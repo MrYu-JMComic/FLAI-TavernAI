@@ -323,6 +323,56 @@ p {
   background: var(--surface);
 }
 
+.user-menu {
+  position: relative;
+  display: inline-flex;
+  min-width: 0;
+}
+
+.user-chip {
+  max-width: 178px;
+}
+
+.user-chip.active,
+.user-chip.open {
+  color: var(--text);
+  border-color: color-mix(in srgb, var(--primary) 28%, var(--line));
+  background: var(--primary-soft);
+}
+
+.user-menu-panel {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 40;
+  min-width: 156px;
+  padding: 6px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--surface) 96%, transparent);
+  box-shadow: var(--shadow);
+}
+
+.user-menu-item {
+  display: flex;
+  width: 100%;
+  min-height: 38px;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 8px;
+  border: 0;
+  border-radius: 8px;
+  padding: 0 10px;
+  color: var(--text);
+  text-align: left;
+  background: transparent;
+  font-weight: 800;
+}
+
+.user-menu-item:hover {
+  background: var(--primary-soft);
+}
+
 .page-shell {
   width: min(1200px, 100%);
   margin: 0 auto;
@@ -1528,6 +1578,127 @@ p {
   color: #b6c2d4;
 }
 
+.markdown-content {
+  min-width: 0;
+  max-width: 100%;
+  white-space: normal;
+}
+
+.markdown-content > :first-child {
+  margin-top: 0;
+}
+
+.markdown-content > :last-child {
+  margin-bottom: 0;
+}
+
+.markdown-paragraph {
+  margin: 0 0 0.72em;
+  white-space: pre-wrap;
+}
+
+.markdown-heading {
+  margin: 0.2em 0 0.55em;
+  color: var(--text);
+  line-height: 1.35;
+}
+
+.markdown-content h1 {
+  font-size: 1.2rem;
+}
+
+.markdown-content h2 {
+  font-size: 1.1rem;
+}
+
+.markdown-content h3,
+.markdown-content h4 {
+  font-size: 1rem;
+}
+
+.markdown-list {
+  margin: 0.2em 0 0.72em;
+  padding-left: 1.25em;
+}
+
+.markdown-list li + li {
+  margin-top: 0.2em;
+}
+
+.markdown-quote {
+  margin: 0.3em 0 0.8em;
+  padding: 0.1em 0 0.1em 0.85em;
+  border-left: 3px solid color-mix(in srgb, var(--primary) 28%, var(--line));
+  color: var(--muted);
+  white-space: pre-wrap;
+}
+
+.markdown-code {
+  max-width: 100%;
+  margin: 0.35em 0 0.8em;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: color-mix(in srgb, var(--surface-strong) 62%, transparent);
+  line-height: 1.55;
+  white-space: pre;
+}
+
+.markdown-inline-code {
+  border: 1px solid color-mix(in srgb, var(--line) 72%, transparent);
+  border-radius: 6px;
+  padding: 0.08em 0.34em;
+  color: var(--primary);
+  background: color-mix(in srgb, var(--primary-soft) 52%, transparent);
+  font-size: 0.92em;
+}
+
+.markdown-table-wrap {
+  max-width: 100%;
+  margin: 0.35em 0 0.8em;
+  overflow: auto;
+}
+
+.markdown-table {
+  width: 100%;
+  min-width: 360px;
+  border-collapse: collapse;
+  font-size: 0.94em;
+}
+
+.markdown-table th,
+.markdown-table td {
+  border: 1px solid var(--line);
+  padding: 8px 10px;
+  text-align: left;
+  vertical-align: top;
+}
+
+.markdown-table th {
+  background: color-mix(in srgb, var(--surface-strong) 72%, transparent);
+  font-weight: 900;
+}
+
+.markdown-image {
+  display: block;
+  width: auto;
+  max-width: min(100%, 520px);
+  max-height: 420px;
+  margin: 0.45em 0 0.8em;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  object-fit: contain;
+  background: color-mix(in srgb, var(--surface-strong) 64%, transparent);
+}
+
+.markdown-content a {
+  color: var(--primary);
+  font-weight: 800;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
 .deep-composer-wrap {
   position: fixed;
   right: 0;
@@ -1648,6 +1819,12 @@ p {
   box-shadow: 0 8px 20px rgba(15, 23, 42, 0.08);
 }
 
+.scroll-bottom-button.active {
+  color: #fff8ec;
+  border-color: var(--primary);
+  background: var(--primary);
+}
+
 @media (max-width: 980px) {
   .deep-chat-shell {
     grid-template-columns: 1fr;
@@ -1766,7 +1943,9 @@ p {
 .history-item.active,
 :root[data-theme="dark"] .history-item.active,
 .mode-pill.active,
-:root[data-theme="dark"] .mode-pill.active {
+:root[data-theme="dark"] .mode-pill.active,
+.scroll-bottom-button.active,
+:root[data-theme="dark"] .scroll-bottom-button.active {
   border-color: color-mix(in srgb, var(--primary) 28%, var(--line));
   color: var(--primary);
   background: var(--primary-soft);

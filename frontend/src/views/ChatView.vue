@@ -1,5 +1,5 @@
 <script setup>
-import { computed, nextTick, onMounted, ref, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, triggerRef, watch } from 'vue';
 import {
   Brain,
   ChevronDown,
@@ -25,6 +25,7 @@ import {
   sendMessage,
   streamMessage
 } from '../api';
+import MarkdownContent from '../components/MarkdownContent.vue';
 
 const props = defineProps({
   route: {
@@ -58,16 +59,28 @@ const usage = ref(null);
 const providerMeta = ref(null);
 const controller = ref(null);
 const messageScroller = ref(null);
+const isScrollPinned = ref(true);
+const distanceToBottom = ref(0);
 const expandedReasoning = ref(new Set());
 let stoppingByUser = false;
+let scrollSaveTimer = null;
+let lastManualScrollIntentAt = 0;
+let touchStartY = 0;
+let lastTouchY = 0;
+let userPausedAutoScroll = false;
 const streamIdleTimeoutMs = 60000;
-const streamFastBacklog = 160;
-const streamMediumBacklog = 64;
-const streamPunctuationPauseMs = 46;
-const streamAnimations = new Map();
+const streamFastChunkLength = 120;
+const streamMediumChunkLength = 48;
+const streamPunctuationPauseMs = 58;
+const scrollStickThreshold = 120;
+const scrollButtonDistanceThreshold = 360;
+const manualScrollIntentCooldownMs = 1400;
 let graphemeSegmenter = null;
 
 const canSend = computed(() => input.value.trim() && !sending.value);
+const showScrollBottomButton = computed(() => {
+  return !isScrollPinned.value && distanceToBottom.value > scrollButtonDistanceThreshold;
+});
 const canToggleThinking = computed(() => props.provider?.providerType === 'deepseek');
 const needsProviderFix = computed(() => {
   return /API Key|SK|密钥|供应商|网关|模型/.test(error.value);
@@ -93,6 +106,13 @@ onMounted(async () => {
   await loadSidebarData();
 });
 
+onBeforeUnmount(() => {
+  saveMessageScrollPosition();
+  if (scrollSaveTimer) {
+    window.clearTimeout(scrollSaveTimer);
+  }
+});
+
 watch(useStream, (value) => {
   writeLocalBoolean('flai-chat-use-stream', value);
 });
@@ -109,7 +129,7 @@ async function loadConversation() {
     conversation.value = result.conversation;
     messages.value = result.messages;
     await nextTick();
-    scrollToBottom(false);
+    restoreMessageScrollPosition();
   } catch (err) {
     error.value = err.message;
   } finally {
@@ -152,25 +172,29 @@ async function submit() {
 
   error.value = '';
   input.value = '';
-  const localUser = {
+  const localUserDraft = {
     id: `local-user-${Date.now()}`,
     role: 'user',
     content,
     reasoning: '',
     createdAt: new Date().toISOString()
   };
-  const assistant = {
+  const assistantDraft = {
     id: `local-assistant-${Date.now()}`,
     role: 'assistant',
     content: '',
     reasoning: '',
     createdAt: new Date().toISOString(),
-    streaming: true
+    streaming: true,
+    reasoningStreaming: false,
+    contentStreaming: false
   };
-  messages.value.push(localUser, assistant);
+  messages.value.push(localUserDraft, assistantDraft);
+  const localUser = messages.value[messages.value.length - 2];
+  const assistant = messages.value[messages.value.length - 1];
   sending.value = true;
   await nextTick();
-  scrollToBottom();
+  stickToBottomIfNeeded(true);
 
   const requestPayload = {
     content,
@@ -210,25 +234,27 @@ async function submit() {
             if (!assistant.reasoning) {
               expandReasoning(assistant.id);
             }
+            assistant.reasoningStreaming = true;
             refreshStreamTimer();
-            appendStreamText(assistant, 'reasoning', data.text);
+            await appendStreamText(assistant, 'reasoning', data.text);
             await nextTick();
-            scrollToBottom();
+            stickToBottomIfNeeded();
           },
           async content(data) {
+            assistant.reasoningStreaming = false;
+            assistant.contentStreaming = true;
             refreshStreamTimer();
-            appendStreamText(assistant, 'content', data.text);
+            await appendStreamText(assistant, 'content', data.text);
             await nextTick();
-            scrollToBottom();
+            stickToBottomIfNeeded();
           },
           async done(data) {
             streamFinished = true;
             clearStreamTimer();
-            await waitForMessageAnimations(assistant);
             if (stoppingByUser || !assistant.streaming) {
               return;
             }
-            Object.assign(assistant, data.assistantMessage, { streaming: false });
+            finalizeStreamedAssistant(assistant, data.assistantMessage);
             usage.value = data.usage || data.assistantMessage?.usage || null;
             providerMeta.value = {
               ...(providerMeta.value || {}),
@@ -238,7 +264,6 @@ async function submit() {
           error(data) {
             streamFinished = true;
             clearStreamTimer();
-            clearMessageAnimations(assistant);
             finishAssistantDraft(assistant);
             if (!stoppingByUser) {
               showError(data.error || '生成失败');
@@ -294,70 +319,45 @@ function stop() {
 }
 
 function finishAssistantDraft(message) {
-  clearMessageAnimations(message);
   message.streaming = false;
+  message.reasoningStreaming = false;
+  message.contentStreaming = false;
   if (!message.content && !message.reasoning) {
     messages.value = messages.value.filter((item) => item.id !== message.id);
   }
+  triggerRef(messages);
 }
 
 function showError(message) {
   error.value = message;
-  nextTick(() => scrollToBottom());
+  nextTick(() => stickToBottomIfNeeded(true));
 }
 
-function appendStreamText(message, field, text) {
+async function appendStreamText(message, field, text) {
   const value = String(text || '');
   if (!value) {
     return;
   }
 
-  const key = streamAnimationKey(message, field);
-  const state = streamAnimations.get(key) || {
-    buffer: '',
-    running: false,
-    waiters: []
-  };
-  state.buffer += value;
-  streamAnimations.set(key, state);
-
-  if (!state.running) {
-    void drainStreamText(message, field, key, state);
-  }
-}
-
-async function drainStreamText(message, field, key, state) {
-  state.running = true;
-
-  while (state.buffer && message.streaming) {
-    const chunk = takeTypingChunk(state.buffer);
-    state.buffer = state.buffer.slice(chunk.length);
+  let buffer = value;
+  while (buffer && message.streaming) {
+    const chunk = takeTypingChunk(buffer);
+    buffer = buffer.slice(chunk.length);
     message[field] += chunk;
+    triggerRef(messages);
     await nextTick();
-    scrollToBottom(false);
-    await waitTypingCadence(chunk, state.buffer.length);
-  }
-
-  state.running = false;
-  if (!message.streaming) {
-    state.buffer = '';
-  }
-  resolveAnimationWaiters(state);
-
-  if (!state.buffer) {
-    streamAnimations.delete(key);
-  } else if (message.streaming) {
-    void drainStreamText(message, field, key, state);
+    stickToBottomIfNeeded(false);
+    await waitTypingCadence(chunk, buffer.length, value.length);
   }
 }
 
 function takeTypingChunk(text) {
   const segments = splitGraphemes(text);
-  if (segments.length > streamFastBacklog) {
-    return segments.slice(0, 5).join('');
-  }
-  if (segments.length > streamMediumBacklog) {
+  if (segments.length > streamFastChunkLength) {
     return segments.slice(0, 3).join('');
+  }
+  if (segments.length > streamMediumChunkLength) {
+    return segments.slice(0, 2).join('');
   }
   return segments[0] || '';
 }
@@ -370,21 +370,18 @@ function splitGraphemes(text) {
   return Array.from(text);
 }
 
-async function waitTypingCadence(chunk, remainingLength) {
-  await waitFrame();
-  if (remainingLength > streamMediumBacklog || !/[。！？!?；;：:，,、…]$/.test(chunk.trim())) {
-    return;
+async function waitTypingCadence(chunk, remainingLength, originalLength) {
+  let delay = 22;
+  if (originalLength > streamFastChunkLength || remainingLength > streamFastChunkLength) {
+    delay = 10;
+  } else if (originalLength > streamMediumChunkLength || remainingLength > streamMediumChunkLength) {
+    delay = 15;
   }
-  await waitMs(streamPunctuationPauseMs);
-}
 
-function waitFrame() {
-  if (typeof window === 'undefined' || typeof window.requestAnimationFrame !== 'function') {
-    return Promise.resolve();
+  if (/[\u3002\uff01\uff1f!?\uff1b;\uff1a:\uff0c,\u3001\u2026]$/.test(chunk.trim())) {
+    delay += streamPunctuationPauseMs;
   }
-  return new Promise((resolve) => {
-    window.requestAnimationFrame(() => resolve());
-  });
+  await waitMs(delay);
 }
 
 function waitMs(duration) {
@@ -396,45 +393,25 @@ function waitMs(duration) {
   });
 }
 
-function streamAnimationKey(message, field) {
-  return `${message.id}:${field}`;
-}
-
-function waitForMessageAnimations(message) {
-  return Promise.all([
-    waitForStreamAnimation(streamAnimationKey(message, 'content')),
-    waitForStreamAnimation(streamAnimationKey(message, 'reasoning'))
-  ]);
-}
-
-function waitForStreamAnimation(key) {
-  const state = streamAnimations.get(key);
-  if (!state || (!state.running && !state.buffer)) {
-    return Promise.resolve();
-  }
-  return new Promise((resolve) => {
-    state.waiters.push(resolve);
+function finalizeStreamedAssistant(message, serverMessage = {}) {
+  const streamedContent = message.content;
+  const streamedReasoning = message.reasoning;
+  Object.assign(message, serverMessage, {
+    content: streamedContent || serverMessage.content || '',
+    reasoning: streamedReasoning || serverMessage.reasoning || '',
+    streaming: false,
+    reasoningStreaming: false,
+    contentStreaming: false
   });
+  triggerRef(messages);
 }
 
-function clearMessageAnimations(message) {
-  for (const field of ['content', 'reasoning']) {
-    const key = streamAnimationKey(message, field);
-    const state = streamAnimations.get(key);
-    if (!state) {
-      continue;
-    }
-    state.buffer = '';
-    resolveAnimationWaiters(state);
-    streamAnimations.delete(key);
-  }
+function isReasoningTyping(message) {
+  return message.role === 'assistant' && message.reasoningStreaming === true;
 }
 
-function resolveAnimationWaiters(state) {
-  const waiters = state.waiters.splice(0);
-  for (const resolve of waiters) {
-    resolve();
-  }
+function isContentTyping(message) {
+  return message.role === 'assistant' && message.contentStreaming === true;
 }
 
 function readLocalBoolean(key, fallback) {
@@ -526,7 +503,89 @@ function formatCost(usage) {
   return `¥${cost.toFixed(digits)}`;
 }
 
-function scrollToBottom(smooth = true) {
+function handleMessageScroll() {
+  updateScrollState();
+  scheduleSaveMessageScrollPosition();
+}
+
+function handleWheelScrollIntent(event) {
+  if (event.deltaY < -1) {
+    pauseAutoScrollForUser();
+  }
+}
+
+function handleTouchStart(event) {
+  const touch = event.touches?.[0];
+  touchStartY = touch?.clientY || 0;
+  lastTouchY = touchStartY;
+}
+
+function handleTouchMove(event) {
+  const touch = event.touches?.[0];
+  if (!touch) {
+    return;
+  }
+  const currentY = touch.clientY;
+  const moved = Math.abs(currentY - lastTouchY) > 4 || Math.abs(currentY - touchStartY) > 10;
+  if (moved) {
+    pauseAutoScrollForUser();
+  }
+  lastTouchY = currentY;
+}
+
+function pauseAutoScrollForUser() {
+  lastManualScrollIntentAt = Date.now();
+  userPausedAutoScroll = true;
+  isScrollPinned.value = false;
+  updateScrollState();
+}
+
+function hasRecentManualScrollIntent() {
+  return Date.now() - lastManualScrollIntentAt < manualScrollIntentCooldownMs;
+}
+
+function updateScrollState() {
+  const el = messageScroller.value;
+  if (!el) {
+    return;
+  }
+  distanceToBottom.value = getDistanceToBottom(el);
+  if (distanceToBottom.value <= 2 && !hasRecentManualScrollIntent()) {
+    userPausedAutoScroll = false;
+  }
+  if (userPausedAutoScroll) {
+    isScrollPinned.value = false;
+  } else if (distanceToBottom.value <= scrollStickThreshold) {
+    isScrollPinned.value = true;
+  } else if (distanceToBottom.value > scrollStickThreshold) {
+    isScrollPinned.value = false;
+  }
+}
+
+function getDistanceToBottom(el) {
+  return Math.max(0, el.scrollHeight - el.scrollTop - el.clientHeight);
+}
+
+function stickToBottomIfNeeded(smooth = false) {
+  if (hasRecentManualScrollIntent()) {
+    updateScrollState();
+    scheduleSaveMessageScrollPosition();
+    return;
+  }
+  updateScrollState();
+  if (userPausedAutoScroll || !isScrollPinned.value) {
+    scheduleSaveMessageScrollPosition();
+    return;
+  }
+  scrollToBottom(smooth, true);
+}
+
+function scrollToBottom(smooth = true, keepPinned = true) {
+  if (keepPinned) {
+    lastManualScrollIntentAt = 0;
+    userPausedAutoScroll = false;
+    isScrollPinned.value = true;
+  }
   requestAnimationFrame(() => {
     const el = messageScroller.value;
     if (!el) {
@@ -536,7 +595,80 @@ function scrollToBottom(smooth = true) {
       top: el.scrollHeight,
       behavior: smooth ? 'smooth' : 'auto'
     });
+    if (!smooth) {
+      updateScrollState();
+    } else if (typeof window !== 'undefined') {
+      window.setTimeout(() => updateScrollState(), 360);
+    }
+    scheduleSaveMessageScrollPosition();
   });
+}
+
+function restoreMessageScrollPosition() {
+  requestAnimationFrame(() => {
+    const el = messageScroller.value;
+    if (!el) {
+      return;
+    }
+
+    const saved = readScrollSnapshot();
+    if (!saved) {
+      scrollToBottom(false, true);
+      return;
+    }
+
+    if (saved.pinned) {
+      scrollToBottom(false, true);
+      return;
+    }
+
+    el.scrollTop = Math.min(saved.top || 0, Math.max(0, el.scrollHeight - el.clientHeight));
+    updateScrollState();
+    scheduleSaveMessageScrollPosition();
+  });
+}
+
+function readScrollSnapshot() {
+  if (typeof window === 'undefined') {
+    return null;
+  }
+  try {
+    return JSON.parse(window.localStorage.getItem(scrollStorageKey()) || 'null');
+  } catch {
+    return null;
+  }
+}
+
+function scheduleSaveMessageScrollPosition() {
+  if (typeof window === 'undefined') {
+    return;
+  }
+  if (scrollSaveTimer) {
+    window.clearTimeout(scrollSaveTimer);
+  }
+  scrollSaveTimer = window.setTimeout(() => {
+    saveMessageScrollPosition();
+  }, 120);
+}
+
+function saveMessageScrollPosition() {
+  if (typeof window === 'undefined') {
+    return;
+  }
+  const el = messageScroller.value;
+  if (!el) {
+    return;
+  }
+  const snapshot = {
+    top: Math.round(el.scrollTop),
+    pinned: !userPausedAutoScroll && getDistanceToBottom(el) <= scrollStickThreshold,
+    savedAt: Date.now()
+  };
+  window.localStorage.setItem(scrollStorageKey(), JSON.stringify(snapshot));
+}
+
+function scrollStorageKey() {
+  return `flai-chat-scroll:${props.route.params.id || 'active'}`;
 }
 </script>
 
@@ -612,7 +744,15 @@ function scrollToBottom(smooth = true) {
         </button>
       </header>
 
-      <div ref="messageScroller" class="deep-message-scroll" aria-live="polite">
+      <div
+        ref="messageScroller"
+        class="deep-message-scroll"
+        aria-live="polite"
+        @scroll.passive="handleMessageScroll"
+        @wheel.passive="handleWheelScrollIntent"
+        @touchstart.passive="handleTouchStart"
+        @touchmove.passive="handleTouchMove"
+      >
         <p v-if="loading" class="deep-muted">正在加载对话...</p>
         <article
           v-for="message in messages"
@@ -624,7 +764,7 @@ function scrollToBottom(smooth = true) {
             <div v-if="message.role === 'assistant' && message.reasoning" class="reasoning-block">
               <button class="reasoning-toggle" type="button" @click="toggleReasoning(message.id)">
                 <Brain :size="16" />
-                <span>{{ message.streaming ? '正在思考' : '已思考' }}</span>
+                <span>{{ isReasoningTyping(message) ? '正在思考' : '已思考' }}</span>
                 <small v-if="message.reasoning.length">约 {{ message.reasoning.length }} 字</small>
                 <ChevronDown v-if="reasoningOpen(message.id)" :size="16" />
                 <ChevronRight v-else :size="16" />
@@ -632,20 +772,20 @@ function scrollToBottom(smooth = true) {
               <div
                 v-if="reasoningOpen(message.id)"
                 class="reasoning-body"
-                :class="{ 'is-typing': message.streaming }"
+                :class="{ 'is-typing': isReasoningTyping(message) }"
               >
-                <span class="typing-text">{{ message.reasoning }}</span>
+                <MarkdownContent class="typing-text" :text="message.reasoning" />
               </div>
             </div>
 
             <div
               class="deep-bubble"
               :class="{
-                'is-typing': message.role === 'assistant' && message.streaming,
-                'is-waiting': message.role === 'assistant' && message.streaming && !message.content
+                'is-typing': isContentTyping(message),
+                'is-waiting': isContentTyping(message) && !message.content
               }"
             >
-              <p><span class="typing-text">{{ message.content || messagePlaceholder(message) }}</span></p>
+              <MarkdownContent class="typing-text" :text="message.content || messagePlaceholder(message)" />
             </div>
           </div>
         </article>
@@ -658,7 +798,13 @@ function scrollToBottom(smooth = true) {
       </div>
 
       <footer class="deep-composer-wrap">
-        <button class="scroll-bottom-button" type="button" title="滚动到底部" @click="scrollToBottom()">
+        <button
+          v-if="showScrollBottomButton"
+          class="scroll-bottom-button"
+          type="button"
+          title="滚动到底部"
+          @click="scrollToBottom()"
+        >
           <ChevronDown :size="18" />
         </button>
         <form class="deep-composer" @submit.prevent="submit">

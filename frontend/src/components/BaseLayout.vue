@@ -1,6 +1,6 @@
 <script setup>
-import { computed } from 'vue';
-import { Home, KeyRound, LogOut, Moon, Plus, Sun, UserRound } from '@lucide/vue';
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
+import { ChevronDown, Home, KeyRound, LogOut, Moon, Plus, Sun, UserRound } from '@lucide/vue';
 
 const props = defineProps({
   user: {
@@ -21,9 +21,30 @@ const props = defineProps({
   }
 });
 
-defineEmits(['navigate', 'logout', 'toggle-theme']);
+const emit = defineEmits(['navigate', 'logout', 'toggle-theme']);
 
 const isChatRoute = computed(() => props.currentRoute === 'chat');
+const userMenuOpen = ref(false);
+const userMenuRef = ref(null);
+
+onMounted(() => {
+  document.addEventListener('click', handleDocumentClick);
+});
+
+onBeforeUnmount(() => {
+  document.removeEventListener('click', handleDocumentClick);
+});
+
+function handleDocumentClick(event) {
+  if (!userMenuRef.value?.contains(event.target)) {
+    userMenuOpen.value = false;
+  }
+}
+
+function openUserSettings() {
+  userMenuOpen.value = false;
+  emit('navigate', 'settings');
+}
 </script>
 
 <template>
@@ -50,10 +71,6 @@ const isChatRoute = computed(() => props.currentRoute === 'chat');
           <Plus :size="18" />
           <span>创建</span>
         </button>
-        <button :class="{ active: currentRoute === 'settings' }" type="button" @click="$emit('navigate', 'settings')">
-          <KeyRound :size="18" />
-          <span>用户</span>
-        </button>
       </nav>
 
       <div class="top-actions">
@@ -61,9 +78,25 @@ const isChatRoute = computed(() => props.currentRoute === 'chat');
           <Moon v-if="theme === 'light'" :size="19" />
           <Sun v-else :size="19" />
         </button>
-        <div class="user-chip">
-          <UserRound :size="17" />
-          <span>{{ user?.username }}</span>
+        <div ref="userMenuRef" class="user-menu">
+          <button
+            class="user-chip"
+            :class="{ active: currentRoute === 'settings', open: userMenuOpen }"
+            type="button"
+            aria-haspopup="menu"
+            :aria-expanded="String(userMenuOpen)"
+            @click.stop="userMenuOpen = !userMenuOpen"
+          >
+            <UserRound :size="17" />
+            <span>{{ user?.username }}</span>
+            <ChevronDown :size="15" />
+          </button>
+          <div v-if="userMenuOpen" class="user-menu-panel" role="menu">
+            <button class="user-menu-item" type="button" role="menuitem" @click="openUserSettings">
+              <KeyRound :size="17" />
+              <span>用户设置</span>
+            </button>
+          </div>
         </div>
         <button class="icon-button" type="button" title="退出登录" @click="$emit('logout')">
           <LogOut :size="19" />
