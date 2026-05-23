@@ -2,28 +2,38 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, triggerRef, watch } from 'vue';
 import {
   Brain,
+  Check,
+  CheckSquare,
   ChevronDown,
   ChevronRight,
+  Copy,
   Home,
   Menu,
   MessageSquarePlus,
   PanelLeftClose,
   PanelLeftOpen,
+  Pencil,
   Search,
   Send,
   Settings,
   Sparkles,
   Square,
+  Trash2,
   UserRound,
+  X,
   Zap
 } from '@lucide/vue';
 import {
   createConversation,
+  deleteConversation,
+  deleteConversations,
+  deleteMessage,
   fetchCharacters,
   fetchConversationMessages,
   fetchConversations,
   sendMessage,
-  streamMessage
+  streamMessage,
+  updateMessage
 } from '../api';
 import MarkdownContent from '../components/MarkdownContent.vue';
 
@@ -59,11 +69,19 @@ const usage = ref(null);
 const providerMeta = ref(null);
 const controller = ref(null);
 const messageScroller = ref(null);
+const composerTextarea = ref(null);
 const isScrollPinned = ref(true);
 const distanceToBottom = ref(0);
 const expandedReasoning = ref(new Set());
+const editingMessageId = ref('');
+const editingMessageContent = ref('');
+const messageActionBusy = ref('');
+const conversationActionBusy = ref(false);
+const selectedConversationIds = ref(new Set());
+const actionNotice = ref('');
 let stoppingByUser = false;
 let scrollSaveTimer = null;
+let actionNoticeTimer = null;
 let lastManualScrollIntentAt = 0;
 let touchStartY = 0;
 let lastTouchY = 0;
@@ -94,6 +112,12 @@ const filteredConversations = computed(() => {
     return `${item.title} ${item.character?.name || ''}`.toLowerCase().includes(query);
   });
 });
+const visibleConversationIds = computed(() => filteredConversations.value.map((item) => item.id));
+const selectedConversationCount = computed(() => selectedConversationIds.value.size);
+const allVisibleConversationsSelected = computed(() => {
+  return visibleConversationIds.value.length > 0
+    && visibleConversationIds.value.every((id) => selectedConversationIds.value.has(id));
+});
 const currentProviderLabel = computed(() => {
   return providerMeta.value?.provider || props.provider?.gatewayName || 'Local Mock';
 });
@@ -104,6 +128,8 @@ const currentModelLabel = computed(() => {
 onMounted(async () => {
   await loadConversation();
   await loadSidebarData();
+  resizeComposerTextarea();
+  window.addEventListener('resize', handleViewportResize);
 });
 
 onBeforeUnmount(() => {
@@ -111,6 +137,10 @@ onBeforeUnmount(() => {
   if (scrollSaveTimer) {
     window.clearTimeout(scrollSaveTimer);
   }
+  if (actionNoticeTimer) {
+    window.clearTimeout(actionNoticeTimer);
+  }
+  window.removeEventListener('resize', handleViewportResize);
 });
 
 watch(useStream, (value) => {
@@ -119,6 +149,10 @@ watch(useStream, (value) => {
 
 watch(thinkingEnabled, (value) => {
   writeLocalBoolean('flai-chat-thinking-enabled', value);
+});
+
+watch(input, () => {
+  nextTick(() => resizeComposerTextarea());
 });
 
 async function loadConversation() {
@@ -145,6 +179,7 @@ async function loadSidebarData() {
   ]);
   conversations.value = history;
   characters.value = characterList;
+  pruneSelectedConversations();
 }
 
 async function startNewConversation() {
@@ -172,6 +207,8 @@ async function submit() {
 
   error.value = '';
   input.value = '';
+  await nextTick();
+  resizeComposerTextarea();
   const localUserDraft = {
     id: `local-user-${Date.now()}`,
     role: 'user',
@@ -465,11 +502,339 @@ function messagePlaceholder(message) {
   return '正在生成...';
 }
 
+function activeCharacter() {
+  return conversation.value?.character
+    || characters.value.find((item) => item.id === conversation.value?.characterId)
+    || null;
+}
+
+function messageAuthorName(message) {
+  if (message.role === 'assistant') {
+    return activeCharacter()?.name || 'AI';
+  }
+  if (message.role === 'user') {
+    return props.user?.username || 'User';
+  }
+  return message.role || 'Message';
+}
+
+function messageAuthorInitial(message) {
+  const name = messageAuthorName(message).trim();
+  return [...name][0]?.toUpperCase() || '?';
+}
+
+function messageAvatarUrl(message) {
+  if (message.role === 'assistant') {
+    return activeCharacter()?.avatarUrl || '';
+  }
+  return '';
+}
+
 function openConversation(conversationId) {
   if (conversationId === props.route.params.id) {
     return;
   }
   emit('navigate', 'chat', { id: conversationId });
+}
+
+function toggleConversationSelection(conversationId) {
+  const next = new Set(selectedConversationIds.value);
+  if (next.has(conversationId)) {
+    next.delete(conversationId);
+  } else {
+    next.add(conversationId);
+  }
+  selectedConversationIds.value = next;
+}
+
+function toggleAllVisibleConversations() {
+  if (allVisibleConversationsSelected.value) {
+    selectedConversationIds.value = new Set(
+      [...selectedConversationIds.value].filter((id) => !visibleConversationIds.value.includes(id))
+    );
+    return;
+  }
+  selectedConversationIds.value = new Set([...selectedConversationIds.value, ...visibleConversationIds.value]);
+}
+
+async function deleteOneConversation(item) {
+  if (conversationActionBusy.value || !item?.id) {
+    return;
+  }
+  if (!window.confirm(`删除会话「${item.title}」？不会删除其他会话。`)) {
+    return;
+  }
+
+  conversationActionBusy.value = true;
+  try {
+    await deleteConversation(item.id);
+    removeDeletedConversations([item.id]);
+    showActionNotice('会话已删除');
+  } catch (err) {
+    showError(err.message);
+  } finally {
+    conversationActionBusy.value = false;
+  }
+}
+
+async function deleteSelectedConversations() {
+  const ids = [...selectedConversationIds.value].filter((id) => visibleConversationIds.value.includes(id));
+  if (!ids.length || conversationActionBusy.value) {
+    return;
+  }
+  if (!window.confirm(`删除选中的 ${ids.length} 个会话？不会影响未选中的会话。`)) {
+    return;
+  }
+
+  conversationActionBusy.value = true;
+  try {
+    const result = await deleteConversations(ids);
+    removeDeletedConversations(result.deletedIds || ids);
+    showActionNotice(`已删除 ${result.deletedIds?.length || ids.length} 个会话`);
+  } catch (err) {
+    showError(err.message);
+  } finally {
+    conversationActionBusy.value = false;
+  }
+}
+
+function removeDeletedConversations(ids) {
+  const deleted = new Set(ids);
+  conversations.value = conversations.value.filter((item) => !deleted.has(item.id));
+  selectedConversationIds.value = new Set([...selectedConversationIds.value].filter((id) => !deleted.has(id)));
+
+  if (deleted.has(props.route.params.id)) {
+    const nextConversation = conversations.value[0];
+    if (nextConversation) {
+      emit('navigate', 'chat', { id: nextConversation.id });
+    } else {
+      emit('navigate', 'home');
+    }
+  }
+}
+
+function pruneSelectedConversations() {
+  const valid = new Set(conversations.value.map((item) => item.id));
+  selectedConversationIds.value = new Set([...selectedConversationIds.value].filter((id) => valid.has(id)));
+}
+
+function canEditMessage(message) {
+  return canPersistMessage(message) && !messageActionBusy.value;
+}
+
+function canDeleteMessage(message) {
+  return canPersistMessage(message) && !messageActionBusy.value;
+}
+
+function canPersistMessage(message) {
+  return Boolean(message?.id) && !message.streaming && !String(message.id).startsWith('local-');
+}
+
+async function beginEditMessage(message) {
+  if (!canEditMessage(message)) {
+    return;
+  }
+  await withMessageScrollAnchor(message.id, async () => {
+    editingMessageId.value = message.id;
+    editingMessageContent.value = message.content || '';
+  });
+  focusMessageEditor(message.id);
+}
+
+async function cancelEditMessage(message = null) {
+  const messageId = message?.id || editingMessageId.value;
+  await withMessageScrollAnchor(messageId, async () => {
+    clearMessageEdit();
+  });
+}
+
+function clearMessageEdit() {
+  editingMessageId.value = '';
+  editingMessageContent.value = '';
+}
+
+async function saveMessageEdit(message) {
+  const content = editingMessageContent.value.trim();
+  if (!content) {
+    showActionNotice('消息内容不能为空');
+    return;
+  }
+  if (!canEditMessage(message)) {
+    return;
+  }
+
+  messageActionBusy.value = message.id;
+  try {
+    const updated = await updateMessage(props.route.params.id, message.id, { content });
+    await withMessageScrollAnchor(message.id, async () => {
+      Object.assign(message, updated);
+      clearMessageEdit();
+      triggerRef(messages);
+    });
+    showActionNotice('消息已更新');
+    await loadSidebarData();
+  } catch (err) {
+    showError(err.message);
+  } finally {
+    messageActionBusy.value = '';
+  }
+}
+
+async function removeMessage(message) {
+  if (!canDeleteMessage(message)) {
+    return;
+  }
+  if (!window.confirm('删除这条消息？不会删除前后关联的其他消息。')) {
+    return;
+  }
+
+  messageActionBusy.value = message.id;
+  try {
+    const deletion = await deleteMessage(props.route.params.id, message.id);
+    await withMessageScrollAnchor(message.id, async () => {
+      messages.value = messages.value.filter((item) => item.id !== message.id);
+      if (editingMessageId.value === message.id) {
+        clearMessageEdit();
+      }
+    });
+    showActionNotice(deletion?.deletedReasoning ? '消息和思考已删除' : '消息已删除');
+    await loadSidebarData();
+  } catch (err) {
+    showError(err.message);
+  } finally {
+    messageActionBusy.value = '';
+  }
+}
+
+async function copyMessage(message) {
+  const text = messageTextForCopy(message);
+  if (!text) {
+    showActionNotice('没有可复制的内容');
+    return;
+  }
+
+  try {
+    await requestClipboardPermission();
+    await writeClipboardText(text);
+    showActionNotice('已复制到剪贴板');
+  } catch (err) {
+    showActionNotice(err.message || '复制失败，请检查浏览器权限');
+  }
+}
+
+function messageTextForCopy(message) {
+  return String(message?.content || message?.reasoning || '').trim();
+}
+
+async function requestClipboardPermission() {
+  const permissions = window.navigator?.permissions;
+  if (!permissions?.query) {
+    return;
+  }
+
+  try {
+    const status = await permissions.query({ name: 'clipboard-write' });
+    if (status.state === 'denied') {
+      throw new Error('剪贴板权限被拒绝');
+    }
+  } catch (err) {
+    if (/denied|拒绝/.test(err.message || '')) {
+      throw err;
+    }
+  }
+}
+
+async function writeClipboardText(text) {
+  if (window.navigator?.clipboard?.writeText) {
+    await window.navigator.clipboard.writeText(text);
+    return;
+  }
+
+  const textarea = document.createElement('textarea');
+  textarea.value = text;
+  textarea.setAttribute('readonly', '');
+  textarea.style.position = 'fixed';
+  textarea.style.left = '-9999px';
+  document.body.appendChild(textarea);
+  textarea.select();
+  const copied = document.execCommand('copy');
+  document.body.removeChild(textarea);
+  if (!copied) {
+    throw new Error('复制失败，请手动复制');
+  }
+}
+
+async function withMessageScrollAnchor(messageId, callback) {
+  const anchor = captureMessageScrollAnchor(messageId);
+  const result = await callback();
+  await nextTick();
+  await waitForFrame();
+  restoreMessageScrollAnchor(anchor);
+  return result;
+}
+
+function captureMessageScrollAnchor(messageId) {
+  const scroller = messageScroller.value;
+  if (!scroller) {
+    return null;
+  }
+
+  const element = findMessageElement(messageId);
+  return {
+    messageId,
+    top: element ? element.getBoundingClientRect().top : null,
+    scrollTop: scroller.scrollTop
+  };
+}
+
+function restoreMessageScrollAnchor(anchor) {
+  const scroller = messageScroller.value;
+  if (!scroller || !anchor) {
+    return;
+  }
+
+  const maxScrollTop = Math.max(0, scroller.scrollHeight - scroller.clientHeight);
+  const element = findMessageElement(anchor.messageId);
+  if (element && anchor.top !== null) {
+    const delta = element.getBoundingClientRect().top - anchor.top;
+    scroller.scrollTop = Math.min(maxScrollTop, Math.max(0, scroller.scrollTop + delta));
+  } else {
+    scroller.scrollTop = Math.min(maxScrollTop, Math.max(0, anchor.scrollTop));
+  }
+  updateScrollState();
+  scheduleSaveMessageScrollPosition();
+}
+
+function findMessageElement(messageId) {
+  if (!messageId || !messageScroller.value) {
+    return null;
+  }
+  return [...messageScroller.value.querySelectorAll('.deep-message')]
+    .find((element) => element.dataset.messageId === String(messageId)) || null;
+}
+
+async function waitForFrame() {
+  if (typeof window === 'undefined') {
+    return;
+  }
+  await new Promise((resolve) => window.requestAnimationFrame(resolve));
+}
+
+function focusMessageEditor(messageId) {
+  requestAnimationFrame(() => {
+    const textarea = findMessageElement(messageId)?.querySelector('.message-edit-box textarea');
+    textarea?.focus?.({ preventScroll: true });
+  });
+}
+
+function showActionNotice(message) {
+  actionNotice.value = message;
+  if (actionNoticeTimer) {
+    window.clearTimeout(actionNoticeTimer);
+  }
+  actionNoticeTimer = window.setTimeout(() => {
+    actionNotice.value = '';
+  }, 1800);
 }
 
 function toggleUseStream() {
@@ -481,6 +846,21 @@ function toggleThinking() {
     return;
   }
   thinkingEnabled.value = !thinkingEnabled.value;
+}
+
+function resizeComposerTextarea() {
+  const el = composerTextarea.value;
+  if (!el) {
+    return;
+  }
+  const maxHeight = 180;
+  el.style.height = 'auto';
+  el.style.height = `${Math.min(el.scrollHeight, maxHeight)}px`;
+  el.style.overflowY = el.scrollHeight > maxHeight ? 'auto' : 'hidden';
+}
+
+function handleViewportResize() {
+  resizeComposerTextarea();
 }
 
 function formatConversationUsage(item) {
@@ -696,20 +1076,56 @@ function scrollStorageKey() {
         <input v-model.trim="historySearch" placeholder="搜索当前角色的对话" />
       </label>
 
+      <div v-if="filteredConversations.length" class="history-tools">
+        <button class="history-tool-button" type="button" @click="toggleAllVisibleConversations">
+          <CheckSquare :size="15" />
+          <span>{{ allVisibleConversationsSelected ? '取消' : '全选' }}</span>
+        </button>
+        <button
+          class="history-tool-button danger"
+          type="button"
+          :disabled="!selectedConversationCount || conversationActionBusy"
+          @click="deleteSelectedConversations"
+        >
+          <Trash2 :size="15" />
+          <span>批删</span>
+          <small v-if="selectedConversationCount">{{ selectedConversationCount }}</small>
+        </button>
+      </div>
+
       <div class="history-list">
         <p class="history-group">{{ conversation?.character?.name || '当前角色' }}</p>
-        <button
+        <div
           v-for="item in filteredConversations"
           :key="item.id"
-          class="history-item"
+          class="history-row"
           :class="{ active: item.id === route.params.id }"
-          type="button"
-          @click="openConversation(item.id)"
         >
-          <span>{{ item.title }}</span>
-          <small>{{ item.character?.name || 'AI' }}</small>
-          <small class="history-usage">{{ formatConversationUsage(item) }}</small>
-        </button>
+          <label class="history-check" title="选择会话" @click.stop>
+            <input
+              type="checkbox"
+              :checked="selectedConversationIds.has(item.id)"
+              @change="toggleConversationSelection(item.id)"
+            />
+            <span aria-hidden="true"></span>
+          </label>
+          <button class="history-item" type="button" @click="openConversation(item.id)">
+            <strong>{{ item.title }}</strong>
+            <span>{{ item.character?.name || 'AI' }}</span>
+            <small class="history-usage" :title="formatConversationUsage(item)">
+              {{ formatConversationUsage(item) }}
+            </small>
+          </button>
+          <button
+            class="history-delete-button"
+            type="button"
+            title="删除会话"
+            :disabled="conversationActionBusy"
+            @click.stop="deleteOneConversation(item)"
+          >
+            <Trash2 :size="15" />
+          </button>
+        </div>
         <p v-if="!filteredConversations.length" class="history-empty">暂无会话</p>
       </div>
 
@@ -759,8 +1175,17 @@ function scrollStorageKey() {
           :key="message.id"
           class="deep-message"
           :class="message.role"
+          :data-message-id="message.id"
         >
+          <div v-if="message.role === 'assistant'" class="deep-message-author" aria-hidden="true">
+            <span class="deep-message-avatar">
+              <img v-if="messageAvatarUrl(message)" :src="messageAvatarUrl(message)" alt="" />
+              <span v-else>{{ messageAuthorInitial(message) }}</span>
+            </span>
+            <small>{{ messageAuthorName(message) }}</small>
+          </div>
           <div class="deep-message-content">
+            <div class="deep-message-name">{{ messageAuthorName(message) }}</div>
             <div v-if="message.role === 'assistant' && message.reasoning" class="reasoning-block">
               <button class="reasoning-toggle" type="button" @click="toggleReasoning(message.id)">
                 <Brain :size="16" />
@@ -782,13 +1207,70 @@ function scrollStorageKey() {
               class="deep-bubble"
               :class="{
                 'is-typing': isContentTyping(message),
-                'is-waiting': isContentTyping(message) && !message.content
+                'is-waiting': isContentTyping(message) && !message.content,
+                'is-editing': editingMessageId === message.id
               }"
             >
-              <MarkdownContent class="typing-text" :text="message.content || messagePlaceholder(message)" />
+              <div v-if="editingMessageId === message.id" class="message-edit-box">
+                <textarea
+                  v-model="editingMessageContent"
+                  rows="4"
+                  @keydown.esc.prevent="cancelEditMessage(message)"
+                />
+                <div class="message-edit-actions">
+                  <button type="button" class="message-action-button primary" @click="saveMessageEdit(message)">
+                    <Check :size="15" />
+                    <span>保存</span>
+                  </button>
+                  <button type="button" class="message-action-button" @click="cancelEditMessage(message)">
+                    <X :size="15" />
+                    <span>取消</span>
+                  </button>
+                </div>
+              </div>
+              <MarkdownContent v-else class="typing-text" :text="message.content || messagePlaceholder(message)" />
+            </div>
+            <div class="message-actions" :class="message.role">
+              <button
+                type="button"
+                class="message-action-button"
+                title="复制消息"
+                @click="copyMessage(message)"
+              >
+                <Copy :size="14" />
+                <span>复制</span>
+              </button>
+              <button
+                type="button"
+                class="message-action-button"
+                title="编辑消息"
+                :disabled="!canEditMessage(message)"
+                @click="beginEditMessage(message)"
+              >
+                <Pencil :size="14" />
+                <span>编辑</span>
+              </button>
+              <button
+                type="button"
+                class="message-action-button danger"
+                title="删除消息"
+                :disabled="!canDeleteMessage(message)"
+                @click="removeMessage(message)"
+              >
+                <Trash2 :size="14" />
+                <span>删除</span>
+              </button>
             </div>
           </div>
+          <div v-if="message.role === 'user'" class="deep-message-author user" aria-hidden="true">
+            <span class="deep-message-avatar">
+              <img v-if="messageAvatarUrl(message)" :src="messageAvatarUrl(message)" alt="" />
+              <span v-else>{{ messageAuthorInitial(message) }}</span>
+            </span>
+            <small>{{ messageAuthorName(message) }}</small>
+          </div>
         </article>
+        <p v-if="actionNotice" class="chat-action-toast" role="status">{{ actionNotice }}</p>
         <div v-if="error" class="deep-error" role="status">
           <span>{{ error }}</span>
           <button v-if="needsProviderFix" type="button" @click="emit('navigate', 'settings')">
@@ -809,9 +1291,11 @@ function scrollStorageKey() {
         </button>
         <form class="deep-composer" @submit.prevent="submit">
           <textarea
+            ref="composerTextarea"
             v-model="input"
             placeholder="给 AI 发送消息"
             rows="2"
+            @input="resizeComposerTextarea"
             @keydown.enter.exact.prevent="submit"
           />
           <div class="composer-actions">

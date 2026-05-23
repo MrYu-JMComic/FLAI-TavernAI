@@ -223,6 +223,17 @@ app.get('/api/conversations', requireAuth, (request, response) => {
   response.json(rows.map((row) => withConversationUsage(toConversation(row), request.auth.user.id)));
 });
 
+app.post('/api/conversations/bulk-delete', requireAuth, (request, response) => {
+  const ids = normalizeIdList(request.body?.ids);
+  if (!ids.length) {
+    response.status(400).json({ error: '请选择要删除的会话' });
+    return;
+  }
+
+  const deletedIds = deleteConversations(request.auth.user.id, ids);
+  response.json({ ok: true, deletedIds });
+});
+
 app.post('/api/conversations', requireAuth, (request, response) => {
   const character = getCharacter(db, request.auth.user.id, request.body?.characterId);
   if (!character) {
@@ -252,6 +263,15 @@ app.post('/api/conversations', requireAuth, (request, response) => {
   response.status(201).json(getConversation(request.auth.user.id, conversationId));
 });
 
+app.delete('/api/conversations/:id', requireAuth, (request, response) => {
+  if (!deleteConversation(request.auth.user.id, request.params.id)) {
+    response.status(404).json({ error: '对话不存在' });
+    return;
+  }
+
+  response.json({ ok: true, deletedId: request.params.id });
+});
+
 app.get('/api/conversations/:id/messages', requireAuth, (request, response) => {
   const conversation = getConversation(request.auth.user.id, request.params.id);
   if (!conversation) {
@@ -262,6 +282,48 @@ app.get('/api/conversations/:id/messages', requireAuth, (request, response) => {
   response.json({
     conversation,
     messages: getMessages(request.auth.user.id, request.params.id)
+  });
+});
+
+app.patch('/api/conversations/:id/messages/:messageId', requireAuth, (request, response) => {
+  const conversation = getConversation(request.auth.user.id, request.params.id);
+  if (!conversation) {
+    response.status(404).json({ error: '对话不存在' });
+    return;
+  }
+
+  const message = getMessage(request.auth.user.id, request.params.id, request.params.messageId);
+  if (!message) {
+    response.status(404).json({ error: '消息不存在' });
+    return;
+  }
+
+  const content = String(request.body?.content ?? '').trim();
+  if (!content) {
+    response.status(400).json({ error: '消息内容不能为空' });
+    return;
+  }
+
+  response.json(updateMessage(request.auth.user.id, request.params.id, request.params.messageId, { content }));
+});
+
+app.delete('/api/conversations/:id/messages/:messageId', requireAuth, (request, response) => {
+  const conversation = getConversation(request.auth.user.id, request.params.id);
+  if (!conversation) {
+    response.status(404).json({ error: '对话不存在' });
+    return;
+  }
+
+  const deletedMessage = deleteMessage(request.auth.user.id, request.params.id, request.params.messageId);
+  if (!deletedMessage) {
+    response.status(404).json({ error: '消息不存在' });
+    return;
+  }
+
+  response.json({
+    ok: true,
+    deletedId: deletedMessage.deletedId,
+    deletedReasoning: deletedMessage.deletedReasoning
   });
 });
 
@@ -578,6 +640,69 @@ function getMessages(userId, conversationId) {
     )
     .all(userId, conversationId)
     .map(toMessage);
+}
+
+function getMessage(userId, conversationId, messageId) {
+  const row = db
+    .prepare(
+      `SELECT * FROM messages
+       WHERE user_id = ? AND conversation_id = ? AND id = ?`
+    )
+    .get(userId, conversationId, messageId);
+  return row ? toMessage(row) : null;
+}
+
+function updateMessage(userId, conversationId, messageId, payload) {
+  db.prepare(
+    `UPDATE messages
+     SET content = ?
+     WHERE user_id = ? AND conversation_id = ? AND id = ?`
+  ).run(payload.content, userId, conversationId, messageId);
+  updateConversationTimestamp(userId, conversationId);
+  return getMessage(userId, conversationId, messageId);
+}
+
+function deleteMessage(userId, conversationId, messageId) {
+  const existing = getMessage(userId, conversationId, messageId);
+  if (!existing) {
+    return null;
+  }
+
+  const result = db
+    .prepare('DELETE FROM messages WHERE user_id = ? AND conversation_id = ? AND id = ?')
+    .run(userId, conversationId, messageId);
+  if (result.changes > 0) {
+    updateConversationTimestamp(userId, conversationId);
+  }
+  return result.changes > 0
+    ? { deletedId: messageId, deletedReasoning: Boolean(existing.reasoning) }
+    : null;
+}
+
+function deleteConversation(userId, conversationId) {
+  const result = db
+    .prepare('DELETE FROM conversations WHERE user_id = ? AND id = ?')
+    .run(userId, conversationId);
+  return result.changes > 0;
+}
+
+function deleteConversations(userId, ids) {
+  const deletedIds = [];
+  const statement = db.prepare('DELETE FROM conversations WHERE user_id = ? AND id = ?');
+  for (const id of ids) {
+    const result = statement.run(userId, id);
+    if (result.changes > 0) {
+      deletedIds.push(id);
+    }
+  }
+  return deletedIds;
+}
+
+function normalizeIdList(ids) {
+  if (!Array.isArray(ids)) {
+    return [];
+  }
+  return [...new Set(ids.map((id) => String(id || '').trim()).filter(Boolean))].slice(0, 100);
 }
 
 function getConversationUsage(userId, conversationId) {

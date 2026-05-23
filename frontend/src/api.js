@@ -106,8 +106,34 @@ export function createConversation(characterId) {
   });
 }
 
+export function deleteConversation(conversationId) {
+  return apiRequest(`/api/conversations/${conversationId}`, {
+    method: 'DELETE'
+  });
+}
+
+export function deleteConversations(ids) {
+  return apiRequest('/api/conversations/bulk-delete', {
+    method: 'POST',
+    body: JSON.stringify({ ids })
+  });
+}
+
 export function fetchConversationMessages(conversationId) {
   return apiRequest(`/api/conversations/${conversationId}/messages`);
+}
+
+export function updateMessage(conversationId, messageId, payload) {
+  return apiRequest(`/api/conversations/${conversationId}/messages/${messageId}`, {
+    method: 'PATCH',
+    body: JSON.stringify(payload)
+  });
+}
+
+export function deleteMessage(conversationId, messageId) {
+  return apiRequest(`/api/conversations/${conversationId}/messages/${messageId}`, {
+    method: 'DELETE'
+  });
 }
 
 export function sendMessage(conversationId, payload) {
