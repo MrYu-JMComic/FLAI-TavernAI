@@ -1,12 +1,21 @@
-import fs from 'node:fs';
-import path from 'node:path';
-import { avatarUploadDir } from '../db.js';
 import { newId, nowIso } from '../security.js';
+import { avatarShortUrl, deleteAvatarAsset, saveAvatarInput } from '../services/avatars.js';
+import { normalizeAdvancedSettings } from './advancedSettings.js';
 
-export function listCharacters(database, userId, { search = '', sort = 'created' } = {}) {
+const characterColumns = `characters.*,
+  avatar_assets.id AS avatar_asset_id,
+  (SELECT COUNT(*) FROM character_likes WHERE character_id = characters.id) AS like_count,
+  (SELECT COUNT(*) FROM character_favorites WHERE character_id = characters.id) AS favorite_count,
+  EXISTS(SELECT 1 FROM character_likes WHERE user_id = ? AND character_id = characters.id) AS liked_by_me,
+  EXISTS(SELECT 1 FROM character_favorites WHERE user_id = ? AND character_id = characters.id) AS favorited_by_me`;
+const avatarAssetJoin =
+  "LEFT JOIN avatar_assets ON avatar_assets.owner_type = 'character' AND avatar_assets.owner_id = characters.id";
+
+export function listCharacters(database, userId, { search = '', sort = 'created', tag = '' } = {}) {
   const query = String(search || '').trim();
-  const params = [userId];
-  let sql = "SELECT * FROM characters WHERE (user_id = ? OR visibility = 'public')";
+  const tagFilter = String(tag || '').trim();
+  const params = [userId, userId, userId];
+  let sql = `SELECT ${characterColumns} FROM characters ${avatarAssetJoin} WHERE (characters.user_id = ? OR visibility = 'public')`;
 
   if (query) {
     sql += ' AND (name LIKE ? OR tags LIKE ? OR persona LIKE ? OR background LIKE ?)';
@@ -14,12 +23,17 @@ export function listCharacters(database, userId, { search = '', sort = 'created'
     params.push(like, like, like, like);
   }
 
+  if (tagFilter) {
+    sql += ' AND EXISTS (SELECT 1 FROM character_tags JOIN tags ON tags.id = character_tags.tag_id WHERE character_tags.character_id = characters.id AND tags.name = ?)';
+    params.push(tagFilter);
+  }
+
   if (sort === 'used') {
-    sql += ' ORDER BY COALESCE(last_used_at, created_at) DESC';
+    sql += ' ORDER BY COALESCE(characters.last_used_at, characters.created_at) DESC';
   } else if (sort === 'name') {
-    sql += ' ORDER BY name COLLATE NOCASE ASC';
+    sql += ' ORDER BY characters.name COLLATE NOCASE ASC';
   } else {
-    sql += ' ORDER BY created_at DESC';
+    sql += ' ORDER BY characters.created_at DESC';
   }
 
   return database.prepare(sql).all(...params).map((row) => toCharacter(row, undefined, userId));
@@ -27,8 +41,13 @@ export function listCharacters(database, userId, { search = '', sort = 'created'
 
 export function getCharacter(database, userId, characterId) {
   const row = database
-    .prepare("SELECT * FROM characters WHERE id = ? AND (user_id = ? OR visibility = 'public')")
-    .get(characterId, userId);
+    .prepare(
+      `SELECT ${characterColumns}
+       FROM characters
+       ${avatarAssetJoin}
+       WHERE characters.id = ? AND (characters.user_id = ? OR visibility = 'public')`
+    )
+    .get(userId, userId, characterId, userId);
   if (!row) {
     return null;
   }
@@ -40,12 +59,18 @@ export function createCharacter(database, userId, payload) {
   const id = newId();
   const timestamp = nowIso();
   const data = normalizeCharacterPayload(payload);
+  data.avatarUrl = saveAvatarInput(database, {
+    userId,
+    ownerType: 'character',
+    ownerId: id,
+    value: data.avatarUrl
+  });
   database
     .prepare(
       `INSERT INTO characters (
         id, user_id, name, avatar_url, gender, age, background, worldview, persona,
-        opening_message, visibility, tags, created_at, updated_at, last_used_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        opening_message, visibility, tags, render_plugins, author_advanced_settings, created_at, updated_at, last_used_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     )
     .run(
       id,
@@ -60,6 +85,8 @@ export function createCharacter(database, userId, payload) {
       data.openingMessage,
       data.visibility,
       JSON.stringify(data.tags),
+      JSON.stringify(data.renderPlugins),
+      JSON.stringify(normalizeAdvancedSettings(data.authorAdvancedSettings)),
       timestamp,
       timestamp,
       null
@@ -76,11 +103,17 @@ export function updateCharacter(database, userId, characterId, payload) {
   }
 
   const data = normalizeCharacterPayload({ ...current, ...payload });
+  data.avatarUrl = saveAvatarInput(database, {
+    userId,
+    ownerType: 'character',
+    ownerId: characterId,
+    value: data.avatarUrl
+  });
   database
     .prepare(
       `UPDATE characters
        SET name = ?, avatar_url = ?, gender = ?, age = ?, background = ?, worldview = ?,
-           persona = ?, opening_message = ?, visibility = ?, tags = ?, updated_at = ?
+           persona = ?, opening_message = ?, visibility = ?, tags = ?, render_plugins = ?, author_advanced_settings = ?, updated_at = ?
        WHERE id = ? AND user_id = ?`
     )
     .run(
@@ -94,6 +127,8 @@ export function updateCharacter(database, userId, characterId, payload) {
       data.openingMessage,
       data.visibility,
       JSON.stringify(data.tags),
+      JSON.stringify(data.renderPlugins),
+      JSON.stringify(normalizeAdvancedSettings(data.authorAdvancedSettings)),
       nowIso(),
       characterId,
       userId
@@ -107,7 +142,30 @@ export function deleteCharacter(database, userId, characterId) {
   const result = database
     .prepare('DELETE FROM characters WHERE id = ? AND user_id = ?')
     .run(characterId, userId);
+  if (result.changes > 0) {
+    deleteAvatarAsset(database, 'character', characterId);
+  }
   return result.changes > 0;
+}
+
+export function setCharacterFavorite(database, userId, characterId, favorited) {
+  const character = getCharacter(database, userId, characterId);
+  if (!character?.canUse) {
+    return null;
+  }
+
+  setCharacterReaction(database, 'character_favorites', userId, characterId, favorited);
+  return getCharacter(database, userId, characterId);
+}
+
+export function setCharacterLike(database, userId, characterId, liked) {
+  const character = getCharacter(database, userId, characterId);
+  if (!character?.canUse) {
+    return null;
+  }
+
+  setCharacterReaction(database, 'character_likes', userId, characterId, liked);
+  return getCharacter(database, userId, characterId);
 }
 
 export function touchCharacter(database, userId, characterId) {
@@ -120,10 +178,10 @@ export function getRegexRules(database, userId, characterId) {
   return database
     .prepare(
       `SELECT * FROM regex_rules
-       WHERE user_id = ? AND character_id = ?
-       ORDER BY order_index ASC`
+       WHERE user_id = ? AND character_id = ?`
     )
     .all(userId, characterId)
+    .sort((a, b) => (a.priority ?? 0) - (b.priority ?? 0) || a.order_index - b.order_index)
     .map((row) => ({
       id: row.id,
       label: row.label,
@@ -132,7 +190,35 @@ export function getRegexRules(database, userId, characterId) {
       flags: row.flags,
       scope: row.scope,
       enabled: Boolean(row.enabled),
-      order: row.order_index
+      order: row.order_index,
+      groupName: row.group_name || '全局',
+      priority: row.priority ?? 0
+    }));
+}
+
+export function getRegexRulesByGroup(database, userId, group) {
+  let sql = 'SELECT * FROM regex_rules WHERE user_id = ?';
+  const params = [userId];
+  if (group) {
+    sql += ' AND group_name = ?';
+    params.push(group);
+  }
+  return database
+    .prepare(sql)
+    .all(...params)
+    .sort((a, b) => (a.priority ?? 0) - (b.priority ?? 0) || a.order_index - b.order_index)
+    .map((row) => ({
+      id: row.id,
+      characterId: row.character_id,
+      label: row.label,
+      pattern: row.pattern,
+      replacement: row.replacement,
+      flags: row.flags,
+      scope: row.scope,
+      enabled: Boolean(row.enabled),
+      order: row.order_index,
+      groupName: row.group_name || '全局',
+      priority: row.priority ?? 0
     }));
 }
 
@@ -143,8 +229,8 @@ export function replaceRegexRules(database, userId, characterId, rules = []) {
 
   const insert = database.prepare(
     `INSERT INTO regex_rules (
-      id, user_id, character_id, label, pattern, replacement, flags, scope, enabled, order_index
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      id, user_id, character_id, label, pattern, replacement, flags, scope, enabled, order_index, group_name, priority
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   );
 
   normalizeRegexRules(rules).forEach((rule, index) => {
@@ -158,13 +244,46 @@ export function replaceRegexRules(database, userId, characterId, rules = []) {
       rule.flags,
       rule.scope,
       rule.enabled ? 1 : 0,
-      index
+      index,
+      rule.groupName || '全局',
+      rule.priority ?? 0
     );
   });
 }
 
+export function toggleRegexRule(database, userId, ruleId) {
+  const row = database.prepare('SELECT * FROM regex_rules WHERE id = ? AND user_id = ?').get(ruleId, userId);
+  if (!row) return null;
+  const newEnabled = row.enabled ? 0 : 1;
+  database.prepare('UPDATE regex_rules SET enabled = ? WHERE id = ?').run(newEnabled, ruleId);
+  return {
+    id: row.id,
+    characterId: row.character_id,
+    label: row.label,
+    pattern: row.pattern,
+    replacement: row.replacement,
+    flags: row.flags,
+    scope: row.scope,
+    enabled: Boolean(newEnabled),
+    order: row.order_index,
+    groupName: row.group_name || '全局',
+    priority: row.priority ?? 0
+  };
+}
+
+export function reorderRegexRules(database, userId, orderedIds) {
+  const update = database.prepare('UPDATE regex_rules SET priority = ? WHERE id = ? AND user_id = ?');
+  let changed = 0;
+  orderedIds.forEach((id, index) => {
+    const result = update.run(index, id, userId);
+    changed += result.changes;
+  });
+  return changed;
+}
+
 export function applyRegexRules(text, rules, phase) {
-  return rules.reduce((value, rule) => {
+  const sorted = [...rules].sort((a, b) => (a.priority ?? 0) - (b.priority ?? 0));
+  return sorted.reduce((value, rule) => {
     if (!rule.enabled || !rule.pattern || !scopeApplies(rule.scope, phase)) {
       return value;
     }
@@ -177,27 +296,6 @@ export function applyRegexRules(text, rules, phase) {
   }, String(text || ''));
 }
 
-export function saveAvatarDataUrl(userId, dataUrl) {
-  if (!dataUrl || !String(dataUrl).startsWith('data:')) {
-    return dataUrl || '';
-  }
-
-  const match = /^data:image\/(png|jpeg|webp);base64,([A-Za-z0-9+/=]+)$/.exec(String(dataUrl));
-  if (!match) {
-    throw new Error('头像仅支持 PNG、JPG 或 WebP');
-  }
-
-  const extension = match[1] === 'jpeg' ? 'jpg' : match[1];
-  const buffer = Buffer.from(match[2], 'base64');
-  if (buffer.length > 2 * 1024 * 1024) {
-    throw new Error('头像不能超过 2MB');
-  }
-
-  const filename = `${userId}-${newId()}.${extension}`;
-  fs.writeFileSync(path.join(avatarUploadDir, filename), buffer);
-  return `/uploads/avatars/${filename}`;
-}
-
 function normalizeCharacterPayload(payload = {}) {
   const name = String(payload.name || '').trim();
   if (name.length < 1 || name.length > 40) {
@@ -206,7 +304,7 @@ function normalizeCharacterPayload(payload = {}) {
 
   return {
     name,
-    avatarUrl: String(payload.avatarUrl || '').trim(),
+    avatarUrl: String(payload.avatarDataUrl || payload.avatarUrl || '').trim(),
     gender: String(payload.gender || '').trim().slice(0, 24),
     age: String(payload.age || '').trim().slice(0, 24),
     background: String(payload.background || '').slice(0, 4000),
@@ -215,14 +313,21 @@ function normalizeCharacterPayload(payload = {}) {
     openingMessage: String(payload.openingMessage || '').slice(0, 2000),
     visibility: normalizeVisibility(payload.visibility),
     tags: normalizeTags(payload.tags),
-    regexRules: normalizeRegexRules(payload.regexRules)
+    renderPlugins: normalizeRenderPlugins(payload.renderPlugins),
+    regexRules: normalizeRegexRules(payload.regexRules),
+    authorAdvancedSettings: normalizeAdvancedSettings(payload.authorAdvancedSettings || payload.advancedSettings || {})
   };
 }
 
 function getOwnedCharacter(database, userId, characterId) {
   const row = database
-    .prepare('SELECT * FROM characters WHERE id = ? AND user_id = ?')
-    .get(characterId, userId);
+    .prepare(
+      `SELECT ${characterColumns}
+       FROM characters
+       ${avatarAssetJoin}
+       WHERE characters.id = ? AND characters.user_id = ?`
+    )
+    .get(userId, userId, characterId, userId);
   if (!row) {
     return null;
   }
@@ -265,9 +370,35 @@ function normalizeRegexRules(rules = []) {
       replacement: String(rule.replacement || '').slice(0, 1000),
       flags,
       scope: ['input', 'output', 'both'].includes(rule.scope) ? rule.scope : 'input',
-      enabled: rule.enabled !== false
+      enabled: rule.enabled !== false,
+      groupName: String(rule.groupName || '全局').trim().slice(0, 60) || '全局',
+      priority: Math.max(0, Math.round(Number(rule.priority) || 0))
     };
   });
+}
+
+function normalizeRenderPlugins(plugins = []) {
+  if (!Array.isArray(plugins)) {
+    return [];
+  }
+
+  return plugins.slice(0, 20).map((plugin, index) => {
+    const flags = normalizeFlags(plugin.flags || 'u').replace(/[gy]/g, '') || 'u';
+    const pattern = String(plugin.pattern || '').trim().slice(0, 260);
+    if (pattern) {
+      new RegExp(pattern, flags);
+    }
+
+    return {
+      id: plugin.id,
+      label: String(plugin.label || `渲染插件 ${index + 1}`).trim().slice(0, 60),
+      type: 'fold',
+      pattern,
+      flags,
+      titleTemplate: String(plugin.titleTemplate || '$1').trim().slice(0, 120) || '$1',
+      enabled: plugin.enabled !== false
+    };
+  }).filter((plugin) => plugin.pattern);
 }
 
 function normalizeFlags(flags) {
@@ -279,9 +410,23 @@ function scopeApplies(scope, phase) {
   return scope === 'both' || scope === phase;
 }
 
+function setCharacterReaction(database, tableName, userId, characterId, active) {
+  if (active) {
+    database
+      .prepare(`INSERT OR IGNORE INTO ${tableName} (user_id, character_id, created_at) VALUES (?, ?, ?)`)
+      .run(userId, characterId, nowIso());
+    return;
+  }
+
+  database
+    .prepare(`DELETE FROM ${tableName} WHERE user_id = ? AND character_id = ?`)
+    .run(userId, characterId);
+}
+
 function toCharacter(row, regexRules = undefined, viewerId = undefined) {
   const visibility = row.visibility === 'public' ? 'public' : 'private';
   const isOwner = row.user_id === viewerId;
+  const legacyTags = parseJson(row.tags, []);
   return {
     id: row.id,
     ownerId: row.user_id,
@@ -290,14 +435,20 @@ function toCharacter(row, regexRules = undefined, viewerId = undefined) {
     canEdit: isOwner,
     canUse: isOwner || visibility === 'public',
     name: row.name,
-    avatarUrl: row.avatar_url || '',
+    avatarUrl: avatarShortUrl(row.avatar_asset_id) || row.avatar_url || '',
     gender: row.gender || '',
     age: row.age || '',
     background: row.background || '',
     worldview: row.worldview || '',
     persona: row.persona || '',
     openingMessage: row.opening_message || '',
-    tags: parseJson(row.tags, []),
+    tags: legacyTags,
+    renderPlugins: parseJson(row.render_plugins, []),
+    authorAdvancedSettings: parseJson(row.author_advanced_settings, {}),
+    likeCount: Number(row.like_count || 0),
+    favoriteCount: Number(row.favorite_count || 0),
+    likedByMe: Boolean(row.liked_by_me),
+    favoritedByMe: Boolean(row.favorited_by_me),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     lastUsedAt: row.last_used_at || null,

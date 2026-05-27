@@ -61,6 +61,24 @@ function secretKey(secret) {
   return crypto.createHash('sha256').update(secret).digest();
 }
 
+// v2: scrypt-derived key (32 bytes) from app secret + fixed salt
+const scryptSalt = 'flai-encryption-salt-v2';
+const scryptKeyLength = 32;
+const scryptCost = 2 ** 14; // N parameter — strong but fast enough for encrypt/decrypt
+
+let cachedScryptKey = null;
+let cachedScryptSecret = null;
+
+function secretKeyScrypt(secret) {
+  if (cachedScryptKey && cachedScryptSecret === secret) {
+    return cachedScryptKey;
+  }
+  // Synchronous scrypt — acceptable here since encrypt/decrypt are not on the hot path
+  cachedScryptKey = crypto.scryptSync(secret, scryptSalt, scryptKeyLength, { N: scryptCost, r: 8, p: 1 });
+  cachedScryptSecret = secret;
+  return cachedScryptKey;
+}
+
 export function nowIso() {
   return new Date().toISOString();
 }
@@ -92,12 +110,12 @@ export function encryptSecret(value) {
     return null;
   }
 
-  const key = secretKey(appSecret());
+  const key = secretKeyScrypt(appSecret());
   const iv = crypto.randomBytes(12);
   const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
   const encrypted = Buffer.concat([cipher.update(String(value), 'utf8'), cipher.final()]);
   const tag = cipher.getAuthTag();
-  return `v1:${iv.toString('base64')}:${tag.toString('base64')}:${encrypted.toString('base64')}`;
+  return `v2:${iv.toString('base64')}:${tag.toString('base64')}:${encrypted.toString('base64')}`;
 }
 
 export function decryptSecret(value) {
@@ -105,26 +123,48 @@ export function decryptSecret(value) {
     return '';
   }
 
-  const [version, ivText, tagText, encryptedText] = String(value).split(':');
-  if (version !== 'v1') {
-    throw new Error('Unsupported encrypted secret format');
-  }
+  const parts = String(value).split(':');
+  const version = parts[0];
 
-  let lastError;
-  for (const secret of secretCandidates()) {
-    try {
-      const decipher = crypto.createDecipheriv('aes-256-gcm', secretKey(secret), Buffer.from(ivText, 'base64'));
-      decipher.setAuthTag(Buffer.from(tagText, 'base64'));
-      return Buffer.concat([
-        decipher.update(Buffer.from(encryptedText, 'base64')),
-        decipher.final()
-      ]).toString('utf8');
-    } catch (error) {
-      lastError = error;
+  if (version === 'v2') {
+    // v2: AES-256-GCM with scrypt-derived key
+    const [, ivText, tagText, encryptedText] = parts;
+    let lastError;
+    for (const secret of secretCandidates()) {
+      try {
+        const decipher = crypto.createDecipheriv('aes-256-gcm', secretKeyScrypt(secret), Buffer.from(ivText, 'base64'));
+        decipher.setAuthTag(Buffer.from(tagText, 'base64'));
+        return Buffer.concat([
+          decipher.update(Buffer.from(encryptedText, 'base64')),
+          decipher.final()
+        ]).toString('utf8');
+      } catch (error) {
+        lastError = error;
+      }
     }
+    throw lastError;
   }
 
-  throw lastError;
+  if (version === 'v1') {
+    // v1 (legacy): AES-256-GCM with SHA-256 key — backward compatible
+    const [, ivText, tagText, encryptedText] = parts;
+    let lastError;
+    for (const secret of secretCandidates()) {
+      try {
+        const decipher = crypto.createDecipheriv('aes-256-gcm', secretKey(secret), Buffer.from(ivText, 'base64'));
+        decipher.setAuthTag(Buffer.from(tagText, 'base64'));
+        return Buffer.concat([
+          decipher.update(Buffer.from(encryptedText, 'base64')),
+          decipher.final()
+        ]).toString('utf8');
+      } catch (error) {
+        lastError = error;
+      }
+    }
+    throw lastError;
+  }
+
+  throw new Error('Unsupported encrypted secret format');
 }
 
 export function apiKeyHint(apiKey) {
@@ -175,6 +215,49 @@ export function clearSessionCookie(response) {
   });
 }
 
+// ── CSRF Protection (Double-Submit Cookie) ──
+
+export const csrfCookieName = 'flai_csrf';
+const csrfHeaderName = 'x-csrf-token';
+const safeMethods = new Set(['GET', 'HEAD', 'OPTIONS']);
+
+export function generateCsrfToken() {
+  return crypto.randomBytes(32).toString('base64url');
+}
+
+export function setCsrfCookie(response, token) {
+  response.cookie(csrfCookieName, token, {
+    httpOnly: false,
+    sameSite: 'lax',
+    secure: process.env.NODE_ENV === 'production',
+    maxAge: sessionDays * 24 * 60 * 60 * 1000,
+    path: '/'
+  });
+}
+
+export function csrfProtection(request, response, next) {
+  if (safeMethods.has(request.method)) {
+    // Ensure CSRF cookie exists for safe methods
+    const existingToken = parseCookies(request.headers.cookie)[csrfCookieName];
+    if (!existingToken) {
+      setCsrfCookie(response, generateCsrfToken());
+    }
+    next();
+    return;
+  }
+
+  // Validate CSRF token on state-changing requests
+  const cookieToken = parseCookies(request.headers.cookie)[csrfCookieName];
+  const headerToken = request.headers[csrfHeaderName];
+
+  if (!cookieToken || !headerToken || cookieToken !== headerToken) {
+    response.status(403).json({ error: 'CSRF 验证失败，请刷新页面后重试' });
+    return;
+  }
+
+  next();
+}
+
 export function createSession(database, userId) {
   const sessionId = newId();
   const expiresAt = Date.now() + sessionDays * 24 * 60 * 60 * 1000;
@@ -198,9 +281,13 @@ export function resolveSession(database, request) {
 
   const row = database
     .prepare(
-      `SELECT sessions.id AS session_id, users.id, users.username, users.created_at
+      `SELECT sessions.id AS session_id, users.id, users.username, users.display_name,
+              users.permission_group, users.is_root_admin, users.created_at,
+              avatar_assets.id AS avatar_asset_id
        FROM sessions
        JOIN users ON users.id = sessions.user_id
+       LEFT JOIN avatar_assets
+         ON avatar_assets.owner_type = 'user' AND avatar_assets.owner_id = users.id
        WHERE sessions.id = ? AND sessions.expires_at > ?`
     )
     .get(sessionId, Date.now());
@@ -215,7 +302,24 @@ export function resolveSession(database, request) {
     user: {
       id: row.id,
       username: row.username,
+      accountName: row.username,
+      displayName: row.display_name || '',
+      permissionGroup: row.permission_group || 'user',
+      isRootAdmin: Boolean(row.is_root_admin),
+      permissionLabel: permissionLabel(row.permission_group, Boolean(row.is_root_admin)),
+      avatarUrl: row.avatar_asset_id ? `/api/avatars/${row.avatar_asset_id}` : '',
       createdAt: row.created_at
     }
   };
+}
+
+function permissionLabel(permissionGroup, isRootAdmin) {
+  if (isRootAdmin) {
+    return '真管理员';
+  }
+  return {
+    admin: '管理员组',
+    user: '用户组',
+    guest: '游客组'
+  }[permissionGroup] || '用户组';
 }

@@ -105,6 +105,28 @@ export function buildProviderBody(settings, messages, stream, options = {}) {
     ...settings.extraBody
   };
 
+  // Apply preset / override parameters
+  if (options.temperature != null) {
+    body.temperature = Number(options.temperature);
+  }
+  if (options.maxTokens != null) {
+    body.max_tokens = Number(options.maxTokens);
+  }
+  if (options.topP != null) {
+    body.top_p = Number(options.topP);
+  }
+  if (options.frequencyPenalty != null) {
+    body.frequency_penalty = Number(options.frequencyPenalty);
+  }
+  if (options.presencePenalty != null) {
+    body.presence_penalty = Number(options.presencePenalty);
+  }
+
+  if (options.tools?.length) {
+    body.tools = options.tools;
+    body.tool_choice = options.toolChoice || 'auto';
+  }
+
   if (settings.providerType === 'deepseek') {
     body.thinking = {
       type: options.thinkingEnabled === false ? 'disabled' : 'enabled'
@@ -228,6 +250,216 @@ export async function listProviderModels(settings) {
     })
     .filter(Boolean)
     .sort((a, b) => a.id.localeCompare(b.id));
+}
+
+export async function runToolCompletion(settings, messages, tools, executeTool, options = {}) {
+  if (!hasUsableProvider(settings)) {
+    throw new Error('请先在用户页保存 API Key / SK，并确认网关和模型可用。');
+  }
+
+  const maxRounds = Math.min(Math.max(Number(options.maxRounds || 6), 1), 10);
+  const nextMessages = messages.map((message) => ({ ...message }));
+  const toolCalls = [];
+  let finalMessage = null;
+  let usage = null;
+
+  for (let round = 0; round < maxRounds; round += 1) {
+    const response = await fetch(`${trimSlash(settings.baseUrl)}/chat/completions`, {
+      method: 'POST',
+      headers: requestHeaders(settings.apiKey),
+      body: JSON.stringify(
+        buildProviderBody(settings, nextMessages, false, {
+          ...options,
+          tools,
+          toolChoice: options.toolChoice || 'auto',
+          thinkingEnabled: options.thinkingEnabled ?? false
+        })
+      )
+    });
+    const json = await readJsonResponse(response);
+    usage = json.usage || usage;
+    const message = json.choices?.[0]?.message || {};
+    finalMessage = message;
+    const calls = normalizeToolCalls(message.tool_calls);
+
+    if (!calls.length) {
+      break;
+    }
+
+    nextMessages.push({
+      role: 'assistant',
+      content: message.content || null,
+      tool_calls: calls.map((call) => call.raw)
+    });
+
+    for (const call of calls) {
+      const result = await executeTool(call.name, call.arguments, call);
+      const log = {
+        name: call.name,
+        arguments: call.arguments,
+        result
+      };
+      toolCalls.push(log);
+      nextMessages.push({
+        role: 'tool',
+        tool_call_id: call.id,
+        content: JSON.stringify(result)
+      });
+      if (result?.stop === true) {
+        return {
+          content: extractText(message.content),
+          message,
+          usage,
+          toolCalls
+        };
+      }
+    }
+  }
+
+  return {
+    content: extractText(finalMessage?.content),
+    message: finalMessage,
+    usage,
+    toolCalls,
+    provider: settings.gatewayName,
+    providerType: settings.providerType,
+    model: normalizeProviderModel(settings.providerType, settings.model)
+  };
+}
+
+export async function streamToolCompletion(settings, messages, tools, executeTool, emit, signal, options = {}) {
+  if (!hasUsableProvider(settings)) {
+    return streamMockCompletion(messages, emit, settings);
+  }
+
+  const maxRounds = Math.min(Math.max(Number(options.maxRounds || 6), 1), 10);
+  const nextMessages = messages.map((message) => ({ ...message }));
+  const toolCalls = [];
+  let finalContent = '';
+  let finalReasoning = '';
+  let usage = null;
+
+  for (let round = 0; round < maxRounds; round += 1) {
+    const response = await fetch(`${trimSlash(settings.baseUrl)}/chat/completions`, {
+      method: 'POST',
+      headers: requestHeaders(settings.apiKey),
+      body: JSON.stringify(
+        buildProviderBody(settings, nextMessages, true, {
+          ...options,
+          tools,
+          toolChoice: options.toolChoice || 'auto',
+          thinkingEnabled: options.thinkingEnabled ?? false
+        })
+      ),
+      signal
+    });
+
+    if (!response.ok) {
+      throw new Error(await responseErrorText(response));
+    }
+
+    let roundContent = '';
+    let roundReasoning = '';
+    const pendingToolCalls = new Map();
+
+    for await (const event of parseSse(response.body)) {
+      if (event.data === '[DONE]') {
+        break;
+      }
+
+      const json = parseJson(event.data, null);
+      if (!json) {
+        continue;
+      }
+
+      usage = json.usage || usage;
+      const delta = json.choices?.[0]?.delta || {};
+      const reasoningDelta = extractReasoning(delta);
+      const contentDelta = extractText(delta.content);
+      if (reasoningDelta) {
+        roundReasoning += reasoningDelta;
+        finalReasoning += reasoningDelta;
+        emit('reasoning', { text: reasoningDelta });
+      }
+      if (contentDelta) {
+        roundContent += contentDelta;
+        finalContent += contentDelta;
+        emit('content', { text: contentDelta });
+      }
+
+      const deltaToolCalls = normalizeStreamingToolCalls(delta.tool_calls);
+      for (const call of deltaToolCalls) {
+        const existing = pendingToolCalls.get(call.index) || {
+          id: call.id,
+          name: '',
+          arguments: ''
+        };
+        if (call.id) existing.id = call.id;
+        if (call.name) existing.name = call.name;
+        if (call.arguments) existing.arguments += call.arguments;
+        pendingToolCalls.set(call.index, existing);
+      }
+    }
+
+    const calls = [...pendingToolCalls.values()]
+      .filter((call) => call.name)
+      .map((call, index) => ({
+        id: call.id || `tool-call-${round}-${index}`,
+        name: call.name,
+        arguments: parseJson(call.arguments || '{}', {}),
+        raw: {
+          id: call.id || `tool-call-${round}-${index}`,
+          type: 'function',
+          function: {
+            name: call.name,
+            arguments: call.arguments || '{}'
+          }
+        }
+      }));
+
+    if (!calls.length) {
+      return {
+        content: finalContent,
+        reasoning: finalReasoning,
+        usage,
+        toolCalls,
+        provider: settings.gatewayName,
+        providerType: settings.providerType,
+        model: normalizeProviderModel(settings.providerType, settings.model)
+      };
+    }
+
+    nextMessages.push({
+      role: 'assistant',
+      content: roundContent || null,
+      tool_calls: calls.map((call) => call.raw)
+    });
+
+    for (const call of calls) {
+      const result = await executeTool(call.name, call.arguments, call);
+      toolCalls.push({
+        name: call.name,
+        arguments: call.arguments,
+        result
+      });
+      emit('tool', { name: call.name, result });
+      nextMessages.push({
+        role: 'tool',
+        tool_call_id: call.id,
+        content: JSON.stringify(result)
+      });
+    }
+  }
+
+  return {
+    content: finalContent,
+    reasoning: finalReasoning,
+    usage,
+    toolCalls,
+    provider: settings.gatewayName,
+    providerType: settings.providerType,
+    model: normalizeProviderModel(settings.providerType, settings.model)
+  };
 }
 
 export async function generateCompletion(settings, messages, options = {}) {
@@ -504,6 +736,49 @@ function parseSseBlock(block) {
 
   event.data = data.join('\n');
   return event;
+}
+
+function normalizeToolCalls(toolCalls = []) {
+  if (!Array.isArray(toolCalls)) {
+    return [];
+  }
+
+  return toolCalls
+    .map((call, index) => {
+      const fn = call.function || {};
+      const name = fn.name || call.name;
+      if (!name) {
+        return null;
+      }
+
+      return {
+        id: call.id || `tool-call-${index}`,
+        name,
+        arguments: parseJson(fn.arguments || call.arguments || '{}', {}),
+        raw: {
+          id: call.id || `tool-call-${index}`,
+          type: call.type || 'function',
+          function: {
+            name,
+            arguments: typeof fn.arguments === 'string' ? fn.arguments : JSON.stringify(fn.arguments || call.arguments || {})
+          }
+        }
+      };
+    })
+    .filter(Boolean);
+}
+
+function normalizeStreamingToolCalls(toolCalls = []) {
+  if (!Array.isArray(toolCalls)) {
+    return [];
+  }
+
+  return toolCalls.map((call, index) => ({
+    index: Number.isFinite(call?.index) ? call.index : index,
+    id: call?.id || '',
+    name: call?.function?.name || '',
+    arguments: call?.function?.arguments || ''
+  }));
 }
 
 function extractReasoning(value = {}) {
