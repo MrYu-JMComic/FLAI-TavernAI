@@ -70,3 +70,16 @@ npm test
 cd ../frontend
 npm run build
 ```
+
+## AI Workstation
+
+This repo includes a guarded autonomous iteration setup:
+
+```powershell
+.\scripts\check-workstation.ps1
+.\scripts\self-evolve.ps1 -Mode report
+.\scripts\self-evolve.ps1 -Mode iterate
+.\scripts\start-ai-workstation.bat
+```
+
+Read `AGENTS.md` and `automation/backlog.md` before allowing autonomous code changes. Reports are written to `automation/reports`.

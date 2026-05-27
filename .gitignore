@@ -16,6 +16,9 @@ backend/uploads/
 *.db-*
 *.log
 logs/
+automation/reports/*.txt
+automation/reports/*.log
+.opencode-config/
 
 .DS_Store
 npm-debug.log*
