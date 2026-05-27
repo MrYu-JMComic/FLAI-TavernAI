@@ -2,18 +2,18 @@
 import { ref } from 'vue';
 import { UserPlus } from '@lucide/vue';
 import { register } from '../api';
+import { useNotify } from '../composables/useNotify';
 
 const emit = defineEmits(['authenticated', 'navigate']);
+const notify = useNotify();
 const username = ref('');
 const password = ref('');
 const confirmPassword = ref('');
 const loading = ref(false);
-const error = ref('');
 
 async function submit() {
-  error.value = '';
   if (password.value !== confirmPassword.value) {
-    error.value = '两次输入的密码不一致';
+    notify.warning('两次输入的密码不一致');
     return;
   }
 
@@ -21,7 +21,7 @@ async function submit() {
   try {
     emit('authenticated', await register({ username: username.value, password: password.value }));
   } catch (err) {
-    error.value = err.message;
+    notify.error(err.message);
   } finally {
     loading.value = false;
   }
@@ -52,7 +52,6 @@ async function submit() {
           <span>确认密码</span>
           <input v-model="confirmPassword" autocomplete="new-password" type="password" minlength="6" maxlength="128" required />
         </label>
-        <p v-if="error" class="error-text">{{ error }}</p>
         <button class="primary-button" type="submit" :disabled="loading">
           <UserPlus :size="18" />
           <span>{{ loading ? '创建中...' : '注册并进入' }}</span>

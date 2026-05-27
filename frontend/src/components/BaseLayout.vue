@@ -1,6 +1,6 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
-import { ChevronDown, Home, KeyRound, LogOut, Moon, Plus, Sun, UserRound } from '@lucide/vue';
+import { BookOpen, ChevronDown, Home, KeyRound, LogOut, Moon, Plus, Puzzle, Sun, UserRound } from '@lucide/vue';
 
 const props = defineProps({
   user: {
@@ -24,6 +24,8 @@ const props = defineProps({
 const emit = defineEmits(['navigate', 'logout', 'toggle-theme']);
 
 const isChatRoute = computed(() => props.currentRoute === 'chat');
+const isWorldBookRoute = computed(() => props.currentRoute === 'worldBooks' || props.currentRoute === 'worldBookDetail');
+const isExtensionsRoute = computed(() => props.currentRoute === 'extensions');
 const userMenuOpen = ref(false);
 const userMenuRef = ref(null);
 
@@ -54,7 +56,6 @@ function openUserSettings() {
         <span class="brand-mark">F</span>
         <span>
           <strong>FLAI Tavern AI</strong>
-          <small>{{ provider?.gatewayName || '未配置供应商' }} · {{ provider?.model || 'Local Mock' }}</small>
         </span>
       </button>
 
@@ -70,6 +71,22 @@ function openUserSettings() {
         >
           <Plus :size="18" />
           <span>创建</span>
+        </button>
+        <button
+          :class="{ active: isWorldBookRoute }"
+          type="button"
+          @click="$emit('navigate', 'worldBooks')"
+        >
+          <BookOpen :size="18" />
+          <span>世界书</span>
+        </button>
+        <button
+          :class="{ active: isExtensionsRoute }"
+          type="button"
+          @click="$emit('navigate', 'extensions')"
+        >
+          <Puzzle :size="18" />
+          <span>扩展</span>
         </button>
       </nav>
 
@@ -87,14 +104,17 @@ function openUserSettings() {
             :aria-expanded="String(userMenuOpen)"
             @click.stop="userMenuOpen = !userMenuOpen"
           >
-            <UserRound :size="17" />
-            <span>{{ user?.username }}</span>
+            <span v-if="user?.avatarUrl" class="user-chip-avatar">
+              <img :src="user.avatarUrl" :alt="user?.username || '用户头像'" />
+            </span>
+            <UserRound v-else :size="17" />
+            <span>{{ user?.displayName || user?.accountName || user?.username }}</span>
             <ChevronDown :size="15" />
           </button>
           <div v-if="userMenuOpen" class="user-menu-panel" role="menu">
             <button class="user-menu-item" type="button" role="menuitem" @click="openUserSettings">
               <KeyRound :size="17" />
-              <span>用户设置</span>
+              <span>个人中心</span>
             </button>
           </div>
         </div>

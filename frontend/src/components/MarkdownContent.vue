@@ -1,5 +1,175 @@
 <script>
-import { computed, defineComponent, h } from 'vue';
+import { computed, defineComponent, h, ref, watch } from 'vue';
+import MarkdownIt from 'markdown-it';
+import hljs from 'highlight.js';
+import DOMPurify from 'dompurify';
+
+// Initialize markdown-it with highlight.js
+const md = new MarkdownIt({
+  html: false,
+  linkify: true,
+  typographer: true,
+  breaks: true,
+  highlight(str, lang) {
+    if (lang && hljs.getLanguage(lang)) {
+      try {
+        const highlighted = hljs.highlight(str, { language: lang, ignoreIllegals: true }).value;
+        return `<pre class="markdown-code"><code class="hljs language-${lang}">${highlighted}</code></pre>`;
+      } catch {}
+    }
+    const escaped = md.utils.escapeHtml(str);
+    return `<pre class="markdown-code"><code>${escaped}</code></pre>`;
+  }
+});
+
+// Custom fence renderer to wrap code blocks properly
+md.renderer.rules.fence = (tokens, idx, options, env, self) => {
+  const token = tokens[idx];
+  const info = token.info ? token.info.trim() : '';
+  const langName = info.split(/\s+/)[0];
+  
+  if (options.highlight) {
+    const highlighted = options.highlight(token.content, langName, info);
+    if (highlighted.indexOf('<pre') !== 0) {
+      return `<pre class="markdown-code"><code class="hljs${langName ? ` language-${langName}` : ''}">${highlighted}</code></pre>`;
+    }
+    return highlighted;
+  }
+  
+  const escaped = md.utils.escapeHtml(token.content);
+  return `<pre class="markdown-code"><code${langName ? ` class="language-${langName}"` : ''}>${escaped}</code></pre>`;
+};
+
+// Cache for rendered HTML
+const renderCache = new Map();
+const MAX_CACHE_SIZE = 200;
+
+function getCachedRender(text, renderPlugins = []) {
+  if (!text) return '';
+  const cacheKey = `${text}\n<!--plugins:${JSON.stringify(pluginCacheShape(renderPlugins))}-->`;
+  const cached = renderCache.get(cacheKey);
+  if (cached) return cached;
+  
+  const rawHtml = renderWithPlugins(text, renderPlugins);
+  const html = DOMPurify.sanitize(rawHtml, {
+    ADD_TAGS: ['pre', 'code', 'span', 'details', 'summary', 'div'],
+    ADD_ATTR: ['class', 'data-lang', 'open']
+  });
+  
+  // Evict oldest entries if cache is full
+  if (renderCache.size >= MAX_CACHE_SIZE) {
+    const firstKey = renderCache.keys().next().value;
+    renderCache.delete(firstKey);
+  }
+  
+  renderCache.set(cacheKey, html);
+  return html;
+}
+
+function renderWithPlugins(text, renderPlugins = []) {
+  const plugins = compileFoldPlugins(renderPlugins);
+  if (!plugins.length) {
+    return md.render(text);
+  }
+
+  const segments = [];
+  let normal = [];
+  let fold = null;
+  const flushNormal = () => {
+    if (normal.length) {
+      segments.push({ type: 'markdown', text: normal.join('\n') });
+      normal = [];
+    }
+  };
+  const flushFold = () => {
+    if (fold) {
+      segments.push(fold);
+      fold = null;
+    }
+  };
+
+  for (const line of String(text || '').split(/\r?\n/)) {
+    const match = matchFoldPlugin(line, plugins);
+    if (match) {
+      flushNormal();
+      flushFold();
+      fold = { type: 'fold', title: match.title, body: [] };
+      continue;
+    }
+    if (fold) {
+      fold.body.push(line);
+    } else {
+      normal.push(line);
+    }
+  }
+  flushFold();
+  flushNormal();
+
+  return segments.map((segment) => {
+    if (segment.type === 'fold') {
+      const body = md.render(segment.body.join('\n').trim());
+      return [
+        '<details class="markdown-fold">',
+        '<summary class="markdown-fold-summary">',
+        '<span class="markdown-fold-caret">›</span>',
+        `<span class="markdown-fold-title">${md.utils.escapeHtml(segment.title || '折叠内容')}</span>`,
+        '</summary>',
+        `<div class="markdown-fold-body">${body}</div>`,
+        '</details>'
+      ].join('');
+    }
+    return md.render(segment.text);
+  }).join('');
+}
+
+function compileFoldPlugins(renderPlugins = []) {
+  return renderPlugins
+    .filter((plugin) => plugin && plugin.enabled !== false && (plugin.type || 'fold') === 'fold' && plugin.pattern)
+    .map((plugin) => {
+      try {
+        const flags = normalizeRegexFlags(plugin.flags || 'u');
+        return {
+          regex: new RegExp(plugin.pattern, flags),
+          titleTemplate: String(plugin.titleTemplate || plugin.label || '$1')
+        };
+      } catch {
+        return null;
+      }
+    })
+    .filter(Boolean);
+}
+
+function normalizeRegexFlags(flags) {
+  return [...new Set(String(flags || '').replace(/[^dgimsuvy]/g, '').replace('g', '').split(''))].join('') || 'u';
+}
+
+function matchFoldPlugin(line, plugins) {
+  for (const plugin of plugins) {
+    plugin.regex.lastIndex = 0;
+    const match = plugin.regex.exec(line);
+    if (match) {
+      return {
+        title: applyTitleTemplate(plugin.titleTemplate, match, line)
+      };
+    }
+  }
+  return null;
+}
+
+function applyTitleTemplate(template, match, fallback) {
+  const value = String(template || '$1').replace(/\$(\d+)/g, (_, index) => match[Number(index)] || '');
+  return (value.trim() || fallback.trim() || '折叠内容').slice(0, 80);
+}
+
+function pluginCacheShape(renderPlugins = []) {
+  return renderPlugins.map((plugin) => ({
+    enabled: plugin?.enabled !== false,
+    type: plugin?.type || 'fold',
+    pattern: plugin?.pattern || '',
+    flags: plugin?.flags || '',
+    titleTemplate: plugin?.titleTemplate || plugin?.label || ''
+  }));
+}
 
 export default defineComponent({
   name: 'MarkdownContent',
@@ -8,329 +178,26 @@ export default defineComponent({
     text: {
       type: String,
       default: ''
+    },
+    renderPlugins: {
+      type: Array,
+      default: () => []
     }
   },
   setup(props, { attrs }) {
-    const blocks = computed(() => parseMarkdownBlocks(props.text));
-
+    const renderedHtml = computed(() => getCachedRender(props.text, props.renderPlugins));
+    
     return () => {
       const { class: className, ...restAttrs } = attrs;
       return h(
         'div',
         {
           ...restAttrs,
-          class: ['markdown-content', className]
-        },
-        blocks.value.map((block, index) => renderBlock(block, index))
+          class: ['markdown-content', className],
+          innerHTML: renderedHtml.value
+        }
       );
     };
   }
 });
-
-function parseMarkdownBlocks(markdown) {
-  const lines = String(markdown || '').replace(/\r\n/g, '\n').split('\n');
-  const blocks = [];
-  let index = 0;
-
-  while (index < lines.length) {
-    const line = lines[index];
-    const trimmed = line.trim();
-
-    if (!trimmed) {
-      index += 1;
-      continue;
-    }
-
-    const fence = trimmed.match(/^```(\S*)?/);
-    if (fence) {
-      const language = fence[1] || '';
-      const code = [];
-      index += 1;
-      while (index < lines.length && !lines[index].trim().startsWith('```')) {
-        code.push(lines[index]);
-        index += 1;
-      }
-      if (index < lines.length) {
-        index += 1;
-      }
-      blocks.push({ type: 'code', language, text: code.join('\n') });
-      continue;
-    }
-
-    if (isTableStart(lines, index)) {
-      const table = parseTable(lines, index);
-      blocks.push(table.block);
-      index = table.nextIndex;
-      continue;
-    }
-
-    const heading = trimmed.match(/^(#{1,4})\s+(.+)$/);
-    if (heading) {
-      blocks.push({
-        type: 'heading',
-        level: heading[1].length,
-        inlines: parseInlineTokens(heading[2])
-      });
-      index += 1;
-      continue;
-    }
-
-    const quote = trimmed.match(/^>\s?(.*)$/);
-    if (quote) {
-      const quoteLines = [];
-      while (index < lines.length) {
-        const match = lines[index].trim().match(/^>\s?(.*)$/);
-        if (!match) {
-          break;
-        }
-        quoteLines.push(match[1]);
-        index += 1;
-      }
-      blocks.push({ type: 'quote', inlines: parseInlineTokens(quoteLines.join('\n')) });
-      continue;
-    }
-
-    const listMatch = trimmed.match(/^(([-*+])|(\d+[.)]))\s+(.+)$/);
-    if (listMatch) {
-      const ordered = Boolean(listMatch[3]);
-      const items = [];
-      while (index < lines.length) {
-        const item = lines[index].trim().match(/^(([-*+])|(\d+[.)]))\s+(.+)$/);
-        if (!item || Boolean(item[3]) !== ordered) {
-          break;
-        }
-        items.push(parseInlineTokens(item[4]));
-        index += 1;
-      }
-      blocks.push({ type: ordered ? 'ol' : 'ul', items });
-      continue;
-    }
-
-    const paragraph = [];
-    while (index < lines.length && lines[index].trim() && !startsBlock(lines, index)) {
-      paragraph.push(lines[index]);
-      index += 1;
-    }
-    if (!paragraph.length) {
-      paragraph.push(line);
-      index += 1;
-    }
-    blocks.push({ type: 'paragraph', inlines: parseInlineTokens(paragraph.join('\n')) });
-  }
-
-  return blocks;
-}
-
-function startsBlock(lines, index) {
-  const trimmed = lines[index].trim();
-  if (!trimmed) {
-    return true;
-  }
-  return (
-    /^```/.test(trimmed)
-    || /^(#{1,4})\s+/.test(trimmed)
-    || /^>\s?/.test(trimmed)
-    || /^(([-*+])|(\d+[.)]))\s+/.test(trimmed)
-    || isTableStart(lines, index)
-  );
-}
-
-function isTableStart(lines, index) {
-  if (index + 1 >= lines.length) {
-    return false;
-  }
-  return lines[index].includes('|') && /^\s*\|?[\s:-]+\|[\s|:-]+\|?\s*$/.test(lines[index + 1]);
-}
-
-function parseTable(lines, startIndex) {
-  const headers = splitTableRow(lines[startIndex]).map(parseInlineTokens);
-  const rows = [];
-  let index = startIndex + 2;
-
-  while (index < lines.length && lines[index].includes('|') && lines[index].trim()) {
-    rows.push(splitTableRow(lines[index]).map(parseInlineTokens));
-    index += 1;
-  }
-
-  return {
-    nextIndex: index,
-    block: { type: 'table', headers, rows }
-  };
-}
-
-function splitTableRow(line) {
-  return line
-    .trim()
-    .replace(/^\|/, '')
-    .replace(/\|$/, '')
-    .split('|')
-    .map((cell) => cell.trim());
-}
-
-function parseInlineTokens(text) {
-  const tokens = [];
-  const pattern = /(!\[[^\]\n]*\]\([^)]+\)|`[^`]+`|\*\*[^*]+\*\*|__[^_]+__|\*[^*\n]+\*|_[^_\n]+_|\[[^\]\n]+\]\([^)]+\))/g;
-  let cursor = 0;
-  let match = pattern.exec(text);
-
-  while (match) {
-    if (match.index > cursor) {
-      tokens.push({ type: 'text', text: text.slice(cursor, match.index) });
-    }
-    tokens.push(toInlineToken(match[0]));
-    cursor = match.index + match[0].length;
-    match = pattern.exec(text);
-  }
-
-  if (cursor < text.length) {
-    tokens.push({ type: 'text', text: text.slice(cursor) });
-  }
-
-  return tokens.length ? tokens : [{ type: 'text', text }];
-}
-
-function toInlineToken(raw) {
-  const image = raw.match(/^!\[([^\]\n]*)\]\(([^)]+)\)$/);
-  if (image) {
-    const src = normalizeSafeImageUrl(image[2].trim());
-    return src
-      ? { type: 'image', alt: image[1], src }
-      : { type: 'text', text: raw };
-  }
-
-  if (raw.startsWith('`')) {
-    return { type: 'code', text: raw.slice(1, -1) };
-  }
-  if (raw.startsWith('**') || raw.startsWith('__')) {
-    return { type: 'strong', text: raw.slice(2, -2) };
-  }
-  if (raw.startsWith('*') || raw.startsWith('_')) {
-    return { type: 'em', text: raw.slice(1, -1) };
-  }
-
-  const link = raw.match(/^\[([^\]\n]+)\]\(([^)]+)\)$/);
-  if (link) {
-    const href = normalizeSafeLinkUrl(link[2].trim());
-    return href
-      ? { type: 'link', text: link[1], href }
-      : { type: 'text', text: raw };
-  }
-
-  return { type: 'text', text: raw };
-}
-
-function normalizeSafeLinkUrl(url) {
-  if (/^(https?:|mailto:)/i.test(url) || url.startsWith('/') || url.startsWith('#')) {
-    return url;
-  }
-  return '';
-}
-
-function normalizeSafeImageUrl(url) {
-  if (/^https?:/i.test(url) || url.startsWith('/')) {
-    return url;
-  }
-  if (/^data:image\/(png|jpe?g|webp|gif);base64,[a-z0-9+/=\s]+$/i.test(url)) {
-    return url;
-  }
-  return '';
-}
-
-function renderBlock(block, index) {
-  const key = `${block.type}-${index}`;
-  if (block.type === 'code') {
-    return h('pre', { class: 'markdown-code', key }, [
-      h('code', { class: block.language ? `language-${block.language}` : undefined }, block.text)
-    ]);
-  }
-
-  if (block.type === 'heading') {
-    return h(
-      `h${Math.min(block.level, 6)}`,
-      { class: 'markdown-heading', key },
-      renderInlineTokens(block.inlines, key)
-    );
-  }
-
-  if (block.type === 'quote') {
-    return h('blockquote', { class: 'markdown-quote', key }, renderInlineTokens(block.inlines, key));
-  }
-
-  if (block.type === 'ul' || block.type === 'ol') {
-    return h(
-      block.type,
-      { class: 'markdown-list', key },
-      block.items.map((item, itemIndex) => h(
-        'li',
-        { key: `${key}-item-${itemIndex}` },
-        renderInlineTokens(item, `${key}-item-${itemIndex}`)
-      ))
-    );
-  }
-
-  if (block.type === 'table') {
-    return h('div', { class: 'markdown-table-wrap', key }, [
-      h('table', { class: 'markdown-table' }, [
-        h('thead', [
-          h('tr', block.headers.map((cell, cellIndex) => h(
-            'th',
-            { key: `${key}-head-${cellIndex}` },
-            renderInlineTokens(cell, `${key}-head-${cellIndex}`)
-          )))
-        ]),
-        h('tbody', block.rows.map((row, rowIndex) => h(
-          'tr',
-          { key: `${key}-row-${rowIndex}` },
-          row.map((cell, cellIndex) => h(
-            'td',
-            { key: `${key}-cell-${rowIndex}-${cellIndex}` },
-            renderInlineTokens(cell, `${key}-cell-${rowIndex}-${cellIndex}`)
-          ))
-        )))
-      ])
-    ]);
-  }
-
-  return h('p', { class: 'markdown-paragraph', key }, renderInlineTokens(block.inlines, key));
-}
-
-function renderInlineTokens(tokens, keyPrefix) {
-  return tokens.map((token, index) => {
-    const key = `${keyPrefix}-inline-${index}-${token.type}`;
-
-    if (token.type === 'code') {
-      return h('code', { class: 'markdown-inline-code', key }, token.text);
-    }
-    if (token.type === 'strong') {
-      return h('strong', { key }, token.text);
-    }
-    if (token.type === 'em') {
-      return h('em', { key }, token.text);
-    }
-    if (token.type === 'link') {
-      return h(
-        'a',
-        {
-          href: token.href,
-          target: '_blank',
-          rel: 'noopener noreferrer',
-          key
-        },
-        token.text
-      );
-    }
-    if (token.type === 'image') {
-      return h('img', {
-        class: 'markdown-image',
-        src: token.src,
-        alt: token.alt || '',
-        loading: 'lazy',
-        decoding: 'async',
-        key
-      });
-    }
-    return h('span', { key }, token.text);
-  });
-}
-
 </script>

@@ -1,25 +1,28 @@
-<script setup>
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, triggerRef, watch } from 'vue';
+﻿<script setup>
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, triggerRef, watch } from 'vue';
 import {
   Brain,
   Check,
   CheckSquare,
   ChevronDown,
   ChevronRight,
+  Coins,
   Copy,
   Home,
   Menu,
   MessageSquarePlus,
   PanelLeftClose,
-  PanelLeftOpen,
   Pencil,
   Search,
   Send,
   Settings,
+  Save,
   Sparkles,
   Square,
   Trash2,
   UserRound,
+  Upload,
+  Users,
   X,
   Zap
 } from '@lucide/vue';
@@ -28,14 +31,36 @@ import {
   deleteConversation,
   deleteConversations,
   deleteMessage,
+  deleteStatusBar,
   fetchCharacters,
+  fetchConversationAccessorySkills,
+  fetchConversationEconomy,
   fetchConversationMessages,
   fetchConversations,
+  fetchPresets,
+  fetchStatusBar,
+  saveConversationAccessorySkills,
+  saveConversationSettings,
+  saveStatusBar,
   sendMessage,
   streamMessage,
   updateMessage
 } from '../api';
 import MarkdownContent from '../components/MarkdownContent.vue';
+import VirtualMessageList from '../components/VirtualMessageList.vue';
+import EconomyPanel from '../components/EconomyPanel.vue';
+import NpcPanel from '../components/NpcPanel.vue';
+import SaveLoadPanel from '../components/SaveLoadPanel.vue';
+import StatusBar from '../components/StatusBar.vue';
+import { useNotify } from '../composables/useNotify';
+import {
+  buildScopedChatCss,
+  createDefaultChatAppearance,
+  mergeChatAppearance,
+  normalizeChatAppearance,
+  resolveChatBackgroundUrl,
+  runChatCustomScript
+} from '../utils/chatAppearance';
 
 const props = defineProps({
   route: {
@@ -52,6 +77,7 @@ const props = defineProps({
   }
 });
 const emit = defineEmits(['navigate']);
+const notify = useNotify();
 
 const conversation = ref(null);
 const conversations = ref([]);
@@ -60,7 +86,7 @@ const messages = ref([]);
 const input = ref('');
 const useStream = ref(readLocalBoolean('flai-chat-use-stream', true));
 const thinkingEnabled = ref(readLocalBoolean('flai-chat-thinking-enabled', false));
-const sidebarOpen = ref(typeof window === 'undefined' ? true : window.innerWidth > 980);
+const sidebarOpen = ref(false);
 const historySearch = ref('');
 const loading = ref(false);
 const sending = ref(false);
@@ -69,6 +95,7 @@ const usage = ref(null);
 const providerMeta = ref(null);
 const controller = ref(null);
 const messageScroller = ref(null);
+const composerWrap = ref(null);
 const composerTextarea = ref(null);
 const isScrollPinned = ref(true);
 const distanceToBottom = ref(0);
@@ -78,10 +105,41 @@ const editingMessageContent = ref('');
 const messageActionBusy = ref('');
 const conversationActionBusy = ref(false);
 const selectedConversationIds = ref(new Set());
-const actionNotice = ref('');
+const chatShellRef = ref(null);
+const settingsDrawerOpen = ref(false);
+const appearanceSaving = ref(false);
+const chatViewportIsPhone = ref(isPhoneViewport());
+const customAppearanceStyleEl = ref(null);
+const customAppearanceCleanup = ref(null);
+const customAppearanceState = ref({});
+const savePanelOpen = ref(false);
+const npcPanelOpen = ref(false);
+const economyPanelOpen = ref(false);
+const economyAccounts = ref([]);
+const presetList = ref([]);
+const selectedPresetId = ref('');
+const statusBar = ref(null);
+const statusBarEditorOpen = ref(false);
+const statusBarSaving = ref(false);
+const accessorySettingsOpen = ref(false);
+const accessorySaving = ref(false);
+const accessorySkills = reactive(createDefaultAccessorySkills());
+const accessorySkillResults = ref([]);
+const virtualMessageListRef = ref(null);
+const statusBarForm = reactive({
+  name: '',
+  variables: [],
+  template: ''
+});
+const accessorySkillItems = [
+  { key: 'npcAgent', label: 'NPC Agent', auto: false },
+  { key: 'statusBarAgent', label: '状态栏 Agent', auto: true },
+  { key: 'economyAgent', label: '经济识别', auto: false },
+  { key: 'talentPrompt', label: '天赋提示', auto: false },
+  { key: 'cgScene', label: 'CG 场景', auto: false }
+];
 let stoppingByUser = false;
 let scrollSaveTimer = null;
-let actionNoticeTimer = null;
 let lastManualScrollIntentAt = 0;
 let touchStartY = 0;
 let lastTouchY = 0;
@@ -94,6 +152,8 @@ const scrollStickThreshold = 120;
 const scrollButtonDistanceThreshold = 360;
 const manualScrollIntentCooldownMs = 1400;
 let graphemeSegmenter = null;
+const chatAppearanceForm = reactive(createDefaultChatAppearance());
+const authorChatAppearance = ref(createDefaultChatAppearance());
 
 const canSend = computed(() => input.value.trim() && !sending.value);
 const showScrollBottomButton = computed(() => {
@@ -118,6 +178,16 @@ const allVisibleConversationsSelected = computed(() => {
   return visibleConversationIds.value.length > 0
     && visibleConversationIds.value.every((id) => selectedConversationIds.value.has(id));
 });
+const hasStatusBarContent = computed(() => {
+  return Boolean(statusBar.value && Array.isArray(statusBar.value.variables) && statusBar.value.variables.length);
+});
+const showEconomyFeature = computed(() => {
+  return isAccessorySkillActiveLocal('economyAgent') || economyAccounts.value.length > 0;
+});
+const showNpcFeature = computed(() => isAccessorySkillActiveLocal('npcAgent'));
+const latestAssistantMessage = computed(() => {
+  return [...messages.value].reverse().find((message) => message.role === 'assistant') || null;
+});
 const currentProviderLabel = computed(() => {
   return providerMeta.value?.provider || props.provider?.gatewayName || 'Local Mock';
 });
@@ -125,22 +195,42 @@ const currentModelLabel = computed(() => {
   return providerMeta.value?.model || props.provider?.model || '未配置模型';
 });
 
+const activeChatBackgroundUrl = computed(() => {
+  return resolveChatBackgroundUrl(effectiveChatAppearance.value, chatViewportIsPhone.value);
+});
+const effectiveChatAppearance = computed(() => mergeChatAppearance(authorChatAppearance.value, chatAppearanceForm));
+const chatMainStyle = computed(() => buildChatMainStyle(activeChatBackgroundUrl.value));
+const chatScopeSelector = computed(() => {
+  const id = conversation.value?.id || 'active';
+  return `:where([data-chat-scope="${cssEscapeAttribute(id)}"])`;
+});
+
 onMounted(async () => {
   await loadConversation();
   await loadSidebarData();
+  await loadEconomyBalance();
   resizeComposerTextarea();
+  updateComposerDock();
   window.addEventListener('resize', handleViewportResize);
+  window.addEventListener('keydown', handleGlobalKeydown);
+  window.addEventListener('focusin', handleViewportResize);
+  window.addEventListener('focusout', handleViewportResize);
+  window.visualViewport?.addEventListener('resize', handleViewportResize);
+  window.visualViewport?.addEventListener('scroll', handleViewportResize);
 });
 
 onBeforeUnmount(() => {
   saveMessageScrollPosition();
+  cleanupConversationAppearance();
   if (scrollSaveTimer) {
     window.clearTimeout(scrollSaveTimer);
   }
-  if (actionNoticeTimer) {
-    window.clearTimeout(actionNoticeTimer);
-  }
   window.removeEventListener('resize', handleViewportResize);
+  window.removeEventListener('keydown', handleGlobalKeydown);
+  window.removeEventListener('focusin', handleViewportResize);
+  window.removeEventListener('focusout', handleViewportResize);
+  window.visualViewport?.removeEventListener('resize', handleViewportResize);
+  window.visualViewport?.removeEventListener('scroll', handleViewportResize);
 });
 
 watch(useStream, (value) => {
@@ -152,7 +242,10 @@ watch(thinkingEnabled, (value) => {
 });
 
 watch(input, () => {
-  nextTick(() => resizeComposerTextarea());
+  nextTick(() => {
+    resizeComposerTextarea();
+    updateComposerDock();
+  });
 });
 
 async function loadConversation() {
@@ -163,9 +256,14 @@ async function loadConversation() {
     conversation.value = result.conversation;
     messages.value = result.messages;
     await nextTick();
+    syncConversationAppearance(result.conversation?.settings);
+    syncAccessorySkills(result.conversation?.settings?.accessorySkills);
+    await applyConversationAppearance();
+    await loadStatusBar();
+    await loadAccessorySkills();
     restoreMessageScrollPosition();
   } catch (err) {
-    error.value = err.message;
+    showError(err.message);
   } finally {
     loading.value = false;
   }
@@ -173,13 +271,210 @@ async function loadConversation() {
 
 async function loadSidebarData() {
   const currentCharacterId = conversation.value?.characterId;
-  const [history, characterList] = await Promise.all([
+  const [history, characterList, presets] = await Promise.all([
     fetchConversations({ characterId: currentCharacterId }).catch(() => []),
-    fetchCharacters().catch(() => [])
+    fetchCharacters().catch(() => []),
+    fetchPresets().catch(() => [])
   ]);
   conversations.value = history;
   characters.value = characterList;
+  presetList.value = presets;
+  // Auto-select default preset if none selected
+  if (!selectedPresetId.value && presets.length) {
+    const defaultPreset = presets.find((p) => p.isDefault);
+    selectedPresetId.value = defaultPreset?.id || '';
+  }
   pruneSelectedConversations();
+}
+
+async function loadStatusBar() {
+  if (!conversation.value?.id) {
+    statusBar.value = null;
+    return;
+  }
+  try {
+    const result = await fetchStatusBar(conversation.value.id);
+    statusBar.value = result;
+    if (result) {
+      syncStatusBarForm(result);
+    }
+  } catch {
+    statusBar.value = null;
+  }
+}
+
+async function loadEconomyBalance() {
+  if (!conversation.value?.id) {
+    economyAccounts.value = [];
+    return;
+  }
+  try {
+    const result = await fetchConversationEconomy(conversation.value.id, { ensure: false });
+    economyAccounts.value = result.accounts || [];
+  } catch {
+    economyAccounts.value = [];
+  }
+}
+
+async function loadAccessorySkills() {
+  if (!conversation.value?.id) {
+    syncAccessorySkills();
+    return;
+  }
+  try {
+    const payload = await fetchConversationAccessorySkills(conversation.value.id);
+    syncAccessorySkills(payload.skills);
+  } catch {
+    syncAccessorySkills(conversation.value?.settings?.accessorySkills);
+  }
+}
+
+function createDefaultAccessorySkills() {
+  return {
+    npcAgent: { enabled: false, modelOverride: '' },
+    statusBarAgent: { enabled: 'auto', modelOverride: '' },
+    economyAgent: { enabled: false, modelOverride: '' },
+    talentPrompt: { enabled: false, modelOverride: '' },
+    cgScene: { enabled: false, modelOverride: '' }
+  };
+}
+
+function syncAccessorySkills(next = {}) {
+  const defaults = createDefaultAccessorySkills();
+  for (const key of Object.keys(defaults)) {
+    const source = next?.[key] || {};
+    accessorySkills[key] = {
+      enabled: normalizeSkillEnabled(source.enabled, defaults[key].enabled),
+      modelOverride: String(source.modelOverride || source.model_override || '').trim()
+    };
+  }
+}
+
+function normalizeSkillEnabled(value, fallback = false) {
+  if (value === 'auto') return 'auto';
+  if (value === true || value === 'true' || value === 'on') return true;
+  if (value === false || value === 'false' || value === 'off') return false;
+  return fallback;
+}
+
+function isAccessorySkillActiveLocal(key) {
+  const skill = accessorySkills[key] || {};
+  if (skill.enabled === true) return true;
+  if (skill.enabled !== 'auto') return false;
+  return key === 'statusBarAgent' && hasStatusBarContent.value;
+}
+
+async function saveAccessorySkillChanges() {
+  if (!conversation.value?.id || accessorySaving.value) return;
+  accessorySaving.value = true;
+  try {
+    const payload = await saveConversationAccessorySkills(conversation.value.id, { accessorySkills });
+    syncAccessorySkills(payload.skills);
+    conversation.value = {
+      ...conversation.value,
+      settings: {
+        ...(conversation.value?.settings || {}),
+        accessorySkills: payload.skills
+      },
+      userSettings: {
+        ...(conversation.value?.userSettings || {}),
+        accessorySkills: payload.skills
+      }
+    };
+    await loadEconomyBalance();
+    showActionNotice('附属技能已保存');
+  } catch (err) {
+    showError(err.message);
+  } finally {
+    accessorySaving.value = false;
+  }
+}
+
+function handleSkillResult(data = {}) {
+  accessorySkillResults.value = [data, ...accessorySkillResults.value].slice(0, 8);
+  if (!data.ok) {
+    return;
+  }
+  const result = data.result || {};
+  if (data.skill === 'statusBarAgent' && result.statusBar) {
+    statusBar.value = result.statusBar;
+    syncStatusBarForm(result.statusBar);
+  }
+  if (data.skill === 'economyAgent' && Array.isArray(result.transactions) && result.transactions.length) {
+    loadEconomyBalance();
+  }
+}
+
+function syncStatusBarForm(data = {}) {
+  statusBarForm.name = data.name || '状态栏';
+  statusBarForm.variables = Array.isArray(data.variables)
+    ? data.variables.map((v) => ({ ...v }))
+    : [];
+  statusBarForm.template = data.template || '';
+}
+
+function addStatusBarVariable() {
+  statusBarForm.variables.push({
+    name: '新变量',
+    value: 100,
+    max: 100,
+    color: '#6c757d'
+  });
+}
+
+function removeStatusBarVariable(index) {
+  statusBarForm.variables.splice(index, 1);
+}
+
+async function saveStatusBarChanges() {
+  if (!conversation.value?.id || statusBarSaving.value) return;
+  statusBarSaving.value = true;
+  try {
+    const result = await saveStatusBar(conversation.value.id, {
+      name: statusBarForm.name,
+      variables: statusBarForm.variables,
+      template: statusBarForm.template
+    });
+    statusBar.value = result;
+    showActionNotice('状态栏已保存');
+  } catch (err) {
+    showError(err.message);
+  } finally {
+    statusBarSaving.value = false;
+  }
+}
+
+async function deleteStatusBarAction() {
+  if (!conversation.value?.id) return;
+  if (!window.confirm('确定删除当前状态栏？')) return;
+  try {
+    await deleteStatusBar(conversation.value.id);
+    statusBar.value = null;
+    statusBarForm.name = '';
+    statusBarForm.variables = [];
+    statusBarForm.template = '';
+    showActionNotice('状态栏已删除');
+  } catch (err) {
+    showError(err.message);
+  }
+}
+
+function openStatusBarEditor() {
+  if (statusBar.value) {
+    syncStatusBarForm(statusBar.value);
+  } else {
+    statusBarForm.name = '状态栏';
+    statusBarForm.variables = [
+      { name: 'HP', value: 100, max: 100, color: '#e74c3c' },
+      { name: 'MP', value: 50, max: 50, color: '#3498db' }
+    ];
+    statusBarForm.template = '';
+  }
+  statusBarEditorOpen.value = true;
+}
+
+function closeStatusBarEditor() {
+  statusBarEditorOpen.value = false;
 }
 
 async function startNewConversation() {
@@ -193,9 +488,10 @@ async function startNewConversation() {
   try {
     const created = await createConversation(characterId);
     await loadSidebarData();
+    closeSidebar();
     emit('navigate', 'chat', { id: created.id });
   } catch (err) {
-    error.value = err.message;
+    showError(err.message);
   }
 }
 
@@ -237,6 +533,9 @@ async function submit() {
     content,
     thinkingEnabled: canToggleThinking.value ? thinkingEnabled.value : true
   };
+  if (selectedPresetId.value) {
+    requestPayload.presetId = selectedPresetId.value;
+  }
   let streamFinished = false;
   let streamTimedOut = false;
   let streamTimer = null;
@@ -285,6 +584,20 @@ async function submit() {
             await nextTick();
             stickToBottomIfNeeded();
           },
+          tool(data) {
+            if (data?.result?.statusBar) {
+              statusBar.value = data.result.statusBar;
+              syncStatusBarForm(data.result.statusBar);
+            }
+          },
+          skill_result(data) {
+            handleSkillResult(data);
+          },
+          skills_done(data) {
+            if (Array.isArray(data?.results)) {
+              accessorySkillResults.value = data.results;
+            }
+          },
           async done(data) {
             streamFinished = true;
             clearStreamTimer();
@@ -297,6 +610,10 @@ async function submit() {
               ...(providerMeta.value || {}),
               provider: data.provider || providerMeta.value?.provider
             };
+            if (data.statusBar) {
+              statusBar.value = data.statusBar;
+              syncStatusBarForm(data.statusBar);
+            }
           },
           error(data) {
             streamFinished = true;
@@ -324,8 +641,16 @@ async function submit() {
       Object.assign(assistant, result.assistantMessage, { streaming: false });
       usage.value = result.usage || null;
       providerMeta.value = { provider: result.provider };
+      if (Array.isArray(result.skillResults)) {
+        result.skillResults.forEach((item) => handleSkillResult(item));
+      }
+      if (result.statusBar) {
+        statusBar.value = result.statusBar;
+        syncStatusBarForm(result.statusBar);
+      }
     }
     await loadSidebarData();
+    await loadEconomyBalance();
   } catch (err) {
     clearStreamTimer();
     if (streamTimedOut && !stoppingByUser) {
@@ -367,7 +692,149 @@ function finishAssistantDraft(message) {
 
 function showError(message) {
   error.value = message;
-  nextTick(() => stickToBottomIfNeeded(true));
+  notify.error(message, {
+    actionLabel: needsProviderFix.value ? '去设置' : '',
+    action: needsProviderFix.value ? () => emit('navigate', 'settings') : null,
+    duration: needsProviderFix.value ? 8000 : undefined
+  });
+}
+
+function syncConversationAppearance(settings = {}) {
+  const authorSettings = normalizeChatAppearance(settings?.authorSettings || conversation.value?.authorSettings || {});
+  const userSettings = normalizeChatAppearance(settings?.userSettings || conversation.value?.userSettings || settings);
+  authorChatAppearance.value = authorSettings;
+  Object.assign(chatAppearanceForm, createDefaultChatAppearance(), userSettings);
+  customAppearanceState.value = {};
+}
+
+async function saveConversationAppearanceChanges() {
+  if (!conversation.value?.id || appearanceSaving.value) {
+    return;
+  }
+
+  appearanceSaving.value = true;
+  try {
+    const saved = await saveConversationSettings(conversation.value.id, {
+      desktopBackgroundUrl: chatAppearanceForm.desktopBackgroundUrl,
+      mobileBackgroundUrl: chatAppearanceForm.mobileBackgroundUrl,
+      customCss: chatAppearanceForm.customCss,
+      customJs: chatAppearanceForm.customJs,
+      statusBarPrompt: chatAppearanceForm.statusBarPrompt
+    });
+    syncConversationAppearance(saved);
+    conversation.value = {
+      ...conversation.value,
+      settings: {
+        desktopBackgroundUrl: saved.desktopBackgroundUrl,
+        mobileBackgroundUrl: saved.mobileBackgroundUrl,
+        customCss: saved.customCss,
+        customJs: saved.customJs,
+        statusBarPrompt: saved.statusBarPrompt
+      },
+      authorSettings: saved.authorSettings || authorChatAppearance.value,
+      userSettings: saved.userSettings || normalizeChatAppearance(chatAppearanceForm)
+    };
+    await applyConversationAppearance();
+    showActionNotice('会话自定义已保存');
+  } catch (err) {
+    showError(err.message);
+  } finally {
+    appearanceSaving.value = false;
+  }
+}
+
+async function applyConversationAppearance() {
+  cleanupConversationAppearance();
+
+  if (!conversation.value?.id) {
+    return;
+  }
+
+  const activeAppearance = effectiveChatAppearance.value;
+  const style = buildScopedChatCss(activeAppearance.customCss, chatScopeSelector.value);
+  syncCustomAppearanceStyle(style);
+
+  try {
+    customAppearanceCleanup.value = await runChatCustomScript(activeAppearance.customJs, {
+      conversation: conversation.value,
+      character: activeCharacter(),
+      user: props.user,
+      provider: props.provider,
+      settings: activeAppearance,
+      state: customAppearanceState.value,
+      root: chatShellRef.value,
+      main: chatShellRef.value?.querySelector('.deep-chat-main') || null,
+      sidebar: chatShellRef.value?.querySelector('.deep-sidebar') || null,
+      messageScroller: messageScroller.value,
+      composer: composerTextarea.value,
+      messages: messages.value,
+      query: (selector, root = chatShellRef.value) => root?.querySelector?.(selector) || null,
+      queryAll: (selector, root = chatShellRef.value) => root ? Array.from(root.querySelectorAll(selector)) : [],
+      notify,
+      openSidebar,
+      closeSidebar,
+      openSettings,
+      closeSettings,
+      scrollToBottom: () => scrollToBottom(true, true),
+      setCssVar: (name, value) => {
+        chatShellRef.value?.style.setProperty(String(name || '').trim(), String(value || ''));
+      },
+      requestPaint: waitForFrame,
+      wait: waitMs
+    });
+  } catch (err) {
+    console.error(err);
+    notify.warning('自定义 JS 执行失败，已保留设置');
+  }
+}
+
+function cleanupConversationAppearance() {
+  if (customAppearanceCleanup.value) {
+    try {
+      customAppearanceCleanup.value();
+    } catch {
+      // Ignore cleanup failures from custom scripts.
+    }
+    customAppearanceCleanup.value = null;
+  }
+
+  if (customAppearanceStyleEl.value) {
+    customAppearanceStyleEl.value.remove();
+    customAppearanceStyleEl.value = null;
+  }
+}
+
+function syncCustomAppearanceStyle(cssText) {
+  if (!cssText) {
+    return;
+  }
+
+  if (!customAppearanceStyleEl.value) {
+    customAppearanceStyleEl.value = document.createElement('style');
+    customAppearanceStyleEl.value.type = 'text/css';
+    customAppearanceStyleEl.value.dataset.chatAppearance = conversation.value?.id || 'active';
+    document.head.appendChild(customAppearanceStyleEl.value);
+  }
+
+  customAppearanceStyleEl.value.textContent = cssText;
+}
+
+function buildChatMainStyle(backgroundUrl) {
+  const safeBackgroundUrl = String(backgroundUrl || '').trim();
+  if (!safeBackgroundUrl) {
+    return {};
+  }
+
+  return {
+    backgroundImage: `linear-gradient(180deg, color-mix(in srgb, var(--surface) 48%, transparent), transparent 18%), url(${JSON.stringify(safeBackgroundUrl)})`,
+    backgroundRepeat: 'no-repeat',
+    backgroundPosition: 'center',
+    backgroundSize: 'cover'
+  };
+}
+
+function cssEscapeAttribute(value) {
+  return String(value || '').replace(/["\\]/g, '\\$&');
 }
 
 async function appendStreamText(message, field, text) {
@@ -427,6 +894,15 @@ function waitMs(duration) {
   }
   return new Promise((resolve) => {
     window.setTimeout(resolve, duration);
+  });
+}
+
+function readFileAsDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error('背景图片读取失败'));
+    reader.onload = () => resolve(String(reader.result || ''));
+    reader.readAsDataURL(file);
   });
 }
 
@@ -508,12 +984,16 @@ function activeCharacter() {
     || null;
 }
 
+function activeRenderPlugins() {
+  return activeCharacter()?.renderPlugins || [];
+}
+
 function messageAuthorName(message) {
   if (message.role === 'assistant') {
     return activeCharacter()?.name || 'AI';
   }
   if (message.role === 'user') {
-    return props.user?.username || 'User';
+    return props.user?.displayName || props.user?.accountName || props.user?.username || 'User';
   }
   return message.role || 'Message';
 }
@@ -527,14 +1007,95 @@ function messageAvatarUrl(message) {
   if (message.role === 'assistant') {
     return activeCharacter()?.avatarUrl || '';
   }
-  return '';
+  return props.user?.avatarUrl || '';
 }
 
 function openConversation(conversationId) {
   if (conversationId === props.route.params.id) {
+    closeSidebar();
     return;
   }
+  closeSidebar();
   emit('navigate', 'chat', { id: conversationId });
+}
+
+function openSidebar() {
+  closeSettings();
+  sidebarOpen.value = true;
+}
+
+function closeSidebar() {
+  sidebarOpen.value = false;
+}
+
+function openSettings() {
+  closeSidebar();
+  settingsDrawerOpen.value = true;
+}
+
+function closeSettings() {
+  settingsDrawerOpen.value = false;
+}
+
+function openSavePanel() {
+  savePanelOpen.value = true;
+}
+
+function closeSavePanel() {
+  savePanelOpen.value = false;
+}
+
+function openNpcPanel() {
+  if (!showNpcFeature.value) {
+    return;
+  }
+  npcPanelOpen.value = true;
+}
+
+function closeNpcPanel() {
+  npcPanelOpen.value = false;
+}
+
+function openEconomyPanel() {
+  if (!showEconomyFeature.value) {
+    return;
+  }
+  economyPanelOpen.value = true;
+}
+
+function closeEconomyPanel() {
+  economyPanelOpen.value = false;
+}
+
+async function onSavesLoaded() {
+  await loadConversation();
+  await loadSidebarData();
+}
+
+function handleGlobalKeydown(event) {
+  if (event.key === 'Escape' && settingsDrawerOpen.value) {
+    closeSettings();
+    return;
+  }
+  if (event.key === 'Escape' && sidebarOpen.value) {
+    closeSidebar();
+  }
+}
+
+function handleComposerEnter(event) {
+  if (isPhoneViewport()) {
+    return;
+  }
+
+  event.preventDefault();
+  submit();
+}
+
+function isPhoneViewport() {
+  if (typeof window === 'undefined') {
+    return false;
+  }
+  return window.matchMedia('(max-width: 760px)').matches;
 }
 
 function toggleConversationSelection(conversationId) {
@@ -656,7 +1217,7 @@ function clearMessageEdit() {
 async function saveMessageEdit(message) {
   const content = editingMessageContent.value.trim();
   if (!content) {
-    showActionNotice('消息内容不能为空');
+    showActionNotice('消息内容不能为空', 'warning');
     return;
   }
   if (!canEditMessage(message)) {
@@ -709,7 +1270,7 @@ async function removeMessage(message) {
 async function copyMessage(message) {
   const text = messageTextForCopy(message);
   if (!text) {
-    showActionNotice('没有可复制的内容');
+    showActionNotice('没有可复制的内容', 'warning');
     return;
   }
 
@@ -718,7 +1279,7 @@ async function copyMessage(message) {
     await writeClipboardText(text);
     showActionNotice('已复制到剪贴板');
   } catch (err) {
-    showActionNotice(err.message || '复制失败，请检查浏览器权限');
+    showActionNotice(err.message || '复制失败，请检查浏览器权限', 'warning');
   }
 }
 
@@ -738,7 +1299,7 @@ async function requestClipboardPermission() {
       throw new Error('剪贴板权限被拒绝');
     }
   } catch (err) {
-    if (/denied|拒绝/.test(err.message || '')) {
+    if (/denied|鎷掔粷/.test(err.message || '')) {
       throw err;
     }
   }
@@ -827,14 +1388,9 @@ function focusMessageEditor(messageId) {
   });
 }
 
-function showActionNotice(message) {
-  actionNotice.value = message;
-  if (actionNoticeTimer) {
-    window.clearTimeout(actionNoticeTimer);
-  }
-  actionNoticeTimer = window.setTimeout(() => {
-    actionNotice.value = '';
-  }, 1800);
+function showActionNotice(message, type = 'success') {
+  const method = notify[type] || notify.info;
+  method(message);
 }
 
 function toggleUseStream() {
@@ -848,19 +1404,85 @@ function toggleThinking() {
   thinkingEnabled.value = !thinkingEnabled.value;
 }
 
+async function handleAppearanceBackgroundUpload(event, field) {
+  const file = event.target.files?.[0];
+  event.target.value = '';
+  if (!file) {
+    return;
+  }
+
+  if (!['image/png', 'image/jpeg', 'image/webp', 'image/gif'].includes(file.type)) {
+    notify.warning('背景图片仅支持 PNG、JPG、WebP、GIF');
+    return;
+  }
+
+  if (file.size > 4 * 1024 * 1024) {
+    notify.warning('背景图片不能超过 4MB');
+    return;
+  }
+
+  try {
+    chatAppearanceForm[field] = await readFileAsDataUrl(file);
+  } catch (err) {
+    notify.warning(err.message || '背景图片读取失败');
+  }
+}
+
+function clearAppearanceField(field) {
+  chatAppearanceForm[field] = '';
+}
+
 function resizeComposerTextarea() {
   const el = composerTextarea.value;
   if (!el) {
     return;
   }
-  const maxHeight = 180;
+  const maxHeight = readComposerTextareaMaxHeight(el);
   el.style.height = 'auto';
   el.style.height = `${Math.min(el.scrollHeight, maxHeight)}px`;
   el.style.overflowY = el.scrollHeight > maxHeight ? 'auto' : 'hidden';
+  updateComposerDock();
+}
+
+function readComposerTextareaMaxHeight(el) {
+  const customValue = window.getComputedStyle(el).getPropertyValue('--composer-textarea-max-height');
+  const parsed = Number.parseFloat(customValue);
+  if (Number.isFinite(parsed) && parsed > 0) {
+    return parsed;
+  }
+  return isPhoneViewport() ? 112 : 180;
 }
 
 function handleViewportResize() {
+  chatViewportIsPhone.value = isPhoneViewport();
   resizeComposerTextarea();
+  updateComposerDock();
+}
+
+let composerDockRafId = null;
+
+function updateComposerDock() {
+  if (composerDockRafId) {
+    cancelAnimationFrame(composerDockRafId);
+  }
+  composerDockRafId = requestAnimationFrame(() => {
+    const shell = chatShellRef.value;
+    const wrap = composerWrap.value;
+    if (!shell || !wrap) {
+      return;
+    }
+
+    shell.style.setProperty('--chat-composer-height', `${Math.ceil(wrap.getBoundingClientRect().height)}px`);
+
+    if (!isPhoneViewport() || !window.visualViewport) {
+      shell.style.setProperty('--chat-keyboard-inset', '0px');
+      return;
+    }
+
+    const viewport = window.visualViewport;
+    const keyboardInset = Math.max(0, window.innerHeight - viewport.height - viewport.offsetTop);
+    shell.style.setProperty('--chat-keyboard-inset', `${Math.round(keyboardInset)}px`);
+  });
 }
 
 function formatConversationUsage(item) {
@@ -880,7 +1502,7 @@ function formatCost(usage) {
   }
 
   const digits = cost > 0 && cost < 0.01 ? 6 : 4;
-  return `¥${cost.toFixed(digits)}`;
+  return `楼${cost.toFixed(digits)}`;
 }
 
 function handleMessageScroll() {
@@ -993,6 +1615,12 @@ function restoreMessageScrollPosition() {
 
     const saved = readScrollSnapshot();
     if (!saved) {
+      if (shouldStartAtConversationBeginning()) {
+        el.scrollTop = 0;
+        updateScrollState();
+        scheduleSaveMessageScrollPosition();
+        return;
+      }
       scrollToBottom(false, true);
       return;
     }
@@ -1006,6 +1634,10 @@ function restoreMessageScrollPosition() {
     updateScrollState();
     scheduleSaveMessageScrollPosition();
   });
+}
+
+function shouldStartAtConversationBeginning() {
+  return messages.value.length === 1 && messages.value[0]?.role === 'assistant';
 }
 
 function readScrollSnapshot() {
@@ -1053,16 +1685,28 @@ function scrollStorageKey() {
 </script>
 
 <template>
-  <section class="deep-chat-shell" :class="{ 'sidebar-collapsed': !sidebarOpen }">
-    <aside class="deep-sidebar" :class="{ collapsed: !sidebarOpen }" aria-label="对话历史">
+    <section
+      ref="chatShellRef"
+      class="deep-chat-shell"
+      :class="{ 'sidebar-collapsed': !sidebarOpen }"
+      :data-chat-scope="conversation?.id || 'active'"
+  >
+    <button
+      class="sidebar-backdrop"
+      :class="{ visible: sidebarOpen }"
+      type="button"
+      aria-label="关闭对话历史"
+      :aria-hidden="String(!sidebarOpen)"
+      @click="closeSidebar"
+    ></button>
+    <aside class="deep-sidebar" :class="{ collapsed: !sidebarOpen }" aria-label="对话历史" :aria-hidden="String(!sidebarOpen)">
       <div class="deep-sidebar-top">
         <button class="deep-brand" type="button" @click="emit('navigate', 'home')">
           <span class="deep-logo">F</span>
           <strong>FLAI Tavern</strong>
         </button>
-        <button class="deep-icon-button" type="button" title="收起侧边栏" @click="sidebarOpen = !sidebarOpen">
-          <PanelLeftClose v-if="sidebarOpen" :size="18" />
-          <PanelLeftOpen v-else :size="18" />
+        <button class="deep-icon-button" type="button" title="收起侧边栏" @click="closeSidebar">
+          <PanelLeftClose :size="18" />
         </button>
       </div>
 
@@ -1129,34 +1773,315 @@ function scrollStorageKey() {
         <p v-if="!filteredConversations.length" class="history-empty">暂无会话</p>
       </div>
 
-      <div class="sidebar-footer">
+            <div class="sidebar-footer">
         <button class="sidebar-user" type="button" @click="emit('navigate', 'settings')">
-          <UserRound :size="18" />
-          <span>{{ user?.username || '用户' }}</span>
+          <span v-if="user?.avatarUrl" class="sidebar-user-avatar">
+            <img :src="user.avatarUrl" :alt="user?.username || '用户头像'" />
+          </span>
+          <UserRound v-else :size="18" />
+          <span>{{ user?.displayName || user?.accountName || user?.username || '用户' }}</span>
         </button>
-        <button class="deep-icon-button" type="button" title="返回首页" @click="emit('navigate', 'home')">
-          <Home :size="18" />
-        </button>
-        <button class="deep-icon-button" type="button" title="设置" @click="emit('navigate', 'settings')">
+        <button class="deep-icon-button" type="button" title="高阶设置" @click="openSettings">
           <Settings :size="18" />
         </button>
       </div>
     </aside>
 
-    <section class="deep-chat-main">
-      <header class="deep-chat-header">
-        <button class="deep-icon-button mobile-menu" type="button" title="打开侧边栏" @click="sidebarOpen = true">
-          <Menu :size="19" />
-        </button>
+    <button
+      class="chat-settings-backdrop"
+      :class="{ visible: settingsDrawerOpen }"
+      type="button"
+      aria-label="关闭高阶设置"
+      :aria-hidden="String(!settingsDrawerOpen)"
+      @click="closeSettings"
+    ></button>
+
+    <aside class="chat-settings-drawer" :class="{ open: settingsDrawerOpen }" aria-label="高阶设置" :aria-hidden="String(!settingsDrawerOpen)">
+      <header class="chat-settings-header">
         <div>
+          <p>高阶设置</p>
+          <h2>{{ conversation?.title || '当前会话' }}</h2>
+        </div>
+        <button class="deep-icon-button" type="button" title="关闭设置" @click="closeSettings">
+          <X :size="18" />
+        </button>
+      </header>
+
+      <div class="chat-settings-body">
+        <section class="chat-settings-section author-settings-section">
+          <div class="settings-section-title">
+            <h3>作者固定设置</h3>
+            <p>来自角色创建/编辑页，只读展示；下方会话设置会叠加在作者设置之后。</p>
+          </div>
+          <div class="readonly-settings-grid">
+            <label class="chat-setting-field">
+              <span>电脑端背景</span>
+              <input :value="authorChatAppearance.desktopBackgroundUrl || '未设置'" type="text" readonly />
+            </label>
+            <label class="chat-setting-field">
+              <span>手机端背景</span>
+              <input :value="authorChatAppearance.mobileBackgroundUrl || '未设置'" type="text" readonly />
+            </label>
+          </div>
+          <label class="chat-setting-field">
+            <span>状态栏提示词</span>
+            <textarea
+              class="chat-code-textarea readonly"
+              rows="4"
+              :value="authorChatAppearance.statusBarPrompt || '未设置'"
+              readonly
+            />
+          </label>
+        </section>
+
+        <section class="chat-settings-section">
+          <div class="settings-section-title">
+            <h3>鑱婂ぉ鑳屾櫙</h3>
+            <p>电脑端和手机端可以分别设置，留空则回退到默认暖色背景。</p>
+          </div>
+
+          <label class="chat-setting-field">
+            <span>电脑端背景</span>
+            <input
+              v-model="chatAppearanceForm.desktopBackgroundUrl"
+              type="text"
+              placeholder="图片链接、短链或 data URL"
+            />
+          </label>
+          <div class="chat-setting-actions">
+            <label class="chat-setting-upload">
+              <Upload :size="15" />
+              <span>上传图片</span>
+              <input type="file" accept="image/*" @change="handleAppearanceBackgroundUpload($event, 'desktopBackgroundUrl')" />
+            </label>
+            <button class="chat-setting-inline-button" type="button" @click="clearAppearanceField('desktopBackgroundUrl')">
+              清空
+            </button>
+          </div>
+
+          <label class="chat-setting-field">
+            <span>手机端背景</span>
+            <input
+              v-model="chatAppearanceForm.mobileBackgroundUrl"
+              type="text"
+              placeholder="图片链接、短链或 data URL"
+            />
+          </label>
+          <div class="chat-setting-actions">
+            <label class="chat-setting-upload">
+              <Upload :size="15" />
+              <span>上传图片</span>
+              <input type="file" accept="image/*" @change="handleAppearanceBackgroundUpload($event, 'mobileBackgroundUrl')" />
+            </label>
+            <button class="chat-setting-inline-button" type="button" @click="clearAppearanceField('mobileBackgroundUrl')">
+              清空
+            </button>
+          </div>
+        </section>
+
+        <section class="chat-settings-section">
+          <div class="settings-section-title">
+            <h3>内置 CSS</h3>
+            <p>只会作用于当前会话。可以写动画、布局和局部样式，留空则不生效。</p>
+          </div>
+          <textarea
+            v-model="chatAppearanceForm.customCss"
+            class="chat-code-textarea"
+            rows="10"
+            placeholder=".deep-bubble { border-radius: 22px; }\n@keyframes floatIn { ... }"
+          />
+        </section>
+
+        <section class="chat-settings-section">
+          <div class="settings-section-title">
+            <h3>内置 JS</h3>
+            <p>可读取当前会话、消息区和聊天容器。脚本可返回清理函数，留空则不执行。</p>
+          </div>
+          <textarea
+            v-model="chatAppearanceForm.customJs"
+            class="chat-code-textarea code-js"
+            rows="12"
+            placeholder="const bubble = query('.deep-bubble');\nif (bubble) bubble.classList.add('pulse');\nreturn () => bubble?.classList.remove('pulse');"
+          />
+        </section>
+
+        <section class="chat-settings-section">
+          <div class="settings-section-title">
+            <h3>状态栏提示词</h3>
+            <p>供状态栏 Agent 判断变量变化；主聊天回复不会被要求调用状态栏工具。</p>
+          </div>
+          <textarea
+            v-model="chatAppearanceForm.statusBarPrompt"
+            class="chat-code-textarea"
+            rows="6"
+            placeholder="例如：HP 降低、好感变化、获得金币时更新对应变量。"
+          />
+        </section>
+
+        <section class="chat-settings-section accessory-skills-section">
+          <button class="settings-section-toggle" type="button" @click="accessorySettingsOpen = !accessorySettingsOpen">
+            <span class="settings-section-title">
+              <h3>附属技能</h3>
+              <p>为当前会话单独启用子智能体；未配置模型时使用当前聊天模型。</p>
+            </span>
+            <ChevronDown :size="17" :class="{ rotated: accessorySettingsOpen }" />
+          </button>
+
+          <div v-if="accessorySettingsOpen" class="accessory-skills-grid">
+            <div v-for="item in accessorySkillItems" :key="item.key" class="accessory-skill-row">
+              <label class="chat-setting-field compact">
+                <span>{{ item.label }}</span>
+                <select v-model="accessorySkills[item.key].enabled">
+                  <option :value="false">关闭</option>
+                  <option :value="true">开启</option>
+                  <option v-if="item.auto" value="auto">自动</option>
+                </select>
+              </label>
+              <label class="chat-setting-field compact">
+                <span>模型覆盖</span>
+                <input
+                  v-model="accessorySkills[item.key].modelOverride"
+                  type="text"
+                  placeholder="留空使用当前模型"
+                  maxlength="100"
+                />
+              </label>
+            </div>
+            <button class="chat-settings-save" type="button" :disabled="accessorySaving" @click="saveAccessorySkillChanges">
+              <Save :size="15" />
+              <span>{{ accessorySaving ? '保存中...' : '保存附属技能' }}</span>
+            </button>
+          </div>
+        </section>
+
+        <section class="chat-settings-section">
+          <div class="settings-section-title">
+            <h3>状态栏</h3>
+            <p>在聊天顶部显示自定义状态栏；变量更新由状态栏 Agent 或手动编辑完成。</p>
+          </div>
+          <div class="status-bar-editor-actions">
+            <button v-if="!statusBar" class="chat-setting-inline-button" type="button" @click="openStatusBarEditor">
+              创建状态栏
+            </button>
+            <template v-else>
+              <button class="chat-setting-inline-button" type="button" @click="openStatusBarEditor">
+                编辑状态栏
+              </button>
+              <button class="chat-setting-inline-button danger" type="button" @click="deleteStatusBarAction">
+                删除状态栏
+              </button>
+            </template>
+          </div>
+
+          <div v-if="statusBarEditorOpen" class="status-bar-editor">
+            <label class="chat-setting-field">
+              <span>状态栏名称</span>
+              <input v-model="statusBarForm.name" type="text" placeholder="状态栏" maxlength="50" />
+            </label>
+
+            <div class="status-bar-variables-editor">
+              <div class="variables-editor-header">
+                <span>变量列表</span>
+                <button class="chat-setting-inline-button small" type="button" @click="addStatusBarVariable">
+                  + 添加变量
+                </button>
+              </div>
+              <div
+                v-for="(variable, index) in statusBarForm.variables"
+                :key="index"
+                class="variable-editor-row"
+              >
+                <input
+                  v-model="variable.name"
+                  class="variable-input name"
+                  type="text"
+                  placeholder="变量名"
+                  maxlength="20"
+                />
+                <input
+                  v-model.number="variable.value"
+                  class="variable-input num"
+                  type="number"
+                  placeholder="当前值"
+                />
+                <span class="variable-separator">/</span>
+                <input
+                  v-model.number="variable.max"
+                  class="variable-input num"
+                  type="number"
+                  placeholder="最大值"
+                />
+                <input
+                  v-model="variable.color"
+                  class="variable-input color"
+                  type="color"
+                  title="颜色"
+                />
+                <button
+                  class="variable-remove"
+                  type="button"
+                  title="删除变量"
+                  @click="removeStatusBarVariable(index)"
+                >
+                  ×
+                </button>
+              </div>
+            </div>
+
+            <div class="status-bar-editor-footer">
+              <button class="chat-settings-save" type="button" :disabled="statusBarSaving" @click="saveStatusBarChanges">
+                <Save :size="15" />
+                <span>{{ statusBarSaving ? '保存中...' : '保存状态栏' }}</span>
+              </button>
+              <button class="chat-setting-inline-button" type="button" @click="closeStatusBarEditor">
+                取消
+              </button>
+            </div>
+          </div>
+        </section>
+      </div>
+
+      <footer class="chat-settings-footer">
+        <button class="chat-setting-inline-button" type="button" @click="syncConversationAppearance(conversation?.settings)">
+          恢复当前会话
+        </button>
+        <button class="chat-settings-save" type="button" :disabled="appearanceSaving" @click="saveConversationAppearanceChanges">
+          <Save :size="15" />
+          <span>{{ appearanceSaving ? '保存中...' : '保存并应用' }}</span>
+        </button>
+      </footer>
+    </aside>
+
+    <section class="deep-chat-main" :style="chatMainStyle">
+      <header class="deep-chat-header">
+        <div class="deep-chat-header-start">
+          <button class="deep-icon-button mobile-menu" type="button" title="打开侧边栏" @click="openSidebar">
+            <Menu :size="19" />
+          </button>
+          <button class="deep-icon-button" type="button" title="返回首页" @click="emit('navigate', 'home')">
+            <Home :size="18" />
+          </button>
+        </div>
+        <div class="deep-chat-header-title">
           <h1>{{ conversation?.title || '角色对话' }}</h1>
           <p>
             <Zap :size="14" />
             <span>{{ currentProviderLabel }} · {{ currentModelLabel }}</span>
           </p>
+          <p v-if="economyAccounts.length" class="economy-summary-header" @click="openEconomyPanel">
+            <span v-for="acc in economyAccounts" :key="acc.id" class="economy-chip">
+              {{ { gold: '金币', silver: '银币', copper: '铜币', gem: '宝石', credit: '点数' }[acc.currencyType] || '银币' }}{{ acc.balance.toLocaleString('zh-CN') }}
+            </span>
+          </p>
         </div>
-        <button class="deep-icon-button" type="button" title="返回首页" @click="emit('navigate', 'home')">
-          <Home :size="18" />
+        <button v-if="showEconomyFeature" class="deep-icon-button" type="button" title="经济系统" @click="openEconomyPanel">
+          <Coins :size="18" />
+        </button>
+        <button v-if="showNpcFeature" class="deep-icon-button" type="button" title="NPC 管理" @click="openNpcPanel">
+          <Users :size="18" />
+        </button>
+        <button class="deep-icon-button" type="button" title="存档管理" @click="openSavePanel">
+          <Save :size="18" />
         </button>
       </header>
 
@@ -1170,9 +2095,11 @@ function scrollStorageKey() {
         @touchmove.passive="handleTouchMove"
       >
         <p v-if="loading" class="deep-muted">正在加载对话...</p>
-        <article
+        <template
           v-for="message in messages"
           :key="message.id"
+        >
+          <article
           class="deep-message"
           :class="message.role"
           :data-message-id="message.id"
@@ -1199,7 +2126,7 @@ function scrollStorageKey() {
                 class="reasoning-body"
                 :class="{ 'is-typing': isReasoningTyping(message) }"
               >
-                <MarkdownContent class="typing-text" :text="message.reasoning" />
+                <MarkdownContent class="typing-text" :text="message.reasoning" :render-plugins="activeRenderPlugins()" />
               </div>
             </div>
 
@@ -1228,7 +2155,12 @@ function scrollStorageKey() {
                   </button>
                 </div>
               </div>
-              <MarkdownContent v-else class="typing-text" :text="message.content || messagePlaceholder(message)" />
+              <MarkdownContent
+                v-else
+                class="typing-text"
+                :text="message.content || messagePlaceholder(message)"
+                :render-plugins="activeRenderPlugins()"
+              />
             </div>
             <div class="message-actions" :class="message.role">
               <button
@@ -1269,17 +2201,14 @@ function scrollStorageKey() {
             </span>
             <small>{{ messageAuthorName(message) }}</small>
           </div>
-        </article>
-        <p v-if="actionNotice" class="chat-action-toast" role="status">{{ actionNotice }}</p>
-        <div v-if="error" class="deep-error" role="status">
-          <span>{{ error }}</span>
-          <button v-if="needsProviderFix" type="button" @click="emit('navigate', 'settings')">
-            去设置
-          </button>
-        </div>
+          </article>
+          <div v-if="hasStatusBarContent && message === latestAssistantMessage" class="status-bar-wrapper">
+            <StatusBar :status-bar="statusBar" />
+          </div>
+        </template>
       </div>
 
-      <footer class="deep-composer-wrap">
+      <footer ref="composerWrap" class="deep-composer-wrap">
         <button
           v-if="showScrollBottomButton"
           class="scroll-bottom-button"
@@ -1294,11 +2223,22 @@ function scrollStorageKey() {
             ref="composerTextarea"
             v-model="input"
             placeholder="给 AI 发送消息"
-            rows="2"
+            :rows="chatViewportIsPhone ? 1 : 2"
             @input="resizeComposerTextarea"
-            @keydown.enter.exact.prevent="submit"
+            @keydown.enter.exact="handleComposerEnter"
           />
           <div class="composer-actions">
+            <select
+              v-if="presetList.length"
+              v-model="selectedPresetId"
+              class="preset-select"
+              title="选择对话预设"
+            >
+              <option value="">无预设</option>
+              <option v-for="p in presetList" :key="p.id" :value="p.id">
+                {{ p.name }}{{ p.isDefault ? ' 默认' : '' }}
+              </option>
+            </select>
             <button
               class="mode-pill"
               :class="{ active: useStream }"
@@ -1332,5 +2272,24 @@ function scrollStorageKey() {
         </form>
       </footer>
     </section>
+    <EconomyPanel
+      v-if="conversation?.id && showEconomyFeature"
+      :conversation-id="conversation.id"
+      :open="economyPanelOpen"
+      @close="closeEconomyPanel"
+    />
+    <NpcPanel
+      v-if="conversation?.id && showNpcFeature"
+      :conversation-id="conversation.id"
+      :open="npcPanelOpen"
+      @close="closeNpcPanel"
+    />
+    <SaveLoadPanel
+      v-if="conversation?.id"
+      :conversation-id="conversation.id"
+      :open="savePanelOpen"
+      @close="closeSavePanel"
+      @loaded="onSavesLoaded"
+    />
   </section>
 </template>

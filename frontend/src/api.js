@@ -2,13 +2,51 @@ const jsonHeaders = {
   'Content-Type': 'application/json'
 };
 
+// ── CSRF Token 管理 ──
+let csrfToken = '';
+
+function getCsrfToken() {
+  if (csrfToken) return csrfToken;
+  // 从 cookie 中读取
+  const match = document.cookie.match(/flai_csrf=([^;]+)/);
+  if (match) csrfToken = decodeURIComponent(match[1]);
+  return csrfToken;
+}
+
+export async function ensureCsrfToken() {
+  if (getCsrfToken()) return csrfToken;
+  try {
+    const res = await fetch(apiUrl('/api/csrf-token'), { credentials: 'include' });
+    const data = await res.json();
+    csrfToken = data.csrfToken || '';
+  } catch {
+    // 静默失败
+  }
+  return csrfToken;
+}
+
+async function refreshCsrfToken() {
+  csrfToken = '';
+  return ensureCsrfToken();
+}
+
+// 页面加载时获取 CSRF token
+if (typeof window !== 'undefined') {
+  ensureCsrfToken();
+}
+
 const configuredApiBase = normalizeBaseUrl(import.meta.env.VITE_API_BASE_URL || '');
 
 export async function apiRequest(path, options = {}) {
-  let { response, data } = await requestJson(path, options);
+  let { response, data, base } = await requestJson(path, options);
 
   if (shouldRetryApiOnBackend(path, response, data)) {
-    ({ response, data } = await requestJson(path, options, devBackendBase()));
+    ({ response, data, base } = await requestJson(path, options, devBackendBase()));
+  }
+
+  if (shouldRetryAfterCsrf(response, data, options)) {
+    await refreshCsrfToken();
+    ({ response, data } = await requestJson(path, options, base));
   }
 
   if (!response.ok) {
@@ -39,8 +77,26 @@ export function logout() {
   return apiRequest('/api/auth/logout', { method: 'POST' });
 }
 
-export function fetchCharacters({ search = '', sort = 'created' } = {}) {
-  const params = new URLSearchParams({ search, sort });
+export function saveUserAvatar(payload) {
+  return apiRequest('/api/users/me/avatar', {
+    method: 'PUT',
+    body: JSON.stringify(payload)
+  });
+}
+
+export function getUserProfile() {
+  return apiRequest('/api/users/me/profile');
+}
+
+export function saveUserProfile(payload) {
+  return apiRequest('/api/users/me/profile', {
+    method: 'PUT',
+    body: JSON.stringify(payload)
+  });
+}
+
+export function fetchCharacters({ search = '', sort = 'created', tag = '' } = {}) {
+  const params = new URLSearchParams({ search, sort, tag });
   return apiRequest(`/api/characters?${params.toString()}`);
 }
 
@@ -64,6 +120,140 @@ export function updateCharacter(id, payload) {
 
 export function deleteCharacter(id) {
   return apiRequest(`/api/characters/${id}`, {
+    method: 'DELETE'
+  });
+}
+
+export function exportCharacter(id) {
+  return apiRequest(`/api/characters/${id}/export`);
+}
+
+export function importCharacter(payload) {
+  return apiRequest('/api/characters/import', {
+    method: 'POST',
+    body: JSON.stringify(payload)
+  });
+}
+
+export function completeCharacterDraft(payload) {
+  return apiRequest('/api/characters/complete-draft', {
+    method: 'POST',
+    body: JSON.stringify(payload)
+  });
+}
+
+export function setCharacterFavorite(id, favorited) {
+  return apiRequest(`/api/characters/${id}/favorite`, {
+    method: 'PUT',
+    body: JSON.stringify({ favorited })
+  });
+}
+
+export function setCharacterLike(id, liked) {
+  return apiRequest(`/api/characters/${id}/like`, {
+    method: 'PUT',
+    body: JSON.stringify({ liked })
+  });
+}
+
+// ── Character Images (CG 立绘) ──
+
+export function fetchCharacterImages(characterId) {
+  return apiRequest(`/api/characters/${characterId}/images`);
+}
+
+export function createCharacterImage(characterId, payload) {
+  return apiRequest(`/api/characters/${characterId}/images`, {
+    method: 'POST',
+    body: JSON.stringify(payload)
+  });
+}
+
+export function updateCharacterImage(characterId, imageId, payload) {
+  return apiRequest(`/api/characters/${characterId}/images/${imageId}`, {
+    method: 'PUT',
+    body: JSON.stringify(payload)
+  });
+}
+
+export function deleteCharacterImage(characterId, imageId) {
+  return apiRequest(`/api/characters/${characterId}/images/${imageId}`, {
+    method: 'DELETE'
+  });
+}
+
+export function reorderCharacterImages(characterId, orderedIds) {
+  return apiRequest(`/api/characters/${characterId}/images/order`, {
+    method: 'PUT',
+    body: JSON.stringify({ orderedIds })
+  });
+}
+
+// ── World Books ──
+
+export function fetchWorldBooks() {
+  return apiRequest('/api/world-books');
+}
+
+export function createWorldBook(payload) {
+  return apiRequest('/api/world-books', {
+    method: 'POST',
+    body: JSON.stringify(payload)
+  });
+}
+
+export function fetchWorldBook(id) {
+  return apiRequest(`/api/world-books/${id}`);
+}
+
+export function updateWorldBook(id, payload) {
+  return apiRequest(`/api/world-books/${id}`, {
+    method: 'PUT',
+    body: JSON.stringify(payload)
+  });
+}
+
+export function deleteWorldBook(id) {
+  return apiRequest(`/api/world-books/${id}`, {
+    method: 'DELETE'
+  });
+}
+
+export function createWorldBookEntry(bookId, payload) {
+  return apiRequest(`/api/world-books/${bookId}/entries`, {
+    method: 'POST',
+    body: JSON.stringify(payload)
+  });
+}
+
+export function updateWorldBookEntry(bookId, entryId, payload) {
+  return apiRequest(`/api/world-books/${bookId}/entries/${entryId}`, {
+    method: 'PUT',
+    body: JSON.stringify(payload)
+  });
+}
+
+export function deleteWorldBookEntry(bookId, entryId) {
+  return apiRequest(`/api/world-books/${bookId}/entries/${entryId}`, {
+    method: 'DELETE'
+  });
+}
+
+// ── Tags ──
+
+export function fetchTags() {
+  return apiRequest('/api/tags');
+}
+
+export function createTag(payload) {
+  return apiRequest('/api/tags', {
+    method: 'POST',
+    body: JSON.stringify(payload)
+  });
+}
+
+export function deleteTag(id) {
+  return apiRequest(`/api/tags/${id}`, {
     method: 'DELETE'
   });
 }
@@ -123,6 +313,218 @@ export function fetchConversationMessages(conversationId) {
   return apiRequest(`/api/conversations/${conversationId}/messages`);
 }
 
+export function fetchConversationSettings(conversationId) {
+  return apiRequest(`/api/conversations/${conversationId}/settings`);
+}
+
+export function saveConversationSettings(conversationId, payload) {
+  return apiRequest(`/api/conversations/${conversationId}/settings`, {
+    method: 'PUT',
+    body: JSON.stringify(payload)
+  });
+}
+
+export function fetchConversationAccessorySkills(conversationId) {
+  return apiRequest(`/api/conversations/${conversationId}/accessory-skills`);
+}
+
+export function saveConversationAccessorySkills(conversationId, payload) {
+  return apiRequest(`/api/conversations/${conversationId}/accessory-skills`, {
+    method: 'PUT',
+    body: JSON.stringify(payload)
+  });
+}
+
+export function saveCharacterAccessorySkills(characterId, payload) {
+  return apiRequest(`/api/characters/${characterId}/accessory-skills`, {
+    method: 'PUT',
+    body: JSON.stringify(payload)
+  });
+}
+
+// ── Saves ──
+
+export function fetchSaves(conversationId) {
+  return apiRequest(`/api/conversations/${conversationId}/saves`);
+}
+
+export function createSave(conversationId, payload = {}) {
+  return apiRequest(`/api/conversations/${conversationId}/saves`, {
+    method: 'POST',
+    body: JSON.stringify(payload)
+  });
+}
+
+export function fetchSave(saveId) {
+  return apiRequest(`/api/saves/${saveId}`);
+}
+
+export function loadSave(saveId) {
+  return apiRequest(`/api/saves/${saveId}/load`, {
+    method: 'POST'
+  });
+}
+
+export function renameSave(saveId, name) {
+  return apiRequest(`/api/saves/${saveId}`, {
+    method: 'PUT',
+    body: JSON.stringify({ name })
+  });
+}
+
+export function deleteSave(saveId) {
+  return apiRequest(`/api/saves/${saveId}`, {
+    method: 'DELETE'
+  });
+}
+
+// ── Regex Rules ──
+
+export function fetchRegexRules(group = '') {
+  const params = new URLSearchParams();
+  if (group) params.set('group', group);
+  const suffix = params.toString() ? `?${params.toString()}` : '';
+  return apiRequest(`/api/regex-rules${suffix}`);
+}
+
+export function toggleRegexRule(ruleId) {
+  return apiRequest(`/api/regex-rules/${ruleId}/toggle`, { method: 'PUT' });
+}
+
+export function reorderRegexRules(orderedIds) {
+  return apiRequest('/api/regex-rules/order', {
+    method: 'PUT',
+    body: JSON.stringify({ orderedIds })
+  });
+}
+
+export function importRegexRuleSet(payload) {
+  return apiRequest('/api/regex-rules/import', {
+    method: 'POST',
+    body: JSON.stringify(payload)
+  });
+}
+
+// ── Presets ──
+
+export function fetchPresets() {
+  return apiRequest('/api/presets');
+}
+
+export function createPreset(payload) {
+  return apiRequest('/api/presets', {
+    method: 'POST',
+    body: JSON.stringify(payload)
+  });
+}
+
+export function fetchPreset(id) {
+  return apiRequest(`/api/presets/${id}`);
+}
+
+export function updatePreset(id, payload) {
+  return apiRequest(`/api/presets/${id}`, {
+    method: 'PUT',
+    body: JSON.stringify(payload)
+  });
+}
+
+export function deletePreset(id) {
+  return apiRequest(`/api/presets/${id}`, {
+    method: 'DELETE'
+  });
+}
+
+export function setDefaultPreset(id) {
+  return apiRequest(`/api/presets/${id}/set-default`, {
+    method: 'POST'
+  });
+}
+
+// ── Talent Pools ──
+
+export function fetchTalentPools() {
+  return apiRequest('/api/talent-pools');
+}
+
+export function createTalentPool(payload) {
+  return apiRequest('/api/talent-pools', {
+    method: 'POST',
+    body: JSON.stringify(payload)
+  });
+}
+
+export function updateTalentPool(id, payload) {
+  return apiRequest(`/api/talent-pools/${id}`, {
+    method: 'PUT',
+    body: JSON.stringify(payload)
+  });
+}
+
+export function deleteTalentPool(id) {
+  return apiRequest(`/api/talent-pools/${id}`, {
+    method: 'DELETE'
+  });
+}
+
+// ── Character Talents ──
+
+export function rollCharacterTalent(characterId, poolId) {
+  return apiRequest(`/api/characters/${characterId}/roll-talent`, {
+    method: 'POST',
+    body: JSON.stringify({ poolId })
+  });
+}
+
+export function fetchCharacterTalents(characterId) {
+  return apiRequest(`/api/characters/${characterId}/talents`);
+}
+
+export function deleteCharacterTalent(characterId, talentId) {
+  return apiRequest(`/api/characters/${characterId}/talents/${talentId}`, {
+    method: 'DELETE'
+  });
+}
+
+export function deleteAllCharacterTalents(characterId) {
+  return apiRequest(`/api/characters/${characterId}/talents`, {
+    method: 'DELETE'
+  });
+}
+
+// ── Mods ──
+
+export function fetchMods() {
+  return apiRequest('/api/mods');
+}
+
+export function createMod(payload) {
+  return apiRequest('/api/mods', {
+    method: 'POST',
+    body: JSON.stringify(payload)
+  });
+}
+
+export function updateMod(id, payload) {
+  return apiRequest(`/api/mods/${id}`, {
+    method: 'PUT',
+    body: JSON.stringify(payload)
+  });
+}
+
+export function deleteMod(id) {
+  return apiRequest(`/api/mods/${id}`, {
+    method: 'DELETE'
+  });
+}
+
+export function reorderMods(order) {
+  return apiRequest('/api/mods/order', {
+    method: 'PUT',
+    body: JSON.stringify({ order })
+  });
+}
+
 export function updateMessage(conversationId, messageId, payload) {
   return apiRequest(`/api/conversations/${conversationId}/messages/${messageId}`, {
     method: 'PATCH',
@@ -143,20 +545,127 @@ export function sendMessage(conversationId, payload) {
   });
 }
 
+// ── Economy ──
+
+export function fetchConversationEconomy(conversationId, options = {}) {
+  const params = new URLSearchParams();
+  if (options.ensure === false) {
+    params.set('ensure', '0');
+  }
+  const suffix = params.toString() ? `?${params.toString()}` : '';
+  return apiRequest(`/api/conversations/${conversationId}/economy${suffix}`);
+}
+
+export function createEconomyTransaction(conversationId, payload) {
+  return apiRequest(`/api/conversations/${conversationId}/economy/transaction`, {
+    method: 'POST',
+    body: JSON.stringify(payload)
+  });
+}
+
+export function fetchEconomyHistory(conversationId, params = {}) {
+  const query = new URLSearchParams();
+  if (params.limit) query.set('limit', params.limit);
+  if (params.offset) query.set('offset', params.offset);
+  if (params.currencyType) query.set('currencyType', params.currencyType);
+  const suffix = query.toString() ? `?${query.toString()}` : '';
+  return apiRequest(`/api/conversations/${conversationId}/economy/history${suffix}`);
+}
+
+// ── Status Bar ──
+
+export function fetchStatusBar(conversationId) {
+  return apiRequest(`/api/conversations/${conversationId}/status-bar`);
+}
+
+export function saveStatusBar(conversationId, payload) {
+  return apiRequest(`/api/conversations/${conversationId}/status-bar`, {
+    method: 'PUT',
+    body: JSON.stringify(payload)
+  });
+}
+
+export function deleteStatusBar(conversationId) {
+  return apiRequest(`/api/conversations/${conversationId}/status-bar`, {
+    method: 'DELETE'
+  });
+}
+
+// ── NPC Agent Engine ──
+
+export function fetchConversationNpcs(conversationId) {
+  return apiRequest(`/api/conversations/${conversationId}/npcs`);
+}
+
+export function fetchNpcMemories(conversationId, npcName) {
+  return apiRequest(`/api/conversations/${conversationId}/npcs/${encodeURIComponent(npcName)}/memories`);
+}
+
+export function addNpcMemory(conversationId, npcName, payload) {
+  return apiRequest(`/api/conversations/${conversationId}/npcs/${encodeURIComponent(npcName)}/memories`, {
+    method: 'POST',
+    body: JSON.stringify(payload)
+  });
+}
+
+export function deleteNpcMemory(conversationId, npcName, memoryId) {
+  return apiRequest(`/api/conversations/${conversationId}/npcs/${encodeURIComponent(npcName)}/memories/${memoryId}`, {
+    method: 'DELETE'
+  });
+}
+
+export function fetchNpcBehaviors(conversationId, npcName) {
+  return apiRequest(`/api/conversations/${conversationId}/npcs/${encodeURIComponent(npcName)}/behaviors`);
+}
+
+export function addNpcBehavior(conversationId, npcName, payload) {
+  return apiRequest(`/api/conversations/${conversationId}/npcs/${encodeURIComponent(npcName)}/behaviors`, {
+    method: 'POST',
+    body: JSON.stringify(payload)
+  });
+}
+
+export function updateNpcBehavior(conversationId, npcName, behaviorId, payload) {
+  return apiRequest(`/api/conversations/${conversationId}/npcs/${encodeURIComponent(npcName)}/behaviors/${behaviorId}`, {
+    method: 'PUT',
+    body: JSON.stringify(payload)
+  });
+}
+
+export function deleteNpcBehavior(conversationId, npcName, behaviorId) {
+  return apiRequest(`/api/conversations/${conversationId}/npcs/${encodeURIComponent(npcName)}/behaviors/${behaviorId}`, {
+    method: 'DELETE'
+  });
+}
+
 export async function streamMessage(conversationId, payload, handlers = {}, signal) {
   const path = `/api/conversations/${conversationId}/messages`;
-  const request = {
+  await ensureCsrfToken();
+  const body = JSON.stringify({ ...payload, stream: true });
+  const buildRequest = () => ({
     method: 'POST',
     credentials: 'include',
-    headers: jsonHeaders,
-    body: JSON.stringify({ ...payload, stream: true }),
+    headers: {
+      ...jsonHeaders,
+      'X-CSRF-Token': getCsrfToken() || ''
+    },
+    body,
     signal
-  };
-  const streamBase = configuredApiBase || devBackendBase();
-  let response = await fetch(apiUrl(path, streamBase), request);
+  });
+  let streamBase = configuredApiBase;
+  let response = await fetch(apiUrl(path, streamBase), buildRequest());
 
   if (shouldRetryApiOnBackend(path, response)) {
-    response = await fetch(apiUrl(path, devBackendBase()), request);
+    streamBase = devBackendBase();
+    response = await fetch(apiUrl(path, streamBase), buildRequest());
+  }
+
+  if (response.status === 403 || response.status === 419) {
+    const detail = await response.clone().json().catch(() => ({}));
+    if (isCsrfFailure(response, detail)) {
+      await refreshCsrfToken();
+      response = await fetch(apiUrl(path, streamBase), buildRequest());
+    }
   }
 
   if (!response.ok) {
@@ -227,10 +736,16 @@ function safeJson(text) {
 }
 
 async function requestJson(path, options = {}, base = configuredApiBase) {
+  const isMutation = ['POST', 'PUT', 'PATCH', 'DELETE'].includes((options.method || 'GET').toUpperCase());
+  if (isMutation) {
+    await ensureCsrfToken();
+  }
+  const csrfHeaders = isMutation ? { 'X-CSRF-Token': getCsrfToken() || '' } : {};
   const response = await fetch(apiUrl(path, base), {
     credentials: 'include',
     ...options,
     headers: {
+      ...csrfHeaders,
       ...(options.body ? jsonHeaders : {}),
       ...(options.headers || {})
     }
@@ -239,7 +754,8 @@ async function requestJson(path, options = {}, base = configuredApiBase) {
   const text = await response.text();
   return {
     response,
-    data: text ? safeJson(text) : {}
+    data: text ? safeJson(text) : {},
+    base
   };
 }
 
@@ -258,6 +774,15 @@ function shouldRetryApiOnBackend(path, response, data = {}) {
     !data.error &&
     Boolean(devBackendBase())
   );
+}
+
+function shouldRetryAfterCsrf(response, data, options = {}) {
+  const isMutation = ['POST', 'PUT', 'PATCH', 'DELETE'].includes((options.method || 'GET').toUpperCase());
+  return isMutation && isCsrfFailure(response, data);
+}
+
+function isCsrfFailure(response, data = {}) {
+  return [403, 419].includes(response.status) && /csrf/i.test(String(data.error || data.message || ''));
 }
 
 function devBackendBase() {

@@ -2,20 +2,20 @@
 import { ref } from 'vue';
 import { LogIn } from '@lucide/vue';
 import { login } from '../api';
+import { useNotify } from '../composables/useNotify';
 
 const emit = defineEmits(['authenticated', 'navigate']);
+const notify = useNotify();
 const username = ref('');
 const password = ref('');
 const loading = ref(false);
-const error = ref('');
 
 async function submit() {
-  error.value = '';
   loading.value = true;
   try {
     emit('authenticated', await login({ username: username.value, password: password.value }));
   } catch (err) {
-    error.value = err.message;
+    notify.error(err.message);
   } finally {
     loading.value = false;
   }
@@ -42,7 +42,6 @@ async function submit() {
           <span>密码</span>
           <input v-model="password" autocomplete="current-password" type="password" minlength="6" maxlength="128" required />
         </label>
-        <p v-if="error" class="error-text">{{ error }}</p>
         <button class="primary-button" type="submit" :disabled="loading">
           <LogIn :size="18" />
           <span>{{ loading ? '登录中...' : '登录' }}</span>

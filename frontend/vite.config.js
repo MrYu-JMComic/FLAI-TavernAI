@@ -16,10 +16,13 @@ const proxy = {
 export default defineConfig({
   plugins: [vue()],
   server: {
+    host: '0.0.0.0',
     port: 5173,
     proxy
   },
   preview: {
+    host: '0.0.0.0',
+    port: 4173,
     proxy
   }
 });
