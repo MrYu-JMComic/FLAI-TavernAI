@@ -74,9 +74,13 @@ export function useChatAccessory({ conversation, showActionNotice, showError }) 
     return Boolean(statusBar.value && Array.isArray(statusBar.value.variables) && statusBar.value.variables.length);
   });
 
-  const statusBarTemplateConfig = computed(() => {
-    return parseTemplateConfig(statusBar.value?.template || '');
-  });
+  const statusBarTemplateConfig = computed(() => ({
+    variant: statusBarTemplateCfg.variant,
+    density: statusBarTemplateCfg.density,
+    accentColor: statusBarTemplateCfg.accentColor,
+    effects: [...statusBarTemplateCfg.effects],
+    customCss: statusBarTemplateCfg.customCss
+  }));
 
   const showEconomyFeature = computed(() => {
     return isAccessorySkillActiveLocal('economyAgent');
