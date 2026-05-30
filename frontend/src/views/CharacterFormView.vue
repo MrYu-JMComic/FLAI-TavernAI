@@ -29,7 +29,22 @@ const previewInput = ref('猫在雨里说你好');
 const worldBooks = ref([]);
 const availableTags = ref([]);
 const tagSearch = ref('');
+const activeSection = ref('basic');
 const form = reactive(emptyCharacter());
+
+const formSections = [
+  { id: 'basic', label: '基础信息' },
+  { id: 'settings', label: '角色设定' },
+  { id: 'advanced', label: '高级功能' }
+];
+
+function scrollToSection(id) {
+  activeSection.value = id;
+  const el = document.getElementById(`section-${id}`);
+  if (el) {
+    el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+}
 const accessorySkillItems = [
   { key: 'npcAgent', label: 'NPC Agent', auto: false },
   { key: 'statusBarAgent', label: '状态栏 Agent', auto: true },
@@ -449,180 +464,201 @@ function applyLocalRules(text, rules, phase) {
     <p v-if="loading" class="muted-text">正在加载角色...</p>
     <p v-if="!loading" class="permission-note" :class="{ readonly: !canEdit }">{{ permissionText }}</p>
 
+    <nav v-if="!loading" class="form-section-nav">
+      <button
+        v-for="section in formSections"
+        :key="section.id"
+        class="form-section-tab"
+        :class="{ active: activeSection === section.id }"
+        type="button"
+        @click="scrollToSection(section.id)"
+      >
+        {{ section.label }}
+      </button>
+    </nav>
+
     <form v-if="!loading" class="editor-layout" @submit.prevent="submit">
       <section class="form-panel">
-        <div class="inline-heading">
-          <div>
-            <h2>角色资料</h2>
-            <p>
-              <span class="variable-token">{user}</span>
-              <span>当前：{{ userVariableValue }}</span>
-            </p>
-          </div>
-        </div>
-
-        <div class="avatar-editor">
-          <div class="large-avatar">
-            <img v-if="form.avatarUrl" :src="form.avatarUrl" :alt="form.name" />
-            <span v-else>{{ form.name.slice(0, 1) || 'F' }}</span>
-          </div>
-          <label v-if="canEdit" class="file-button">
-            <Upload :size="18" />
-            <span>上传头像</span>
-            <input type="file" accept="image/png,image/jpeg,image/webp" @change="handleAvatar" />
-          </label>
-          <div v-else class="permission-chip">只读展示</div>
-        </div>
-
-        <div class="form-grid two-col">
-          <div class="field full-span">
-            <span>展示权限</span>
-            <div class="visibility-picker" :class="{ disabled: !canEdit }">
-              <label>
-                <input v-model="form.visibility" type="radio" value="private" :disabled="!canEdit" />
-                <span>
-                  私人角色
-                  <small>仅拥有者可见、可编辑、可使用</small>
-                </span>
-              </label>
-              <label>
-                <input v-model="form.visibility" type="radio" value="public" :disabled="!canEdit" />
-                <span>
-                  公开角色
-                  <small>所有登录用户可查看和使用，仅拥有者可编辑</small>
-                </span>
-              </label>
+        <div id="section-basic" class="form-section-group">
+          <div class="inline-heading">
+            <div>
+              <h2>基础信息</h2>
+              <p>
+                <span class="variable-token">{user}</span>
+                <span>当前：{{ userVariableValue }}</span>
+              </p>
             </div>
           </div>
-          <label class="field">
-            <span>角色名</span>
-            <input v-model.trim="form.name" required maxlength="40" :disabled="!canEdit" />
-          </label>
+
+          <div class="avatar-editor">
+            <div class="large-avatar">
+              <img v-if="form.avatarUrl" :src="form.avatarUrl" :alt="form.name" />
+              <span v-else>{{ form.name.slice(0, 1) || 'F' }}</span>
+            </div>
+            <label v-if="canEdit" class="file-button">
+              <Upload :size="18" />
+              <span>上传头像</span>
+              <input type="file" accept="image/png,image/jpeg,image/webp" @change="handleAvatar" />
+            </label>
+            <div v-else class="permission-chip">只读展示</div>
+          </div>
+
+          <div class="form-grid two-col">
+            <div class="field full-span">
+              <span>展示权限</span>
+              <div class="visibility-picker" :class="{ disabled: !canEdit }">
+                <label>
+                  <input v-model="form.visibility" type="radio" value="private" :disabled="!canEdit" />
+                  <span>
+                    私人角色
+                    <small>仅拥有者可见、可编辑、可使用</small>
+                  </span>
+                </label>
+                <label>
+                  <input v-model="form.visibility" type="radio" value="public" :disabled="!canEdit" />
+                  <span>
+                    公开角色
+                    <small>所有登录用户可查看和使用，仅拥有者可编辑</small>
+                  </span>
+                </label>
+              </div>
+            </div>
+            <label class="field">
+              <span>角色名</span>
+              <input v-model.trim="form.name" required maxlength="40" :disabled="!canEdit" />
+            </label>
+            <div class="field">
+              <span>标签</span>
+              <div class="tag-selector" :class="{ disabled: !canEdit }">
+                <div v-if="form.selectedTags.length" class="selected-tags">
+                  <span
+                    v-for="tagName in form.selectedTags"
+                    :key="tagName"
+                    class="tag-badge removable"
+                    @click="canEdit && toggleTagSelection(tagName)"
+                  >
+                    {{ tagName }}
+                    <span v-if="canEdit" class="tag-remove">×</span>
+                  </span>
+                </div>
+                <div v-if="canEdit" class="tag-input-row">
+                  <input v-model="tagSearch" placeholder="搜索或创建标签..." class="tag-search-input" />
+                  <button
+                    v-if="tagSearch.trim() && !availableTags.some((t) => t.name === tagSearch.trim())"
+                    class="ghost-button tag-create-btn"
+                    type="button"
+                    @click="createAndSelectTag"
+                  >
+                    <Plus :size="14" />
+                    创建
+                  </button>
+                </div>
+                <div v-if="canEdit && tagSearch.trim()" class="tag-dropdown">
+                  <button
+                    v-for="tag in filteredTags"
+                    :key="tag.id"
+                    class="tag-option"
+                    :class="{ selected: form.selectedTags.includes(tag.name) }"
+                    type="button"
+                    @click="toggleTagSelection(tag.name)"
+                  >
+                    {{ tag.name }}
+                    <span v-if="form.selectedTags.includes(tag.name)" class="tag-check">✓</span>
+                  </button>
+                  <p v-if="!filteredTags.length" class="muted-text tag-empty">无匹配标签</p>
+                </div>
+              </div>
+              <small class="muted-text">选择已有标签或输入新标签名创建</small>
+            </div>
+            <label class="field full-span">
+              <span>关联世界书</span>
+              <select v-model="form.worldBookId" :disabled="!canEdit">
+                <option value="">不关联</option>
+                <option v-for="wb in worldBooks" :key="wb.id" :value="wb.id">{{ wb.name }}</option>
+              </select>
+              <small v-if="worldBooks.length" class="muted-text">选择世界书后，对话中触发词匹配时会自动注入设定</small>
+              <small v-else class="muted-text">还没有世界书，去 <a href="#/world-books">世界书管理</a> 创建</small>
+            </label>
+            <label class="field">
+              <span>性别</span>
+              <input v-model.trim="form.gender" maxlength="24" :disabled="!canEdit" />
+            </label>
+            <label class="field">
+              <span>年龄</span>
+              <input v-model.trim="form.age" maxlength="24" :disabled="!canEdit" />
+            </label>
+          </div>
+        </div>
+
+        <div id="section-settings" class="form-section-group">
+          <h3 class="form-section-title">角色设定</h3>
+          <p class="form-section-desc">定义角色的背景、世界观、人设和开场白。支持 <span class="variable-token">{user}</span> 变量替换。</p>
+
           <div class="field">
-            <span>标签</span>
-            <div class="tag-selector" :class="{ disabled: !canEdit }">
-              <div v-if="form.selectedTags.length" class="selected-tags">
-                <span
-                  v-for="tagName in form.selectedTags"
-                  :key="tagName"
-                  class="tag-badge removable"
-                  @click="canEdit && toggleTagSelection(tagName)"
-                >
-                  {{ tagName }}
-                  <span v-if="canEdit" class="tag-remove">×</span>
-                </span>
-              </div>
-              <div v-if="canEdit" class="tag-input-row">
-                <input v-model="tagSearch" placeholder="搜索或创建标签..." class="tag-search-input" />
-                <button
-                  v-if="tagSearch.trim() && !availableTags.some((t) => t.name === tagSearch.trim())"
-                  class="ghost-button tag-create-btn"
-                  type="button"
-                  @click="createAndSelectTag"
-                >
-                  <Plus :size="14" />
-                  创建
-                </button>
-              </div>
-              <div v-if="canEdit && tagSearch.trim()" class="tag-dropdown">
-                <button
-                  v-for="tag in filteredTags"
-                  :key="tag.id"
-                  class="tag-option"
-                  :class="{ selected: form.selectedTags.includes(tag.name) }"
-                  type="button"
-                  @click="toggleTagSelection(tag.name)"
-                >
-                  {{ tag.name }}
-                  <span v-if="form.selectedTags.includes(tag.name)" class="tag-check">✓</span>
-                </button>
-                <p v-if="!filteredTags.length" class="muted-text tag-empty">无匹配标签</p>
-              </div>
+            <div class="field-heading">
+              <span>背景</span>
+              <button class="variable-insert-button" type="button" :disabled="!canEdit" @click="insertUserVariable('background')">
+                {user}
+              </button>
             </div>
-            <small class="muted-text">选择已有标签或输入新标签名创建</small>
+            <VariableEditor
+              v-model="form.background"
+              :rows="4"
+              :disabled="!canEdit"
+              :user-value="userVariableValue"
+              placeholder=""
+            />
           </div>
-          <label class="field full-span">
-            <span>关联世界书</span>
-            <select v-model="form.worldBookId" :disabled="!canEdit">
-              <option value="">不关联</option>
-              <option v-for="wb in worldBooks" :key="wb.id" :value="wb.id">{{ wb.name }}</option>
-            </select>
-            <small v-if="worldBooks.length" class="muted-text">选择世界书后，对话中触发词匹配时会自动注入设定</small>
-            <small v-else class="muted-text">还没有世界书，去 <a href="#/world-books">世界书管理</a> 创建</small>
-          </label>
-          <label class="field">
-            <span>性别</span>
-            <input v-model.trim="form.gender" maxlength="24" :disabled="!canEdit" />
-          </label>
-          <label class="field">
-            <span>年龄</span>
-            <input v-model.trim="form.age" maxlength="24" :disabled="!canEdit" />
-          </label>
-        </div>
-
-        <div class="field">
-          <div class="field-heading">
-            <span>背景</span>
-            <button class="variable-insert-button" type="button" :disabled="!canEdit" @click="insertUserVariable('background')">
-              {user}
-            </button>
+          <div class="field">
+            <div class="field-heading">
+              <span>世界观</span>
+              <button class="variable-insert-button" type="button" :disabled="!canEdit" @click="insertUserVariable('worldview')">
+                {user}
+              </button>
+            </div>
+            <VariableEditor
+              v-model="form.worldview"
+              :rows="4"
+              :disabled="!canEdit"
+              :user-value="userVariableValue"
+              placeholder=""
+            />
           </div>
-          <VariableEditor
-            v-model="form.background"
-            :rows="4"
-            :disabled="!canEdit"
-            :user-value="userVariableValue"
-            placeholder=""
-          />
-        </div>
-        <div class="field">
-          <div class="field-heading">
-            <span>世界观</span>
-            <button class="variable-insert-button" type="button" :disabled="!canEdit" @click="insertUserVariable('worldview')">
-              {user}
-            </button>
+          <div class="field">
+            <div class="field-heading">
+              <span>人设</span>
+              <button class="variable-insert-button" type="button" :disabled="!canEdit" @click="insertUserVariable('persona')">
+                {user}
+              </button>
+            </div>
+            <VariableEditor
+              v-model="form.persona"
+              :rows="5"
+              :disabled="!canEdit"
+              :user-value="userVariableValue"
+              placeholder=""
+            />
           </div>
-          <VariableEditor
-            v-model="form.worldview"
-            :rows="4"
-            :disabled="!canEdit"
-            :user-value="userVariableValue"
-            placeholder=""
-          />
-        </div>
-        <div class="field">
-          <div class="field-heading">
-            <span>人设</span>
-            <button class="variable-insert-button" type="button" :disabled="!canEdit" @click="insertUserVariable('persona')">
-              {user}
-            </button>
+          <div class="field">
+            <div class="field-heading">
+              <span>开场白</span>
+              <button class="variable-insert-button" type="button" :disabled="!canEdit" @click="insertUserVariable('openingMessage')">
+                {user}
+              </button>
+            </div>
+            <VariableEditor
+              v-model="form.openingMessage"
+              :rows="4"
+              :disabled="!canEdit"
+              :user-value="userVariableValue"
+              placeholder=""
+            />
           </div>
-          <VariableEditor
-            v-model="form.persona"
-            :rows="5"
-            :disabled="!canEdit"
-            :user-value="userVariableValue"
-            placeholder=""
-          />
-        </div>
-        <div class="field">
-          <div class="field-heading">
-            <span>开场白</span>
-            <button class="variable-insert-button" type="button" :disabled="!canEdit" @click="insertUserVariable('openingMessage')">
-              {user}
-            </button>
-          </div>
-          <VariableEditor
-            v-model="form.openingMessage"
-            :rows="4"
-            :disabled="!canEdit"
-            :user-value="userVariableValue"
-            placeholder=""
-          />
         </div>
       </section>
 
       <div class="editor-side">
+        <div id="section-advanced" class="form-section-group-advanced">
         <section v-if="canEdit" class="form-panel ai-draft-panel">
           <div class="inline-heading">
             <div>
@@ -869,6 +905,7 @@ function applyLocalRules(text, rules, phase) {
           </button>
         </div>
         </section>
+        </div>
       </div>
     </form>
   </section>
