@@ -1,55 +1,41 @@
-# ChatView Phase 2 Refactor — 2026-05-30
+# Phase 2 — ChatView Component Extraction
+
+**Date:** 2026-05-30
+**Commit:** `cddf8f2` — ui: refactor chat experience
+**Scope:** `frontend/src/views/ChatView.vue`, `frontend/src/components/chat/`, `frontend/src/styles.css`
 
 ## Summary
 
-Refactored `ChatView.vue` (2295 lines) by extracting 5 reusable Vue components under `frontend/src/components/chat/`. All behavior preserved. Build passes. Encoding check passes.
+Extracted 5 reusable Vue components from `ChatView.vue` (2295 lines). After extraction, ChatView was 1837 lines. Phase 2b (commit `029c6e9`) later extracted composables, bringing ChatView to its final 441 lines.
 
-## Changes
+## New Components
 
-### New files
-- `frontend/src/components/chat/ChatSidebar.vue` (138 lines) — conversation list, search, batch delete, user footer
-- `frontend/src/components/chat/ChatSettingsDrawer.vue` (311 lines) — appearance, CSS/JS, accessory skills, status bar editor
-- `frontend/src/components/chat/ChatHeader.vue` (48 lines) — title, provider/model label, economy/NPC/save buttons
-- `frontend/src/components/chat/ChatMessageItem.vue` (146 lines) — message bubble, reasoning toggle, edit/copy/delete actions
-- `frontend/src/components/chat/ChatComposer.vue` (101 lines) — textarea, send/stop, stream toggle, thinking toggle, preset select
+| Component | Lines | Responsibility |
+|---|---|---|
+| `ChatSidebar.vue` | 138 | Conversation list, search, batch delete, user footer |
+| `ChatSettingsDrawer.vue` | 311 | Appearance, CSS/JS, accessory skills, status bar editor |
+| `ChatHeader.vue` | 48 | Title, provider/model label, economy/NPC/save buttons |
+| `ChatMessageItem.vue` | 146 | Message bubble, reasoning toggle, edit/copy/delete actions |
+| `ChatComposer.vue` | 101 | Textarea, send/stop, stream toggle, thinking toggle, preset select |
 
-### Modified files
-- `frontend/src/views/ChatView.vue` — 2295 → 1837 lines (template: ~608 → ~152 lines)
-- `frontend/src/styles.css` — mobile touch target improvements
+## Modified Files
 
-## Line count summary
+- `ChatView.vue` — 2295 to 1837 lines (template: ~608 to ~152 lines)
+- `styles.css` — mobile touch target improvements
 
-| File | Lines |
-|---|---|
-| ChatView.vue | 1837 |
-| ChatSidebar.vue | 138 |
-| ChatSettingsDrawer.vue | 311 |
-| ChatHeader.vue | 48 |
-| ChatMessageItem.vue | 146 |
-| ChatComposer.vue | 101 |
-| **Total** | **2581** |
+## Mobile UX Improvements
 
-## Why ChatView remains above 800 lines
-
-The script section (~1685 lines) contains all business logic: streaming, typing animation, scroll management, appearance scripting, message CRUD, clipboard, sidebar/settings state. Moving this logic into child components would require either:
-- Duplicating state across components (risky)
-- Creating a shared composable with ~50 reactive refs and ~40 functions (large refactor, risky)
-
-Behavior preservation was prioritized over an arbitrary line count target.
-
-## Mobile UX improvements
-
-- `.message-action-button` on mobile (≤520px): 32px → 44px touch targets
-- `.round-send` button: 38px → 44px
-- `.mode-pill` buttons: 34px → 44px min-height
-- `.message-actions` always visible on mobile (≤980px), flex-wrap with gap to prevent overlap
+- `.message-action-button` on mobile (<=520px): 32px to 44px touch targets
+- `.round-send` button: 38px to 44px
+- `.mode-pill` buttons: 34px to 44px min-height
+- `.message-actions` always visible on mobile (<=980px), flex-wrap with gap
 
 ## Validation
 
-- `node scripts/check-encoding.mjs` — PASSED
-- `npm.cmd run build` (frontend) — PASSED (568ms)
+- `node scripts/check-encoding.mjs` — PASS
+- `npm run build` (frontend) — PASS
 
-## Behavior preserved
+## Behavior Preserved
 
 - Streaming with typing animation
 - Reasoning expand/collapse
@@ -62,8 +48,6 @@ Behavior preservation was prioritized over an arbitrary line count target.
 - Economy/NPC/SaveLoad panel integration
 - Preset selection
 
-## Next recommended task
+## Note
 
-- Further extract scroll management logic into a `useChatScroll` composable
-- Extract streaming logic into a `useChatStream` composable
-- These could bring ChatView under 1000 lines while keeping behavior safe
+This was the initial component extraction. The script section (~1685 lines) remained in ChatView. Phase 2b (commit `029c6e9`) subsequently extracted logic into 6 composables, reducing ChatView to 441 lines.
