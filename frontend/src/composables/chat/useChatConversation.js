@@ -16,7 +16,7 @@ export function useChatConversation({ route, emit, showError }) {
   const loading = ref(false);
   const error = ref('');
   const historySearch = ref('');
-  const sidebarOpen = ref(false);
+  const sidebarOpen = ref(typeof window !== 'undefined' && window.matchMedia('(min-width: 981px)').matches);
   const settingsDrawerOpen = ref(false);
   const selectedConversationIds = ref(new Set());
   const conversationActionBusy = ref(false);
