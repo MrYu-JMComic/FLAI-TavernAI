@@ -3242,6 +3242,7 @@ p {
   margin-top: 6px;
   opacity: 0;
   transition: opacity 0.14s ease;
+  overflow: hidden;
 }
 
 .message-actions.user {
@@ -3653,7 +3654,7 @@ p {
 
 .mode-pill {
   gap: 6px;
-  min-height: 34px;
+  min-height: 44px;
   border: 1px solid #e5e9f1;
   border-radius: 999px;
   padding: 0 12px;
@@ -3696,8 +3697,8 @@ p {
 
 .round-send {
   display: grid;
-  width: 38px;
-  height: 38px;
+  width: 44px;
+  height: 44px;
   place-items: center;
   border: 0;
   border-radius: 999px;
@@ -3796,8 +3797,8 @@ p {
 
 @media (max-width: 520px) {
   .message-action-button {
-    width: 32px;
-    min-height: 32px;
+    width: 44px;
+    min-height: 44px;
     padding: 0;
   }
 

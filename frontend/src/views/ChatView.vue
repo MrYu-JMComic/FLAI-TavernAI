@@ -1,30 +1,9 @@
 ﻿<script setup>
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, triggerRef, watch } from 'vue';
 import {
-  Brain,
-  Check,
-  CheckSquare,
-  ChevronDown,
-  ChevronRight,
   Coins,
-  Copy,
-  Home,
-  Menu,
-  MessageSquarePlus,
-  PanelLeftClose,
-  Pencil,
-  Search,
-  Send,
-  Settings,
   Save,
-  Sparkles,
-  Square,
-  Trash2,
-  UserRound,
-  Upload,
-  Users,
-  X,
-  Zap
+  Users
 } from '@lucide/vue';
 import {
   createConversation,
@@ -46,12 +25,15 @@ import {
   streamMessage,
   updateMessage
 } from '../api';
-import MarkdownContent from '../components/MarkdownContent.vue';
-import VirtualMessageList from '../components/VirtualMessageList.vue';
 import EconomyPanel from '../components/EconomyPanel.vue';
 import NpcPanel from '../components/NpcPanel.vue';
 import SaveLoadPanel from '../components/SaveLoadPanel.vue';
 import StatusBar from '../components/StatusBar.vue';
+import ChatSidebar from '../components/chat/ChatSidebar.vue';
+import ChatSettingsDrawer from '../components/chat/ChatSettingsDrawer.vue';
+import ChatHeader from '../components/chat/ChatHeader.vue';
+import ChatMessageItem from '../components/chat/ChatMessageItem.vue';
+import ChatComposer from '../components/chat/ChatComposer.vue';
 import { useNotify } from '../composables/useNotify';
 import {
   buildScopedChatCss,
@@ -279,7 +261,6 @@ async function loadSidebarData() {
   conversations.value = history;
   characters.value = characterList;
   presetList.value = presets;
-  // Auto-select default preset if none selected
   if (!selectedPresetId.value && presets.length) {
     const defaultPreset = presets.find((p) => p.isDefault);
     selectedPresetId.value = defaultPreset?.id || '';
@@ -766,7 +747,7 @@ async function applyConversationAppearance() {
       main: chatShellRef.value?.querySelector('.deep-chat-main') || null,
       sidebar: chatShellRef.value?.querySelector('.deep-sidebar') || null,
       messageScroller: messageScroller.value,
-      composer: composerTextarea.value,
+      composer: composerWrap.value?.textareaRef || composerTextarea.value,
       messages: messages.value,
       query: (selector, root = chatShellRef.value) => root?.querySelector?.(selector) || null,
       queryAll: (selector, root = chatShellRef.value) => root ? Array.from(root.querySelectorAll(selector)) : [],
@@ -1087,7 +1068,9 @@ function handleComposerEnter(event) {
     return;
   }
 
-  event.preventDefault();
+  if (event?.preventDefault) {
+    event.preventDefault();
+  }
   submit();
 }
 
@@ -1432,8 +1415,16 @@ function clearAppearanceField(field) {
   chatAppearanceForm[field] = '';
 }
 
+function handleSettingsBackgroundUpload({ event, field }) {
+  handleAppearanceBackgroundUpload(event, field);
+}
+
+function handleComposerEnterFromComposer(event) {
+  handleComposerEnter(event);
+}
+
 function resizeComposerTextarea() {
-  const el = composerTextarea.value;
+  const el = composerWrap.value?.textareaRef || composerTextarea.value;
   if (!el) {
     return;
   }
@@ -1467,7 +1458,7 @@ function updateComposerDock() {
   }
   composerDockRafId = requestAnimationFrame(() => {
     const shell = chatShellRef.value;
-    const wrap = composerWrap.value;
+    const wrap = composerWrap.value?.wrapRef || composerWrap.value;
     if (!shell || !wrap) {
       return;
     }
@@ -1685,405 +1676,78 @@ function scrollStorageKey() {
 </script>
 
 <template>
-    <section
-      ref="chatShellRef"
-      class="deep-chat-shell"
-      :class="{ 'sidebar-collapsed': !sidebarOpen }"
-      :data-chat-scope="conversation?.id || 'active'"
+  <section
+    ref="chatShellRef"
+    class="deep-chat-shell"
+    :class="{ 'sidebar-collapsed': !sidebarOpen }"
+    :data-chat-scope="conversation?.id || 'active'"
   >
-    <button
-      class="sidebar-backdrop"
-      :class="{ visible: sidebarOpen }"
-      type="button"
-      aria-label="关闭对话历史"
-      :aria-hidden="String(!sidebarOpen)"
-      @click="closeSidebar"
-    ></button>
-    <aside class="deep-sidebar" :class="{ collapsed: !sidebarOpen }" aria-label="对话历史" :aria-hidden="String(!sidebarOpen)">
-      <div class="deep-sidebar-top">
-        <button class="deep-brand" type="button" @click="emit('navigate', 'home')">
-          <span class="deep-logo">F</span>
-          <strong>FLAI Tavern</strong>
-        </button>
-        <button class="deep-icon-button" type="button" title="收起侧边栏" @click="closeSidebar">
-          <PanelLeftClose :size="18" />
-        </button>
-      </div>
+    <ChatSidebar
+      :open="sidebarOpen"
+      :user="user"
+      :conversation="conversation"
+      :filtered-conversations="filteredConversations"
+      :selected-conversation-ids="selectedConversationIds"
+      :all-visible-conversations-selected="allVisibleConversationsSelected"
+      :selected-conversation-count="selectedConversationCount"
+      :conversation-action-busy="conversationActionBusy"
+      :route="route"
+      :format-conversation-usage="formatConversationUsage"
+      @close="closeSidebar"
+      @navigate="(page, params) => emit('navigate', page, params)"
+      @start-new="startNewConversation"
+      @open-conversation="openConversation"
+      @update:history-search="(val) => historySearch = val"
+      @toggle-all="toggleAllVisibleConversations"
+      @toggle-selection="toggleConversationSelection"
+      @delete-one="deleteOneConversation"
+      @delete-selected="deleteSelectedConversations"
+      @open-settings="openSettings"
+    />
 
-      <button class="new-chat-button" type="button" @click="startNewConversation">
-        <MessageSquarePlus :size="18" />
-        <span>开启新对话</span>
-      </button>
-
-      <label class="history-search">
-        <Search :size="17" />
-        <input v-model.trim="historySearch" placeholder="搜索当前角色的对话" />
-      </label>
-
-      <div v-if="filteredConversations.length" class="history-tools">
-        <button class="history-tool-button" type="button" @click="toggleAllVisibleConversations">
-          <CheckSquare :size="15" />
-          <span>{{ allVisibleConversationsSelected ? '取消' : '全选' }}</span>
-        </button>
-        <button
-          class="history-tool-button danger"
-          type="button"
-          :disabled="!selectedConversationCount || conversationActionBusy"
-          @click="deleteSelectedConversations"
-        >
-          <Trash2 :size="15" />
-          <span>批删</span>
-          <small v-if="selectedConversationCount">{{ selectedConversationCount }}</small>
-        </button>
-      </div>
-
-      <div class="history-list">
-        <p class="history-group">{{ conversation?.character?.name || '当前角色' }}</p>
-        <div
-          v-for="item in filteredConversations"
-          :key="item.id"
-          class="history-row"
-          :class="{ active: item.id === route.params.id }"
-        >
-          <label class="history-check" title="选择会话" @click.stop>
-            <input
-              type="checkbox"
-              :checked="selectedConversationIds.has(item.id)"
-              @change="toggleConversationSelection(item.id)"
-            />
-            <span aria-hidden="true"></span>
-          </label>
-          <button class="history-item" type="button" @click="openConversation(item.id)">
-            <strong>{{ item.title }}</strong>
-            <span>{{ item.character?.name || 'AI' }}</span>
-            <small class="history-usage" :title="formatConversationUsage(item)">
-              {{ formatConversationUsage(item) }}
-            </small>
-          </button>
-          <button
-            class="history-delete-button"
-            type="button"
-            title="删除会话"
-            :disabled="conversationActionBusy"
-            @click.stop="deleteOneConversation(item)"
-          >
-            <Trash2 :size="15" />
-          </button>
-        </div>
-        <p v-if="!filteredConversations.length" class="history-empty">暂无会话</p>
-      </div>
-
-            <div class="sidebar-footer">
-        <button class="sidebar-user" type="button" @click="emit('navigate', 'settings')">
-          <span v-if="user?.avatarUrl" class="sidebar-user-avatar">
-            <img :src="user.avatarUrl" :alt="user?.username || '用户头像'" />
-          </span>
-          <UserRound v-else :size="18" />
-          <span>{{ user?.displayName || user?.accountName || user?.username || '用户' }}</span>
-        </button>
-        <button class="deep-icon-button" type="button" title="高阶设置" @click="openSettings">
-          <Settings :size="18" />
-        </button>
-      </div>
-    </aside>
-
-    <button
-      class="chat-settings-backdrop"
-      :class="{ visible: settingsDrawerOpen }"
-      type="button"
-      aria-label="关闭高阶设置"
-      :aria-hidden="String(!settingsDrawerOpen)"
-      @click="closeSettings"
-    ></button>
-
-    <aside class="chat-settings-drawer" :class="{ open: settingsDrawerOpen }" aria-label="高阶设置" :aria-hidden="String(!settingsDrawerOpen)">
-      <header class="chat-settings-header">
-        <div>
-          <p>高阶设置</p>
-          <h2>{{ conversation?.title || '当前会话' }}</h2>
-        </div>
-        <button class="deep-icon-button" type="button" title="关闭设置" @click="closeSettings">
-          <X :size="18" />
-        </button>
-      </header>
-
-      <div class="chat-settings-body">
-        <section class="chat-settings-section author-settings-section">
-          <div class="settings-section-title">
-            <h3>作者固定设置</h3>
-            <p>来自角色创建/编辑页，只读展示；下方会话设置会叠加在作者设置之后。</p>
-          </div>
-          <div class="readonly-settings-grid">
-            <label class="chat-setting-field">
-              <span>电脑端背景</span>
-              <input :value="authorChatAppearance.desktopBackgroundUrl || '未设置'" type="text" readonly />
-            </label>
-            <label class="chat-setting-field">
-              <span>手机端背景</span>
-              <input :value="authorChatAppearance.mobileBackgroundUrl || '未设置'" type="text" readonly />
-            </label>
-          </div>
-          <label class="chat-setting-field">
-            <span>状态栏提示词</span>
-            <textarea
-              class="chat-code-textarea readonly"
-              rows="4"
-              :value="authorChatAppearance.statusBarPrompt || '未设置'"
-              readonly
-            />
-          </label>
-        </section>
-
-        <section class="chat-settings-section">
-          <div class="settings-section-title">
-            <h3>鑱婂ぉ鑳屾櫙</h3>
-            <p>电脑端和手机端可以分别设置，留空则回退到默认暖色背景。</p>
-          </div>
-
-          <label class="chat-setting-field">
-            <span>电脑端背景</span>
-            <input
-              v-model="chatAppearanceForm.desktopBackgroundUrl"
-              type="text"
-              placeholder="图片链接、短链或 data URL"
-            />
-          </label>
-          <div class="chat-setting-actions">
-            <label class="chat-setting-upload">
-              <Upload :size="15" />
-              <span>上传图片</span>
-              <input type="file" accept="image/*" @change="handleAppearanceBackgroundUpload($event, 'desktopBackgroundUrl')" />
-            </label>
-            <button class="chat-setting-inline-button" type="button" @click="clearAppearanceField('desktopBackgroundUrl')">
-              清空
-            </button>
-          </div>
-
-          <label class="chat-setting-field">
-            <span>手机端背景</span>
-            <input
-              v-model="chatAppearanceForm.mobileBackgroundUrl"
-              type="text"
-              placeholder="图片链接、短链或 data URL"
-            />
-          </label>
-          <div class="chat-setting-actions">
-            <label class="chat-setting-upload">
-              <Upload :size="15" />
-              <span>上传图片</span>
-              <input type="file" accept="image/*" @change="handleAppearanceBackgroundUpload($event, 'mobileBackgroundUrl')" />
-            </label>
-            <button class="chat-setting-inline-button" type="button" @click="clearAppearanceField('mobileBackgroundUrl')">
-              清空
-            </button>
-          </div>
-        </section>
-
-        <section class="chat-settings-section">
-          <div class="settings-section-title">
-            <h3>内置 CSS</h3>
-            <p>只会作用于当前会话。可以写动画、布局和局部样式，留空则不生效。</p>
-          </div>
-          <textarea
-            v-model="chatAppearanceForm.customCss"
-            class="chat-code-textarea"
-            rows="10"
-            placeholder=".deep-bubble { border-radius: 22px; }\n@keyframes floatIn { ... }"
-          />
-        </section>
-
-        <section class="chat-settings-section">
-          <div class="settings-section-title">
-            <h3>内置 JS</h3>
-            <p>可读取当前会话、消息区和聊天容器。脚本可返回清理函数，留空则不执行。</p>
-          </div>
-          <textarea
-            v-model="chatAppearanceForm.customJs"
-            class="chat-code-textarea code-js"
-            rows="12"
-            placeholder="const bubble = query('.deep-bubble');\nif (bubble) bubble.classList.add('pulse');\nreturn () => bubble?.classList.remove('pulse');"
-          />
-        </section>
-
-        <section class="chat-settings-section">
-          <div class="settings-section-title">
-            <h3>状态栏提示词</h3>
-            <p>供状态栏 Agent 判断变量变化；主聊天回复不会被要求调用状态栏工具。</p>
-          </div>
-          <textarea
-            v-model="chatAppearanceForm.statusBarPrompt"
-            class="chat-code-textarea"
-            rows="6"
-            placeholder="例如：HP 降低、好感变化、获得金币时更新对应变量。"
-          />
-        </section>
-
-        <section class="chat-settings-section accessory-skills-section">
-          <button class="settings-section-toggle" type="button" @click="accessorySettingsOpen = !accessorySettingsOpen">
-            <span class="settings-section-title">
-              <h3>附属技能</h3>
-              <p>为当前会话单独启用子智能体；未配置模型时使用当前聊天模型。</p>
-            </span>
-            <ChevronDown :size="17" :class="{ rotated: accessorySettingsOpen }" />
-          </button>
-
-          <div v-if="accessorySettingsOpen" class="accessory-skills-grid">
-            <div v-for="item in accessorySkillItems" :key="item.key" class="accessory-skill-row">
-              <label class="chat-setting-field compact">
-                <span>{{ item.label }}</span>
-                <select v-model="accessorySkills[item.key].enabled">
-                  <option :value="false">关闭</option>
-                  <option :value="true">开启</option>
-                  <option v-if="item.auto" value="auto">自动</option>
-                </select>
-              </label>
-              <label class="chat-setting-field compact">
-                <span>模型覆盖</span>
-                <input
-                  v-model="accessorySkills[item.key].modelOverride"
-                  type="text"
-                  placeholder="留空使用当前模型"
-                  maxlength="100"
-                />
-              </label>
-            </div>
-            <button class="chat-settings-save" type="button" :disabled="accessorySaving" @click="saveAccessorySkillChanges">
-              <Save :size="15" />
-              <span>{{ accessorySaving ? '保存中...' : '保存附属技能' }}</span>
-            </button>
-          </div>
-        </section>
-
-        <section class="chat-settings-section">
-          <div class="settings-section-title">
-            <h3>状态栏</h3>
-            <p>在聊天顶部显示自定义状态栏；变量更新由状态栏 Agent 或手动编辑完成。</p>
-          </div>
-          <div class="status-bar-editor-actions">
-            <button v-if="!statusBar" class="chat-setting-inline-button" type="button" @click="openStatusBarEditor">
-              创建状态栏
-            </button>
-            <template v-else>
-              <button class="chat-setting-inline-button" type="button" @click="openStatusBarEditor">
-                编辑状态栏
-              </button>
-              <button class="chat-setting-inline-button danger" type="button" @click="deleteStatusBarAction">
-                删除状态栏
-              </button>
-            </template>
-          </div>
-
-          <div v-if="statusBarEditorOpen" class="status-bar-editor">
-            <label class="chat-setting-field">
-              <span>状态栏名称</span>
-              <input v-model="statusBarForm.name" type="text" placeholder="状态栏" maxlength="50" />
-            </label>
-
-            <div class="status-bar-variables-editor">
-              <div class="variables-editor-header">
-                <span>变量列表</span>
-                <button class="chat-setting-inline-button small" type="button" @click="addStatusBarVariable">
-                  + 添加变量
-                </button>
-              </div>
-              <div
-                v-for="(variable, index) in statusBarForm.variables"
-                :key="index"
-                class="variable-editor-row"
-              >
-                <input
-                  v-model="variable.name"
-                  class="variable-input name"
-                  type="text"
-                  placeholder="变量名"
-                  maxlength="20"
-                />
-                <input
-                  v-model.number="variable.value"
-                  class="variable-input num"
-                  type="number"
-                  placeholder="当前值"
-                />
-                <span class="variable-separator">/</span>
-                <input
-                  v-model.number="variable.max"
-                  class="variable-input num"
-                  type="number"
-                  placeholder="最大值"
-                />
-                <input
-                  v-model="variable.color"
-                  class="variable-input color"
-                  type="color"
-                  title="颜色"
-                />
-                <button
-                  class="variable-remove"
-                  type="button"
-                  title="删除变量"
-                  @click="removeStatusBarVariable(index)"
-                >
-                  ×
-                </button>
-              </div>
-            </div>
-
-            <div class="status-bar-editor-footer">
-              <button class="chat-settings-save" type="button" :disabled="statusBarSaving" @click="saveStatusBarChanges">
-                <Save :size="15" />
-                <span>{{ statusBarSaving ? '保存中...' : '保存状态栏' }}</span>
-              </button>
-              <button class="chat-setting-inline-button" type="button" @click="closeStatusBarEditor">
-                取消
-              </button>
-            </div>
-          </div>
-        </section>
-      </div>
-
-      <footer class="chat-settings-footer">
-        <button class="chat-setting-inline-button" type="button" @click="syncConversationAppearance(conversation?.settings)">
-          恢复当前会话
-        </button>
-        <button class="chat-settings-save" type="button" :disabled="appearanceSaving" @click="saveConversationAppearanceChanges">
-          <Save :size="15" />
-          <span>{{ appearanceSaving ? '保存中...' : '保存并应用' }}</span>
-        </button>
-      </footer>
-    </aside>
+    <ChatSettingsDrawer
+      :open="settingsDrawerOpen"
+      :conversation="conversation"
+      :author-chat-appearance="authorChatAppearance"
+      :chat-appearance-form="chatAppearanceForm"
+      :appearance-saving="appearanceSaving"
+      :accessory-settings-open="accessorySettingsOpen"
+      :accessory-saving="accessorySaving"
+      :accessory-skills="accessorySkills"
+      :accessory-skill-items="accessorySkillItems"
+      :status-bar="statusBar"
+      :status-bar-editor-open="statusBarEditorOpen"
+      :status-bar-saving="statusBarSaving"
+      :status-bar-form="statusBarForm"
+      @close="closeSettings"
+      @save-appearance="saveConversationAppearanceChanges"
+      @reset-appearance="syncConversationAppearance(conversation?.settings)"
+      @background-upload="handleSettingsBackgroundUpload"
+      @clear-field="clearAppearanceField"
+      @update:accessory-settings-open="(val) => accessorySettingsOpen = val"
+      @save-accessory="saveAccessorySkillChanges"
+      @open-status-bar-editor="openStatusBarEditor"
+      @close-status-bar-editor="closeStatusBarEditor"
+      @add-status-bar-variable="addStatusBarVariable"
+      @remove-status-bar-variable="removeStatusBarVariable"
+      @save-status-bar="saveStatusBarChanges"
+      @delete-status-bar="deleteStatusBarAction"
+    />
 
     <section class="deep-chat-main" :style="chatMainStyle">
-      <header class="deep-chat-header">
-        <div class="deep-chat-header-start">
-          <button class="deep-icon-button mobile-menu" type="button" title="打开侧边栏" @click="openSidebar">
-            <Menu :size="19" />
-          </button>
-          <button class="deep-icon-button" type="button" title="返回首页" @click="emit('navigate', 'home')">
-            <Home :size="18" />
-          </button>
-        </div>
-        <div class="deep-chat-header-title">
-          <h1>{{ conversation?.title || '角色对话' }}</h1>
-          <p>
-            <Zap :size="14" />
-            <span>{{ currentProviderLabel }} · {{ currentModelLabel }}</span>
-          </p>
-          <p v-if="economyAccounts.length" class="economy-summary-header" @click="openEconomyPanel">
-            <span v-for="acc in economyAccounts" :key="acc.id" class="economy-chip">
-              {{ { gold: '金币', silver: '银币', copper: '铜币', gem: '宝石', credit: '点数' }[acc.currencyType] || '银币' }}{{ acc.balance.toLocaleString('zh-CN') }}
-            </span>
-          </p>
-        </div>
-        <button v-if="showEconomyFeature" class="deep-icon-button" type="button" title="经济系统" @click="openEconomyPanel">
-          <Coins :size="18" />
-        </button>
-        <button v-if="showNpcFeature" class="deep-icon-button" type="button" title="NPC 管理" @click="openNpcPanel">
-          <Users :size="18" />
-        </button>
-        <button class="deep-icon-button" type="button" title="存档管理" @click="openSavePanel">
-          <Save :size="18" />
-        </button>
-      </header>
+      <ChatHeader
+        :conversation="conversation"
+        :current-provider-label="currentProviderLabel"
+        :current-model-label="currentModelLabel"
+        :economy-accounts="economyAccounts"
+        :show-economy-feature="showEconomyFeature"
+        :show-npc-feature="showNpcFeature"
+        @navigate="(page) => emit('navigate', page)"
+        @open-sidebar="openSidebar"
+        @open-economy="openEconomyPanel"
+        @open-npc="openNpcPanel"
+        @open-saves="openSavePanel"
+      />
 
       <div
         ref="messageScroller"
@@ -2099,179 +1763,57 @@ function scrollStorageKey() {
           v-for="message in messages"
           :key="message.id"
         >
-          <article
-          class="deep-message"
-          :class="message.role"
-          :data-message-id="message.id"
-        >
-          <div v-if="message.role === 'assistant'" class="deep-message-author" aria-hidden="true">
-            <span class="deep-message-avatar">
-              <img v-if="messageAvatarUrl(message)" :src="messageAvatarUrl(message)" alt="" />
-              <span v-else>{{ messageAuthorInitial(message) }}</span>
-            </span>
-            <small>{{ messageAuthorName(message) }}</small>
-          </div>
-          <div class="deep-message-content">
-            <div class="deep-message-name">{{ messageAuthorName(message) }}</div>
-            <div v-if="message.role === 'assistant' && message.reasoning" class="reasoning-block">
-              <button class="reasoning-toggle" type="button" @click="toggleReasoning(message.id)">
-                <Brain :size="16" />
-                <span>{{ isReasoningTyping(message) ? '正在思考' : '已思考' }}</span>
-                <small v-if="message.reasoning.length">约 {{ message.reasoning.length }} 字</small>
-                <ChevronDown v-if="reasoningOpen(message.id)" :size="16" />
-                <ChevronRight v-else :size="16" />
-              </button>
-              <div
-                v-if="reasoningOpen(message.id)"
-                class="reasoning-body"
-                :class="{ 'is-typing': isReasoningTyping(message) }"
-              >
-                <MarkdownContent class="typing-text" :text="message.reasoning" :render-plugins="activeRenderPlugins()" />
-              </div>
-            </div>
-
-            <div
-              class="deep-bubble"
-              :class="{
-                'is-typing': isContentTyping(message),
-                'is-waiting': isContentTyping(message) && !message.content,
-                'is-editing': editingMessageId === message.id
-              }"
-            >
-              <div v-if="editingMessageId === message.id" class="message-edit-box">
-                <textarea
-                  v-model="editingMessageContent"
-                  rows="4"
-                  @keydown.esc.prevent="cancelEditMessage(message)"
-                />
-                <div class="message-edit-actions">
-                  <button type="button" class="message-action-button primary" @click="saveMessageEdit(message)">
-                    <Check :size="15" />
-                    <span>保存</span>
-                  </button>
-                  <button type="button" class="message-action-button" @click="cancelEditMessage(message)">
-                    <X :size="15" />
-                    <span>取消</span>
-                  </button>
-                </div>
-              </div>
-              <MarkdownContent
-                v-else
-                class="typing-text"
-                :text="message.content || messagePlaceholder(message)"
-                :render-plugins="activeRenderPlugins()"
-              />
-            </div>
-            <div class="message-actions" :class="message.role">
-              <button
-                type="button"
-                class="message-action-button"
-                title="复制消息"
-                @click="copyMessage(message)"
-              >
-                <Copy :size="14" />
-                <span>复制</span>
-              </button>
-              <button
-                type="button"
-                class="message-action-button"
-                title="编辑消息"
-                :disabled="!canEditMessage(message)"
-                @click="beginEditMessage(message)"
-              >
-                <Pencil :size="14" />
-                <span>编辑</span>
-              </button>
-              <button
-                type="button"
-                class="message-action-button danger"
-                title="删除消息"
-                :disabled="!canDeleteMessage(message)"
-                @click="removeMessage(message)"
-              >
-                <Trash2 :size="14" />
-                <span>删除</span>
-              </button>
-            </div>
-          </div>
-          <div v-if="message.role === 'user'" class="deep-message-author user" aria-hidden="true">
-            <span class="deep-message-avatar">
-              <img v-if="messageAvatarUrl(message)" :src="messageAvatarUrl(message)" alt="" />
-              <span v-else>{{ messageAuthorInitial(message) }}</span>
-            </span>
-            <small>{{ messageAuthorName(message) }}</small>
-          </div>
-          </article>
+          <ChatMessageItem
+            :message="message"
+            :editing-message-id="editingMessageId"
+            :editing-message-content="editingMessageContent"
+            :reasoning-open="reasoningOpen(message.id)"
+            :is-reasoning-typing="isReasoningTyping(message)"
+            :is-content-typing="isContentTyping(message)"
+            :message-placeholder="messagePlaceholder(message)"
+            :author-name="messageAuthorName(message)"
+            :author-initial="messageAuthorInitial(message)"
+            :avatar-url="messageAvatarUrl(message)"
+            :can-edit="canEditMessage(message)"
+            :can-delete="canDeleteMessage(message)"
+            :render-plugins="activeRenderPlugins()"
+            @toggle-reasoning="toggleReasoning"
+            @begin-edit="beginEditMessage"
+            @cancel-edit="cancelEditMessage"
+            @save-edit="saveMessageEdit"
+            @delete="removeMessage"
+            @copy="copyMessage"
+            @update:editing-message-content="(val) => editingMessageContent = val"
+          />
           <div v-if="hasStatusBarContent && message === latestAssistantMessage" class="status-bar-wrapper">
             <StatusBar :status-bar="statusBar" />
           </div>
         </template>
       </div>
 
-      <footer ref="composerWrap" class="deep-composer-wrap">
-        <button
-          v-if="showScrollBottomButton"
-          class="scroll-bottom-button"
-          type="button"
-          title="滚动到底部"
-          @click="scrollToBottom()"
-        >
-          <ChevronDown :size="18" />
-        </button>
-        <form class="deep-composer" @submit.prevent="submit">
-          <textarea
-            ref="composerTextarea"
-            v-model="input"
-            placeholder="给 AI 发送消息"
-            :rows="chatViewportIsPhone ? 1 : 2"
-            @input="resizeComposerTextarea"
-            @keydown.enter.exact="handleComposerEnter"
-          />
-          <div class="composer-actions">
-            <select
-              v-if="presetList.length"
-              v-model="selectedPresetId"
-              class="preset-select"
-              title="选择对话预设"
-            >
-              <option value="">无预设</option>
-              <option v-for="p in presetList" :key="p.id" :value="p.id">
-                {{ p.name }}{{ p.isDefault ? ' 默认' : '' }}
-              </option>
-            </select>
-            <button
-              class="mode-pill"
-              :class="{ active: useStream }"
-              type="button"
-              :aria-pressed="String(useStream)"
-              @click="toggleUseStream"
-            >
-              <Sparkles :size="16" />
-              <span>流式输出</span>
-            </button>
-            <button
-              class="mode-pill"
-              :class="{ active: canToggleThinking && thinkingEnabled }"
-              type="button"
-              :aria-pressed="String(canToggleThinking && thinkingEnabled)"
-              :disabled="!canToggleThinking"
-              title="DeepSeek thinking.enabled / thinking.disabled"
-              @click="toggleThinking"
-            >
-              <Brain :size="16" />
-              <span>{{ thinkingEnabled ? '深度思考' : '普通回复' }}</span>
-            </button>
-            <span v-if="usage" class="token-chip">tokens {{ usage.total_tokens || usage.totalTokens || '-' }}</span>
-            <button v-if="sending" class="round-send stop" type="button" title="停止生成" @click="stop">
-              <Square :size="18" />
-            </button>
-            <button v-else class="round-send" type="submit" title="发送" :disabled="!canSend">
-              <Send :size="19" />
-            </button>
-          </div>
-        </form>
-      </footer>
+      <ChatComposer
+        ref="composerWrap"
+        :input="input"
+        :sending="sending"
+        :can-send="canSend"
+        :use-stream="useStream"
+        :thinking-enabled="thinkingEnabled"
+        :can-toggle-thinking="canToggleThinking"
+        :chat-viewport-is-phone="chatViewportIsPhone"
+        :show-scroll-bottom-button="showScrollBottomButton"
+        :usage="usage"
+        :preset-list="presetList"
+        :selected-preset-id="selectedPresetId"
+        @update:input="(val) => input = val"
+        @submit="handleComposerEnterFromComposer"
+        @stop="stop"
+        @toggle-stream="toggleUseStream"
+        @toggle-thinking="toggleThinking"
+        @scroll-to-bottom="scrollToBottom()"
+        @update:selected-preset-id="(val) => selectedPresetId = val"
+      />
     </section>
+
     <EconomyPanel
       v-if="conversation?.id && showEconomyFeature"
       :conversation-id="conversation.id"
