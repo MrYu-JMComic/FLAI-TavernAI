@@ -43,6 +43,16 @@ const emit = defineEmits(['provider-saved', 'profile-saved']);
 const notify = useNotify();
 const isExtensionsPage = computed(() => props.route?.name === 'extensions');
 const isPersonalPage = computed(() => !isExtensionsPage.value);
+
+// Extension section navigation
+const extensionSections = [
+  { id: 'tags', label: '标签管理', icon: 'Tag' },
+  { id: 'presets', label: '对话预设', icon: 'Sliders' },
+  { id: 'mods', label: 'Mod 管理', icon: 'Puzzle' },
+  { id: 'regex', label: '正则规则', icon: 'Regex' }
+];
+const activeExtensionSection = ref('tags');
+
 const presets = {
   openai: {
     gatewayName: 'OpenAI',
@@ -787,6 +797,14 @@ function handleRegexImportFile(event) {
   };
   reader.readAsText(file);
 }
+
+function scrollToSection(sectionId) {
+  activeExtensionSection.value = sectionId;
+  const el = document.getElementById(`extension-section-${sectionId}`);
+  if (el) {
+    el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+}
 </script>
 
 <template>
@@ -797,6 +815,19 @@ function handleRegexImportFile(event) {
         <h1>{{ isExtensionsPage ? '标签、预设、Mod 与正则' : '账户、权限与 AI 资产' }}</h1>
       </div>
     </div>
+
+    <!-- Extension Section Navigation -->
+    <nav v-if="isExtensionsPage" class="form-section-nav">
+      <button
+        v-for="section in extensionSections"
+        :key="section.id"
+        class="form-section-tab"
+        :class="{ active: activeExtensionSection === section.id }"
+        @click="scrollToSection(section.id)"
+      >
+        {{ section.label }}
+      </button>
+    </nav>
 
     <p v-if="isPersonalPage && form.apiKeyNeedsReset" class="error-text">
       已保存的 API Key 无法解密。请重新粘贴 SK 并保存设置，之后再获取模型或查询余额。
@@ -974,7 +1005,8 @@ function handleRegexImportFile(event) {
       </div>
     </form>
 
-    <section v-if="isExtensionsPage" class="form-panel tag-management-panel">
+    <!-- Tags Section -->
+    <section v-if="isExtensionsPage" id="extension-section-tags" class="form-panel tag-management-panel form-section-group">
       <div class="inline-heading">
         <div>
           <h2>标签管理</h2>
@@ -1001,7 +1033,8 @@ function handleRegexImportFile(event) {
       <p v-else class="muted-text">还没有标签，在角色卡编辑页或这里创建。</p>
     </section>
 
-    <section v-if="isExtensionsPage" class="form-panel preset-management-panel">
+    <!-- Presets Section -->
+    <section v-if="isExtensionsPage" id="extension-section-presets" class="form-panel preset-management-panel form-section-group">
       <div class="inline-heading">
         <div>
           <h2>对话预设</h2>
@@ -1096,7 +1129,8 @@ function handleRegexImportFile(event) {
       <p v-else class="muted-text">还没有预设，点击「新建预设」创建第一个。</p>
     </section>
 
-    <section v-if="isExtensionsPage" class="form-panel mod-management-panel">
+    <!-- Mods Section -->
+    <section v-if="isExtensionsPage" id="extension-section-mods" class="form-panel mod-management-panel form-section-group">
       <div class="inline-heading">
         <div>
           <h2>Mod 管理</h2>
@@ -1198,7 +1232,8 @@ function handleRegexImportFile(event) {
       <p v-else class="muted-text">还没有 Mod，点击「新建 Mod」创建第一个。拖拽卡片可调整顺序。</p>
     </section>
 
-    <section v-if="isExtensionsPage" class="form-panel regex-rules-panel">
+    <!-- Regex Rules Section -->
+    <section v-if="isExtensionsPage" id="extension-section-regex" class="form-panel regex-rules-panel form-section-group">
       <div class="inline-heading">
         <div>
           <h2>正则规则管理</h2>
