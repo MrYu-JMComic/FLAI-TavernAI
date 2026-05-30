@@ -4071,23 +4071,50 @@ p {
   }
 }
 
-/* ── Desktop / tablet persistent sidebar rail (≥ 981px) ── */
+/* Desktop two-column chat layout (>= 981px) */
 @media (min-width: 981px) {
-  .deep-chat-shell.sidebar-collapsed .deep-chat-header .mobile-menu {
-    display: inline-grid;
+  /* Hide backdrop entirely on desktop - never a grid item or overlay */
+  .sidebar-backdrop {
+    display: none;
   }
 
+  /* Open desktop state: two-column grid */
+  .deep-chat-shell:not(.sidebar-collapsed) {
+    display: grid;
+    grid-template-columns: var(--chat-sidebar-drawer-width) minmax(0, 1fr);
+  }
+
+  /* Sidebar participates in normal document flow on desktop */
+  .deep-chat-shell:not(.sidebar-collapsed) .deep-sidebar {
+    position: relative;
+    inset: auto;
+    width: var(--chat-sidebar-drawer-width);
+    height: 100%;
+    max-height: none;
+    transform: none;
+    visibility: visible;
+    box-shadow: none;
+    border-right: 1px solid var(--line);
+  }
+
+  /* Main area fills remaining column */
+  .deep-chat-shell:not(.sidebar-collapsed) .deep-chat-main {
+    margin-left: 0;
+    min-width: 0;
+  }
+
+  /* Hide hamburger when sidebar is open */
   .deep-chat-shell:not(.sidebar-collapsed) .deep-chat-header .mobile-menu {
     display: none;
   }
 
-  .deep-sidebar:not(.collapsed) ~ .deep-chat-main {
-    margin-left: var(--chat-sidebar-drawer-width);
+  /* Collapsed desktop state: main takes full width, show toggle */
+  .deep-chat-shell.sidebar-collapsed {
+    display: block;
   }
 
-  .deep-chat-shell:not(.sidebar-collapsed) .sidebar-backdrop {
-    opacity: 0;
-    pointer-events: none;
+  .deep-chat-shell.sidebar-collapsed .deep-chat-header .mobile-menu {
+    display: inline-grid;
   }
 }
 
