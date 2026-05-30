@@ -5141,12 +5141,14 @@ p {
   gap: 4px;
 }
 
-.deep-chat-shell.sidebar-collapsed .deep-chat-header .mobile-menu {
-  display: inline-grid;
-}
+@media (max-width: 980px) {
+  .deep-chat-shell.sidebar-collapsed .deep-chat-header .mobile-menu {
+    display: inline-grid;
+  }
 
-.deep-chat-shell:not(.sidebar-collapsed) .deep-chat-header .mobile-menu {
-  display: none;
+  .deep-chat-shell:not(.sidebar-collapsed) .deep-chat-header .mobile-menu {
+    display: none;
+  }
 }
 
 .deep-chat-header-title {
