@@ -8,6 +8,38 @@ import {
   saveStatusBar
 } from '../../api';
 
+const VALID_VARIANTS = ['default', 'compact', 'minimal', 'neon'];
+const VALID_DENSITIES = ['default', 'cozy', 'compact'];
+const VALID_EFFECTS = ['glow', 'striped', 'pulse'];
+
+function parseTemplateConfig(raw) {
+  if (!raw || typeof raw !== 'string' || !raw.trim()) return {};
+  const trimmed = raw.trim();
+  if (trimmed[0] !== '{') return {};
+  try {
+    const parsed = JSON.parse(trimmed);
+    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return {};
+    const cfg = {};
+    if (VALID_VARIANTS.includes(parsed.variant)) cfg.variant = parsed.variant;
+    if (VALID_DENSITIES.includes(parsed.density)) cfg.density = parsed.density;
+    if (typeof parsed.accentColor === 'string' && parsed.accentColor.trim()) {
+      cfg.accentColor = parsed.accentColor.trim();
+    }
+    if (Array.isArray(parsed.effects)) {
+      const valid = parsed.effects.filter((e) => VALID_EFFECTS.includes(e));
+      if (valid.length) cfg.effects = valid;
+    }
+    if (typeof parsed.customCss === 'string' && parsed.customCss.trim()) {
+      cfg.customCss = parsed.customCss.trim();
+    }
+    return cfg;
+  } catch {
+    return {};
+  }
+}
+
+export { parseTemplateConfig };
+
 export function useChatAccessory({ conversation, showActionNotice, showError }) {
   const statusBar = ref(null);
   const statusBarEditorOpen = ref(false);
@@ -21,6 +53,13 @@ export function useChatAccessory({ conversation, showActionNotice, showError }) 
     variables: [],
     template: ''
   });
+  const statusBarTemplateCfg = reactive({
+    variant: 'default',
+    density: 'default',
+    accentColor: '',
+    effects: [],
+    customCss: ''
+  });
   const accessorySkills = reactive(createDefaultAccessorySkills());
 
   const accessorySkillItems = [
@@ -33,6 +72,10 @@ export function useChatAccessory({ conversation, showActionNotice, showError }) 
 
   const hasStatusBarContent = computed(() => {
     return Boolean(statusBar.value && Array.isArray(statusBar.value.variables) && statusBar.value.variables.length);
+  });
+
+  const statusBarTemplateConfig = computed(() => {
+    return parseTemplateConfig(statusBar.value?.template || '');
   });
 
   const showEconomyFeature = computed(() => {
@@ -165,6 +208,7 @@ export function useChatAccessory({ conversation, showActionNotice, showError }) 
       ? data.variables.map((v) => ({ ...v }))
       : [];
     statusBarForm.template = data.template || '';
+    syncTemplateCfgFromForm();
   }
 
   function addStatusBarVariable() {
@@ -182,6 +226,7 @@ export function useChatAccessory({ conversation, showActionNotice, showError }) 
 
   async function saveStatusBarChanges() {
     if (!conversation.value?.id || statusBarSaving.value) return;
+    syncTemplateCfgToForm();
     statusBarSaving.value = true;
     try {
       const result = await saveStatusBar(conversation.value.id, {
@@ -224,7 +269,27 @@ export function useChatAccessory({ conversation, showActionNotice, showError }) 
       ];
       statusBarForm.template = '';
     }
+    syncTemplateCfgFromForm();
     statusBarEditorOpen.value = true;
+  }
+
+  function syncTemplateCfgFromForm() {
+    const parsed = parseTemplateConfig(statusBarForm.template);
+    statusBarTemplateCfg.variant = parsed.variant || 'default';
+    statusBarTemplateCfg.density = parsed.density || 'default';
+    statusBarTemplateCfg.accentColor = parsed.accentColor || '';
+    statusBarTemplateCfg.effects = parsed.effects || [];
+    statusBarTemplateCfg.customCss = parsed.customCss || '';
+  }
+
+  function syncTemplateCfgToForm() {
+    const cfg = {};
+    if (statusBarTemplateCfg.variant !== 'default') cfg.variant = statusBarTemplateCfg.variant;
+    if (statusBarTemplateCfg.density !== 'default') cfg.density = statusBarTemplateCfg.density;
+    if (statusBarTemplateCfg.accentColor) cfg.accentColor = statusBarTemplateCfg.accentColor;
+    if (statusBarTemplateCfg.effects.length) cfg.effects = statusBarTemplateCfg.effects;
+    if (statusBarTemplateCfg.customCss) cfg.customCss = statusBarTemplateCfg.customCss;
+    statusBarForm.template = Object.keys(cfg).length ? JSON.stringify(cfg) : '';
   }
 
   function closeStatusBarEditor() {
@@ -236,6 +301,8 @@ export function useChatAccessory({ conversation, showActionNotice, showError }) 
     statusBarForm,
     statusBarEditorOpen,
     statusBarSaving,
+    statusBarTemplateConfig,
+    statusBarTemplateCfg,
     accessorySettingsOpen,
     accessorySaving,
     accessorySkills,

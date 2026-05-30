@@ -847,7 +847,7 @@ p {
   font-weight: 700;
 }
 
-/* ── Tag Badges ── */
+/* -- Tag Badges -- */
 
 .tag-badge {
   display: inline-flex;
@@ -878,7 +878,7 @@ p {
   margin-left: 2px;
 }
 
-/* ── Tag Cloud Bar (Home) ── */
+/* -- Tag Cloud Bar (Home) -- */
 
 .tag-cloud-bar {
   display: flex;
@@ -924,7 +924,7 @@ p {
   font-weight: 500;
 }
 
-/* ── Tag Selector (Form) ── */
+/* -- Tag Selector (Form) -- */
 
 .tag-selector {
   position: relative;
@@ -1177,9 +1177,9 @@ p {
   }
 }
 
-/* ═══════════════════════════════════════
-   PHASE 3 — SKELETON LOADING CARDS
-   ═══════════════════════════════════════ */
+/* ---------------------------------------
+   PHASE 3 -- SKELETON LOADING CARDS
+   --------------------------------------- */
 
 .home-skeleton-grid {
   display: grid;
@@ -1283,9 +1283,9 @@ p {
   50% { opacity: 1; }
 }
 
-/* ═══════════════════════════════════════
-   PHASE 3 — FORM SECTION NAVIGATION
-   ═══════════════════════════════════════ */
+/* ---------------------------------------
+   PHASE 3 -- FORM SECTION NAVIGATION
+   --------------------------------------- */
 
 .form-section-nav {
   display: flex;
@@ -1329,9 +1329,9 @@ p {
   font-weight: 800;
 }
 
-/* ═══════════════════════════════════════
-   PHASE 3 — FORM SECTION GROUPS
-   ═══════════════════════════════════════ */
+/* ---------------------------------------
+   PHASE 3 -- FORM SECTION GROUPS
+   --------------------------------------- */
 
 .form-section-group {
   display: grid;
@@ -1365,9 +1365,9 @@ p {
   scroll-margin-top: 120px;
 }
 
-/* ═══════════════════════════════════════
-   PHASE 3 — IMPORT DIALOG AVATAR IMAGE
-   ═══════════════════════════════════════ */
+/* ---------------------------------------
+   PHASE 3 -- IMPORT DIALOG AVATAR IMAGE
+   --------------------------------------- */
 
 .import-preview-avatar img {
   width: 100%;
@@ -1376,9 +1376,9 @@ p {
   border-radius: 10px;
 }
 
-/* ═══════════════════════════════════════
-   PHASE 3 — ERROR STATE VARIANT
-   ═══════════════════════════════════════ */
+/* ---------------------------------------
+   PHASE 3 -- ERROR STATE VARIANT
+   --------------------------------------- */
 
 .error-state {
   color: var(--danger);
@@ -2086,7 +2086,7 @@ p {
   white-space: pre-wrap;
 }
 
-/* ── Tag Management (Settings) ── */
+/* -- Tag Management (Settings) -- */
 
 .tag-add-row {
   display: flex;
@@ -4472,18 +4472,18 @@ p {
 }
 
 /*
- * ══════════════════════════════════════════════════════════
- *  MOBILE UI OPTIMIZATION — BREAKPOINT SYSTEM
+ * ----------------------------------------------------------
+ *  MOBILE UI OPTIMIZATION -- BREAKPOINT SYSTEM
  *  480px (phone) · 768px (tablet) · 769px+ (desktop)
- * ══════════════════════════════════════════════════════════
+ * ----------------------------------------------------------
  */
 
-/* ── Tablet & below: 768px ── */
+/* -- Tablet & below: 768px -- */
 
 @media (max-width: 768px) {
   /* Touch targets use --touch-min custom property (44px) */
 
-  /* ── Page shell: tighter padding ── */
+  /* -- Page shell: tighter padding -- */
   .page-shell {
     padding: 18px 14px 32px;
   }
@@ -4493,7 +4493,7 @@ p {
     padding: 0;
   }
 
-  /* ── Toolbar: stack to single column ── */
+  /* -- Toolbar: stack to single column -- */
   .toolbar {
     grid-template-columns: 1fr;
     gap: 10px;
@@ -4504,7 +4504,7 @@ p {
     gap: 8px;
   }
 
-  /* ── Character grid: single column ── */
+  /* -- Character grid: single column -- */
   .character-grid {
     grid-template-columns: 1fr;
     gap: 12px;
@@ -4519,7 +4519,7 @@ p {
     gap: 12px;
   }
 
-  /* ── Tag cloud: horizontal scroll ── */
+  /* -- Tag cloud: horizontal scroll -- */
   .tag-cloud-bar {
     flex-wrap: nowrap;
     overflow-x: auto;
@@ -4541,7 +4541,7 @@ p {
     padding: 6px 14px;
   }
 
-  /* ── Editor layout: single column ── */
+  /* -- Editor layout: single column -- */
   .editor-layout {
     grid-template-columns: 1fr;
     gap: 14px;
@@ -4551,12 +4551,12 @@ p {
     position: static;
   }
 
-  /* ── Form grid: single column on tablet ── */
+  /* -- Form grid: single column on tablet -- */
   .two-col {
     grid-template-columns: 1fr;
   }
 
-  /* ── Profile layout: single column ── */
+  /* -- Profile layout: single column -- */
   .profile-layout {
     grid-template-columns: 1fr;
     gap: 14px;
@@ -4566,12 +4566,12 @@ p {
     align-items: center;
   }
 
-  /* ── Profile stats: 2-column grid ── */
+  /* -- Profile stats: 2-column grid -- */
   .profile-stats-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  /* ── Mod card: responsive actions ── */
+  /* -- Mod card: responsive actions -- */
   .mod-card {
     flex-wrap: wrap;
     gap: 8px;
@@ -4584,7 +4584,7 @@ p {
     border-top: 1px solid var(--line);
   }
 
-  /* ── Preset card actions: wrap ── */
+  /* -- Preset card actions: wrap -- */
   .preset-card-actions {
     flex-wrap: wrap;
   }
@@ -4593,7 +4593,7 @@ p {
     flex-wrap: wrap;
   }
 
-  /* ── Regex rule card: stack ── */
+  /* -- Regex rule card: stack -- */
   .regex-rule-card {
     flex-wrap: wrap;
   }
@@ -4607,7 +4607,7 @@ p {
     flex-wrap: wrap;
   }
 
-  /* ── Tag manage item: wrap ── */
+  /* -- Tag manage item: wrap -- */
   .tag-manage-item {
     flex-wrap: wrap;
     gap: 8px;
@@ -4618,7 +4618,7 @@ p {
     order: 3;
   }
 
-  /* ── Section heading: stack ── */
+  /* -- Section heading: stack -- */
   .section-heading {
     flex-direction: column;
     align-items: stretch;
@@ -4630,7 +4630,7 @@ p {
     gap: 8px;
   }
 
-  /* ── Chat header ── */
+  /* -- Chat header -- */
   .chat-header {
     flex-direction: column;
     align-items: stretch;
@@ -4641,7 +4641,7 @@ p {
     flex-wrap: wrap;
   }
 
-  /* ── Chat composer: full width ── */
+  /* -- Chat composer: full width -- */
   .composer {
     grid-template-columns: 1fr 48px;
     gap: 8px;
@@ -4651,7 +4651,7 @@ p {
     min-height: 48px;
   }
 
-  /* ── Chat message: narrow ── */
+  /* -- Chat message: narrow -- */
   .chat-message,
   .chat-message.user {
     grid-template-columns: 34px minmax(0, 1fr);
@@ -4671,24 +4671,24 @@ p {
     padding: 10px 12px;
   }
 
-  /* ── Message list: reduce gap ── */
+  /* -- Message list: reduce gap -- */
   .message-list {
     gap: 10px;
   }
 
-  /* ── SaveLoadPanel: full screen on mobile ── */
+  /* -- SaveLoadPanel: full screen on mobile -- */
   .save-panel {
     width: 100vw;
     max-width: none;
     border-radius: 0;
   }
 
-  /* ── World book grid: single column ── */
+  /* -- World book grid: single column -- */
   .book-grid {
     grid-template-columns: 1fr;
   }
 
-  /* ── Entry row: stack controls ── */
+  /* -- Entry row: stack controls -- */
   .entry-row {
     flex-wrap: wrap;
   }
@@ -4717,7 +4717,7 @@ p {
     border-top: 1px solid var(--line);
   }
 
-  /* ── World book modal: full screen ── */
+  /* -- World book modal: full screen -- */
   .modal-overlay {
     padding: 0;
     align-items: flex-end;
@@ -4735,7 +4735,7 @@ p {
     width: 100%;
   }
 
-  /* ── Import dialog: full width ── */
+  /* -- Import dialog: full width -- */
   .import-overlay {
     padding: 12px;
     align-items: flex-end;
@@ -4753,7 +4753,7 @@ p {
     text-align: center;
   }
 
-  /* ── Render plugin row: stack ── */
+  /* -- Render plugin row: stack -- */
   .render-plugin-row {
     grid-template-areas:
       "enabled label delete"
@@ -4763,7 +4763,7 @@ p {
     grid-template-columns: 60px minmax(0, 1fr) 38px;
   }
 
-  /* ── Rule row: stack (already handled at 900px but refine) ── */
+  /* -- Rule row: stack (already handled at 900px but refine) -- */
   .rule-row {
     grid-template-columns: 1fr;
     grid-template-areas:
@@ -4783,12 +4783,12 @@ p {
     justify-self: stretch;
   }
 
-  /* ── Visibility picker: single column ── */
+  /* -- Visibility picker: single column -- */
   .visibility-picker {
     grid-template-columns: 1fr;
   }
 
-  /* ── Avatar editor: stack ── */
+  /* -- Avatar editor: stack -- */
   .avatar-editor {
     flex-direction: column;
     align-items: center;
@@ -4796,23 +4796,23 @@ p {
     gap: 12px;
   }
 
-  /* ── Form panel: tighter padding ── */
+  /* -- Form panel: tighter padding -- */
   .form-panel {
     padding: 14px;
   }
 
-  /* ── Preset editor: tighter ── */
+  /* -- Preset editor: tighter -- */
   .preset-editor {
     padding: 14px;
   }
 
-  /* ── Skeleton grid: single column ── */
+  /* -- Skeleton grid: single column -- */
   .home-skeleton-grid {
     grid-template-columns: 1fr;
     gap: 12px;
   }
 
-  /* ── Form section nav: scrollable ── */
+  /* -- Form section nav: scrollable -- */
   .form-section-nav {
     position: sticky;
     top: 0;
@@ -4824,27 +4824,27 @@ p {
     padding: 0 16px;
   }
 
-  /* ── Form section group: adjust scroll margin ── */
+  /* -- Form section group: adjust scroll margin -- */
   .form-section-group,
   .form-section-group-advanced {
     scroll-margin-top: 100px;
   }
 
-  /* ── Form section divider: more spacing ── */
+  /* -- Form section divider: more spacing -- */
   .form-section-group + .form-section-group {
     padding-top: 16px;
   }
 }
 
-/* ── Phone: 480px ── */
+/* -- Phone: 480px -- */
 
 @media (max-width: 480px) {
-  /* ── Page shell: minimal padding ── */
+  /* -- Page shell: minimal padding -- */
   .page-shell {
     padding: 14px 10px 28px;
   }
 
-  /* ── Topbar: compact ── */
+  /* -- Topbar: compact -- */
   .topbar {
     padding: 10px 10px;
     gap: 8px;
@@ -4859,7 +4859,7 @@ p {
     font-size: 0.92rem;
   }
 
-  /* ── Character card: compact ── */
+  /* -- Character card: compact -- */
   .character-card {
     padding: 10px;
     gap: 8px;
@@ -4884,7 +4884,7 @@ p {
     -webkit-line-clamp: 2;
   }
 
-  /* ── Card actions: full width stack ── */
+  /* -- Card actions: full width stack -- */
   .card-actions {
     flex-wrap: wrap;
   }
@@ -4896,13 +4896,13 @@ p {
     justify-content: center;
   }
 
-  /* ── Reaction buttons: larger touch ── */
+  /* -- Reaction buttons: larger touch -- */
   .reaction-button {
     width: 36px;
     height: 36px;
   }
 
-  /* ── Search box: full width ── */
+  /* -- Search box: full width -- */
   .search-box {
     min-height: 44px;
     padding: 0 10px;
@@ -4912,7 +4912,7 @@ p {
     font-size: 16px; /* prevent iOS zoom */
   }
 
-  /* ── Select field: compact ── */
+  /* -- Select field: compact -- */
   .select-field {
     min-height: 44px;
     padding: 0 10px;
@@ -4922,23 +4922,23 @@ p {
     font-size: 16px; /* prevent iOS zoom */
   }
 
-  /* ── Tag chip: compact ── */
+  /* -- Tag chip: compact -- */
   .tag-chip {
     padding: 5px 10px;
     font-size: 0.76rem;
   }
 
-  /* ── Section heading ── */
+  /* -- Section heading -- */
   .section-heading h1 {
     font-size: 1.35rem;
   }
 
-  /* ── Chat header ── */
+  /* -- Chat header -- */
   .chat-header h1 {
     font-size: 1.15rem;
   }
 
-  /* ── Message bubble: compact ── */
+  /* -- Message bubble: compact -- */
   .message-bubble {
     padding: 8px 10px;
   }
@@ -4947,7 +4947,7 @@ p {
     gap: 6px;
   }
 
-  /* ── Composer: compact ── */
+  /* -- Composer: compact -- */
   .composer {
     grid-template-columns: 1fr 44px;
     gap: 6px;
@@ -4964,25 +4964,25 @@ p {
     height: 44px;
   }
 
-  /* ── Form panel: minimal ── */
+  /* -- Form panel: minimal -- */
   .form-panel {
     padding: 12px;
     gap: 12px;
   }
 
-  /* ── Large avatar: smaller ── */
+  /* -- Large avatar: smaller -- */
   .large-avatar {
     width: 72px;
     height: 72px;
     font-size: 1.6rem;
   }
 
-  /* ── Form grid gap ── */
+  /* -- Form grid gap -- */
   .form-grid {
     gap: 10px;
   }
 
-  /* ── Status bar: compact ── */
+  /* -- Status bar: compact -- */
   .status-bar-container {
     padding: 8px 10px;
     border-radius: 8px;
@@ -5001,7 +5001,7 @@ p {
     font-size: 10px;
   }
 
-  /* ── Save panel: full screen ── */
+  /* -- Save panel: full screen -- */
   .save-panel {
     width: 100vw;
     max-width: none;
@@ -5016,12 +5016,12 @@ p {
     font-size: 16px; /* prevent iOS zoom */
   }
 
-  /* ── World book cards ── */
+  /* -- World book cards -- */
   .book-card-body h3 {
     font-size: 0.95rem;
   }
 
-  /* ── Modal: nearly full screen ── */
+  /* -- Modal: nearly full screen -- */
   .modal-content {
     padding: 16px;
     border-radius: 12px 12px 0 0;
@@ -5031,14 +5031,14 @@ p {
     font-size: 1.05rem;
   }
 
-  /* ── Input font size: prevent iOS zoom ── */
+  /* -- Input font size: prevent iOS zoom -- */
   input,
   textarea,
   select {
     font-size: 16px;
   }
 
-  /* ── Inline heading: stack ── */
+  /* -- Inline heading: stack -- */
   .inline-heading {
     flex-direction: column;
     align-items: stretch;
@@ -5054,13 +5054,13 @@ p {
     gap: 6px;
   }
 
-  /* ── Tag badge: compact ── */
+  /* -- Tag badge: compact -- */
   .tag-badge {
     font-size: 0.72rem;
     padding: 2px 8px;
   }
 
-  /* ── Empty state: compact ── */
+  /* -- Empty state: compact -- */
   .empty-state {
     padding: 28px 12px;
   }
@@ -5069,12 +5069,12 @@ p {
     font-size: 1.1rem;
   }
 
-  /* ── Preset editor fields ── */
+  /* -- Preset editor fields -- */
   .preset-editor textarea {
     font-size: 16px; /* prevent iOS zoom */
   }
 
-  /* ── Mod card: compact ── */
+  /* -- Mod card: compact -- */
   .mod-card {
     padding: 10px;
   }
@@ -5093,7 +5093,7 @@ p {
     padding: 1px 5px;
   }
 
-  /* ── Regex rule card: compact ── */
+  /* -- Regex rule card: compact -- */
   .regex-rule-card {
     padding: 8px 10px;
   }
@@ -5102,17 +5102,17 @@ p {
     font-size: 13px;
   }
 
-  /* ── Profile stats: single column on very small ── */
+  /* -- Profile stats: single column on very small -- */
   .profile-stats-grid {
     grid-template-columns: 1fr;
   }
 
-  /* ── Owned AI row: compact ── */
+  /* -- Owned AI row: compact -- */
   .owned-ai-row {
     padding: 8px;
   }
 
-  /* ── Permission badges: wrap ── */
+  /* -- Permission badges: wrap -- */
   .permission-badges {
     gap: 4px;
   }
@@ -5124,7 +5124,7 @@ p {
     padding: 0 6px;
   }
 
-  /* ── Preset card: compact ── */
+  /* -- Preset card: compact -- */
   .preset-card {
     padding: 10px;
   }
@@ -5133,14 +5133,14 @@ p {
     font-size: 0.88rem;
   }
 
-  /* ── Form section tab: compact ── */
+  /* -- Form section tab: compact -- */
   .form-section-tab {
     min-height: 44px;
     padding: 0 12px;
     font-size: 0.82rem;
   }
 
-  /* ── Form section title: compact ── */
+  /* -- Form section title: compact -- */
   .form-section-title {
     font-size: 0.96rem;
   }
@@ -5173,7 +5173,7 @@ p {
   }
 }
 
-/* ── Desktop refinement: 769px+ ── */
+/* -- Desktop refinement: 769px+ -- */
 
 @media (min-width: 769px) {
   /* Ensure desktop experience stays unchanged */
@@ -5384,7 +5384,7 @@ p {
   }
 }
 
-/* ── Preset Management ── */
+/* -- Preset Management -- */
 
 .preset-actions-row {
   display: flex;
@@ -5488,7 +5488,7 @@ p {
   gap: 6px;
 }
 
-/* ── Mod Cards ── */
+/* -- Mod Cards -- */
 
 .mod-card-list {
   display: grid;
@@ -5592,7 +5592,7 @@ p {
   color: var(--green);
 }
 
-/* ── Chat Preset Selector ── */
+/* -- Chat Preset Selector -- */
 
 .preset-select {
   font-size: 0.78rem;
@@ -5605,7 +5605,7 @@ p {
   cursor: pointer;
 }
 
-/* ── Import Preview Dialog ── */
+/* -- Import Preview Dialog -- */
 
 .import-overlay {
   position: fixed;
@@ -5859,7 +5859,111 @@ p {
   padding: 0 0 4px;
 }
 
-/* ── CG Portrait Panel ── */
+/* -- Status Bar Template Editor -- */
+
+.sb-template-editor {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px dashed color-mix(in srgb, var(--line) 60%, transparent);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--surface-strong) 30%, transparent);
+}
+
+.sb-template-row {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.sb-template-row > .chat-setting-field {
+  flex: 1 1 120px;
+  min-width: 0;
+}
+
+.sb-accent-row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.sb-accent-row input[type="text"] {
+  flex: 1;
+  min-width: 0;
+}
+
+.sb-accent-picker {
+  flex: 0 0 36px;
+  width: 36px;
+  height: 36px;
+  min-height: 36px;
+  padding: 2px;
+  cursor: pointer;
+  border-radius: 8px;
+}
+
+.sb-effects-field {
+  display: grid;
+  gap: 6px;
+}
+
+.sb-effects-label {
+  color: var(--text);
+  font-size: 0.82rem;
+  font-weight: 800;
+}
+
+.sb-effects-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.sb-effect-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 30px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  cursor: pointer;
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: var(--text);
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.sb-effect-check:has(input:checked) {
+  border-color: color-mix(in srgb, var(--primary) 40%, var(--line));
+  background: var(--primary-soft);
+  color: var(--primary);
+}
+
+.sb-effect-check input {
+  width: 14px;
+  height: 14px;
+  accent-color: var(--primary);
+}
+
+.sb-custom-css {
+  min-height: 60px;
+  font-size: 0.8rem;
+  line-height: 1.5;
+}
+
+@media (max-width: 560px) {
+  .sb-template-row {
+    flex-direction: column;
+  }
+
+  .sb-template-row > .chat-setting-field {
+    flex-basis: 100%;
+  }
+}
+
+/* -- CG Portrait Panel -- */
 
 .cg-portrait-panel {
   position: relative;
@@ -5900,11 +6004,11 @@ p {
   backdrop-filter: blur(4px);
 }
 
-/* ═══════════════════════════════════════
+/* ---------------------------------------
    TALENT ROLL SYSTEM
-   ═══════════════════════════════════════ */
+   --------------------------------------- */
 
-/* ── Rarity Colors ── */
+/* -- Rarity Colors -- */
 
 .rarity-common {
   --rarity-color: #8b8b8b;
@@ -5950,7 +6054,7 @@ p {
   --rarity-bg: rgba(250, 204, 21, 0.18);
 }
 
-/* ── Talent Badge ── */
+/* -- Talent Badge -- */
 
 .talent-badge {
   display: inline-flex;
@@ -6013,7 +6117,7 @@ p {
   font-weight: 700;
 }
 
-/* ── Talent Panel (Character Form) ── */
+/* -- Talent Panel (Character Form) -- */
 
 .talent-panel {
   border-color: color-mix(in srgb, #a855f7 18%, var(--line));
@@ -6022,7 +6126,7 @@ p {
     color-mix(in srgb, var(--surface) 92%, transparent);
 }
 
-/* ── Talent Roll Dialog ── */
+/* -- Talent Roll Dialog -- */
 
 .talent-overlay {
   position: fixed;
@@ -6075,7 +6179,7 @@ p {
   padding: 18px 20px 20px;
 }
 
-/* ── Roll Section ── */
+/* -- Roll Section -- */
 
 .talent-roll-section {
   display: grid;
@@ -6118,7 +6222,7 @@ p {
   100% { transform: rotate(360deg) scale(1); }
 }
 
-/* ── Roll Result Card ── */
+/* -- Roll Result Card -- */
 
 .roll-result-card {
   position: relative;
@@ -6235,7 +6339,7 @@ p {
   100% { opacity: 0; transform: scale(0.9) translateY(-10px); }
 }
 
-/* ── Talent List ── */
+/* -- Talent List -- */
 
 .talent-list-section {
   display: grid;
@@ -6359,7 +6463,7 @@ p {
   opacity: 0.5;
 }
 
-/* ── Mobile adjustments ── */
+/* -- Mobile adjustments -- */
 
 @media (max-width: 620px) {
   .talent-overlay {
@@ -6381,7 +6485,7 @@ p {
   }
 }
 
-/* ── Economy Summary (Chat Header) ── */
+/* -- Economy Summary (Chat Header) -- */
 
 .economy-summary-header {
   display: flex;
@@ -6409,9 +6513,9 @@ p {
   white-space: nowrap;
 }
 
-/* ═══════════════════════════════════════════════════════
+/* -------------------------------------------------------
    MOBILE BOTTOM SHEET SIDEBAR
-   ═══════════════════════════════════════════════════════ */
+   ------------------------------------------------------- */
 
 @media (max-width: 768px) {
   /* Convert sidebar to bottom sheet on mobile */
@@ -6570,9 +6674,9 @@ p {
   }
 }
 
-/* ═══════════════════════════════════════════════════════
+/* -------------------------------------------------------
    MOBILE KEYBOARD ADAPTATION
-   ═══════════════════════════════════════════════════════ */
+   ------------------------------------------------------- */
 
 @supports (height: 100dvh) {
   .deep-chat-shell {
@@ -6588,9 +6692,9 @@ p {
   }
 }
 
-/* ═══════════════════════════════════════════════════════
+/* -------------------------------------------------------
    TOUCH GESTURE IMPROVEMENTS
-   ═══════════════════════════════════════════════════════ */
+   ------------------------------------------------------- */
 
 @media (hover: none) and (pointer: coarse) {
   /* Larger touch targets on touch devices */
@@ -6636,9 +6740,9 @@ p {
   }
 }
 
-/* ═══════════════════════════════════════════════════════
+/* -------------------------------------------------------
    HIGHLIGHT.JS THEME INTEGRATION
-   ═══════════════════════════════════════════════════════ */
+   ------------------------------------------------------- */
 
 .hljs {
   background: transparent !important;
@@ -6688,9 +6792,9 @@ p {
   color: #ff8d82;
 }
 
-/* ═══════════════════════════════════════════════════════
+/* -------------------------------------------------------
    VIRTUAL SCROLL SUPPORT
-   ═══════════════════════════════════════════════════════ */
+   ------------------------------------------------------- */
 
 .virtual-scroll-container {
   display: flex;

@@ -1,7 +1,7 @@
 <script setup>
 import { ChevronDown, Save, Upload, X } from '@lucide/vue';
 
-defineProps({
+const props = defineProps({
   open: { type: Boolean, default: false },
   conversation: { type: Object, default: null },
   authorChatAppearance: { type: Object, default: () => ({}) },
@@ -14,7 +14,8 @@ defineProps({
   statusBar: { type: Object, default: null },
   statusBarEditorOpen: { type: Boolean, default: false },
   statusBarSaving: { type: Boolean, default: false },
-  statusBarForm: { type: Object, default: () => ({}) }
+  statusBarForm: { type: Object, default: () => ({}) },
+  statusBarTemplateCfg: { type: Object, default: () => ({ variant: 'default', density: 'default', accentColor: '', effects: [], customCss: '' }) }
 });
 
 const emit = defineEmits([
@@ -34,6 +35,16 @@ const emit = defineEmits([
   'save-status-bar',
   'delete-status-bar'
 ]);
+
+function toggleEffect(effect) {
+  const cfg = props.statusBarTemplateCfg;
+  const idx = cfg.effects.indexOf(effect);
+  if (idx >= 0) {
+    cfg.effects.splice(idx, 1);
+  } else {
+    cfg.effects.push(effect);
+  }
+}
 </script>
 
 <template>
@@ -235,6 +246,83 @@ const emit = defineEmits([
               maxlength="50"
             />
           </label>
+
+          <div class="sb-template-editor">
+            <div class="sb-template-row">
+              <label class="chat-setting-field compact">
+                <span>样式风格</span>
+                <select v-model="statusBarTemplateCfg.variant">
+                  <option value="default">默认</option>
+                  <option value="compact">紧凑</option>
+                  <option value="minimal">极简</option>
+                  <option value="neon">霓虹</option>
+                </select>
+              </label>
+              <label class="chat-setting-field compact">
+                <span>间距</span>
+                <select v-model="statusBarTemplateCfg.density">
+                  <option value="default">默认</option>
+                  <option value="cozy">宽松</option>
+                  <option value="compact">紧凑</option>
+                </select>
+              </label>
+            </div>
+            <label class="chat-setting-field compact">
+              <span>强调色</span>
+              <div class="sb-accent-row">
+                <input
+                  v-model="statusBarTemplateCfg.accentColor"
+                  type="text"
+                  placeholder="留空使用主题色，如 #e91e63"
+                  maxlength="30"
+                />
+                <input
+                  v-model="statusBarTemplateCfg.accentColor"
+                  type="color"
+                  class="sb-accent-picker"
+                  title="选择颜色"
+                />
+              </div>
+            </label>
+            <div class="sb-effects-field">
+              <span class="sb-effects-label">动效</span>
+              <div class="sb-effects-grid">
+                <label class="sb-effect-check">
+                  <input
+                    type="checkbox"
+                    :checked="statusBarTemplateCfg.effects.includes('glow')"
+                    @change="toggleEffect('glow')"
+                  />
+                  <span>光晕</span>
+                </label>
+                <label class="sb-effect-check">
+                  <input
+                    type="checkbox"
+                    :checked="statusBarTemplateCfg.effects.includes('striped')"
+                    @change="toggleEffect('striped')"
+                  />
+                  <span>条纹</span>
+                </label>
+                <label class="sb-effect-check">
+                  <input
+                    type="checkbox"
+                    :checked="statusBarTemplateCfg.effects.includes('pulse')"
+                    @change="toggleEffect('pulse')"
+                  />
+                  <span>脉冲</span>
+                </label>
+              </div>
+            </div>
+            <label class="chat-setting-field compact">
+              <span>自定义 CSS 变量</span>
+              <textarea
+                v-model="statusBarTemplateCfg.customCss"
+                class="chat-code-textarea sb-custom-css"
+                rows="3"
+                placeholder='--sb-accent: #e91e63; border-radius: 20px;'
+              />
+            </label>
+          </div>
 
           <div class="status-bar-variables-editor">
             <div class="variables-editor-header">

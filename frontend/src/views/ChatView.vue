@@ -64,6 +64,7 @@ const {
 
 const {
   statusBar, statusBarForm, statusBarEditorOpen, statusBarSaving,
+  statusBarTemplateConfig, statusBarTemplateCfg,
   accessorySettingsOpen, accessorySaving, accessorySkills, accessorySkillResults,
   economyAccounts, accessorySkillItems,
   hasStatusBarContent, showEconomyFeature, showNpcFeature,
@@ -323,6 +324,7 @@ watch(input, () => {
       :status-bar-editor-open="statusBarEditorOpen"
       :status-bar-saving="statusBarSaving"
       :status-bar-form="statusBarForm"
+      :status-bar-template-cfg="statusBarTemplateCfg"
       @close="closeSettings"
       @save-appearance="saveConversationAppearanceChanges"
       @reset-appearance="syncConversationAppearance(conversation?.settings)"
@@ -390,7 +392,7 @@ watch(input, () => {
             @update:editing-message-content="(val) => editingMessageContent = val"
           />
           <div v-if="hasStatusBarContent && message === latestAssistantMessage" class="status-bar-wrapper">
-            <StatusBar :status-bar="statusBar" />
+            <StatusBar :status-bar="statusBar" :template-config="statusBarTemplateConfig" />
           </div>
         </template>
       </div>
