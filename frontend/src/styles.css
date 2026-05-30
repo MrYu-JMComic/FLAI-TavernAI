@@ -944,6 +944,8 @@ p {
   flex-wrap: wrap;
   gap: 6px;
   margin-bottom: 6px;
+  max-height: 120px;
+  overflow-y: auto;
 }
 
 .tag-input-row {
@@ -1082,6 +1084,21 @@ p {
   color: var(--muted);
   font-size: 0.88rem;
   font-weight: 800;
+}
+
+.field input,
+.field select,
+.field textarea {
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.field textarea {
+  overflow: auto;
+  text-overflow: unset;
+  resize: vertical;
 }
 
 .primary-button,
@@ -1405,6 +1422,27 @@ p {
   display: grid;
   gap: 18px;
   min-width: 0;
+  overflow: hidden;
+}
+
+.advanced-settings-panel {
+  align-content: start;
+}
+
+.advanced-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.advanced-grid .field {
+  min-width: 0;
+}
+
+@media (max-width: 680px) {
+  .advanced-grid {
+    grid-template-columns: 1fr;
+  }
 }
 
 .form-panel,
@@ -1630,12 +1668,67 @@ p {
 }
 
 .ai-draft-panel {
-  position: sticky;
-  top: 14px;
   border-color: color-mix(in srgb, var(--primary) 22%, var(--line));
   background:
     linear-gradient(135deg, color-mix(in srgb, var(--primary-soft) 34%, transparent), transparent 42%),
     color-mix(in srgb, var(--surface) 92%, transparent);
+}
+
+@media (min-width: 761px) {
+  .ai-draft-panel {
+    position: fixed;
+    left: var(--ai-panel-x, 0px);
+    top: var(--ai-panel-y, 0px);
+    z-index: 18;
+    width: var(--ai-panel-w, 420px);
+    max-width: calc(100vw - 32px);
+    height: var(--ai-panel-h, auto);
+    max-height: calc(100dvh - 32px);
+    min-height: 120px;
+    resize: both;
+    overflow: auto;
+    box-shadow: 0 18px 48px rgba(67, 45, 30, 0.18);
+  }
+
+  .ai-panel-dragging {
+    opacity: 0.92;
+    box-shadow: 0 24px 60px rgba(67, 45, 30, 0.24);
+    user-select: none;
+    pointer-events: none;
+  }
+}
+
+.ai-panel-heading {
+  cursor: grab;
+  user-select: none;
+}
+
+.ai-panel-dragging .ai-panel-heading {
+  cursor: grabbing;
+}
+
+.ai-panel-heading-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.ai-panel-reset {
+  display: inline-grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border: 0;
+  border-radius: 6px;
+  color: var(--muted);
+  background: transparent;
+  cursor: pointer;
+  transition: color 0.15s, background 0.15s;
+}
+
+.ai-panel-reset:hover {
+  color: var(--primary);
+  background: var(--primary-soft);
 }
 
 .ai-draft-panel .inline-heading > svg {
@@ -1925,6 +2018,12 @@ p {
   min-width: 0;
 }
 
+.render-plugin-row input,
+.render-plugin-row select {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .plugin-enabled {
   grid-area: enabled;
 }
@@ -1969,6 +2068,8 @@ p {
   border-radius: 8px;
   padding: 12px;
   background: color-mix(in srgb, var(--surface) 78%, transparent);
+  overflow-wrap: break-word;
+  word-break: break-word;
 }
 
 .render-plugin-preview textarea[readonly] {
@@ -2001,6 +2102,12 @@ p {
 
 .rule-row > * {
   min-width: 0;
+}
+
+.rule-row input,
+.rule-row select {
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .rule-enabled {
@@ -2071,6 +2178,8 @@ p {
   margin: 0;
   color: var(--green);
   line-height: 1.55;
+  overflow-wrap: break-word;
+  word-break: break-word;
 }
 
 .form-actions {
@@ -2328,6 +2437,16 @@ p {
 
   .ai-draft-panel {
     position: static;
+    left: auto;
+    top: auto;
+    width: auto;
+    max-width: none;
+    height: auto;
+    min-height: 0;
+    max-height: none;
+    resize: none;
+    overflow: visible;
+    box-shadow: none;
   }
 
   .home-toolbar {
@@ -2750,15 +2869,14 @@ p {
 
 .chat-settings-drawer {
   position: fixed;
+  top: 0;
+  bottom: 0;
   right: 0;
-  inset-block: 0;
   z-index: 44;
   display: grid;
   grid-template-rows: auto minmax(0, 1fr) auto;
   gap: 14px;
   width: min(560px, calc(100vw - 32px));
-  height: 100vh;
-  height: 100dvh;
   padding: 18px 16px 16px;
   border-left: 1px solid #e8edf5;
   color: #111827;
@@ -2882,6 +3000,10 @@ p {
     border-color 0.16s ease,
     box-shadow 0.16s ease,
     background 0.16s ease;
+}
+
+.chat-code-textarea {
+  resize: vertical;
 }
 
 .chat-setting-field input:focus,
@@ -3921,6 +4043,8 @@ p {
   z-index: 12;
   width: 100%;
   display: grid;
+  align-self: end;
+  min-width: 0;
   padding: 0 clamp(14px, 2vw, 28px);
   background: transparent;
   pointer-events: none;
@@ -3956,8 +4080,8 @@ p {
   --composer-textarea-max-height: 180px;
   min-height: 52px;
   max-height: var(--composer-textarea-max-height);
-  resize: none;
-  overflow-y: hidden;
+  resize: vertical;
+  overflow-y: auto;
   border: 1px solid color-mix(in srgb, var(--line) 88%, transparent);
   border-radius: 8px;
   padding: 12px 14px;
@@ -4182,7 +4306,7 @@ p {
   }
 
   .deep-message-scroll {
-    padding: 18px 12px 48px;
+    padding: 18px 12px calc(var(--chat-composer-height) + 24px);
   }
 }
 
@@ -4555,6 +4679,16 @@ p {
 
   .ai-draft-panel {
     position: static;
+    left: auto;
+    top: auto;
+    width: auto;
+    max-width: none;
+    height: auto;
+    min-height: 0;
+    max-height: none;
+    resize: none;
+    overflow: visible;
+    box-shadow: none;
   }
 
   /* -- Form grid: single column on tablet -- */
@@ -4791,6 +4925,11 @@ p {
 
   /* -- Visibility picker: single column -- */
   .visibility-picker {
+    grid-template-columns: 1fr;
+  }
+
+  /* -- Accessory skills: stack on mobile -- */
+  .accessory-skill-row {
     grid-template-columns: 1fr;
   }
 
@@ -6664,7 +6803,7 @@ p {
     width: 100%;
     max-width: 100%;
     height: auto;
-    max-height: 90vh;
+    max-height: min(90dvh, calc(100dvh - env(safe-area-inset-top, 0px)));
     padding: 16px 14px calc(16px + env(safe-area-inset-bottom, 0px));
     border-left: 0;
     border-top: 1px solid var(--line);
@@ -6756,8 +6895,10 @@ p {
     max-height: 85dvh;
   }
 
-  .chat-settings-drawer {
-    max-height: 90dvh;
+  @media (min-width: 769px) {
+    .chat-settings-drawer {
+      max-height: none;
+    }
   }
 }
 

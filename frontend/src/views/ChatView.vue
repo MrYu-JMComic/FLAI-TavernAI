@@ -206,16 +206,37 @@ function isPhoneViewport() {
   return window.matchMedia('(max-width: 760px)').matches;
 }
 
+let userResizedHeight = 0;
+let isUserResizing = false;
+
 function resizeComposerTextarea() {
   const el = composerWrap.value?.textareaRef || composerTextarea.value;
-  if (!el) {
-    return;
-  }
+  if (!el) return;
   const maxHeight = readComposerTextareaMaxHeight(el);
   el.style.height = 'auto';
-  el.style.height = `${Math.min(el.scrollHeight, maxHeight)}px`;
-  el.style.overflowY = el.scrollHeight > maxHeight ? 'auto' : 'hidden';
+  const scrollH = el.scrollHeight;
+  const minHeight = isUserResizing ? Math.min(userResizedHeight, maxHeight) : 0;
+  const targetHeight = Math.min(Math.max(scrollH, minHeight), maxHeight);
+  el.style.height = `${targetHeight}px`;
+  el.style.overflowY = scrollH > maxHeight ? 'auto' : 'hidden';
   updateComposerDock();
+}
+
+function handleTextareaResize() {
+  const el = composerWrap.value?.textareaRef || composerTextarea.value;
+  if (!el) return;
+  const maxH = readComposerTextareaMaxHeight(el);
+  const h = el.offsetHeight;
+  if (h > maxH * 0.6) {
+    userResizedHeight = Math.min(h, maxH);
+    isUserResizing = true;
+  }
+  updateComposerDock();
+}
+
+function resetUserResize() {
+  isUserResizing = false;
+  userResizedHeight = 0;
 }
 
 function readComposerTextareaMaxHeight(el) {
@@ -234,6 +255,8 @@ function handleViewportResize() {
 }
 
 let composerDockRafId = null;
+let composerResizeObserver = null;
+let textareaResizeObserver = null;
 
 function updateComposerDock() {
   if (composerDockRafId) {
@@ -281,6 +304,20 @@ onMounted(async () => {
   window.addEventListener('focusout', handleViewportResize);
   window.visualViewport?.addEventListener('resize', handleViewportResize);
   window.visualViewport?.addEventListener('scroll', handleViewportResize);
+  const wrapEl = composerWrap.value?.wrapRef || composerWrap.value;
+  if (wrapEl && typeof ResizeObserver !== 'undefined') {
+    composerResizeObserver = new ResizeObserver(() => {
+      updateComposerDock();
+    });
+    composerResizeObserver.observe(wrapEl);
+  }
+  const textareaEl = composerWrap.value?.textareaRef || composerTextarea.value;
+  if (textareaEl && typeof ResizeObserver !== 'undefined') {
+    textareaResizeObserver = new ResizeObserver(() => {
+      handleTextareaResize();
+    });
+    textareaResizeObserver.observe(textareaEl);
+  }
 });
 
 onBeforeUnmount(() => {
@@ -293,9 +330,20 @@ onBeforeUnmount(() => {
   window.removeEventListener('focusout', handleViewportResize);
   window.visualViewport?.removeEventListener('resize', handleViewportResize);
   window.visualViewport?.removeEventListener('scroll', handleViewportResize);
+  if (composerResizeObserver) {
+    composerResizeObserver.disconnect();
+    composerResizeObserver = null;
+  }
+  if (textareaResizeObserver) {
+    textareaResizeObserver.disconnect();
+    textareaResizeObserver = null;
+  }
 });
 
-watch(input, () => {
+watch(input, (newVal) => {
+  if (!newVal) {
+    resetUserResize();
+  }
   nextTick(() => {
     resizeComposerTextarea();
     updateComposerDock();

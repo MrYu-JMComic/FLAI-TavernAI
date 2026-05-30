@@ -1,6 +1,6 @@
 ﻿<script setup>
-import { computed, onMounted, reactive, ref } from 'vue';
-import { ArrowLeft, Download, ListChecks, Plus, Save, Settings, Sparkles, Trash2, Upload, WandSparkles } from '@lucide/vue';
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
+import { ArrowLeft, Download, ListChecks, Plus, RotateCcw, Save, Settings, Sparkles, Trash2, Upload, WandSparkles } from '@lucide/vue';
 import { completeCharacterDraft, createCharacter, createTag, deleteCharacter, exportCharacter, fetchCharacter, fetchTags, fetchWorldBooks, updateCharacter } from '../api';
 import MarkdownContent from '../components/MarkdownContent.vue';
 import VariableEditor from '../components/VariableEditor.vue';
@@ -31,6 +31,158 @@ const availableTags = ref([]);
 const tagSearch = ref('');
 const activeSection = ref('basic');
 const form = reactive(emptyCharacter());
+
+// ---- AI draft panel drag / resize state ----
+const AI_PANEL_STORAGE_KEY = 'cf-ai-panel-pos';
+const AI_PANEL_DEFAULT = (() => {
+  try {
+    return { x: Math.max(16, window.innerWidth - 460), y: 96, w: 420, h: 0 };
+  } catch {
+    return { x: 16, y: 96, w: 420, h: 0 };
+  }
+})();
+const aiPanelRef = ref(null);
+const aiPanelPos = ref(loadAiPanelPos());
+const aiPanelSize = ref(loadAiPanelSize());
+const aiPanelDragging = ref(false);
+let dragOffsetX = 0;
+let dragOffsetY = 0;
+let dragStarted = false;
+
+function loadAiPanelPos() {
+  try {
+    const raw = localStorage.getItem(AI_PANEL_STORAGE_KEY);
+    if (raw) {
+      const d = JSON.parse(raw);
+      if (typeof d.x === 'number' && typeof d.y === 'number') return { x: d.x, y: d.y };
+    }
+  } catch {}
+  return { x: AI_PANEL_DEFAULT.x, y: AI_PANEL_DEFAULT.y };
+}
+
+function loadAiPanelSize() {
+  try {
+    const raw = localStorage.getItem(AI_PANEL_STORAGE_KEY);
+    if (raw) {
+      const d = JSON.parse(raw);
+      if (typeof d.w === 'number' && typeof d.h === 'number' && d.w > 0) return { w: d.w, h: d.h };
+    }
+  } catch {}
+  return { w: AI_PANEL_DEFAULT.w, h: AI_PANEL_DEFAULT.h };
+}
+
+function saveAiPanelState() {
+  try {
+    localStorage.setItem(AI_PANEL_STORAGE_KEY, JSON.stringify({
+      x: aiPanelPos.value.x,
+      y: aiPanelPos.value.y,
+      w: aiPanelSize.value.w,
+      h: aiPanelSize.value.h
+    }));
+  } catch {}
+}
+
+function clampAiPanelPos(x, y) {
+  const vw = window.innerWidth;
+  const vh = window.innerHeight;
+  const w = aiPanelSize.value.w;
+  const h = aiPanelSize.value.h || 200;
+  return {
+    x: Math.max(0, Math.min(x, vw - w)),
+    y: Math.max(0, Math.min(y, vh - h))
+  };
+}
+
+function onAiPanelDragStart(e) {
+  if (window.innerWidth <= 760) return;
+  const evt = e.type === 'touchstart' ? e.touches[0] : e;
+  const panel = aiPanelRef.value;
+  if (!panel) return;
+  const rect = panel.getBoundingClientRect();
+  dragOffsetX = evt.clientX - rect.left;
+  dragOffsetY = evt.clientY - rect.top;
+  aiPanelDragging.value = true;
+  dragStarted = false;
+  document.addEventListener('mousemove', onAiPanelDragMove, { passive: false });
+  document.addEventListener('mouseup', onAiPanelDragEnd);
+  document.addEventListener('touchmove', onAiPanelDragMove, { passive: false });
+  document.addEventListener('touchend', onAiPanelDragEnd);
+}
+
+function onAiPanelDragMove(e) {
+  if (!aiPanelDragging.value) return;
+  e.preventDefault();
+  dragStarted = true;
+  const evt = e.type === 'touchmove' ? e.touches[0] : e;
+  const clamped = clampAiPanelPos(evt.clientX - dragOffsetX, evt.clientY - dragOffsetY);
+  aiPanelPos.value = { x: clamped.x, y: clamped.y };
+}
+
+function onAiPanelDragEnd() {
+  aiPanelDragging.value = false;
+  document.removeEventListener('mousemove', onAiPanelDragMove);
+  document.removeEventListener('mouseup', onAiPanelDragEnd);
+  document.removeEventListener('touchmove', onAiPanelDragMove);
+  document.removeEventListener('touchend', onAiPanelDragEnd);
+  if (dragStarted) saveAiPanelState();
+}
+
+function resetAiPanel() {
+  aiPanelPos.value = { x: AI_PANEL_DEFAULT.x, y: AI_PANEL_DEFAULT.y };
+  aiPanelSize.value = { w: AI_PANEL_DEFAULT.w, h: AI_PANEL_DEFAULT.h };
+  saveAiPanelState();
+}
+
+let aiPanelResizeObserver = null;
+let skipFirstResize = true;
+
+function onAiPanelResize() {
+  if (skipFirstResize) { skipFirstResize = false; return; }
+  if (window.innerWidth <= 760) return;
+  const el = aiPanelRef.value;
+  if (!el) return;
+  const rect = el.getBoundingClientRect();
+  if (rect.width > 0 && rect.height > 0) {
+    aiPanelSize.value = { w: Math.round(rect.width), h: Math.round(rect.height) };
+    saveAiPanelState();
+  }
+}
+
+function onWindowResize() {
+  const clamped = clampAiPanelPos(aiPanelPos.value.x, aiPanelPos.value.y);
+  if (clamped.x !== aiPanelPos.value.x || clamped.y !== aiPanelPos.value.y) {
+    aiPanelPos.value = clamped;
+    saveAiPanelState();
+  }
+}
+
+watch(aiPanelRef, (el) => {
+  if (aiPanelResizeObserver) {
+    aiPanelResizeObserver.disconnect();
+    aiPanelResizeObserver = null;
+  }
+  if (el && window.ResizeObserver && window.innerWidth > 760) {
+    skipFirstResize = true;
+    aiPanelResizeObserver = new ResizeObserver(onAiPanelResize);
+    aiPanelResizeObserver.observe(el);
+  }
+});
+
+onMounted(() => {
+  window.addEventListener('resize', onWindowResize);
+});
+
+onBeforeUnmount(() => {
+  document.removeEventListener('mousemove', onAiPanelDragMove);
+  document.removeEventListener('mouseup', onAiPanelDragEnd);
+  document.removeEventListener('touchmove', onAiPanelDragMove);
+  document.removeEventListener('touchend', onAiPanelDragEnd);
+  if (aiPanelResizeObserver) {
+    aiPanelResizeObserver.disconnect();
+    aiPanelResizeObserver = null;
+  }
+  window.removeEventListener('resize', onWindowResize);
+});
 
 const formSections = [
   { id: 'basic', label: '基础信息' },
@@ -659,13 +811,24 @@ function applyLocalRules(text, rules, phase) {
 
       <div class="editor-side">
         <div id="section-advanced" class="form-section-group-advanced">
-        <section v-if="canEdit" class="form-panel ai-draft-panel">
-          <div class="inline-heading">
+        <section
+          v-if="canEdit"
+          ref="aiPanelRef"
+          class="form-panel ai-draft-panel"
+          :class="{ 'ai-panel-dragging': aiPanelDragging }"
+          :style="{ '--ai-panel-x': aiPanelPos.x + 'px', '--ai-panel-y': aiPanelPos.y + 'px', '--ai-panel-w': aiPanelSize.w + 'px', '--ai-panel-h': aiPanelSize.h ? aiPanelSize.h + 'px' : 'auto' }"
+        >
+          <div class="inline-heading ai-panel-heading" @mousedown="onAiPanelDragStart" @touchstart="onAiPanelDragStart">
             <div>
               <h2>AI 完善设定</h2>
               <p>按你的要求自动补全角色字段和正则规则。</p>
             </div>
-            <Sparkles :size="20" />
+            <div class="ai-panel-heading-actions">
+              <button class="ai-panel-reset" type="button" title="重置位置" @mousedown.stop @click.stop="resetAiPanel">
+                <RotateCcw :size="14" />
+              </button>
+              <Sparkles :size="20" />
+            </div>
           </div>
           <label class="field">
             <span>完善要求</span>
