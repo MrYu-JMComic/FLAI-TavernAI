@@ -11,6 +11,39 @@ import {
 const VALID_VARIANTS = ['default', 'compact', 'minimal', 'neon'];
 const VALID_DENSITIES = ['default', 'cozy', 'compact'];
 const VALID_EFFECTS = ['glow', 'striped', 'pulse'];
+const VALID_DISPLAY_MODES = ['immersive', 'compact'];
+const VALID_CHAR_STATUSES = ['active', 'dead', 'forgotten', 'left', 'hidden'];
+
+function parseCharacter(raw) {
+  if (!raw || typeof raw !== 'object') return null;
+  const ch = {};
+  if (typeof raw.id === 'string') ch.id = raw.id;
+  if (typeof raw.name === 'string' && raw.name.trim()) ch.name = raw.name.trim();
+  if (typeof raw.role === 'string' && raw.role.trim()) ch.role = raw.role.trim();
+  if (VALID_CHAR_STATUSES.includes(raw.status)) ch.status = raw.status;
+  if (typeof raw.note === 'string') ch.note = raw.note;
+  if (typeof raw.accentColor === 'string' && raw.accentColor.trim()) ch.accentColor = raw.accentColor.trim();
+  if (typeof raw.customCss === 'string' && raw.customCss.trim()) ch.customCss = raw.customCss.trim();
+  if (Array.isArray(raw.variables)) {
+    ch.variables = raw.variables
+      .filter((v) => v && typeof v === 'object')
+      .map((v) => ({
+        name: String(v.name || ''),
+        value: Number(v.value) || 0,
+        max: Number(v.max) || 100,
+        color: String(v.color || '#6c757d')
+      }))
+      .filter((v) => v.name);
+  }
+  return ch;
+}
+
+function parseQuickReply(raw) {
+  if (!raw || typeof raw !== 'object') return null;
+  if (typeof raw.label !== 'string' || !raw.label.trim()) return null;
+  if (typeof raw.text !== 'string' || !raw.text.trim()) return null;
+  return { label: raw.label.trim(), text: raw.text.trim() };
+}
 
 function parseTemplateConfig(raw) {
   if (!raw || typeof raw !== 'string' || !raw.trim()) return {};
@@ -31,6 +64,17 @@ function parseTemplateConfig(raw) {
     }
     if (typeof parsed.customCss === 'string' && parsed.customCss.trim()) {
       cfg.customCss = parsed.customCss.trim();
+    }
+    if (VALID_DISPLAY_MODES.includes(parsed.displayMode)) {
+      cfg.displayMode = parsed.displayMode;
+    }
+    if (Array.isArray(parsed.characters)) {
+      const chars = parsed.characters.map(parseCharacter).filter(Boolean);
+      if (chars.length) cfg.characters = chars;
+    }
+    if (Array.isArray(parsed.quickReplies)) {
+      const qrs = parsed.quickReplies.map(parseQuickReply).filter(Boolean);
+      if (qrs.length) cfg.quickReplies = qrs;
     }
     return cfg;
   } catch {
@@ -58,7 +102,10 @@ export function useChatAccessory({ conversation, showActionNotice, showError }) 
     density: 'default',
     accentColor: '',
     effects: [],
-    customCss: ''
+    customCss: '',
+    displayMode: 'compact',
+    characters: [],
+    quickReplies: []
   });
   const accessorySkills = reactive(createDefaultAccessorySkills());
 
@@ -79,7 +126,10 @@ export function useChatAccessory({ conversation, showActionNotice, showError }) 
     density: statusBarTemplateCfg.density,
     accentColor: statusBarTemplateCfg.accentColor,
     effects: [...statusBarTemplateCfg.effects],
-    customCss: statusBarTemplateCfg.customCss
+    customCss: statusBarTemplateCfg.customCss,
+    displayMode: statusBarTemplateCfg.displayMode,
+    characters: statusBarTemplateCfg.characters.map((c) => ({ ...c, variables: (c.variables || []).map((v) => ({ ...v })) })),
+    quickReplies: statusBarTemplateCfg.quickReplies.map((q) => ({ ...q }))
   }));
 
   const showEconomyFeature = computed(() => {
@@ -274,6 +324,21 @@ export function useChatAccessory({ conversation, showActionNotice, showError }) 
       statusBarForm.template = '';
     }
     syncTemplateCfgFromForm();
+    if (!statusBar.value) {
+      const charName = conversation.value?.characterName || conversation.value?.character?.name || '';
+      if (charName && !statusBarTemplateCfg.characters.length) {
+        statusBarTemplateCfg.characters = [{
+          id: 'char_' + Date.now(),
+          name: charName,
+          role: '主角',
+          status: 'active',
+          note: '',
+          accentColor: '',
+          customCss: '',
+          variables: []
+        }];
+      }
+    }
     statusBarEditorOpen.value = true;
   }
 
@@ -284,6 +349,13 @@ export function useChatAccessory({ conversation, showActionNotice, showError }) 
     statusBarTemplateCfg.accentColor = parsed.accentColor || '';
     statusBarTemplateCfg.effects = parsed.effects || [];
     statusBarTemplateCfg.customCss = parsed.customCss || '';
+    statusBarTemplateCfg.displayMode = parsed.displayMode || 'compact';
+    statusBarTemplateCfg.characters = Array.isArray(parsed.characters)
+      ? parsed.characters.map((c) => ({ ...c, variables: (c.variables || []).map((v) => ({ ...v })) }))
+      : [];
+    statusBarTemplateCfg.quickReplies = Array.isArray(parsed.quickReplies)
+      ? parsed.quickReplies.map((q) => ({ ...q }))
+      : [];
   }
 
   function syncTemplateCfgToForm() {
@@ -293,11 +365,52 @@ export function useChatAccessory({ conversation, showActionNotice, showError }) 
     if (statusBarTemplateCfg.accentColor) cfg.accentColor = statusBarTemplateCfg.accentColor;
     if (statusBarTemplateCfg.effects.length) cfg.effects = statusBarTemplateCfg.effects;
     if (statusBarTemplateCfg.customCss) cfg.customCss = statusBarTemplateCfg.customCss;
+    if (statusBarTemplateCfg.displayMode !== 'compact') cfg.displayMode = statusBarTemplateCfg.displayMode;
+    if (statusBarTemplateCfg.characters.length) cfg.characters = statusBarTemplateCfg.characters;
+    if (statusBarTemplateCfg.quickReplies.length) cfg.quickReplies = statusBarTemplateCfg.quickReplies;
     statusBarForm.template = Object.keys(cfg).length ? JSON.stringify(cfg) : '';
   }
 
   function closeStatusBarEditor() {
     statusBarEditorOpen.value = false;
+  }
+
+  function addStatusCharacter() {
+    statusBarTemplateCfg.characters.push({
+      id: 'char_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6),
+      name: '新角色',
+      role: '',
+      status: 'active',
+      note: '',
+      accentColor: '',
+      customCss: '',
+      variables: []
+    });
+  }
+
+  function removeStatusCharacter(index) {
+    statusBarTemplateCfg.characters.splice(index, 1);
+  }
+
+  function addCharacterVariable(charIndex) {
+    const ch = statusBarTemplateCfg.characters[charIndex];
+    if (!ch) return;
+    if (!ch.variables) ch.variables = [];
+    ch.variables.push({ name: '新变量', value: 100, max: 100, color: '#6c757d' });
+  }
+
+  function removeCharacterVariable(charIndex, varIndex) {
+    const ch = statusBarTemplateCfg.characters[charIndex];
+    if (!ch || !ch.variables) return;
+    ch.variables.splice(varIndex, 1);
+  }
+
+  function addQuickReply() {
+    statusBarTemplateCfg.quickReplies.push({ label: '新选项', text: '' });
+  }
+
+  function removeQuickReply(index) {
+    statusBarTemplateCfg.quickReplies.splice(index, 1);
   }
 
   return {
@@ -329,6 +442,12 @@ export function useChatAccessory({ conversation, showActionNotice, showError }) 
     saveStatusBarChanges,
     deleteStatusBarAction,
     openStatusBarEditor,
-    closeStatusBarEditor
+    closeStatusBarEditor,
+    addStatusCharacter,
+    removeStatusCharacter,
+    addCharacterVariable,
+    removeCharacterVariable,
+    addQuickReply,
+    removeQuickReply
   };
 }

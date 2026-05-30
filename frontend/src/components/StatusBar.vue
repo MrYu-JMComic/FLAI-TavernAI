@@ -4,6 +4,16 @@ import { computed } from 'vue';
 const VALID_VARIANTS = ['default', 'compact', 'minimal', 'neon'];
 const VALID_DENSITIES = ['default', 'cozy', 'compact'];
 const VALID_EFFECTS = ['glow', 'striped', 'pulse'];
+const VALID_DISPLAY_MODES = ['immersive', 'compact'];
+const VALID_CHAR_STATUSES = ['active', 'dead', 'forgotten', 'left', 'hidden'];
+
+const STATUS_LABELS = {
+  active: '在线',
+  dead: '死亡',
+  forgotten: '遗忘',
+  left: '离开',
+  hidden: '隐藏'
+};
 
 const props = defineProps({
   statusBar: {
@@ -16,6 +26,8 @@ const props = defineProps({
   }
 });
 
+const emit = defineEmits(['quick-reply']);
+
 const cfg = computed(() => {
   const raw = props.templateConfig || {};
   const variant = VALID_VARIANTS.includes(raw.variant) ? raw.variant : 'default';
@@ -27,11 +39,18 @@ const cfg = computed(() => {
     ? raw.accentColor.trim()
     : '';
   const customCss = typeof raw.customCss === 'string' ? raw.customCss : '';
-  return { variant, density, effects, accentColor, customCss };
+  const displayMode = VALID_DISPLAY_MODES.includes(raw.displayMode) ? raw.displayMode : 'compact';
+  const characters = Array.isArray(raw.characters) ? raw.characters : [];
+  const quickReplies = Array.isArray(raw.quickReplies) ? raw.quickReplies : [];
+  return { variant, density, effects, accentColor, customCss, displayMode, characters, quickReplies };
 });
 
 const hasContent = computed(() => {
   return props.statusBar && Array.isArray(props.statusBar.variables) && props.statusBar.variables.length > 0;
+});
+
+const hasImmersiveContent = computed(() => {
+  return cfg.value.displayMode === 'immersive' && cfg.value.characters.length > 0;
 });
 
 const displayVariables = computed(() => {
@@ -58,6 +77,7 @@ const wrapperClasses = computed(() => {
   for (const fx of cfg.value.effects) {
     classes.push(`sb-fx-${fx}`);
   }
+  if (hasImmersiveContent.value) classes.push('sb-immersive');
   return classes;
 });
 
@@ -133,16 +153,52 @@ function barStyle(variable) {
     backgroundColor: variable.color
   };
 }
+
+function charStyle(ch) {
+  const style = {};
+  if (ch.accentColor) style['--sb-ch-accent'] = ch.accentColor;
+  Object.assign(style, parseSafeStyle(ch.customCss));
+  return style;
+}
+
+function charVariables(ch) {
+  if (!ch.variables || !Array.isArray(ch.variables)) return [];
+  return ch.variables.map((v) => {
+    const value = Number(v.value) || 0;
+    const max = Number(v.max) || 100;
+    const percentage = max > 0 ? Math.min(100, Math.max(0, (value / max) * 100)) : 0;
+    return {
+      name: v.name || '?',
+      value,
+      max,
+      percentage,
+      color: v.color || '#6c757d',
+      displayValue: max > 0 ? `${value}/${max}` : String(value)
+    };
+  });
+}
+
+function statusLabel(status) {
+  return STATUS_LABELS[status] || status;
+}
+
+function statusClass(status) {
+  return `sb-char-status-${status}`;
+}
+
+function onQuickReply(text) {
+  if (text) emit('quick-reply', text);
+}
 </script>
 
 <template>
-  <div v-if="hasContent" :class="wrapperClasses" :style="wrapperStyle" class="status-bar-root">
-    <div class="status-bar-header">
+  <div v-if="hasContent || hasImmersiveContent" :class="wrapperClasses" :style="wrapperStyle" class="status-bar-root">
+    <div v-if="hasContent" class="status-bar-header">
       <span class="status-bar-label">状态同步</span>
       <span class="status-bar-context">关联最新 AI 回复</span>
       <span class="status-bar-name">{{ statusBar.name || '状态栏' }}</span>
     </div>
-    <div class="status-bar-variables">
+    <div v-if="hasContent" class="status-bar-variables">
       <div
         v-for="(variable, index) in displayVariables"
         :key="index"
@@ -156,6 +212,50 @@ function barStyle(variable) {
           <div class="variable-bar-fill" :style="barStyle(variable)"></div>
         </div>
       </div>
+    </div>
+
+    <div v-if="hasImmersiveContent" class="sb-characters-section">
+      <div
+        v-for="ch in cfg.characters"
+        :key="ch.id"
+        class="sb-char-card"
+        :class="statusClass(ch.status)"
+        :style="charStyle(ch)"
+      >
+        <div class="sb-char-header">
+          <span class="sb-char-name">{{ ch.name }}</span>
+          <span v-if="ch.role" class="sb-char-role">{{ ch.role }}</span>
+          <span class="sb-char-status" :class="statusClass(ch.status)">{{ statusLabel(ch.status) }}</span>
+        </div>
+        <p v-if="ch.note" class="sb-char-note">{{ ch.note }}</p>
+        <div v-if="charVariables(ch).length" class="sb-char-variables">
+          <div
+            v-for="(v, vi) in charVariables(ch)"
+            :key="vi"
+            class="sb-char-variable"
+          >
+            <div class="variable-header">
+              <span class="variable-name">{{ v.name }}</span>
+              <span class="variable-value">{{ v.displayValue }}</span>
+            </div>
+            <div class="variable-bar-track">
+              <div class="variable-bar-fill" :style="barStyle(v)"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div v-if="cfg.quickReplies.length" class="sb-quick-replies">
+      <button
+        v-for="(qr, qi) in cfg.quickReplies"
+        :key="qi"
+        class="sb-quick-reply-btn"
+        type="button"
+        @click="onQuickReply(qr.text)"
+      >
+        {{ qr.label }}
+      </button>
     </div>
   </div>
 </template>
@@ -498,7 +598,157 @@ function barStyle(variable) {
     sbStripedMove 0.8s linear infinite;
 }
 
-/* -- Mobile Responsive -- */
+/* -- Immersive Multi-Character Section -- */
+.sb-immersive {
+  border: 0;
+  border-radius: 0;
+  padding: 0;
+  background: transparent;
+  box-shadow: none;
+  backdrop-filter: none;
+}
+
+.sb-immersive .status-bar-header,
+.sb-immersive .status-bar-variables {
+  display: none;
+}
+
+.sb-characters-section {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 8px;
+  margin-top: 0;
+}
+
+.sb-char-card {
+  --sb-ch-accent: var(--sb-accent, var(--primary, #8f3f2f));
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, var(--sb-ch-accent) 18%, var(--line, rgba(62,48,38,0.14)));
+  border-radius: 10px;
+  background:
+    linear-gradient(135deg,
+      color-mix(in srgb, var(--surface, #fffaf2) 88%, transparent),
+      color-mix(in srgb, var(--sb-ch-accent) 4%, transparent));
+}
+
+.sb-char-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 4px;
+}
+
+.sb-char-name {
+  font-size: 0.88rem;
+  font-weight: 800;
+  color: var(--text, #241f1b);
+}
+
+.sb-char-role {
+  font-size: 0.72rem;
+  font-weight: 700;
+  padding: 1px 7px;
+  border-radius: 6px;
+  color: var(--sb-ch-accent);
+  background: color-mix(in srgb, var(--sb-ch-accent) 12%, transparent);
+}
+
+.sb-char-status {
+  font-size: 0.68rem;
+  font-weight: 700;
+  padding: 1px 7px;
+  border-radius: 6px;
+  line-height: 1.5;
+}
+
+.sb-char-status-active {
+  color: var(--green, #2e6654);
+  background: var(--green-soft, #dfeee6);
+}
+
+.sb-char-status-dead {
+  color: var(--danger, #b83232);
+  background: color-mix(in srgb, var(--danger) 12%, transparent);
+}
+
+.sb-char-status-forgotten {
+  color: var(--muted, #75685e);
+  background: color-mix(in srgb, var(--muted) 12%, transparent);
+}
+
+.sb-char-status-left {
+  color: #a86400;
+  background: color-mix(in srgb, #ffc76a 24%, transparent);
+}
+
+.sb-char-status-hidden {
+  color: var(--muted, #75685e);
+  background: color-mix(in srgb, var(--muted) 8%, transparent);
+  opacity: 0.7;
+}
+
+.sb-char-card.sb-char-status-hidden {
+  opacity: 0.55;
+  border-style: dashed;
+  border-color: color-mix(in srgb, var(--line, rgba(62,48,38,0.14)) 60%, transparent);
+  background: color-mix(in srgb, var(--surface, #fffaf2) 40%, transparent);
+}
+
+.sb-char-card.sb-char-status-hidden .sb-char-name {
+  color: var(--muted, #75685e);
+}
+
+.sb-char-note {
+  margin: 4px 0 6px;
+  font-size: 0.78rem;
+  color: var(--muted, #75685e);
+  line-height: 1.4;
+}
+
+.sb-char-variables {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 6px;
+}
+
+.sb-char-variable {
+  flex: 1 1 120px;
+  min-width: 100px;
+}
+
+/* -- Quick Replies -- */
+.sb-quick-replies {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 12px;
+}
+
+.sb-quick-reply-btn {
+  min-height: 32px;
+  padding: 0 12px;
+  border: 1px solid color-mix(in srgb, var(--sb-accent, var(--primary)) 30%, var(--line, rgba(62,48,38,0.14)));
+  border-radius: 8px;
+  color: var(--sb-accent, var(--primary, #8f3f2f));
+  background: color-mix(in srgb, var(--sb-accent, var(--primary)) 8%, var(--surface, #fffaf2));
+  font-size: 0.8rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.sb-quick-reply-btn:hover {
+  background: color-mix(in srgb, var(--sb-accent, var(--primary)) 16%, var(--surface, #fffaf2));
+  border-color: color-mix(in srgb, var(--sb-accent, var(--primary)) 50%, var(--line));
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sb-quick-reply-btn {
+    transition: none;
+  }
+}
 
 @media (max-width: 768px) {
   .status-bar-container {
@@ -539,6 +789,53 @@ function barStyle(variable) {
   .variable-bar-track {
     height: 5px;
   }
+
+  .sb-characters-section {
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+    gap: 6px;
+  }
+
+  .sb-char-card {
+    padding: 8px 10px;
+  }
+
+  .sb-char-name {
+    font-size: 0.82rem;
+  }
+
+  .sb-char-role {
+    font-size: 0.68rem;
+    padding: 1px 5px;
+  }
+
+  .sb-char-status {
+    font-size: 0.64rem;
+    padding: 1px 5px;
+  }
+
+  .sb-char-note {
+    font-size: 0.74rem;
+  }
+
+  .sb-char-variables {
+    gap: 8px;
+  }
+
+  .sb-char-variable {
+    flex: 1 1 100px;
+    min-width: 80px;
+  }
+
+  .sb-quick-replies {
+    gap: 4px;
+    margin-top: 8px;
+  }
+
+  .sb-quick-reply-btn {
+    min-height: 28px;
+    padding: 0 10px;
+    font-size: 0.76rem;
+  }
 }
 
 @media (max-width: 480px) {
@@ -578,6 +875,40 @@ function barStyle(variable) {
 
   .variable-bar-track {
     height: 4px;
+  }
+
+  .sb-characters-section {
+    grid-template-columns: 1fr;
+    gap: 6px;
+  }
+
+  .sb-char-card {
+    padding: 6px 8px;
+  }
+
+  .sb-char-header {
+    gap: 4px;
+  }
+
+  .sb-char-name {
+    font-size: 0.78rem;
+  }
+
+  .sb-char-role {
+    font-size: 0.64rem;
+  }
+
+  .sb-char-status {
+    font-size: 0.6rem;
+  }
+
+  .sb-char-note {
+    font-size: 0.7rem;
+  }
+
+  .sb-char-variable {
+    flex: 1 1 80px;
+    min-width: 60px;
   }
 }
 

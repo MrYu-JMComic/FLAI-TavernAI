@@ -5959,6 +5959,69 @@ p {
   line-height: 1.5;
 }
 
+/* -- Characters Editor -- */
+
+.sb-characters-editor {
+  display: grid;
+  gap: 10px;
+}
+
+.sb-char-editor-row {
+  position: relative;
+  display: grid;
+  gap: 8px;
+  padding: 10px 34px 10px 10px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+}
+
+.sb-char-editor-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: end;
+}
+
+.sb-char-editor-grid .chat-setting-field {
+  flex: 1 1 100px;
+  min-width: 0;
+}
+
+.sb-char-editor-grid .chat-setting-field .variable-input {
+  width: 100%;
+}
+
+.sb-char-css-field {
+  flex-basis: 100%;
+}
+
+.sb-char-vars {
+  display: grid;
+  gap: 6px;
+  padding-top: 6px;
+  border-top: 1px dashed color-mix(in srgb, var(--line) 50%, transparent);
+}
+
+.sb-char-vars-label {
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: var(--muted);
+}
+
+.char-remove {
+  position: absolute;
+  top: 8px;
+  right: 6px;
+}
+
+/* -- Quick Replies Editor -- */
+
+.sb-quick-replies-editor {
+  display: grid;
+  gap: 8px;
+}
+
 @media (max-width: 560px) {
   .sb-template-row {
     flex-direction: column;

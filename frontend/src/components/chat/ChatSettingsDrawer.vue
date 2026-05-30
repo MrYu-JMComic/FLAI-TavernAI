@@ -33,7 +33,13 @@ const emit = defineEmits([
   'add-status-bar-variable',
   'remove-status-bar-variable',
   'save-status-bar',
-  'delete-status-bar'
+  'delete-status-bar',
+  'add-status-character',
+  'remove-status-character',
+  'add-character-variable',
+  'remove-character-variable',
+  'add-quick-reply',
+  'remove-quick-reply'
 ]);
 
 function toggleEffect(effect) {
@@ -266,6 +272,13 @@ function toggleEffect(effect) {
                   <option value="compact">紧凑</option>
                 </select>
               </label>
+              <label class="chat-setting-field compact">
+                <span>显示模式</span>
+                <select v-model="statusBarTemplateCfg.displayMode">
+                  <option value="compact">紧凑</option>
+                  <option value="immersive">沉浸</option>
+                </select>
+              </label>
             </div>
             <label class="chat-setting-field compact">
               <span>强调色</span>
@@ -322,6 +335,86 @@ function toggleEffect(effect) {
                 placeholder='--sb-accent: #e91e63; border-radius: 20px;'
               />
             </label>
+          </div>
+
+          <div v-if="statusBarTemplateCfg.displayMode === 'immersive'" class="sb-characters-editor">
+            <div class="variables-editor-header">
+              <span>角色列表</span>
+              <button class="chat-setting-inline-button small" type="button" @click="emit('add-status-character')">
+                + 添加角色
+              </button>
+            </div>
+            <div
+              v-for="(ch, ci) in statusBarTemplateCfg.characters"
+              :key="ch.id || ci"
+              class="sb-char-editor-row"
+            >
+              <div class="sb-char-editor-grid">
+                <label class="chat-setting-field compact">
+                  <span>名称</span>
+                  <input v-model="ch.name" type="text" placeholder="角色名" maxlength="30" class="variable-input name" />
+                </label>
+                <label class="chat-setting-field compact">
+                  <span>分类</span>
+                  <input v-model="ch.role" type="text" placeholder="如 主角/NPC" maxlength="20" class="variable-input name" />
+                </label>
+                <label class="chat-setting-field compact">
+                  <span>状态</span>
+                  <select v-model="ch.status" class="variable-input">
+                    <option value="active">在线</option>
+                    <option value="dead">死亡</option>
+                    <option value="forgotten">遗忘</option>
+                    <option value="left">离开</option>
+                    <option value="hidden">隐藏</option>
+                  </select>
+                </label>
+                <label class="chat-setting-field compact">
+                  <span>备注</span>
+                  <input v-model="ch.note" type="text" placeholder="简短备注" maxlength="80" class="variable-input name" />
+                </label>
+                <label class="chat-setting-field compact">
+                  <span>强调色</span>
+                  <input v-model="ch.accentColor" type="color" class="variable-input color" title="角色强调色" />
+                </label>
+                <label class="chat-setting-field compact sb-char-css-field">
+                  <span>自定义 CSS</span>
+                  <input v-model="ch.customCss" type="text" placeholder='--sb-ch-accent: #e91e63;' maxlength="120" class="variable-input name" />
+                </label>
+              </div>
+              <div class="sb-char-vars">
+                <span class="sb-char-vars-label">角色变量</span>
+                <div
+                  v-for="(v, vi) in ch.variables"
+                  :key="vi"
+                  class="variable-editor-row"
+                >
+                  <input v-model="v.name" class="variable-input name" type="text" placeholder="变量名" maxlength="20" />
+                  <input v-model.number="v.value" class="variable-input num" type="number" placeholder="值" />
+                  <span class="variable-separator">/</span>
+                  <input v-model.number="v.max" class="variable-input num" type="number" placeholder="最大" />
+                  <input v-model="v.color" class="variable-input color" type="color" title="颜色" />
+                  <button class="variable-remove" type="button" title="删除变量" @click="emit('remove-character-variable', ci, vi)">x</button>
+                </div>
+                <button class="chat-setting-inline-button small" type="button" @click="emit('add-character-variable', ci)">+ 添加变量</button>
+              </div>
+              <button class="variable-remove char-remove" type="button" title="删除角色" @click="emit('remove-status-character', ci)">x</button>
+            </div>
+          </div>
+
+          <div class="sb-quick-replies-editor">
+            <div class="variables-editor-header">
+              <span>快捷回复</span>
+              <button class="chat-setting-inline-button small" type="button" @click="emit('add-quick-reply')">+ 添加</button>
+            </div>
+            <div
+              v-for="(qr, qi) in statusBarTemplateCfg.quickReplies"
+              :key="qi"
+              class="variable-editor-row"
+            >
+              <input v-model="qr.label" class="variable-input name" type="text" placeholder="按钮文字" maxlength="20" />
+              <input v-model="qr.text" class="variable-input name" type="text" placeholder="发送文本" maxlength="200" />
+              <button class="variable-remove" type="button" title="删除" @click="emit('remove-quick-reply', qi)">x</button>
+            </div>
           </div>
 
           <div class="status-bar-variables-editor">

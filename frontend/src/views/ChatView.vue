@@ -73,7 +73,10 @@ const {
   saveAccessorySkillChanges, handleSkillResult,
   syncStatusBarForm, addStatusBarVariable, removeStatusBarVariable,
   saveStatusBarChanges, deleteStatusBarAction,
-  openStatusBarEditor, closeStatusBarEditor
+  openStatusBarEditor, closeStatusBarEditor,
+  addStatusCharacter, removeStatusCharacter,
+  addCharacterVariable, removeCharacterVariable,
+  addQuickReply, removeQuickReply
 } = useChatAccessory({ conversation, showActionNotice, showError });
 
 const {
@@ -156,6 +159,20 @@ async function loadConversation() {
 async function onSavesLoaded() {
   await loadConversation();
   await loadSidebarData();
+}
+
+function handleStatusBarQuickReply(text) {
+  if (!text) return;
+  const current = input.value || '';
+  const sep = current && !current.endsWith('\n') ? '\n' : '';
+  input.value = current + sep + text;
+  nextTick(() => {
+    const el = composerWrap.value?.textareaRef || composerTextarea.value;
+    if (el) {
+      el.focus();
+      resizeComposerTextarea();
+    }
+  });
 }
 
 function handleGlobalKeydown(event) {
@@ -244,6 +261,12 @@ function updateComposerDock() {
 
 const latestAssistantMessage = computed(() => {
   return [...messages.value].reverse().find((m) => m.role === 'assistant') || null;
+});
+
+const hasStatusBarVisible = computed(() => {
+  if (hasStatusBarContent.value) return true;
+  const cfg = statusBarTemplateConfig.value;
+  return cfg.displayMode === 'immersive' && Array.isArray(cfg.characters) && cfg.characters.length > 0;
 });
 
 onMounted(async () => {
@@ -338,6 +361,12 @@ watch(input, () => {
       @remove-status-bar-variable="removeStatusBarVariable"
       @save-status-bar="saveStatusBarChanges"
       @delete-status-bar="deleteStatusBarAction"
+      @add-status-character="addStatusCharacter"
+      @remove-status-character="removeStatusCharacter"
+      @add-character-variable="addCharacterVariable"
+      @remove-character-variable="removeCharacterVariable"
+      @add-quick-reply="addQuickReply"
+      @remove-quick-reply="removeQuickReply"
     />
 
     <section class="deep-chat-main" :style="chatMainStyle">
@@ -391,8 +420,8 @@ watch(input, () => {
             @copy="copyMessage"
             @update:editing-message-content="(val) => editingMessageContent = val"
           />
-          <div v-if="hasStatusBarContent && message === latestAssistantMessage" class="status-bar-wrapper">
-            <StatusBar :status-bar="statusBar" :template-config="statusBarTemplateConfig" />
+          <div v-if="hasStatusBarVisible && message === latestAssistantMessage" class="status-bar-wrapper">
+            <StatusBar :status-bar="statusBar" :template-config="statusBarTemplateConfig" @quick-reply="handleStatusBarQuickReply" />
           </div>
         </template>
       </div>
