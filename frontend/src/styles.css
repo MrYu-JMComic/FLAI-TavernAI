@@ -95,7 +95,7 @@ button {
   transform: translateY(0);
 }
 
-.mobile-nav-toggle {
+.topbar .mobile-nav-toggle {
   display: none;
 }
 
@@ -493,6 +493,8 @@ p {
 .top-actions {
   justify-content: flex-end;
   gap: 9px;
+  flex-wrap: nowrap;
+  min-width: 0;
 }
 
 .icon-button {
@@ -517,6 +519,7 @@ p {
   border-radius: 8px;
   color: var(--muted);
   background: var(--surface);
+  min-width: 0;
 }
 
 .user-menu {
@@ -527,6 +530,13 @@ p {
 
 .user-chip {
   max-width: 178px;
+}
+
+.user-chip > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .user-chip-avatar,
@@ -2370,7 +2380,7 @@ p {
     grid-template-columns: minmax(0, 1fr) auto auto;
   }
 
-  .mobile-nav-toggle {
+  .topbar .mobile-nav-toggle {
     display: inline-flex;
     order: 3;
   }
