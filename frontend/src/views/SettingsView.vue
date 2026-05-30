@@ -394,6 +394,7 @@ const presetForm = reactive({
   frequencyPenalty: 0,
   presencePenalty: 0
 });
+const showPresetEditor = ref(false);
 const presetImportText = ref('');
 const showPresetImport = ref(false);
 
@@ -424,6 +425,7 @@ function startNewPreset() {
     frequencyPenalty: 0,
     presencePenalty: 0
   });
+  showPresetEditor.value = true;
 }
 
 function startEditPreset(preset) {
@@ -437,6 +439,7 @@ function startEditPreset(preset) {
     frequencyPenalty: preset.frequencyPenalty,
     presencePenalty: preset.presencePenalty
   });
+  showPresetEditor.value = true;
 }
 
 async function savePreset() {
@@ -457,6 +460,7 @@ async function savePreset() {
       await createPreset(payload);
       notify.success('预设已创建');
     }
+    showPresetEditor.value = false;
     presetEditing.value = null;
     await loadPresets();
   } catch (err) {
@@ -470,6 +474,7 @@ async function removePreset(id, name) {
     await deletePreset(id);
     presetList.value = presetList.value.filter((p) => p.id !== id);
     if (presetEditing.value === id) {
+      showPresetEditor.value = false;
       presetEditing.value = null;
     }
     notify.success(`预设「${name}」已删除`);
@@ -541,6 +546,7 @@ function handlePresetImportFile(event) {
 // ── Mod Management ──
 const modList = ref([]);
 const modLoading = ref(false);
+const showModEditor = ref(false);
 const modEditing = ref(null);
 const modForm = reactive({
   name: '',
@@ -577,6 +583,7 @@ function startNewMod() {
     content: '',
     enabled: true
   });
+  showModEditor.value = true;
 }
 
 function startEditMod(mod) {
@@ -588,6 +595,7 @@ function startEditMod(mod) {
     content: mod.content,
     enabled: mod.enabled
   });
+  showModEditor.value = true;
 }
 
 async function saveMod() {
@@ -606,6 +614,7 @@ async function saveMod() {
       await createMod(payload);
       notify.success('Mod 已创建');
     }
+    showModEditor.value = false;
     modEditing.value = null;
     await loadMods();
   } catch (err) {
@@ -619,6 +628,7 @@ async function removeMod(id, name) {
     await deleteMod(id);
     modList.value = modList.value.filter((m) => m.id !== id);
     if (modEditing.value === id) {
+      showModEditor.value = false;
       modEditing.value = null;
     }
     notify.success(`Mod「${name}」已删除`);
@@ -1059,7 +1069,7 @@ function scrollToSection(sectionId) {
       </div>
 
       <!-- Preset Editor -->
-      <form v-if="presetEditing !== null || presetForm.name !== ''" class="preset-editor" @submit.prevent="savePreset">
+      <form v-if="showPresetEditor" class="preset-editor" @submit.prevent="savePreset">
         <h3>{{ presetEditing ? '编辑预设' : '新建预设' }}</h3>
         <label class="field">
           <span>预设名称</span>
@@ -1096,7 +1106,7 @@ function scrollToSection(sectionId) {
             <Save :size="18" />
             <span>{{ presetEditing ? '保存修改' : '创建预设' }}</span>
           </button>
-          <button class="ghost-button" type="button" @click="presetEditing = null; startNewPreset()">
+          <button class="ghost-button" type="button" @click="showPresetEditor = false; presetEditing = null; Object.assign(presetForm, { name: '', systemPrompt: '', temperature: 1.0, maxTokens: 4096, topP: 1.0, frequencyPenalty: 0, presencePenalty: 0 })">
             取消
           </button>
         </div>
@@ -1146,7 +1156,7 @@ function scrollToSection(sectionId) {
       </div>
 
       <!-- Mod Editor -->
-      <form v-if="modEditing !== null || modForm.name !== ''" class="preset-editor" @submit.prevent="saveMod">
+      <form v-if="showModEditor" class="preset-editor" @submit.prevent="saveMod">
         <h3>{{ modEditing ? '编辑 Mod' : '新建 Mod' }}</h3>
         <div class="form-grid two-col">
           <label class="field">
@@ -1179,7 +1189,7 @@ function scrollToSection(sectionId) {
             <Save :size="18" />
             <span>{{ modEditing ? '保存修改' : '创建 Mod' }}</span>
           </button>
-          <button class="ghost-button" type="button" @click="modEditing = null; startNewMod()">
+          <button class="ghost-button" type="button" @click="showModEditor = false; modEditing = null; Object.assign(modForm, { name: '', description: '', type: 'prompt_inject', content: '', enabled: true })">
             取消
           </button>
         </div>
