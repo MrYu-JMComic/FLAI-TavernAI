@@ -36,7 +36,7 @@ export function useChatAccessory({ conversation, showActionNotice, showError }) 
   });
 
   const showEconomyFeature = computed(() => {
-    return isAccessorySkillActiveLocal('economyAgent') || economyAccounts.value.length > 0;
+    return isAccessorySkillActiveLocal('economyAgent');
   });
 
   const showNpcFeature = computed(() => isAccessorySkillActiveLocal('npcAgent'));

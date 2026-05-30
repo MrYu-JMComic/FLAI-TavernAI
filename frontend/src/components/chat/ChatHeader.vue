@@ -29,7 +29,7 @@ const emit = defineEmits(['navigate', 'open-sidebar', 'open-economy', 'open-npc'
         <Zap :size="14" />
         <span>{{ currentProviderLabel }} · {{ currentModelLabel }}</span>
       </p>
-      <p v-if="economyAccounts.length" class="economy-summary-header" @click="emit('open-economy')">
+      <p v-if="showEconomyFeature && economyAccounts.length" class="economy-summary-header" @click="emit('open-economy')">
         <span v-for="acc in economyAccounts" :key="acc.id" class="economy-chip">
           {{ { gold: '金币', silver: '银币', copper: '铜币', gem: '宝石', credit: '点数' }[acc.currencyType] || '银币' }}{{ acc.balance.toLocaleString('zh-CN') }}
         </span>
