@@ -2750,12 +2750,13 @@ p {
 
 .chat-settings-drawer {
   position: fixed;
-  inset: 0 0 0 auto;
+  right: 0;
+  inset-block: 0;
   z-index: 44;
   display: grid;
   grid-template-rows: auto minmax(0, 1fr) auto;
   gap: 14px;
-  width: min(440px, calc(100vw - 24px));
+  width: min(560px, calc(100vw - 32px));
   height: 100vh;
   height: 100dvh;
   padding: 18px 16px 16px;
@@ -2764,19 +2765,20 @@ p {
   background: color-mix(in srgb, var(--surface) 94%, var(--bg));
   box-shadow: -18px 0 50px rgba(67, 45, 30, 0.16);
   visibility: hidden;
-  transform: translateX(102%);
   pointer-events: none;
-  will-change: transform;
+  transform: none;
   transition:
-    transform 0.24s cubic-bezier(0.22, 1, 0.36, 1),
     box-shadow 0.24s ease,
     visibility 0s linear 0.24s;
 }
 
 .chat-settings-drawer.open {
   visibility: visible;
-  transform: translateX(0);
   pointer-events: auto;
+  transform: none;
+  transition:
+    box-shadow 0.24s ease,
+    visibility 0s linear;
 }
 
 :root[data-theme="dark"] .chat-settings-drawer {
@@ -2810,18 +2812,36 @@ p {
 .chat-settings-body {
   display: grid;
   gap: 14px;
+  align-content: start;
+  grid-auto-rows: max-content;
   min-height: 0;
+  min-width: 0;
   overflow: auto;
+  overflow-x: hidden;
   padding-right: 2px;
 }
 
 .chat-settings-section {
   display: grid;
   gap: 10px;
+  min-width: 0;
   border: 1px solid var(--line);
   border-radius: 12px;
   padding: 14px;
   background: color-mix(in srgb, var(--surface) 90%, transparent);
+}
+
+.readonly-settings-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.chat-settings-body input,
+.chat-settings-body textarea,
+.chat-settings-body select {
+  min-width: 0;
+  max-width: 100%;
 }
 
 .settings-section-title h3 {
@@ -2914,23 +2934,30 @@ p {
 }
 
 .accessory-skill-row {
-  display: grid;
-  grid-template-columns: minmax(112px, 0.72fr) minmax(140px, 1fr);
+  display: flex;
+  flex-wrap: wrap;
   gap: 10px;
 }
 
+.accessory-skill-row > .chat-setting-field {
+  flex: 1 1 180px;
+  min-width: 0;
+}
+
 @media (max-width: 560px) {
-  .accessory-skill-row {
-    grid-template-columns: 1fr;
+  .accessory-skill-row > .chat-setting-field {
+    flex-basis: 100%;
   }
 }
 
 .chat-code-textarea {
   min-height: 152px;
+  max-width: 100%;
   resize: vertical;
   line-height: 1.65;
   font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
   white-space: pre-wrap;
+  word-break: break-word;
 }
 
 .chat-code-textarea.code-js {
@@ -5729,12 +5756,31 @@ p {
 
 .variable-editor-row {
   display: flex;
+  flex-wrap: wrap;
   gap: 6px;
   align-items: center;
+  min-width: 0;
   padding: 6px 8px;
   border: 1px solid var(--line);
   border-radius: 8px;
   background: var(--surface);
+}
+
+.variable-editor-row > .variable-input {
+  min-width: 0;
+}
+
+.variable-editor-row > .variable-input.name {
+  flex: 1 1 80px;
+  min-width: 60px;
+}
+
+.variable-editor-row > .variable-input.num {
+  flex: 0 0 58px;
+}
+
+.variable-editor-row > .variable-input.color {
+  flex: 0 0 32px;
 }
 
 .variable-input {
@@ -6465,6 +6511,14 @@ p {
     pointer-events: auto;
     transition: transform 0.28s cubic-bezier(0.22, 1, 0.36, 1),
                 visibility 0s linear;
+  }
+
+  .readonly-settings-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .variable-editor-row > .variable-input.name {
+    flex-basis: 100%;
   }
 
   /* Drag handle for settings bottom sheet */
