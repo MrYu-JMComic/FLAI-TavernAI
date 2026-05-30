@@ -19,6 +19,7 @@
   --green-soft: #dfeee6;
   --danger: #b83232;
   --shadow: 0 18px 48px rgba(67, 45, 30, 0.14);
+  --touch-min: 44px;
 }
 
 :root[data-theme="dark"] {
@@ -50,6 +51,10 @@ body,
   min-height: 100vh;
 }
 
+#main-content:focus {
+  outline: none;
+}
+
 body {
   margin: 0;
   color: var(--text);
@@ -68,6 +73,30 @@ select {
 
 button {
   cursor: pointer;
+}
+
+.skip-link {
+  position: absolute;
+  top: -100%;
+  left: 16px;
+  z-index: 200;
+  padding: 10px 18px;
+  border-radius: 0 0 8px 8px;
+  color: var(--text);
+  background: var(--surface);
+  box-shadow: var(--shadow);
+  font-weight: 800;
+  text-decoration: none;
+  transform: translateY(-100%);
+  transition: transform 0.16s ease;
+}
+
+.skip-link:focus {
+  transform: translateY(0);
+}
+
+.mobile-nav-toggle {
+  display: none;
 }
 
 button:disabled {
@@ -401,7 +430,7 @@ p {
   align-items: center;
   justify-content: center;
   gap: 8px;
-  min-height: 38px;
+  min-height: var(--touch-min, 44px);
   border-radius: 8px;
   text-decoration: none;
   white-space: nowrap;
@@ -426,8 +455,8 @@ p {
 }
 
 .icon-button {
-  width: 38px;
-  height: 38px;
+  width: var(--touch-min, 44px);
+  height: var(--touch-min, 44px);
   border: 1px solid var(--line);
   color: var(--text);
   background: var(--surface);
@@ -441,7 +470,7 @@ p {
   display: inline-flex;
   align-items: center;
   gap: 7px;
-  min-height: 38px;
+  min-height: var(--touch-min, 44px);
   padding: 0 11px;
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -505,7 +534,7 @@ p {
 .user-menu-item {
   display: flex;
   width: 100%;
-  min-height: 38px;
+  min-height: var(--touch-min, 44px);
   align-items: center;
   justify-content: flex-start;
   gap: 8px;
@@ -1071,6 +1100,30 @@ p {
 .empty-state h2,
 .empty-state p {
   margin: 0;
+}
+
+.loading-state {
+  display: grid;
+  place-items: center;
+  gap: 12px;
+  padding: 42px 18px;
+  color: var(--muted);
+  text-align: center;
+}
+
+.loading-spinner {
+  width: 28px;
+  height: 28px;
+  border: 3px solid var(--line);
+  border-top-color: var(--primary);
+  border-radius: 999px;
+  animation: spin 0.72s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .editor-layout {
@@ -2057,6 +2110,38 @@ p {
 
   .topbar {
     padding: 12px 14px;
+    grid-template-columns: minmax(0, 1fr) auto auto;
+  }
+
+  .mobile-nav-toggle {
+    display: inline-flex;
+    order: 3;
+  }
+
+  .top-actions {
+    order: 2;
+    gap: 6px;
+  }
+
+  .topnav {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    justify-content: flex-start;
+    overflow-x: auto;
+    max-height: 0;
+    opacity: 0;
+    padding: 0;
+    border: 0;
+    pointer-events: none;
+    transition: max-height 0.24s ease, opacity 0.18s ease, padding 0.24s ease;
+  }
+
+  .topnav.mobile-open {
+    max-height: 200px;
+    opacity: 1;
+    padding: 4px;
+    border: 1px solid var(--line);
+    pointer-events: auto;
   }
 
   .brand-button {
@@ -2082,12 +2167,12 @@ p {
 
   .top-actions .icon-button,
   .top-actions .user-chip {
-    height: 36px;
-    min-height: 36px;
+    height: var(--touch-min, 44px);
+    min-height: var(--touch-min, 44px);
   }
 
   .top-actions .icon-button {
-    width: 36px;
+    width: var(--touch-min, 44px);
   }
 
   .top-actions .user-chip {
@@ -2119,7 +2204,7 @@ p {
     height: 54px;
   }
 
-  .topnav button span {
+  .topnav:not(.mobile-open) button span {
     display: none;
   }
 
@@ -3969,6 +4054,15 @@ p {
 }
 
 @media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+
   .message-toast-move,
   .message-toast-enter-active,
   .message-toast-leave-active,
@@ -3978,7 +4072,9 @@ p {
   .deep-bubble.is-typing,
   .deep-bubble.is-typing .typing-text::after,
   .deep-bubble.is-waiting .typing-text::after,
-  .reasoning-body.is-typing .typing-text::after {
+  .reasoning-body.is-typing .typing-text::after,
+  .topnav,
+  .skip-link {
     animation: none;
     transition: none;
   }
@@ -3999,21 +4095,7 @@ p {
 /* ── Tablet & below: 768px ── */
 
 @media (max-width: 768px) {
-  /* ── Global touch targets: 44px minimum ── */
-  .topnav button,
-  .icon-button,
-  .ghost-button,
-  .primary-button,
-  .danger-button,
-  .file-button,
-  .mini-button {
-    min-height: 44px;
-  }
-
-  .icon-button {
-    width: 44px;
-    height: 44px;
-  }
+  /* Touch targets use --touch-min custom property (44px) */
 
   /* ── Page shell: tighter padding ── */
   .page-shell {
