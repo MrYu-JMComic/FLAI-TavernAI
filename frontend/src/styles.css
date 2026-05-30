@@ -4098,8 +4098,8 @@ p {
   }
 }
 
-/* Desktop two-column chat layout (>= 981px) */
-@media (min-width: 981px) {
+/* Desktop two-column chat layout (>= 1180px) */
+@media (min-width: 1180px) {
   /* Hide backdrop entirely on desktop - never a grid item or overlay */
   .sidebar-backdrop {
     display: none;
@@ -4109,6 +4109,12 @@ p {
   .deep-chat-shell:not(.sidebar-collapsed) {
     display: grid;
     grid-template-columns: var(--chat-sidebar-drawer-width) minmax(0, 1fr);
+  }
+
+  /* Constrain chat widths when sidebar is open so content does not overflow */
+  .deep-chat-shell:not(.sidebar-collapsed) {
+    --chat-readable-width: min(1440px, calc(100vw - var(--chat-sidebar-width) - 36px));
+    --chat-composer-width: min(1120px, calc(100vw - var(--chat-sidebar-width) - 40px));
   }
 
   /* Sidebar participates in normal document flow on desktop */
@@ -4145,7 +4151,7 @@ p {
   }
 }
 
-@media (max-width: 980px) {
+@media (max-width: 1179px) {
   .deep-sidebar {
     width: var(--chat-sidebar-drawer-width);
   }
@@ -5215,7 +5221,7 @@ p {
   gap: 4px;
 }
 
-@media (max-width: 980px) {
+@media (max-width: 1179px) {
   .deep-chat-shell.sidebar-collapsed .deep-chat-header .mobile-menu {
     display: inline-grid;
   }
@@ -5253,7 +5259,7 @@ p {
   line-height: 1.25;
 }
 
-@media (min-width: 621px) and (max-width: 980px) {
+@media (min-width: 621px) and (max-width: 1179px) {
   .deep-chat-header h1 {
     font-size: 0.95rem;
   }
@@ -5282,7 +5288,7 @@ p {
   min-height: 42px;
 }
 
-@media (max-width: 980px) {
+@media (max-width: 1179px) {
   .deep-chat-shell.sidebar-collapsed {
     grid-template-columns: 1fr;
   }
