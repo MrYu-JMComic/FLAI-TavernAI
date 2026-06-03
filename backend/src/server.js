@@ -26,6 +26,8 @@ import { createTagsRouter } from './routes/tags.js';
 import { createTalentsRouter } from './routes/talents.js';
 import { createSettingsRouter } from './routes/settings.js';
 import { createRegexRouter } from './routes/regex.js';
+import { createSwipesRouter } from './routes/swipes.js';
+import { createBranchesRouter } from './routes/branches.js';
 import { createBackup, listBackups, scheduleDailyBackup } from './services/backup.js';
 import { csrfProtection, csrfTokenEndpoint } from './services/csrf.js';
 
@@ -387,6 +389,8 @@ app.use('/api/mods', createModsRouter(ctx));
 app.use('/api/tags', createTagsRouter(ctx));
 app.use('/api/talent-pools', createTalentsRouter(ctx));
 app.use('/api/regex-rules', createRegexRouter(ctx));
+app.use('/api/messages', createSwipesRouter(ctx));
+app.use('/api/conversations', createBranchesRouter(ctx));
 app.use('/api', createSettingsRouter(ctx));
 
 // ── Admin backup endpoint ──

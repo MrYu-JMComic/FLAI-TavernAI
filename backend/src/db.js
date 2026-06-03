@@ -58,6 +58,24 @@ export function initializeDatabase(database) {
       FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
     );
 
+    CREATE TABLE IF NOT EXISTS provider_presets (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      name TEXT NOT NULL,
+      provider_type TEXT NOT NULL,
+      gateway_name TEXT NOT NULL,
+      base_url TEXT NOT NULL,
+      model TEXT NOT NULL,
+      encrypted_api_key TEXT,
+      api_key_hint TEXT,
+      supports_reasoning INTEGER NOT NULL DEFAULT 0,
+      extra_body TEXT NOT NULL DEFAULT '{}',
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_provider_presets_user ON provider_presets(user_id);
+
     CREATE TABLE IF NOT EXISTS avatar_assets (
       id TEXT PRIMARY KEY,
       user_id TEXT NOT NULL,
@@ -96,7 +114,7 @@ export function initializeDatabase(database) {
     CREATE TABLE IF NOT EXISTS regex_rules (
       id TEXT PRIMARY KEY,
       user_id TEXT NOT NULL,
-      character_id TEXT NOT NULL,
+      character_id TEXT NOT NULL DEFAULT '',
       label TEXT NOT NULL,
       pattern TEXT NOT NULL,
       replacement TEXT NOT NULL DEFAULT '',
@@ -106,8 +124,9 @@ export function initializeDatabase(database) {
       order_index INTEGER NOT NULL DEFAULT 0,
       group_name TEXT NOT NULL DEFAULT '全局',
       priority INTEGER NOT NULL DEFAULT 0,
-      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
-      FOREIGN KEY (character_id) REFERENCES characters(id) ON DELETE CASCADE
+      script_mode INTEGER NOT NULL DEFAULT 0,
+      js_script TEXT NOT NULL DEFAULT '',
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
     );
 
     CREATE TABLE IF NOT EXISTS conversations (
@@ -158,6 +177,7 @@ export function initializeDatabase(database) {
   ensureColumn(database, 'conversations', 'custom_css', "TEXT NOT NULL DEFAULT ''");
   ensureColumn(database, 'conversations', 'custom_js', "TEXT NOT NULL DEFAULT ''");
   ensureColumn(database, 'conversations', 'user_advanced_settings', "TEXT NOT NULL DEFAULT '{}'");
+  ensureColumn(database, 'conversations', 'chat_lorebook_id', 'TEXT');
   database.exec(`
     CREATE TABLE IF NOT EXISTS character_likes (
       user_id TEXT NOT NULL,
@@ -187,6 +207,64 @@ export function initializeDatabase(database) {
   ensureColumn(database, 'regex_rules', 'group_name', "TEXT NOT NULL DEFAULT '全局'");
   ensureColumn(database, 'regex_rules', 'priority', 'INTEGER NOT NULL DEFAULT 0');
 
+  // Sprint 2: Regex engine upgrade — script mode + global rules
+  ensureColumn(database, 'regex_rules', 'script_mode', 'INTEGER NOT NULL DEFAULT 0');
+  ensureColumn(database, 'regex_rules', 'js_script', "TEXT NOT NULL DEFAULT ''");
+
+  // Sprint 3: Message Swipes
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS message_swipes (
+      id TEXT PRIMARY KEY,
+      message_id TEXT NOT NULL,
+      user_id TEXT NOT NULL,
+      content TEXT NOT NULL,
+      reasoning TEXT NOT NULL DEFAULT '',
+      usage_json TEXT,
+      created_at TEXT NOT NULL,
+      FOREIGN KEY (message_id) REFERENCES messages(id) ON DELETE CASCADE,
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_message_swipes_message ON message_swipes(message_id);
+  `);
+
+  // Sprint 3: Conversation Branching
+  ensureColumn(database, 'conversations', 'branched_from_id', 'TEXT');
+  ensureColumn(database, 'conversations', 'branched_from_message_id', 'TEXT');
+  ensureColumn(database, 'conversations', 'branched_from_title', "TEXT NOT NULL DEFAULT ''");
+
+  // Migration: Remove FOREIGN KEY constraint on regex_rules.character_id
+  // This allows global rules where character_id = ''
+  const regexTableInfo = database.prepare("SELECT sql FROM sqlite_master WHERE name = 'regex_rules' AND type = 'table'").get();
+  if (regexTableInfo && regexTableInfo.sql.includes('FOREIGN KEY (character_id)')) {
+    database.exec(`
+      CREATE TABLE IF NOT EXISTS regex_rules_new (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL,
+        character_id TEXT NOT NULL DEFAULT '',
+        label TEXT NOT NULL,
+        pattern TEXT NOT NULL,
+        replacement TEXT NOT NULL DEFAULT '',
+        flags TEXT NOT NULL DEFAULT 'g',
+        scope TEXT NOT NULL DEFAULT 'input',
+        enabled INTEGER NOT NULL DEFAULT 1,
+        order_index INTEGER NOT NULL DEFAULT 0,
+        group_name TEXT NOT NULL DEFAULT '全局',
+        priority INTEGER NOT NULL DEFAULT 0,
+        script_mode INTEGER NOT NULL DEFAULT 0,
+        js_script TEXT NOT NULL DEFAULT '',
+        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+      );
+      INSERT INTO regex_rules_new SELECT id, user_id, character_id, label, pattern, replacement, flags, scope, enabled, order_index, group_name, priority, COALESCE(script_mode, 0), COALESCE(js_script, '') FROM regex_rules;
+      DROP TABLE regex_rules;
+      ALTER TABLE regex_rules_new RENAME TO regex_rules;
+    `);
+  }
+
+  // Allow global rules (character_id = '') for rules that apply to all characters
+  database.exec(`
+    CREATE INDEX IF NOT EXISTS idx_regex_user_global ON regex_rules(user_id, character_id);
+  `);
+
   database.exec(`
     CREATE TABLE IF NOT EXISTS world_books (
       id TEXT PRIMARY KEY,
@@ -215,6 +293,54 @@ export function initializeDatabase(database) {
       FOREIGN KEY (world_book_id) REFERENCES world_books(id) ON DELETE CASCADE
     );
     CREATE INDEX IF NOT EXISTS idx_world_book_entries_book ON world_book_entries(world_book_id);
+
+    CREATE TABLE IF NOT EXISTS character_world_books (
+      character_id TEXT NOT NULL,
+      world_book_id TEXT NOT NULL,
+      order_index INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL,
+      PRIMARY KEY (character_id, world_book_id),
+      FOREIGN KEY (character_id) REFERENCES characters(id) ON DELETE CASCADE,
+      FOREIGN KEY (world_book_id) REFERENCES world_books(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_cwb_character ON character_world_books(character_id);
+    CREATE INDEX IF NOT EXISTS idx_cwb_book ON character_world_books(world_book_id);
+  `);
+
+  // Sprint 1: World Info deep enhancements (must come AFTER CREATE TABLE world_books)
+  ensureColumn(database, 'world_books', 'scan_depth', 'INTEGER NOT NULL DEFAULT 1');
+  ensureColumn(database, 'world_books', 'lorebook_context_percent', 'INTEGER NOT NULL DEFAULT 25');
+  ensureColumn(database, 'world_book_entries', 'regex_mode', 'INTEGER NOT NULL DEFAULT 0');
+  ensureColumn(database, 'world_book_entries', 'always_active', 'INTEGER NOT NULL DEFAULT 0');
+  ensureColumn(database, 'world_book_entries', 'depth', 'INTEGER NOT NULL DEFAULT 0');
+
+  // Selective filter for world book entries
+  ensureColumn(database, 'world_book_entries', 'selective', 'INTEGER NOT NULL DEFAULT 0');
+  ensureColumn(database, 'world_book_entries', 'selective_logic', 'INTEGER NOT NULL DEFAULT 0');
+  ensureColumn(database, 'world_book_entries', 'keys_secondary', "TEXT NOT NULL DEFAULT ''");
+
+  // Probability-based activation for world book entries
+  ensureColumn(database, 'world_book_entries', 'probability', 'INTEGER NOT NULL DEFAULT 100');
+  ensureColumn(database, 'world_book_entries', 'use_probability', 'INTEGER NOT NULL DEFAULT 0');
+  ensureColumn(database, 'world_book_entries', 'inclusion_group', "TEXT NOT NULL DEFAULT ''");
+  ensureColumn(database, 'world_book_entries', 'group_weight', 'INTEGER NOT NULL DEFAULT 0');
+  ensureColumn(database, 'world_book_entries', 'role', 'INTEGER NOT NULL DEFAULT 0');
+
+  // Sticky / Cooldown / Delay for world book entries
+  ensureColumn(database, 'world_book_entries', 'sticky', 'INTEGER');
+  ensureColumn(database, 'world_book_entries', 'cooldown', 'INTEGER');
+  ensureColumn(database, 'world_book_entries', 'delay', 'INTEGER');
+
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS world_book_entry_state (
+      entry_id TEXT PRIMARY KEY,
+      last_activated_message INTEGER DEFAULT 0,
+      last_deactivated_message INTEGER DEFAULT 0,
+      first_seen_message INTEGER DEFAULT 0,
+      sticky_remaining INTEGER DEFAULT 0,
+      was_active INTEGER DEFAULT 0,
+      FOREIGN KEY (entry_id) REFERENCES world_book_entries(id) ON DELETE CASCADE
+    );
 
     CREATE TABLE IF NOT EXISTS tags (
       id TEXT PRIMARY KEY,
@@ -386,8 +512,9 @@ export function initializeDatabase(database) {
 export const db = createAppDatabase(process.env.FLAI_DB_PATH || path.join(dataDir, 'flai.sqlite'));
 
 function ensureColumn(database, tableName, columnName, definition) {
+  const rawName = columnName.replace(/[`"]/g, '');
   const columns = database.prepare(`PRAGMA table_info(${tableName})`).all();
-  if (columns.some((column) => column.name === columnName)) {
+  if (columns.some((column) => column.name === rawName)) {
     return;
   }
 

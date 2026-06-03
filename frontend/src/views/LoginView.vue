@@ -24,31 +24,50 @@ async function submit() {
 
 <template>
   <main class="auth-page">
-    <section class="auth-panel">
+    <section class="auth-panel" role="region" aria-label="登录">
       <div class="auth-brand">
-        <span class="brand-mark">F</span>
+        <span class="brand-mark" aria-hidden="true">F</span>
         <div>
-          <p>欢迎回来</p>
+          <p class="auth-brand-eyebrow">欢迎回来</p>
           <h1>登录 FLAI Tavern AI</h1>
+          <p class="auth-brand-sub">本地部署 · 数据自持 · 安全可控</p>
         </div>
       </div>
 
-      <form class="form-grid" @submit.prevent="submit">
-        <label class="field">
+      <form class="form-grid" @submit.prevent="submit" novalidate>
+        <label class="field" for="login-username">
           <span>用户名</span>
-          <input v-model.trim="username" autocomplete="username" maxlength="32" required />
+          <input
+            id="login-username"
+            v-model.trim="username"
+            autocomplete="username"
+            maxlength="32"
+            required
+            aria-required="true"
+          />
+          <small class="field-hint">最多 32 个字符</small>
         </label>
-        <label class="field">
+        <label class="field" for="login-password">
           <span>密码</span>
-          <input v-model="password" autocomplete="current-password" type="password" minlength="6" maxlength="128" required />
+          <input
+            id="login-password"
+            v-model="password"
+            autocomplete="current-password"
+            type="password"
+            minlength="6"
+            maxlength="128"
+            required
+            aria-required="true"
+          />
+          <small class="field-hint">至少 6 个字符</small>
         </label>
-        <button class="primary-button" type="submit" :disabled="loading">
-          <LogIn :size="18" />
+        <button class="primary-button auth-submit" type="submit" :disabled="loading" :aria-busy="loading">
+          <LogIn :size="18" aria-hidden="true" />
           <span>{{ loading ? '登录中...' : '登录' }}</span>
         </button>
       </form>
 
-      <button class="text-button" type="button" @click="emit('navigate', 'register')">
+      <button class="text-button" type="button" aria-label="跳转到注册页面" @click="emit('navigate', 'register')">
         还没有账号？创建一个
       </button>
     </section>

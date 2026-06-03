@@ -6,7 +6,8 @@ import {
 import { getCharacter, touchCharacter } from '../modules/characters.js';
 import {
   buildWorldBookContext,
-  matchWorldBookEntries
+  matchWorldBookEntries,
+  injectAtDepthEntries
 } from '../modules/worldBooks.js';
 import {
   createSave,
@@ -157,9 +158,25 @@ export function createConversationsRouter(ctx) {
       return;
     }
 
+    const character = getCharacter(db, request.auth.user.id, conversation.characterId);
+    const rules = character ? getRegexRules(db, character.ownerId, character.id) : [];
+    const displayRules = rules.filter(r => r.enabled && r.scope === 'display');
+    const macroContext = {
+      userName: request.auth.user.displayName || request.auth.user.username || '用户',
+      charName: character?.name || ''
+    };
+
+    const messages = getMessages(request.auth.user.id, request.params.id).map(msg => {
+      if (displayRules.length === 0) return msg;
+      return {
+        ...msg,
+        content: applyRegexRules(msg.content, displayRules, 'display', macroContext)
+      };
+    });
+
     response.json({
       conversation,
-      messages: getMessages(request.auth.user.id, request.params.id)
+      messages
     });
   });
 
@@ -195,8 +212,16 @@ export function createConversationsRouter(ctx) {
       ? getPreset(db, request.auth.user.id, presetId)
       : getDefaultPreset(db, request.auth.user.id);
 
-    const processedUserText = applyRegexRules(userText, rules, 'input');
-    const worldBookEntries = matchWorldBookEntries(db, character.id, processedUserText);
+    const macroContext = {
+      userName: request.auth.user.displayName || request.auth.user.username || '用户',
+      charName: character.name || ''
+    };
+    const processedUserText = applyRegexRules(userText, rules, 'input', macroContext);
+    // Collect recent messages for scan_depth matching
+    const recentForWI = getRecentMessages(request.auth.user.id, conversation.id);
+    const recentTexts = recentForWI.map((m) => m.content);
+    recentTexts.push(processedUserText);
+    const worldBookEntries = matchWorldBookEntries(db, character.id, recentTexts, { conversationId: conversation.id });
     const userMods = getEnabledModsForUser(db, request.auth.user.id);
     const accessoryState = getAccessorySkillsPayload(conversation, statusBar);
     const npcPrompt = accessoryState.active.npcAgent ? buildNpcBehaviorPrompt(db, conversation.id) : '';
@@ -208,6 +233,7 @@ export function createConversationsRouter(ctx) {
       userText: processedUserText,
       user: request.auth.user,
       worldBookContext: buildWorldBookContext(worldBookEntries),
+      worldBookEntries,
       presetSystemPrompt: activePreset?.systemPrompt || '',
       modSystemPrompt: buildModSystemPrompt(userMods),
       npcBehaviorPrompt: npcPrompt,
@@ -263,7 +289,11 @@ export function createConversationsRouter(ctx) {
       conversation,
       character,
       rules,
-      result
+      result,
+      macroContext: {
+        userName: request.auth.user.displayName || request.auth.user.username || '用户',
+        charName: character.name || ''
+      }
     });
     const skillResults = await runAccessoryAgents({
       db,
@@ -349,7 +379,20 @@ export function createConversationsRouter(ctx) {
       response.status(404).json({ error: '对话不存在' });
       return;
     }
-    response.json(getConversation(request.auth.user.id, request.params.id)?.settings || settings);
+    if (request.body?.chatLorebookId !== undefined) {
+      const lorebookId = request.body.chatLorebookId ? String(request.body.chatLorebookId).trim() : null;
+      if (lorebookId) {
+        const book = db.prepare('SELECT id FROM world_books WHERE id = ? AND user_id = ?').get(lorebookId, request.auth.user.id);
+        if (!book) {
+          response.status(400).json({ error: '指定的世界书不存在' });
+          return;
+        }
+      }
+      db.prepare('UPDATE conversations SET chat_lorebook_id = ?, updated_at = ? WHERE id = ? AND user_id = ?')
+        .run(lorebookId, nowIso(), request.params.id, request.auth.user.id);
+    }
+    const updated = getConversation(request.auth.user.id, request.params.id);
+    response.json({ ...(updated?.settings || settings), chatLorebookId: updated?.chatLorebookId ?? null });
   });
 
   router.get('/:id/accessory-skills', requireAuth, (request, response) => {
@@ -797,6 +840,7 @@ export function createConversationsRouter(ctx) {
     user = {},
     userName = '',
     worldBookContext = '',
+    worldBookEntries = [],
     presetSystemPrompt = '',
     modSystemPrompt = '',
     npcBehaviorPrompt = '',
@@ -845,7 +889,7 @@ export function createConversationsRouter(ctx) {
       ...(participantName ? { name: participantName } : {})
     });
 
-    return [
+    const messages = [
       ...systemMessages,
       ...history.map((message) => (
         message.role === 'assistant'
@@ -854,6 +898,13 @@ export function createConversationsRouter(ctx) {
       )),
       userMessage(userText)
     ];
+
+    // Inject at_depth world book entries at their specified positions
+    if (worldBookEntries.length) {
+      injectAtDepthEntries(messages, worldBookEntries);
+    }
+
+    return messages;
   }
 
   function normalizeModelName(value) {
@@ -904,7 +955,11 @@ export function createConversationsRouter(ctx) {
         conversation,
         character,
         rules,
-        result
+        result,
+        macroContext: {
+          userName: request.auth?.user?.displayName || request.auth?.user?.username || '用户',
+          charName: character.name || ''
+        }
       });
       const skillResults = await runAccessoryAgents({
         db,
@@ -939,8 +994,8 @@ export function createConversationsRouter(ctx) {
     }
   }
 
-  function saveAssistantResult({ userId, conversation, character, rules, result }) {
-    const content = applyRegexRules(result.content || '', rules, 'output');
+  function saveAssistantResult({ userId, conversation, character, rules, result, macroContext = {} }) {
+    const content = applyRegexRules(result.content || '', rules, 'output', macroContext);
     const usage = buildUsageSnapshot(result.usage, result);
     const assistantMessage = insertMessage({
       userId,

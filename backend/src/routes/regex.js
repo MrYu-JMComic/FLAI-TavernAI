@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import {
   getRegexRulesByGroup,
+  testRegexRule,
   toggleRegexRule,
   reorderRegexRules
 } from '../modules/characters.js';
@@ -9,6 +10,15 @@ import { z } from 'zod';
 
 const reorderRegexSchema = z.object({
   orderedIds: z.array(z.string()).min(1, '请提供排序后的规则 ID 列表').max(500)
+});
+
+const testRegexSchema = z.object({
+  rule: z.object({
+    pattern: z.string().min(1, '请提供匹配模式'),
+    mode: z.enum(['contain', 'exact', 'regex', 'preset']).optional().default('regex'),
+    flags: z.string().max(10).optional().default('g')
+  }),
+  text: z.string()
 });
 
 export function createRegexRouter(ctx) {
@@ -38,6 +48,11 @@ export function createRegexRouter(ctx) {
     }
     const changed = reorderRegexRules(db, request.auth.user.id, orderedIds);
     response.json({ ok: true, changed });
+  });
+
+  router.post('/test', requireAuth, validate(testRegexSchema), (request, response) => {
+    const result = testRegexRule(request.body.rule, request.body.text);
+    response.json(result);
   });
 
   router.post('/import', requireAuth, (request, response) => {

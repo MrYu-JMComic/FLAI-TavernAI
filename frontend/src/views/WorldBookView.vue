@@ -5,12 +5,13 @@ import {
   BookOpen,
   ChevronDown,
   ChevronUp,
-  GripVertical,
   Plus,
   Save,
   ToggleLeft,
   ToggleRight,
-  Trash2
+  Trash2,
+  AlertCircle,
+  Loader2
 } from '@lucide/vue';
 import {
   createWorldBook,
@@ -34,6 +35,7 @@ const loading = ref(false);
 const saving = ref(false);
 const books = ref([]);
 const currentBook = ref(null);
+const error = ref(null);
 const editingBook = reactive({ name: '', description: '', characterId: '' });
 const editingEntry = reactive({
   name: '',
@@ -78,9 +80,11 @@ watch(
 
 async function loadBooks() {
   loading.value = true;
+  error.value = null;
   try {
     books.value = await fetchWorldBooks();
   } catch (err) {
+    error.value = err.message;
     notify.error(err.message);
   } finally {
     loading.value = false;
@@ -89,9 +93,11 @@ async function loadBooks() {
 
 async function loadBook(id) {
   loading.value = true;
+  error.value = null;
   try {
     currentBook.value = await fetchWorldBook(id);
   } catch (err) {
+    error.value = err.message;
     notify.error(err.message);
     emit('navigate', 'worldBooks');
   } finally {
@@ -262,6 +268,14 @@ async function moveEntry(index, direction) {
 function positionLabel(value) {
   return positionOptions.find((o) => o.value === value)?.label || value;
 }
+
+function retryLoad() {
+  if (isDetailView.value) {
+    loadBook(bookId.value);
+  } else {
+    loadBooks();
+  }
+}
 </script>
 
 <template>
@@ -285,15 +299,35 @@ function positionLabel(value) {
         </div>
       </div>
 
-      <p v-if="loading" class="muted-text">正在加载...</p>
-
-      <div v-if="!loading && !books.length" class="empty-state">
-        <BookOpen :size="48" />
-        <p>还没有世界书</p>
-        <p class="muted-text">世界书用于在对话中自动注入背景设定</p>
+      <!-- Loading State -->
+      <div v-if="loading" class="loading-state">
+        <div class="loading-spinner"></div>
+        <p>正在加载世界书...</p>
       </div>
 
-      <div v-if="!loading && books.length" class="book-grid">
+      <!-- Error State -->
+      <div v-else-if="error" class="empty-state error-state">
+        <AlertCircle :size="48" />
+        <h2>加载失败</h2>
+        <p>{{ error }}</p>
+        <button class="ghost-button" @click="retryLoad">
+          <span>重试</span>
+        </button>
+      </div>
+
+      <!-- Empty State -->
+      <div v-else-if="!books.length" class="empty-state">
+        <BookOpen :size="48" />
+        <h2>还没有世界书</h2>
+        <p>世界书用于在对话中自动注入背景设定</p>
+        <button class="primary-button" @click="openCreateBook">
+          <Plus :size="18" />
+          <span>创建第一个世界书</span>
+        </button>
+      </div>
+
+      <!-- Book Grid -->
+      <div v-else class="book-grid">
         <div
           v-for="book in books"
           :key="book.id"
@@ -335,9 +369,29 @@ function positionLabel(value) {
         </div>
       </div>
 
-      <p v-if="loading" class="muted-text">正在加载...</p>
+      <!-- Loading State -->
+      <div v-if="loading" class="loading-state">
+        <div class="loading-spinner"></div>
+        <p>正在加载世界书详情...</p>
+      </div>
 
-      <template v-if="!loading && currentBook">
+      <!-- Error State -->
+      <div v-else-if="error" class="empty-state error-state">
+        <AlertCircle :size="48" />
+        <h2>加载失败</h2>
+        <p>{{ error }}</p>
+        <div class="empty-state-actions">
+          <button class="ghost-button" @click="retryLoad">
+            <span>重试</span>
+          </button>
+          <button class="ghost-button" @click="emit('navigate', 'worldBooks')">
+            <span>返回列表</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- Book Content -->
+      <template v-else-if="currentBook">
         <div class="book-info-panel form-panel">
           <div class="inline-heading">
             <div>
@@ -369,56 +423,72 @@ function positionLabel(value) {
             </button>
           </div>
 
+          <!-- Empty Entries -->
           <div v-if="!currentBook.entries.length" class="empty-entries">
-            <p class="muted-text">还没有条目，点击上方按钮添加</p>
+            <BookOpen :size="36" />
+            <p>还没有条目</p>
+            <p class="muted-text">点击上方按钮添加触发词和内容</p>
           </div>
 
-          <div v-for="(entry, index) in currentBook.entries" :key="entry.id" class="entry-row" :class="{ disabled: !entry.enabled }">
-            <div class="entry-controls">
-              <div class="entry-order-buttons">
+          <!-- Entry List -->
+          <div v-else class="entry-list">
+            <div v-for="(entry, index) in currentBook.entries" :key="entry.id" class="entry-row" :class="{ disabled: !entry.enabled }">
+              <div class="entry-controls">
+                <div class="entry-order-buttons">
+                  <button
+                    class="icon-button ghost"
+                    :disabled="index === 0"
+                    title="上移"
+                    @click="moveEntry(index, -1)"
+                  >
+                    <ChevronUp :size="14" />
+                  </button>
+                  <button
+                    class="icon-button ghost"
+                    :disabled="index === currentBook.entries.length - 1"
+                    title="下移"
+                    @click="moveEntry(index, 1)"
+                  >
+                    <ChevronDown :size="14" />
+                  </button>
+                </div>
                 <button
-                  class="icon-button ghost"
-                  :disabled="index === 0"
-                  title="上移"
-                  @click="moveEntry(index, -1)"
+                  class="icon-button toggle"
+                  :title="entry.enabled ? '点击禁用' : '点击启用'"
+                  @click="toggleEntry(entry)"
                 >
-                  <ChevronUp :size="14" />
-                </button>
-                <button
-                  class="icon-button ghost"
-                  :disabled="index === currentBook.entries.length - 1"
-                  title="下移"
-                  @click="moveEntry(index, 1)"
-                >
-                  <ChevronDown :size="14" />
+                  <ToggleRight v-if="entry.enabled" :size="20" />
+                  <ToggleLeft v-else :size="20" />
                 </button>
               </div>
-              <button
-                class="icon-button toggle"
-                :title="entry.enabled ? '点击禁用' : '点击启用'"
-                @click="toggleEntry(entry)"
-              >
-                <ToggleRight v-if="entry.enabled" :size="20" />
-                <ToggleLeft v-else :size="20" />
-              </button>
-            </div>
-            <div class="entry-info">
-              <div class="entry-header">
-                <strong>{{ entry.name || '未命名条目' }}</strong>
-                <span class="entry-position">{{ positionLabel(entry.position) }}</span>
+              <div class="entry-info">
+                <div class="entry-header">
+                  <strong>{{ entry.name || '未命名条目' }}</strong>
+                  <span class="entry-position">{{ positionLabel(entry.position) }}</span>
+                  <div class="entry-chips">
+                    <span v-if="entry.regexMode" class="entry-chip">Regex</span>
+                    <span v-if="entry.alwaysActive" class="entry-chip">Always</span>
+                    <span v-if="entry.useProbability" class="entry-chip">{{ entry.probability }}%</span>
+                    <span v-if="entry.inclusionGroup" class="entry-chip">G:{{ entry.inclusionGroup }}</span>
+                    <span v-if="entry.position === 'at_depth'" class="entry-chip">D:{{ entry.depth }}</span>
+                    <span v-if="entry.sticky != null" class="entry-chip">Sticky:{{ entry.sticky }}</span>
+                    <span v-if="entry.cooldown != null" class="entry-chip">CD:{{ entry.cooldown }}</span>
+                    <span v-if="entry.delay != null" class="entry-chip">Delay:{{ entry.delay }}</span>
+                  </div>
+                </div>
+                <p v-if="entry.triggerKeys" class="entry-keys">
+                  触发词: {{ entry.triggerKeys }}
+                </p>
+                <p class="entry-content-preview">{{ entry.content || '空内容' }}</p>
               </div>
-              <p v-if="entry.triggerKeys" class="entry-keys">
-                触发词: {{ entry.triggerKeys }}
-              </p>
-              <p class="entry-content-preview">{{ entry.content || '空内容' }}</p>
-            </div>
-            <div class="entry-actions">
-              <button class="icon-button" title="编辑" @click="openEditEntry(entry)">
-                <Save :size="16" />
-              </button>
-              <button class="icon-button danger" title="删除" @click="removeEntry(entry.id)">
-                <Trash2 :size="16" />
-              </button>
+              <div class="entry-actions">
+                <button class="icon-button" title="编辑" @click="openEditEntry(entry)">
+                  <Save :size="16" />
+                </button>
+                <button class="icon-button danger" title="删除" @click="removeEntry(entry.id)">
+                  <Trash2 :size="16" />
+                </button>
+              </div>
             </div>
           </div>
         </div>
@@ -549,17 +619,6 @@ function positionLabel(value) {
   gap: 4px;
 }
 
-.empty-state {
-  text-align: center;
-  padding: 48px 24px;
-  color: var(--muted);
-}
-
-.empty-state svg {
-  opacity: 0.4;
-  margin-bottom: 12px;
-}
-
 .heading-actions {
   display: flex;
   gap: 8px;
@@ -580,6 +639,12 @@ function positionLabel(value) {
   margin-top: 0;
 }
 
+.entry-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
 .entry-row {
   display: flex;
   align-items: flex-start;
@@ -587,8 +652,12 @@ function positionLabel(value) {
   padding: 12px;
   border: 1px solid var(--line);
   border-radius: 8px;
-  margin-bottom: 8px;
   background: color-mix(in srgb, var(--surface) 86%, transparent);
+  transition: border-color 0.15s, opacity 0.15s;
+}
+
+.entry-row:hover {
+  border-color: color-mix(in srgb, var(--primary) 30%, var(--line));
 }
 
 .entry-row.disabled {
@@ -629,6 +698,21 @@ function positionLabel(value) {
   border-radius: 4px;
 }
 
+.entry-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.entry-chip {
+  padding: 2px 6px;
+  border-radius: 999px;
+  background: var(--surface-2);
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
 .entry-keys {
   font-size: 0.82rem;
   color: var(--muted);
@@ -666,6 +750,19 @@ function positionLabel(value) {
 .empty-entries {
   text-align: center;
   padding: 32px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+
+.empty-entries svg {
+  color: var(--muted);
+  opacity: 0.4;
+}
+
+.empty-entries p {
+  margin: 0;
 }
 
 .entry-modal {
@@ -709,11 +806,6 @@ function positionLabel(value) {
   .heading-actions {
     flex-wrap: wrap;
     gap: 6px;
-  }
-
-  .heading-actions .ghost-button span,
-  .heading-actions .primary-button span {
-    display: inline;
   }
 
   .entry-row {

@@ -281,6 +281,34 @@ export function reorderRegexRules(database, userId, orderedIds) {
   return changed;
 }
 
+export function testRegexRule(rule, text) {
+  const mode = rule.mode || 'regex';
+  const pattern = String(rule.pattern || '');
+  const input = String(text || '');
+
+  if (mode === 'preset') {
+    return { pass: true, matches: [] };
+  }
+
+  if (mode === 'contain') {
+    const idx = input.indexOf(pattern);
+    return { pass: idx !== -1, matches: idx !== -1 ? [pattern] : [] };
+  }
+
+  if (mode === 'exact') {
+    return { pass: input === pattern, matches: input === pattern ? [pattern] : [] };
+  }
+
+  // mode === 'regex'
+  try {
+    const re = new RegExp(pattern, rule.flags || 'g');
+    const matches = input.match(re) || [];
+    return { pass: matches.length > 0, matches };
+  } catch {
+    return { pass: false, matches: [] };
+  }
+}
+
 export function applyRegexRules(text, rules, phase) {
   const sorted = [...rules].sort((a, b) => (a.priority ?? 0) - (b.priority ?? 0));
   return sorted.reduce((value, rule) => {
@@ -289,6 +317,10 @@ export function applyRegexRules(text, rules, phase) {
     }
 
     try {
+      if (rule.scriptMode && rule.jsScript) {
+        const fn = new Function('text', 'matches', 'rule', rule.jsScript);
+        return String(fn(value, value.match(new RegExp(rule.pattern, rule.flags || 'g')) || [], rule) ?? value);
+      }
       return value.replace(new RegExp(rule.pattern, rule.flags || 'g'), rule.replacement || '');
     } catch {
       return value;

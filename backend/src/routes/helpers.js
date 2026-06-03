@@ -26,6 +26,7 @@ export function toConversation(row, db) {
     id: row.id,
     characterId: row.character_id,
     title: row.title,
+    chatLorebookId: row.chat_lorebook_id || null,
     settings: mergedSettings,
     authorSettings: authorAdvancedSettings,
     userSettings: userAdvancedSettings,

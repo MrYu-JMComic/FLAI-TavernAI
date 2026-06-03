@@ -20,40 +20,20 @@ FLAI Tavern AI is a local full-stack Tavern-style roleplay chat app with Vue + V
 
 ## Quick Start
 
-Install dependencies in each app if needed:
+Set a strong `APP_SECRET` in `backend/.env` before saving real API keys (copy `backend/.env.example` if the file does not exist).
 
-```bash
-cd frontend
-npm install
+Start both servers with one command:
 
-cd ../backend
-npm install
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/start-dev.ps1
 ```
 
-Create backend environment settings:
+| Service | URL |
+|---|---|
+| Frontend dev | `http://127.0.0.1:5173/#/` |
+| Backend health | `http://127.0.0.1:3001/api/health` |
 
-```bash
-cd backend
-copy .env.example .env
-```
-
-Set a strong `APP_SECRET` in `backend/.env` before saving real API keys.
-
-Start the backend:
-
-```bash
-cd backend
-npm run dev
-```
-
-Start the frontend in another terminal:
-
-```bash
-cd frontend
-npm run dev
-```
-
-The frontend runs on `http://127.0.0.1:5173` and proxies `/api` requests to the backend on `http://localhost:3001`.
+Vite is configured with `strictPort` so port 5173 is the only frontend dev port. If 5173 is occupied Vite will fail instead of silently falling back to another port.
 
 ## Data
 

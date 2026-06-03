@@ -116,7 +116,9 @@ export const updateMessageSchema = z.object({
 export const createWorldBookSchema = z.object({
   name: z.string().min(1, '名称不能为空').max(80, '名称最多 80 字').trim(),
   description: z.string().max(2000).trim().optional().default(''),
-  characterId: z.string().optional()
+  characterId: z.string().optional(),
+  scanDepth: z.number().int().min(1).max(50).optional().default(1),
+  lorebookContextPercent: z.number().int().min(1).max(100).optional().default(25)
 });
 
 export const updateWorldBookSchema = createWorldBookSchema.partial();
@@ -125,8 +127,23 @@ export const createWorldBookEntrySchema = z.object({
   name: z.string().max(100).trim().optional().default(''),
   triggerKeys: z.string().max(2000).trim().optional().default(''),
   content: z.string().max(50000).trim().optional().default(''),
-  position: z.enum(['before_char', 'at_start', 'at_end']).optional().default('before_char'),
-  enabled: z.boolean().optional().default(true)
+  position: z.enum(['before_char', 'at_start', 'at_end', 'at_depth']).optional().default('before_char'),
+  enabled: z.boolean().optional().default(true),
+  regexMode: z.boolean().optional().default(false),
+  alwaysActive: z.boolean().optional().default(false),
+  depth: z.number().int().min(0).max(10).optional().default(0),
+  role: z.number().int().min(0).max(2).optional().default(0),
+  sticky: z.number().int().min(0).max(9999).nullable().optional(),
+  cooldown: z.number().int().min(0).max(9999).nullable().optional(),
+  delay: z.number().int().min(0).max(9999).nullable().optional(),
+  selective: z.boolean().optional().default(false),
+  selectiveLogic: z.number().int().min(0).max(2).optional().default(0),
+  keysSecondary: z.string().max(2000).trim().optional().default(''),
+  probability: z.number().int().min(0).max(100).optional().default(100),
+  useProbability: z.boolean().optional().default(false),
+  group: z.string().max(100).trim().optional().default(''),
+  groupWeight: z.number().int().min(0).optional().default(0),
+  orderIndex: z.number().int().optional()
 });
 
 export const updateWorldBookEntrySchema = createWorldBookEntrySchema.partial();
@@ -199,6 +216,7 @@ export const saveConversationSettingsSchema = z.object({
   customCss: z.string().max(50000).trim().optional().default(''),
   customJs: z.string().max(50000).trim().optional().default(''),
   statusBarPrompt: z.string().max(50000).trim().optional().default(''),
+  chatLorebookId: z.string().max(200).trim().nullable().optional(),
   accessorySkills: accessorySkillsSchema
 });
 

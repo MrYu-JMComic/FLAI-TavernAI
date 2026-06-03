@@ -17,7 +17,7 @@ const {
   setCharacterLike,
   updateCharacter
 } = await import('../modules/characters.js');
-const { decryptSecret, encryptSecret, hashPassword, verifyPassword } = await import('../security.js');
+const { apiKeyHint, decryptSecret, encryptSecret, hashPassword, newId, nowIso, verifyPassword } = await import('../security.js');
 const {
   buildProviderBody,
   buildUsageSnapshot,
@@ -48,7 +48,10 @@ const {
   updateEntry,
   deleteEntry,
   matchWorldBookEntries,
-  buildWorldBookContext
+  buildWorldBookContext,
+  linkWorldBookToCharacter,
+  injectAtDepthEntries,
+  resetMessageCounter
 } = await import('../modules/worldBooks.js');
 const {
   createTag,
@@ -83,6 +86,14 @@ const {
   getStatusBar,
   upsertStatusBar
 } = await import('../modules/statusBars.js');
+const {
+  createSave,
+  deleteSave,
+  getSave,
+  listSaves,
+  loadSave,
+  updateSave
+} = await import('../modules/saves.js');
 const {
   buildTalentSystemPrompt,
   createTalentPool,
@@ -821,6 +832,155 @@ test('world book entries respect ownership', () => {
   assert.equal(getWorldBook(database, 'other', book.id), null);
   assert.equal(createEntry(database, 'other', book.id, { name: '入侵' }), null);
   assert.equal(deleteWorldBook(database, 'other', book.id), false);
+});
+
+test('world book regex key auto-detection in string mode', () => {
+  const database = createAppDatabase(':memory:');
+  database.prepare('INSERT INTO users (id, username, password_hash, created_at) VALUES (?, ?, ?, ?)').run(
+    'user-1', 'tester', 'hash', new Date().toISOString()
+  );
+
+  const book = createWorldBook(database, 'user-1', { name: '正则测试书' });
+  const character = createCharacter(database, 'user-1', { name: '正则测试角色' });
+  linkWorldBookToCharacter(database, book.id, character.id);
+
+  // Entry with /pattern/flags key, regex_mode = false
+  createEntry(database, 'user-1', book.id, {
+    name: 'dragon entry',
+    triggerKeys: '/dragon|wyrm/i',
+    content: '龙族知识',
+    enabled: true
+    // regexMode defaults to false
+  });
+
+  // Should match because key is auto-detected as regex
+  const matches = matchWorldBookEntries(database, character.id, 'I saw a Dragon flying overhead');
+  assert.ok(matches.length > 0, 'should match Dragon via auto-detected regex key');
+  assert.equal(matches[0].content, '龙族知识');
+});
+
+test('world book invalid regex key falls back to literal match', () => {
+  const database = createAppDatabase(':memory:');
+  database.prepare('INSERT INTO users (id, username, password_hash, created_at) VALUES (?, ?, ?, ?)').run(
+    'user-1', 'tester', 'hash', new Date().toISOString()
+  );
+
+  const book = createWorldBook(database, 'user-1', { name: '无效正则测试书' });
+  const character = createCharacter(database, 'user-1', { name: '无效正则角色' });
+  linkWorldBookToCharacter(database, book.id, character.id);
+
+  // Entry with invalid regex key, regex_mode = false
+  createEntry(database, 'user-1', book.id, {
+    name: 'invalid regex entry',
+    triggerKeys: '/[/invalid/',
+    content: '无效正则内容',
+    enabled: true
+  });
+
+  // Should NOT throw 500 / exception; falls back to literal match which won't match
+  const matches = matchWorldBookEntries(database, character.id, 'some text here');
+  assert.ok(matches.length === 0, 'invalid regex should not match and should not throw');
+
+  // But literal match should work if text contains the key literally
+  const literalMatches = matchWorldBookEntries(database, character.id, 'test /[/invalid/ more');
+  assert.ok(literalMatches.length > 0, 'literal fallback should match the key string');
+});
+
+test('world book selective AND_ANY activates when secondary key matches', () => {
+  const database = createAppDatabase(':memory:');
+  database.prepare('INSERT INTO users (id, username, password_hash, created_at) VALUES (?, ?, ?, ?)').run(
+    'user-1', 'tester', 'hash', new Date().toISOString()
+  );
+
+  const book = createWorldBook(database, 'user-1', { name: '选择性过滤书' });
+  const character = createCharacter(database, 'user-1', { name: '选择性角色' });
+  linkWorldBookToCharacter(database, book.id, character.id);
+
+  // selective=true, selectiveLogic=0 (AND_ANY), keysSecondary=魔法,战斗
+  createEntry(database, 'user-1', book.id, {
+    name: '魔法战斗条目',
+    triggerKeys: '冒险',
+    content: '魔法与战斗的冒险内容',
+    enabled: true,
+    selective: true,
+    selectiveLogic: 0,
+    keysSecondary: '魔法,战斗'
+  });
+
+  // Primary key matches AND secondary key "魔法" present -> activated
+  const matches = matchWorldBookEntries(database, character.id, '我想开始一次冒险，学习魔法');
+  assert.equal(matches.length, 1);
+  assert.equal(matches[0].content, '魔法与战斗的冒险内容');
+
+  // Primary key matches but no secondary key present -> NOT activated
+  const noSecondary = matchWorldBookEntries(database, character.id, '我想开始一次冒险');
+  assert.equal(noSecondary.length, 0);
+});
+
+test('world book selective NOT_ANY blocks when secondary key matches', () => {
+  const database = createAppDatabase(':memory:');
+  database.prepare('INSERT INTO users (id, username, password_hash, created_at) VALUES (?, ?, ?, ?)').run(
+    'user-1', 'tester', 'hash', new Date().toISOString()
+  );
+
+  const book = createWorldBook(database, 'user-1', { name: 'NOT_ANY测试书' });
+  const character = createCharacter(database, 'user-1', { name: 'NOT_ANY角色' });
+  linkWorldBookToCharacter(database, book.id, character.id);
+
+  // selective=true, selectiveLogic=1 (NOT_ANY), keysSecondary=战斗
+  createEntry(database, 'user-1', book.id, {
+    name: '和平条目',
+    triggerKeys: '冒险',
+    content: '和平冒险内容',
+    enabled: true,
+    selective: true,
+    selectiveLogic: 1,
+    keysSecondary: '战斗'
+  });
+
+  // Primary key matches AND secondary key "战斗" present -> BLOCKED
+  const blocked = matchWorldBookEntries(database, character.id, '我想开始一次冒险，参与战斗');
+  assert.equal(blocked.length, 0);
+
+  // Primary key matches and no secondary key present -> activated
+  const activated = matchWorldBookEntries(database, character.id, '我想开始一次冒险');
+  assert.equal(activated.length, 1);
+  assert.equal(activated[0].content, '和平冒险内容');
+});
+
+test('world book selective NOT_ALL blocks when all secondary keys match', () => {
+  const database = createAppDatabase(':memory:');
+  database.prepare('INSERT INTO users (id, username, password_hash, created_at) VALUES (?, ?, ?, ?)').run(
+    'user-1', 'tester', 'hash', new Date().toISOString()
+  );
+
+  const book = createWorldBook(database, 'user-1', { name: 'NOT_ALL测试书' });
+  const character = createCharacter(database, 'user-1', { name: 'NOT_ALL角色' });
+  linkWorldBookToCharacter(database, book.id, character.id);
+
+  // selective=true, selectiveLogic=2 (NOT_ALL), keysSecondary=火焰,冰霜
+  createEntry(database, 'user-1', book.id, {
+    name: '元素条目',
+    triggerKeys: '魔法',
+    content: '元素魔法内容',
+    enabled: true,
+    selective: true,
+    selectiveLogic: 2,
+    keysSecondary: '火焰,冰霜'
+  });
+
+  // Primary key matches AND ALL secondary keys present -> BLOCKED
+  const allMatch = matchWorldBookEntries(database, character.id, '我使用魔法，释放火焰和冰霜');
+  assert.equal(allMatch.length, 0);
+
+  // Primary key matches but only one secondary key present -> activated
+  const partialMatch = matchWorldBookEntries(database, character.id, '我使用魔法，释放火焰');
+  assert.equal(partialMatch.length, 1);
+  assert.equal(partialMatch[0].content, '元素魔法内容');
+
+  // Primary key matches, no secondary keys present -> activated
+  const noSecondary = matchWorldBookEntries(database, character.id, '我使用魔法');
+  assert.equal(noSecondary.length, 1);
 });
 
 test('tags CRUD with usage count', () => {
@@ -1737,4 +1897,1279 @@ test('RARITY_LABEL_MAP contains correct labels', () => {
   assert.equal(RARITY_LABEL_MAP.rare, '稀有');
   assert.equal(RARITY_LABEL_MAP.epic, '史诗');
   assert.equal(RARITY_LABEL_MAP.legendary, '传说');
+});
+
+// ── Saves ──
+
+function createTestSetup(database) {
+  const userId = 'save-user';
+  const otherUserId = 'other-user';
+  const timestamp = new Date().toISOString();
+
+  database.prepare('INSERT INTO users (id, username, password_hash, created_at) VALUES (?, ?, ?, ?)').run(
+    userId, 'save-tester', 'hash', timestamp
+  );
+  database.prepare('INSERT INTO users (id, username, password_hash, created_at) VALUES (?, ?, ?, ?)').run(
+    otherUserId, 'other-tester', 'hash', timestamp
+  );
+
+  const character = createCharacter(database, userId, { name: 'SaveTestChar', visibility: 'private' });
+
+  const conversationId = newId();
+  database.prepare(
+    'INSERT INTO conversations (id, user_id, character_id, title, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)'
+  ).run(conversationId, userId, character.id, 'Save Test Conversation', timestamp, timestamp);
+
+  return { userId, otherUserId, character, conversationId, timestamp };
+}
+
+function insertMessage(database, userId, conversationId, role, content, timestamp) {
+  const id = newId();
+  database.prepare(
+    'INSERT INTO messages (id, user_id, conversation_id, role, content, reasoning, usage_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+  ).run(id, userId, conversationId, role, content, '', null, timestamp || new Date().toISOString());
+  return id;
+}
+
+test('saves create and list for a conversation', () => {
+  const database = createAppDatabase(':memory:');
+  const { userId, conversationId, timestamp } = createTestSetup(database);
+
+  insertMessage(database, userId, conversationId, 'user', '你好', timestamp);
+  insertMessage(database, userId, conversationId, 'assistant', '你好！有什么可以帮助你的吗？', timestamp);
+
+  const save = createSave(database, userId, conversationId, { name: '第一次存档' });
+  assert.equal(save.name, '第一次存档');
+  assert.ok(save.id);
+  assert.equal(save.conversationId, conversationId);
+  assert.ok(save.createdAt);
+
+  const saves = listSaves(database, userId, conversationId);
+  assert.equal(saves.length, 1);
+  assert.equal(saves[0].id, save.id);
+  assert.equal(saves[0].name, '第一次存档');
+});
+
+test('saves getSave returns snapshot with messages', () => {
+  const database = createAppDatabase(':memory:');
+  const { userId, conversationId, timestamp } = createTestSetup(database);
+
+  insertMessage(database, userId, conversationId, 'user', '今天天气怎么样？', timestamp);
+  insertMessage(database, userId, conversationId, 'assistant', '今天天气晴朗，适合出门。', timestamp);
+
+  const save = createSave(database, userId, conversationId, { name: '天气存档' });
+  const detail = getSave(database, userId, save.id);
+
+  assert.ok(detail);
+  assert.equal(detail.name, '天气存档');
+  assert.equal(detail.conversationId, conversationId);
+  assert.ok(detail.snapshot);
+  assert.ok(Array.isArray(detail.snapshot.messages));
+  assert.equal(detail.snapshot.messages.length, 2);
+  assert.equal(detail.snapshot.messages[0].role, 'user');
+  assert.equal(detail.snapshot.messages[0].content, '今天天气怎么样？');
+  assert.equal(detail.snapshot.messages[1].role, 'assistant');
+  assert.equal(detail.snapshot.messages[1].content, '今天天气晴朗，适合出门。');
+});
+
+test('saves updateSave renames a save', () => {
+  const database = createAppDatabase(':memory:');
+  const { userId, conversationId, timestamp } = createTestSetup(database);
+
+  insertMessage(database, userId, conversationId, 'user', '测试消息', timestamp);
+
+  const save = createSave(database, userId, conversationId, { name: '原名' });
+  assert.equal(save.name, '原名');
+
+  const updated = updateSave(database, userId, save.id, { name: '新名字' });
+  assert.ok(updated);
+  assert.equal(updated.name, '新名字');
+  assert.equal(updated.id, save.id);
+
+  // Verify through getSave
+  const detail = getSave(database, userId, save.id);
+  assert.equal(detail.name, '新名字');
+});
+
+test('saves deleteSave removes a save', () => {
+  const database = createAppDatabase(':memory:');
+  const { userId, conversationId, timestamp } = createTestSetup(database);
+
+  insertMessage(database, userId, conversationId, 'user', '删除测试', timestamp);
+
+  const save = createSave(database, userId, conversationId, { name: '待删除' });
+  assert.equal(listSaves(database, userId, conversationId).length, 1);
+
+  assert.equal(deleteSave(database, userId, save.id), true);
+  assert.equal(listSaves(database, userId, conversationId).length, 0);
+  assert.equal(getSave(database, userId, save.id), null);
+
+  // Delete nonexistent returns false
+  assert.equal(deleteSave(database, userId, 'nonexistent-id'), false);
+});
+
+test('saves loadSave restores messages to saved state', () => {
+  const database = createAppDatabase(':memory:');
+  const { userId, conversationId, timestamp } = createTestSetup(database);
+
+  // Create initial messages
+  insertMessage(database, userId, conversationId, 'user', '第一条消息', timestamp);
+  insertMessage(database, userId, conversationId, 'assistant', '第一条回复', timestamp);
+
+  // Save the state
+  const save = createSave(database, userId, conversationId, { name: '初始状态' });
+
+  // Add more messages after saving
+  insertMessage(database, userId, conversationId, 'user', '第二条消息', timestamp);
+  insertMessage(database, userId, conversationId, 'assistant', '第二条回复', timestamp);
+
+  // Verify we now have 4 messages
+  const beforeLoad = database.prepare(
+    'SELECT COUNT(*) AS count FROM messages WHERE user_id = ? AND conversation_id = ?'
+  ).get(userId, conversationId);
+  assert.equal(beforeLoad.count, 4);
+
+  // Load the save - should restore to 2 messages
+  const result = loadSave(database, userId, save.id);
+  assert.ok(result);
+  assert.equal(result.conversationId, conversationId);
+  assert.equal(result.messageCount, 2);
+
+  // Verify messages are restored
+  const afterLoad = database.prepare(
+    'SELECT * FROM messages WHERE user_id = ? AND conversation_id = ? ORDER BY created_at ASC'
+  ).all(userId, conversationId);
+  assert.equal(afterLoad.length, 2);
+  assert.equal(afterLoad[0].content, '第一条消息');
+  assert.equal(afterLoad[1].content, '第一条回复');
+});
+
+test('saves ownership isolation between users', () => {
+  const database = createAppDatabase(':memory:');
+  const { userId, otherUserId, conversationId, timestamp } = createTestSetup(database);
+
+  insertMessage(database, userId, conversationId, 'user', '隔离测试', timestamp);
+
+  const save = createSave(database, userId, conversationId, { name: '用户A的存档' });
+
+  // Other user cannot list saves for this conversation
+  assert.equal(listSaves(database, otherUserId, conversationId).length, 0);
+
+  // Other user cannot get the save
+  assert.equal(getSave(database, otherUserId, save.id), null);
+
+  // Other user cannot update the save
+  assert.equal(updateSave(database, otherUserId, save.id, { name: '入侵' }), null);
+
+  // Other user cannot delete the save
+  assert.equal(deleteSave(database, otherUserId, save.id), false);
+
+  // Other user cannot load the save
+  assert.equal(loadSave(database, otherUserId, save.id), null);
+});
+
+test('saves auto-generate timestamped name when empty', () => {
+  const database = createAppDatabase(':memory:');
+  const { userId, conversationId, timestamp } = createTestSetup(database);
+
+  insertMessage(database, userId, conversationId, 'user', '空名称测试', timestamp);
+
+  const save = createSave(database, userId, conversationId, { name: '' });
+  assert.ok(save.name);
+  assert.match(save.name, /^存档 /);
+
+  const save2 = createSave(database, userId, conversationId, {});
+  assert.ok(save2.name);
+  assert.match(save2.name, /^存档 /);
+});
+
+// ── World Book Probability ──
+
+test('world book probability=0 never activates entry', () => {
+  const database = createAppDatabase(':memory:');
+  database.prepare('INSERT INTO users (id, username, password_hash, created_at) VALUES (?, ?, ?, ?)').run(
+    'user-1', 'tester', 'hash', new Date().toISOString()
+  );
+  const character = createCharacter(database, 'user-1', { name: '概率角色', visibility: 'private' });
+  const book = createWorldBook(database, 'user-1', { name: '概率测试书' });
+  linkWorldBookToCharacter(database, book.id, character.id);
+
+  createEntry(database, 'user-1', book.id, {
+    name: '零概率条目',
+    triggerKeys: '触发',
+    content: '不应出现',
+    enabled: true,
+    probability: 0,
+    useProbability: true
+  });
+
+  const origRandom = Math.random;
+  Math.random = () => 0.01;
+  const matches = matchWorldBookEntries(database, character.id, '触发关键词');
+  Math.random = origRandom;
+
+  assert.equal(matches.length, 0);
+});
+
+test('world book probability=100 always activates entry', () => {
+  const database = createAppDatabase(':memory:');
+  database.prepare('INSERT INTO users (id, username, password_hash, created_at) VALUES (?, ?, ?, ?)').run(
+    'user-1', 'tester', 'hash', new Date().toISOString()
+  );
+  const character = createCharacter(database, 'user-1', { name: '满概率角色', visibility: 'private' });
+  const book = createWorldBook(database, 'user-1', { name: '满概率测试书' });
+  linkWorldBookToCharacter(database, book.id, character.id);
+
+  createEntry(database, 'user-1', book.id, {
+    name: '满概率条目',
+    triggerKeys: '触发',
+    content: '必定出现',
+    enabled: true,
+    probability: 100,
+    useProbability: true
+  });
+
+  const origRandom = Math.random;
+  Math.random = () => 0.99;
+  const matches = matchWorldBookEntries(database, character.id, '触发关键词');
+  Math.random = origRandom;
+
+  assert.equal(matches.length, 1);
+  assert.equal(matches[0].content, '必定出现');
+});
+
+test('world book probability=50 activates conditionally based on Math.random', () => {
+  const database = createAppDatabase(':memory:');
+  database.prepare('INSERT INTO users (id, username, password_hash, created_at) VALUES (?, ?, ?, ?)').run(
+    'user-1', 'tester', 'hash', new Date().toISOString()
+  );
+  const character = createCharacter(database, 'user-1', { name: '半概率角色', visibility: 'private' });
+  const book = createWorldBook(database, 'user-1', { name: '半概率测试书' });
+  linkWorldBookToCharacter(database, book.id, character.id);
+
+  createEntry(database, 'user-1', book.id, {
+    name: '半概率条目',
+    triggerKeys: '触发',
+    content: '概率出现',
+    enabled: true,
+    probability: 50,
+    useProbability: true
+  });
+
+  const origRandom = Math.random;
+
+  // random < 0.5 -> activates
+  Math.random = () => 0.3;
+  const hit = matchWorldBookEntries(database, character.id, '触发关键词');
+  assert.equal(hit.length, 1);
+  assert.equal(hit[0].content, '概率出现');
+
+  // random > 0.5 -> does not activate
+  Math.random = () => 0.8;
+  const miss = matchWorldBookEntries(database, character.id, '触发关键词');
+  assert.equal(miss.length, 0);
+
+  Math.random = origRandom;
+});
+
+test('world book group inclusion keeps only one entry per group', () => {
+  const database = createAppDatabase(':memory:');
+  database.prepare('INSERT INTO users (id, username, password_hash, created_at) VALUES (?, ?, ?, ?)').run(
+    'user-1', 'tester', 'hash', new Date().toISOString()
+  );
+  const character = createCharacter(database, 'user-1', { name: '分组角色', visibility: 'private' });
+  const book = createWorldBook(database, 'user-1', { name: '分组测试书' });
+  linkWorldBookToCharacter(database, book.id, character.id);
+
+  createEntry(database, 'user-1', book.id, {
+    name: '条目A',
+    triggerKeys: '触发',
+    content: '内容A',
+    alwaysActive: true,
+    group: '测试组',
+    groupWeight: 10
+  });
+  createEntry(database, 'user-1', book.id, {
+    name: '条目B',
+    triggerKeys: '触发',
+    content: '内容B',
+    alwaysActive: true,
+    group: '测试组',
+    groupWeight: 20
+  });
+  createEntry(database, 'user-1', book.id, {
+    name: '条目C',
+    triggerKeys: '触发',
+    content: '内容C',
+    alwaysActive: true,
+    group: '测试组',
+    groupWeight: 70
+  });
+
+  const matches = matchWorldBookEntries(database, character.id, '无关键词');
+  assert.equal(matches.length, 1, 'group inclusion should keep exactly 1 of 3 entries');
+  assert.ok(['内容A', '内容B', '内容C'].includes(matches[0].content));
+});
+
+test('world book at_depth entry role field controls injected message role', () => {
+  const database = createAppDatabase(':memory:');
+  database.prepare('INSERT INTO users (id, username, password_hash, created_at) VALUES (?, ?, ?, ?)').run(
+    'user-1', 'tester', 'hash', new Date().toISOString()
+  );
+  const character = createCharacter(database, 'user-1', { name: '测试角色', visibility: 'private' });
+
+  const book = createWorldBook(database, 'user-1', { name: '深度角色测试书', characterId: character.id });
+
+  // Create entries with different roles
+  createEntry(database, 'user-1', book.id, {
+    name: '系统提示',
+    triggerKeys: '触发',
+    content: '这是一条系统消息',
+    position: 'at_depth',
+    depth: 2,
+    role: 0,
+    alwaysActive: true
+  });
+  createEntry(database, 'user-1', book.id, {
+    name: '用户提示',
+    triggerKeys: '触发',
+    content: '这是一条用户消息',
+    position: 'at_depth',
+    depth: 1,
+    role: 1,
+    alwaysActive: true
+  });
+  createEntry(database, 'user-1', book.id, {
+    name: '助手提示',
+    triggerKeys: '触发',
+    content: '这是一条助手消息',
+    position: 'at_depth',
+    depth: 0,
+    role: 2,
+    alwaysActive: true
+  });
+
+  const matches = matchWorldBookEntries(database, character.id, '触发');
+  assert.equal(matches.length, 3);
+
+  // Verify role field is preserved in matched entries
+  const systemEntry = matches.find((m) => m.name === '系统提示');
+  assert.equal(systemEntry.role, 0);
+  const userEntry = matches.find((m) => m.name === '用户提示');
+  assert.equal(userEntry.role, 1);
+  const assistantEntry = matches.find((m) => m.name === '助手提示');
+  assert.equal(assistantEntry.role, 2);
+
+  // Verify at_depth entries are excluded from buildWorldBookContext (system prompt)
+  const context = buildWorldBookContext(matches);
+  assert.equal(context, '', 'at_depth entries should not appear in system prompt context');
+
+  // Verify injectAtDepthEntries inserts messages with correct roles
+  const messages = [
+    { role: 'system', content: '系统' },
+    { role: 'user', content: '你好' },
+    { role: 'assistant', content: '你好呀' },
+    { role: 'user', content: '触发关键词' }
+  ];
+  injectAtDepthEntries(messages, matches);
+
+  // After injection: 4 original + 3 injected = 7 messages
+  assert.equal(messages.length, 7);
+
+  // Find injected messages by content
+  const injectedSystem = messages.find((m) => m.content === '这是一条系统消息');
+  assert.equal(injectedSystem.role, 'system');
+  const injectedUser = messages.find((m) => m.content === '这是一条用户消息');
+  assert.equal(injectedUser.role, 'user');
+  const injectedAssistant = messages.find((m) => m.content === '这是一条助手消息');
+  assert.equal(injectedAssistant.role, 'assistant');
+
+  // Verify depth=2 entry is inserted 2 positions before the last message of the original array
+  // depth=0 goes at the very end, depth=1 goes before the last, depth=2 goes 2 before the end
+  const lastContent = messages[messages.length - 1].content;
+  assert.equal(lastContent, '这是一条助手消息', 'last message should be depth=0 assistant entry');
+  const secondToLast = messages[messages.length - 2].content;
+  assert.equal(secondToLast, '触发关键词', 'second-to-last should be the original user text');
+  const thirdToLast = messages[messages.length - 3].content;
+  assert.equal(thirdToLast, '这是一条用户消息', 'depth=1 user entry should be right before the original last user text');
+});
+
+test('saves preview uses last assistant message', () => {
+  const database = createAppDatabase(':memory:');
+  const { userId, character, conversationId, timestamp } = createTestSetup(database);
+
+  // Only user messages - preview should be message count
+  insertMessage(database, userId, conversationId, 'user', '只有用户消息', timestamp);
+  const save1 = createSave(database, userId, conversationId, { name: '用户消息存档' });
+  const detail1 = getSave(database, userId, save1.id);
+  assert.equal(detail1.preview, '1 条消息');
+
+  // With assistant message - preview should be assistant content
+  insertMessage(database, userId, conversationId, 'assistant', '这是助手的回复内容', timestamp);
+  const save2 = createSave(database, userId, conversationId, { name: '助手消息存档' });
+  const detail2 = getSave(database, userId, save2.id);
+  assert.equal(detail2.preview, '这是助手的回复内容');
+
+  // Empty conversation - preview should indicate empty
+  const emptyConvId = newId();
+  database.prepare(
+    'INSERT INTO conversations (id, user_id, character_id, title, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)'
+  ).run(emptyConvId, userId, character.id, 'Empty', timestamp, timestamp);
+  const save3 = createSave(database, userId, emptyConvId, { name: '空会话存档' });
+  const detail3 = getSave(database, userId, save3.id);
+  assert.equal(detail3.preview, '空会话');
+});
+
+// ── World Book Sticky / Cooldown / Delay ──
+
+test('world book sticky=3 keeps entry active for 3 messages after activation', () => {
+  resetMessageCounter();
+  const database = createAppDatabase(':memory:');
+  database.prepare('INSERT INTO users (id, username, password_hash, created_at) VALUES (?, ?, ?, ?)').run(
+    'user-1', 'tester', 'hash', new Date().toISOString()
+  );
+  const character = createCharacter(database, 'user-1', { name: 'Sticky角色', visibility: 'private' });
+  const book = createWorldBook(database, 'user-1', { name: 'Sticky测试书' });
+  linkWorldBookToCharacter(database, book.id, character.id);
+
+  createEntry(database, 'user-1', book.id, {
+    name: '粘性条目',
+    triggerKeys: '触发',
+    content: '粘性内容',
+    enabled: true,
+    sticky: 3
+  });
+
+  // Message 1: key matches, entry activates with sticky=3
+  const m1 = matchWorldBookEntries(database, character.id, '触发关键词', { messageCount: 1 });
+  assert.equal(m1.length, 1);
+  assert.equal(m1[0].content, '粘性内容');
+
+  // Message 2: key does NOT match, but sticky_remaining should keep it active
+  const m2 = matchWorldBookEntries(database, character.id, '无关文本', { messageCount: 2 });
+  assert.equal(m2.length, 1);
+  assert.equal(m2[0].content, '粘性内容');
+
+  // Message 3: still sticky (sticky_remaining was 3, decremented: 2->1)
+  const m3 = matchWorldBookEntries(database, character.id, '无关文本', { messageCount: 3 });
+  assert.equal(m3.length, 1);
+  assert.equal(m3[0].content, '粘性内容');
+
+  // Message 4: sticky expired (sticky_remaining reached 0 after 3 decrements)
+  const m4 = matchWorldBookEntries(database, character.id, '无关文本', { messageCount: 4 });
+  assert.equal(m4.length, 0);
+});
+
+test('world book cooldown prevents re-activation for N messages', () => {
+  resetMessageCounter();
+  const database = createAppDatabase(':memory:');
+  database.prepare('INSERT INTO users (id, username, password_hash, created_at) VALUES (?, ?, ?, ?)').run(
+    'user-1', 'tester', 'hash', new Date().toISOString()
+  );
+  const character = createCharacter(database, 'user-1', { name: 'Cooldown角色', visibility: 'private' });
+  const book = createWorldBook(database, 'user-1', { name: 'Cooldown测试书' });
+  linkWorldBookToCharacter(database, book.id, character.id);
+
+  createEntry(database, 'user-1', book.id, {
+    name: '冷却条目',
+    triggerKeys: '触发',
+    content: '冷却内容',
+    enabled: true,
+    cooldown: 3
+  });
+
+  // Message 1: key matches, activates
+  const m1 = matchWorldBookEntries(database, character.id, '触发关键词', { messageCount: 1 });
+  assert.equal(m1.length, 1);
+
+  // Message 2: key absent, entry deactivates (cooldown starts from msg2)
+  const m2 = matchWorldBookEntries(database, character.id, '无关文本', { messageCount: 2 });
+  assert.equal(m2.length, 0);
+
+  // Message 3: key matches but cooldown active (1 msg since deactivation at msg2)
+  const m3 = matchWorldBookEntries(database, character.id, '触发关键词', { messageCount: 3 });
+  assert.equal(m3.length, 0);
+
+  // Message 4: still in cooldown (2 msgs since deactivation)
+  const m4 = matchWorldBookEntries(database, character.id, '触发关键词', { messageCount: 4 });
+  assert.equal(m4.length, 0);
+
+  // Message 5: cooldown expired (3 msgs since deactivation at msg2, 5-2=3 >= cooldown=3)
+  const m5 = matchWorldBookEntries(database, character.id, '触发关键词', { messageCount: 5 });
+  assert.equal(m5.length, 1);
+  assert.equal(m5[0].content, '冷却内容');
+});
+
+test('world book delay prevents activation until N messages after first seen', () => {
+  resetMessageCounter();
+  const database = createAppDatabase(':memory:');
+  database.prepare('INSERT INTO users (id, username, password_hash, created_at) VALUES (?, ?, ?, ?)').run(
+    'user-1', 'tester', 'hash', new Date().toISOString()
+  );
+  const character = createCharacter(database, 'user-1', { name: 'Delay角色', visibility: 'private' });
+  const book = createWorldBook(database, 'user-1', { name: 'Delay测试书' });
+  linkWorldBookToCharacter(database, book.id, character.id);
+
+  createEntry(database, 'user-1', book.id, {
+    name: '延迟条目',
+    triggerKeys: '触发',
+    content: '延迟内容',
+    enabled: true,
+    delay: 3
+  });
+
+  // Message 1: first seen, but delay=3 so should NOT activate
+  const m1 = matchWorldBookEntries(database, character.id, '触发关键词', { messageCount: 1 });
+  assert.equal(m1.length, 0);
+
+  // Message 2: still delayed (1 msg since first seen)
+  const m2 = matchWorldBookEntries(database, character.id, '触发关键词', { messageCount: 2 });
+  assert.equal(m2.length, 0);
+
+  // Message 3: still delayed (2 msgs since first seen)
+  const m3 = matchWorldBookEntries(database, character.id, '触发关键词', { messageCount: 3 });
+  assert.equal(m3.length, 0);
+
+  // Message 4: delay expired (3 msgs since first seen at msg 1, 4-1=3 >= delay=3)
+  const m4 = matchWorldBookEntries(database, character.id, '触发关键词', { messageCount: 4 });
+  assert.equal(m4.length, 1);
+  assert.equal(m4[0].content, '延迟内容');
+});
+
+test('world book sticky and cooldown work together', () => {
+  resetMessageCounter();
+  const database = createAppDatabase(':memory:');
+  database.prepare('INSERT INTO users (id, username, password_hash, created_at) VALUES (?, ?, ?, ?)').run(
+    'user-1', 'tester', 'hash', new Date().toISOString()
+  );
+  const character = createCharacter(database, 'user-1', { name: '组合角色', visibility: 'private' });
+  const book = createWorldBook(database, 'user-1', { name: '组合测试书' });
+  linkWorldBookToCharacter(database, book.id, character.id);
+
+  createEntry(database, 'user-1', book.id, {
+    name: '组合条目',
+    triggerKeys: '触发',
+    content: '组合内容',
+    enabled: true,
+    sticky: 2,
+    cooldown: 2
+  });
+
+  // msg1: key matches, activates, sticky=2 -> remaining=2, decremented to 1
+  const m1 = matchWorldBookEntries(database, character.id, '触发关键词', { messageCount: 1 });
+  assert.equal(m1.length, 1);
+
+  // msg2: key absent, but sticky_remaining=1 -> still active, decremented to 0
+  const m2 = matchWorldBookEntries(database, character.id, '无关', { messageCount: 2 });
+  assert.equal(m2.length, 1);
+
+  // msg3: key absent, sticky expired (remaining=0), deactivates. Cooldown starts from msg3.
+  const m3 = matchWorldBookEntries(database, character.id, '无关', { messageCount: 3 });
+  assert.equal(m3.length, 0);
+
+  // msg4: key matches, but cooldown active (1 msg since deactivation at msg3)
+  const m4 = matchWorldBookEntries(database, character.id, '触发关键词', { messageCount: 4 });
+  assert.equal(m4.length, 0);
+
+  // msg5: cooldown expired (2 msgs since deactivation at msg3, 5-3=2 >= cooldown=2)
+  const m5 = matchWorldBookEntries(database, character.id, '触发关键词', { messageCount: 5 });
+  assert.equal(m5.length, 1);
+  assert.equal(m5[0].content, '组合内容');
+});
+
+test('world book entry CRUD persists sticky, cooldown, delay fields', () => {
+  const database = createAppDatabase(':memory:');
+  database.prepare('INSERT INTO users (id, username, password_hash, created_at) VALUES (?, ?, ?, ?)').run(
+    'user-1', 'tester', 'hash', new Date().toISOString()
+  );
+  const book = createWorldBook(database, 'user-1', { name: '字段持久化测试' });
+
+  const entry = createEntry(database, 'user-1', book.id, {
+    name: '测试条目',
+    triggerKeys: '关键词',
+    content: '内容',
+    sticky: 5,
+    cooldown: 3,
+    delay: 2
+  });
+
+  assert.equal(entry.sticky, 5);
+  assert.equal(entry.cooldown, 3);
+  assert.equal(entry.delay, 2);
+
+  // Update fields
+  const updated = updateEntry(database, 'user-1', book.id, entry.id, {
+    sticky: 10,
+    cooldown: null,
+    delay: 0
+  });
+  assert.equal(updated.sticky, 10);
+  assert.equal(updated.cooldown, null);
+  assert.equal(updated.delay, 0);
+
+  // Verify persistence via getWorldBook
+  const bookData = getWorldBook(database, 'user-1', book.id);
+  const persisted = bookData.entries[0];
+  assert.equal(persisted.sticky, 10);
+  assert.equal(persisted.cooldown, null);
+  assert.equal(persisted.delay, 0);
+});
+
+// ── Token Budget ──
+
+test('world book token budget truncates entries exceeding budget', () => {
+  const database = createAppDatabase(':memory:');
+  database.prepare('INSERT INTO users (id, username, password_hash, created_at) VALUES (?, ?, ?, ?)').run(
+    'user-1', 'tester', 'hash', new Date().toISOString()
+  );
+  const character = createCharacter(database, 'user-1', { name: 'Budget角色', visibility: 'private' });
+  const book = createWorldBook(database, 'user-1', { name: 'Budget测试书' });
+  linkWorldBookToCharacter(database, book.id, character.id);
+
+  // Create entries with known content lengths
+  // Entry A: 200 chars -> 50 tokens (order 0)
+  // Entry B: 200 chars -> 50 tokens (order 1)
+  // Entry C: 200 chars -> 50 tokens (order 2)
+  // Total: 150 tokens
+  createEntry(database, 'user-1', book.id, {
+    name: '条目A',
+    triggerKeys: '触发',
+    content: 'A'.repeat(200),
+    enabled: true,
+    alwaysActive: true
+  });
+  createEntry(database, 'user-1', book.id, {
+    name: '条目B',
+    triggerKeys: '触发',
+    content: 'B'.repeat(200),
+    enabled: true,
+    alwaysActive: true
+  });
+  createEntry(database, 'user-1', book.id, {
+    name: '条目C',
+    triggerKeys: '触发',
+    content: 'C'.repeat(200),
+    enabled: true,
+    alwaysActive: true
+  });
+
+  // With budget of 100 tokens (contextSize=1000, percent=10), should truncate
+  const matches = matchWorldBookEntries(database, character.id, '触发', {
+    contextSize: 1000,
+    lorebookContextPercent: 10
+  });
+  // budget = 1000 * 10 / 100 = 100 tokens
+  // Entry A (50 tokens) + Entry B (50 tokens) = 100 tokens (fits)
+  // Entry C (50 tokens) would exceed -> truncated
+  assert.equal(matches.length, 2);
+  assert.equal(matches[0].name, '条目A');
+  assert.equal(matches[1].name, '条目B');
+
+  // Without budget, all entries should be returned
+  const allMatches = matchWorldBookEntries(database, character.id, '触发');
+  assert.equal(allMatches.length, 3);
+});
+
+test('world book lorebookContextPercent persists and defaults to 25', () => {
+  const database = createAppDatabase(':memory:');
+  database.prepare('INSERT INTO users (id, username, password_hash, created_at) VALUES (?, ?, ?, ?)').run(
+    'user-1', 'tester', 'hash', new Date().toISOString()
+  );
+
+  // Default value
+  const book1 = createWorldBook(database, 'user-1', { name: '默认百分比' });
+  assert.equal(book1.lorebookContextPercent, 25);
+
+  // Custom value
+  const book2 = createWorldBook(database, 'user-1', { name: '自定义百分比', lorebookContextPercent: 40 });
+  assert.equal(book2.lorebookContextPercent, 40);
+
+  // Update value
+  const updated = updateWorldBook(database, 'user-1', book2.id, { lorebookContextPercent: 15 });
+  assert.equal(updated.lorebookContextPercent, 15);
+
+  // Clamping
+  const book3 = createWorldBook(database, 'user-1', { name: '超出范围', lorebookContextPercent: 150 });
+  assert.equal(book3.lorebookContextPercent, 100);
+});
+
+test('chat lorebook entries activate only in the bound conversation', () => {
+  const database = createAppDatabase(':memory:');
+  database.prepare('INSERT INTO users (id, username, password_hash, created_at) VALUES (?, ?, ?, ?)').run(
+    'user-1', 'tester', 'hash', new Date().toISOString()
+  );
+  const character = createCharacter(database, 'user-1', { name: '角色A', visibility: 'private' });
+
+  const chatBook = createWorldBook(database, 'user-1', {
+    name: '对话专属世界书',
+    description: '仅绑定对话可见'
+  });
+  createEntry(database, 'user-1', chatBook.id, {
+    name: '秘密事件',
+    triggerKeys: '秘密,暗号',
+    content: '这段内容只在绑定对话中出现',
+    enabled: true
+  });
+
+  const now = new Date().toISOString();
+  const boundConvId = 'conv-bound-1';
+  const otherConvId = 'conv-other-1';
+  database.prepare(
+    'INSERT INTO conversations (id, user_id, character_id, title, chat_lorebook_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)'
+  ).run(boundConvId, 'user-1', character.id, '绑定对话', chatBook.id, now, now);
+  database.prepare(
+    'INSERT INTO conversations (id, user_id, character_id, title, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)'
+  ).run(otherConvId, 'user-1', character.id, '普通对话', now, now);
+
+  const boundMatches = matchWorldBookEntries(database, character.id, '这里提到了秘密', { conversationId: boundConvId });
+  assert.equal(boundMatches.length, 1);
+  assert.equal(boundMatches[0].name, '秘密事件');
+  assert.equal(boundMatches[0].content, '这段内容只在绑定对话中出现');
+
+  const otherMatches = matchWorldBookEntries(database, character.id, '这里提到了秘密', { conversationId: otherConvId });
+  assert.equal(otherMatches.length, 0);
+
+  const noConvMatches = matchWorldBookEntries(database, character.id, '这里提到了秘密');
+  assert.equal(noConvMatches.length, 0);
+});
+
+test('chat lorebook coexists with character world books', () => {
+  const database = createAppDatabase(':memory:');
+  database.prepare('INSERT INTO users (id, username, password_hash, created_at) VALUES (?, ?, ?, ?)').run(
+    'user-1', 'tester', 'hash', new Date().toISOString()
+  );
+  const character = createCharacter(database, 'user-1', { name: '角色B', visibility: 'private' });
+
+  const charBook = createWorldBook(database, 'user-1', {
+    name: '角色世界书',
+    characterId: character.id
+  });
+  createEntry(database, 'user-1', charBook.id, {
+    name: '世界观',
+    triggerKeys: '世界',
+    content: '角色世界观设定',
+    enabled: true
+  });
+
+  const chatBook = createWorldBook(database, 'user-1', {
+    name: '对话专属世界书'
+  });
+  createEntry(database, 'user-1', chatBook.id, {
+    name: '对话剧情',
+    triggerKeys: '剧情',
+    content: '对话专属剧情内容',
+    enabled: true
+  });
+
+  const now = new Date().toISOString();
+  const convId = 'conv-bound-2';
+  database.prepare(
+    'INSERT INTO conversations (id, user_id, character_id, title, chat_lorebook_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)'
+  ).run(convId, 'user-1', character.id, '测试对话', chatBook.id, now, now);
+
+  const matches = matchWorldBookEntries(database, character.id, '这个世界有新的剧情', { conversationId: convId });
+  assert.equal(matches.length, 2);
+  const names = matches.map((m) => m.name).sort();
+  assert.deepEqual(names, ['世界观', '对话剧情']);
+});
+
+// ══════════════════════════════════════════════════════════════════
+// BACKEND-TEST-001: Streaming Error Paths & Provider Settings
+// ══════════════════════════════════════════════════════════════════
+
+// ── Streaming Error Paths ──
+
+test('streamCompletion throws on HTTP 401 response', async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () =>
+    new Response('Unauthorized', { status: 401, statusText: 'Unauthorized' });
+
+  await assert.rejects(
+    () =>
+      streamCompletion(
+        {
+          providerType: 'deepseek',
+          gatewayName: 'DeepSeek',
+          baseUrl: 'https://example.test',
+          model: 'deepseek-chat',
+          apiKey: 'sk-test',
+          supportsReasoning: false,
+          extraBody: {}
+        },
+        [{ role: 'user', content: 'hi' }],
+        () => {}
+      ),
+    { message: /401|Unauthorized/ }
+  );
+  globalThis.fetch = originalFetch;
+});
+
+test('streamCompletion throws on HTTP 500 response', async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () =>
+    new Response('Internal Server Error', { status: 500, statusText: 'Internal Server Error' });
+
+  await assert.rejects(
+    () =>
+      streamCompletion(
+        {
+          providerType: 'deepseek',
+          gatewayName: 'DeepSeek',
+          baseUrl: 'https://example.test',
+          model: 'deepseek-chat',
+          apiKey: 'sk-test',
+          supportsReasoning: false,
+          extraBody: {}
+        },
+        [{ role: 'user', content: 'hi' }],
+        () => {}
+      ),
+    { message: /500|Internal Server Error/ }
+  );
+  globalThis.fetch = originalFetch;
+});
+
+test('streamCompletion skips invalid JSON in SSE data lines without crashing', async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () =>
+    new Response(sseStream([
+      'data: {invalid json}',
+      'data: {"choices":[{"delta":{"content":"ok"}}]}',
+      'data: [DONE]'
+    ]));
+
+  const events = [];
+  const result = await streamCompletion(
+    {
+      providerType: 'deepseek',
+      gatewayName: 'DeepSeek',
+      baseUrl: 'https://example.test',
+      model: 'deepseek-chat',
+      apiKey: 'sk-test',
+      supportsReasoning: false,
+      extraBody: {}
+    },
+    [{ role: 'user', content: 'hi' }],
+    (event, data) => events.push({ event, data })
+  );
+  globalThis.fetch = originalFetch;
+
+  assert.equal(result.content, 'ok');
+  assert.equal(result.reasoning, '');
+  assert.equal(events.length, 1);
+  assert.equal(events[0].event, 'content');
+});
+
+test('streamCompletion returns empty content for immediately closed empty stream', async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => {
+    const encoder = new TextEncoder();
+    return new Response(
+      new ReadableStream({
+        start(controller) {
+          controller.enqueue(encoder.encode(''));
+          controller.close();
+        }
+      })
+    );
+  };
+
+  const events = [];
+  const result = await streamCompletion(
+    {
+      providerType: 'deepseek',
+      gatewayName: 'DeepSeek',
+      baseUrl: 'https://example.test',
+      model: 'deepseek-chat',
+      apiKey: 'sk-test',
+      supportsReasoning: false,
+      extraBody: {}
+    },
+    [{ role: 'user', content: 'hi' }],
+    (event, data) => events.push({ event, data })
+  );
+  globalThis.fetch = originalFetch;
+
+  assert.equal(result.content, '');
+  assert.equal(result.reasoning, '');
+  assert.equal(events.length, 0);
+});
+
+test('streamCompletion handles AbortController signal', async () => {
+  const originalFetch = globalThis.fetch;
+  const controller = new AbortController();
+  let fetchCalled = false;
+
+  globalThis.fetch = async (_url, options = {}) => {
+    fetchCalled = true;
+    assert.equal(options.signal, controller.signal);
+    controller.abort();
+    const error = new DOMException('The operation was aborted.', 'AbortError');
+    throw error;
+  };
+
+  await assert.rejects(
+    () =>
+      streamCompletion(
+        {
+          providerType: 'deepseek',
+          gatewayName: 'DeepSeek',
+          baseUrl: 'https://example.test',
+          model: 'deepseek-chat',
+          apiKey: 'sk-test',
+          supportsReasoning: false,
+          extraBody: {}
+        },
+        [{ role: 'user', content: 'hi' }],
+        () => {},
+        controller.signal
+      ),
+    { name: 'AbortError' }
+  );
+  globalThis.fetch = originalFetch;
+  assert.equal(fetchCalled, true);
+});
+
+test('streamCompletion handles SSE data with missing choices field gracefully', async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () =>
+    new Response(sseStream([
+      'data: {"id":"chatcmpl-1","object":"chat.completion.chunk"}',
+      'data: {"choices":[{"delta":{"content":"hello"}}]}',
+      'data: {"usage":{"prompt_tokens":10,"completion_tokens":5}}',
+      'data: [DONE]'
+    ]));
+
+  const result = await streamCompletion(
+    {
+      providerType: 'deepseek',
+      gatewayName: 'DeepSeek',
+      baseUrl: 'https://example.test',
+      model: 'deepseek-chat',
+      apiKey: 'sk-test',
+      supportsReasoning: false,
+      extraBody: {}
+    },
+    [{ role: 'user', content: 'hi' }],
+    () => {}
+  );
+  globalThis.fetch = originalFetch;
+
+  assert.equal(result.content, 'hello');
+  assert.ok(result.usage);
+  assert.equal(result.usage.prompt_tokens, 10);
+});
+
+test('streamOpenAiResponse throws on HTTP error', async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () =>
+    new Response('Forbidden', { status: 403, statusText: 'Forbidden' });
+
+  await assert.rejects(
+    () =>
+      streamCompletion(
+        {
+          providerType: 'openai',
+          gatewayName: 'OpenAI',
+          baseUrl: 'https://example.test/v1',
+          model: 'o4-mini',
+          apiKey: 'sk-test',
+          supportsReasoning: true,
+          extraBody: {}
+        },
+        [{ role: 'user', content: 'hi' }],
+        () => {}
+      ),
+    { message: /403|Forbidden/ }
+  );
+  globalThis.fetch = originalFetch;
+});
+
+// ── Provider Settings Persistence ──
+
+test('provider_settings table INSERT and ON CONFLICT UPDATE', () => {
+  const database = createAppDatabase(':memory:');
+  const userId = 'ps-user-1';
+  database.prepare('INSERT INTO users (id, username, password_hash, created_at) VALUES (?, ?, ?, ?)').run(
+    userId, 'provider-tester', 'hash', new Date().toISOString()
+  );
+
+  const encryptedKey = encryptSecret('sk-test-key-12345');
+  const timestamp = new Date().toISOString();
+
+  // INSERT
+  database.prepare(
+    `INSERT INTO provider_settings (
+      user_id, provider_type, gateway_name, base_url, model, encrypted_api_key,
+      api_key_hint, supports_reasoning, extra_body, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  ).run(userId, 'deepseek', 'DeepSeek', 'https://api.deepseek.com', 'deepseek-chat', encryptedKey, 'sk-...345', 1, '{}', timestamp);
+
+  const row = database.prepare('SELECT * FROM provider_settings WHERE user_id = ?').get(userId);
+  assert.equal(row.provider_type, 'deepseek');
+  assert.equal(row.gateway_name, 'DeepSeek');
+  assert.equal(row.encrypted_api_key, encryptedKey);
+  assert.equal(decryptSecret(row.encrypted_api_key), 'sk-test-key-12345');
+
+  // ON CONFLICT UPDATE
+  const newEncryptedKey = encryptSecret('sk-new-key-67890');
+  const newTimestamp = new Date().toISOString();
+  database.prepare(
+    `INSERT INTO provider_settings (
+      user_id, provider_type, gateway_name, base_url, model, encrypted_api_key,
+      api_key_hint, supports_reasoning, extra_body, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(user_id) DO UPDATE SET
+      provider_type = excluded.provider_type,
+      gateway_name = excluded.gateway_name,
+      base_url = excluded.base_url,
+      model = excluded.model,
+      encrypted_api_key = excluded.encrypted_api_key,
+      api_key_hint = excluded.api_key_hint,
+      supports_reasoning = excluded.supports_reasoning,
+      extra_body = excluded.extra_body,
+      updated_at = excluded.updated_at`
+  ).run(userId, 'openai', 'OpenAI', 'https://api.openai.com/v1', 'gpt-4.1-mini', newEncryptedKey, 'sk-...7890', 0, '{}', newTimestamp);
+
+  const updated = database.prepare('SELECT * FROM provider_settings WHERE user_id = ?').get(userId);
+  assert.equal(updated.provider_type, 'openai');
+  assert.equal(updated.gateway_name, 'OpenAI');
+  assert.equal(updated.model, 'gpt-4.1-mini');
+  assert.equal(updated.supports_reasoning, 0);
+  assert.equal(decryptSecret(updated.encrypted_api_key), 'sk-new-key-67890');
+
+  // Verify only one row exists
+  const count = database.prepare('SELECT COUNT(*) AS count FROM provider_settings').get();
+  assert.equal(count.count, 1);
+});
+
+test('getPublicProviderSettings creates defaults for new user', () => {
+  const database = createAppDatabase(':memory:');
+  const userId = 'default-user';
+  database.prepare('INSERT INTO users (id, username, password_hash, created_at) VALUES (?, ?, ?, ?)').run(
+    userId, 'default-tester', 'hash', new Date().toISOString()
+  );
+
+  // No provider_settings row yet — simulate getPublicProviderSettings behavior
+  const row = database.prepare('SELECT * FROM provider_settings WHERE user_id = ?').get(userId);
+  assert.equal(row, undefined);
+
+  // normalizeProviderRow(null) returns defaults
+  const defaults = normalizeProviderRow(null);
+  assert.equal(defaults.providerType, 'deepseek');
+  assert.equal(defaults.gatewayName, 'DeepSeek');
+  assert.equal(defaults.baseUrl, 'https://api.deepseek.com');
+  assert.equal(defaults.apiKeySet, false);
+  assert.equal(defaults.apiKeyNeedsReset, false);
+});
+
+test('saveProviderSettings encrypts API key and updates hint', () => {
+  const database = createAppDatabase(':memory:');
+  const userId = 'save-provider-user';
+  database.prepare('INSERT INTO users (id, username, password_hash, created_at) VALUES (?, ?, ?, ?)').run(
+    userId, 'save-tester', 'hash', new Date().toISOString()
+  );
+
+  const apiKey = 'sk-abcdefgh12345678';
+  const encryptedKey = encryptSecret(apiKey);
+  const hint = apiKeyHint(apiKey);
+  const timestamp = new Date().toISOString();
+
+  database.prepare(
+    `INSERT INTO provider_settings (
+      user_id, provider_type, gateway_name, base_url, model, encrypted_api_key,
+      api_key_hint, supports_reasoning, extra_body, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  ).run(userId, 'deepseek', 'DeepSeek', 'https://api.deepseek.com', 'deepseek-v4-flash', encryptedKey, hint, 1, '{}', timestamp);
+
+  const row = database.prepare('SELECT * FROM provider_settings WHERE user_id = ?').get(userId);
+  assert.equal(row.api_key_hint, 'sk-...5678');
+  assert.equal(decryptSecret(row.encrypted_api_key), apiKey);
+
+  // Verify providerWithSecret returns decrypted key
+  const withSecret = providerWithSecret(row);
+  assert.equal(withSecret.apiKey, apiKey);
+  assert.equal(withSecret.apiKeySet, true);
+  assert.equal(withSecret.apiKeyNeedsReset, false);
+});
+
+test('clearApiKey removes encrypted key and hint', () => {
+  const database = createAppDatabase(':memory:');
+  const userId = 'clear-key-user';
+  database.prepare('INSERT INTO users (id, username, password_hash, created_at) VALUES (?, ?, ?, ?)').run(
+    userId, 'clear-tester', 'hash', new Date().toISOString()
+  );
+
+  const timestamp = new Date().toISOString();
+  const encryptedKey = encryptSecret('sk-to-be-cleared');
+
+  // Insert with key
+  database.prepare(
+    `INSERT INTO provider_settings (
+      user_id, provider_type, gateway_name, base_url, model, encrypted_api_key,
+      api_key_hint, supports_reasoning, extra_body, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  ).run(userId, 'deepseek', 'DeepSeek', 'https://api.deepseek.com', 'deepseek-chat', encryptedKey, 'sk-...ared', 1, '{}', timestamp);
+
+  // Simulate clearApiKey: update encrypted_api_key and api_key_hint to null
+  database.prepare(
+    'UPDATE provider_settings SET encrypted_api_key = NULL, api_key_hint = NULL, updated_at = ? WHERE user_id = ?'
+  ).run(new Date().toISOString(), userId);
+
+  const cleared = database.prepare('SELECT * FROM provider_settings WHERE user_id = ?').get(userId);
+  assert.equal(cleared.encrypted_api_key, null);
+  assert.equal(cleared.api_key_hint, null);
+
+  // normalizeProviderRow should show key not set
+  const normalized = normalizeProviderRow(cleared);
+  assert.equal(normalized.apiKeySet, false);
+  assert.equal(normalized.apiKeyHint, null);
+
+  // providerWithSecret should return empty key
+  const withSecret = providerWithSecret(cleared);
+  assert.equal(withSecret.apiKey, '');
+});
+
+// ── Character CRUD Boundary ──
+
+test('character name over 40 characters is rejected', () => {
+  const database = createAppDatabase(':memory:');
+  const userId = 'name-len-user';
+  database.prepare('INSERT INTO users (id, username, password_hash, created_at) VALUES (?, ?, ?, ?)').run(
+    userId, 'name-tester', 'hash', new Date().toISOString()
+  );
+
+  // Exactly 40 should work
+  const ok = createCharacter(database, userId, { name: 'a'.repeat(40) });
+  assert.equal(ok.name.length, 40);
+
+  // 41 should throw
+  assert.throws(
+    () => createCharacter(database, userId, { name: 'b'.repeat(41) }),
+    /角色名长度/
+  );
+});
+
+test('batch created characters list in descending created_at order by default', () => {
+  const database = createAppDatabase(':memory:');
+  const userId = 'batch-user';
+  database.prepare('INSERT INTO users (id, username, password_hash, created_at) VALUES (?, ?, ?, ?)').run(
+    userId, 'batch-tester', 'hash', new Date().toISOString()
+  );
+
+  // Create characters with explicit different timestamps to test sort order
+  const id1 = newId();
+  const id2 = newId();
+  const id3 = newId();
+  database.prepare(
+    'INSERT INTO characters (id, user_id, name, visibility, tags, render_plugins, author_advanced_settings, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
+  ).run(id1, userId, 'First', 'private', '[]', '[]', '{}', '2025-01-01T00:00:00.000Z', '2025-01-01T00:00:00.000Z');
+  database.prepare(
+    'INSERT INTO characters (id, user_id, name, visibility, tags, render_plugins, author_advanced_settings, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
+  ).run(id2, userId, 'Second', 'private', '[]', '[]', '{}', '2025-06-01T00:00:00.000Z', '2025-06-01T00:00:00.000Z');
+  database.prepare(
+    'INSERT INTO characters (id, user_id, name, visibility, tags, render_plugins, author_advanced_settings, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
+  ).run(id3, userId, 'Third', 'private', '[]', '[]', '{}', '2025-12-01T00:00:00.000Z', '2025-12-01T00:00:00.000Z');
+
+  const list = listCharacters(database, userId);
+  assert.equal(list.length, 3);
+
+  // Default sort is created_at DESC — newest first
+  assert.equal(list[0].id, id3);
+  assert.equal(list[1].id, id2);
+  assert.equal(list[2].id, id1);
+});
+
+test('batch created characters sort by name alphabetically when sort=name', () => {
+  const database = createAppDatabase(':memory:');
+  const userId = 'sort-name-user';
+  database.prepare('INSERT INTO users (id, username, password_hash, created_at) VALUES (?, ?, ?, ?)').run(
+    userId, 'sort-tester', 'hash', new Date().toISOString()
+  );
+
+  createCharacter(database, userId, { name: 'Charlie' });
+  createCharacter(database, userId, { name: 'Alpha' });
+  createCharacter(database, userId, { name: 'Bravo' });
+
+  const list = listCharacters(database, userId, { sort: 'name' });
+  assert.equal(list.length, 3);
+
+  // Should be sorted by name COLLATE NOCASE ASC
+  const names = list.map((c) => c.name);
+  assert.deepEqual(names, ['Alpha', 'Bravo', 'Charlie']);
+});
+
+test('world book alwaysActive entry matches without any trigger keys', () => {
+  const database = createAppDatabase(':memory:');
+  database.prepare('INSERT INTO users (id, username, password_hash, created_at) VALUES (?, ?, ?, ?)').run(
+    'user-1', 'tester', 'hash', new Date().toISOString()
+  );
+  const character = createCharacter(database, 'user-1', { name: 'AlwaysActive角色', visibility: 'private' });
+  const book = createWorldBook(database, 'user-1', { name: 'AlwaysActive测试书' });
+  linkWorldBookToCharacter(database, book.id, character.id);
+
+  createEntry(database, 'user-1', book.id, {
+    name: '永久条目',
+    triggerKeys: '',
+    content: '永久激活的内容',
+    enabled: true,
+    alwaysActive: true
+  });
+
+  const matches = matchWorldBookEntries(database, character.id, '');
+  assert.equal(matches.length, 1);
+  assert.equal(matches[0].name, '永久条目');
+  assert.equal(matches[0].content, '永久激活的内容');
+});
+
+test('world book regexMode entry matches by regex pattern', () => {
+  const database = createAppDatabase(':memory:');
+  database.prepare('INSERT INTO users (id, username, password_hash, created_at) VALUES (?, ?, ?, ?)').run(
+    'user-1', 'tester', 'hash', new Date().toISOString()
+  );
+  const character = createCharacter(database, 'user-1', { name: 'RegexMode角色', visibility: 'private' });
+  const book = createWorldBook(database, 'user-1', { name: 'RegexMode测试书' });
+  linkWorldBookToCharacter(database, book.id, character.id);
+
+  createEntry(database, 'user-1', book.id, {
+    name: '数字匹配',
+    triggerKeys: '\\d+',
+    content: '检测到数字',
+    enabled: true,
+    regexMode: true
+  });
+
+  const matches = matchWorldBookEntries(database, character.id, '我有42个苹果');
+  assert.equal(matches.length, 1);
+  assert.equal(matches[0].content, '检测到数字');
+
+  const noMatches = matchWorldBookEntries(database, character.id, '我没有苹果');
+  assert.equal(noMatches.length, 0);
+});
+
+test('world book selective NOT logic filters out when secondary key present', () => {
+  const database = createAppDatabase(':memory:');
+  database.prepare('INSERT INTO users (id, username, password_hash, created_at) VALUES (?, ?, ?, ?)').run(
+    'user-1', 'tester', 'hash', new Date().toISOString()
+  );
+  const character = createCharacter(database, 'user-1', { name: 'SelectiveNot角色', visibility: 'private' });
+  const book = createWorldBook(database, 'user-1', { name: 'SelectiveNot测试书' });
+  linkWorldBookToCharacter(database, book.id, character.id);
+
+  createEntry(database, 'user-1', book.id, {
+    name: '和平场景',
+    triggerKeys: '场景',
+    content: '和平的场景描述',
+    enabled: true,
+    selective: true,
+    selectiveLogic: 1,
+    keysSecondary: '战斗'
+  });
+
+  const matches = matchWorldBookEntries(database, character.id, '一个美丽的场景');
+  assert.equal(matches.length, 1);
+  assert.equal(matches[0].content, '和平的场景描述');
+
+  const blocked = matchWorldBookEntries(database, character.id, '一个激烈的战斗场景');
+  assert.equal(blocked.length, 0);
 });

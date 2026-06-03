@@ -124,6 +124,23 @@ export function deleteCharacter(id) {
   });
 }
 
+export function fetchCharacterWorldBooks(characterId) {
+  return apiRequest(`/api/characters/${characterId}/world-books`);
+}
+
+export function linkCharacterWorldBook(characterId, worldBookId) {
+  return apiRequest(`/api/characters/${characterId}/world-books`, {
+    method: 'POST',
+    body: JSON.stringify({ worldBookId })
+  });
+}
+
+export function unlinkCharacterWorldBook(characterId, worldBookId) {
+  return apiRequest(`/api/characters/${characterId}/world-books/${worldBookId}`, {
+    method: 'DELETE'
+  });
+}
+
 export function exportCharacter(id) {
   return apiRequest(`/api/characters/${id}/export`);
 }
@@ -311,6 +328,28 @@ export function deleteConversations(ids) {
 
 export function fetchConversationMessages(conversationId) {
   return apiRequest(`/api/conversations/${conversationId}/messages`);
+}
+
+export function fetchConversationBranches(conversationId) {
+  return apiRequest(`/api/conversations/${conversationId}/branches`);
+}
+
+export function branchConversation(conversationId, messageId) {
+  return apiRequest(`/api/conversations/${conversationId}/branch`, {
+    method: 'POST',
+    body: JSON.stringify({ messageId })
+  });
+}
+
+export function fetchMessageSwipes(_conversationId, messageId) {
+  return apiRequest(`/api/messages/${messageId}/swipes`);
+}
+
+export function createMessageSwipe(_conversationId, messageId, payload = {}) {
+  return apiRequest(`/api/messages/${messageId}/swipes`, {
+    method: 'POST',
+    body: JSON.stringify(payload)
+  });
 }
 
 export function fetchConversationSettings(conversationId) {

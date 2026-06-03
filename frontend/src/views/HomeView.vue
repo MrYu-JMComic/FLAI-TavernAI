@@ -1,7 +1,7 @@
 <script setup>
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 import { measureElement, useVirtualizer } from '@tanstack/vue-virtual';
-import { Bot, Clock3, Download, Eye, Heart, MessageSquareText, Pencil, Plus, Search, Star, Upload } from '@lucide/vue';
+import { AlertTriangle, Bot, Clock3, Download, Eye, Heart, MessageSquareText, Pencil, Plus, RefreshCw, Search, Star, Upload } from '@lucide/vue';
 import {
   createConversation,
   fetchCharacters,
@@ -28,6 +28,7 @@ const sort = ref('created');
 const selectedTag = ref('');
 const tags = ref([]);
 const loading = ref(false);
+const loadError = ref('');
 const reactionPending = ref({});
 const importPreview = ref(null);
 const importLoading = ref(false);
@@ -106,9 +107,11 @@ function selectTag(name) {
 
 async function loadCharacters() {
   loading.value = true;
+  loadError.value = '';
   try {
     characters.value = await fetchCharacters({ search: search.value, sort: sort.value, tag: selectedTag.value });
   } catch (err) {
+    loadError.value = err.message || '加载角色失败';
     notify.error(err.message);
   } finally {
     loading.value = false;
@@ -252,7 +255,41 @@ function visibilityLabel(character) {
       </button>
     </section>
 
-    <p v-if="loading" class="muted-text">正在加载角色...</p>
+    <section v-if="loading" class="home-skeleton-grid">
+      <article v-for="n in 6" :key="n" class="skeleton-card">
+        <div class="skeleton-reactions">
+          <div class="skeleton-circle" />
+          <div class="skeleton-circle" />
+        </div>
+        <div class="skeleton-body">
+          <div class="skeleton-avatar" />
+          <div class="skeleton-lines">
+            <div class="skeleton-line w60" />
+            <div class="skeleton-line w40" />
+          </div>
+          <div class="skeleton-line w90" />
+          <div class="skeleton-line w70" />
+          <div class="skeleton-tags">
+            <div class="skeleton-tag" />
+            <div class="skeleton-tag w50" />
+          </div>
+        </div>
+        <div class="skeleton-actions">
+          <div class="skeleton-btn" />
+          <div class="skeleton-btn" />
+        </div>
+      </article>
+    </section>
+
+    <section v-else-if="loadError" class="empty-state error-state">
+      <AlertTriangle :size="34" />
+      <h2>加载失败</h2>
+      <p>{{ loadError }}</p>
+      <button class="primary-button" type="button" @click="loadCharacters">
+        <RefreshCw :size="18" />
+        <span>重新加载</span>
+      </button>
+    </section>
 
     <section v-else-if="characters.length" ref="scrollContainerRef" class="character-virtual-scroll">
       <div
@@ -360,7 +397,8 @@ function visibilityLabel(character) {
           <h2>导入角色卡预览</h2>
           <div class="import-preview-content">
             <div class="import-preview-avatar">
-              <span>{{ (importPreview.character?.name || '?').slice(0, 1) }}</span>
+              <img v-if="importPreview.character?.avatarUrl" :src="importPreview.character.avatarUrl" :alt="importPreview.character?.name" />
+              <span v-else>{{ (importPreview.character?.name || '?').slice(0, 1) }}</span>
             </div>
             <div class="import-preview-info">
               <h3>{{ importPreview.character?.name }}</h3>

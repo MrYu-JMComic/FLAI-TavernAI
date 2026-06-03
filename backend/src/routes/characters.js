@@ -16,8 +16,11 @@ import {
   createWorldBook,
   deleteWorldBook,
   getWorldBook,
+  linkWorldBookToCharacter,
+  listCharacterWorldBooks,
   matchWorldBookEntries,
-  buildWorldBookContext
+  buildWorldBookContext,
+  unlinkWorldBookFromCharacter
 } from '../modules/worldBooks.js';
 import { setCharacterTags } from '../modules/tags.js';
 import {
@@ -62,8 +65,10 @@ export function createCharactersRouter({
   router.post('/', requireAuth, validate(createCharacterSchema), (request, response) => {
     const payload = prepareCharacterPayload(request.auth.user.id, sanitizeCharacterPayload(request.body));
     const character = createCharacter(db, request.auth.user.id, payload);
-    linkWorldBookToCharacter(request.auth.user.id, character.id, request.body?.worldBookId);
-    syncCharacterTags(character.id, request.body?.tags);
+    if (request.body?.worldBookId) {
+      linkWorldBookToCharacter(db, request.body.worldBookId, character.id);
+    }
+    setCharacterTags(character.id, request.body?.tags);
     response.status(201).json(withCharacterTags(withWorldBookId(character)));
   });
 
@@ -94,10 +99,10 @@ export function createCharactersRouter({
       return;
     }
     if (Object.prototype.hasOwnProperty.call(request.body || {}, 'worldBookId')) {
-      linkWorldBookToCharacter(request.auth.user.id, character.id, request.body.worldBookId);
+      linkWorldBookToCharacter(db, request.body.worldBookId, character.id);
     }
     if (Object.prototype.hasOwnProperty.call(request.body || {}, 'tags')) {
-      syncCharacterTags(character.id, request.body.tags);
+      setCharacterTags(character.id, request.body.tags);
     }
     response.json(withCharacterTags(withWorldBookId(character)));
   });
@@ -467,6 +472,54 @@ export function createCharactersRouter({
     }
     if (!deleteCharacterTalent(db, request.params.talentId)) {
       response.status(404).json({ error: '天赋不存在' });
+      return;
+    }
+    response.json({ ok: true });
+  });
+
+  // ── Character World Books ──
+
+  router.get('/:id/world-books', requireAuth, (request, response) => {
+    const character = getCharacter(db, request.auth.user.id, request.params.id);
+    if (!character) {
+      response.status(404).json({ error: '角色不存在' });
+      return;
+    }
+    response.json(listCharacterWorldBooks(db, request.params.id));
+  });
+
+  router.post('/:id/world-books', requireAuth, (request, response) => {
+    const character = getCharacter(db, request.auth.user.id, request.params.id);
+    if (!character) {
+      response.status(404).json({ error: '角色不存在' });
+      return;
+    }
+    if (!character.canEdit) {
+      response.status(403).json({ error: '只有角色拥有者可以编辑此角色' });
+      return;
+    }
+    const bookId = String(request.body?.worldBookId || '').trim();
+    if (!bookId) {
+      response.status(400).json({ error: '请提供世界书 ID' });
+      return;
+    }
+    const orderIndex = Number(request.body?.orderIndex) || 0;
+    linkWorldBookToCharacter(db, bookId, request.params.id, orderIndex);
+    response.json({ ok: true });
+  });
+
+  router.delete('/:id/world-books/:bookId', requireAuth, (request, response) => {
+    const character = getCharacter(db, request.auth.user.id, request.params.id);
+    if (!character) {
+      response.status(404).json({ error: '角色不存在' });
+      return;
+    }
+    if (!character.canEdit) {
+      response.status(403).json({ error: '只有角色拥有者可以编辑此角色' });
+      return;
+    }
+    if (!unlinkWorldBookFromCharacter(db, request.params.bookId, request.params.id)) {
+      response.status(404).json({ error: '关联不存在' });
       return;
     }
     response.json({ ok: true });
