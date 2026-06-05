@@ -20,6 +20,7 @@ TOOLS.md
 USER.md
 claude-prompt.txt
 automation/claude-prompt.*
+automation/prompts/claude-prompt.*
 
 *.sqlite
 *.sqlite3

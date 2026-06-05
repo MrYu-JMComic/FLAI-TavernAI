@@ -28,6 +28,7 @@ Use `automation/` for AI-agent working artifacts.
 - `automation/plans/` stores active task plans.
 - `automation/plans/legacy/` stores old plans, edicts, roadmaps, and superseded planning notes.
 - `automation/prompts/` stores reusable agent/tool prompt files.
+- Ignored generated prompt drafts such as `automation/prompts/claude-prompt.*` also belong under `automation/prompts/`.
 - `automation/tasks/` stores task briefs and dispatch files.
 - `automation/reports/` stores standard iteration reports.
 - `automation/reports/audits/` stores larger audits, robustness reviews, project analyses, and optimization reports.
