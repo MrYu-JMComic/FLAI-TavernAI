@@ -22,6 +22,8 @@ import { buildModSystemPrompt, getEnabledModsForUser } from '../modules/mods.js'
 import { buildTalentSystemPrompt } from '../modules/talents.js';
 import {
   createDefaultAdvancedSettings,
+  hasStatusBarBlueprint,
+  normalizeAdvancedSettings,
   normalizeAccessorySkills
 } from '../modules/advancedSettings.js';
 import {
@@ -45,10 +47,11 @@ import {
   buildNpcBehaviorPrompt,
   deleteNpcBehavior,
   deleteNpcMemory,
+  hideConversationNpc,
+  hideEmptyConversationNpcs,
   listConversationNpcs,
   listNpcBehaviors,
   listNpcMemories,
-  scanNpcsFromMessages,
   updateNpcBehavior
 } from '../modules/npcs.js';
 import {
@@ -62,13 +65,11 @@ import {
   buildUsageSnapshot,
   generateCompletion,
   streamCompletion,
-  runToolCompletion,
-  streamToolCompletion,
   summarizeUsageSnapshots
 } from '../services/providers.js';
 import { renderPromptVariables, resolvePromptUserName } from '../services/promptVariables.js';
 import { saveConversationAppearance } from '../modules/conversationAppearance.js';
-import { normalizeAdvancedSettings, mergeAdvancedSettings } from '../modules/advancedSettings.js';
+import { mergeAdvancedSettings } from '../modules/advancedSettings.js';
 import { getAccessorySkillsPayload, runAccessoryAgents } from '../services/accessoryAgents.js';
 import { toConversation, toMessage, withConversationUsage, parseJson, normalizeIdList } from './helpers.js';
 import { sendMessageSchema, updateMessageSchema, saveConversationSettingsSchema, saveStatusBarSchema, economyTransactionSchema, addNpcMemorySchema, addNpcBehaviorSchema, updateNpcBehaviorSchema, createSaveSchema, renameSaveSchema, createConversationSchema, bulkDeleteSchema, validate } from '../validations/schemas.js';
@@ -125,6 +126,15 @@ export function createConversationsRouter(ctx) {
       `INSERT INTO conversations (id, user_id, character_id, title, created_at, updated_at)
        VALUES (?, ?, ?, ?, ?, ?)`
     ).run(conversationId, request.auth.user.id, character.id, `${character.name} 的故事`, timestamp, timestamp);
+
+    const statusBarBlueprint = normalizeAdvancedSettings(character.authorAdvancedSettings || {}).statusBarBlueprint;
+    if (hasStatusBarBlueprint(statusBarBlueprint)) {
+      upsertStatusBar(db, request.auth.user.id, conversationId, {
+        name: statusBarBlueprint.name || '状态栏',
+        variables: statusBarBlueprint.variables,
+        template: statusBarBlueprint.template
+      });
+    }
 
     if (character.openingMessage) {
       insertMessage({
@@ -284,6 +294,15 @@ export function createConversationsRouter(ctx) {
     }
 
     const result = await generateCompletion(settings.value, modelMessages, aiOptions);
+    if (!hasAssistantPayload(result)) {
+      response.status(502).json({
+        error: '模型没有返回正文，请重试或检查当前模型/网关是否支持该对话格式。',
+        accepted: true,
+        userMessage,
+        provider: result.provider
+      });
+      return;
+    }
     const assistantMessage = saveAssistantResult({
       userId: request.auth.user.id,
       conversation,
@@ -295,23 +314,32 @@ export function createConversationsRouter(ctx) {
         charName: character.name || ''
       }
     });
-    const skillResults = await runAccessoryAgents({
-      db,
-      userId: request.auth.user.id,
-      conversation,
-      character,
-      assistantMessage,
-      settings: settings.value,
-      statusBar
-    });
-
+    if (!assistantMessage) {
+      response.status(502).json({
+        error: '模型回复被处理后为空，请检查输出正则或重试。',
+        accepted: true,
+        userMessage,
+        provider: result.provider
+      });
+      return;
+    }
     response.json({
       userMessage,
       assistantMessage,
       usage: assistantMessage.usage,
       provider: result.provider,
       statusBar: getStatusBar(db, request.auth.user.id, conversation.id),
-      skillResults
+      accessoryBackground: true
+    });
+
+    startAccessoryAgentsInBackground({
+      db,
+      userId: request.auth.user.id,
+      conversation,
+      character,
+      assistantMessage,
+      settings: settings.value,
+      statusBar: getStatusBar(db, request.auth.user.id, conversation.id) || statusBar
     });
   }));
 
@@ -374,25 +402,36 @@ export function createConversationsRouter(ctx) {
       response.status(404).json({ error: '对话不存在' });
       return;
     }
-    const settings = saveConversationAppearance(db, request.auth.user.id, request.params.id, request.body || {});
-    if (!settings) {
-      response.status(404).json({ error: '对话不存在' });
-      return;
-    }
-    if (request.body?.chatLorebookId !== undefined) {
-      const lorebookId = request.body.chatLorebookId ? String(request.body.chatLorebookId).trim() : null;
-      if (lorebookId) {
-        const book = db.prepare('SELECT id FROM world_books WHERE id = ? AND user_id = ?').get(lorebookId, request.auth.user.id);
-        if (!book) {
-          response.status(400).json({ error: '指定的世界书不存在' });
-          return;
-        }
+
+    // Wrap multi-field update in a transaction for atomicity
+    db.exec('BEGIN');
+    try {
+      const settings = saveConversationAppearance(db, request.auth.user.id, request.params.id, request.body || {});
+      if (!settings) {
+        db.exec('ROLLBACK');
+        response.status(404).json({ error: '对话不存在' });
+        return;
       }
-      db.prepare('UPDATE conversations SET chat_lorebook_id = ?, updated_at = ? WHERE id = ? AND user_id = ?')
-        .run(lorebookId, nowIso(), request.params.id, request.auth.user.id);
+      if (request.body?.chatLorebookId !== undefined) {
+        const lorebookId = request.body.chatLorebookId ? String(request.body.chatLorebookId).trim() : null;
+        if (lorebookId) {
+          const book = db.prepare('SELECT id FROM world_books WHERE id = ? AND user_id = ?').get(lorebookId, request.auth.user.id);
+          if (!book) {
+            db.exec('ROLLBACK');
+            response.status(400).json({ error: '指定的世界书不存在' });
+            return;
+          }
+        }
+        db.prepare('UPDATE conversations SET chat_lorebook_id = ?, updated_at = ? WHERE id = ? AND user_id = ?')
+          .run(lorebookId, nowIso(), request.params.id, request.auth.user.id);
+      }
+      db.exec('COMMIT');
+      const updated = getConversation(request.auth.user.id, request.params.id);
+      response.json({ ...(updated?.settings || settings), chatLorebookId: updated?.chatLorebookId ?? null });
+    } catch (error) {
+      try { db.exec('ROLLBACK'); } catch { /* already rolled back */ }
+      throw error;
     }
-    const updated = getConversation(request.auth.user.id, request.params.id);
-    response.json({ ...(updated?.settings || settings), chatLorebookId: updated?.chatLorebookId ?? null });
   });
 
   router.get('/:id/accessory-skills', requireAuth, (request, response) => {
@@ -491,6 +530,17 @@ export function createConversationsRouter(ctx) {
     response.json(listConversationNpcs(db, request.auth.user.id, request.params.id, character?.name || ''));
   });
 
+  router.delete('/:id/npcs-empty', requireAuth, (request, response) => {
+    const conversation = getConversation(request.auth.user.id, request.params.id);
+    if (!conversation) {
+      response.status(404).json({ error: '对话不存在' });
+      return;
+    }
+    const character = getCharacter(db, request.auth.user.id, conversation.characterId);
+    const result = hideEmptyConversationNpcs(db, request.auth.user.id, request.params.id, character?.name || '');
+    response.json({ ok: true, ...result });
+  });
+
   router.get('/:id/npcs/:npc/memories', requireAuth, (request, response) => {
     const conversation = getConversation(request.auth.user.id, request.params.id);
     if (!conversation) {
@@ -498,6 +548,20 @@ export function createConversationsRouter(ctx) {
       return;
     }
     response.json(listNpcMemories(db, request.auth.user.id, request.params.id, request.params.npc));
+  });
+
+  router.delete('/:id/npcs/:npc', requireAuth, (request, response) => {
+    const conversation = getConversation(request.auth.user.id, request.params.id);
+    if (!conversation) {
+      response.status(404).json({ error: '对话不存在' });
+      return;
+    }
+    const hidden = hideConversationNpc(db, request.auth.user.id, request.params.id, request.params.npc);
+    if (!hidden) {
+      response.status(400).json({ error: 'NPC 名称无效' });
+      return;
+    }
+    response.json({ ok: true, hidden });
   });
 
   router.post('/:id/npcs/:npc/memories', requireAuth, validate(addNpcMemorySchema), (request, response) => {
@@ -612,6 +676,7 @@ export function createConversationsRouter(ctx) {
          ORDER BY created_at ASC`
       )
       .all(userId, conversationId)
+      .filter(isDisplayableMessageRow)
       .map(toMessage);
   }
 
@@ -660,28 +725,31 @@ export function createConversationsRouter(ctx) {
   }
 
   function deleteConversations(userId, ids) {
-    const deletedIds = [];
-    const statement = db.prepare('DELETE FROM conversations WHERE user_id = ? AND id = ?');
-    for (const id of ids) {
-      const result = statement.run(userId, id);
-      if (result.changes > 0) {
-        deletedIds.push(id);
-      }
+    const placeholders = ids.map(() => '?').join(', ');
+    // First, find which IDs actually belong to this user
+    const existing = db
+      .prepare(`SELECT id FROM conversations WHERE user_id = ? AND id IN (${placeholders})`)
+      .all(userId, ...ids)
+      .map((r) => r.id);
+    if (!existing.length) {
+      return [];
     }
-    return deletedIds;
+    const existingPlaceholders = existing.map(() => '?').join(', ');
+    db.prepare(`DELETE FROM conversations WHERE user_id = ? AND id IN (${existingPlaceholders})`).run(userId, ...existing);
+    return existing;
   }
 
   function getRecentMessages(userId, conversationId) {
     return db
       .prepare(
-        `SELECT * FROM (
-          SELECT * FROM messages
-          WHERE user_id = ? AND conversation_id = ?
-          ORDER BY created_at DESC
-          LIMIT 20
-        ) ORDER BY created_at ASC`
+        `SELECT * FROM messages
+         WHERE user_id = ? AND conversation_id = ?
+         ORDER BY created_at DESC
+         LIMIT 20`
       )
-      .all(userId, conversationId);
+      .all(userId, conversationId)
+      .reverse()
+      .filter(isDisplayableMessageRow);
   }
 
   function insertMessage({ userId, conversationId, role, content, reasoning, usage }) {
@@ -708,7 +776,7 @@ export function createConversationsRouter(ctx) {
     if (settings.apiKeyError) {
       return { ok: false, error: settings.apiKeyError };
     }
-    if (!settings.apiKey) {
+    if (!settings.apiKey && !hasUsableProvider(settings)) {
       return { ok: false, error: '请先在用户页保存 API Key / SK，再开始真实对话。' };
     }
     if (!hasUsableProvider(settings)) {
@@ -740,97 +808,12 @@ export function createConversationsRouter(ctx) {
     return getAccessorySkillsPayload(conversation, getStatusBar(db, userId, conversationId));
   }
 
-  function buildConversationTools(statusBar) {
-    if (!statusBar || !Array.isArray(statusBar.variables) || statusBar.variables.length === 0) {
-      return [];
-    }
-
-    return [
-      {
-        type: 'function',
-        function: {
-          name: 'update_status_bar',
-          description: '更新当前对话的状态栏变量。仅在状态发生变化时调用，不要直接在正文中伪造状态栏。',
-          parameters: {
-            type: 'object',
-            additionalProperties: false,
-            properties: {
-              variables: {
-                type: 'array',
-                items: {
-                  type: 'object',
-                  additionalProperties: false,
-                  properties: {
-                    name: { type: 'string', minLength: 1, maxLength: 40 },
-                    value: { type: 'number' },
-                    max: { type: 'number' },
-                    color: { type: 'string' }
-                  },
-                  required: ['name', 'value']
-                }
-              }
-            },
-            required: ['variables']
-          }
-        }
-      }
-    ];
-  }
-
-  async function executeConversationTool({ toolName, toolArguments, userId, conversationId, statusBar }) {
-    if (toolName !== 'update_status_bar') {
-      return { ok: false, error: `不支持的工具：${toolName}` };
-    }
-    const currentStatusBar = getStatusBar(db, userId, conversationId) || statusBar;
-    if (!currentStatusBar) {
-      return { ok: false, error: '当前会话没有状态栏' };
-    }
-
-    const payload = normalizeStatusBarToolPayload(toolArguments);
-    const currentMap = new Map((currentStatusBar.variables || []).map((item) => [String(item.name || '').toLowerCase(), { ...item }]));
-    for (const update of payload.variables) {
-      const key = String(update.name || '').toLowerCase();
-      const existing = currentMap.get(key) || { name: update.name, value: 0, max: 100, color: '' };
-      currentMap.set(key, {
-        ...existing,
-        name: update.name,
-        value: Number.isFinite(Number(update.value)) ? Number(update.value) : existing.value,
-        ...(update.max !== undefined && Number.isFinite(Number(update.max)) ? { max: Number(update.max) } : {}),
-        ...(typeof update.color === 'string' && update.color.trim() ? { color: update.color.trim() } : {})
+  function startAccessoryAgentsInBackground(options) {
+    queueMicrotask(() => {
+      runAccessoryAgents(options).catch((error) => {
+        console.warn('[accessory-agents] background update failed:', error?.message || error);
       });
-    }
-
-    const variables = [...currentMap.values()];
-    const updated = upsertStatusBar(db, userId, conversationId, {
-      name: currentStatusBar.name,
-      variables,
-      template: currentStatusBar.template
     });
-    return {
-      ok: true,
-      statusBar: updated,
-      updatedVariables: variables.length
-    };
-  }
-
-  function normalizeStatusBarToolPayload(toolArguments) {
-    if (!toolArguments) {
-      return { variables: [] };
-    }
-
-    const payload = typeof toolArguments === 'string' ? parseJson(toolArguments, {}) : toolArguments;
-    const variables = Array.isArray(payload.variables) ? payload.variables : Array.isArray(payload.updates) ? payload.updates : [];
-    return {
-      variables: variables
-        .map((item) => ({
-          name: String(item?.name || '').trim(),
-          value: Number(item?.value),
-          ...(item?.max !== undefined ? { max: Number(item.max) } : {}),
-          ...(item?.color ? { color: String(item.color).trim() } : {})
-        }))
-        .filter((item) => item.name && Number.isFinite(item.value))
-        .slice(0, 20)
-    };
   }
 
   function buildModelMessagesV2({
@@ -857,7 +840,14 @@ export function createConversationsRouter(ctx) {
           '[状态栏]',
           `名称：${statusBar.name || '状态栏'}`,
           ...statusBar.variables.map((item) => `- ${item.name}: ${Number(item.value || 0)}/${Number(item.max || 0)}`),
-          '将这些变量视为当前状态上下文；不要调用工具，也不要在正文里手写状态栏表格。'
+          '将这些变量视为当前状态上下文；后台状态栏 Agent 会异步更新变量；正文只写角色内容，不要手写状态栏表格。'
+        ]
+      : [];
+    const statusBarPromptLines = String(statusBarPrompt || '').trim()
+      ? [
+          '[状态栏更新规则]',
+          renderField(statusBarPrompt),
+          '后台状态栏 Agent 会异步处理这些规则；回复正文只写角色内容，不要输出状态栏更新记录。'
         ]
       : [];
     const baseSystemPrompt = [
@@ -871,6 +861,7 @@ export function createConversationsRouter(ctx) {
       modSystemPrompt ? `\n[Mod 指令]\n${modSystemPrompt}` : '',
       npcBehaviorPrompt ? npcBehaviorPrompt : '',
       talentPrompt ? `\n${talentPrompt}` : '',
+      statusBarPromptLines.length ? `\n${statusBarPromptLines.join('\n')}` : '',
       statusBarLines.length ? `\n${statusBarLines.join('\n')}` : '',
       '保持角色一致，用自然中文回复。不要伪造内部思考；如果模型接口返回思考内容，系统会单独展示。'
     ]
@@ -923,8 +914,7 @@ export function createConversationsRouter(ctx) {
     settings,
     statusBar = null,
     thinkingEnabled = true,
-    completionOptions = {},
-    tools = []
+    completionOptions = {}
   }) {
     response.writeHead(200, {
       'Content-Type': 'text/event-stream; charset=utf-8',
@@ -950,6 +940,12 @@ export function createConversationsRouter(ctx) {
 
     try {
       const result = await streamCompletion(settings, modelMessages, emit, controller.signal, { thinkingEnabled, ...completionOptions });
+      if (!hasAssistantPayload(result)) {
+        emit('error', { error: '模型没有返回正文，请重试或检查当前模型/网关是否支持该对话格式。' });
+        response.end();
+        return;
+      }
+
       const assistantMessage = saveAssistantResult({
         userId,
         conversation,
@@ -961,24 +957,28 @@ export function createConversationsRouter(ctx) {
           charName: character.name || ''
         }
       });
-      const skillResults = await runAccessoryAgents({
+      if (!assistantMessage) {
+        emit('error', { error: '模型回复被处理后为空，请检查输出正则或重试。' });
+        response.end();
+        return;
+      }
+      emit('done', {
+        assistantMessage,
+        usage: assistantMessage.usage,
+        provider: result.provider,
+        statusBar: getStatusBar(db, userId, conversation.id),
+        accessoryBackground: true
+      });
+      response.end();
+      startAccessoryAgentsInBackground({
         db,
         userId,
         conversation,
         character,
         assistantMessage,
         settings,
-        statusBar,
-        emit
+        statusBar: getStatusBar(db, userId, conversation.id) || statusBar
       });
-      emit('done', {
-        assistantMessage,
-        usage: assistantMessage.usage,
-        provider: result.provider,
-        statusBar: getStatusBar(db, userId, conversation.id),
-        skillResults
-      });
-      response.end();
     } catch (error) {
       if (isAbortError(error) || controller.signal.aborted || response.destroyed) {
         if (!response.destroyed) {
@@ -996,13 +996,17 @@ export function createConversationsRouter(ctx) {
 
   function saveAssistantResult({ userId, conversation, character, rules, result, macroContext = {} }) {
     const content = applyRegexRules(result.content || '', rules, 'output', macroContext);
+    const reasoning = result.reasoning || '';
+    if (!String(content || '').trim() && !String(reasoning || '').trim()) {
+      return null;
+    }
     const usage = buildUsageSnapshot(result.usage, result);
     const assistantMessage = insertMessage({
       userId,
       conversationId: conversation.id,
       role: 'assistant',
       content,
-      reasoning: result.reasoning || '',
+      reasoning,
       usage
     });
     updateConversationTimestamp(userId, conversation.id);
@@ -1011,37 +1015,26 @@ export function createConversationsRouter(ctx) {
     return assistantMessage;
   }
 
-  function autoScanNpcFromReply(database, userId, conversationId, content, mainCharacterName) {
-    if (!content) return;
-    const npcNames = scanNpcsFromMessages([{ content }], mainCharacterName);
-    for (const npcName of npcNames.slice(0, 5)) {
-      const existing = database
-        .prepare('SELECT id FROM npc_memories WHERE conversation_id = ? AND npc_name = ? LIMIT 1')
-        .get(conversationId, npcName);
-      if (!existing) {
-        try {
-          addNpcMemory(database, userId, conversationId, npcName, {
-            memoryType: 'event',
-            content: '首次出现在对话中'
-          });
-        } catch {
-          const id = newId();
-          const timestamp = nowIso();
-          database
-            .prepare(
-              `INSERT INTO npc_memories (id, conversation_id, npc_name, memory_type, content, created_at)
-               VALUES (?, ?, ?, ?, ?, ?)`
-            )
-            .run(id, conversationId, npcName, 'event', '首次出现在对话中', timestamp);
-        }
-      }
+  function hasAssistantPayload(result = {}) {
+    return Boolean(String(result.content || '').trim() || String(result.reasoning || '').trim());
+  }
+
+  function isDisplayableMessageRow(row = {}) {
+    if (row.role !== 'assistant') {
+      return true;
     }
+    return Boolean(String(row.content || '').trim() || String(row.reasoning || '').trim());
   }
 
   function writeSse(response, event, data) {
-    response.write(`event: ${event}\n`);
-    response.write(`data: ${JSON.stringify(data)}\n\n`);
-    response.flush?.();
+    if (response.destroyed) return;
+    try {
+      response.write(`event: ${event}\n`);
+      response.write(`data: ${JSON.stringify(data)}\n\n`);
+      response.flush?.();
+    } catch {
+      // Response stream may have been destroyed by client disconnect
+    }
   }
 
   function isAbortError(error) {

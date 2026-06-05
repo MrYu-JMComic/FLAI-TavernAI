@@ -45,6 +45,17 @@ self.addEventListener('fetch', (event) => {
   // Skip API requests (let them go to network)
   if (url.pathname.startsWith('/api/')) return;
 
+  // Skip Vite dev modules if an old dev registration is still active.
+  if (
+    url.port === '5173' ||
+    url.port === '5174' ||
+    url.pathname.startsWith('/src/') ||
+    url.pathname.startsWith('/@vite') ||
+    url.pathname.startsWith('/node_modules/')
+  ) {
+    return;
+  }
+
   // Skip SSE/streaming requests
   if (request.headers.get('Accept')?.includes('text/event-stream')) return;
 

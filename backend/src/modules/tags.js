@@ -2,22 +2,26 @@ import { newId, nowIso } from '../security.js';
 
 // ── Tag CRUD ──
 
-export function listTags(database) {
+export function listTags(database, userId) {
   return database
     .prepare(
       `SELECT tags.*,
-        (SELECT COUNT(*) FROM character_tags WHERE tag_id = tags.id) AS usage_count
+        (SELECT COUNT(*)
+         FROM character_tags
+         JOIN characters ON characters.id = character_tags.character_id
+         WHERE character_tags.tag_id = tags.id AND characters.user_id = tags.user_id) AS usage_count
        FROM tags
+       WHERE tags.user_id = ?
        ORDER BY usage_count DESC, tags.name COLLATE NOCASE ASC`
     )
-    .all()
+    .all(userId)
     .map(toTag);
 }
 
-export function createTag(database, payload) {
+export function createTag(database, userId, payload) {
   const name = normalizeTagName(payload.name);
   const color = normalizeColor(payload.color);
-  const existing = database.prepare('SELECT id FROM tags WHERE name = ?').get(name);
+  const existing = database.prepare('SELECT id FROM tags WHERE user_id = ? AND name = ?').get(userId, name);
   if (existing) {
     throw new Error('标签名已存在');
   }
@@ -25,71 +29,89 @@ export function createTag(database, payload) {
   const id = newId();
   const timestamp = nowIso();
   database
-    .prepare('INSERT INTO tags (id, name, color, created_at) VALUES (?, ?, ?, ?)')
-    .run(id, name, color, timestamp);
+    .prepare('INSERT INTO tags (id, user_id, name, color, created_at) VALUES (?, ?, ?, ?, ?)')
+    .run(id, userId, name, color, timestamp);
 
   return { id, name, color, usageCount: 0, createdAt: timestamp };
 }
 
-export function deleteTag(database, tagId) {
-  const result = database.prepare('DELETE FROM tags WHERE id = ?').run(tagId);
+export function deleteTag(database, userId, tagId) {
+  const result = database.prepare('DELETE FROM tags WHERE id = ? AND user_id = ?').run(tagId, userId);
   return result.changes > 0;
 }
 
-export function getTagByName(database, name) {
+export function getTagByName(database, userId, name) {
   const row = database
     .prepare(
       `SELECT tags.*,
         (SELECT COUNT(*) FROM character_tags WHERE tag_id = tags.id) AS usage_count
        FROM tags
-       WHERE tags.name = ?`
+       WHERE tags.user_id = ? AND tags.name = ?`
     )
-    .get(name);
+    .get(userId, name);
   return row ? toTag(row) : null;
 }
 
 // ── Character-Tag Association ──
 
-export function setCharacterTags(database, characterId, tagNames) {
-  // Remove all existing associations
-  database.prepare('DELETE FROM character_tags WHERE character_id = ?').run(characterId);
-
-  if (!Array.isArray(tagNames) || tagNames.length === 0) {
+export function setCharacterTags(database, userId, characterId, tagNames) {
+  const character = database.prepare('SELECT id FROM characters WHERE id = ? AND user_id = ?').get(characterId, userId);
+  if (!character) {
     return;
   }
 
-  const names = [...new Set(tagNames.map((n) => String(n).trim()).filter(Boolean))].slice(0, 12);
-  const insertTag = database.prepare(
-    'INSERT OR IGNORE INTO tags (id, name, color, created_at) VALUES (?, ?, ?, ?)'
-  );
-  const insertLink = database.prepare(
-    'INSERT OR IGNORE INTO character_tags (character_id, tag_id) VALUES (?, ?)'
-  );
-  const findTag = database.prepare('SELECT id FROM tags WHERE name = ?');
+  // Wrap DELETE + INSERT in a transaction to prevent partial tag loss on failure
+  database.exec('BEGIN');
+  try {
+    // Remove all existing associations
+    database.prepare('DELETE FROM character_tags WHERE character_id = ?').run(characterId);
 
-  for (const name of names) {
-    const normalized = normalizeTagName(name);
-    let tag = findTag.get(normalized);
-    if (!tag) {
-      const id = `tag:${normalized}`;
-      insertTag.run(id, normalized, '', nowIso());
-      tag = findTag.get(normalized);
+    if (Array.isArray(tagNames) && tagNames.length > 0) {
+      const names = [...new Set(tagNames.map((n) => String(n).trim()).filter(Boolean))].slice(0, 12);
+      const insertTag = database.prepare(
+        'INSERT OR IGNORE INTO tags (id, user_id, name, color, created_at) VALUES (?, ?, ?, ?, ?)'
+      );
+      const insertLink = database.prepare(
+        'INSERT OR IGNORE INTO character_tags (character_id, tag_id) VALUES (?, ?)'
+      );
+      const findTag = database.prepare('SELECT id FROM tags WHERE user_id = ? AND name = ?');
+
+      for (const name of names) {
+        const normalized = normalizeTagName(name);
+        let tag = findTag.get(userId, normalized);
+        if (!tag) {
+          const id = newId();
+          insertTag.run(id, userId, normalized, '', nowIso());
+          tag = findTag.get(userId, normalized);
+        }
+        if (tag) {
+          insertLink.run(characterId, tag.id);
+        }
+      }
     }
-    if (tag) {
-      insertLink.run(characterId, tag.id);
-    }
+
+    database.exec('COMMIT');
+  } catch (error) {
+    database.exec('ROLLBACK');
+    throw error;
   }
 }
 
-export function getCharacterTagNames(database, characterId) {
+export function getCharacterTagNames(database, characterId, userId = '') {
+  const params = [characterId];
+  let userFilter = '';
+  if (userId) {
+    userFilter = ' AND tags.user_id = ?';
+    params.push(userId);
+  }
   return database
     .prepare(
       `SELECT tags.name FROM character_tags
        JOIN tags ON tags.id = character_tags.tag_id
-       WHERE character_tags.character_id = ?
+       WHERE character_tags.character_id = ?${userFilter}
        ORDER BY tags.name COLLATE NOCASE ASC`
     )
-    .all(characterId)
+    .all(...params)
     .map((row) => row.name);
 }
 
@@ -114,6 +136,7 @@ function normalizeColor(color) {
 function toTag(row) {
   return {
     id: row.id,
+    userId: row.user_id,
     name: row.name,
     color: row.color || '',
     usageCount: Number(row.usage_count ?? 0),

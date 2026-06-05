@@ -10,6 +10,17 @@ dist/
 backend/data/
 backend/uploads/
 
+# Local AI workspace state and generated prompts
+.openclaw/
+ENVIRONMENT.md
+HEARTBEAT.md
+IDENTITY.md
+SOUL.md
+TOOLS.md
+USER.md
+claude-prompt.txt
+automation/claude-prompt.*
+
 *.sqlite
 *.sqlite3
 *.db

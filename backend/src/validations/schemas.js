@@ -18,12 +18,26 @@ const accessorySkillsSchema = z.object({
   cgScene: accessorySkillConfigSchema.optional()
 }).partial().optional().default({});
 
+const statusBarBlueprintVariableSchema = z.object({
+  name: z.string().max(40).trim().optional().default(''),
+  value: z.union([z.number(), z.string().max(200).trim()]).optional().default(0),
+  max: z.number().optional().default(100),
+  color: z.string().max(30).trim().optional().default('')
+}).passthrough();
+
+const statusBarBlueprintSchema = z.object({
+  name: z.string().max(50).trim().optional().default(''),
+  variables: z.array(statusBarBlueprintVariableSchema).max(20).optional().default([]),
+  template: z.string().max(50000).trim().optional().default('')
+}).partial().optional().default({});
+
 const advancedSettingsSchema = z.object({
   desktopBackgroundUrl: z.string().max(5000).trim().optional().default(''),
   mobileBackgroundUrl: z.string().max(5000).trim().optional().default(''),
   customCss: z.string().max(50000).trim().optional().default(''),
   customJs: z.string().max(50000).trim().optional().default(''),
   statusBarPrompt: z.string().max(50000).trim().optional().default(''),
+  statusBarBlueprint: statusBarBlueprintSchema,
   accessorySkills: accessorySkillsSchema
 }).partial().optional().default({});
 
@@ -31,6 +45,7 @@ const advancedSettingsSchema = z.object({
 
 const nonEmptyString = z.string().min(1, '不能为空').trim();
 const optionalString = z.string().optional().default('');
+const nullableOptionalString = z.string().nullable().optional();
 
 // ── 认证相关 ──
 
@@ -60,6 +75,7 @@ export const updateProfileSchema = z.object({
 
 export const createCharacterSchema = z.object({
   name: z.string().min(1, '角色名不能为空').max(50, '角色名最多 50 字').trim(),
+  avatarUrl: z.string().optional().default(''),
   gender: z.string().max(20).trim().optional().default(''),
   age: z.string().max(20).trim().optional().default(''),
   background: z.string().max(10000, '背景最多 10000 字').optional().default(''),
@@ -69,8 +85,9 @@ export const createCharacterSchema = z.object({
   visibility: z.enum(['public', 'private']).optional().default('private'),
   tags: z.array(z.string().max(30)).max(20).optional().default([]),
   renderPlugins: z.array(z.any()).max(20).optional().default([]),
+  regexRules: z.array(z.any()).max(50).optional().default([]),
   authorAdvancedSettings: advancedSettingsSchema,
-  worldBookId: z.string().optional()
+  worldBookId: nullableOptionalString
 });
 
 export const updateCharacterSchema = createCharacterSchema.partial();
@@ -116,7 +133,7 @@ export const updateMessageSchema = z.object({
 export const createWorldBookSchema = z.object({
   name: z.string().min(1, '名称不能为空').max(80, '名称最多 80 字').trim(),
   description: z.string().max(2000).trim().optional().default(''),
-  characterId: z.string().optional(),
+  characterId: nullableOptionalString,
   scanDepth: z.number().int().min(1).max(50).optional().default(1),
   lorebookContextPercent: z.number().int().min(1).max(100).optional().default(25)
 });
@@ -127,7 +144,7 @@ export const createWorldBookEntrySchema = z.object({
   name: z.string().max(100).trim().optional().default(''),
   triggerKeys: z.string().max(2000).trim().optional().default(''),
   content: z.string().max(50000).trim().optional().default(''),
-  position: z.enum(['before_char', 'at_start', 'at_end', 'at_depth']).optional().default('before_char'),
+  position: z.enum(['before_char', 'after_char', 'at_start', 'at_depth']).optional().default('before_char'),
   enabled: z.boolean().optional().default(true),
   regexMode: z.boolean().optional().default(false),
   alwaysActive: z.boolean().optional().default(false),
@@ -185,14 +202,14 @@ export const createTagSchema = z.object({
 // ── Provider 设置 ──
 
 export const saveProviderSchema = z.object({
-  providerType: z.enum(['deepseek', 'openai', 'gemini', 'custom']).optional(),
+  providerType: z.enum(['deepseek', 'openai', 'gemini', 'anthropic', 'xai', 'mistral', 'qwen', 'glm', 'kimi', 'custom']).optional(),
   gatewayName: z.string().max(50).trim().optional().default(''),
   baseUrl: z.string().url().max(500).trim().optional().or(z.literal('')),
   model: z.string().max(100).trim().optional().default(''),
   apiKey: z.string().max(500).optional(),
   clearApiKey: z.boolean().optional().default(false),
   supportsReasoning: z.boolean().optional(),
-  extraBody: z.record(z.any()).optional()
+  extraBody: z.union([z.record(z.any()), z.string().max(50000)]).optional()
 });
 
 // ── 状态栏相关 ──
@@ -201,11 +218,11 @@ export const saveStatusBarSchema = z.object({
   name: z.string().max(50).trim().optional().default('状态栏'),
   variables: z.array(z.object({
     name: z.string().min(1).max(40).trim(),
-    value: z.number(),
+    value: z.union([z.number(), z.string().max(200).trim()]),
     max: z.number().optional(),
     color: z.string().max(20).trim().optional().default('')
   })).max(20).optional().default([]),
-  template: z.string().max(5000).trim().optional().default('')
+  template: z.string().max(50000).trim().optional().default('')
 });
 
 // ── 对话设置 ──

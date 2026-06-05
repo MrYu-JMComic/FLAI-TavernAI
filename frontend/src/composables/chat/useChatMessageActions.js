@@ -290,17 +290,31 @@ export function useChatMessageActions({
   const messageSwipeState = reactive({});
   const swipeLoading = ref(new Set());
 
+  function resetMessageSwipeState() {
+    for (const key of Object.keys(messageSwipeState)) {
+      delete messageSwipeState[key];
+    }
+    swipeLoading.value = new Set();
+  }
+
   async function initMessageSwipes(conversationId) {
+    resetMessageSwipeState();
     for (const msg of messages.value) {
       if (msg.role === 'assistant') {
         try {
           const swipes = await fetchMessageSwipes(conversationId, msg.id);
+          if (route.params.id !== conversationId || !messages.value.some((item) => item.id === msg.id)) {
+            return;
+          }
           messageSwipeState[msg.id] = {
             swipes: swipes || [],
             activeIndex: 0,
             swipeCount: (swipes?.length || 0) + 1
           };
         } catch {
+          if (route.params.id !== conversationId || !messages.value.some((item) => item.id === msg.id)) {
+            return;
+          }
           messageSwipeState[msg.id] = { swipes: [], activeIndex: 0, swipeCount: 1 };
         }
       }
@@ -334,6 +348,9 @@ export function useChatMessageActions({
           reasoning: message.reasoning || '',
           usage: message.usage || null
         });
+        if (route.params.id !== conversationId || !messages.value.some((item) => item.id === message.id)) {
+          return;
+        }
         if (result) {
           state.swipes.push(result);
           state.swipeCount = state.swipes.length + 1;
@@ -342,7 +359,9 @@ export function useChatMessageActions({
           message.reasoning = result.reasoning || '';
         }
       } finally {
-        swipeLoading.value.delete(message.id);
+        if (route.params.id === conversationId) {
+          swipeLoading.value.delete(message.id);
+        }
       }
     }
   }
@@ -360,8 +379,15 @@ export function useChatMessageActions({
   async function loadConversationBranches(conversationId) {
     if (!conversationId) return;
     try {
-      conversationBranches.value = await fetchConversationBranches(conversationId);
+      const branches = await fetchConversationBranches(conversationId);
+      if (route.params.id !== conversationId) {
+        return;
+      }
+      conversationBranches.value = branches;
     } catch {
+      if (route.params.id !== conversationId) {
+        return;
+      }
       conversationBranches.value = [];
     }
   }
@@ -370,11 +396,16 @@ export function useChatMessageActions({
     branchBusy.value = true;
     try {
       const result = await branchConversation(conversationId, message.id);
+      if (route.params.id !== conversationId) {
+        return;
+      }
       if (result?.id && onBranched) {
         await onBranched(result.id);
       }
     } finally {
-      branchBusy.value = false;
+      if (route.params.id === conversationId) {
+        branchBusy.value = false;
+      }
     }
   }
 

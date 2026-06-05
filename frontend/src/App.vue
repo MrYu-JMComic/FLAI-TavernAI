@@ -14,14 +14,15 @@ const views = {
   characterEdit: defineAsyncComponent(() => import('./views/CharacterFormView.vue')),
   chat: defineAsyncComponent(() => import('./views/ChatView.vue')),
   worldBooks: defineAsyncComponent(() => import('./views/WorldBookView.vue')),
-  worldBookDetail: defineAsyncComponent(() => import('./views/WorldBookView.vue'))
+  worldBookDetail: defineAsyncComponent(() => import('./views/WorldBookView.vue')),
+  presets: defineAsyncComponent(() => import('./views/PresetView.vue'))
 };
 
 const route = ref(parseRoute());
 const user = ref(null);
 const provider = ref(null);
 const booting = ref(true);
-const theme = ref(localStorage.getItem('flai-theme') || 'light');
+const theme = ref(readStoredTheme());
 const notifications = ref([]);
 const notificationTimers = new Map();
 const isAuthRoute = computed(() => ['login', 'register'].includes(route.value.name));
@@ -40,23 +41,27 @@ provide('notify', notify);
 watch(
   theme,
   (value) => {
-    document.documentElement.dataset.theme = value;
-    localStorage.setItem('flai-theme', value);
+    const nextTheme = normalizeTheme(value);
+    document.documentElement.dataset.theme = nextTheme;
+    writeStoredTheme(nextTheme);
   },
   { immediate: true }
 );
 
 onMounted(async () => {
-  window.addEventListener('hashchange', () => {
-    route.value = parseRoute();
-  });
+  window.addEventListener('hashchange', syncRouteFromHash);
   await refreshSession();
 });
 
 onBeforeUnmount(() => {
+  window.removeEventListener('hashchange', syncRouteFromHash);
   notificationTimers.forEach((timer) => window.clearTimeout(timer));
   notificationTimers.clear();
 });
+
+function syncRouteFromHash() {
+  route.value = parseRoute();
+}
 
 async function refreshSession() {
   booting.value = true;
@@ -71,6 +76,13 @@ async function refreshSession() {
     } else if (!isAuthRoute.value) {
       navigate('login');
     }
+  } catch (error) {
+    user.value = null;
+    provider.value = null;
+    if (!isAuthRoute.value) {
+      navigate('login');
+    }
+    notify.warning(error?.message || '会话检查失败，请重新登录。', { duration: 4200 });
   } finally {
     booting.value = false;
   }
@@ -100,11 +112,36 @@ async function handleLogout() {
 }
 
 function navigate(name, params = {}) {
-  window.location.hash = routeToHash(name, params);
+  const nextHash = routeToHash(name, params);
+  if (window.location.hash === nextHash) {
+    syncRouteFromHash();
+    return;
+  }
+  window.location.hash = nextHash;
 }
 
 function toggleTheme() {
   theme.value = theme.value === 'dark' ? 'light' : 'dark';
+}
+
+function normalizeTheme(value) {
+  return value === 'dark' ? 'dark' : 'light';
+}
+
+function readStoredTheme() {
+  try {
+    return normalizeTheme(window.localStorage.getItem('flai-theme'));
+  } catch {
+    return 'light';
+  }
+}
+
+function writeStoredTheme(value) {
+  try {
+    window.localStorage.setItem('flai-theme', normalizeTheme(value));
+  } catch {
+    // Theme switching should not break app boot when storage is unavailable.
+  }
 }
 
 function pushNotification(input = {}) {
@@ -187,6 +224,9 @@ function parseRoute() {
   if (parts[0] === 'world-books') {
     return { name: 'worldBooks', params: {} };
   }
+  if (parts[0] === 'presets') {
+    return { name: 'presets', params: {} };
+  }
 
   return { name: 'home', params: {} };
 }
@@ -202,7 +242,8 @@ function routeToHash(name, params = {}) {
     characterEdit: `#/characters/${params.id}/edit`,
     chat: `#/chat/${params.id}`,
     worldBooks: '#/world-books',
-    worldBookDetail: `#/world-books/${params.id}`
+    worldBookDetail: `#/world-books/${params.id}`,
+    presets: '#/presets'
   };
   return routes[name] || '#/';
 }

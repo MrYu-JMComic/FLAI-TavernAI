@@ -28,7 +28,7 @@ export function createBackup() {
   ensureBackupDir();
   const destPath = path.join(BACKUP_DIR, backupFileName());
 
-  // Use SQLite's backup via file copy (safe with WAL mode — checkpoint first)
+  // Copy the main database file (WAL mode ensures consistency)
   fs.copyFileSync(sourcePath, destPath);
 
   // Also copy WAL and SHM files if they exist

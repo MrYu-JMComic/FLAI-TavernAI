@@ -49,12 +49,12 @@ export function createSettingsRouter(ctx) {
 
   router.get('/providers/models', requireAuth, asyncRoute(async (request, response) => {
     const settings = providerWithSecret(getProviderRow(request.auth.user.id));
-    response.json({ models: await listProviderModels(settings) });
+    response.json({ models: await listProviderModels(settings, { forceRefresh: request.query.force === '1' }) });
   }));
 
   router.post('/providers/models', requireAuth, asyncRoute(async (request, response) => {
     const settings = buildProviderProbeSettings(request.auth.user.id, request.body || {});
-    response.json({ models: await listProviderModels(settings) });
+    response.json({ models: await listProviderModels(settings, { forceRefresh: Boolean(request.body?.forceRefresh) }) });
   }));
 
   // ── Economy currencies ──
@@ -214,7 +214,11 @@ export function createSettingsRouter(ctx) {
       return {};
     }
     if (typeof value === 'string') {
-      return JSON.parse(value);
+      try {
+        return JSON.parse(value);
+      } catch {
+        return {};
+      }
     }
     return value;
   }

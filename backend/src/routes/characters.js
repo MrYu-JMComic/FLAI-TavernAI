@@ -32,7 +32,7 @@ import {
 } from '../modules/characterImages.js';
 import { getRegexRules as getRegexRulesForExport } from '../modules/characters.js';
 import { normalizeAdvancedSettings, normalizeAccessorySkills } from '../modules/advancedSettings.js';
-import { completeCharacterDraft } from '../services/characterAssistant.js';
+import { completeCharacterDraft, streamCharacterDraft } from '../services/characterAssistant.js';
 import { rollTalent, getCharacterTalents, deleteAllCharacterTalents, deleteCharacterTalent } from '../modules/talents.js';
 import { createCharacterSchema, updateCharacterSchema, importCharacterSchema, validate } from '../validations/schemas.js';
 import { sanitizeCharacterPayload, sanitizeText } from '../services/sanitize.js';
@@ -68,7 +68,7 @@ export function createCharactersRouter({
     if (request.body?.worldBookId) {
       linkWorldBookToCharacter(db, request.body.worldBookId, character.id);
     }
-    setCharacterTags(character.id, request.body?.tags);
+    setCharacterTags(db, request.auth.user.id, character.id, request.body?.tags);
     response.status(201).json(withCharacterTags(withWorldBookId(character)));
   });
 
@@ -102,7 +102,7 @@ export function createCharactersRouter({
       linkWorldBookToCharacter(db, request.body.worldBookId, character.id);
     }
     if (Object.prototype.hasOwnProperty.call(request.body || {}, 'tags')) {
-      setCharacterTags(character.id, request.body.tags);
+      setCharacterTags(db, request.auth.user.id, character.id, request.body.tags);
     }
     response.json(withCharacterTags(withWorldBookId(character)));
   });
@@ -166,9 +166,9 @@ export function createCharactersRouter({
       .prepare(
         `SELECT tags.name, tags.color FROM character_tags
          JOIN tags ON tags.id = character_tags.tag_id
-         WHERE character_tags.character_id = ?`
+         WHERE character_tags.character_id = ? AND tags.user_id = ?`
       )
-      .all(character.id);
+      .all(character.id, character.ownerId);
 
     const worldBookRow = db.prepare('SELECT id, name, description FROM world_books WHERE character_id = ?').get(character.id);
     let worldBook = null;
@@ -238,6 +238,7 @@ export function createCharactersRouter({
       regexRules: Array.isArray(data.regex_rules) ? data.regex_rules : [],
       tags: Array.isArray(data.tags) ? data.tags : []
     });
+    setCharacterTags(db, userId, character.id, data.tags);
 
     if (data.world_book && data.world_book.name) {
       const book = createWorldBook(db, userId, {
@@ -400,14 +401,67 @@ export function createCharactersRouter({
       response.status(400).json({ error: settings.error });
       return;
     }
+    const effectiveSettings = withModelOverride(settings.value, request.body?.modelOverride);
 
-    response.json(
-      await completeCharacterDraft(settings.value, {
-        requirement,
-        current,
-        user: request.auth.user
-      })
-    );
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(new Error('AI 角色助手请求超时，请稍后重试。')), 300000);
+    request.on('aborted', () => controller.abort(new Error('客户端已取消角色助手请求。')));
+
+    try {
+      if (request.body?.stream === true) {
+        response.writeHead(200, {
+          'Content-Type': 'text/event-stream; charset=utf-8',
+          'Cache-Control': 'no-cache, no-transform',
+          Connection: 'keep-alive',
+          'X-Accel-Buffering': 'no'
+        });
+        response.flushHeaders?.();
+        const heartbeat = setInterval(() => writeSse(response, 'ping', { at: Date.now() }), 15000);
+        try {
+          const result = await streamCharacterDraft(effectiveSettings, {
+            requirement,
+            current,
+            user: request.auth.user,
+            options: request.body?.options || {},
+            signal: controller.signal,
+            emit: (event, data) => writeSse(response, event, data)
+          });
+          writeSse(response, 'done', result);
+          response.end();
+        } catch (error) {
+          if (!request.aborted && !response.destroyed) {
+            const message = controller.signal.aborted
+              ? controller.signal.reason?.message || 'AI 角色助手请求已中断，请重试。'
+              : normalizeCharacterAssistantError(error);
+            writeSse(response, 'error', { error: message });
+            response.end();
+          }
+        } finally {
+          clearInterval(heartbeat);
+        }
+        return;
+      }
+
+      response.json(
+        await completeCharacterDraft(effectiveSettings, {
+          requirement,
+          current,
+          user: request.auth.user,
+          options: request.body?.options || {},
+          signal: controller.signal
+        })
+      );
+    } catch (error) {
+      if (request.aborted || response.destroyed) {
+        return;
+      }
+      const message = controller.signal.aborted
+        ? controller.signal.reason?.message || 'AI 角色助手请求已中断，请重试。'
+        : normalizeCharacterAssistantError(error);
+      response.status(controller.signal.aborted ? 504 : 400).json({ error: message });
+    } finally {
+      clearTimeout(timeout);
+    }
   }));
 
   // ── Character Talents ──
@@ -541,6 +595,30 @@ function hasCharacterDraftSeed(character = {}) {
     .some((key) => String(character[key] || '').trim())
     || (Array.isArray(character.tags) && character.tags.some((tag) => String(tag || '').trim()))
     || (Array.isArray(character.regexRules) && character.regexRules.length > 0);
+}
+
+function normalizeCharacterAssistantError(error) {
+  const message = String(error?.message || 'AI 角色助手失败，请稍后重试。');
+  if (/terminated|ECONNRESET|socket|fetch failed|network/i.test(message)) {
+    return 'AI 服务连接中断，请检查网关地址、网络或稍后重试。';
+  }
+  return message;
+}
+
+function withModelOverride(settings, modelOverride) {
+  const model = String(modelOverride || '').trim();
+  return model ? { ...settings, model } : settings;
+}
+
+function writeSse(response, event, data) {
+  if (response.destroyed) return;
+  try {
+    response.write(`event: ${event}\n`);
+    response.write(`data: ${JSON.stringify(data)}\n\n`);
+    response.flush?.();
+  } catch {
+    // Response stream may have been destroyed by client disconnect
+  }
 }
 
 function parseJson(value, fallback) {

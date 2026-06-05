@@ -1,4 +1,4 @@
-import { computed, ref } from 'vue';
+import { computed, nextTick, ref } from 'vue';
 import {
   createConversation,
   deleteConversation,
@@ -113,7 +113,11 @@ export function useChatConversation({ route, emit, showError }) {
     savePanelOpen.value = false;
   }
 
-  function openNpcPanel() {
+  async function openNpcPanel() {
+    if (npcPanelOpen.value) {
+      npcPanelOpen.value = false;
+      await nextTick();
+    }
     npcPanelOpen.value = true;
   }
 

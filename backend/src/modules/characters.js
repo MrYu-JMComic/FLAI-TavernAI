@@ -24,8 +24,8 @@ export function listCharacters(database, userId, { search = '', sort = 'created'
   }
 
   if (tagFilter) {
-    sql += ' AND EXISTS (SELECT 1 FROM character_tags JOIN tags ON tags.id = character_tags.tag_id WHERE character_tags.character_id = characters.id AND tags.name = ?)';
-    params.push(tagFilter);
+    sql += ' AND EXISTS (SELECT 1 FROM character_tags JOIN tags ON tags.id = character_tags.tag_id WHERE character_tags.character_id = characters.id AND tags.user_id = ? AND tags.name = ?)';
+    params.push(userId, tagFilter);
   }
 
   if (sort === 'used') {
@@ -223,32 +223,43 @@ export function getRegexRulesByGroup(database, userId, group) {
 }
 
 export function replaceRegexRules(database, userId, characterId, rules = []) {
-  database
-    .prepare('DELETE FROM regex_rules WHERE user_id = ? AND character_id = ?')
-    .run(userId, characterId);
+  // Use SAVEPOINT so callers already inside a transaction don't trigger
+  // "cannot start a transaction within a transaction" errors.
+  database.exec('SAVEPOINT sp_replace_regex');
+  try {
+    database
+      .prepare('DELETE FROM regex_rules WHERE user_id = ? AND character_id = ?')
+      .run(userId, characterId);
 
-  const insert = database.prepare(
-    `INSERT INTO regex_rules (
-      id, user_id, character_id, label, pattern, replacement, flags, scope, enabled, order_index, group_name, priority
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-  );
-
-  normalizeRegexRules(rules).forEach((rule, index) => {
-    insert.run(
-      rule.id || newId(),
-      userId,
-      characterId,
-      rule.label,
-      rule.pattern,
-      rule.replacement,
-      rule.flags,
-      rule.scope,
-      rule.enabled ? 1 : 0,
-      index,
-      rule.groupName || '全局',
-      rule.priority ?? 0
+    const insert = database.prepare(
+      `INSERT INTO regex_rules (
+        id, user_id, character_id, label, pattern, replacement, flags, scope, enabled, order_index, group_name, priority
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     );
-  });
+
+    normalizeRegexRules(rules).forEach((rule, index) => {
+      insert.run(
+        rule.id || newId(),
+        userId,
+        characterId,
+        rule.label,
+        rule.pattern,
+        rule.replacement,
+        rule.flags,
+        rule.scope,
+        rule.enabled ? 1 : 0,
+        index,
+        rule.groupName || '全局',
+        rule.priority ?? 0
+      );
+    });
+
+    database.exec('RELEASE SAVEPOINT sp_replace_regex');
+  } catch (error) {
+    database.exec('ROLLBACK TO SAVEPOINT sp_replace_regex');
+    database.exec('RELEASE SAVEPOINT sp_replace_regex');
+    throw error;
+  }
 }
 
 export function toggleRegexRule(database, userId, ruleId) {
@@ -272,13 +283,20 @@ export function toggleRegexRule(database, userId, ruleId) {
 }
 
 export function reorderRegexRules(database, userId, orderedIds) {
-  const update = database.prepare('UPDATE regex_rules SET priority = ? WHERE id = ? AND user_id = ?');
-  let changed = 0;
-  orderedIds.forEach((id, index) => {
-    const result = update.run(index, id, userId);
-    changed += result.changes;
-  });
-  return changed;
+  database.exec('BEGIN');
+  try {
+    const update = database.prepare('UPDATE regex_rules SET priority = ? WHERE id = ? AND user_id = ?');
+    let changed = 0;
+    orderedIds.forEach((id, index) => {
+      const result = update.run(index, id, userId);
+      changed += result.changes;
+    });
+    database.exec('COMMIT');
+    return changed;
+  } catch (error) {
+    database.exec('ROLLBACK');
+    throw error;
+  }
 }
 
 export function testRegexRule(rule, text) {
@@ -319,7 +337,12 @@ export function applyRegexRules(text, rules, phase) {
     try {
       if (rule.scriptMode && rule.jsScript) {
         const fn = new Function('text', 'matches', 'rule', rule.jsScript);
-        return String(fn(value, value.match(new RegExp(rule.pattern, rule.flags || 'g')) || [], rule) ?? value);
+        const deadline = Date.now() + 100; // 100ms timeout guard
+        const result = fn(value, value.match(new RegExp(rule.pattern, rule.flags || 'g')) || [], rule);
+        if (Date.now() > deadline) {
+          console.warn('[regex] script exceeded 100ms budget, consider optimizing:', rule.label);
+        }
+        return String(result ?? value);
       }
       return value.replace(new RegExp(rule.pattern, rule.flags || 'g'), rule.replacement || '');
     } catch {

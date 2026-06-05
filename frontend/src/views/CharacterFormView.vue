@@ -1,10 +1,12 @@
 ﻿<script setup>
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
 import { ArrowLeft, Download, ListChecks, Plus, RotateCcw, Save, Settings, Sparkles, Trash2, Upload, WandSparkles } from '@lucide/vue';
-import { completeCharacterDraft, createCharacter, createTag, deleteCharacter, exportCharacter, fetchCharacter, fetchCharacterWorldBooks, fetchTags, fetchWorldBooks, linkCharacterWorldBook, unlinkCharacterWorldBook, updateCharacter } from '../api';
+import { createCharacter, createMod, createTag, deleteCharacter, exportCharacter, fetchCharacter, fetchCharacterWorldBooks, fetchTags, fetchWorldBooks, linkCharacterWorldBook, streamCharacterDraft, unlinkCharacterWorldBook, updateCharacter } from '../api';
 import MarkdownContent from '../components/MarkdownContent.vue';
+import StatusBar from '../components/StatusBar.vue';
 import VariableEditor from '../components/VariableEditor.vue';
 import { useNotify } from '../composables/useNotify';
+import { useProviderModels } from '../composables/useProviderModels';
 
 const props = defineProps({
   route: {
@@ -12,6 +14,10 @@ const props = defineProps({
     required: true
   },
   user: {
+    type: Object,
+    default: null
+  },
+  provider: {
     type: Object,
     default: null
   }
@@ -25,6 +31,54 @@ const saving = ref(false);
 const aiLoading = ref(false);
 const aiRequirement = ref('');
 const aiToolCalls = ref([]);
+const aiProcess = ref([]);
+const aiReasoning = ref('');
+const aiModSuggestions = ref([]);
+const advancedAiLoading = ref(false);
+const advancedAiRequirement = ref('');
+const aiAbortController = ref(null);
+const advancedAiAbortController = ref(null);
+const ASSISTANT_MODEL_STORAGE_KEY = 'flai-assistant-model';
+const ASSISTANT_USE_CURRENT_STORAGE_KEY = 'flai-assistant-use-current-draft';
+const assistantModel = ref(loadAssistantModel());
+const aiUseCurrentDraft = ref(loadAiUseCurrentDraft());
+const { providerModelOptionsFor } = useProviderModels(computed(() => props.provider));
+const assistantModelOptions = computed(() => providerModelOptionsFor(assistantModel.value, '使用全局模型'));
+const STATUS_BLUEPRINT_SAMPLE_TEMPLATE = [
+  '<section class="sb-sample-card">',
+  '  <style>',
+  '    .sb-sample-card{display:grid;gap:8px;font-size:13px}',
+  '    .sb-sample-card .sb-row{display:grid;grid-template-columns:72px 1fr;gap:8px;align-items:center}',
+  '    .sb-sample-card .sb-label{color:#6b7280;font-weight:700}',
+  '    .sb-sample-card .sb-val{min-width:0;overflow-wrap:anywhere}',
+  '    .sb-sample-card .sb-track{height:8px;overflow:hidden;border-radius:999px;background:#e5e7eb}',
+  '    .sb-sample-card .sb-fill{height:100%;width:{{体力.percent}};background:{{体力.color}}}',
+  '    .sb-sample-card .sb-actions{display:flex;flex-wrap:wrap;gap:6px}',
+  '    .sb-sample-card button{border:1px solid #d1d5db;border-radius:6px;padding:4px 8px;background:#fff;color:#111827}',
+  '  </style>',
+  '  <div class="sb-row"><span class="sb-label">姓名</span><span class="sb-val">{{姓名}}</span></div>',
+  '  <div class="sb-row"><span class="sb-label">所在地</span><span class="sb-val">{{所在地}}</span></div>',
+  '  <div class="sb-row"><span class="sb-label">体力</span><span class="sb-val">{{体力}} / {{体力.max}}</span></div>',
+  '  <div class="sb-track"><div class="sb-fill"></div></div>',
+  '  <div class="sb-actions">',
+  '    <button type="button" data-sb-action="quick-reply" data-sb-text="查看状态">查看状态</button>',
+  '    <button type="button" data-sb-action="copy" data-sb-copy="{{姓名}}｜{{所在地}}">复制摘要</button>',
+  '  </div>',
+  '</section>'
+].join('\n');
+const aiOptions = reactive({
+  profile: true,
+  background: true,
+  worldview: true,
+  persona: true,
+  openingMessage: true,
+  tags: true,
+  regexRules: true,
+  renderPlugins: true,
+  worldBookSuggestion: true,
+  advancedSettings: true,
+  modSuggestions: true
+});
 const previewInput = ref('猫在雨里说你好');
 const worldBooks = ref([]);
 const selectedWorldBookIds = ref([]);
@@ -32,6 +86,51 @@ const availableTags = ref([]);
 const tagSearch = ref('');
 const activeSection = ref('basic');
 const form = reactive(emptyCharacter());
+
+const statusBarBlueprintPreview = computed(() => {
+  const blueprint = normalizeStatusBarBlueprintForPayload(form.authorAdvancedSettings.statusBarBlueprint || {});
+  if (!hasStatusBarBlueprintContent(blueprint)) {
+    return null;
+  }
+  return {
+    id: 'character-status-blueprint-preview',
+    name: blueprint.name || '状态栏',
+    variables: blueprint.variables,
+    template: blueprint.template
+  };
+});
+
+const statusBarBlueprintPreviewConfig = computed(() => (
+  parseStatusBarTemplateConfig(statusBarBlueprintPreview.value?.template || '')
+));
+
+const statusBarBlueprintTemplateStats = computed(() => {
+  const blueprint = form.authorAdvancedSettings.statusBarBlueprint || {};
+  const normalized = normalizeStatusBarBlueprintForPayload(blueprint);
+  const template = normalized.template;
+  const inferredKeys = new Set(
+    inferStatusVariablesFromTemplate(template, []).map((variable) => normalizeStatusVariableKey(variable.name))
+  );
+  const inferredCount = normalized.variables.filter((variable) => inferredKeys.has(normalizeStatusVariableKey(variable.name))).length;
+  const meterCount = normalized.variables.filter((variable) => shouldTreatStatusVariableAsMeter(variable, template)).length;
+  return {
+    variables: normalized.variables.length,
+    inferred: inferredCount,
+    text: Math.max(0, normalized.variables.length - meterCount),
+    meter: meterCount,
+    placeholders: countStatusTemplatePlaceholders(template),
+    actions: countStatusTemplateActions(template),
+    lines: template ? template.split(/\r\n|\r|\n/).length : 0,
+    hasTemplate: Boolean(template)
+  };
+});
+
+watch(
+  () => form.authorAdvancedSettings.statusBarBlueprint.template,
+  () => {
+    syncStatusBlueprintVariablesFromTemplate();
+  }
+);
 
 // ---- AI draft panel drag / resize state ----
 const AI_PANEL_STORAGE_KEY = 'cf-ai-panel-pos';
@@ -71,6 +170,35 @@ function loadAiPanelSize() {
   } catch {}
   return { w: AI_PANEL_DEFAULT.w, h: AI_PANEL_DEFAULT.h };
 }
+
+function loadAssistantModel() {
+  try {
+    return localStorage.getItem(ASSISTANT_MODEL_STORAGE_KEY) || '';
+  } catch {
+    return '';
+  }
+}
+
+function loadAiUseCurrentDraft() {
+  try {
+    const raw = localStorage.getItem(ASSISTANT_USE_CURRENT_STORAGE_KEY);
+    return raw === null ? true : raw !== 'false';
+  } catch {
+    return true;
+  }
+}
+
+watch(assistantModel, (value) => {
+  try {
+    localStorage.setItem(ASSISTANT_MODEL_STORAGE_KEY, String(value || '').trim());
+  } catch {}
+});
+
+watch(aiUseCurrentDraft, (value) => {
+  try {
+    localStorage.setItem(ASSISTANT_USE_CURRENT_STORAGE_KEY, value ? 'true' : 'false');
+  } catch {}
+});
 
 function saveAiPanelState() {
   try {
@@ -232,6 +360,10 @@ const filteredTags = computed(() => {
   return availableTags.value.filter((t) => t.name.toLowerCase().includes(search));
 });
 
+function modelOverrideOptions(value = '') {
+  return providerModelOptionsFor(value, '使用当前模型');
+}
+
 onMounted(async () => {
   try {
     [worldBooks.value, availableTags.value] = await Promise.all([fetchWorldBooks(), fetchTags()]);
@@ -299,26 +431,51 @@ async function syncCharacterWorldBooks(characterId) {
 
 async function completeWithAi() {
   const requirement = aiRequirement.value.trim();
-  if (!requirement && !hasDraftSeed()) {
-    notify.warning('请先写一点角色要求，或保留已有设定作为参考');
+  if (!canRunAiWithContext(requirement, '请先写一点角色要求，或开启“结合当前已填写内容”。')) {
     return;
   }
 
   aiLoading.value = true;
   aiToolCalls.value = [];
+  aiProcess.value = [{ round: 1, reasoning: '等待模型响应...', content: '', tools: [] }];
+  aiReasoning.value = '';
+  aiModSuggestions.value = [];
+  aiAbortController.value = new AbortController();
   try {
-    const result = await completeCharacterDraft({
+    const result = await streamCharacterDraft({
       requirement,
-      character: toPayload()
+      character: getAiCurrentCharacter(),
+      modelOverride: assistantModel.value.trim(),
+      options: { ...aiOptions, optimizeExisting: aiUseCurrentDraft.value }
+    }, aiStreamHandlers(), aiAbortController.value.signal);
+    if (result?.aborted) {
+      notify.info('AI 生成已暂停');
+      return;
+    }
+    applyAiDraft(result.character || {}, {
+      enabledSections: { ...aiOptions },
+      applyEmptyValues: aiUseCurrentDraft.value
     });
-    applyAiDraft(result.character || {});
+    aiModSuggestions.value = result.character?.modSuggestions || [];
     aiToolCalls.value = result.toolCalls || [];
+    aiProcess.value = result.process || [];
+    aiReasoning.value = result.reasoning || '';
     notify.success(`AI 已完善设定，调用 ${aiToolCalls.value.length} 次工具`);
   } catch (err) {
+    if (aiAbortController.value?.signal.aborted || err.name === 'AbortError') {
+      notify.info('AI 生成已暂停');
+      return;
+    }
+    aiProcess.value = [{ round: 1, reasoning: err.message, content: '', tools: [] }];
     notify.error(err.message);
   } finally {
     aiLoading.value = false;
+    aiAbortController.value = null;
   }
+}
+
+function stopCharacterAi() {
+  aiAbortController.value?.abort();
 }
 
 async function removeCharacter() {
@@ -427,11 +584,12 @@ function toPayload() {
       customCss: form.authorAdvancedSettings.customCss,
       customJs: form.authorAdvancedSettings.customJs,
       statusBarPrompt: form.authorAdvancedSettings.statusBarPrompt,
+      statusBarBlueprint: normalizeStatusBarBlueprintForPayload(form.authorAdvancedSettings.statusBarBlueprint),
       accessorySkills: normalizeAccessorySkillsForPayload(form.authorAdvancedSettings.accessorySkills)
     },
     renderPlugins: form.renderPlugins,
     regexRules: form.regexRules,
-    worldBookId: form.worldBookId || null,
+    worldBookId: form.worldBookId || '',
     tags: form.selectedTags.length ? form.selectedTags : form.tagsText.split(',').map((tag) => tag.trim()).filter(Boolean)
   };
 }
@@ -454,6 +612,171 @@ function toggleWorldBook(bookId) {
   }
 }
 
+async function createSuggestedMods() {
+  if (!aiModSuggestions.value.length) {
+    notify.warning('没有可创建的 AI Mod 建议');
+    return;
+  }
+  try {
+    for (const mod of aiModSuggestions.value) {
+      await createMod({
+        name: mod.name,
+        description: mod.description || '',
+        type: normalizeModType(mod.type),
+        content: mod.content,
+        enabled: mod.enabled !== false
+      });
+    }
+    notify.success(`已创建 ${aiModSuggestions.value.length} 个 Mod`);
+    aiModSuggestions.value = [];
+  } catch (err) {
+    notify.error(err.message);
+  }
+}
+
+function normalizeModType(type) {
+  if (['prompt_inject', 'style_enhance', 'custom'].includes(type)) return type;
+  if (type === 'style') return 'style_enhance';
+  return 'prompt_inject';
+}
+
+function aiStreamHandlers() {
+  return {
+    step: (step) => {
+      const target = ensureAiProcessStep(step.round || 1);
+      Object.assign(target, {
+        ...step,
+        content: target.content || step.content || '',
+        reasoning: target.reasoning === '等待模型响应...' ? step.reasoning || '' : target.reasoning || step.reasoning || '',
+        tools: target.tools?.length ? target.tools : step.tools || []
+      });
+    },
+    reasoning: ({ round = 1, text = '' } = {}) => {
+      const target = ensureAiProcessStep(round);
+      if (target.reasoning === '等待模型响应...') target.reasoning = '';
+      target.reasoning += text;
+      aiReasoning.value += text;
+    },
+    content: ({ round = 1, text = '' } = {}) => {
+      const target = ensureAiProcessStep(round);
+      target.content += text;
+    },
+    nudge: ({ round = 1, text = '' } = {}) => {
+      const target = ensureAiProcessStep(round);
+      target.content += `${target.content ? '\n\n' : ''}系统提醒：${text}`;
+    },
+    tool: (call = {}) => {
+      const target = ensureAiProcessStep(call.round || 1);
+      const log = {
+        name: call.name,
+        arguments: call.arguments,
+        result: call.result
+      };
+      target.tools.push(log);
+      aiToolCalls.value.push(log);
+    }
+  };
+}
+
+function ensureAiProcessStep(round = 1) {
+  let step = aiProcess.value.find((item) => item.round === round);
+  if (!step) {
+    step = { round, reasoning: '', content: '', tools: [] };
+    aiProcess.value.push(step);
+  }
+  return step;
+}
+
+function formatAiValue(value) {
+  if (value === null || value === undefined || value === '') return '空';
+  if (typeof value === 'string') return value;
+  try {
+    return JSON.stringify(value, null, 2);
+  } catch {
+    return String(value);
+  }
+}
+
+function toolResultLabel(result = {}) {
+  if (result?.ok === false) return result.error || '失败';
+  if (typeof result?.count === 'number') return `写入 ${result.count} 项`;
+  if (result?.applied && typeof result.applied === 'object') return `更新 ${Object.keys(result.applied).length} 项`;
+  if (result?.rule?.label) return `规则：${result.rule.label}`;
+  return result?.ok === true ? '成功' : '已返回';
+}
+
+async function completeAdvancedSettingsWithAi() {
+  const requirement = advancedAiRequirement.value.trim() || aiRequirement.value.trim();
+  if (!canRunAiWithContext(requirement, '请先写一点高阶设置目标，或开启“结合当前已填写内容”。')) {
+    return;
+  }
+
+  advancedAiLoading.value = true;
+  aiProcess.value = [{ round: 1, reasoning: '等待模型响应...', content: '', tools: [] }];
+  aiReasoning.value = '';
+  aiToolCalls.value = [];
+  advancedAiAbortController.value = new AbortController();
+  try {
+    const result = await streamCharacterDraft({
+      requirement,
+      character: getAiCurrentCharacter(),
+      modelOverride: assistantModel.value.trim(),
+      options: {
+        profile: false,
+        background: false,
+        worldview: false,
+        persona: false,
+        openingMessage: false,
+        tags: false,
+        regexRules: false,
+        renderPlugins: false,
+        worldBookSuggestion: false,
+        advancedSettings: true,
+        modSuggestions: false,
+        optimizeExisting: aiUseCurrentDraft.value
+      }
+    }, aiStreamHandlers(), advancedAiAbortController.value.signal);
+    if (result?.aborted) {
+      notify.info('AI 高阶设置生成已暂停');
+      return;
+    }
+    applyAiDraft(result.character || {}, {
+      enabledSections: {
+        profile: false,
+        background: false,
+        worldview: false,
+        persona: false,
+        openingMessage: false,
+        tags: false,
+        regexRules: false,
+        renderPlugins: false,
+        worldBookSuggestion: false,
+        advancedSettings: true,
+        modSuggestions: false
+      },
+      applyEmptyValues: aiUseCurrentDraft.value
+    });
+    aiToolCalls.value = result.toolCalls || [];
+    aiProcess.value = result.process || [];
+    aiReasoning.value = result.reasoning || '';
+    notify.success('AI 已完善高阶设置');
+  } catch (err) {
+    if (advancedAiAbortController.value?.signal.aborted || err.name === 'AbortError') {
+      notify.info('AI 高阶设置生成已暂停');
+      return;
+    }
+    aiProcess.value = [{ round: 1, reasoning: err.message, content: '', tools: [] }];
+    notify.error(err.message);
+  } finally {
+    advancedAiLoading.value = false;
+    advancedAiAbortController.value = null;
+  }
+}
+
+function stopAdvancedAi() {
+  advancedAiAbortController.value?.abort();
+}
+
 async function createAndSelectTag() {
   const name = tagSearch.value.trim();
   if (!name) return;
@@ -468,26 +791,70 @@ async function createAndSelectTag() {
   }
 }
 
-function applyAiDraft(character = {}) {
+function getAiCurrentCharacter() {
+  return aiUseCurrentDraft.value ? toPayload() : {};
+}
+
+function canRunAiWithContext(requirement, message) {
+  if (requirement) {
+    return true;
+  }
+  if (aiUseCurrentDraft.value && hasDraftSeed()) {
+    return true;
+  }
+  notify.warning(message);
+  return false;
+}
+
+function applyAiDraft(character = {}, { enabledSections = {}, applyEmptyValues = true } = {}) {
+  const fieldSections = {
+    name: 'profile',
+    avatarUrl: 'profile',
+    gender: 'profile',
+    age: 'profile',
+    visibility: 'profile',
+    background: 'background',
+    worldview: 'worldview',
+    persona: 'persona',
+    openingMessage: 'openingMessage'
+  };
   for (const key of ['name', 'avatarUrl', 'gender', 'age', 'background', 'worldview', 'persona', 'openingMessage', 'visibility']) {
-    if (Object.prototype.hasOwnProperty.call(character, key)) {
+    const section = fieldSections[key];
+    if (
+      isAiSectionEnabled(enabledSections, section) &&
+      Object.prototype.hasOwnProperty.call(character, key) &&
+      shouldApplyAiValue(character[key], { applyEmptyValues, key })
+    ) {
       form[key] = character[key] || '';
     }
   }
-  if (Array.isArray(character.tags)) {
+  if (isAiSectionEnabled(enabledSections, 'tags') && Array.isArray(character.tags) && (applyEmptyValues || character.tags.length)) {
     form.tagsText = character.tags.join(', ');
   }
-  if (Array.isArray(character.regexRules)) {
+  if (isAiSectionEnabled(enabledSections, 'regexRules') && Array.isArray(character.regexRules) && (applyEmptyValues || character.regexRules.length)) {
     form.regexRules = character.regexRules;
   }
-  if (Array.isArray(character.renderPlugins)) {
+  if (isAiSectionEnabled(enabledSections, 'renderPlugins') && Array.isArray(character.renderPlugins) && (applyEmptyValues || character.renderPlugins.length)) {
     form.renderPlugins = character.renderPlugins;
   }
-  if (character.authorAdvancedSettings || character.advancedSettings) {
+  if (isAiSectionEnabled(enabledSections, 'advancedSettings') && (character.authorAdvancedSettings || character.advancedSettings)) {
     const nextSettings = character.authorAdvancedSettings || character.advancedSettings;
-    Object.assign(form.authorAdvancedSettings, nextSettings);
-    form.authorAdvancedSettings.accessorySkills = normalizeAccessorySkillsForPayload(nextSettings.accessorySkills);
+    applyAdvancedSettingsDraft(nextSettings, { applyEmptyValues });
   }
+}
+
+function isAiSectionEnabled(sections = {}, key) {
+  return sections[key] !== false;
+}
+
+function shouldApplyAiValue(value, { applyEmptyValues = true, key = '' } = {}) {
+  if (applyEmptyValues) {
+    return true;
+  }
+  if (key === 'visibility') {
+    return value === 'public';
+  }
+  return String(value || '').trim().length > 0;
 }
 
 function hasDraftSeed() {
@@ -519,6 +886,7 @@ function emptyCharacter() {
       customCss: '',
       customJs: '',
       statusBarPrompt: '',
+      statusBarBlueprint: createDefaultStatusBarBlueprint(),
       accessorySkills: createDefaultAccessorySkills()
     },
     regexRules: [],
@@ -565,11 +933,451 @@ function normalizeAccessorySkillsForPayload(input = {}) {
   );
 }
 
+function createDefaultStatusBarBlueprint() {
+  return {
+    name: '',
+    variables: [],
+    template: ''
+  };
+}
+
+function ensureStatusBlueprint() {
+  if (!form.authorAdvancedSettings.statusBarBlueprint || typeof form.authorAdvancedSettings.statusBarBlueprint !== 'object') {
+    form.authorAdvancedSettings.statusBarBlueprint = createDefaultStatusBarBlueprint();
+  }
+  if (!Array.isArray(form.authorAdvancedSettings.statusBarBlueprint.variables)) {
+    form.authorAdvancedSettings.statusBarBlueprint.variables = [];
+  }
+  return form.authorAdvancedSettings.statusBarBlueprint;
+}
+
+function syncStatusBlueprintVariablesFromTemplate({ notifyUser = false } = {}) {
+  const blueprint = ensureStatusBlueprint();
+  if (!blueprint || typeof blueprint !== 'object') {
+    return;
+  }
+  const normalized = normalizeStatusBarBlueprintForPayload(blueprint);
+  const changed = !sameStatusVariableList(blueprint.variables, normalized.variables);
+  if (!sameStatusVariableList(blueprint.variables, normalized.variables)) {
+    blueprint.variables = normalized.variables.map((variable) => ({ ...variable }));
+  }
+  if (notifyUser) {
+    notify.success(changed ? '已重新同步模板变量' : '变量已是最新');
+  }
+}
+
+function refreshStatusBlueprintVariables() {
+  if (!canEdit.value) {
+    return;
+  }
+  syncStatusBlueprintVariablesFromTemplate({ notifyUser: true });
+}
+
+function applyStatusBlueprintSampleTemplate() {
+  if (!canEdit.value) {
+    return;
+  }
+  const blueprint = ensureStatusBlueprint();
+  if (!String(blueprint.name || '').trim()) {
+    blueprint.name = '状态栏';
+  }
+  blueprint.template = STATUS_BLUEPRINT_SAMPLE_TEMPLATE;
+  syncStatusBlueprintVariablesFromTemplate();
+  notify.success('已套用示例模板并同步变量');
+}
+
+function clearStatusBlueprintTemplate() {
+  if (!canEdit.value) {
+    return;
+  }
+  const blueprint = ensureStatusBlueprint();
+  if (!String(blueprint.template || '').trim()) {
+    notify.info('模板已经是空的');
+    return;
+  }
+  blueprint.template = '';
+  syncStatusBlueprintVariablesFromTemplate();
+  notify.success('已清空模板，变量仍保留');
+}
+
+function normalizeStatusBarBlueprintForPayload(input = {}) {
+  const source = input && typeof input === 'object' ? input : {};
+  const template = String(source.template || '').trim();
+  const variables = Array.isArray(source.variables)
+    ? source.variables
+        .map((variable) => normalizeStatusVariableForPayload(variable, template))
+        .filter((variable) => variable.name)
+    : [];
+  return {
+    name: String(source.name || '').trim(),
+    variables: inferStatusVariablesFromTemplate(template, variables),
+    template
+  };
+}
+
+function normalizeStatusVariableForPayload(variable = {}, template = '') {
+  const name = String(variable?.name || '').trim();
+  if (!name) {
+    return { name: '', value: '' };
+  }
+  if (!shouldTreatStatusVariableAsMeter(variable, template)) {
+    return {
+      name,
+      value: normalizeStatusTextVariableValue(variable?.value)
+    };
+  }
+  return {
+    name,
+    value: normalizeStatusMeterVariableValue(variable?.value),
+    max: normalizeStatusMeterMax(variable?.max),
+    color: normalizeHexColor(variable?.color)
+  };
+}
+
+function isStatusBlueprintMeterVariable(variable = {}) {
+  return shouldTreatStatusVariableAsMeter(variable, form.authorAdvancedSettings.statusBarBlueprint.template);
+}
+
+function setStatusBlueprintVariableMode(variable, mode) {
+  if (!canEdit.value || !variable || typeof variable !== 'object') {
+    return;
+  }
+  if (mode === 'meter') {
+    variable.value = normalizeStatusMeterVariableValue(variable.value);
+    variable.max = normalizeStatusMeterMax(variable.max);
+    variable.color = normalizeHexColor(variable.color);
+    return;
+  }
+  variable.value = normalizeStatusTextVariableValue(variable.value) || defaultStatusTextValueForName(variable.name);
+  delete variable.max;
+  delete variable.color;
+}
+
+function shouldTreatStatusVariableAsMeter(variable = {}, template = '') {
+  const name = String(variable?.name || '').trim();
+  if (!name) {
+    return false;
+  }
+  const usage = getStatusVariableTemplateUsage(template, name);
+  if (usage.meter) {
+    return true;
+  }
+  if (usage.text) {
+    return false;
+  }
+  const value = normalizeStatusVariableValue(variable?.value);
+  return typeof value === 'number' && Number.isFinite(Number(variable?.max));
+}
+
+function getStatusVariableTemplateUsage(template = '', name = '') {
+  const target = normalizeStatusVariableKey(name);
+  const usage = { meter: false, text: false };
+  if (!target) {
+    return usage;
+  }
+  const placeholderPattern = /\{\{\s*([^{}]+?)\s*\}\}|\{([\w\u4e00-\u9fa5 ._-]+)\}/g;
+  let match;
+  while ((match = placeholderPattern.exec(String(template || '')))) {
+    const token = String(match[1] || match[2] || '').trim();
+    const [tokenName, ...propertyParts] = token.split('.');
+    if (normalizeStatusVariableKey(tokenName) !== target) {
+      continue;
+    }
+    const property = propertyParts.join('.').trim();
+    if (isStatusMeterPlaceholderProperty(property)) {
+      usage.meter = true;
+    } else {
+      usage.text = true;
+    }
+  }
+  return usage;
+}
+
+function isStatusMeterPlaceholderProperty(property = '') {
+  return ['max', 'percent', 'color', 'display'].includes(String(property || '').trim());
+}
+
+function countStatusTemplatePlaceholders(template = '') {
+  return (String(template || '').match(/\{\{\s*[^{}]+?\s*\}\}|\{[\w\u4e00-\u9fa5 ._-]+\}/g) || []).length;
+}
+
+function countStatusTemplateActions(template = '') {
+  return (String(template || '').match(/\bdata-sb-action\s*=/gi) || []).length;
+}
+
+function normalizeStatusTextVariableValue(value) {
+  const text = String(value ?? '').trim();
+  return text.length > 200 ? text.slice(0, 200) : text;
+}
+
+function normalizeStatusMeterVariableValue(value) {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : 0;
+}
+
+function normalizeStatusMeterMax(value) {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) && numeric > 0 ? numeric : 100;
+}
+
+function normalizeStatusVariableValue(value) {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return value;
+  }
+  const text = String(value ?? '').trim();
+  if (!text) {
+    return 0;
+  }
+  const numeric = Number(text);
+  if (Number.isFinite(numeric) && /^[-+]?(?:\d+|\d*\.\d+)$/.test(text)) {
+    return numeric;
+  }
+  return text.length > 200 ? text.slice(0, 200) : text;
+}
+
+function inferStatusVariablesFromTemplate(template, variables = []) {
+  const inferred = dedupeStatusVariables(variables, template);
+  const seen = new Set(inferred.map((item) => normalizeStatusVariableKey(item.name)));
+  for (const item of extractTemplateRowVariables(template)) {
+    const key = normalizeStatusVariableKey(item.name);
+    if (!seen.has(key)) {
+      inferred.push(item);
+      seen.add(key);
+    }
+  }
+  const placeholderPattern = /\{\{\s*([^{}]+?)\s*\}\}|\{([\w\u4e00-\u9fa5 ._-]+)\}/g;
+  let match;
+  while ((match = placeholderPattern.exec(String(template || '')))) {
+    const token = String(match[1] || match[2] || '').trim();
+    const name = normalizeTemplateVariableName(token.split('.')[0]);
+    const key = normalizeStatusVariableKey(name);
+    if (!name || seen.has(key)) {
+      continue;
+    }
+    inferred.push(
+      shouldTreatStatusVariableAsMeter({ name }, template)
+        ? { name: name.slice(0, 40), value: 0, max: 100, color: '#6c757d' }
+        : { name: name.slice(0, 40), value: defaultStatusTextValueForName(name) }
+    );
+    seen.add(key);
+    if (inferred.length >= 20) {
+      break;
+    }
+  }
+  return inferred.slice(0, 20);
+}
+
+function extractTemplateRowVariables(template) {
+  const rows = [];
+  const seen = new Set();
+  const addRow = (rawName, rawValue) => {
+    const name = normalizeTemplateVariableName(rawName);
+    const key = normalizeStatusVariableKey(name);
+    if (!name || !key || seen.has(key)) {
+      return;
+    }
+    const rawValueText = normalizeHtmlText(rawValue);
+    const value = isSelfStatusPlaceholder(rawValueText, name)
+      ? defaultStatusTextValueForName(name)
+      : normalizeStatusTextVariableValue(rawValueText);
+    rows.push({ name, value });
+    seen.add(key);
+  };
+
+  const pairPattern = /<[^>]+\bclass\s*=\s*(['"])[^'"]*\bsb-label\b[^'"]*\1[^>]*>([\s\S]*?)<\/[^>]+>[\s\S]{0,180}?<[^>]+\bclass\s*=\s*(['"])[^'"]*\bsb-val\b[^'"]*\3[^>]*>([\s\S]*?)<\/[^>]+>/gi;
+  let match;
+  while ((match = pairPattern.exec(String(template || '')))) {
+    addRow(match[2], match[4]);
+  }
+
+  const inlineValuePattern = /(?:^|>|\n)([^<>\n]{1,40}?)[\s:\uFF1A]+<[^>]+\bclass\s*=\s*(['"])[^'"]*\bsb-val\b[^'"]*\2[^>]*>([\s\S]*?)<\/[^>]+>/gi;
+  while ((match = inlineValuePattern.exec(String(template || '')))) {
+    addRow(match[1], match[3]);
+  }
+  return rows;
+}
+
+function isSelfStatusPlaceholder(value = '', name = '') {
+  const escaped = escapeRegExp(String(name || '').trim());
+  return Boolean(escaped && new RegExp(`^\\{\\{\\s*${escaped}\\s*\\}\\}$`).test(String(value || '').trim()));
+}
+
+function defaultStatusTextValueForName(name = '') {
+  const text = String(name || '');
+  if (/事件/.test(text)) return '故事尚未开始';
+  if (/记忆|淡忘/.test(text)) return '暂无';
+  if (/情绪/.test(text)) return '平静';
+  if (/倾向/.test(text)) return '无特殊';
+  if (/伤病|排泄|特殊|随身/.test(text)) return '无';
+  return '待定';
+}
+
+function escapeRegExp(value = '') {
+  return String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function dedupeStatusVariables(variables = [], template = '') {
+  const byKey = new Map();
+  for (const variable of Array.isArray(variables) ? variables : []) {
+    const normalized = normalizeStatusVariableForPayload(variable, template);
+    const key = normalizeStatusVariableKey(normalized.name);
+    if (!key) {
+      continue;
+    }
+    if (byKey.has(key)) {
+      byKey.set(key, mergeStatusVariable(byKey.get(key), normalized, template));
+    } else {
+      byKey.set(key, normalized);
+    }
+  }
+  return [...byKey.values()];
+}
+
+function mergeStatusVariable(current, next, template = '') {
+  const useMeter = shouldTreatStatusVariableAsMeter(next, template) || shouldTreatStatusVariableAsMeter(current, template);
+  if (useMeter) {
+    return {
+      name: next.name || current.name,
+      value: normalizeStatusMeterVariableValue(next.value ?? current.value),
+      max: normalizeStatusMeterMax(next.max ?? current.max),
+      color: normalizeHexColor(next.color || current.color)
+    };
+  }
+  return {
+    name: next.name || current.name,
+    value: normalizeStatusTextVariableValue(next.value || current.value)
+  };
+}
+
+function normalizeTemplateVariableName(value) {
+  return normalizeHtmlText(value)
+    .replace(/^[\s\u3000:\uFF1A;\uFF1B,\uFF0C.\u3002]+|[\s\u3000:\uFF1A;\uFF1B,\uFF0C.\u3002]+$/g, '')
+    .replace(/\s+/g, ' ')
+    .slice(0, 40);
+}
+
+function normalizeStatusVariableKey(value) {
+  return String(value || '')
+    .replace(/<[^>]*>/g, '')
+    .replace(/[\s\u3000:\uFF1A;\uFF1B,\uFF0C.\u3002\u3001/\\|()[\]{}"'`~!@#$%^&*_+=?<>-]+/g, '')
+    .trim()
+    .toLowerCase();
+}
+
+function sameStatusVariableList(left = [], right = []) {
+  const a = Array.isArray(left) ? left.map((item) => normalizeStatusVariableForPayload(item)) : [];
+  const b = Array.isArray(right) ? right.map((item) => normalizeStatusVariableForPayload(item)) : [];
+  if (a.length !== b.length) {
+    return false;
+  }
+  return a.every((item, index) => JSON.stringify(item) === JSON.stringify(b[index]));
+}
+
+function normalizeHtmlText(value) {
+  return String(value || '')
+    .replace(/<[^>]*>/g, '')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&amp;/gi, '&')
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;/gi, "'")
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function parseStatusBarTemplateConfig(raw) {
+  const trimmed = String(raw || '').trim();
+  if (!trimmed || trimmed[0] !== '{') {
+    return {};
+  }
+  try {
+    const parsed = JSON.parse(trimmed);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      return {};
+    }
+    const cfg = {};
+    if (['default', 'compact', 'minimal', 'neon'].includes(parsed.variant)) cfg.variant = parsed.variant;
+    if (['default', 'cozy', 'compact'].includes(parsed.density)) cfg.density = parsed.density;
+    if (['immersive', 'compact'].includes(parsed.displayMode)) cfg.displayMode = parsed.displayMode;
+    if (typeof parsed.accentColor === 'string' && parsed.accentColor.trim()) cfg.accentColor = parsed.accentColor.trim();
+    if (typeof parsed.customCss === 'string' && parsed.customCss.trim()) cfg.customCss = parsed.customCss.trim();
+    if (Array.isArray(parsed.effects)) {
+      cfg.effects = parsed.effects.filter((effect) => ['glow', 'striped', 'pulse'].includes(effect));
+    }
+    if (Array.isArray(parsed.characters)) {
+      cfg.characters = parsed.characters;
+    }
+    if (Array.isArray(parsed.quickReplies)) {
+      cfg.quickReplies = parsed.quickReplies;
+    }
+    return cfg;
+  } catch {
+    return {};
+  }
+}
+
+function normalizeAdvancedSettingsForForm(input = {}) {
+  const source = input && typeof input === 'object' ? input : {};
+  return {
+    ...emptyCharacter().authorAdvancedSettings,
+    ...source,
+    statusBarBlueprint: normalizeStatusBarBlueprintForPayload(source.statusBarBlueprint || source.status_bar_blueprint || {}),
+    accessorySkills: normalizeAccessorySkillsForPayload(source.accessorySkills)
+  };
+}
+
+function applyAdvancedSettingsDraft(input = {}, { applyEmptyValues = true } = {}) {
+  const source = input && typeof input === 'object' ? input : {};
+  const normalized = normalizeAdvancedSettingsForForm(source);
+  for (const key of ['desktopBackgroundUrl', 'mobileBackgroundUrl', 'customCss', 'customJs', 'statusBarPrompt']) {
+    if (applyEmptyValues || String(normalized[key] || '').trim()) {
+      form.authorAdvancedSettings[key] = normalized[key];
+    }
+  }
+  if (applyEmptyValues || hasStatusBarBlueprintContent(normalized.statusBarBlueprint)) {
+    form.authorAdvancedSettings.statusBarBlueprint = normalized.statusBarBlueprint;
+  }
+  if (applyEmptyValues || hasNonDefaultAccessorySkills(normalized.accessorySkills)) {
+    form.authorAdvancedSettings.accessorySkills = normalized.accessorySkills;
+  }
+}
+
+function hasStatusBarBlueprintContent(blueprint = {}) {
+  return Boolean(
+    String(blueprint.name || '').trim() ||
+      String(blueprint.template || '').trim() ||
+      (Array.isArray(blueprint.variables) && blueprint.variables.length)
+  );
+}
+
+function hasNonDefaultAccessorySkills(skills = {}) {
+  const defaults = createDefaultAccessorySkills();
+  return Object.keys(defaults).some((key) => {
+    const current = skills?.[key] || {};
+    const fallback = defaults[key] || {};
+    return normalizeSkillEnabled(current.enabled, fallback.enabled) !== fallback.enabled ||
+      String(current.modelOverride || current.model_override || '').trim();
+  });
+}
+
 function normalizeSkillEnabled(value, fallback = false) {
   if (value === 'auto') return 'auto';
   if (value === true || value === 'true' || value === 'on') return true;
   if (value === false || value === 'false' || value === 'off') return false;
   return fallback;
+}
+
+function normalizeHexColor(value, fallback = '#6c757d') {
+  const normalized = String(value || '').trim();
+  return /^#[0-9a-f]{6}$/i.test(normalized) ? normalized : fallback;
+}
+
+function setColorValue(target, key, value) {
+  if (!target || typeof target !== 'object') {
+    return;
+  }
+  target[key] = normalizeHexColor(value);
 }
 
 function normalizeForForm(character) {
@@ -585,12 +1393,28 @@ function normalizeForForm(character) {
     selectedTags: (character.characterTags || []).map((t) => t.name),
     renderPlugins: character.renderPlugins || [],
     authorAdvancedSettings: {
-      ...emptyCharacter().authorAdvancedSettings,
-      ...(character.authorAdvancedSettings || {}),
-      accessorySkills: normalizeAccessorySkillsForPayload((character.authorAdvancedSettings || character.advancedSettings || {}).accessorySkills)
+      ...normalizeAdvancedSettingsForForm(character.authorAdvancedSettings || character.advancedSettings || {})
     },
     regexRules: character.regexRules || []
   };
+}
+
+function addStatusBlueprintVariable() {
+  if (!canEdit.value) {
+    return;
+  }
+  const blueprint = ensureStatusBlueprint();
+  blueprint.variables.push({
+    name: `变量 ${blueprint.variables.length + 1}`,
+    value: '待定'
+  });
+}
+
+function removeStatusBlueprintVariable(index) {
+  if (!canEdit.value) {
+    return;
+  }
+  form.authorAdvancedSettings.statusBarBlueprint.variables.splice(index, 1);
 }
 
 function readAsDataUrl(file) {
@@ -881,18 +1705,98 @@ function applyLocalRules(text, rules, phase) {
               :disabled="aiLoading"
             />
           </label>
-          <button class="primary-button ai-draft-button" type="button" :disabled="aiLoading" @click="completeWithAi">
-            <WandSparkles :size="18" />
-            <span>{{ aiLoading ? 'AI 正在调用工具...' : 'AI 完善角色设定' }}</span>
-          </button>
-          <div v-if="aiToolCalls.length" class="ai-tool-list">
+          <label class="field">
+            <span>助手模型</span>
+            <select
+              v-model="assistantModel"
+              :disabled="aiLoading || advancedAiLoading"
+            >
+              <option v-for="model in assistantModelOptions" :key="model.id || '__global'" :value="model.id">
+                {{ model.label || model.id }}
+              </option>
+            </select>
+          </label>
+          <label class="checkbox-line ai-context-toggle">
+            <input v-model="aiUseCurrentDraft" type="checkbox" :disabled="aiLoading || advancedAiLoading" />
+            <span>结合当前已填写内容 + 完善要求进行优化</span>
+          </label>
+          <p class="ai-context-hint">
+            {{ aiUseCurrentDraft ? '开启后，助手会参考表单现有内容并按你的消息优化。' : '关闭后，助手只按完善要求生成，不读取当前表单内容。' }}
+          </p>
+          <div class="ai-scope-grid">
+            <label v-for="(enabled, key) in aiOptions" :key="key" class="checkbox-line">
+              <input v-model="aiOptions[key]" type="checkbox" :disabled="aiLoading" />
+              <span>{{ {
+                profile: '基础资料',
+                background: '背景',
+                worldview: '世界观',
+                persona: '人设',
+                openingMessage: '开场白',
+                tags: '标签',
+                regexRules: '正则',
+                renderPlugins: '渲染插件',
+                worldBookSuggestion: '世界书建议',
+                advancedSettings: '高阶设置',
+                modSuggestions: 'Mod 建议'
+              }[key] || key }}</span>
+            </label>
+          </div>
+          <div class="ai-action-row">
+            <button class="primary-button ai-draft-button" type="button" :disabled="aiLoading" @click="completeWithAi">
+              <WandSparkles :size="18" />
+              <span>{{ aiLoading ? 'AI 正在调用工具...' : 'AI 完善角色设定' }}</span>
+            </button>
+            <button v-if="aiLoading" class="ghost-button" type="button" @click="stopCharacterAi">
+              <span>暂停</span>
+            </button>
+          </div>
+          <div v-if="aiModSuggestions.length" class="ai-mod-suggestions">
             <div class="ai-tool-title">
               <ListChecks :size="16" />
-              <span>工具调用 {{ aiToolCalls.length }}</span>
+              <span>AI Mod 建议 {{ aiModSuggestions.length }}</span>
             </div>
-            <span v-for="(call, index) in aiToolCalls" :key="`${call.name}-${index}`">
-              {{ call.name }}
-            </span>
+            <article v-for="(mod, index) in aiModSuggestions" :key="index" class="ai-mod-card">
+              <strong>{{ mod.name }}</strong>
+              <small>{{ mod.type || 'system' }}</small>
+              <p>{{ mod.description || mod.content }}</p>
+            </article>
+            <button class="ghost-button" type="button" @click="createSuggestedMods">
+              <Plus :size="16" />
+              <span>创建这些 Mod</span>
+            </button>
+          </div>
+          <div v-if="aiProcess.length || aiToolCalls.length" class="ai-process-panel">
+            <div class="ai-tool-title">
+              <ListChecks :size="16" />
+              <span>AI 过程 {{ aiProcess.length || 1 }} 轮 · 工具 {{ aiToolCalls.length }}</span>
+            </div>
+            <div v-if="aiReasoning" class="ai-reasoning-box">
+              <strong>思考摘要</strong>
+              <p>{{ aiReasoning }}</p>
+            </div>
+            <details v-for="(step, stepIndex) in aiProcess" :key="`step-${step.round || stepIndex}`" class="ai-process-step" open>
+              <summary>
+                <span>第 {{ step.round || stepIndex + 1 }} 轮</span>
+                <small>{{ step.tools?.length || 0 }} 个工具</small>
+              </summary>
+              <p v-if="step.reasoning" class="ai-process-text">{{ step.reasoning }}</p>
+              <p v-if="step.content" class="ai-process-text">{{ step.content }}</p>
+              <div v-if="step.tools?.length" class="ai-tool-detail-list">
+                <details v-for="(call, index) in step.tools" :key="`${call.name}-${index}`" class="ai-tool-detail">
+                  <summary>
+                    <span>{{ call.name }}</span>
+                    <small>{{ toolResultLabel(call.result) }}</small>
+                  </summary>
+                  <strong>参数</strong>
+                  <pre>{{ formatAiValue(call.arguments) }}</pre>
+                  <strong>结果</strong>
+                  <pre>{{ formatAiValue(call.result) }}</pre>
+                </details>
+              </div>
+            </details>
+            <div v-if="!aiProcess.length && aiToolCalls.length" class="ai-tool-list">
+              <span v-for="(call, index) in aiToolCalls" :key="`${call.name}-${index}`">{{ call.name }}</span>
+            </div>
           </div>
         </section>
 
@@ -903,6 +1807,34 @@ function applyLocalRules(text, rules, phase) {
               <p>固定随角色进入对话；从聊天里打开时只读展示，使用者可另加自己的设置。</p>
             </div>
             <Settings :size="20" />
+          </div>
+
+          <label class="field">
+            <span>高阶设置 AI 需求</span>
+            <textarea
+              v-model="advancedAiRequirement"
+              rows="3"
+              placeholder="例如：生成适合豪门恋爱角色的状态栏提示词、附属技能默认值和一点聊天气泡 CSS。"
+              :disabled="advancedAiLoading || !canEdit"
+            />
+          </label>
+          <label v-if="canEdit" class="checkbox-line ai-context-toggle compact">
+            <input v-model="aiUseCurrentDraft" type="checkbox" :disabled="aiLoading || advancedAiLoading" />
+            <span>结合当前已填写内容优化</span>
+          </label>
+          <div v-if="canEdit" class="ai-action-row">
+            <button
+              class="ghost-button"
+              type="button"
+              :disabled="advancedAiLoading"
+              @click="completeAdvancedSettingsWithAi"
+            >
+              <WandSparkles :size="17" />
+              <span>{{ advancedAiLoading ? 'AI 正在完善...' : 'AI 完善高阶设置' }}</span>
+            </button>
+            <button v-if="advancedAiLoading" class="ghost-button" type="button" @click="stopAdvancedAi">
+              <span>暂停</span>
+            </button>
           </div>
 
           <div class="advanced-grid">
@@ -936,6 +1868,127 @@ function applyLocalRules(text, rules, phase) {
             />
           </label>
 
+          <div class="accessory-defaults-panel status-blueprint-panel">
+            <div class="inline-heading compact">
+              <div>
+                <h3>初始状态栏</h3>
+                <p>创建新会话时自动写入；模板会自动同步变量，并支持安全 HTML/CSS 与 data-sb-action 按钮。</p>
+              </div>
+              <button class="ghost-button" type="button" :disabled="!canEdit" @click="addStatusBlueprintVariable">
+                <Plus :size="16" />
+                <span>变量</span>
+              </button>
+            </div>
+            <div class="status-blueprint-toolbar" aria-live="polite">
+              <div class="status-blueprint-summary">
+                <span><strong>{{ statusBarBlueprintTemplateStats.variables }}</strong> 变量</span>
+                <span><strong>{{ statusBarBlueprintTemplateStats.inferred }}</strong> 自动识别</span>
+                <span><strong>{{ statusBarBlueprintTemplateStats.meter }}</strong> 数值</span>
+                <span><strong>{{ statusBarBlueprintTemplateStats.placeholders }}</strong> 占位符</span>
+                <span><strong>{{ statusBarBlueprintTemplateStats.actions }}</strong> 按钮动作</span>
+              </div>
+              <div v-if="canEdit" class="status-blueprint-actions">
+                <button class="chat-setting-inline-button" type="button" @click="refreshStatusBlueprintVariables">
+                  <RotateCcw :size="14" />
+                  <span>同步</span>
+                </button>
+                <button class="chat-setting-inline-button" type="button" @click="applyStatusBlueprintSampleTemplate">
+                  <Sparkles :size="14" />
+                  <span>示例</span>
+                </button>
+                <button class="chat-setting-inline-button danger" type="button" @click="clearStatusBlueprintTemplate">
+                  <Trash2 :size="14" />
+                  <span>清空模板</span>
+                </button>
+              </div>
+            </div>
+            <label class="field compact">
+              <span>状态栏名称</span>
+              <input
+                v-model="form.authorAdvancedSettings.statusBarBlueprint.name"
+                type="text"
+                placeholder="状态栏"
+                maxlength="50"
+                :disabled="!canEdit"
+              />
+            </label>
+            <div class="status-blueprint-vars">
+              <div
+                v-for="(variable, index) in form.authorAdvancedSettings.statusBarBlueprint.variables"
+                :key="index"
+                class="variable-editor-row status-variable-row"
+                :class="{ 'is-meter': isStatusBlueprintMeterVariable(variable), 'is-text': !isStatusBlueprintMeterVariable(variable) }"
+              >
+                <input v-model="variable.name" class="variable-input name" type="text" placeholder="变量名" maxlength="40" :disabled="!canEdit" />
+                <select
+                  class="variable-input kind"
+                  :value="isStatusBlueprintMeterVariable(variable) ? 'meter' : 'text'"
+                  :disabled="!canEdit"
+                  @change="setStatusBlueprintVariableMode(variable, $event.target.value)"
+                >
+                  <option value="text">文本</option>
+                  <option value="meter">数值</option>
+                </select>
+                <input
+                  v-model="variable.value"
+                  class="variable-input value"
+                  type="text"
+                  :placeholder="isStatusBlueprintMeterVariable(variable) ? '数值' : '文本内容'"
+                  :disabled="!canEdit"
+                />
+                <template v-if="isStatusBlueprintMeterVariable(variable)">
+                  <span class="variable-separator">/</span>
+                  <input v-model.number="variable.max" class="variable-input num" type="number" placeholder="最大" :disabled="!canEdit" />
+                  <input :value="normalizeHexColor(variable.color)" class="variable-input color" type="color" title="颜色" :disabled="!canEdit" @input="setColorValue(variable, 'color', $event.target.value)" />
+                </template>
+                <button
+                  v-if="canEdit"
+                  class="variable-remove"
+                  type="button"
+                  title="删除变量"
+                  @click="removeStatusBlueprintVariable(index)"
+                >
+                  x
+                </button>
+              </div>
+              <p v-if="!form.authorAdvancedSettings.statusBarBlueprint.variables.length" class="status-blueprint-vars-empty">
+                粘贴模板会自动识别变量，也可以点击右上角“变量”手动添加。
+              </p>
+            </div>
+            <div class="field status-blueprint-template-field">
+              <div class="field-heading compact">
+                <span>完全自定义模板</span>
+                <small>
+                  {{ statusBarBlueprintTemplateStats.hasTemplate ? `${statusBarBlueprintTemplateStats.lines} 行` : '留空使用内置状态栏' }}
+                </small>
+              </div>
+              <textarea
+                v-model="form.authorAdvancedSettings.statusBarBlueprint.template"
+                rows="6"
+                placeholder="<div class=&quot;my-status&quot;><span class=&quot;sb-label&quot;>HP</span><span class=&quot;sb-val&quot;>{{HP}}</span><button data-sb-action=&quot;quick-reply&quot; data-sb-text=&quot;查看状态&quot;>查看</button></div>"
+                :disabled="!canEdit"
+              />
+              <div class="status-blueprint-hints">
+                <span>标签 + 值：<code v-pre>&lt;span class="sb-label"&gt;姓名&lt;/span&gt;&lt;span class="sb-val"&gt;{{ 姓名 }}&lt;/span&gt;</code></span>
+                <span>按钮：<code>data-sb-action="quick-reply"</code>、<code>copy</code>、<code>collapse</code></span>
+              </div>
+            </div>
+            <div class="status-blueprint-preview">
+              <div class="inline-heading compact">
+                <div>
+                  <h3>实际效果预览</h3>
+                  <p>使用聊天页同一套状态栏渲染逻辑，保存后新会话会按此效果显示。</p>
+                </div>
+              </div>
+              <StatusBar
+                v-if="statusBarBlueprintPreview"
+                :status-bar="statusBarBlueprintPreview"
+                :template-config="statusBarBlueprintPreviewConfig"
+              />
+              <p v-else class="muted-text status-blueprint-empty">添加变量或模板后显示预览。</p>
+            </div>
+          </div>
+
           <div class="accessory-defaults-panel">
             <div class="inline-heading compact">
               <div>
@@ -955,13 +2008,18 @@ function applyLocalRules(text, rules, phase) {
                 </label>
                 <label class="field compact">
                   <span>模型覆盖</span>
-                  <input
+                  <select
                     v-model="form.authorAdvancedSettings.accessorySkills[item.key].modelOverride"
-                    type="text"
-                    placeholder="留空使用当前模型"
-                    maxlength="100"
                     :disabled="!canEdit"
-                  />
+                  >
+                    <option
+                      v-for="model in modelOverrideOptions(form.authorAdvancedSettings.accessorySkills[item.key].modelOverride)"
+                      :key="model.id || `current-${item.key}`"
+                      :value="model.id"
+                    >
+                      {{ model.label || model.id }}
+                    </option>
+                  </select>
                 </label>
               </div>
             </div>

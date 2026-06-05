@@ -39,11 +39,19 @@ const saveName = ref('');
 const renamingId = ref('');
 const renameValue = ref('');
 const busyId = ref('');
+let savesLoadToken = 0;
 
 const sortedSaves = computed(() => [...saves.value]);
 
 watch(() => props.open, (isOpen) => {
   if (isOpen) {
+    loadSaves();
+  }
+});
+
+watch(() => props.conversationId, () => {
+  resetSavePanelState();
+  if (props.open) {
     loadSaves();
   }
 });
@@ -54,60 +62,99 @@ onMounted(() => {
   }
 });
 
+function resetSavePanelState() {
+  savesLoadToken += 1;
+  saves.value = [];
+  saveName.value = '';
+  renamingId.value = '';
+  renameValue.value = '';
+  busyId.value = '';
+  loading.value = false;
+  saving.value = false;
+}
+
 async function loadSaves() {
-  if (!props.conversationId) return;
+  const conversationId = props.conversationId;
+  if (!conversationId) {
+    resetSavePanelState();
+    return;
+  }
+  const requestToken = ++savesLoadToken;
   loading.value = true;
   try {
-    saves.value = await fetchSaves(props.conversationId);
+    const nextSaves = await fetchSaves(conversationId);
+    if (requestToken !== savesLoadToken || conversationId !== props.conversationId) return;
+    saves.value = nextSaves;
   } catch (err) {
+    if (requestToken !== savesLoadToken || conversationId !== props.conversationId) return;
     notify.error(err.message || '加载存档列表失败');
   } finally {
-    loading.value = false;
+    if (requestToken === savesLoadToken && conversationId === props.conversationId) {
+      loading.value = false;
+    }
   }
 }
 
 async function doCreateSave() {
   if (saving.value) return;
+  const conversationId = props.conversationId;
+  if (!conversationId) return;
   saving.value = true;
   try {
-    const created = await createSave(props.conversationId, { name: saveName.value.trim() });
+    const created = await createSave(conversationId, { name: saveName.value.trim() });
+    if (conversationId !== props.conversationId) return;
     saves.value = [created, ...saves.value];
     saveName.value = '';
     notify.success('存档已创建');
   } catch (err) {
+    if (conversationId !== props.conversationId) return;
     notify.error(err.message || '存档失败');
   } finally {
-    saving.value = false;
+    if (conversationId === props.conversationId) {
+      saving.value = false;
+    }
   }
 }
 
 async function doLoadSave(item) {
   if (busyId.value) return;
   if (!window.confirm(`读取存档「${item.name}」？当前会话消息将被替换。`)) return;
+  const conversationId = props.conversationId;
+  if (!conversationId) return;
   busyId.value = item.id;
   try {
     const result = await loadSave(item.id);
+    if (conversationId !== props.conversationId) return;
     notify.success(`已恢复 ${result.messageCount} 条消息`);
     emit('loaded', result);
   } catch (err) {
+    if (conversationId !== props.conversationId) return;
     notify.error(err.message || '读档失败');
   } finally {
-    busyId.value = '';
+    if (conversationId === props.conversationId) {
+      busyId.value = '';
+    }
   }
 }
 
 async function doDeleteSave(item) {
   if (busyId.value) return;
   if (!window.confirm(`删除存档「${item.name}」？此操作不可撤销。`)) return;
+  const conversationId = props.conversationId;
+  if (!conversationId) return;
   busyId.value = item.id;
   try {
     await deleteSave(item.id);
+    if (conversationId !== props.conversationId) return;
     saves.value = saves.value.filter((s) => s.id !== item.id);
     notify.success('存档已删除');
   } catch (err) {
+    if (conversationId !== props.conversationId) return;
     notify.error(err.message || '删除失败');
   } finally {
-    busyId.value = '';
+    if (conversationId === props.conversationId) {
+      busyId.value = '';
+    }
   }
 }
 
@@ -124,9 +171,12 @@ function cancelRename() {
 async function doRename(item) {
   const name = renameValue.value.trim();
   if (!name || busyId.value) return;
+  const conversationId = props.conversationId;
+  if (!conversationId) return;
   busyId.value = item.id;
   try {
     const updated = await renameSave(item.id, name);
+    if (conversationId !== props.conversationId) return;
     const index = saves.value.findIndex((s) => s.id === item.id);
     if (index !== -1) {
       saves.value[index] = { ...saves.value[index], name: updated.name };
@@ -134,9 +184,12 @@ async function doRename(item) {
     cancelRename();
     notify.success('存档名已更新');
   } catch (err) {
+    if (conversationId !== props.conversationId) return;
     notify.error(err.message || '重命名失败');
   } finally {
-    busyId.value = '';
+    if (conversationId === props.conversationId) {
+      busyId.value = '';
+    }
   }
 }
 

@@ -38,6 +38,24 @@ const clientOrigins = (process.env.CLIENT_ORIGIN || 'http://127.0.0.1:5173,http:
   .map((origin) => origin.trim())
   .filter(Boolean);
 const allowPrivateNetworkOrigins = process.env.ALLOW_PRIVATE_NETWORK_ORIGINS !== 'false';
+const apiRateLimitWindowMs = readPositiveInteger(process.env.API_RATE_LIMIT_WINDOW_MS, 15 * 60 * 1000);
+const apiRateLimitMax = readPositiveInteger(process.env.API_RATE_LIMIT_MAX, 600);
+const authRateLimitWindowMs = readPositiveInteger(process.env.AUTH_RATE_LIMIT_WINDOW_MS, 60 * 1000);
+const authRateLimitMax = readPositiveInteger(process.env.AUTH_RATE_LIMIT_MAX, 20);
+
+function readPositiveInteger(value, fallback) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : fallback;
+}
+
+function isAuthAttemptPath(request) {
+  const pathName = String(request.path || '');
+  const originalUrl = String(request.originalUrl || '');
+  return pathName === '/auth/login'
+    || pathName === '/auth/register'
+    || originalUrl.startsWith('/api/auth/login')
+    || originalUrl.startsWith('/api/auth/register');
+}
 
 // ── Middleware ──
 
@@ -69,19 +87,20 @@ app.use(attachAuth);
 
 // ── API 速率限制 ──
 const apiLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 分钟
-  max: 100, // 每个 IP 最多 100 次请求
+  windowMs: apiRateLimitWindowMs,
+  max: apiRateLimitMax,
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: '请求过于频繁，请稍后再试' },
+  skip: (request) => isAuthAttemptPath(request),
   keyGenerator: (request) => {
     return request.auth?.user?.id || ipKeyGenerator(request.ip);
   }
 });
 
 const authLimiter = rateLimit({
-  windowMs: 60 * 1000, // 1 分钟
-  max: 5, // 每分钟最多 5 次
+  windowMs: authRateLimitWindowMs,
+  max: authRateLimitMax,
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: '登录尝试过于频繁，请 1 分钟后再试' }
@@ -195,10 +214,10 @@ function withCharacterTags(character) {
     .prepare(
       `SELECT tags.id, tags.name, tags.color FROM character_tags
        JOIN tags ON tags.id = character_tags.tag_id
-       WHERE character_tags.character_id = ?
+       WHERE character_tags.character_id = ? AND tags.user_id = ?
        ORDER BY tags.name COLLATE NOCASE ASC`
     )
-    .all(character.id);
+    .all(character.id, character.ownerId);
   return { ...character, characterTags };
 }
 
@@ -206,125 +225,24 @@ function getProviderRow(userId) {
   return db.prepare('SELECT * FROM provider_settings WHERE user_id = ?').get(userId);
 }
 
+function getChatProviderSettings(userId) {
+  const settings = providerWithSecret(getProviderRow(userId));
+  if (settings.apiKeyError) {
+    return { ok: false, error: settings.apiKeyError };
+  }
+  if (!settings.apiKey && !hasUsableProvider(settings)) {
+    return { ok: false, error: '请先在用户页保存 API Key / SK，再开始使用 AI 助手。' };
+  }
+  if (!hasUsableProvider(settings)) {
+    return { ok: false, error: 'AI 供应商配置不完整，请检查网关地址、模型和 API Key。' };
+  }
+  return { ok: true, value: settings };
+}
+
 // ── User helpers ──
 
-import { getUserAvatarUrl } from './services/avatars.js';
+import { publicUser, getUserProfile, getUserStats, getOwnedCharacterStats } from './modules/users.js';
 import { newId, nowIso } from './security.js';
-
-function publicUser(row) {
-  const accountName = row.accountName || row.username;
-  const displayName = row.displayName ?? row.display_name ?? '';
-  const permissionGroup = normalizePermissionGroup(row.permissionGroup ?? row.permission_group);
-  const isRootAdmin = Boolean(row.isRootAdmin ?? row.is_root_admin);
-  const avatarUrl = row.avatarUrl || row.avatar_url || getUserAvatarUrl(db, row.id);
-  return {
-    id: row.id,
-    username: accountName,
-    accountName,
-    displayName,
-    permissionGroup,
-    permissionLabel: permissionLabel({ permissionGroup, isRootAdmin }),
-    isRootAdmin,
-    avatarUrl,
-    createdAt: row.created_at || row.createdAt
-  };
-}
-
-function getUserProfile(userId) {
-  const row = db.prepare('SELECT * FROM users WHERE id = ?').get(userId);
-  return {
-    user: publicUser(row),
-    stats: getUserStats(userId),
-    ownedCharacters: getOwnedCharacterStats(userId)
-  };
-}
-
-function getUserStats(userId) {
-  const base = db
-    .prepare(
-      `SELECT
-        COUNT(*) AS ownedAiCount,
-        SUM(CASE WHEN visibility = 'public' THEN 1 ELSE 0 END) AS publicAiCount,
-        SUM(CASE WHEN visibility = 'private' THEN 1 ELSE 0 END) AS privateAiCount
-       FROM characters
-       WHERE user_id = ?`
-    )
-    .get(userId);
-  const usage = db
-    .prepare(
-      `SELECT
-        COUNT(DISTINCT conversations.id) AS totalUseCount,
-        COUNT(DISTINCT conversations.user_id) AS userCount
-       FROM characters
-       LEFT JOIN conversations ON conversations.character_id = characters.id
-       WHERE characters.user_id = ?`
-    )
-    .get(userId);
-  const likes = db
-    .prepare(
-      `SELECT COUNT(character_likes.user_id) AS likeCount
-       FROM characters
-       LEFT JOIN character_likes ON character_likes.character_id = characters.id
-       WHERE characters.user_id = ?`
-    )
-    .get(userId);
-
-  return {
-    ownedAiCount: Number(base?.ownedAiCount || 0),
-    publicAiCount: Number(base?.publicAiCount || 0),
-    privateAiCount: Number(base?.privateAiCount || 0),
-    likeCount: Number(likes?.likeCount || 0),
-    totalUseCount: Number(usage?.totalUseCount || 0),
-    userCount: Number(usage?.userCount || 0)
-  };
-}
-
-function getOwnedCharacterStats(userId) {
-  return db
-    .prepare(
-      `SELECT
-        characters.id,
-        characters.name,
-        characters.avatar_url,
-        characters.visibility,
-        characters.created_at,
-        characters.last_used_at,
-        COUNT(DISTINCT conversations.id) AS use_count,
-        COUNT(DISTINCT character_likes.user_id) AS like_count
-       FROM characters
-       LEFT JOIN conversations ON conversations.character_id = characters.id
-       LEFT JOIN character_likes ON character_likes.character_id = characters.id
-       WHERE characters.user_id = ?
-       GROUP BY characters.id
-       ORDER BY COALESCE(characters.last_used_at, characters.created_at) DESC`
-    )
-    .all(userId)
-    .map((row) => ({
-      id: row.id,
-      name: row.name,
-      avatarUrl: row.avatar_url || '',
-      visibility: row.visibility === 'public' ? 'public' : 'private',
-      useCount: Number(row.use_count || 0),
-      likeCount: Number(row.like_count || 0),
-      createdAt: row.created_at,
-      lastUsedAt: row.last_used_at || null
-    }));
-}
-
-function normalizePermissionGroup(value) {
-  return ['admin', 'user', 'guest'].includes(value) ? value : 'user';
-}
-
-function permissionLabel({ permissionGroup, isRootAdmin }) {
-  if (isRootAdmin) {
-    return '真管理员';
-  }
-  return {
-    admin: '管理员组',
-    user: '用户组',
-    guest: '游客组'
-  }[permissionGroup] || '用户组';
-}
 
 // ── Dependency context for route modules ──
 
@@ -334,8 +252,8 @@ const ctx = {
   asyncRoute,
   newId,
   nowIso,
-  publicUser,
-  getUserProfile,
+  publicUser: (row) => publicUser(db, row),
+  getUserProfile: (userId) => getUserProfile(db, userId),
   saveDefaultProvider: (userId) => {
     const preset = defaultProviderSettings();
     const timestamp = nowIso();
@@ -364,6 +282,7 @@ const ctx = {
   withEtag,
   withListCache,
   getProviderRow,
+  getChatProviderSettings,
   providerWithSecret,
   hasUsableProvider
 };
@@ -432,7 +351,12 @@ app.use((error, _request, response, _next) => {
   if (response.headersSent) {
     return;
   }
-  response.status(400).json({ error: message });
+  // Log error details for production debugging
+  console.error('[error]', error);
+  // Determine appropriate HTTP status: use explicit status, 500 for server/DB errors, else 400
+  const status = error?.status
+    || (/SQLITE|database|disk/i.test(message) ? 500 : 400);
+  response.status(status).json({ error: message });
 });
 
 // ── Start ──
@@ -441,6 +365,24 @@ app.listen(port, () => {
   scheduleDailyBackup();
   console.log(`FLAI Tavern backend listening on http://localhost:${port}`);
 });
+
+// ── Graceful shutdown ──
+
+function gracefulShutdown(signal) {
+  console.log(`[server] Received ${signal}, shutting down gracefully...`);
+  try {
+    // WAL checkpoint to flush pending writes
+    db.exec('PRAGMA wal_checkpoint(TRUNCATE)');
+    db.close();
+    console.log('[server] Database closed successfully');
+  } catch (error) {
+    console.error('[server] Error during database shutdown:', error?.message || error);
+  }
+  process.exit(0);
+}
+
+process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
 
 // ── CORS helpers ──
 

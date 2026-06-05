@@ -116,26 +116,41 @@ export function createTransaction(database, userId, accountId, payload) {
   const isDebit = ['expense', 'transfer', 'penalty', 'trade'].includes(type);
   const signedAmount = isDebit ? -Math.abs(amount) : Math.abs(amount);
 
-  // Check for sufficient balance on debits
-  if (isDebit && account.balance + signedAmount < 0) {
-    throw new Error(`余额不足：当前 ${account.balance}，需要 ${Math.abs(signedAmount)}`);
-  }
-
   const transactionId = newId();
   const timestamp = nowIso();
 
-  database
-    .prepare(
-      `INSERT INTO economy_transactions (id, account_id, amount, type, description, related_npc, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`
-    )
-    .run(transactionId, accountId, signedAmount, type, description, relatedNpc, timestamp);
+  // Wrap balance check + INSERT + UPDATE in a transaction to prevent TOCTOU race
+  database.exec('BEGIN');
+  try {
+    // Re-read balance inside the transaction to get a consistent snapshot
+    const freshAccount = database
+      .prepare('SELECT balance FROM economy_accounts WHERE id = ?')
+      .get(accountId);
+    const currentBalance = freshAccount?.balance ?? account.balance;
 
-  // Update account balance
-  const newBalance = account.balance + signedAmount;
-  database
-    .prepare('UPDATE economy_accounts SET balance = ?, updated_at = ? WHERE id = ?')
-    .run(newBalance, timestamp, accountId);
+    if (isDebit && currentBalance + signedAmount < 0) {
+      database.exec('ROLLBACK');
+      throw new Error(`余额不足：当前 ${currentBalance}，需要 ${Math.abs(signedAmount)}`);
+    }
+
+    const newBalance = currentBalance + signedAmount;
+
+    database
+      .prepare(
+        `INSERT INTO economy_transactions (id, account_id, amount, type, description, related_npc, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`
+      )
+      .run(transactionId, accountId, signedAmount, type, description, relatedNpc, timestamp);
+
+    database
+      .prepare('UPDATE economy_accounts SET balance = ?, updated_at = ? WHERE id = ?')
+      .run(newBalance, timestamp, accountId);
+
+    database.exec('COMMIT');
+  } catch (error) {
+    try { database.exec('ROLLBACK'); } catch { /* already rolled back */ }
+    throw error;
+  }
 
   return {
     transaction: toTransaction(
@@ -302,15 +317,9 @@ export function processTransactionIntents(database, userId, conversationId, text
   const results = [];
   for (const intent of intents) {
     try {
-      if (intent.amount < 0) {
-        const existingAccount = database
-          .prepare('SELECT balance FROM economy_accounts WHERE conversation_id = ? AND currency_type = ?')
-          .get(conversationId, intent.currencyType);
-        const available = existingAccount?.balance ?? (DEFAULT_INITIAL_BALANCE[intent.currencyType] ?? 0);
-        if (available + intent.amount < 0) {
-          continue;
-        }
-      }
+      // All balance checks happen inside createTransaction's atomic BEGIN/COMMIT block.
+      // No outer pre-check needed — the transaction block re-reads balance and
+      // rejects insufficient funds atomically, avoiding TOCTOU race conditions.
       const result = createConversationTransaction(database, userId, conversationId, {
         currencyType: intent.currencyType,
         amount: intent.amount,
@@ -320,8 +329,9 @@ export function processTransactionIntents(database, userId, conversationId, text
       if (result) {
         results.push(result);
       }
-    } catch {
-      // Skip transactions that fail (e.g., insufficient balance)
+    } catch (error) {
+      // Log but skip transactions that fail (e.g., insufficient balance)
+      console.warn('[economy] Transaction intent skipped:', error?.message || error);
     }
   }
 

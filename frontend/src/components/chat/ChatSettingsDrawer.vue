@@ -1,5 +1,6 @@
 <script setup>
 import { ChevronDown, Save, Upload, X } from '@lucide/vue';
+import { buildModelSelectOptions } from '../../services/modelCatalog';
 
 const props = defineProps({
   open: { type: Boolean, default: false },
@@ -14,10 +15,13 @@ const props = defineProps({
   accessorySaving: { type: Boolean, default: false },
   accessorySkills: { type: Object, default: () => ({}) },
   accessorySkillItems: { type: Array, default: () => [] },
+  providerModelOptions: { type: Array, default: () => [] },
   statusBar: { type: Object, default: null },
   statusBarEditorOpen: { type: Boolean, default: false },
   statusBarSaving: { type: Boolean, default: false },
   statusBarForm: { type: Object, default: () => ({}) },
+  statusBarTemplateMode: { type: String, default: 'builtin' },
+  statusBarTemplateIssues: { type: Array, default: () => [] },
   statusBarTemplateCfg: { type: Object, default: () => ({ variant: 'default', density: 'default', accentColor: '', effects: [], customCss: '' }) }
 });
 
@@ -34,6 +38,7 @@ const emit = defineEmits([
   'update:accessorySkillModel',
   'open-status-bar-editor',
   'close-status-bar-editor',
+  'update:statusBarTemplateMode',
   'add-status-bar-variable',
   'remove-status-bar-variable',
   'save-status-bar',
@@ -54,6 +59,22 @@ function toggleEffect(effect) {
   } else {
     cfg.effects.push(effect);
   }
+}
+
+function colorInputValue(value, fallback = '#6c757d') {
+  const normalized = String(value || '').trim();
+  return /^#[0-9a-f]{6}$/i.test(normalized) ? normalized : fallback;
+}
+
+function setColorValue(target, key, value) {
+  if (!target || typeof target !== 'object') {
+    return;
+  }
+  target[key] = String(value || '').trim();
+}
+
+function modelOverrideOptions(value = '') {
+  return buildModelSelectOptions(props.providerModelOptions, value, '使用当前模型');
 }
 </script>
 
@@ -240,12 +261,17 @@ function toggleEffect(effect) {
             </label>
             <label class="chat-setting-field compact">
               <span>模型覆盖</span>
-              <input
+              <select
                 v-model="accessorySkills[item.key].modelOverride"
-                type="text"
-                placeholder="留空使用当前模型"
-                maxlength="100"
-              />
+              >
+                <option
+                  v-for="model in modelOverrideOptions(accessorySkills[item.key].modelOverride)"
+                  :key="model.id || `current-${item.key}`"
+                  :value="model.id"
+                >
+                  {{ model.label || model.id }}
+                </option>
+              </select>
             </label>
           </div>
           <button class="chat-settings-save" type="button" :disabled="accessorySaving" @click="emit('save-accessory')">
@@ -286,6 +312,32 @@ function toggleEffect(effect) {
           </label>
 
           <div class="sb-template-editor">
+            <label class="chat-setting-field compact">
+              <span>模板模式</span>
+              <select
+                :value="statusBarTemplateMode"
+                @change="emit('update:statusBarTemplateMode', $event.target.value)"
+              >
+                <option value="builtin">内置样式</option>
+                <option value="custom">完全自定义</option>
+              </select>
+            </label>
+            <label v-if="statusBarTemplateMode === 'custom'" class="chat-setting-field compact">
+              <span>自定义模板</span>
+              <textarea
+                v-model="statusBarForm.template"
+                class="chat-code-textarea sb-custom-template"
+                rows="8"
+                placeholder="<div class=&quot;my-status&quot;>HP: {{HP}} / {{HP.max}}</div>"
+              />
+            </label>
+            <div v-if="statusBarTemplateIssues.length" class="status-bar-template-alert" role="alert">
+              <span>模板需要调整：</span>
+              <ul>
+                <li v-for="issue in statusBarTemplateIssues" :key="issue">{{ issue }}</li>
+              </ul>
+            </div>
+            <template v-else>
             <div class="sb-template-row">
               <label class="chat-setting-field compact">
                 <span>样式风格</span>
@@ -322,10 +374,11 @@ function toggleEffect(effect) {
                   maxlength="30"
                 />
                 <input
-                  v-model="statusBarTemplateCfg.accentColor"
+                  :value="colorInputValue(statusBarTemplateCfg.accentColor, '#8f3f2f')"
                   type="color"
                   class="sb-accent-picker"
                   title="选择颜色"
+                  @input="setColorValue(statusBarTemplateCfg, 'accentColor', $event.target.value)"
                 />
               </div>
             </label>
@@ -367,9 +420,10 @@ function toggleEffect(effect) {
                 placeholder='--sb-accent: #e91e63; border-radius: 20px;'
               />
             </label>
+            </template>
           </div>
 
-          <div v-if="statusBarTemplateCfg.displayMode === 'immersive'" class="sb-characters-editor">
+          <div v-if="statusBarTemplateMode !== 'custom' && statusBarTemplateCfg.displayMode === 'immersive'" class="sb-characters-editor">
             <div class="variables-editor-header">
               <span>角色列表</span>
               <button class="chat-setting-inline-button small" type="button" @click="emit('add-status-character')">
@@ -406,7 +460,7 @@ function toggleEffect(effect) {
                 </label>
                 <label class="chat-setting-field compact">
                   <span>强调色</span>
-                  <input v-model="ch.accentColor" type="color" class="variable-input color" title="角色强调色" />
+                  <input :value="colorInputValue(ch.accentColor)" type="color" class="variable-input color" title="角色强调色" @input="setColorValue(ch, 'accentColor', $event.target.value)" />
                 </label>
                 <label class="chat-setting-field compact sb-char-css-field">
                   <span>自定义 CSS</span>
@@ -424,7 +478,7 @@ function toggleEffect(effect) {
                   <input v-model.number="v.value" class="variable-input num" type="number" placeholder="值" />
                   <span class="variable-separator">/</span>
                   <input v-model.number="v.max" class="variable-input num" type="number" placeholder="最大" />
-                  <input v-model="v.color" class="variable-input color" type="color" title="颜色" />
+                  <input :value="colorInputValue(v.color)" class="variable-input color" type="color" title="颜色" @input="setColorValue(v, 'color', $event.target.value)" />
                   <button class="variable-remove" type="button" title="删除变量" @click="emit('remove-character-variable', ci, vi)">x</button>
                 </div>
                 <button class="chat-setting-inline-button small" type="button" @click="emit('add-character-variable', ci)">+ 添加变量</button>
@@ -433,7 +487,7 @@ function toggleEffect(effect) {
             </div>
           </div>
 
-          <div class="sb-quick-replies-editor">
+          <div v-if="statusBarTemplateMode !== 'custom'" class="sb-quick-replies-editor">
             <div class="variables-editor-header">
               <span>快捷回复</span>
               <button class="chat-setting-inline-button small" type="button" @click="emit('add-quick-reply')">+ 添加</button>
@@ -469,9 +523,9 @@ function toggleEffect(effect) {
                 maxlength="20"
               />
               <input
-                v-model.number="variable.value"
+                v-model="variable.value"
                 class="variable-input num"
-                type="number"
+                type="text"
                 placeholder="当前值"
               />
               <span class="variable-separator">/</span>
@@ -482,10 +536,11 @@ function toggleEffect(effect) {
                 placeholder="最大值"
               />
               <input
-                v-model="variable.color"
+                :value="colorInputValue(variable.color)"
                 class="variable-input color"
                 type="color"
                 title="颜色"
+                @input="setColorValue(variable, 'color', $event.target.value)"
               />
               <button
                 class="variable-remove"
@@ -499,7 +554,7 @@ function toggleEffect(effect) {
           </div>
 
           <div class="status-bar-editor-footer">
-            <button class="chat-settings-save" type="button" :disabled="statusBarSaving" @click="emit('save-status-bar')">
+            <button class="chat-settings-save" type="button" :disabled="statusBarSaving || statusBarTemplateIssues.length > 0" @click="emit('save-status-bar')">
               <Save :size="15" />
               <span>{{ statusBarSaving ? '保存中...' : '保存状态栏' }}</span>
             </button>

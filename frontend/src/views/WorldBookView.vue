@@ -1,17 +1,18 @@
 <script setup>
 import { computed, onMounted, reactive, ref, watch } from 'vue';
 import {
+  AlertCircle,
   ArrowLeft,
   BookOpen,
   ChevronDown,
   ChevronUp,
   Plus,
   Save,
+  Sparkles,
   ToggleLeft,
   ToggleRight,
   Trash2,
-  AlertCircle,
-  Loader2
+  WandSparkles
 } from '@lucide/vue';
 import {
   createWorldBook,
@@ -20,30 +21,38 @@ import {
   deleteWorldBookEntry,
   fetchWorldBook,
   fetchWorldBooks,
+  streamWorldBookDraft,
   updateWorldBook,
   updateWorldBookEntry
 } from '../api';
 import { useNotify } from '../composables/useNotify';
+import { useProviderModels } from '../composables/useProviderModels';
 
 const props = defineProps({
-  route: { type: Object, required: true }
+  route: { type: Object, required: true },
+  provider: { type: Object, default: null }
 });
 const emit = defineEmits(['navigate']);
 
 const notify = useNotify();
 const loading = ref(false);
 const saving = ref(false);
+const aiLoading = ref(false);
+const aiRequirement = ref('');
+const aiDraft = ref(null);
+const aiToolCalls = ref([]);
+const aiProcess = ref([]);
+const aiReasoning = ref('');
+const aiAbortController = ref(null);
+const ASSISTANT_MODEL_STORAGE_KEY = 'flai-assistant-model';
+const assistantModel = ref(loadAssistantModel());
+const { providerModelOptionsFor } = useProviderModels(computed(() => props.provider));
+const assistantModelOptions = computed(() => providerModelOptionsFor(assistantModel.value, '使用全局模型'));
 const books = ref([]);
 const currentBook = ref(null);
 const error = ref(null);
-const editingBook = reactive({ name: '', description: '', characterId: '' });
-const editingEntry = reactive({
-  name: '',
-  triggerKeys: '',
-  content: '',
-  position: 'before_char',
-  enabled: true
-});
+const editingBook = reactive(createEmptyBook());
+const editingEntry = reactive(createEmptyEntry());
 const showBookForm = ref(false);
 const editingBookId = ref(null);
 const showEntryForm = ref(false);
@@ -51,12 +60,40 @@ const editingEntryId = ref(null);
 
 const isDetailView = computed(() => Boolean(props.route.params.id));
 const bookId = computed(() => props.route.params.id);
+const aiDraftEntryCount = computed(() => aiDraft.value?.entries?.length || 0);
 
 const positionOptions = [
   { value: 'at_start', label: '最前面 (at_start)' },
   { value: 'before_char', label: '角色设定前 (before_char)' },
-  { value: 'after_char', label: '角色设定后 (after_char)' }
+  { value: 'after_char', label: '角色设定后 (after_char)' },
+  { value: 'at_depth', label: '按深度插入 (at_depth)' }
 ];
+
+const roleOptions = [
+  { value: 0, label: 'System' },
+  { value: 1, label: 'User' },
+  { value: 2, label: 'Assistant' }
+];
+
+const selectiveLogicOptions = [
+  { value: 0, label: '副关键词命中时激活' },
+  { value: 1, label: '副关键词命中时阻止' },
+  { value: 2, label: '全部副关键词命中时阻止' }
+];
+
+function loadAssistantModel() {
+  try {
+    return localStorage.getItem(ASSISTANT_MODEL_STORAGE_KEY) || '';
+  } catch {
+    return '';
+  }
+}
+
+watch(assistantModel, (value) => {
+  try {
+    localStorage.setItem(ASSISTANT_MODEL_STORAGE_KEY, String(value || '').trim());
+  } catch {}
+});
 
 onMounted(async () => {
   if (isDetailView.value) {
@@ -106,17 +143,19 @@ async function loadBook(id) {
 }
 
 function openCreateBook() {
-  editingBook.name = '';
-  editingBook.description = '';
-  editingBook.characterId = '';
+  Object.assign(editingBook, createEmptyBook());
   editingBookId.value = null;
   showBookForm.value = true;
 }
 
 function openEditBook(book) {
-  editingBook.name = book.name;
-  editingBook.description = book.description || '';
-  editingBook.characterId = book.characterId || '';
+  Object.assign(editingBook, {
+    name: book.name || '',
+    description: book.description || '',
+    characterId: book.characterId || '',
+    scanDepth: book.scanDepth || 4,
+    lorebookContextPercent: book.lorebookContextPercent || 25
+  });
   editingBookId.value = book.id;
   showBookForm.value = true;
 }
@@ -136,7 +175,9 @@ async function saveBook() {
     const payload = {
       name: editingBook.name.trim(),
       description: editingBook.description.trim(),
-      characterId: editingBook.characterId.trim() || null
+      characterId: editingBook.characterId.trim(),
+      scanDepth: clampNumber(editingBook.scanDepth, 1, 50, 4),
+      lorebookContextPercent: clampNumber(editingBook.lorebookContextPercent, 1, 100, 25)
     };
     if (editingBookId.value) {
       await updateWorldBook(editingBookId.value, payload);
@@ -175,21 +216,34 @@ async function removeBook(id) {
 }
 
 function openCreateEntry() {
-  editingEntry.name = '';
-  editingEntry.triggerKeys = '';
-  editingEntry.content = '';
-  editingEntry.position = 'before_char';
-  editingEntry.enabled = true;
+  Object.assign(editingEntry, createEmptyEntry());
   editingEntryId.value = null;
   showEntryForm.value = true;
 }
 
 function openEditEntry(entry) {
-  editingEntry.name = entry.name;
-  editingEntry.triggerKeys = entry.triggerKeys;
-  editingEntry.content = entry.content;
-  editingEntry.position = entry.position;
-  editingEntry.enabled = entry.enabled;
+  Object.assign(editingEntry, {
+    ...createEmptyEntry(),
+    name: entry.name || '',
+    triggerKeys: entry.triggerKeys || '',
+    content: entry.content || '',
+    position: entry.position || 'before_char',
+    enabled: entry.enabled !== false,
+    regexMode: Boolean(entry.regexMode),
+    alwaysActive: Boolean(entry.alwaysActive),
+    depth: entry.depth ?? 0,
+    role: entry.role ?? 0,
+    sticky: entry.sticky ?? null,
+    cooldown: entry.cooldown ?? null,
+    delay: entry.delay ?? null,
+    selective: Boolean(entry.selective),
+    selectiveLogic: entry.selectiveLogic ?? 0,
+    keysSecondary: entry.keysSecondary || '',
+    useProbability: Boolean(entry.useProbability),
+    probability: entry.probability ?? 100,
+    group: entry.group || '',
+    groupWeight: entry.groupWeight ?? 0
+  });
   editingEntryId.value = entry.id;
   showEntryForm.value = true;
 }
@@ -207,7 +261,21 @@ async function saveEntry() {
       triggerKeys: editingEntry.triggerKeys.trim(),
       content: editingEntry.content,
       position: editingEntry.position,
-      enabled: editingEntry.enabled
+      enabled: editingEntry.enabled,
+      regexMode: editingEntry.regexMode,
+      alwaysActive: editingEntry.alwaysActive,
+      depth: clampNumber(editingEntry.depth, 0, 10, 0),
+      role: clampNumber(editingEntry.role, 0, 2, 0),
+      sticky: nullableNumber(editingEntry.sticky),
+      cooldown: nullableNumber(editingEntry.cooldown),
+      delay: nullableNumber(editingEntry.delay),
+      selective: editingEntry.selective,
+      selectiveLogic: clampNumber(editingEntry.selectiveLogic, 0, 2, 0),
+      keysSecondary: editingEntry.keysSecondary.trim(),
+      useProbability: editingEntry.useProbability,
+      probability: clampNumber(editingEntry.probability, 0, 100, 100),
+      group: editingEntry.group.trim(),
+      groupWeight: Math.max(0, Number(editingEntry.groupWeight) || 0)
     };
     if (editingEntryId.value) {
       await updateWorldBookEntry(bookId.value, editingEntryId.value, payload);
@@ -253,7 +321,6 @@ async function moveEntry(index, direction) {
 
   const current = entries[index];
   const target = entries[targetIndex];
-
   try {
     await Promise.all([
       updateWorldBookEntry(bookId.value, current.id, { orderIndex: target.orderIndex }),
@@ -269,6 +336,102 @@ function positionLabel(value) {
   return positionOptions.find((o) => o.value === value)?.label || value;
 }
 
+function currentWorldBookDraft() {
+  return {
+    name: editingBook.name || currentBook.value?.name || '',
+    description: editingBook.description || currentBook.value?.description || '',
+    characterId: editingBook.characterId || currentBook.value?.characterId || '',
+    scanDepth: editingBook.scanDepth || currentBook.value?.scanDepth || 4,
+    lorebookContextPercent: editingBook.lorebookContextPercent || currentBook.value?.lorebookContextPercent || 25,
+    entries: currentBook.value?.entries || []
+  };
+}
+
+async function completeWorldBookWithAi() {
+  const requirement = aiRequirement.value.trim();
+  if (!requirement && !currentWorldBookDraft().name && !currentWorldBookDraft().description) {
+    notify.warning('请先输入世界书主题，或保留已有世界书内容作为参考。');
+    return;
+  }
+
+  aiLoading.value = true;
+  aiToolCalls.value = [];
+  aiProcess.value = [{ round: 1, reasoning: '等待模型响应...', content: '', tools: [] }];
+  aiReasoning.value = '';
+  aiAbortController.value = new AbortController();
+  try {
+    const result = await streamWorldBookDraft({
+      requirement,
+      worldBook: currentWorldBookDraft(),
+      modelOverride: assistantModel.value.trim()
+    }, aiStreamHandlers(), aiAbortController.value.signal);
+    if (result?.aborted) {
+      notify.info('AI 世界书生成已暂停');
+      return;
+    }
+    aiDraft.value = result.worldBook;
+    aiToolCalls.value = result.toolCalls || [];
+    aiProcess.value = result.process || [];
+    aiReasoning.value = result.reasoning || '';
+    if (!aiDraftEntryCount.value) {
+      aiDraft.value = null;
+      notify.warning('AI 没有生成有效条目，请补充更具体的世界书主题后重试。');
+      return;
+    }
+    notify.success(`AI 已生成 ${aiDraftEntryCount.value} 个世界书条目`);
+  } catch (err) {
+    if (aiAbortController.value?.signal.aborted || err.name === 'AbortError') {
+      notify.info('AI 世界书生成已暂停');
+      return;
+    }
+    aiProcess.value = [{ round: 1, reasoning: err.message, content: '', tools: [] }];
+    notify.error(err.message);
+  } finally {
+    aiLoading.value = false;
+    aiAbortController.value = null;
+  }
+}
+
+function stopWorldBookAi() {
+  aiAbortController.value?.abort();
+}
+
+async function createBookFromAiDraft() {
+  if (!aiDraft.value?.name) {
+    notify.warning('请先生成世界书草稿');
+    return;
+  }
+  if (!aiDraftEntryCount.value) {
+    notify.warning('AI 草稿没有可创建的条目，请重新生成。');
+    return;
+  }
+
+  saving.value = true;
+  let createdBook = null;
+  try {
+    createdBook = await createWorldBook({
+      name: aiDraft.value.name,
+      description: aiDraft.value.description || '',
+      characterId: aiDraft.value.characterId || '',
+      scanDepth: aiDraft.value.scanDepth || 4,
+      lorebookContextPercent: aiDraft.value.lorebookContextPercent || 25
+    });
+    for (const entry of aiDraft.value.entries || []) {
+      await createWorldBookEntry(createdBook.id, normalizeAiEntryForCreate(entry));
+    }
+    notify.success(`世界书已创建，并写入 ${aiDraftEntryCount.value} 个条目`);
+    aiDraft.value = null;
+    emit('navigate', 'worldBookDetail', { id: createdBook.id });
+  } catch (err) {
+    if (createdBook?.id) {
+      await deleteWorldBook(createdBook.id).catch(() => null);
+    }
+    notify.error(err.message);
+  } finally {
+    saving.value = false;
+  }
+}
+
 function retryLoad() {
   if (isDetailView.value) {
     loadBook(bookId.value);
@@ -276,11 +439,134 @@ function retryLoad() {
     loadBooks();
   }
 }
+
+function createEmptyBook() {
+  return {
+    name: '',
+    description: '',
+    characterId: '',
+    scanDepth: 4,
+    lorebookContextPercent: 25
+  };
+}
+
+function createEmptyEntry() {
+  return {
+    name: '',
+    triggerKeys: '',
+    content: '',
+    position: 'before_char',
+    enabled: true,
+    regexMode: false,
+    alwaysActive: false,
+    depth: 0,
+    role: 0,
+    sticky: null,
+    cooldown: null,
+    delay: null,
+    selective: false,
+    selectiveLogic: 0,
+    keysSecondary: '',
+    useProbability: false,
+    probability: 100,
+    group: '',
+    groupWeight: 0
+  };
+}
+
+function clampNumber(value, min, max, fallback) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return fallback;
+  return Math.max(min, Math.min(max, Math.floor(number)));
+}
+
+function nullableNumber(value) {
+  if (value === null || value === undefined || value === '') return null;
+  return Math.max(0, Math.floor(Number(value) || 0));
+}
+
+function normalizeAiEntryForCreate(entry = {}) {
+  return {
+    ...entry,
+    position: positionOptions.some((option) => option.value === entry.position) ? entry.position : 'before_char',
+    depth: clampNumber(entry.depth, 0, 10, 0),
+    role: clampNumber(entry.role, 0, 2, 0),
+    probability: clampNumber(entry.probability, 0, 100, 100),
+    groupWeight: Math.max(0, Number(entry.groupWeight) || 0),
+    sticky: nullableNumber(entry.sticky),
+    cooldown: nullableNumber(entry.cooldown),
+    delay: nullableNumber(entry.delay)
+  };
+}
+
+function aiStreamHandlers() {
+  return {
+    step: (step) => {
+      const target = ensureAiProcessStep(step.round || 1);
+      Object.assign(target, {
+        ...step,
+        content: target.content || step.content || '',
+        reasoning: target.reasoning === '等待模型响应...' ? step.reasoning || '' : target.reasoning || step.reasoning || '',
+        tools: target.tools?.length ? target.tools : step.tools || []
+      });
+    },
+    reasoning: ({ round = 1, text = '' } = {}) => {
+      const target = ensureAiProcessStep(round);
+      if (target.reasoning === '等待模型响应...') target.reasoning = '';
+      target.reasoning += text;
+      aiReasoning.value += text;
+    },
+    content: ({ round = 1, text = '' } = {}) => {
+      const target = ensureAiProcessStep(round);
+      target.content += text;
+    },
+    nudge: ({ round = 1, text = '' } = {}) => {
+      const target = ensureAiProcessStep(round);
+      target.content += `${target.content ? '\n\n' : ''}系统提醒：${text}`;
+    },
+    tool: (call = {}) => {
+      const target = ensureAiProcessStep(call.round || 1);
+      const log = {
+        name: call.name,
+        arguments: call.arguments,
+        result: call.result
+      };
+      target.tools.push(log);
+      aiToolCalls.value.push(log);
+    }
+  };
+}
+
+function ensureAiProcessStep(round = 1) {
+  let step = aiProcess.value.find((item) => item.round === round);
+  if (!step) {
+    step = { round, reasoning: '', content: '', tools: [] };
+    aiProcess.value.push(step);
+  }
+  return step;
+}
+
+function formatAiValue(value) {
+  if (value === null || value === undefined || value === '') return '空';
+  if (typeof value === 'string') return value;
+  try {
+    return JSON.stringify(value, null, 2);
+  } catch {
+    return String(value);
+  }
+}
+
+function toolResultLabel(result = {}) {
+  if (result?.ok === false) return result.error || '失败';
+  if (typeof result?.count === 'number') return `写入 ${result.count} 项`;
+  if (result?.applied?.entries && Array.isArray(result.applied.entries)) return `写入 ${result.applied.entries.length} 个条目`;
+  if (result?.applied && typeof result.applied === 'object') return `更新 ${Object.keys(result.applied).length} 项`;
+  return result?.ok === true ? '成功' : '已返回';
+}
 </script>
 
 <template>
   <section class="page-stack">
-    <!-- List View -->
     <template v-if="!isDetailView">
       <div class="section-heading">
         <div>
@@ -299,13 +585,100 @@ function retryLoad() {
         </div>
       </div>
 
-      <!-- Loading State -->
+      <section class="form-panel worldbook-ai-panel">
+        <div class="inline-heading">
+          <div>
+            <h2>AI 世界书创建助手</h2>
+            <p>生成关键词触发、扫描深度、上下文预算、概率、分组和深度注入，适合 Tavern / SillyTavern 风格 lorebook。</p>
+          </div>
+          <Sparkles :size="20" />
+        </div>
+        <label class="field">
+          <span>世界书需求</span>
+          <textarea
+            v-model="aiRequirement"
+            rows="4"
+            placeholder="例如：现代豪门恋爱世界书，包含家族、公司、别墅、秘密关系和触发词。"
+            :disabled="aiLoading"
+          />
+        </label>
+        <label class="field">
+          <span>助手模型</span>
+          <select
+            v-model="assistantModel"
+            :disabled="aiLoading"
+          >
+            <option v-for="model in assistantModelOptions" :key="model.id || '__global'" :value="model.id">
+              {{ model.label || model.id }}
+            </option>
+          </select>
+        </label>
+        <div class="form-actions">
+          <button class="primary-button" type="button" :disabled="aiLoading" @click="completeWorldBookWithAi">
+            <WandSparkles :size="18" />
+            <span>{{ aiLoading ? 'AI 正在生成...' : '生成世界书草稿' }}</span>
+          </button>
+          <button v-if="aiLoading" class="ghost-button" type="button" @click="stopWorldBookAi">
+            <span>暂停</span>
+          </button>
+          <button class="ghost-button" type="button" :disabled="!aiDraft || !aiDraftEntryCount || saving" @click="createBookFromAiDraft">
+            <Save :size="18" />
+            <span>{{ saving ? '创建中...' : '创建书和条目' }}</span>
+          </button>
+        </div>
+        <div v-if="aiProcess.length || aiToolCalls.length" class="ai-process-panel">
+          <div class="ai-tool-title">
+            <span>AI 过程 {{ aiProcess.length || 1 }} 轮 · 工具 {{ aiToolCalls.length }}</span>
+          </div>
+          <div v-if="aiReasoning" class="ai-reasoning-box">
+            <strong>思考摘要</strong>
+            <p>{{ aiReasoning }}</p>
+          </div>
+          <details v-for="(step, stepIndex) in aiProcess" :key="`wb-step-${step.round || stepIndex}`" class="ai-process-step" open>
+            <summary>
+              <span>第 {{ step.round || stepIndex + 1 }} 轮</span>
+              <small>{{ step.tools?.length || 0 }} 个工具</small>
+            </summary>
+            <p v-if="step.reasoning" class="ai-process-text">{{ step.reasoning }}</p>
+            <p v-if="step.content" class="ai-process-text">{{ step.content }}</p>
+            <div v-if="step.tools?.length" class="ai-tool-detail-list">
+              <details v-for="(call, index) in step.tools" :key="`${call.name}-${index}`" class="ai-tool-detail">
+                <summary>
+                  <span>{{ call.name }}</span>
+                  <small>{{ toolResultLabel(call.result) }}</small>
+                </summary>
+                <strong>参数</strong>
+                <pre>{{ formatAiValue(call.arguments) }}</pre>
+                <strong>结果</strong>
+                <pre>{{ formatAiValue(call.result) }}</pre>
+              </details>
+            </div>
+          </details>
+          <div v-if="!aiProcess.length && aiToolCalls.length" class="ai-tool-list">
+            <span v-for="(call, index) in aiToolCalls" :key="`${call.name}-${index}`">{{ call.name }}</span>
+          </div>
+        </div>
+        <div v-if="aiDraft" class="worldbook-ai-preview">
+          <div>
+            <strong>{{ aiDraft.name }}</strong>
+            <p>{{ aiDraft.description }}</p>
+            <small>scan {{ aiDraft.scanDepth }} | budget {{ aiDraft.lorebookContextPercent }}% | {{ aiDraftEntryCount }} entries</small>
+          </div>
+          <div class="worldbook-ai-entry-list">
+            <article v-for="(entry, index) in aiDraft.entries" :key="index" class="worldbook-ai-entry">
+              <strong>{{ entry.name }}</strong>
+              <small>{{ entry.position }} | {{ entry.triggerKeys || 'Always' }}</small>
+              <p>{{ entry.content }}</p>
+            </article>
+          </div>
+        </div>
+      </section>
+
       <div v-if="loading" class="loading-state">
         <div class="loading-spinner"></div>
         <p>正在加载世界书...</p>
       </div>
 
-      <!-- Error State -->
       <div v-else-if="error" class="empty-state error-state">
         <AlertCircle :size="48" />
         <h2>加载失败</h2>
@@ -315,18 +688,16 @@ function retryLoad() {
         </button>
       </div>
 
-      <!-- Empty State -->
       <div v-else-if="!books.length" class="empty-state">
         <BookOpen :size="48" />
         <h2>还没有世界书</h2>
-        <p>世界书用于在对话中自动注入背景设定</p>
+        <p>世界书用于在对话中自动注入背景设定。</p>
         <button class="primary-button" @click="openCreateBook">
           <Plus :size="18" />
           <span>创建第一个世界书</span>
         </button>
       </div>
 
-      <!-- Book Grid -->
       <div v-else class="book-grid">
         <div
           v-for="book in books"
@@ -354,7 +725,6 @@ function retryLoad() {
       </div>
     </template>
 
-    <!-- Detail View -->
     <template v-else>
       <div class="section-heading">
         <div>
@@ -369,13 +739,11 @@ function retryLoad() {
         </div>
       </div>
 
-      <!-- Loading State -->
       <div v-if="loading" class="loading-state">
         <div class="loading-spinner"></div>
         <p>正在加载世界书详情...</p>
       </div>
 
-      <!-- Error State -->
       <div v-else-if="error" class="empty-state error-state">
         <AlertCircle :size="48" />
         <h2>加载失败</h2>
@@ -390,7 +758,6 @@ function retryLoad() {
         </div>
       </div>
 
-      <!-- Book Content -->
       <template v-else-if="currentBook">
         <div class="book-info-panel form-panel">
           <div class="inline-heading">
@@ -406,16 +773,18 @@ function retryLoad() {
               </button>
             </div>
           </div>
-          <p v-if="currentBook.characterId" class="muted-text">
-            关联角色 ID: {{ currentBook.characterId }}
-          </p>
+          <div class="worldbook-meta-row">
+            <span>扫描深度 {{ currentBook.scanDepth }}</span>
+            <span>上下文预算 {{ currentBook.lorebookContextPercent }}%</span>
+            <span v-if="currentBook.characterId">关联角色 ID: {{ currentBook.characterId }}</span>
+          </div>
         </div>
 
         <div class="form-panel entries-panel">
           <div class="inline-heading">
             <div>
               <h2>条目列表</h2>
-              <p>触发词匹配时自动注入对应内容到上下文</p>
+              <p>触发词匹配时自动注入对应内容到上下文。</p>
             </div>
             <button class="primary-button" @click="openCreateEntry">
               <Plus :size="17" />
@@ -423,40 +792,24 @@ function retryLoad() {
             </button>
           </div>
 
-          <!-- Empty Entries -->
           <div v-if="!currentBook.entries.length" class="empty-entries">
             <BookOpen :size="36" />
             <p>还没有条目</p>
-            <p class="muted-text">点击上方按钮添加触发词和内容</p>
+            <p class="muted-text">点击上方按钮添加触发词和内容。</p>
           </div>
 
-          <!-- Entry List -->
           <div v-else class="entry-list">
             <div v-for="(entry, index) in currentBook.entries" :key="entry.id" class="entry-row" :class="{ disabled: !entry.enabled }">
               <div class="entry-controls">
                 <div class="entry-order-buttons">
-                  <button
-                    class="icon-button ghost"
-                    :disabled="index === 0"
-                    title="上移"
-                    @click="moveEntry(index, -1)"
-                  >
+                  <button class="icon-button ghost" :disabled="index === 0" title="上移" @click="moveEntry(index, -1)">
                     <ChevronUp :size="14" />
                   </button>
-                  <button
-                    class="icon-button ghost"
-                    :disabled="index === currentBook.entries.length - 1"
-                    title="下移"
-                    @click="moveEntry(index, 1)"
-                  >
+                  <button class="icon-button ghost" :disabled="index === currentBook.entries.length - 1" title="下移" @click="moveEntry(index, 1)">
                     <ChevronDown :size="14" />
                   </button>
                 </div>
-                <button
-                  class="icon-button toggle"
-                  :title="entry.enabled ? '点击禁用' : '点击启用'"
-                  @click="toggleEntry(entry)"
-                >
+                <button class="icon-button toggle" :title="entry.enabled ? '点击禁用' : '点击启用'" @click="toggleEntry(entry)">
                   <ToggleRight v-if="entry.enabled" :size="20" />
                   <ToggleLeft v-else :size="20" />
                 </button>
@@ -469,16 +822,15 @@ function retryLoad() {
                     <span v-if="entry.regexMode" class="entry-chip">Regex</span>
                     <span v-if="entry.alwaysActive" class="entry-chip">Always</span>
                     <span v-if="entry.useProbability" class="entry-chip">{{ entry.probability }}%</span>
-                    <span v-if="entry.inclusionGroup" class="entry-chip">G:{{ entry.inclusionGroup }}</span>
+                    <span v-if="entry.group" class="entry-chip">G:{{ entry.group }}</span>
                     <span v-if="entry.position === 'at_depth'" class="entry-chip">D:{{ entry.depth }}</span>
                     <span v-if="entry.sticky != null" class="entry-chip">Sticky:{{ entry.sticky }}</span>
                     <span v-if="entry.cooldown != null" class="entry-chip">CD:{{ entry.cooldown }}</span>
                     <span v-if="entry.delay != null" class="entry-chip">Delay:{{ entry.delay }}</span>
                   </div>
                 </div>
-                <p v-if="entry.triggerKeys" class="entry-keys">
-                  触发词: {{ entry.triggerKeys }}
-                </p>
+                <p v-if="entry.triggerKeys" class="entry-keys">触发词：{{ entry.triggerKeys }}</p>
+                <p v-if="entry.keysSecondary" class="entry-keys">副关键词：{{ entry.keysSecondary }}</p>
                 <p class="entry-content-preview">{{ entry.content || '空内容' }}</p>
               </div>
               <div class="entry-actions">
@@ -495,7 +847,6 @@ function retryLoad() {
       </template>
     </template>
 
-    <!-- Book Form Modal -->
     <div v-if="showBookForm" class="modal-overlay" @click.self="closeBookForm">
       <div class="modal-content form-panel">
         <h2>{{ editingBookId ? '编辑世界书' : '新建世界书' }}</h2>
@@ -511,6 +862,16 @@ function retryLoad() {
           <span>关联角色 ID</span>
           <input v-model.trim="editingBook.characterId" placeholder="可选，留空则不关联" />
         </label>
+        <div class="worldbook-settings-grid">
+          <label class="field">
+            <span>扫描深度</span>
+            <input v-model.number="editingBook.scanDepth" type="number" min="1" max="50" />
+          </label>
+          <label class="field">
+            <span>上下文预算 %</span>
+            <input v-model.number="editingBook.lorebookContextPercent" type="number" min="1" max="100" />
+          </label>
+        </div>
         <div class="form-actions">
           <button class="ghost-button" @click="closeBookForm">取消</button>
           <button class="primary-button" :disabled="saving" @click="saveBook">
@@ -520,7 +881,6 @@ function retryLoad() {
       </div>
     </div>
 
-    <!-- Entry Form Modal -->
     <div v-if="showEntryForm" class="modal-overlay" @click.self="closeEntryForm">
       <div class="modal-content form-panel entry-modal">
         <h2>{{ editingEntryId ? '编辑条目' : '添加条目' }}</h2>
@@ -535,19 +895,87 @@ function retryLoad() {
         <label class="field">
           <span>注入位置</span>
           <select v-model="editingEntry.position">
-            <option v-for="opt in positionOptions" :key="opt.value" :value="opt.value">
-              {{ opt.label }}
-            </option>
+            <option v-for="opt in positionOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
           </select>
         </label>
         <label class="field">
           <span>注入内容</span>
-          <textarea v-model="editingEntry.content" rows="8" placeholder="当触发词匹配时，这段内容会被注入到 AI 上下文中" />
+          <textarea v-model="editingEntry.content" rows="8" placeholder="当触发词匹配时，这段内容会被注入到 AI 上下文中。" />
         </label>
         <label class="checkbox-line">
           <input v-model="editingEntry.enabled" type="checkbox" />
           <span>启用</span>
         </label>
+        <div class="worldbook-entry-switches">
+          <label class="checkbox-line">
+            <input v-model="editingEntry.regexMode" type="checkbox" />
+            <span>正则触发</span>
+          </label>
+          <label class="checkbox-line">
+            <input v-model="editingEntry.alwaysActive" type="checkbox" />
+            <span>总是激活</span>
+          </label>
+          <label class="checkbox-line">
+            <input v-model="editingEntry.selective" type="checkbox" />
+            <span>副关键词过滤</span>
+          </label>
+          <label class="checkbox-line">
+            <input v-model="editingEntry.useProbability" type="checkbox" />
+            <span>概率激活</span>
+          </label>
+        </div>
+        <div class="worldbook-settings-grid">
+          <label class="field">
+            <span>副关键词</span>
+            <input v-model="editingEntry.keysSecondary" placeholder="可选，逗号分隔" />
+          </label>
+          <label class="field">
+            <span>过滤逻辑</span>
+            <select v-model.number="editingEntry.selectiveLogic">
+              <option v-for="opt in selectiveLogicOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
+            </select>
+          </label>
+        </div>
+        <div class="worldbook-settings-grid">
+          <label class="field">
+            <span>概率 %</span>
+            <input v-model.number="editingEntry.probability" type="number" min="0" max="100" />
+          </label>
+          <label class="field">
+            <span>互斥分组</span>
+            <input v-model.trim="editingEntry.group" placeholder="同组只注入一个" />
+          </label>
+        </div>
+        <div class="worldbook-settings-grid">
+          <label class="field">
+            <span>分组权重</span>
+            <input v-model.number="editingEntry.groupWeight" type="number" min="0" />
+          </label>
+          <label class="field">
+            <span>at_depth 角色</span>
+            <select v-model.number="editingEntry.role">
+              <option v-for="opt in roleOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
+            </select>
+          </label>
+        </div>
+        <div class="worldbook-settings-grid compact-numbers">
+          <label class="field">
+            <span>深度</span>
+            <input v-model.number="editingEntry.depth" type="number" min="0" max="10" />
+          </label>
+          <label class="field">
+            <span>Sticky</span>
+            <input v-model.number="editingEntry.sticky" type="number" min="0" placeholder="空" />
+          </label>
+          <label class="field">
+            <span>Cooldown</span>
+            <input v-model.number="editingEntry.cooldown" type="number" min="0" placeholder="空" />
+          </label>
+          <label class="field">
+            <span>Delay</span>
+            <input v-model.number="editingEntry.delay" type="number" min="0" placeholder="空" />
+          </label>
+        </div>
         <div class="form-actions">
           <button class="ghost-button" @click="closeEntryForm">取消</button>
           <button class="primary-button" :disabled="saving" @click="saveEntry">
@@ -560,6 +988,54 @@ function retryLoad() {
 </template>
 
 <style scoped>
+.worldbook-ai-panel {
+  display: grid;
+  gap: 14px;
+}
+
+.worldbook-ai-preview {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--surface) 86%, transparent);
+}
+
+.worldbook-ai-preview p {
+  margin: 4px 0 0;
+  color: var(--muted);
+  line-height: 1.55;
+}
+
+.worldbook-ai-preview small {
+  color: var(--muted);
+}
+
+.worldbook-ai-entry-list {
+  display: grid;
+  gap: 8px;
+  max-height: 360px;
+  overflow: auto;
+}
+
+.worldbook-ai-entry {
+  display: grid;
+  gap: 4px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg);
+}
+
+.worldbook-ai-entry p {
+  display: -webkit-box;
+  margin: 0;
+  overflow: hidden;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+}
+
 .book-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
@@ -567,13 +1043,13 @@ function retryLoad() {
 }
 
 .book-card {
+  display: flex;
+  flex-direction: column;
   border: 1px solid var(--line);
   border-radius: 12px;
   background: var(--surface);
   cursor: pointer;
   transition: box-shadow 0.2s, border-color 0.2s;
-  display: flex;
-  flex-direction: column;
 }
 
 .book-card:hover {
@@ -582,8 +1058,8 @@ function retryLoad() {
 }
 
 .book-card-body {
-  padding: 16px;
   flex: 1;
+  padding: 16px;
 }
 
 .book-card-body h3 {
@@ -592,26 +1068,34 @@ function retryLoad() {
 }
 
 .book-desc {
+  display: -webkit-box;
   margin: 0;
+  overflow: hidden;
   color: var(--muted);
   font-size: 0.88rem;
-  display: -webkit-box;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
-  overflow: hidden;
+}
+
+.book-card-footer,
+.heading-actions,
+.inline-actions,
+.worldbook-meta-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
 }
 
 .book-card-footer {
-  display: flex;
-  align-items: center;
   justify-content: space-between;
   padding: 10px 16px;
   border-top: 1px solid var(--line);
 }
 
-.entry-count {
-  font-size: 0.82rem;
+.entry-count,
+.worldbook-meta-row {
   color: var(--muted);
+  font-size: 0.82rem;
 }
 
 .book-card-actions {
@@ -619,23 +1103,56 @@ function retryLoad() {
   gap: 4px;
 }
 
-.heading-actions {
-  display: flex;
-  gap: 8px;
-  align-items: center;
+.worldbook-meta-row {
+  flex-wrap: wrap;
+  margin-top: 10px;
+}
+
+.book-info-panel .inline-heading,
+.entries-panel .inline-heading {
+  align-items: flex-start;
+  min-width: 0;
+}
+
+.book-info-panel .inline-heading > div:first-child,
+.entries-panel .inline-heading > div:first-child {
+  min-width: 0;
+}
+
+.book-info-panel .inline-heading p,
+.entries-panel .inline-heading p {
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+
+.book-info-panel .inline-actions {
+  flex: 0 1 auto;
+  justify-content: flex-end;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.book-info-panel .inline-actions > button,
+.entries-panel .inline-heading > .primary-button {
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+}
+
+.book-info-panel .inline-actions > button span,
+.entries-panel .inline-heading > .primary-button span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .book-info-panel {
+  container-type: inline-size;
   margin-bottom: 16px;
 }
 
-.inline-actions {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-}
-
 .entries-panel {
+  container-type: inline-size;
   margin-top: 0;
 }
 
@@ -649,6 +1166,7 @@ function retryLoad() {
   display: flex;
   align-items: flex-start;
   gap: 12px;
+  min-width: 0;
   padding: 12px;
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -666,10 +1184,10 @@ function retryLoad() {
 
 .entry-controls {
   display: flex;
+  flex-shrink: 0;
   flex-direction: column;
   align-items: center;
   gap: 4px;
-  flex-shrink: 0;
 }
 
 .entry-order-buttons {
@@ -686,16 +1204,22 @@ function retryLoad() {
 .entry-header {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 10px;
   margin-bottom: 4px;
 }
 
+.entry-header strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
 .entry-position {
-  font-size: 0.78rem;
-  color: var(--muted);
-  background: var(--surface-strong);
   padding: 1px 8px;
   border-radius: 4px;
+  background: var(--surface-strong);
+  color: var(--muted);
+  font-size: 0.78rem;
 }
 
 .entry-chips {
@@ -714,29 +1238,32 @@ function retryLoad() {
 }
 
 .entry-keys {
-  font-size: 0.82rem;
-  color: var(--muted);
   margin: 2px 0;
-  white-space: nowrap;
   overflow: hidden;
+  color: var(--muted);
+  font-size: 0.82rem;
   text-overflow: ellipsis;
+  overflow-wrap: anywhere;
 }
 
 .entry-content-preview {
-  font-size: 0.84rem;
-  color: var(--text);
-  margin: 4px 0 0;
   display: -webkit-box;
+  margin: 4px 0 0;
+  overflow: hidden;
+  color: var(--text);
+  font-size: 0.84rem;
+  opacity: 0.8;
+  overflow-wrap: anywhere;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
-  overflow: hidden;
-  opacity: 0.8;
 }
 
 .entry-actions {
   display: flex;
-  gap: 4px;
   flex-shrink: 0;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 4px;
 }
 
 .icon-button.toggle {
@@ -748,12 +1275,12 @@ function retryLoad() {
 }
 
 .empty-entries {
-  text-align: center;
-  padding: 32px;
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: 8px;
+  padding: 32px;
+  text-align: center;
 }
 
 .empty-entries svg {
@@ -766,29 +1293,45 @@ function retryLoad() {
 }
 
 .entry-modal {
-  max-width: 600px;
-  width: 90vw;
+  max-width: 720px;
+  width: 92vw;
+}
+
+.worldbook-settings-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.worldbook-settings-grid.compact-numbers {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.worldbook-entry-switches {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px 10px;
 }
 
 .modal-overlay {
   position: fixed;
+  z-index: 1000;
   inset: 0;
-  background: rgba(0, 0, 0, 0.45);
   display: flex;
   align-items: center;
   justify-content: center;
-  z-index: 1000;
   padding: 24px;
+  background: rgba(0, 0, 0, 0.45);
 }
 
 .modal-content {
-  background: var(--surface);
-  border-radius: 16px;
-  padding: 24px;
-  max-width: 480px;
   width: 90vw;
+  max-width: 480px;
   max-height: 80vh;
   overflow-y: auto;
+  padding: 24px;
+  border-radius: 16px;
+  background: var(--surface);
   box-shadow: var(--shadow);
 }
 
@@ -796,16 +1339,77 @@ function retryLoad() {
   margin-top: 0;
 }
 
-/* ── Mobile Responsive ── */
+@container (max-width: 620px) {
+  .book-info-panel .inline-heading,
+  .entries-panel .inline-heading {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .book-info-panel .inline-actions,
+  .entries-panel .inline-heading > .primary-button {
+    width: 100%;
+  }
+
+  .book-info-panel .inline-actions {
+    justify-content: stretch;
+  }
+
+  .book-info-panel .inline-actions > button,
+  .entries-panel .inline-heading > .primary-button {
+    flex: 1 1 0;
+    min-width: 0;
+  }
+
+  .book-info-panel .inline-actions > button span,
+  .entries-panel .inline-heading > .primary-button span {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+}
+
+@container (max-width: 640px) {
+  .entry-row {
+    flex-wrap: wrap;
+  }
+
+  .entry-controls {
+    flex-direction: row;
+    justify-content: space-between;
+    width: 100%;
+    margin-bottom: 8px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .entry-order-buttons {
+    flex-direction: row;
+  }
+
+  .entry-info {
+    flex: 1 1 100%;
+  }
+
+  .entry-actions {
+    justify-content: flex-end;
+    width: 100%;
+    padding-top: 8px;
+    border-top: 1px solid var(--line);
+  }
+}
 
 @media (max-width: 768px) {
-  .book-grid {
+  .book-grid,
+  .worldbook-settings-grid,
+  .worldbook-settings-grid.compact-numbers,
+  .worldbook-entry-switches {
     grid-template-columns: 1fr;
   }
 
-  .heading-actions {
+  .heading-actions,
+  .inline-actions {
     flex-wrap: wrap;
-    gap: 6px;
   }
 
   .entry-row {
@@ -814,11 +1418,11 @@ function retryLoad() {
 
   .entry-controls {
     flex-direction: row;
-    width: 100%;
     justify-content: space-between;
+    width: 100%;
+    margin-bottom: 8px;
     padding-bottom: 8px;
     border-bottom: 1px solid var(--line);
-    margin-bottom: 8px;
   }
 
   .entry-order-buttons {
@@ -830,54 +1434,122 @@ function retryLoad() {
   }
 
   .entry-actions {
-    width: 100%;
     justify-content: flex-end;
+    width: 100%;
     padding-top: 8px;
     border-top: 1px solid var(--line);
   }
 
-  .inline-actions {
-    flex-wrap: wrap;
-    gap: 6px;
-  }
-
   .modal-overlay {
-    padding: 0;
     align-items: flex-end;
+    padding: 0;
   }
 
-  .modal-content {
-    max-width: none;
+  .modal-content,
+  .entry-modal {
     width: 100%;
+    max-width: none;
     max-height: 92vh;
     border-radius: 16px 16px 0 0;
   }
-
-  .entry-modal {
-    max-width: none;
-    width: 100%;
-  }
 }
 
-@media (max-width: 480px) {
-  .book-card-body h3 {
-    font-size: 0.95rem;
-  }
+/* uiuxpromax world book polish */
+.worldbook-ai-panel {
+  position: relative;
+  overflow: hidden;
+  border-color: color-mix(in srgb, var(--primary) 20%, var(--line));
+  background:
+    linear-gradient(135deg,
+      color-mix(in srgb, var(--surface) 92%, transparent),
+      color-mix(in srgb, var(--green-soft, #dfeee6) 34%, transparent));
+}
 
-  .book-card-body {
-    padding: 12px;
-  }
+.worldbook-ai-panel::before {
+  position: absolute;
+  inset: 0 0 auto;
+  height: 4px;
+  background: linear-gradient(90deg, var(--primary), var(--green, #2e6654), #6f74d8);
+  content: '';
+}
 
-  .book-card-footer {
-    padding: 8px 12px;
-  }
+.worldbook-ai-preview,
+.worldbook-ai-entry,
+.book-info-panel,
+.entries-panel {
+  border-color: color-mix(in srgb, var(--line) 72%, transparent);
+  box-shadow: 0 10px 26px rgba(67, 45, 30, 0.07);
+}
 
-  .modal-content {
-    padding: 16px;
-  }
+.book-grid {
+  align-items: stretch;
+}
 
-  .entry-row {
-    padding: 10px;
-  }
+.book-card {
+  position: relative;
+  overflow: hidden;
+  min-height: 188px;
+  border-color: color-mix(in srgb, var(--line) 74%, transparent);
+  background:
+    linear-gradient(180deg,
+      color-mix(in srgb, var(--surface) 96%, transparent),
+      color-mix(in srgb, var(--surface-strong) 74%, transparent));
+  box-shadow: 0 8px 22px rgba(67, 45, 30, 0.06);
+}
+
+.book-card::before {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 4px;
+  background: linear-gradient(180deg, var(--primary), var(--green, #2e6654));
+  content: '';
+  opacity: 0.84;
+}
+
+.book-card:hover {
+  transform: translateY(-2px);
+  border-color: color-mix(in srgb, var(--primary) 34%, var(--line));
+  box-shadow: 0 16px 36px rgba(67, 45, 30, 0.12);
+}
+
+.book-card-body {
+  padding: 18px 18px 16px 20px;
+}
+
+.book-card-footer {
+  background: color-mix(in srgb, var(--surface-strong) 48%, transparent);
+}
+
+.entry-row {
+  border-radius: 12px;
+  background:
+    linear-gradient(180deg,
+      color-mix(in srgb, var(--surface) 92%, transparent),
+      color-mix(in srgb, var(--surface-strong) 62%, transparent));
+  box-shadow: 0 8px 20px rgba(67, 45, 30, 0.05);
+}
+
+.entry-row.disabled {
+  filter: saturate(0.65);
+}
+
+.entry-position,
+.entry-chip {
+  border: 1px solid color-mix(in srgb, var(--line) 64%, transparent);
+  background: color-mix(in srgb, var(--surface) 72%, transparent);
+}
+
+.entry-chip {
+  color: color-mix(in srgb, var(--primary) 70%, var(--text));
+}
+
+.entry-actions .icon-button,
+.entry-controls .icon-button {
+  border-radius: 8px;
+}
+
+.modal-content {
+  border: 1px solid color-mix(in srgb, var(--line) 78%, transparent);
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.28);
 }
 </style>

@@ -8,14 +8,14 @@ export function createTagsRouter(ctx) {
   const router = Router();
 
   router.get('/', requireAuth, (request, response) => {
-    withListCache(request, response, listTags(db));
+    withListCache(request, response, listTags(db, request.auth.user.id));
   });
 
   router.post('/', requireAuth, validate(createTagSchema), (request, response) => {
     try {
       const body = request.body;
       body.name = sanitizeText(body.name);
-      const tag = createTag(db, body);
+      const tag = createTag(db, request.auth.user.id, body);
       response.status(201).json(tag);
     } catch (error) {
       response.status(400).json({ error: error.message });
@@ -23,7 +23,7 @@ export function createTagsRouter(ctx) {
   });
 
   router.delete('/:id', requireAuth, (request, response) => {
-    if (!deleteTag(db, request.params.id)) {
+    if (!deleteTag(db, request.auth.user.id, request.params.id)) {
       response.status(404).json({ error: '标签不存在' });
       return;
     }

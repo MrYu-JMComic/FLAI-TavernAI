@@ -5,7 +5,6 @@ import {
   createTag,
   deleteTag,
   fetchDeepSeekBalance,
-  fetchProviderModels,
   fetchTags,
   getProviderSettings,
   getUserProfile,
@@ -28,6 +27,11 @@ import {
   reorderRegexRules
 } from '../api';
 import { useNotify } from '../composables/useNotify';
+import {
+  buildModelSelectOptions,
+  readCachedProviderModels,
+  refreshProviderModels
+} from '../services/modelCatalog';
 
 const props = defineProps({
   route: {
@@ -87,6 +91,48 @@ const presets = {
       2
     )
   },
+  anthropic: {
+    gatewayName: 'Anthropic',
+    baseUrl: 'https://api.anthropic.com/v1',
+    model: 'claude-sonnet-4-6',
+    supportsReasoning: true,
+    extraBody: '{}'
+  },
+  xai: {
+    gatewayName: 'xAI',
+    baseUrl: 'https://api.x.ai/v1',
+    model: 'grok-4.1',
+    supportsReasoning: true,
+    extraBody: '{}'
+  },
+  mistral: {
+    gatewayName: 'Mistral',
+    baseUrl: 'https://api.mistral.ai/v1',
+    model: 'mistral-medium-3-5',
+    supportsReasoning: true,
+    extraBody: '{}'
+  },
+  qwen: {
+    gatewayName: 'Qwen',
+    baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+    model: 'qwen3-plus',
+    supportsReasoning: true,
+    extraBody: '{}'
+  },
+  glm: {
+    gatewayName: 'Z.AI GLM',
+    baseUrl: 'https://api.z.ai/api/paas/v4',
+    model: 'glm-5.1',
+    supportsReasoning: true,
+    extraBody: '{}'
+  },
+  kimi: {
+    gatewayName: 'Kimi',
+    baseUrl: 'https://api.moonshot.cn/v1',
+    model: 'kimi-k2.5',
+    supportsReasoning: true,
+    extraBody: '{}'
+  },
   custom: {
     gatewayName: '自定义网关',
     baseUrl: '',
@@ -118,6 +164,7 @@ const modelLoading = ref(false);
 const balanceLoading = ref(false);
 const modelOptions = ref([]);
 const balance = ref(null);
+const settingsModelOptions = computed(() => buildModelSelectOptions(modelOptions.value, form.model));
 const profile = reactive({
   avatarUrl: props.user?.avatarUrl || '',
   accountName: props.user?.accountName || props.user?.username || '',
@@ -137,7 +184,16 @@ const profileStats = ref({
 const ownedCharacters = ref([]);
 
 const canCheckBalance = computed(() => form.providerType === 'deepseek' && form.apiKeySet && !form.apiKeyNeedsReset);
-const canFetchModels = computed(() => Boolean(form.baseUrl && (form.apiKey || form.apiKeySet)));
+const canFetchModels = computed(() => Boolean(
+  form.baseUrl && (form.apiKey || form.apiKeySet || canUseNoAuthProvider())
+));
+
+watch(
+  () => [form.providerType, form.gatewayName, form.baseUrl, form.supportsReasoning, form.extraBody],
+  () => {
+    syncCachedModelOptions();
+  }
+);
 
 watch(
   () => props.user,
@@ -179,29 +235,29 @@ function applyPreset() {
     supportsReasoning: preset.supportsReasoning,
     extraBody: preset.extraBody
   });
-  modelOptions.value = [];
+  syncCachedModelOptions();
 }
 
 async function loadModels() {
   modelLoading.value = true;
   try {
-    const result = await fetchProviderModels({
+    modelOptions.value = await refreshProviderModels({
       providerType: form.providerType,
       gatewayName: form.gatewayName,
       baseUrl: form.baseUrl,
       model: form.model,
       apiKey: form.apiKey,
+      apiKeySet: form.apiKeySet,
       supportsReasoning: form.supportsReasoning,
       extraBody: form.extraBody
-    });
-    modelOptions.value = result.models || [];
+    }, { forceRefresh: true });
     if (!modelOptions.value.length) {
-      notify.info('官方接口没有返回可选模型，仍可手动填写模型名。');
+      notify.info('网关没有返回可选模型，请确认 /models 接口可用。');
     } else if (!modelOptions.value.some((model) => model.id === form.model)) {
       form.model = modelOptions.value[0].id;
-      notify.success(`已获取 ${modelOptions.value.length} 个模型，并自动选择第一个。`);
+      notify.success(`已刷新 ${modelOptions.value.length} 个模型，并自动选择第一个。`);
     } else {
-      notify.success(`已获取 ${modelOptions.value.length} 个模型。`);
+      notify.success(`已刷新 ${modelOptions.value.length} 个模型。`);
     }
   } catch (err) {
     notify.error(err.message);
@@ -320,6 +376,11 @@ function applySettings(settings) {
     supportsReasoning: settings.supportsReasoning,
     extraBody: JSON.stringify(settings.extraBody || {}, null, 2)
   });
+  syncCachedModelOptions();
+}
+
+function syncCachedModelOptions() {
+  modelOptions.value = readCachedProviderModels(form);
 }
 
 function readAsDataUrl(file) {
@@ -340,6 +401,32 @@ function visibilityText(value) {
 }
 
 // ── Tag Management ──
+function canUseNoAuthProvider() {
+  return form.providerType === 'custom' && isLocalOrPrivateBaseUrl(form.baseUrl);
+}
+
+function isLocalOrPrivateBaseUrl(value) {
+  try {
+    const { hostname } = new URL(String(value || ''));
+    const host = hostname.replace(/^\[(.*)\]$/, '$1').toLowerCase();
+    if (['localhost', '127.0.0.1', '::1', '0.0.0.0'].includes(host) || host.startsWith('127.')) {
+      return true;
+    }
+    const parts = host.split('.').map((part) => Number(part));
+    if (parts.length !== 4 || parts.some((part) => !Number.isInteger(part) || part < 0 || part > 255)) {
+      return false;
+    }
+    return (
+      parts[0] === 10 ||
+      (parts[0] === 172 && parts[1] >= 16 && parts[1] <= 31) ||
+      (parts[0] === 192 && parts[1] === 168) ||
+      (parts[0] === 198 && parts[1] === 18)
+    );
+  } catch {
+    return false;
+  }
+}
+
 const tagList = ref([]);
 const newTagName = ref('');
 const tagLoading = ref(false);
@@ -377,6 +464,11 @@ async function removeTag(id, name) {
     tagList.value = tagList.value.filter((t) => t.id !== id);
     notify.success(`标签「${name}」已删除`);
   } catch (err) {
+    if (/标签不存在/.test(err.message || '')) {
+      tagList.value = tagList.value.filter((t) => t.id !== id);
+      notify.info(`标签「${name}」已从列表移除`);
+      return;
+    }
     notify.error(err.message);
   }
 }
@@ -953,6 +1045,12 @@ function scrollToSection(sectionId) {
             <option value="deepseek">DeepSeek</option>
             <option value="openai">OpenAI</option>
             <option value="gemini">Gemini OpenAI-compatible</option>
+            <option value="anthropic">Anthropic Claude</option>
+            <option value="xai">xAI Grok</option>
+            <option value="mistral">Mistral</option>
+            <option value="qwen">Qwen 通义千问</option>
+            <option value="glm">Z.AI GLM 智谱</option>
+            <option value="kimi">Kimi Moonshot</option>
             <option value="custom">自定义 OpenAI-compatible</option>
           </select>
         </label>
@@ -967,18 +1065,17 @@ function scrollToSection(sectionId) {
         <div class="field model-field">
           <span>模型</span>
           <div class="model-picker">
-            <select v-if="modelOptions.length" v-model="form.model" required>
-              <option v-if="!modelOptions.some((model) => model.id === form.model)" :value="form.model">
-                {{ form.model }}
+            <select v-model="form.model" required>
+              <option v-if="!settingsModelOptions.length" value="" disabled>
+                请先获取模型列表
               </option>
-              <option v-for="model in modelOptions" :key="model.id" :value="model.id">
+              <option v-for="model in settingsModelOptions" :key="model.id" :value="model.id">
                 {{ model.label || model.id }}
               </option>
             </select>
-            <input v-else v-model.trim="form.model" placeholder="deepseek-v4-flash" required />
             <button class="ghost-button compact-button" type="button" :disabled="!canFetchModels || modelLoading" @click="loadModels">
               <RefreshCw :size="17" />
-              <span>{{ modelLoading ? '获取中' : '获取模型' }}</span>
+              <span>{{ modelLoading ? '刷新中' : '刷新模型' }}</span>
             </button>
           </div>
         </div>

@@ -12,10 +12,13 @@ const {
   buildNpcBehaviorPrompt,
   deleteNpcBehavior,
   deleteNpcMemory,
+  hideConversationNpc,
+  hideEmptyConversationNpcs,
   listConversationNpcs,
   listNpcBehaviors,
   listNpcMemories,
   scanNpcsFromMessages,
+  upsertConversationNpc,
   updateNpcBehavior
 } = await import('../modules/npcs.js');
 
@@ -117,41 +120,28 @@ test('NPC behaviors CRUD with priority and toggle', () => {
   assert.equal(listNpcBehaviors(database, userId, conversationId, '酒馆老板').length, 1);
 });
 
-test('scanNpcsFromMessages extracts NPC names from text patterns', () => {
+test('scanNpcsFromMessages is disabled to avoid keyword false positives', () => {
   const messages = [
-    { role: 'assistant', content: '【酒馆老板】欢迎来到月光酒馆！' }
+    { role: 'assistant', content: '【酒馆老板】欢迎来到月光酒馆！' },
+    { role: 'assistant', content: '**老铁匠**锤打着铁砧，火星四溅。' },
+    { role: 'assistant', content: '老板娘：欢迎回来，今天想听哪段传闻？' },
+    {
+      role: 'assistant',
+      content: [
+        '**主角信息**',
+        '**其他角色**',
+        '**特殊要素**',
+        '角色状态面板：6 项状态'
+      ].join('\n')
+    }
   ];
-  const npcs = scanNpcsFromMessages(messages, '主角');
-  assert.ok(npcs.includes('酒馆老板'));
 
-  // Bold markdown names
-  const messages2 = [
-    { role: 'assistant', content: '**老铁匠**锤打着铁砧，火星四溅。' }
-  ];
-  const npcs2 = scanNpcsFromMessages(messages2, '主角');
-  assert.ok(npcs2.includes('老铁匠'));
-
-  // Excludes main character
-  const messages3 = [
-    { role: 'assistant', content: '**主角**走进了房间。【酒馆老板】端来一杯酒。' }
-  ];
-  const npcs3 = scanNpcsFromMessages(messages3, '主角');
-  assert.ok(!npcs3.includes('主角'));
-  assert.ok(npcs3.includes('酒馆老板'));
-
-  // Chinese dialogue patterns
-  const messages4 = [
-    { role: 'assistant', content: '\u201c神秘商人\u201d说道：\u201c你想买什么？\u201d' }
-  ];
-  const npcs4 = scanNpcsFromMessages(messages4, '主角');
-  assert.ok(npcs4.includes('神秘商人'));
-
-  // Empty input
+  assert.deepEqual(scanNpcsFromMessages(messages, '主角'), []);
   assert.deepEqual(scanNpcsFromMessages([], ''), []);
   assert.deepEqual(scanNpcsFromMessages([{ role: 'user', content: '你好' }], ''), []);
 });
 
-test('listConversationNpcs merges scanned and stored NPCs', () => {
+test('listConversationNpcs merges stored and agent-registered NPCs only', () => {
   const { database, userId, conversationId } = setupDatabase();
 
   // Insert a message with NPC names
@@ -164,15 +154,101 @@ test('listConversationNpcs merges scanned and stored NPCs', () => {
 
   const npcs = listConversationNpcs(database, userId, conversationId, '主角');
   const names = npcs.map((n) => n.name);
-  assert.ok(names.includes('铁匠'));
-  assert.ok(names.includes('商人'));
-  assert.ok(names.includes('守卫'));
-  assert.ok(!names.includes('主角'));
+  assert.deepEqual(names, ['守卫']);
 
   // Check counts
   const guard = npcs.find((n) => n.name === '守卫');
   assert.equal(guard.memoryCount, 1);
   assert.equal(guard.behaviorCount, 0);
+});
+
+test('listConversationNpcs includes registry NPCs and hides removed NPCs', () => {
+  const { database, userId, conversationId } = setupDatabase();
+  database.prepare(
+    'INSERT INTO messages (id, user_id, conversation_id, role, content, reasoning, usage_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+  ).run('msg-registry-1', userId, conversationId, 'assistant', '【误判标题】不是角色。\n老板娘：欢迎回来。', '', null, new Date().toISOString());
+
+  const agentNpc = upsertConversationNpc(database, userId, conversationId, {
+    npcName: '巡逻队长',
+    source: 'agent',
+    evidence: '巡逻队长出现在走廊口',
+    confidence: 88
+  });
+  assert.equal(agentNpc.name, '巡逻队长');
+  assert.equal(agentNpc.source, 'agent');
+
+  addNpcMemory(database, userId, conversationId, '误判标题', { content: '旧误判记忆' });
+  assert.ok(listConversationNpcs(database, userId, conversationId, '主角').some((npc) => npc.name === '误判标题'));
+
+  const hidden = hideConversationNpc(database, userId, conversationId, '误判标题');
+  assert.equal(hidden.hidden, true);
+
+  const npcs = listConversationNpcs(database, userId, conversationId, '主角');
+  const names = npcs.map((npc) => npc.name);
+  assert.ok(names.includes('巡逻队长'));
+  assert.ok(!names.includes('老板娘'));
+  assert.ok(!names.includes('误判标题'));
+  assert.equal(npcs.find((npc) => npc.name === '巡逻队长').confidence, 88);
+});
+
+test('hideEmptyConversationNpcs hides NPCs without memories or behaviors only', () => {
+  const { database, userId, conversationId } = setupDatabase();
+  database.prepare(
+    'INSERT INTO messages (id, user_id, conversation_id, role, content, reasoning, usage_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+  ).run(
+    'msg-empty-npcs-1',
+    userId,
+    conversationId,
+    'assistant',
+    '空甲：只是路过。\n空乙：点了点头。\n记忆者：留下线索。\n行为者：继续巡逻。',
+    '',
+    null,
+    new Date().toISOString()
+  );
+  upsertConversationNpc(database, userId, conversationId, { npcName: '空甲', source: 'agent', evidence: '助手识别', confidence: 80 });
+  upsertConversationNpc(database, userId, conversationId, { npcName: '空乙', source: 'agent', evidence: '助手识别', confidence: 80 });
+  addNpcMemory(database, userId, conversationId, '记忆者', { content: '留下线索' });
+  addNpcBehavior(database, userId, conversationId, '行为者', {
+    behaviorType: 'movement',
+    triggerCondition: '夜晚',
+    action: '继续巡逻'
+  });
+
+  const result = hideEmptyConversationNpcs(database, userId, conversationId, '主角');
+  assert.equal(result.count, 2);
+  assert.deepEqual(result.hidden.map((npc) => npc.name).sort(), ['空乙', '空甲']);
+
+  const names = listConversationNpcs(database, userId, conversationId, '主角').map((npc) => npc.name);
+  assert.ok(!names.includes('空甲'));
+  assert.ok(!names.includes('空乙'));
+  assert.ok(names.includes('记忆者'));
+  assert.ok(names.includes('行为者'));
+});
+
+test('hidden NPC state is scoped to a single conversation', () => {
+  const { database, userId, character, conversationId } = setupDatabase();
+  const secondConversationId = 'conv-npc-2';
+  const timestamp = new Date().toISOString();
+  database.prepare(
+    'INSERT INTO conversations (id, user_id, character_id, title, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)'
+  ).run(secondConversationId, userId, character.id, 'NPC isolation test', timestamp, timestamp);
+  database.prepare(
+    'INSERT INTO messages (id, user_id, conversation_id, role, content, reasoning, usage_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+  ).run('msg-isolation-1', userId, conversationId, 'assistant', 'SharedNpc: appears here.', '', null, timestamp);
+  database.prepare(
+    'INSERT INTO messages (id, user_id, conversation_id, role, content, reasoning, usage_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+  ).run('msg-isolation-2', userId, secondConversationId, 'assistant', 'SharedNpc: appears there.\nSecondOnly: stays there.', '', null, timestamp);
+  upsertConversationNpc(database, userId, conversationId, { npcName: 'SharedNpc', source: 'agent', evidence: 'appears here', confidence: 80 });
+  upsertConversationNpc(database, userId, secondConversationId, { npcName: 'SharedNpc', source: 'agent', evidence: 'appears there', confidence: 80 });
+  upsertConversationNpc(database, userId, secondConversationId, { npcName: 'SecondOnly', source: 'agent', evidence: 'stays there', confidence: 80 });
+
+  const hidden = hideConversationNpc(database, userId, conversationId, 'SharedNpc');
+  assert.equal(hidden.hidden, true);
+  assert.ok(!listConversationNpcs(database, userId, conversationId, 'Main').some((npc) => npc.name === 'SharedNpc'));
+
+  const secondNames = listConversationNpcs(database, userId, secondConversationId, 'Main').map((npc) => npc.name);
+  assert.ok(secondNames.includes('SharedNpc'));
+  assert.ok(secondNames.includes('SecondOnly'));
 });
 
 test('buildNpcBehaviorPrompt generates system prompt from behaviors', () => {

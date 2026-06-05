@@ -1,6 +1,6 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
-import { BookOpen, ChevronDown, Home, KeyRound, LogOut, Menu, Moon, Plus, Puzzle, Sun, UserRound, X } from '@lucide/vue';
+import { BookOpen, ChevronDown, Home, KeyRound, LogOut, Menu, Moon, Plus, Puzzle, SlidersHorizontal, Sun, UserRound, X } from '@lucide/vue';
 
 const props = defineProps({
   user: {
@@ -26,6 +26,7 @@ const emit = defineEmits(['navigate', 'logout', 'toggle-theme']);
 const isChatRoute = computed(() => props.currentRoute === 'chat');
 const isWorldBookRoute = computed(() => props.currentRoute === 'worldBooks' || props.currentRoute === 'worldBookDetail');
 const isExtensionsRoute = computed(() => props.currentRoute === 'extensions');
+const isPresetsRoute = computed(() => props.currentRoute === 'presets');
 const userMenuOpen = ref(false);
 const userMenuRef = ref(null);
 const mobileNavOpen = ref(false);
@@ -109,6 +110,14 @@ function navigateAndClose(name) {
         >
           <BookOpen :size="18" aria-hidden="true" />
           <span>世界书</span>
+        </button>
+        <button
+          :class="{ active: isPresetsRoute }"
+          type="button"
+          @click="navigateAndClose('presets')"
+        >
+          <SlidersHorizontal :size="18" aria-hidden="true" />
+          <span>预设</span>
         </button>
         <button
           :class="{ active: isExtensionsRoute }"

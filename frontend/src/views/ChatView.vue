@@ -17,6 +17,8 @@ import { useChatAppearance } from '../composables/chat/useChatAppearance';
 import { useChatMessageActions } from '../composables/chat/useChatMessageActions';
 import { useChatScroll } from '../composables/chat/useChatScroll';
 import { useChatSubmit } from '../composables/chat/useChatSubmit';
+import { useProviderModels } from '../composables/useProviderModels';
+import { isPhoneViewport } from '../composables/useViewport';
 
 const props = defineProps({
   route: { type: Object, required: true },
@@ -30,6 +32,8 @@ const chatShellRef = ref(null);
 const messageScroller = ref(null);
 const composerWrap = ref(null);
 const composerTextarea = ref(null);
+const npcRefreshKey = ref(0);
+let conversationLoadToken = 0;
 
 function showError(message) {
   const needsFix = /API Key|SK|密钥|供应商|网关|模型/.test(message);
@@ -64,16 +68,16 @@ const {
 
 const {
   statusBar, statusBarForm, statusBarEditorOpen, statusBarSaving,
-  statusBarTemplateConfig, statusBarTemplateCfg,
+  statusBarTemplateMode, statusBarTemplateConfig, statusBarTemplateIssues, statusBarTemplateCfg,
   accessorySettingsOpen, accessorySaving, accessorySkills, accessorySkillResults,
-  economyAccounts, accessorySkillItems,
+  accessorySkillItems,
   hasStatusBarContent, showEconomyFeature, showNpcFeature,
   loadStatusBar, loadEconomyBalance, loadAccessorySkills,
   syncAccessorySkills, isAccessorySkillActiveLocal,
   saveAccessorySkillChanges, handleSkillResult,
   syncStatusBarForm, addStatusBarVariable, removeStatusBarVariable,
   saveStatusBarChanges, deleteStatusBarAction,
-  openStatusBarEditor, closeStatusBarEditor,
+  openStatusBarEditor, closeStatusBarEditor, setStatusBarTemplateMode,
   addStatusCharacter, removeStatusCharacter,
   addCharacterVariable, removeCharacterVariable,
   addQuickReply, removeQuickReply
@@ -128,37 +132,60 @@ const {
 
 const {
   input, useStream, thinkingEnabled,
-  sending, usage, providerMeta,
+  sending, usage,
   canSend, canToggleThinking,
-  submit, stop, toggleUseStream, toggleThinking
+  submit, stop, toggleUseStream, toggleThinking,
+  cleanup: cleanupSubmit
 } = useChatSubmit({
   route: props.route, messages, provider: computed(() => props.provider),
   selectedPresetId, statusBar,
   syncStatusBarForm, handleSkillResult,
+  loadStatusBar,
   loadSidebarData, loadEconomyBalance,
+  onAccessoryRefresh: refreshAccessoryPanels,
   stickToBottomIfNeeded, expandReasoning, showError
 });
+const { providerModels } = useProviderModels(computed(() => props.provider));
 
 async function loadConversation() {
+  const conversationId = props.route.params.id;
+  if (!conversationId) return;
+  const requestToken = ++conversationLoadToken;
+  if (conversation.value?.id && conversation.value.id !== conversationId) {
+    conversation.value = null;
+    messages.value = [];
+    statusBar.value = null;
+    syncAccessorySkills();
+  }
   loading.value = true;
   error.value = '';
   try {
-    const result = await fetchConversationMessages(props.route.params.id);
+    const result = await fetchConversationMessages(conversationId);
+    if (requestToken !== conversationLoadToken || props.route.params.id !== conversationId) return;
     conversation.value = result.conversation;
     messages.value = result.messages;
     await nextTick();
     syncConversationAppearance(result.conversation?.settings);
     syncAccessorySkills(result.conversation?.settings?.accessorySkills);
     await applyConversationAppearance();
-    await loadStatusBar();
-    await loadAccessorySkills();
-    await initMessageSwipes(props.route.params.id);
-    await loadConversationBranches(props.route.params.id);
+    // Parallel: these 4 operations are independent of each other
+    const [, , , branchesResult] = await Promise.all([
+      loadStatusBar(),
+      loadAccessorySkills(),
+      typeof initMessageSwipes === 'function'
+        ? initMessageSwipes(conversationId)
+        : Promise.resolve(),
+      loadConversationBranches(conversationId)
+    ]);
+    if (requestToken !== conversationLoadToken || props.route.params.id !== conversationId) return;
     restoreMessageScrollPosition(messages);
   } catch (err) {
+    if (requestToken !== conversationLoadToken || props.route.params.id !== conversationId) return;
     showError(err.message);
   } finally {
-    loading.value = false;
+    if (requestToken === conversationLoadToken && props.route.params.id === conversationId) {
+      loading.value = false;
+    }
   }
 }
 
@@ -181,6 +208,20 @@ function handleStatusBarQuickReply(text) {
   });
 }
 
+function handleNpcPanelOpenUpdate(value) {
+  if (value) {
+    openNpcPanel();
+  } else {
+    closeNpcPanel();
+  }
+}
+
+function refreshAccessoryPanels() {
+  if (npcPanelOpen.value) {
+    npcRefreshKey.value += 1;
+  }
+}
+
 async function createBranchFromMessage(message) {
   await handleBranchMessage(message, props.route.params.id, async (branchId) => {
     await loadSidebarData();
@@ -197,34 +238,64 @@ function handleGlobalKeydown(event) {
     closeSettings();
     return;
   }
+  if (event.key === 'Escape' && npcPanelOpen.value) {
+    closeNpcPanel();
+    return;
+  }
   if (event.key === 'Escape' && sidebarOpen.value) {
     closeSidebar();
   }
 }
 
-function handleComposerEnter(event) {
-  if (isPhoneViewport()) {
+let suppressNpcPanelClick = false;
+
+function handleGlobalPointerDown(event) {
+  if (!npcPanelOpen.value) {
     return;
   }
+  const target = event.target;
+  const shouldClose = target?.closest?.('.npc-close') || target?.classList?.contains('npc-panel-overlay');
+  if (!shouldClose) {
+    return;
+  }
+  suppressNpcPanelClick = true;
+  closeNpcPanel();
+  event.preventDefault();
+  event.stopPropagation();
+}
+
+function handleGlobalClick(event) {
+  if (!suppressNpcPanelClick) {
+    return;
+  }
+  suppressNpcPanelClick = false;
+  event.preventDefault();
+  event.stopPropagation();
+}
+
+function handleComposerEnter(payload) {
+  const isEnter = payload?.isEnter === true;
+  if (isEnter && isPhoneViewport()) {
+    return;
+  }
+  const event = payload?.event;
   if (event?.preventDefault) {
     event.preventDefault();
   }
   submit();
 }
 
-function handleComposerEnterFromComposer(event) {
-  handleComposerEnter(event);
+function handleComposerEnterFromComposer(payload) {
+  handleComposerEnter(payload);
 }
 
-function isPhoneViewport() {
-  if (typeof window === 'undefined') {
-    return false;
-  }
-  return window.matchMedia('(max-width: 760px)').matches;
-}
+// isPhoneViewport is now imported from composables/useViewport.js
 
 let userResizedHeight = 0;
 let isUserResizing = false;
+let isAutoSizingTextarea = false;
+let autoSizingTextareaHeight = 0;
+let autoSizingTextareaRafId = null;
 
 function resizeComposerTextarea() {
   const el = composerWrap.value?.textareaRef || composerTextarea.value;
@@ -234,8 +305,17 @@ function resizeComposerTextarea() {
   const scrollH = el.scrollHeight;
   const minHeight = isUserResizing ? Math.min(userResizedHeight, maxHeight) : 0;
   const targetHeight = Math.min(Math.max(scrollH, minHeight), maxHeight);
+  isAutoSizingTextarea = true;
+  autoSizingTextareaHeight = targetHeight;
+  if (autoSizingTextareaRafId) {
+    cancelAnimationFrame(autoSizingTextareaRafId);
+  }
   el.style.height = `${targetHeight}px`;
   el.style.overflowY = scrollH > maxHeight ? 'auto' : 'hidden';
+  autoSizingTextareaRafId = requestAnimationFrame(() => {
+    isAutoSizingTextarea = false;
+    autoSizingTextareaRafId = null;
+  });
   updateComposerDock();
 }
 
@@ -244,6 +324,10 @@ function handleTextareaResize() {
   if (!el) return;
   const maxH = readComposerTextareaMaxHeight(el);
   const h = el.offsetHeight;
+  if (isAutoSizingTextarea || Math.abs(h - autoSizingTextareaHeight) <= 1) {
+    updateComposerDock();
+    return;
+  }
   if (h > maxH * 0.6) {
     userResizedHeight = Math.min(h, maxH);
     isUserResizing = true;
@@ -317,6 +401,8 @@ onMounted(async () => {
   updateComposerDock();
   window.addEventListener('resize', handleViewportResize);
   window.addEventListener('keydown', handleGlobalKeydown);
+  window.addEventListener('pointerdown', handleGlobalPointerDown, true);
+  window.addEventListener('click', handleGlobalClick, true);
   window.addEventListener('focusin', handleViewportResize);
   window.addEventListener('focusout', handleViewportResize);
   window.visualViewport?.addEventListener('resize', handleViewportResize);
@@ -338,11 +424,15 @@ onMounted(async () => {
 });
 
 onBeforeUnmount(() => {
+  conversationLoadToken += 1;
   saveMessageScrollPosition();
+  cleanupSubmit();
   cleanupConversationAppearance();
   cleanupScroll();
   window.removeEventListener('resize', handleViewportResize);
   window.removeEventListener('keydown', handleGlobalKeydown);
+  window.removeEventListener('pointerdown', handleGlobalPointerDown, true);
+  window.removeEventListener('click', handleGlobalClick, true);
   window.removeEventListener('focusin', handleViewportResize);
   window.removeEventListener('focusout', handleViewportResize);
   window.visualViewport?.removeEventListener('resize', handleViewportResize);
@@ -354,6 +444,10 @@ onBeforeUnmount(() => {
   if (textareaResizeObserver) {
     textareaResizeObserver.disconnect();
     textareaResizeObserver = null;
+  }
+  if (autoSizingTextareaRafId) {
+    cancelAnimationFrame(autoSizingTextareaRafId);
+    autoSizingTextareaRafId = null;
   }
 });
 
@@ -417,10 +511,13 @@ watch(settingsDrawerOpen, (isOpen) => {
       :accessory-saving="accessorySaving"
       :accessory-skills="accessorySkills"
       :accessory-skill-items="accessorySkillItems"
+      :provider-model-options="providerModels"
       :status-bar="statusBar"
       :status-bar-editor-open="statusBarEditorOpen"
       :status-bar-saving="statusBarSaving"
       :status-bar-form="statusBarForm"
+      :status-bar-template-mode="statusBarTemplateMode"
+      :status-bar-template-issues="statusBarTemplateIssues"
       :status-bar-template-cfg="statusBarTemplateCfg"
       @close="closeSettings"
       @save-appearance="saveConversationAppearanceChanges"
@@ -432,6 +529,7 @@ watch(settingsDrawerOpen, (isOpen) => {
       @save-accessory="saveAccessorySkillChanges"
       @open-status-bar-editor="openStatusBarEditor"
       @close-status-bar-editor="closeStatusBarEditor"
+      @update:status-bar-template-mode="setStatusBarTemplateMode"
       @add-status-bar-variable="addStatusBarVariable"
       @remove-status-bar-variable="removeStatusBarVariable"
       @save-status-bar="saveStatusBarChanges"
@@ -446,10 +544,6 @@ watch(settingsDrawerOpen, (isOpen) => {
 
     <section class="deep-chat-main" :style="chatMainStyle">
       <ChatHeader
-        :conversation="conversation"
-        :current-provider-label="providerMeta?.provider || provider?.gatewayName || 'Local Mock'"
-        :current-model-label="providerMeta?.model || provider?.model || '未配置模型'"
-        :economy-accounts="economyAccounts"
         :show-economy-feature="showEconomyFeature"
         :show-npc-feature="showNpcFeature"
         @navigate="(page) => emit('navigate', page)"
@@ -542,6 +636,8 @@ watch(settingsDrawerOpen, (isOpen) => {
       v-if="conversation?.id && showNpcFeature"
       :conversation-id="conversation.id"
       :open="npcPanelOpen"
+      :refresh-key="npcRefreshKey"
+      @update:open="handleNpcPanelOpenUpdate"
       @close="closeNpcPanel"
     />
     <SaveLoadPanel

@@ -9,8 +9,10 @@ export function useChatSubmit({
   statusBar,
   syncStatusBarForm,
   handleSkillResult,
+  loadStatusBar,
   loadSidebarData,
   loadEconomyBalance,
+  onAccessoryRefresh,
   stickToBottomIfNeeded,
   expandReasoning,
   showError
@@ -24,32 +26,40 @@ export function useChatSubmit({
   const providerMeta = ref(null);
 
   let stoppingByUser = false;
-  let graphemeSegmenter = null;
+  let accessoryRefreshRun = 0;
+  const accessoryRefreshTimers = [];
 
   const streamIdleTimeoutMs = 60000;
-  const streamFastChunkLength = 120;
-  const streamMediumChunkLength = 48;
-  const streamPunctuationPauseMs = 58;
+  const accessoryRefreshDelays = [1200, 4000, 9000, 16000, 25000, 38000, 55000];
 
   const canSend = computed(() => input.value.trim() && !sending.value);
-  const canToggleThinking = computed(() => provider.value?.providerType === 'deepseek');
+  const canToggleThinking = computed(() => Boolean(provider.value?.supportsReasoning));
 
   function readLocalBoolean(key, fallback) {
     if (typeof window === 'undefined') {
       return fallback;
     }
-    const value = window.localStorage.getItem(key);
-    if (value === null) {
+    try {
+      const value = window.localStorage.getItem(key);
+      if (value === null) {
+        return fallback;
+      }
+      return value === 'true';
+    } catch {
+      // Private mode or storage quota exceeded
       return fallback;
     }
-    return value === 'true';
   }
 
   function writeLocalBoolean(key, value) {
     if (typeof window === 'undefined') {
       return;
     }
-    window.localStorage.setItem(key, String(Boolean(value)));
+    try {
+      window.localStorage.setItem(key, String(Boolean(value)));
+    } catch {
+      // Private mode or storage quota exceeded
+    }
   }
 
   function toggleUseStream() {
@@ -105,6 +115,7 @@ export function useChatSubmit({
     if (selectedPresetId.value) {
       requestPayload.presetId = selectedPresetId.value;
     }
+    cancelAccessoryRefresh();
     let streamFinished = false;
     let streamTimedOut = false;
     let streamTimer = null;
@@ -173,6 +184,11 @@ export function useChatSubmit({
               if (stoppingByUser || !assistant.streaming) {
                 return;
               }
+              if (!data.assistantMessage && !hasMessagePayload(assistant)) {
+                finishAssistantDraft(assistant);
+                showError('模型没有返回正文，请重试或检查当前模型/网关是否支持该对话格式。');
+                return;
+              }
               finalizeStreamedAssistant(assistant, data.assistantMessage);
               usage.value = data.usage || data.assistantMessage?.usage || null;
               providerMeta.value = {
@@ -182,6 +198,9 @@ export function useChatSubmit({
               if (data.statusBar) {
                 statusBar.value = data.statusBar;
                 syncStatusBarForm(data.statusBar);
+              }
+              if (data.accessoryBackground) {
+                scheduleAccessoryRefresh();
               }
             },
             error(data) {
@@ -217,9 +236,11 @@ export function useChatSubmit({
           statusBar.value = result.statusBar;
           syncStatusBarForm(result.statusBar);
         }
+        if (result.accessoryBackground) {
+          scheduleAccessoryRefresh();
+        }
       }
-      await loadSidebarData();
-      await loadEconomyBalance();
+      refreshConversationChrome();
     } catch (err) {
       clearStreamTimer();
       if (streamTimedOut && !stoppingByUser) {
@@ -239,14 +260,81 @@ export function useChatSubmit({
     }
   }
 
+  function clearAccessoryRefreshTimers() {
+    if (typeof window === 'undefined') {
+      accessoryRefreshTimers.length = 0;
+      return;
+    }
+    while (accessoryRefreshTimers.length) {
+      window.clearTimeout(accessoryRefreshTimers.pop());
+    }
+  }
+
+  function cancelAccessoryRefresh() {
+    accessoryRefreshRun += 1;
+    clearAccessoryRefreshTimers();
+  }
+
+  function refreshConversationChrome() {
+    const tasks = [
+      createRefreshTask(loadSidebarData),
+      createRefreshTask(loadEconomyBalance)
+    ].filter(Boolean);
+    if (tasks.length) {
+      void Promise.allSettled(tasks);
+    }
+  }
+
+  function createRefreshTask(task) {
+    if (typeof task !== 'function') {
+      return null;
+    }
+    try {
+      return task();
+    } catch (error) {
+      return Promise.reject(error);
+    }
+  }
+
+  function scheduleAccessoryRefresh() {
+    if (typeof window === 'undefined') {
+      return;
+    }
+    const runId = ++accessoryRefreshRun;
+    clearAccessoryRefreshTimers();
+    for (const delay of accessoryRefreshDelays) {
+      const timer = window.setTimeout(async () => {
+        if (runId !== accessoryRefreshRun) {
+          return;
+        }
+        const results = await Promise.allSettled([
+          createRefreshTask(loadStatusBar),
+          createRefreshTask(loadEconomyBalance)
+        ]);
+        if (runId !== accessoryRefreshRun) {
+          return;
+        }
+        if (typeof onAccessoryRefresh === 'function') {
+          onAccessoryRefresh(results);
+        }
+      }, delay);
+      accessoryRefreshTimers.push(timer);
+    }
+  }
+
   function stop() {
     stoppingByUser = true;
     controller.value?.abort();
     sending.value = false;
+    cancelAccessoryRefresh();
     const last = [...messages.value].reverse().find((message) => message.streaming);
     if (last) {
       finishAssistantDraft(last);
     }
+  }
+
+  function cleanup() {
+    cancelAccessoryRefresh();
   }
 
   function finishAssistantDraft(message) {
@@ -260,76 +348,37 @@ export function useChatSubmit({
   }
 
   function finalizeStreamedAssistant(message, serverMessage = {}) {
+    const finalServerMessage = serverMessage && typeof serverMessage === 'object' ? serverMessage : {};
     const streamedContent = message.content;
     const streamedReasoning = message.reasoning;
-    Object.assign(message, serverMessage, {
-      content: streamedContent || serverMessage.content || '',
-      reasoning: streamedReasoning || serverMessage.reasoning || '',
+    Object.assign(message, finalServerMessage, {
+      content: streamedContent || finalServerMessage.content || '',
+      reasoning: streamedReasoning || finalServerMessage.reasoning || '',
       streaming: false,
       reasoningStreaming: false,
       contentStreaming: false
     });
+    if (!hasMessagePayload(message)) {
+      finishAssistantDraft(message);
+      return;
+    }
     triggerRef(messages);
+  }
+
+  function hasMessagePayload(message = {}) {
+    return Boolean(String(message.content || '').trim() || String(message.reasoning || '').trim());
   }
 
   async function appendStreamText(message, field, text) {
     const value = String(text || '');
-    if (!value) {
+    if (!value || !message.streaming) {
       return;
     }
 
-    let buffer = value;
-    while (buffer && message.streaming) {
-      const chunk = takeTypingChunk(buffer);
-      buffer = buffer.slice(chunk.length);
-      message[field] += chunk;
-      triggerRef(messages);
-      await nextTick();
-      stickToBottomIfNeeded(false);
-      await waitTypingCadence(chunk, buffer.length, value.length);
-    }
-  }
-
-  function takeTypingChunk(text) {
-    const segments = splitGraphemes(text);
-    if (segments.length > streamFastChunkLength) {
-      return segments.slice(0, 3).join('');
-    }
-    if (segments.length > streamMediumChunkLength) {
-      return segments.slice(0, 2).join('');
-    }
-    return segments[0] || '';
-  }
-
-  function splitGraphemes(text) {
-    if (typeof Intl !== 'undefined' && Intl.Segmenter) {
-      graphemeSegmenter ||= new Intl.Segmenter('zh', { granularity: 'grapheme' });
-      return Array.from(graphemeSegmenter.segment(text), (item) => item.segment);
-    }
-    return Array.from(text);
-  }
-
-  async function waitTypingCadence(chunk, remainingLength, originalLength) {
-    let delay = 22;
-    if (originalLength > streamFastChunkLength || remainingLength > streamFastChunkLength) {
-      delay = 10;
-    } else if (originalLength > streamMediumChunkLength || remainingLength > streamMediumChunkLength) {
-      delay = 15;
-    }
-
-    if (/[\u3002\uff01\uff1f!?\uff1b;\uff1a:\uff0c,\u3001\u2026]$/.test(chunk.trim())) {
-      delay += streamPunctuationPauseMs;
-    }
-    await waitMs(delay);
-  }
-
-  function waitMs(duration) {
-    if (typeof window === 'undefined') {
-      return Promise.resolve();
-    }
-    return new Promise((resolve) => {
-      window.setTimeout(resolve, duration);
-    });
+    message[field] += value;
+    triggerRef(messages);
+    await nextTick();
+    stickToBottomIfNeeded(false);
   }
 
   return {
@@ -346,6 +395,7 @@ export function useChatSubmit({
     stop,
     toggleUseStream,
     toggleThinking,
-    finishAssistantDraft
+    finishAssistantDraft,
+    cleanup
   };
 }

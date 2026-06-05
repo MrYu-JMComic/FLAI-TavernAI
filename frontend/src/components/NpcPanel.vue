@@ -2,11 +2,8 @@
 import { computed, reactive, ref, watch } from 'vue';
 import {
   Brain,
-  ChevronDown,
-  ChevronRight,
-  MessageSquare,
   Plus,
-  Settings2,
+  RefreshCw,
   Trash2,
   Users,
   X,
@@ -20,15 +17,18 @@ import {
   fetchConversationNpcs,
   fetchNpcBehaviors,
   fetchNpcMemories,
+  hideConversationNpc,
+  hideEmptyConversationNpcs,
   updateNpcBehavior
 } from '../api';
 import { useNotify } from '../composables/useNotify';
 
 const props = defineProps({
   conversationId: { type: String, required: true },
-  open: { type: Boolean, default: false }
+  open: { type: Boolean, default: false },
+  refreshKey: { type: Number, default: 0 }
 });
-const emit = defineEmits(['close']);
+const emit = defineEmits(['close', 'update:open']);
 
 const notify = useNotify();
 const loading = ref(false);
@@ -40,6 +40,8 @@ const detailTab = ref('memories');
 const detailLoading = ref(false);
 const addMemoryOpen = ref(false);
 const addBehaviorOpen = ref(false);
+let npcLoadToken = 0;
+let npcDetailToken = 0;
 const memoryForm = reactive({ memoryType: 'event', content: '' });
 const behaviorForm = reactive({
   behaviorType: 'reaction',
@@ -50,6 +52,19 @@ const behaviorForm = reactive({
 });
 
 const selectedNpcData = computed(() => npcs.value.find((n) => n.name === selectedNpc.value) || null);
+const npcPanelStats = computed(() => ({
+  npcCount: npcs.value.length,
+  memoryCount: npcs.value.reduce((sum, npc) => sum + Number(npc.memoryCount || 0), 0),
+  behaviorCount: npcs.value.reduce((sum, npc) => sum + Number(npc.behaviorCount || 0), 0)
+}));
+
+const selectedNpcStats = computed(() => ({
+  memoryCount: memories.value.length,
+  behaviorCount: behaviors.value.length
+}));
+const emptyNpcNames = computed(() => npcs.value
+  .filter((npc) => Number(npc.memoryCount || 0) === 0 && Number(npc.behaviorCount || 0) === 0)
+  .map((npc) => npc.name));
 
 const memoryTypeOptions = [
   { value: 'event', label: '事件' },
@@ -67,25 +82,74 @@ const behaviorTypeOptions = [
   { value: 'movement', label: '移动' }
 ];
 
-watch(() => props.open, async (isOpen) => {
-  if (isOpen) await loadNpcs();
+watch(() => props.open, (isOpen) => {
+  if (isOpen) {
+    loadNpcs();
+  }
+}, { immediate: true });
+
+watch(() => props.refreshKey, () => {
+  if (props.open) {
+    loadNpcs();
+  }
 });
 
+watch(() => props.conversationId, () => {
+  resetNpcState();
+  if (props.open) {
+    loadNpcs();
+  }
+});
+
+function requestClose() {
+  emit('update:open', false);
+  emit('close');
+}
+
+function resetNpcState() {
+  npcLoadToken += 1;
+  npcDetailToken += 1;
+  npcs.value = [];
+  selectedNpc.value = '';
+  memories.value = [];
+  behaviors.value = [];
+  addMemoryOpen.value = false;
+  addBehaviorOpen.value = false;
+  loading.value = false;
+  detailLoading.value = false;
+}
+
 async function loadNpcs() {
-  if (!props.conversationId) return;
+  const conversationId = props.conversationId;
+  if (!conversationId) {
+    resetNpcState();
+    return;
+  }
+  const requestToken = ++npcLoadToken;
   loading.value = true;
   try {
-    npcs.value = await fetchConversationNpcs(props.conversationId);
+    const nextNpcs = await fetchConversationNpcs(conversationId);
+    if (requestToken !== npcLoadToken || conversationId !== props.conversationId) return;
+    npcs.value = nextNpcs;
     if (selectedNpc.value && !npcs.value.find((n) => n.name === selectedNpc.value)) {
       selectedNpc.value = '';
     }
     if (!selectedNpc.value && npcs.value.length > 0) {
       selectedNpc.value = npcs.value[0].name;
     }
+    if (selectedNpc.value) {
+      await loadNpcDetail();
+    } else {
+      memories.value = [];
+      behaviors.value = [];
+    }
   } catch (err) {
+    if (requestToken !== npcLoadToken || conversationId !== props.conversationId) return;
     notify.error(err.message || '加载 NPC 列表失败');
   } finally {
-    loading.value = false;
+    if (requestToken === npcLoadToken && conversationId === props.conversationId) {
+      loading.value = false;
+    }
   }
 }
 
@@ -97,19 +161,26 @@ async function selectNpc(name) {
 }
 
 async function loadNpcDetail() {
-  if (!selectedNpc.value) return;
+  const conversationId = props.conversationId;
+  const npcName = selectedNpc.value;
+  if (!conversationId || !npcName) return;
+  const requestToken = ++npcDetailToken;
   detailLoading.value = true;
   try {
     const [mem, beh] = await Promise.all([
-      fetchNpcMemories(props.conversationId, selectedNpc.value),
-      fetchNpcBehaviors(props.conversationId, selectedNpc.value)
+      fetchNpcMemories(conversationId, npcName),
+      fetchNpcBehaviors(conversationId, npcName)
     ]);
+    if (requestToken !== npcDetailToken || conversationId !== props.conversationId || npcName !== selectedNpc.value) return;
     memories.value = mem;
     behaviors.value = beh;
   } catch (err) {
+    if (requestToken !== npcDetailToken || conversationId !== props.conversationId || npcName !== selectedNpc.value) return;
     notify.error(err.message || '加载 NPC 详情失败');
   } finally {
-    detailLoading.value = false;
+    if (requestToken === npcDetailToken && conversationId === props.conversationId && npcName === selectedNpc.value) {
+      detailLoading.value = false;
+    }
   }
 }
 
@@ -118,11 +189,15 @@ async function submitMemory() {
     notify.warning('请输入记忆内容');
     return;
   }
+  const conversationId = props.conversationId;
+  const npcName = selectedNpc.value;
+  if (!conversationId || !npcName) return;
   try {
-    const mem = await addNpcMemory(props.conversationId, selectedNpc.value, {
+    const mem = await addNpcMemory(conversationId, npcName, {
       memoryType: memoryForm.memoryType,
       content: memoryForm.content.trim()
     });
+    if (conversationId !== props.conversationId || npcName !== selectedNpc.value) return;
     memories.value.unshift(mem);
     memoryForm.content = '';
     addMemoryOpen.value = false;
@@ -134,8 +209,12 @@ async function submitMemory() {
 }
 
 async function removeMemory(memoryId) {
+  const conversationId = props.conversationId;
+  const npcName = selectedNpc.value;
+  if (!conversationId || !npcName) return;
   try {
-    await deleteNpcMemory(props.conversationId, selectedNpc.value, memoryId);
+    await deleteNpcMemory(conversationId, npcName, memoryId);
+    if (conversationId !== props.conversationId || npcName !== selectedNpc.value) return;
     memories.value = memories.value.filter((m) => m.id !== memoryId);
     await loadNpcs();
     notify.success('记忆已删除');
@@ -149,14 +228,18 @@ async function submitBehavior() {
     notify.warning('请输入行为动作');
     return;
   }
+  const conversationId = props.conversationId;
+  const npcName = selectedNpc.value;
+  if (!conversationId || !npcName) return;
   try {
-    const beh = await addNpcBehavior(props.conversationId, selectedNpc.value, {
+    const beh = await addNpcBehavior(conversationId, npcName, {
       behaviorType: behaviorForm.behaviorType,
       triggerCondition: behaviorForm.triggerCondition.trim(),
       action: behaviorForm.action.trim(),
       priority: behaviorForm.priority,
       enabled: behaviorForm.enabled
     });
+    if (conversationId !== props.conversationId || npcName !== selectedNpc.value) return;
     behaviors.value.push(beh);
     behaviorForm.triggerCondition = '';
     behaviorForm.action = '';
@@ -170,10 +253,14 @@ async function submitBehavior() {
 }
 
 async function toggleBehavior(behavior) {
+  const conversationId = props.conversationId;
+  const npcName = selectedNpc.value;
+  if (!conversationId || !npcName) return;
   try {
-    const updated = await updateNpcBehavior(props.conversationId, selectedNpc.value, behavior.id, {
+    const updated = await updateNpcBehavior(conversationId, npcName, behavior.id, {
       enabled: !behavior.enabled
     });
+    if (conversationId !== props.conversationId || npcName !== selectedNpc.value) return;
     Object.assign(behavior, updated);
   } catch (err) {
     notify.error(err.message || '更新失败');
@@ -181,13 +268,62 @@ async function toggleBehavior(behavior) {
 }
 
 async function removeBehavior(behaviorId) {
+  const conversationId = props.conversationId;
+  const npcName = selectedNpc.value;
+  if (!conversationId || !npcName) return;
   try {
-    await deleteNpcBehavior(props.conversationId, selectedNpc.value, behaviorId);
+    await deleteNpcBehavior(conversationId, npcName, behaviorId);
+    if (conversationId !== props.conversationId || npcName !== selectedNpc.value) return;
     behaviors.value = behaviors.value.filter((b) => b.id !== behaviorId);
     await loadNpcs();
     notify.success('行为规则已删除');
   } catch (err) {
     notify.error(err.message || '删除行为规则失败');
+  }
+}
+
+async function removeSelectedNpc() {
+  if (!selectedNpc.value) return;
+  const conversationId = props.conversationId;
+  const npcName = selectedNpc.value;
+  if (!conversationId) return;
+  if (!window.confirm(`从 NPC 列表移除“${npcName}”？已有记忆和行为不会被删除。`)) {
+    return;
+  }
+  try {
+    await hideConversationNpc(conversationId, npcName);
+    if (conversationId !== props.conversationId || npcName !== selectedNpc.value) return;
+    selectedNpc.value = '';
+    memories.value = [];
+    behaviors.value = [];
+    await loadNpcs();
+    notify.success('NPC 已从列表移除');
+  } catch (err) {
+    notify.error(err.message || '移除 NPC 失败');
+  }
+}
+
+async function removeEmptyNpcs() {
+  const conversationId = props.conversationId;
+  const names = emptyNpcNames.value;
+  if (!conversationId || !names.length) return;
+  const preview = names.slice(0, 5).join('、');
+  const suffix = names.length > 5 ? `等 ${names.length} 个` : `${names.length} 个`;
+  if (!window.confirm(`从 NPC 列表移除 ${suffix}没有记忆和行为的 NPC？\n${preview}\n已有记忆和行为不会被删除。`)) {
+    return;
+  }
+  try {
+    const result = await hideEmptyConversationNpcs(conversationId);
+    if (conversationId !== props.conversationId) return;
+    if (names.includes(selectedNpc.value)) {
+      selectedNpc.value = '';
+      memories.value = [];
+      behaviors.value = [];
+    }
+    await loadNpcs();
+    notify.success(`已移除 ${result?.count ?? names.length} 个空 NPC`);
+  } catch (err) {
+    notify.error(err.message || '批量移除空 NPC 失败');
   }
 }
 
@@ -212,25 +348,52 @@ function formatTime(iso) {
 
 <template>
   <Teleport to="body">
-    <Transition name="npc-panel">
-      <div v-if="open" class="npc-panel-overlay" @click.self="emit('close')">
-        <aside class="npc-panel" role="dialog" aria-label="NPC 管理面板">
+    <div v-if="open" class="npc-panel-overlay" @click.self="requestClose" @pointerdown.self="requestClose">
+      <aside class="npc-panel" role="dialog" aria-label="NPC 管理面板">
           <header class="npc-panel-header">
             <div class="npc-panel-title">
               <Users :size="20" />
               <h2>NPC 管理</h2>
             </div>
-            <button class="npc-close" type="button" @click="emit('close')">
+            <button class="npc-close" type="button" @pointerdown.stop @click.stop="requestClose">
               <X :size="18" />
             </button>
           </header>
+
+          <section class="npc-panel-summary" aria-label="NPC 记忆概览">
+            <div class="npc-summary-card">
+              <span>NPC</span>
+              <strong>{{ npcPanelStats.npcCount }}</strong>
+            </div>
+            <div class="npc-summary-card memory">
+              <span>记忆</span>
+              <strong>{{ npcPanelStats.memoryCount }}</strong>
+            </div>
+            <div class="npc-summary-card behavior">
+              <span>行为</span>
+              <strong>{{ npcPanelStats.behaviorCount }}</strong>
+            </div>
+          </section>
 
           <div class="npc-panel-body">
             <!-- NPC List -->
             <div class="npc-list-section">
               <div class="npc-list-header">
                 <span>NPC 列表</span>
-                <button class="npc-refresh" type="button" title="刷新" @click="loadNpcs">↻</button>
+                <div class="npc-list-actions">
+                  <button
+                    class="npc-empty-remove"
+                    type="button"
+                    :disabled="!emptyNpcNames.length"
+                    title="移除没有记忆和行为的 NPC"
+                    @click="removeEmptyNpcs"
+                  >
+                    清理空项
+                  </button>
+                  <button class="npc-refresh" type="button" title="刷新" @click="loadNpcs">
+                    <RefreshCw :size="15" />
+                  </button>
+                </div>
               </div>
               <div v-if="loading" class="npc-empty">加载中...</div>
               <div v-else-if="!npcs.length" class="npc-empty">
@@ -258,6 +421,19 @@ function formatTime(iso) {
             <div v-if="selectedNpc" class="npc-detail-section">
               <div class="npc-detail-header">
                 <h3>{{ selectedNpc }}</h3>
+                <div class="npc-detail-metrics">
+                  <span>{{ selectedNpcStats.memoryCount }} 记忆</span>
+                  <span>{{ selectedNpcStats.behaviorCount }} 行为</span>
+                  <button
+                    class="npc-detail-remove"
+                    type="button"
+                    title="从列表移除"
+                    @click="removeSelectedNpc"
+                  >
+                    <Trash2 :size="13" />
+                    <span>移除</span>
+                  </button>
+                </div>
               </div>
 
               <div class="npc-tabs">
@@ -424,9 +600,8 @@ function formatTime(iso) {
               ← 点击左侧 NPC 查看详情
             </div>
           </div>
-        </aside>
-      </div>
-    </Transition>
+      </aside>
+    </div>
   </Teleport>
 </template>
 
@@ -435,27 +610,35 @@ function formatTime(iso) {
   position: fixed;
   inset: 0;
   z-index: 1000;
-  background: rgba(0, 0, 0, 0.45);
   display: flex;
   justify-content: flex-end;
+  background: color-mix(in srgb, #0c0b0a 46%, transparent);
+  backdrop-filter: blur(3px);
 }
 
 .npc-panel {
-  width: min(440px, 92vw);
+  width: min(520px, 94vw);
   height: 100%;
-  background: var(--surface, #1a1a2e);
+  transform: none !important;
+  border-left: 1px solid color-mix(in srgb, var(--line, #2a2a3e) 78%, transparent);
+  background:
+    linear-gradient(180deg,
+      color-mix(in srgb, var(--surface, #1a1a2e) 96%, transparent),
+      color-mix(in srgb, var(--bg, #11111f) 82%, transparent));
   color: var(--text, #e8e6e3);
   display: flex;
   flex-direction: column;
-  box-shadow: -4px 0 24px rgba(0, 0, 0, 0.3);
+  box-shadow: -18px 0 52px rgba(0, 0, 0, 0.26);
 }
 
 .npc-panel-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 16px 20px;
-  border-bottom: 1px solid var(--border, #2a2a3e);
+  padding: 18px 20px 14px;
+  border-bottom: 1px solid color-mix(in srgb, var(--line, #2a2a3e) 70%, transparent);
+  background: color-mix(in srgb, var(--surface, #1a1a2e) 86%, transparent);
+  backdrop-filter: blur(14px);
 }
 
 .npc-panel-title {
@@ -467,7 +650,7 @@ function formatTime(iso) {
 .npc-panel-title h2 {
   margin: 0;
   font-size: 18px;
-  font-weight: 600;
+  font-weight: 800;
 }
 
 .npc-close {
@@ -490,11 +673,50 @@ function formatTime(iso) {
   overflow-y: auto;
   display: flex;
   flex-direction: column;
+  scrollbar-gutter: stable;
+}
+
+.npc-panel-summary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  padding: 12px 14px;
+  border-bottom: 1px solid color-mix(in srgb, var(--line, #2a2a3e) 64%, transparent);
+  background: color-mix(in srgb, var(--surface, #1a1a2e) 78%, transparent);
+}
+
+.npc-summary-card {
+  display: grid;
+  gap: 3px;
+  padding: 10px;
+  border: 1px solid color-mix(in srgb, var(--line, #2a2a3e) 72%, transparent);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--surface, #1a1a2e) 70%, transparent);
+}
+
+.npc-summary-card span {
+  color: var(--text-muted, #888);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.npc-summary-card strong {
+  color: var(--text, #e8e6e3);
+  font-size: 20px;
+  line-height: 1;
+}
+
+.npc-summary-card.memory strong {
+  color: #8f6ee8;
+}
+
+.npc-summary-card.behavior strong {
+  color: #2f9f7b;
 }
 
 .npc-list-section {
-  border-bottom: 1px solid var(--border, #2a2a3e);
-  max-height: 200px;
+  border-bottom: 1px solid color-mix(in srgb, var(--line, #2a2a3e) 64%, transparent);
+  max-height: 240px;
   overflow-y: auto;
 }
 
@@ -509,34 +731,66 @@ function formatTime(iso) {
   letter-spacing: 0.5px;
 }
 
+.npc-list-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.npc-empty-remove {
+  min-height: 30px;
+  padding: 0 10px;
+  border: 1px solid color-mix(in srgb, #ef4444 28%, var(--line, #2a2a3e));
+  border-radius: 8px;
+  color: #ef4444;
+  background: color-mix(in srgb, #ef4444 7%, transparent);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.npc-empty-remove:hover:not(:disabled) {
+  background: color-mix(in srgb, #ef4444 13%, transparent);
+}
+
+.npc-empty-remove:disabled {
+  opacity: 0.42;
+  cursor: not-allowed;
+}
+
 .npc-refresh {
-  background: none;
-  border: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border: 1px solid color-mix(in srgb, var(--line, #2a2a3e) 72%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--surface, #1a1a2e) 70%, transparent);
   color: var(--text-muted, #888);
   cursor: pointer;
-  font-size: 16px;
-  padding: 2px 6px;
-  border-radius: 4px;
 }
 .npc-refresh:hover {
   background: var(--hover, rgba(255,255,255,0.08));
+  color: var(--accent, #818cf8);
 }
 
 .npc-list {
   display: flex;
   flex-direction: column;
-  gap: 2px;
-  padding: 0 12px 8px;
+  gap: 6px;
+  padding: 0 12px 10px;
 }
 
 .npc-item {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 8px 12px;
-  background: none;
-  border: none;
-  border-radius: 8px;
+  padding: 10px 12px;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--surface, #1a1a2e) 50%, transparent);
   color: var(--text, #e8e6e3);
   cursor: pointer;
   text-align: left;
@@ -544,9 +798,11 @@ function formatTime(iso) {
   transition: background 0.15s;
 }
 .npc-item:hover {
+  border-color: color-mix(in srgb, var(--accent, #818cf8) 26%, transparent);
   background: var(--hover, rgba(255,255,255,0.06));
 }
 .npc-item.active {
+  border-color: color-mix(in srgb, var(--accent, #818cf8) 38%, transparent);
   background: var(--accent-bg, rgba(99, 102, 241, 0.15));
   color: var(--accent, #818cf8);
 }
@@ -572,20 +828,61 @@ function formatTime(iso) {
 }
 
 .npc-detail-header {
-  padding: 14px 20px 0;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 16px 20px 4px;
 }
 
 .npc-detail-header h3 {
   margin: 0;
   font-size: 16px;
-  font-weight: 600;
+  font-weight: 800;
+}
+
+.npc-detail-metrics {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.npc-detail-metrics span {
+  padding: 2px 7px;
+  border: 1px solid color-mix(in srgb, var(--line, #2a2a3e) 70%, transparent);
+  border-radius: 999px;
+  color: var(--text-muted, #888);
+  background: color-mix(in srgb, var(--surface, #1a1a2e) 62%, transparent);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.npc-detail-remove {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 24px;
+  padding: 2px 8px;
+  border: 1px solid color-mix(in srgb, #ef4444 32%, var(--line, #2a2a3e));
+  border-radius: 999px;
+  color: #ef4444;
+  background: color-mix(in srgb, #ef4444 8%, transparent);
+  font: inherit;
+  font-size: 11px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.npc-detail-remove:hover {
+  background: color-mix(in srgb, #ef4444 14%, transparent);
 }
 
 .npc-tabs {
   display: flex;
-  gap: 4px;
+  gap: 8px;
   padding: 10px 20px;
-  border-bottom: 1px solid var(--border, #2a2a3e);
+  border-bottom: 1px solid color-mix(in srgb, var(--line, #2a2a3e) 64%, transparent);
 }
 
 .npc-tab {
@@ -616,8 +913,8 @@ function formatTime(iso) {
   margin: 12px 20px;
   padding: 8px 14px;
   background: var(--accent-bg, rgba(99, 102, 241, 0.12));
-  border: 1px dashed var(--accent, #818cf8);
-  border-radius: 8px;
+  border: 1px dashed color-mix(in srgb, var(--accent, #818cf8) 70%, transparent);
+  border-radius: 10px;
   color: var(--accent, #818cf8);
   cursor: pointer;
   font-size: 13px;
@@ -633,9 +930,10 @@ function formatTime(iso) {
   gap: 8px;
   margin: 12px 20px;
   padding: 14px;
-  background: var(--surface-raised, #22223a);
-  border-radius: 10px;
-  border: 1px solid var(--border, #2a2a3e);
+  background: color-mix(in srgb, var(--surface-raised, #22223a) 90%, transparent);
+  border-radius: 12px;
+  border: 1px solid color-mix(in srgb, var(--line, #2a2a3e) 70%, transparent);
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.12);
 }
 
 .npc-select,
@@ -727,10 +1025,14 @@ function formatTime(iso) {
 }
 
 .npc-card {
-  padding: 10px 14px;
-  background: var(--surface-raised, #22223a);
-  border-radius: 8px;
-  border: 1px solid var(--border, #2a2a3e);
+  padding: 12px 14px;
+  background:
+    linear-gradient(180deg,
+      color-mix(in srgb, var(--surface-raised, #22223a) 92%, transparent),
+      color-mix(in srgb, var(--surface, #1a1a2e) 70%, transparent));
+  border-radius: 12px;
+  border: 1px solid color-mix(in srgb, var(--line, #2a2a3e) 70%, transparent);
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.10);
 }
 .npc-card.disabled {
   opacity: 0.5;
@@ -803,18 +1105,18 @@ function formatTime(iso) {
 }
 .npc-panel-enter-active .npc-panel,
 .npc-panel-leave-active .npc-panel {
-  transition: transform 0.25s ease;
+  transition: none;
 }
 .npc-panel-enter-from {
   opacity: 0;
 }
 .npc-panel-enter-from .npc-panel {
-  transform: translateX(100%);
+  transform: none !important;
 }
 .npc-panel-leave-to {
   opacity: 0;
 }
 .npc-panel-leave-to .npc-panel {
-  transform: translateX(100%);
+  transform: none !important;
 }
 </style>

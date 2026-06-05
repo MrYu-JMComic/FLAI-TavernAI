@@ -1,4 +1,4 @@
-import { runToolCompletion } from './providers.js';
+import { runToolCompletion, streamToolCompletion } from './providers.js';
 import { resolvePromptUserName, userVariableToken } from './promptVariables.js';
 import { normalizeAdvancedSettings, normalizeAccessorySkills } from '../modules/advancedSettings.js';
 
@@ -123,7 +123,82 @@ const characterTools = [
               cgScene: skillConfigSchema()
             }
           },
-          statusBarPrompt: { type: 'string' }
+          statusBarPrompt: { type: 'string' },
+          statusBarBlueprint: {
+            type: 'object',
+            description: [
+              'Custom status bar seed data. Template labels and placeholders such as {{变量名}} are automatically inferred into variables, so keep labels exact and do not duplicate variable names.',
+              'Text rows should use string values when known, for example {"name":"姓名","value":"待定"}, and template markup like <span class="sb-label">姓名</span><span class="sb-val">{{姓名}}</span>.',
+              'Numeric meters should use value/max/color and placeholders such as {{体力}}, {{体力.max}}, {{体力.percent}}, and {{体力.color}}.'
+            ].join(' '),
+            additionalProperties: false,
+            properties: {
+              name: { type: 'string', description: '状态栏名称。' },
+              variables: {
+                type: 'array',
+                description: '新会话创建时写入的初始状态变量。',
+                items: {
+                  type: 'object',
+                  additionalProperties: false,
+                  properties: {
+                    name: {
+                      type: 'string',
+                      description: 'Variable name. Use the exact same text in placeholders, for example {{姓名}} or {{体力}}.'
+                    },
+                    value: {
+                      oneOf: [{ type: 'number' }, { type: 'string' }],
+                      description: 'Initial value. Use a number for meters, or a string for text rows such as "待定".'
+                    },
+                    max: {
+                      type: 'number',
+                      description: 'Optional max value for numeric meters; enables {{变量名.max}} and {{变量名.percent}}.'
+                    },
+                    color: {
+                      type: 'string',
+                      description: 'Optional CSS color for numeric meters; enables {{变量名.color}}.'
+                    }
+                  },
+                  required: ['name', 'value']
+                }
+              },
+              template: {
+                type: 'string',
+                description: [
+                  'Optional fully custom status bar template. Leave empty to use built-in rendering.',
+                  'Write safe HTML plus optional CSS. Do not write Vue, Markdown code fences, event attributes, external resources, javascript: URLs, or <script>.',
+                  'For interactive controls, use safe declarative buttons only: <button data-sb-action="quick-reply" data-sb-text="...">...</button>, <button data-sb-action="copy" data-sb-copy="...">...</button>, or <button data-sb-action="collapse">...</button>.',
+                  'Every dynamic visible value should use a placeholder like {{变量名}}; labels and placeholders are inferred into variables automatically, but include variables[] when you know useful initial values.',
+                  'Do not hardcode mutable values such as 待定/未知/无 inside .sb-val.',
+                  'For text rows, use <span class="sb-label">姓名</span><span class="sb-val">{{姓名}}</span> and variables: [{"name":"姓名","value":"待定"}].',
+                  'For numeric meters, use {{体力}}, {{体力.max}}, {{体力.percent}}, and {{体力.color}} with variables: [{"name":"体力","value":80,"max":100,"color":"#27ae60"}].',
+                  'Allowed tags include div/span/button/p/section/article/header/footer/ul/ol/li/small/strong/em/b/i/br/hr/style. Keep HTML tags, quotes, CSS braces, and placeholders balanced.'
+                ].join(' ')
+              }
+            }
+          },
+          desktopBackgroundUrl: { type: 'string' },
+          mobileBackgroundUrl: { type: 'string' },
+          customCss: { type: 'string' },
+          customJs: { type: 'string' },
+          modSuggestions: {
+            type: 'array',
+            items: {
+              type: 'object',
+              properties: {
+                name: { type: 'string' },
+                description: { type: 'string' },
+                type: {
+                  type: 'string',
+                  enum: ['prompt_inject', 'style_enhance', 'custom'],
+                  description: 'prompt_inject injects direct system prompt text; style_enhance adds writing style guidance; custom is a named utility block.'
+                },
+                content: { type: 'string' },
+                enabled: { type: 'boolean' }
+              },
+              required: ['name', 'content'],
+              additionalProperties: false
+            }
+          }
         },
         additionalProperties: false
       }
@@ -131,10 +206,24 @@ const characterTools = [
   }
 ];
 
-export async function completeCharacterDraft(settings, { requirement = '', current = {}, user = {} } = {}) {
+const statusBarBlueprintInstructions = [
+  'When the user asks for a status bar, provide both statusBarPrompt and statusBarBlueprint; do not only write the prompt.',
+  'statusBarBlueprint.template labels/placeholders are inferred into variables automatically, but statusBarBlueprint.variables remains the best place to provide useful initial values.',
+  'Use exact labels and placeholders consistently so inferred variables do not duplicate: text rows render {{变量名}}; numeric bars render {{变量名}}, {{变量名.max}}, {{变量名.percent}}, and {{变量名.color}}.',
+  'Do not hardcode dynamic fallback text such as 待定, 未知, 无, or 故事尚未开始 inside .sb-val or visible value spans; put that text in variables[].value and reference {{变量名}}.',
+  'For rows like <span class="sb-label">姓名</span><span class="sb-val">...</span>, the label text must equal a variable name and the value span must be <span class="sb-val">{{姓名}}</span>.',
+  'Example text variable: {"name":"姓名","value":"待定"}. Example meter: {"name":"体力","value":80,"max":100,"color":"#27ae60"} with style="width:{{体力.percent}};background:{{体力.color}}".',
+  'For statusBarBlueprint.template, output plain safe HTML plus optional CSS. It is not Vue or Markdown; do not use script tags, event handlers, javascript:, external resources, or fenced code blocks.',
+  'For button behavior, use safe declarative actions: data-sb-action="quick-reply" with data-sb-text, data-sb-action="copy" with data-sb-copy, or data-sb-action="collapse".',
+  'Keep statusBarBlueprint.template syntactically valid: balanced HTML tags, balanced quotes, balanced CSS braces, and balanced placeholders. If unsure, leave template empty and rely on variables.'
+];
+
+export async function completeCharacterDraft(settings, { requirement = '', current = {}, user = {}, options = {}, signal } = {}) {
   const draft = normalizeDraft(current);
   let summary = '';
   const userName = resolvePromptUserName(user);
+  const enabledSections = normalizeGenerationOptions(options);
+  const optimizeExisting = options.optimizeExisting === true || options.optimize_existing === true;
 
   const result = await runToolCompletion(
     settings,
@@ -147,9 +236,15 @@ export async function completeCharacterDraft(settings, { requirement = '', curre
           '目标是生成适合角色扮演对话的中文 Tavern 角色卡。',
           `可在背景、世界观、人设、开场白中使用 ${userVariableToken}，它运行时会替换为当前用户：${userName}。`,
           '没有必要的字段保持为空；不要为了填满表单而编造无关设定。',
+          optimizeExisting
+            ? '已开启“结合当前已填写内容优化”：currentCharacter 是用户现有表单，请在保留有效内容的基础上按用户消息优化，不要无故清空字段。'
+            : '未开启“结合当前已填写内容优化”：主要依据用户消息生成；currentCharacter 里的空字段不是清空用户表单的指令。',
           '正则规则只在用户明确需要自动替换、口癖清洗、禁词替换、格式规范时添加。',
           '正则 pattern 必须是 JavaScript 可用正则，避免过宽、灾难性回溯或破坏正常中文内容。',
-          'You may call set_character_extensions to suggest world book notes, markdown fold render plugins, and opening accessory skill defaults.',
+          'You may call set_character_extensions to suggest world book notes, markdown fold render plugins, opening accessory skill defaults, status bar prompt, initial statusBarBlueprint variables/template, and built-in CSS/JS.',
+          ...statusBarBlueprintInstructions,
+          `Only modify these enabled sections: ${Object.entries(enabledSections).filter(([, value]) => value).map(([key]) => key).join(', ') || 'none'}.`,
+          'If a section is not enabled, do not call tools for it and do not include it in arguments.',
           'Do not enable economyAgent, talentPrompt, or cgScene unless the user explicitly asks for economy, talents, CG, portraits, or scene art.',
           'Prefer statusBarAgent:auto only when the character has clear status variables; keep npcAgent off unless side-character memory is important.'
         ].join('\n')
@@ -159,7 +254,9 @@ export async function completeCharacterDraft(settings, { requirement = '', curre
         content: JSON.stringify(
           {
             requirement: String(requirement || '').trim(),
-            currentCharacter: draft
+            currentCharacter: draft,
+            enabledSections,
+            optimizeExisting
           },
           null,
           2
@@ -167,8 +264,8 @@ export async function completeCharacterDraft(settings, { requirement = '', curre
       }
     ],
     characterTools,
-    (name, args) => executeCharacterTool(name, args, draft),
-    { maxRounds: 6, thinkingEnabled: false }
+    (name, args) => executeCharacterTool(name, filterToolArgs(name, args, enabledSections), draft),
+    { maxRounds: 6, thinkingEnabled: false, signal }
   );
 
   if (!result.toolCalls.length && result.content) {
@@ -180,8 +277,81 @@ export async function completeCharacterDraft(settings, { requirement = '', curre
     character: normalizeDraft(draft),
     toolCalls: result.toolCalls.map((call) => ({
       name: call.name,
-      arguments: call.arguments
+      arguments: call.arguments,
+      result: call.result
     })),
+    process: result.process || [],
+    reasoning: collectReasoning(result.process),
+    summary,
+    usage: result.usage || null
+  };
+}
+
+export async function streamCharacterDraft(settings, { requirement = '', current = {}, user = {}, options = {}, signal, emit = () => {} } = {}) {
+  const draft = normalizeDraft(current);
+  const userName = resolvePromptUserName(user);
+  const enabledSections = normalizeGenerationOptions(options);
+  const optimizeExisting = options.optimizeExisting === true || options.optimize_existing === true;
+
+  const result = await streamToolCompletion(
+    settings,
+    [
+      {
+        role: 'system',
+        content: [
+          '你是 FLAI Tavern AI 的角色设定助手。',
+          '必须通过工具填写角色设定，不要只输出自然语言。',
+          '目标是生成适合角色扮演对话的中文 Tavern 角色卡。',
+          `可在背景、世界观、人设、开场白中使用 ${userVariableToken}，它运行时会替换为当前用户：${userName}。`,
+          '没有必要的字段保持为空；不要为了填满表单而编造无关设定。',
+          optimizeExisting
+            ? '已开启“结合当前已填写内容优化”：currentCharacter 是用户现有表单，请在保留有效内容的基础上按用户消息优化，不要无故清空字段。'
+            : '未开启“结合当前已填写内容优化”：主要依据用户消息生成；currentCharacter 里的空字段不是清空用户表单的指令。',
+          '正则规则只在用户明确需要自动替换、口癖清洗、禁词替换、格式规范时添加。',
+          '正则 pattern 必须是 JavaScript 可用正则，避免过宽、灾难性回溯或破坏正常中文内容。',
+          'You may call set_character_extensions to suggest world book notes, markdown fold render plugins, opening accessory skill defaults, status bar prompt, initial statusBarBlueprint variables/template, and built-in CSS/JS.',
+          ...statusBarBlueprintInstructions,
+          `Only modify these enabled sections: ${Object.entries(enabledSections).filter(([, value]) => value).map(([key]) => key).join(', ') || 'none'}.`,
+          'If a section is not enabled, do not call tools for it and do not include it in arguments.',
+          'Do not enable economyAgent, talentPrompt, or cgScene unless the user explicitly asks for economy, talents, CG, portraits, or scene art.',
+          'Prefer statusBarAgent:auto only when the character has clear status variables; keep npcAgent off unless side-character memory is important.'
+        ].join('\n')
+      },
+      {
+        role: 'user',
+        content: JSON.stringify(
+          {
+            requirement: String(requirement || '').trim(),
+            currentCharacter: draft,
+            enabledSections,
+            optimizeExisting
+          },
+          null,
+          2
+        )
+      }
+    ],
+    characterTools,
+    (name, args) => executeCharacterTool(name, filterToolArgs(name, args, enabledSections), draft),
+    emit,
+    signal,
+    { maxRounds: 6, thinkingEnabled: false }
+  );
+
+  if (!result.toolCalls.length && result.content) {
+    mergeProfile(draft, parseLooseJson(result.content));
+  }
+  const summary = result.content || summarizeDraft(result.toolCalls);
+
+  return {
+    character: normalizeDraft(draft),
+    toolCalls: result.toolCalls.map((call) => ({
+      name: call.name,
+      arguments: call.arguments,
+      result: call.result
+    })),
+    process: result.process || [],
+    reasoning: collectReasoning(result.process),
     summary,
     usage: result.usage || null
   };
@@ -246,10 +416,23 @@ function mergeExtensions(draft, args = {}) {
     applied.renderPlugins = draft.renderPlugins;
   }
   const accessorySkills = args.accessorySkills || args.accessory_skills;
-  if (accessorySkills || Object.prototype.hasOwnProperty.call(args, 'statusBarPrompt')) {
+  const hasAdvancedField = [
+    'statusBarPrompt',
+    'desktopBackgroundUrl',
+    'mobileBackgroundUrl',
+    'customCss',
+    'customJs',
+    'statusBarBlueprint'
+  ].some((key) => Object.prototype.hasOwnProperty.call(args, key));
+  if (accessorySkills || hasAdvancedField) {
     draft.authorAdvancedSettings = normalizeAdvancedSettings({
       ...(draft.authorAdvancedSettings || {}),
       statusBarPrompt: args.statusBarPrompt ?? draft.authorAdvancedSettings?.statusBarPrompt,
+      statusBarBlueprint: args.statusBarBlueprint ?? draft.authorAdvancedSettings?.statusBarBlueprint,
+      desktopBackgroundUrl: args.desktopBackgroundUrl ?? draft.authorAdvancedSettings?.desktopBackgroundUrl,
+      mobileBackgroundUrl: args.mobileBackgroundUrl ?? draft.authorAdvancedSettings?.mobileBackgroundUrl,
+      customCss: args.customCss ?? draft.authorAdvancedSettings?.customCss,
+      customJs: args.customJs ?? draft.authorAdvancedSettings?.customJs,
       accessorySkills: normalizeAccessorySkills(accessorySkills || draft.authorAdvancedSettings?.accessorySkills)
     });
     applied.authorAdvancedSettings = draft.authorAdvancedSettings;
@@ -257,6 +440,13 @@ function mergeExtensions(draft, args = {}) {
   if (Object.prototype.hasOwnProperty.call(args, 'worldBookSuggestion')) {
     draft.worldBookSuggestion = limitText(args.worldBookSuggestion, 'worldBookSuggestion');
     applied.worldBookSuggestion = draft.worldBookSuggestion;
+  }
+  if (Array.isArray(args.modSuggestions)) {
+    draft.modSuggestions = args.modSuggestions
+      .map((mod, index) => normalizeModSuggestion(mod, index))
+      .filter((mod) => mod.name && mod.content)
+      .slice(0, 8);
+    applied.modSuggestions = draft.modSuggestions;
   }
   return applied;
 }
@@ -279,8 +469,90 @@ function normalizeDraft(value = {}) {
       ? value.renderPlugins.map((plugin, index) => normalizeRenderPlugin(plugin, index)).filter((plugin) => plugin.pattern)
       : [],
     authorAdvancedSettings: normalizeAdvancedSettings(value.authorAdvancedSettings || value.advancedSettings || {}),
-    worldBookSuggestion: limitText(value.worldBookSuggestion, 'worldBookSuggestion')
+    worldBookSuggestion: limitText(value.worldBookSuggestion, 'worldBookSuggestion'),
+    modSuggestions: Array.isArray(value.modSuggestions)
+      ? value.modSuggestions.map((mod, index) => normalizeModSuggestion(mod, index)).filter((mod) => mod.name && mod.content)
+      : []
   };
+}
+
+function normalizeGenerationOptions(options = {}) {
+  const defaults = {
+    profile: true,
+    background: true,
+    worldview: true,
+    persona: true,
+    openingMessage: true,
+    tags: true,
+    regexRules: true,
+    renderPlugins: true,
+    worldBookSuggestion: true,
+    advancedSettings: true,
+    modSuggestions: true
+  };
+  return Object.fromEntries(
+    Object.entries(defaults).map(([key, fallback]) => [key, options[key] === undefined ? fallback : Boolean(options[key])])
+  );
+}
+
+function filterToolArgs(name, args = {}, enabled = {}) {
+  if (name === 'set_character_profile') {
+    const allowed = {};
+    for (const key of ['name', 'gender', 'age', 'visibility']) {
+      if (enabled.profile && Object.prototype.hasOwnProperty.call(args, key)) allowed[key] = args[key];
+    }
+    for (const key of ['background', 'worldview', 'persona', 'openingMessage']) {
+      if (enabled[key] && Object.prototype.hasOwnProperty.call(args, key)) allowed[key] = args[key];
+    }
+    if (enabled.tags && Array.isArray(args.tags)) allowed.tags = args.tags;
+    return allowed;
+  }
+  if (name === 'add_regex_rule' || name === 'replace_regex_rules') {
+    return enabled.regexRules ? args : {};
+  }
+  if (name === 'set_character_extensions') {
+    const allowed = {};
+    if (enabled.worldBookSuggestion && Object.prototype.hasOwnProperty.call(args, 'worldBookSuggestion')) {
+      allowed.worldBookSuggestion = args.worldBookSuggestion;
+    }
+    if (enabled.renderPlugins && Array.isArray(args.renderPlugins)) {
+      allowed.renderPlugins = args.renderPlugins;
+    }
+    if (enabled.advancedSettings) {
+      if (Object.prototype.hasOwnProperty.call(args, 'statusBarPrompt')) allowed.statusBarPrompt = args.statusBarPrompt;
+      if (Object.prototype.hasOwnProperty.call(args, 'desktopBackgroundUrl')) allowed.desktopBackgroundUrl = args.desktopBackgroundUrl;
+      if (Object.prototype.hasOwnProperty.call(args, 'mobileBackgroundUrl')) allowed.mobileBackgroundUrl = args.mobileBackgroundUrl;
+      if (Object.prototype.hasOwnProperty.call(args, 'customCss')) allowed.customCss = args.customCss;
+      if (Object.prototype.hasOwnProperty.call(args, 'customJs')) allowed.customJs = args.customJs;
+      if (Object.prototype.hasOwnProperty.call(args, 'statusBarBlueprint')) allowed.statusBarBlueprint = args.statusBarBlueprint;
+      if (Object.prototype.hasOwnProperty.call(args, 'accessorySkills')) allowed.accessorySkills = args.accessorySkills;
+    }
+    if (enabled.modSuggestions && Array.isArray(args.modSuggestions)) {
+      allowed.modSuggestions = args.modSuggestions;
+    }
+    return allowed;
+  }
+  return args;
+}
+
+function normalizeModSuggestion(mod = {}, index = 0) {
+  const type = normalizeModType(mod.type);
+  return {
+    name: String(mod.name || `AI Mod ${index + 1}`).trim().slice(0, 80),
+    description: String(mod.description || '').trim().slice(0, 500),
+    type,
+    content: String(mod.content || '').trim().slice(0, 6000),
+    enabled: mod.enabled !== false
+  };
+}
+
+function normalizeModType(type) {
+  if (['prompt_inject', 'style_enhance', 'custom'].includes(type)) {
+    return type;
+  }
+  if (type === 'style') return 'style_enhance';
+  if (['system', 'behavior', 'utility'].includes(type)) return 'prompt_inject';
+  return 'prompt_inject';
 }
 
 function normalizeTags(tags = []) {
@@ -395,4 +667,12 @@ function summarizeDraft(toolCalls = []) {
     return '';
   }
   return `已调用 ${toolCalls.length} 次工具完善角色设定。`;
+}
+
+function collectReasoning(process = []) {
+  return process
+    .map((step) => String(step.reasoning || '').trim())
+    .filter(Boolean)
+    .join('\n\n')
+    .slice(0, 8000);
 }

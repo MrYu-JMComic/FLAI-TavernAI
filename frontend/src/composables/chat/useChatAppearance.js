@@ -1,5 +1,6 @@
 import { computed, reactive, ref } from 'vue';
 import { fetchWorldBooks, saveConversationSettings } from '../../api';
+import { isPhoneViewport } from '../useViewport';
 import {
   buildScopedChatCss,
   createDefaultChatAppearance,
@@ -38,6 +39,7 @@ export function useChatAppearance({
   const chatLorebookId = ref(null);
   const worldBooks = ref([]);
   const worldBooksLoading = ref(false);
+  let appearanceApplyToken = 0;
 
   const effectiveChatAppearance = computed(() => mergeChatAppearance(authorChatAppearance.value, chatAppearanceForm));
 
@@ -62,12 +64,7 @@ export function useChatAppearance({
     return activeCharacter()?.renderPlugins || [];
   }
 
-  function isPhoneViewport() {
-    if (typeof window === 'undefined') {
-      return false;
-    }
-    return window.matchMedia('(max-width: 760px)').matches;
-  }
+  // isPhoneViewport is now imported from composables/useViewport.js
 
   function syncConversationAppearance(settings = {}) {
     const authorSettings = normalizeChatAppearance(settings?.authorSettings || conversation.value?.authorSettings || {});
@@ -79,13 +76,14 @@ export function useChatAppearance({
   }
 
   async function saveConversationAppearanceChanges() {
-    if (!conversation.value?.id || appearanceSaving.value) {
+    const conversationId = conversation.value?.id;
+    if (!conversationId || appearanceSaving.value) {
       return;
     }
 
     appearanceSaving.value = true;
     try {
-      const saved = await saveConversationSettings(conversation.value.id, {
+      const saved = await saveConversationSettings(conversationId, {
         desktopBackgroundUrl: chatAppearanceForm.desktopBackgroundUrl,
         mobileBackgroundUrl: chatAppearanceForm.mobileBackgroundUrl,
         customCss: chatAppearanceForm.customCss,
@@ -93,16 +91,16 @@ export function useChatAppearance({
         statusBarPrompt: chatAppearanceForm.statusBarPrompt,
         chatLorebookId: chatLorebookId.value
       });
+      if (conversation.value?.id !== conversationId) {
+        return;
+      }
       syncConversationAppearance(saved);
       conversation.value = {
         ...conversation.value,
         chatLorebookId: saved.chatLorebookId ?? chatLorebookId.value,
         settings: {
-          desktopBackgroundUrl: saved.desktopBackgroundUrl,
-          mobileBackgroundUrl: saved.mobileBackgroundUrl,
-          customCss: saved.customCss,
-          customJs: saved.customJs,
-          statusBarPrompt: saved.statusBarPrompt,
+          ...(conversation.value?.settings || {}),
+          ...saved,
           chatLorebookId: saved.chatLorebookId ?? chatLorebookId.value
         },
         authorSettings: saved.authorSettings || authorChatAppearance.value,
@@ -111,16 +109,23 @@ export function useChatAppearance({
       await applyConversationAppearance();
       showActionNotice('会话自定义已保存');
     } catch (err) {
+      if (conversation.value?.id !== conversationId) {
+        return;
+      }
       showError(err.message);
     } finally {
-      appearanceSaving.value = false;
+      if (conversation.value?.id === conversationId) {
+        appearanceSaving.value = false;
+      }
     }
   }
 
   async function applyConversationAppearance() {
     cleanupConversationAppearance();
+    const applyToken = ++appearanceApplyToken;
 
-    if (!conversation.value?.id) {
+    const conversationId = conversation.value?.id;
+    if (!conversationId) {
       return;
     }
 
@@ -129,7 +134,7 @@ export function useChatAppearance({
     syncCustomAppearanceStyle(style);
 
     try {
-      customAppearanceCleanup.value = await runChatCustomScript(activeAppearance.customJs, {
+      const cleanup = await runChatCustomScript(activeAppearance.customJs, {
         conversation: conversation.value,
         character: activeCharacter(),
         user: user.value,
@@ -156,13 +161,24 @@ export function useChatAppearance({
         requestPaint: waitForFrame,
         wait: waitMs
       });
+      if (applyToken !== appearanceApplyToken || conversation.value?.id !== conversationId) {
+        if (typeof cleanup === 'function') {
+          cleanup();
+        }
+        return;
+      }
+      customAppearanceCleanup.value = cleanup;
     } catch (err) {
+      if (applyToken !== appearanceApplyToken || conversation.value?.id !== conversationId) {
+        return;
+      }
       console.error(err);
       notify.warning('自定义 JS 执行失败，已保留设置');
     }
   }
 
   function cleanupConversationAppearance() {
+    appearanceApplyToken += 1;
     if (customAppearanceCleanup.value) {
       try {
         customAppearanceCleanup.value();

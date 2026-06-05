@@ -1,6 +1,6 @@
 import { normalizeAccessorySkills, isAccessorySkillActive, normalizeAdvancedSettings } from '../modules/advancedSettings.js';
 import { processTransactionIntents, createConversationTransaction } from '../modules/economy.js';
-import { addNpcMemory, scanNpcsFromMessages } from '../modules/npcs.js';
+import { addNpcMemory, isConversationNpcHidden, upsertConversationNpc } from '../modules/npcs.js';
 import { applyVariableUpdates, extractVariablesFromText, upsertStatusBar } from '../modules/statusBars.js';
 import { detectSceneAndEmotion, findBestMatch, listCharacterImages } from '../modules/characterImages.js';
 import { hasUsableProvider, runToolCompletion } from './providers.js';
@@ -9,12 +9,17 @@ const agentTimeoutMs = 20000;
 
 export function getAccessorySkillsPayload(conversation, statusBar = null) {
   const skills = normalizeAccessorySkills(conversation?.settings?.accessorySkills || {});
+  const advancedSettings = normalizeAdvancedSettings(conversation?.settings || {});
   return {
     skills,
     active: Object.fromEntries(
       Object.keys(skills).map((key) => [
         key,
-        isAccessorySkillActive(skills, key, { statusBar })
+        isAccessorySkillActive(skills, key, {
+          statusBar,
+          statusBarPrompt: advancedSettings.statusBarPrompt,
+          statusBarBlueprint: advancedSettings.statusBarBlueprint
+        })
       ])
     )
   };
@@ -84,15 +89,17 @@ async function runAgentJob(skill, config, emit, handler) {
 }
 
 async function runStatusBarAgent({ db, userId, conversation, assistantMessage, settings, statusBar, skill }) {
-  if (!statusBar?.variables?.length) {
+  const statusBarPrompt = normalizeAdvancedSettings(conversation?.settings || {}).statusBarPrompt;
+  if (!statusBar?.variables?.length && !statusBarPrompt) {
     return { statusBar: null, updates: [] };
   }
 
+  const currentStatusBar = statusBar || { name: '状态栏', variables: [], template: '' };
   let updates = [];
   if (hasUsableProvider(settings)) {
     const toolResult = await runToolCompletion(
       withModelOverride(settings, skill),
-      buildStatusBarMessages(statusBar, assistantMessage.content, normalizeAdvancedSettings(conversation?.settings || {}).statusBarPrompt),
+      buildStatusBarMessages(currentStatusBar, assistantMessage.content, statusBarPrompt),
       [statusBarTool()],
       async (toolName, args) => {
         if (toolName !== 'update_status_bar') {
@@ -105,12 +112,12 @@ async function runStatusBarAgent({ db, userId, conversation, assistantMessage, s
     ).catch(() => null);
 
     if (!updates.length && toolResult?.content) {
-      updates = extractVariablesFromText(toolResult.content, statusBar.variables);
+      updates = extractVariablesFromText(toolResult.content, currentStatusBar.variables);
     }
   }
 
   if (!updates.length) {
-    updates = extractVariablesFromText(assistantMessage.content, statusBar.variables);
+    updates = extractVariablesFromText(assistantMessage.content, currentStatusBar.variables);
   }
 
   if (!updates.length) {
@@ -118,24 +125,40 @@ async function runStatusBarAgent({ db, userId, conversation, assistantMessage, s
   }
 
   const nextStatusBar = upsertStatusBar(db, userId, conversation.id, {
-    name: statusBar.name,
-    variables: applyVariableUpdates(statusBar.variables, updates),
-    template: statusBar.template
+    name: currentStatusBar.name,
+    variables: mergeStatusVariables(currentStatusBar.variables, updates),
+    template: currentStatusBar.template
   });
   return { statusBar: nextStatusBar, updates };
 }
 
 async function runNpcAgent({ db, userId, conversation, character, assistantMessage, settings, skill }) {
   const recorded = [];
+  const npcs = [];
 
   if (hasUsableProvider(settings)) {
     await runToolCompletion(
       withModelOverride(settings, skill),
       buildNpcMessages(character, assistantMessage.content),
-      [npcMemoryTool()],
+      [npcUpsertTool(), npcMemoryTool()],
       async (toolName, args) => {
+        if (toolName === 'upsert_npc') {
+          const npc = upsertNpcFromAgent(db, userId, conversation.id, args);
+          if (npc) {
+            npcs.push(npc);
+          }
+          return { ok: true, npc };
+        }
         if (toolName !== 'record_npc_memory') {
           return { ok: false, error: `Unsupported tool: ${toolName}` };
+        }
+        const npc = upsertNpcFromAgent(db, userId, conversation.id, {
+          npcName: args.npcName,
+          evidence: args.content,
+          confidence: args.confidence ?? 75
+        });
+        if (npc) {
+          npcs.push(npc);
         }
         const memory = addNpcMemoryIfNew(db, userId, conversation.id, args.npcName, {
           memoryType: args.memoryType || 'event',
@@ -150,20 +173,7 @@ async function runNpcAgent({ db, userId, conversation, character, assistantMessa
     ).catch(() => null);
   }
 
-  if (!recorded.length) {
-    const names = scanNpcsFromMessages([{ role: 'assistant', content: assistantMessage.content }], character?.name || '');
-    for (const npcName of names.slice(0, 5)) {
-      const memory = addNpcMemoryIfNew(db, userId, conversation.id, npcName, {
-        memoryType: 'event',
-        content: snippet(assistantMessage.content)
-      });
-      if (memory) {
-        recorded.push(memory);
-      }
-    }
-  }
-
-  return { memories: recorded };
+  return { npcs, memories: recorded };
 }
 
 async function runEconomyAgent({ db, userId, conversation, assistantMessage, settings, skill }) {
@@ -222,6 +232,9 @@ function buildStatusBarMessages(statusBar, content, statusBarPrompt = '') {
       content: [
         'You are a state bar updater for a roleplay chat.',
         'Call update_status_bar only when the assistant reply clearly changes one or more variables.',
+        'The variable value can be a number for meters or a short string for profile/status text.',
+        'Pay close attention to short text fields for outfit, clothing, equipment, carried items, location, mood, and memory.',
+        'You may create a new variable when the guidance asks for it and the reply contains a clear value.',
         'Do not invent changes.',
         statusBarPrompt ? `Additional author/session guidance:\n${statusBarPrompt}` : ''
       ].join('\n')
@@ -242,8 +255,10 @@ function buildNpcMessages(character, content) {
       role: 'system',
       content: [
         'You are an NPC memory extractor for a roleplay chat.',
-        'Call record_npc_memory for named side characters that appear in the reply.',
-        'Skip the main character and skip generic section titles.'
+        'Call upsert_npc for named side characters that clearly appear in the reply.',
+        'Call record_npc_memory only when there is a concise useful memory about that side character.',
+        'Skip the main character, user/player, generic section titles, status panels, and markdown headings.',
+        'Do not report narrative fragments, pronouns, or UI labels as NPCs.'
       ].join('\n')
     },
     {
@@ -254,6 +269,26 @@ function buildNpcMessages(character, content) {
       })
     }
   ];
+}
+
+function npcUpsertTool() {
+  return {
+    type: 'function',
+    function: {
+      name: 'upsert_npc',
+      description: 'Confirm that a named side character appeared in the reply.',
+      parameters: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          npcName: { type: 'string' },
+          evidence: { type: 'string' },
+          confidence: { type: 'number', description: '0-100 confidence that this is a real side character name.' }
+        },
+        required: ['npcName', 'evidence']
+      }
+    }
+  };
 }
 
 function buildEconomyMessages(content) {
@@ -287,8 +322,9 @@ function statusBarTool() {
               additionalProperties: false,
               properties: {
                 name: { type: 'string' },
-                value: { type: 'number' },
-                max: { type: 'number' }
+                value: { type: 'string', maxLength: 200 },
+                max: { type: 'number' },
+                color: { type: 'string' }
               },
               required: ['name', 'value']
             }
@@ -344,19 +380,69 @@ function economyTool() {
 
 function normalizeStatusUpdates(args = {}) {
   return (Array.isArray(args.variables) ? args.variables : [])
-    .map((item) => ({
-      name: String(item?.name || '').trim(),
-      value: Number(item?.value),
-      ...(item?.max !== undefined ? { max: Number(item.max) } : {})
-    }))
-    .filter((item) => item.name && Number.isFinite(item.value))
+    .map((item) => {
+      const value = normalizeStatusValue(item?.value);
+      return {
+        name: String(item?.name || '').trim(),
+        value,
+        ...(Number.isFinite(Number(item?.max)) ? { max: Number(item.max) } : {}),
+        ...(typeof item?.color === 'string' && item.color.trim() ? { color: item.color.trim() } : {})
+      };
+    })
+    .filter((item) => item.name && item.value !== '')
     .slice(0, 20);
+}
+
+function mergeStatusVariables(variables = [], updates = []) {
+  if (!Array.isArray(updates) || updates.length === 0) {
+    return variables;
+  }
+  const current = applyVariableUpdates(Array.isArray(variables) ? variables : [], updates);
+  const seen = new Set(current.map((item) => statusVariableKey(item.name)));
+  const additions = updates
+    .filter((item) => item.name && !seen.has(statusVariableKey(item.name)))
+    .map((item) => ({
+      name: item.name,
+      value: item.value,
+      ...(Number.isFinite(Number(item.max))
+        ? { max: Number(item.max) }
+        : typeof item.value === 'number'
+          ? { max: 100 }
+          : {}),
+      color: item.color || ''
+    }));
+  return [...current, ...additions].slice(0, 20);
+}
+
+function statusVariableKey(value) {
+  return String(value || '')
+    .replace(/[\s\u3000:\uFF1A;\uFF1B,\uFF0C.\u3002\u3001/\\|()[\]{}"'`~!@#$%^&*_+=?<>-]+/g, '')
+    .trim()
+    .toLowerCase();
+}
+
+function normalizeStatusValue(value) {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return value;
+  }
+  const text = String(value ?? '').trim();
+  if (!text) {
+    return '';
+  }
+  const numeric = Number(text);
+  if (Number.isFinite(numeric) && /^[-+]?(?:\d+|\d*\.\d+)$/.test(text)) {
+    return numeric;
+  }
+  return text.length > 200 ? text.slice(0, 200) : text;
 }
 
 function addNpcMemoryIfNew(db, userId, conversationId, npcName, payload) {
   const name = String(npcName || '').trim().slice(0, 80);
   const content = String(payload?.content || '').trim();
   if (!name || !content) {
+    return null;
+  }
+  if (isConversationNpcHidden(db, conversationId, name)) {
     return null;
   }
   const existing = db
@@ -375,9 +461,17 @@ function addNpcMemoryIfNew(db, userId, conversationId, npcName, payload) {
   });
 }
 
-function snippet(value) {
-  const text = String(value || '').replace(/\s+/g, ' ').trim();
-  return text.length > 240 ? `${text.slice(0, 240)}...` : text;
+function upsertNpcFromAgent(db, userId, conversationId, args = {}) {
+  const npcName = String(args.npcName || args.name || '').trim();
+  if (!npcName || isConversationNpcHidden(db, conversationId, npcName)) {
+    return null;
+  }
+  return upsertConversationNpc(db, userId, conversationId, {
+    npcName,
+    source: 'agent',
+    evidence: args.evidence || '',
+    confidence: Number.isFinite(Number(args.confidence)) ? Number(args.confidence) : 75
+  });
 }
 
 function withTimeout(promise, ms, message) {

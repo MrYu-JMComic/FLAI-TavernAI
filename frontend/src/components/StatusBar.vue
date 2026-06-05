@@ -1,5 +1,7 @@
 <script setup>
-import { computed } from 'vue';
+import { computed, onBeforeUnmount, ref, watch } from 'vue';
+import { ChevronDown } from '@lucide/vue';
+import { buildScopedChatCss } from '../utils/chatAppearance';
 
 const VALID_VARIANTS = ['default', 'compact', 'minimal', 'neon'];
 const VALID_DENSITIES = ['default', 'cozy', 'compact'];
@@ -27,6 +29,9 @@ const props = defineProps({
 });
 
 const emit = defineEmits(['quick-reply']);
+const collapsed = ref(false);
+const templateScopeId = ref(`flai-sb-${Math.random().toString(36).slice(2, 10)}`);
+let customTemplateStyleElement = null;
 
 const cfg = computed(() => {
   const raw = props.templateConfig || {};
@@ -55,20 +60,29 @@ const hasImmersiveContent = computed(() => {
 
 const displayVariables = computed(() => {
   if (!props.statusBar?.variables) return [];
-  return props.statusBar.variables.map((v) => {
-    const value = Number(v.value) || 0;
-    const max = Number(v.max) || 100;
-    const percentage = max > 0 ? Math.min(100, Math.max(0, (value / max) * 100)) : 0;
-    return {
-      name: v.name || '?',
-      value,
-      max,
-      percentage,
-      color: v.color || defaultColor(v.name),
-      displayValue: max > 0 ? `${value}/${max}` : String(value)
-    };
-  });
+  return props.statusBar.variables.map(normalizeDisplayVariable);
 });
+
+const customTemplate = computed(() => {
+  const raw = String(props.statusBar?.template || '').trim();
+  if (!raw || raw[0] === '{') {
+    return { html: '', css: '' };
+  }
+  const extracted = extractTemplateStyleBlocks(interpolateTemplate(raw));
+  const styleBlocks = [];
+  const html = sanitizeTemplateHtml(extracted.html, styleBlocks);
+  const safeStyleBlocks = [...extracted.styleBlocks, ...styleBlocks]
+    .map((block) => sanitizeStyleBlock(block))
+    .filter(Boolean);
+  const css = safeStyleBlocks.length
+    ? buildScopedChatCss(safeStyleBlocks.join('\n\n'), `[data-status-bar-scope="${templateScopeId.value}"]`)
+    : '';
+  return { html, css };
+});
+
+const customTemplateHtml = computed(() => customTemplate.value.html);
+const customTemplateCss = computed(() => customTemplate.value.css);
+const hasCustomTemplate = computed(() => Boolean(customTemplateHtml.value));
 
 const wrapperClasses = computed(() => {
   const classes = ['status-bar-container'];
@@ -78,7 +92,49 @@ const wrapperClasses = computed(() => {
     classes.push(`sb-fx-${fx}`);
   }
   if (hasImmersiveContent.value) classes.push('sb-immersive');
+  if (hasCustomTemplate.value) classes.push('sb-custom-mode');
+  if (collapsed.value) classes.push('sb-collapsed');
   return classes;
+});
+
+const collapseStorageKey = computed(() => {
+  const rawKey = props.statusBar?.id || props.statusBar?.name || 'default';
+  return `flai-status-bar-collapsed:${String(rawKey).slice(0, 80)}`;
+});
+
+const statusBarTitle = computed(() => props.statusBar?.name || '状态栏');
+
+const statusBarMeta = computed(() => {
+  if (hasImmersiveContent.value) {
+    return `${cfg.value.characters.length} 个角色`;
+  }
+  if (displayVariables.value.length) {
+    return `${displayVariables.value.length} 项状态`;
+  }
+  if (hasCustomTemplate.value) {
+    return '自定义模板';
+  }
+  return '';
+});
+
+const collapsedSummary = computed(() => {
+  return statusBarMeta.value
+    ? `${statusBarTitle.value} · ${statusBarMeta.value}`
+    : statusBarTitle.value;
+});
+
+const statusBarVisible = computed(() => hasCustomTemplate.value || hasContent.value || hasImmersiveContent.value);
+
+watch(collapseStorageKey, (key) => {
+  collapsed.value = readCollapsedState(key);
+}, { immediate: true });
+
+watch(customTemplateCss, (css) => {
+  syncCustomTemplateStyle(css);
+}, { immediate: true });
+
+onBeforeUnmount(() => {
+  removeCustomTemplateStyle();
 });
 
 const ALLOWED_STYLE_PROPS = new Set(['borderRadius', 'background', 'boxShadow', 'fontFamily']);
@@ -90,7 +146,7 @@ function parseSafeStyle(css) {
     const obj = JSON.parse(css);
     if (obj && typeof obj === 'object' && !Array.isArray(obj)) {
       for (const [key, value] of Object.entries(obj)) {
-        if (ALLOWED_STYLE_PROPS.has(key) || key.startsWith('--sb-')) {
+        if ((ALLOWED_STYLE_PROPS.has(key) || key.startsWith('--sb-')) && isSafeCssValue(value)) {
           style[key] = String(value);
         }
       }
@@ -105,11 +161,15 @@ function parseSafeStyle(css) {
     const value = seg.substring(colonIdx + 1).trim();
     if (!rawProp || !value) continue;
     const camel = rawProp.replace(/-([a-z])/g, (_, c) => c.toUpperCase());
-    if (ALLOWED_STYLE_PROPS.has(camel) || rawProp.startsWith('--sb-')) {
+    if ((ALLOWED_STYLE_PROPS.has(camel) || rawProp.startsWith('--sb-')) && isSafeCssValue(value)) {
       style[camel] = value;
     }
   }
   return style;
+}
+
+function isSafeCssValue(value) {
+  return !/@import|expression\s*\(|javascript:|url\s*\(|behavior\s*:/i.test(String(value || ''));
 }
 
 const wrapperStyle = computed(() => {
@@ -122,6 +182,7 @@ const wrapperStyle = computed(() => {
 });
 
 function defaultColor(name) {
+  const safeName = String(name || '');
   const colorMap = {
     'HP': '#e74c3c',
     'MP': '#3498db',
@@ -140,7 +201,7 @@ function defaultColor(name) {
     '心情': '#9b59b6'
   };
   for (const [key, color] of Object.entries(colorMap)) {
-    if (name.toLowerCase().includes(key.toLowerCase())) {
+    if (safeName.toLowerCase().includes(key.toLowerCase())) {
       return color;
     }
   }
@@ -149,7 +210,7 @@ function defaultColor(name) {
 
 function barStyle(variable) {
   return {
-    width: `${variable.percentage}%`,
+    width: `${variable.isMeter ? variable.percentage : 0}%`,
     backgroundColor: variable.color
   };
 }
@@ -163,19 +224,7 @@ function charStyle(ch) {
 
 function charVariables(ch) {
   if (!ch.variables || !Array.isArray(ch.variables)) return [];
-  return ch.variables.map((v) => {
-    const value = Number(v.value) || 0;
-    const max = Number(v.max) || 100;
-    const percentage = max > 0 ? Math.min(100, Math.max(0, (value / max) * 100)) : 0;
-    return {
-      name: v.name || '?',
-      value,
-      max,
-      percentage,
-      color: v.color || '#6c757d',
-      displayValue: max > 0 ? `${value}/${max}` : String(value)
-    };
-  });
+  return ch.variables.map((v) => normalizeDisplayVariable(v, '#6c757d'));
 }
 
 function statusLabel(status) {
@@ -189,74 +238,478 @@ function statusClass(status) {
 function onQuickReply(text) {
   if (text) emit('quick-reply', text);
 }
+
+function onCustomTemplateClick(event) {
+  const target = event.target?.closest?.('[data-sb-action]');
+  if (!target || !event.currentTarget?.contains(target)) {
+    return;
+  }
+  const action = String(target.getAttribute('data-sb-action') || '').trim().toLowerCase();
+  const text = String(
+    target.getAttribute('data-sb-text') ||
+      target.getAttribute('data-sb-reply') ||
+      target.getAttribute('data-sb-copy') ||
+      target.textContent ||
+      ''
+  ).trim();
+  if (['quick-reply', 'reply', 'option'].includes(action)) {
+    onQuickReply(text);
+    return;
+  }
+  if (action === 'copy') {
+    copyTemplateText(text);
+    return;
+  }
+  if (['collapse', 'toggle-collapse'].includes(action)) {
+    toggleCollapsed();
+  }
+}
+
+async function copyTemplateText(text) {
+  if (!text || typeof window === 'undefined') {
+    return;
+  }
+  try {
+    if (navigator?.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text);
+      return;
+    }
+  } catch {
+    // Fall back to a temporary textarea below.
+  }
+  const textarea = document.createElement('textarea');
+  textarea.value = text;
+  textarea.setAttribute('readonly', '');
+  textarea.style.position = 'fixed';
+  textarea.style.opacity = '0';
+  document.body.appendChild(textarea);
+  textarea.select();
+  try {
+    document.execCommand('copy');
+  } catch {
+    // Copy buttons are optional; ignore unavailable clipboard APIs.
+  } finally {
+    document.body.removeChild(textarea);
+  }
+}
+
+function toggleCollapsed() {
+  collapsed.value = !collapsed.value;
+  writeCollapsedState(collapseStorageKey.value, collapsed.value);
+}
+
+function readCollapsedState(key) {
+  if (typeof window === 'undefined') {
+    return false;
+  }
+  try {
+    return window.localStorage.getItem(key) === 'true';
+  } catch {
+    return false;
+  }
+}
+
+function writeCollapsedState(key, value) {
+  if (typeof window === 'undefined') {
+    return;
+  }
+  try {
+    window.localStorage.setItem(key, String(Boolean(value)));
+  } catch {
+    // Collapsing should keep working even when storage is unavailable.
+  }
+}
+
+function interpolateTemplate(template) {
+  return String(template || '').replace(/\{\{\s*([^{}]+?)\s*\}\}|\{([\w\u4e00-\u9fa5 .-]+)\}/g, (_, doubleToken, singleToken) => {
+    return escapeHtml(resolveTemplateToken(doubleToken || singleToken));
+  });
+}
+
+function resolveTemplateToken(token) {
+  const [rawName, rawProp = 'value'] = String(token || '').split('.').map((part) => part.trim());
+  if (!rawName) return '';
+  const variable = findDisplayVariable(rawName);
+  if (!variable) return '';
+  if (rawProp === 'max') return variable.isMeter ? variable.max : '';
+  if (rawProp === 'percent') return variable.isMeter ? `${Math.round(variable.percentage)}%` : '';
+  if (rawProp === 'percentage') return variable.isMeter ? Math.round(variable.percentage) : '';
+  if (rawProp === 'display' || rawProp === 'displayValue') return variable.displayValue;
+  if (rawProp === 'color') return variable.color;
+  return variable.value;
+}
+
+function extractTemplateStyleBlocks(template) {
+  const styleBlocks = [];
+  const html = String(template || '').replace(/<style\b[^>]*>([\s\S]*?)<\/style>/gi, (_match, css) => {
+    styleBlocks.push(String(css || ''));
+    return '';
+  });
+  return { html, styleBlocks };
+}
+
+function syncCustomTemplateStyle(css) {
+  if (typeof document === 'undefined') {
+    return;
+  }
+  const nextCss = String(css || '').trim();
+  if (!nextCss) {
+    removeCustomTemplateStyle();
+    return;
+  }
+  if (!customTemplateStyleElement) {
+    customTemplateStyleElement = document.createElement('style');
+    customTemplateStyleElement.setAttribute('data-flai-status-bar-style', templateScopeId.value);
+    document.head.appendChild(customTemplateStyleElement);
+  }
+  customTemplateStyleElement.textContent = nextCss;
+}
+
+function removeCustomTemplateStyle() {
+  if (customTemplateStyleElement?.parentNode) {
+    customTemplateStyleElement.parentNode.removeChild(customTemplateStyleElement);
+  }
+  customTemplateStyleElement = null;
+}
+
+function sanitizeTemplateHtml(html, styleBlocks = []) {
+  if (typeof window === 'undefined' || typeof window.DOMParser !== 'function') {
+    return escapeHtml(html);
+  }
+  const parser = new window.DOMParser();
+  const doc = parser.parseFromString(String(html || ''), 'text/html');
+  const allowedTags = new Set(['article', 'b', 'br', 'button', 'div', 'em', 'footer', 'header', 'hr', 'i', 'li', 'ol', 'p', 'section', 'small', 'span', 'strong', 'ul']);
+  const allowedAttrs = new Set(['aria-label', 'class', 'data-sb-action', 'data-sb-copy', 'data-sb-reply', 'data-sb-text', 'role', 'style', 'title', 'type']);
+  for (const node of [...doc.body.querySelectorAll('*')]) {
+    const tag = node.tagName.toLowerCase();
+    if (tag === 'style') {
+      const safeCss = sanitizeStyleBlock(node.textContent);
+      if (safeCss) {
+        styleBlocks.push(safeCss);
+      }
+      node.remove();
+      continue;
+    }
+    if (!allowedTags.has(tag)) {
+      node.replaceWith(...node.childNodes);
+      continue;
+    }
+    for (const attr of [...node.attributes]) {
+      const name = attr.name.toLowerCase();
+      if (name.startsWith('on') || !allowedAttrs.has(name)) {
+        node.removeAttribute(attr.name);
+        continue;
+      }
+      if (name === 'style') {
+        const safeStyle = sanitizeStyleText(attr.value);
+        if (safeStyle) {
+          node.setAttribute('style', safeStyle);
+        } else {
+          node.removeAttribute(attr.name);
+        }
+        continue;
+      }
+      if (name === 'type' && tag === 'button') {
+        node.setAttribute('type', 'button');
+        continue;
+      }
+      if (name.startsWith('data-sb-')) {
+        node.setAttribute(attr.name, String(attr.value || '').slice(0, 500));
+      }
+    }
+    if (tag === 'button') {
+      node.setAttribute('type', 'button');
+    }
+  }
+  applyTemplateRowVariables(doc.body);
+  return doc.body.innerHTML;
+}
+
+function normalizeDisplayVariable(variable, fallbackColor) {
+  const rawValue = variable?.value;
+  const numberValue = Number(rawValue);
+  const hasNumberValue = isNumericLike(rawValue) && Number.isFinite(numberValue);
+  const max = Number(variable?.max);
+  const isMeter = hasNumberValue && Number.isFinite(max) && max > 0;
+  const value = hasNumberValue ? numberValue : String(rawValue ?? '').trim();
+  const percentage = isMeter ? Math.min(100, Math.max(0, (numberValue / max) * 100)) : 0;
+  return {
+    name: variable?.name || '?',
+    value,
+    max: isMeter ? max : '',
+    percentage,
+    isMeter,
+    color: variable?.color || fallbackColor || defaultColor(variable?.name),
+    displayValue: isMeter ? `${formatStatusNumber(numberValue)}/${formatStatusNumber(max)}` : (String(rawValue ?? '').trim() || '—')
+  };
+}
+
+function isNumericLike(value) {
+  if (typeof value === 'number') {
+    return Number.isFinite(value);
+  }
+  const text = String(value ?? '').trim();
+  return /^[-+]?(?:\d+|\d*\.\d+)$/.test(text);
+}
+
+function formatStatusNumber(value) {
+  return Number.isInteger(value) ? String(value) : String(Number(value.toFixed(2)));
+}
+
+function findDisplayVariable(name) {
+  const key = normalizeVariableKey(name);
+  return displayVariables.value.find((item) => normalizeVariableKey(item.name) === key);
+}
+
+function normalizeVariableKey(value) {
+  return String(value || '')
+    .replace(/[\s\u3000:\uFF1A;\uFF1B,\uFF0C.\u3002\u3001/\\|()[\]{}"'`~!@#$%^&*_+=?<>-]+/g, '')
+    .trim()
+    .toLowerCase();
+}
+
+function applyTemplateRowVariables(root) {
+  if (!root?.querySelectorAll) {
+    return;
+  }
+  const pairs = findTemplateValuePairs(root);
+  for (const { label, value } of pairs) {
+    const variable = findDisplayVariable(label);
+    if (variable && value) {
+      value.textContent = variable.displayValue;
+    }
+  }
+}
+
+function findTemplateValuePairs(root) {
+  const pairs = [];
+  const usedValues = new Set();
+  for (const label of [...root.querySelectorAll('.sb-label')]) {
+    const value = findValueForTemplateLabel(label);
+    if (!value || usedValues.has(value)) {
+      continue;
+    }
+    pairs.push({ label: templateLabelText(label.textContent), value });
+    usedValues.add(value);
+  }
+  for (const value of [...root.querySelectorAll('.sb-val')]) {
+    if (usedValues.has(value)) {
+      continue;
+    }
+    const label = findInlineLabelBeforeValue(value);
+    if (!label) {
+      continue;
+    }
+    pairs.push({ label, value });
+    usedValues.add(value);
+  }
+  return pairs;
+}
+
+function findValueForTemplateLabel(label) {
+  for (let node = label.nextSibling; node; node = node.nextSibling) {
+    if (node.nodeType === 1) {
+      if (node.classList?.contains('sb-label')) {
+        return null;
+      }
+      if (node.classList?.contains('sb-val')) {
+        return node;
+      }
+      const nested = node.querySelector?.('.sb-val');
+      if (nested) {
+        return nested;
+      }
+    }
+  }
+  const parentValues = [...(label.parentElement?.querySelectorAll?.('.sb-val') || [])];
+  return parentValues.find((value) => label.compareDocumentPosition(value) & Node.DOCUMENT_POSITION_FOLLOWING) || null;
+}
+
+function findInlineLabelBeforeValue(value) {
+  let text = '';
+  for (let node = value.previousSibling; node; node = node.previousSibling) {
+    if (node.nodeType === 1 && node.classList?.contains('sb-val')) {
+      break;
+    }
+    text = `${node.textContent || ''}${text}`;
+    if (/[:\uFF1A\n\r]/.test(node.textContent || '') || text.length > 60) {
+      break;
+    }
+  }
+  const match = text.match(/([^:\uFF1A\n\r]{1,40})[:\uFF1A]?\s*$/);
+  return templateLabelText(match?.[1] || '');
+}
+
+function templateLabelText(value) {
+  return String(value || '')
+    .replace(/<[^>]*>/g, '')
+    .replace(/^[\s\u3000:\uFF1A;\uFF1B,\uFF0C.\u3002]+|[\s\u3000:\uFF1A;\uFF1B,\uFF0C.\u3002]+$/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function sanitizeStyleText(value) {
+  return String(value || '')
+    .split(';')
+    .map((part) => part.trim())
+    .filter((part) => part && isSafeCssValue(part))
+    .join('; ');
+}
+
+function sanitizeStyleBlock(value) {
+  return String(value || '')
+    .replace(/@import[^;]+;?/gi, '')
+    .replace(/url\s*\([^)]*\)/gi, '')
+    .replace(/expression\s*\([^)]*\)/gi, '')
+    .replace(/javascript:/gi, '')
+    .replace(/behavior\s*:/gi, '');
+}
+
+function escapeHtml(value) {
+  return String(value ?? '').replace(/[&<>"']/g, (char) => ({
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#39;'
+  }[char]));
+}
 </script>
 
 <template>
-  <div v-if="hasContent || hasImmersiveContent" :class="wrapperClasses" :style="wrapperStyle" class="status-bar-root">
-    <div v-if="hasContent" class="status-bar-header">
-      <span class="status-bar-label">状态同步</span>
-      <span class="status-bar-context">关联最新 AI 回复</span>
-      <span class="status-bar-name">{{ statusBar.name || '状态栏' }}</span>
-    </div>
-    <div v-if="hasContent" class="status-bar-variables">
-      <div
-        v-for="(variable, index) in displayVariables"
-        :key="index"
-        class="status-bar-variable"
-      >
-        <div class="variable-header">
-          <span class="variable-name">{{ variable.name }}</span>
-          <span class="variable-value">{{ variable.displayValue }}</span>
-        </div>
-        <div class="variable-bar-track">
-          <div class="variable-bar-fill" :style="barStyle(variable)"></div>
-        </div>
-      </div>
-    </div>
+  <div
+    v-if="statusBarVisible"
+    :class="wrapperClasses"
+    :style="wrapperStyle"
+    :data-status-bar-scope="templateScopeId"
+    class="status-bar-root"
+    :aria-expanded="String(!collapsed)"
+  >
+    <button
+      v-if="collapsed"
+      class="flai-statusbar-collapsed-card"
+      type="button"
+      :title="`展开状态栏：${collapsedSummary}`"
+      :aria-label="`展开状态栏：${collapsedSummary}`"
+      @click="toggleCollapsed"
+    >
+      <span class="status-bar-collapsed-label">状态栏</span>
+      <span class="flai-statusbar-title">{{ statusBarTitle }}</span>
+      <span v-if="statusBarMeta" class="flai-statusbar-meta">{{ statusBarMeta }}</span>
+      <span class="flai-statusbar-action">
+        <ChevronDown :size="16" class="flai-statusbar-toggle-icon" />
+        <span>展开</span>
+      </span>
+    </button>
 
-    <div v-if="hasImmersiveContent" class="sb-characters-section">
-      <div
-        v-for="ch in cfg.characters"
-        :key="ch.id"
-        class="sb-char-card"
-        :class="statusClass(ch.status)"
-        :style="charStyle(ch)"
+    <template v-else>
+      <div v-if="!hasCustomTemplate" class="flai-statusbar-header">
+        <button
+          class="flai-statusbar-summary"
+          type="button"
+          :title="'收起状态栏'"
+          :aria-label="`收起状态栏：${collapsedSummary}`"
+          @click="toggleCollapsed"
+        >
+          <span class="status-bar-collapsed-label">状态栏</span>
+          <span class="flai-statusbar-title">{{ statusBarTitle }}</span>
+          <span v-if="statusBarMeta" class="flai-statusbar-meta">{{ statusBarMeta }}</span>
+        </button>
+        <button
+          class="flai-statusbar-toggle"
+          type="button"
+          title="收起状态栏"
+          aria-label="收起状态栏"
+          :aria-pressed="String(collapsed)"
+          @click="toggleCollapsed"
+        >
+          <ChevronDown :size="16" class="flai-statusbar-toggle-icon expanded" />
+          <span>收起</span>
+        </button>
+      </div>
+
+      <button
+        v-else
+        class="flai-statusbar-floating-toggle"
+        type="button"
+        title="收起状态栏"
+        aria-label="收起状态栏"
+        @click="toggleCollapsed"
       >
-        <div class="sb-char-header">
-          <span class="sb-char-name">{{ ch.name }}</span>
-          <span v-if="ch.role" class="sb-char-role">{{ ch.role }}</span>
-          <span class="sb-char-status" :class="statusClass(ch.status)">{{ statusLabel(ch.status) }}</span>
-        </div>
-        <p v-if="ch.note" class="sb-char-note">{{ ch.note }}</p>
-        <div v-if="charVariables(ch).length" class="sb-char-variables">
-          <div
-            v-for="(v, vi) in charVariables(ch)"
-            :key="vi"
-            class="sb-char-variable"
-          >
-            <div class="variable-header">
-              <span class="variable-name">{{ v.name }}</span>
-              <span class="variable-value">{{ v.displayValue }}</span>
-            </div>
-            <div class="variable-bar-track">
-              <div class="variable-bar-fill" :style="barStyle(v)"></div>
+        <ChevronDown :size="16" class="flai-statusbar-toggle-icon expanded" />
+        <span>收起</span>
+      </button>
+
+      <div class="status-bar-collapse-body" :class="{ 'status-bar-collapse-body-custom': hasCustomTemplate }">
+        <div v-if="hasCustomTemplate" class="status-bar-custom" @click="onCustomTemplateClick" v-html="customTemplateHtml"></div>
+        <template v-else>
+          <div v-if="hasContent" class="status-bar-header">
+            <span class="status-bar-label">状态同步</span>
+            <span class="status-bar-context">关联最新 AI 回复</span>
+            <span class="status-bar-name">{{ statusBar.name || '状态栏' }}</span>
+          </div>
+          <div v-if="hasContent" class="status-bar-variables">
+            <div
+              v-for="(variable, index) in displayVariables"
+              :key="index"
+              class="status-bar-variable"
+            >
+              <div class="variable-header">
+                <span class="variable-name">{{ variable.name }}</span>
+                <span class="variable-value">{{ variable.displayValue }}</span>
+              </div>
+              <div v-if="variable.isMeter" class="variable-bar-track">
+                <div class="variable-bar-fill" :style="barStyle(variable)"></div>
+              </div>
             </div>
           </div>
-        </div>
-      </div>
-    </div>
 
-    <div v-if="cfg.quickReplies.length" class="sb-quick-replies">
-      <button
-        v-for="(qr, qi) in cfg.quickReplies"
-        :key="qi"
-        class="sb-quick-reply-btn"
-        type="button"
-        @click="onQuickReply(qr.text)"
-      >
-        {{ qr.label }}
-      </button>
-    </div>
+          <div v-if="hasImmersiveContent" class="sb-characters-section">
+            <div
+              v-for="ch in cfg.characters"
+              :key="ch.id"
+              class="sb-char-card"
+              :class="statusClass(ch.status)"
+              :style="charStyle(ch)"
+            >
+              <div class="sb-char-header">
+                <span class="sb-char-name">{{ ch.name }}</span>
+                <span v-if="ch.role" class="sb-char-role">{{ ch.role }}</span>
+                <span class="sb-char-status" :class="statusClass(ch.status)">{{ statusLabel(ch.status) }}</span>
+              </div>
+              <p v-if="ch.note" class="sb-char-note">{{ ch.note }}</p>
+              <div v-if="charVariables(ch).length" class="sb-char-variables">
+                <div
+                  v-for="(v, vi) in charVariables(ch)"
+                  :key="vi"
+                  class="sb-char-variable"
+                >
+                  <div class="variable-header">
+                    <span class="variable-name">{{ v.name }}</span>
+                    <span class="variable-value">{{ v.displayValue }}</span>
+                  </div>
+                  <div v-if="v.isMeter" class="variable-bar-track">
+                    <div class="variable-bar-fill" :style="barStyle(v)"></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div v-if="cfg.quickReplies.length" class="sb-quick-replies">
+            <button
+              v-for="(qr, qi) in cfg.quickReplies"
+              :key="qi"
+              class="sb-quick-reply-btn"
+              type="button"
+              @click="onQuickReply(qr.text)"
+            >
+              {{ qr.label }}
+            </button>
+          </div>
+        </template>
+      </div>
+    </template>
   </div>
 </template>
 
@@ -269,6 +722,8 @@ function onQuickReply(text) {
 /* -- Base Card -- */
 .status-bar-container {
   position: relative;
+  display: grid;
+  gap: 10px;
   border: 1px solid color-mix(in srgb, var(--line, rgba(62,48,38,0.14)) 80%, transparent);
   border-radius: 14px;
   padding: 14px 16px;
@@ -281,6 +736,239 @@ function onQuickReply(text) {
     inset 0 1px 0 color-mix(in srgb, #ffffff 36%, transparent);
   backdrop-filter: blur(10px);
   transition: box-shadow 0.2s ease, border-color 0.2s ease;
+}
+
+.status-bar-container.sb-custom-mode:not(.sb-collapsed) {
+  display: block;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  backdrop-filter: none;
+}
+
+.flai-statusbar-collapsed-card {
+  display: flex !important;
+  width: 100%;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  min-height: 28px;
+  padding: 0;
+  border: 0;
+  color: inherit;
+  background: transparent;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.flai-statusbar-collapsed-card:hover .flai-statusbar-title,
+.flai-statusbar-summary:hover .flai-statusbar-title {
+  color: var(--sb-accent, var(--primary, #8f3f2f));
+}
+
+.flai-statusbar-action {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  margin-left: auto;
+  color: var(--sb-accent, var(--primary, #8f3f2f));
+  font-size: 0.72rem;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.flai-statusbar-floating-toggle {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  z-index: 12;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  min-height: 28px;
+  padding: 0 9px;
+  border: 1px solid color-mix(in srgb, var(--line, rgba(62,48,38,0.14)) 76%, transparent);
+  border-radius: 999px;
+  color: var(--sb-accent, var(--primary, #8f3f2f));
+  background: color-mix(in srgb, var(--surface, #fffaf2) 88%, transparent);
+  box-shadow: 0 8px 18px rgba(67, 45, 30, 0.12);
+  font-family: inherit;
+  font-size: 0.68rem;
+  font-weight: 800;
+  cursor: pointer;
+  opacity: 0.86;
+  backdrop-filter: blur(8px);
+  transition: transform 0.15s ease, opacity 0.15s ease, border-color 0.15s ease;
+}
+
+.flai-statusbar-floating-toggle:hover {
+  transform: translateY(-1px);
+  opacity: 1;
+  border-color: color-mix(in srgb, var(--sb-accent, var(--primary, #8f3f2f)) 42%, var(--line, rgba(62,48,38,0.14)));
+}
+
+.flai-statusbar-header {
+  position: relative;
+  z-index: 4;
+  display: flex !important;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+  isolation: isolate;
+}
+
+.flai-statusbar-summary {
+  display: flex !important;
+  flex: 1 1 auto;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  color: inherit;
+  background: transparent;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.status-bar-collapsed-label {
+  flex: 0 0 auto;
+  padding: 2px 8px;
+  border-radius: 6px;
+  color: var(--sb-accent, var(--primary, #8f3f2f));
+  background: color-mix(in srgb, var(--sb-accent, var(--primary, #8f3f2f)) 12%, transparent);
+  font-size: 0.68rem;
+  font-weight: 800;
+  line-height: 1.6;
+}
+
+.flai-statusbar-title {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text, #241f1b);
+  font-size: 0.82rem;
+  font-weight: 800;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.flai-statusbar-meta {
+  flex: 0 0 auto;
+  color: var(--muted, #75685e);
+  font-size: 0.72rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.flai-statusbar-meta::before {
+  content: '·';
+  margin-right: 8px;
+  color: color-mix(in srgb, var(--muted, #75685e) 58%, transparent);
+}
+
+.flai-statusbar-toggle {
+  display: inline-flex !important;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  min-width: 68px;
+  min-height: 30px;
+  padding: 0 10px;
+  border: 1px solid color-mix(in srgb, var(--line, rgba(62,48,38,0.14)) 82%, transparent);
+  border-radius: 999px;
+  color: var(--sb-accent, var(--primary, #8f3f2f));
+  background: color-mix(in srgb, var(--surface, #fffaf2) 88%, transparent);
+  box-shadow: 0 4px 12px rgba(67, 45, 30, 0.08);
+  font-family: inherit;
+  font-size: 0.72rem;
+  font-weight: 800;
+  cursor: pointer;
+  transition: transform 0.15s ease, background 0.15s ease, border-color 0.15s ease;
+}
+
+.flai-statusbar-toggle:hover {
+  transform: translateY(-1px);
+  border-color: color-mix(in srgb, var(--sb-accent, var(--primary, #8f3f2f)) 42%, var(--line, rgba(62,48,38,0.14)));
+  background: color-mix(in srgb, var(--sb-accent, var(--primary, #8f3f2f)) 10%, var(--surface, #fffaf2));
+}
+
+.flai-statusbar-toggle-icon {
+  transition: transform 0.18s ease;
+}
+
+.flai-statusbar-toggle-icon.expanded {
+  transform: rotate(180deg);
+}
+
+.status-bar-collapse-body {
+  min-width: 0;
+}
+
+.status-bar-custom {
+  min-width: 0;
+  max-width: 100%;
+  overflow-x: hidden;
+  color: var(--text, #2d2420);
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+}
+
+.status-bar-custom :deep(*) {
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.status-bar-custom :deep(.sb-panel),
+.status-bar-custom :deep(.sb-section),
+.status-bar-custom :deep(.sb-row),
+.status-bar-custom :deep(.sb-line),
+.status-bar-custom :deep(.sb-val) {
+  min-width: 0;
+  max-width: 100%;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.status-bar-custom :deep(.sb-label) {
+  white-space: nowrap;
+}
+
+.status-bar-custom :deep(button) {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 28px;
+  margin: 2px 4px 2px 0;
+  padding: 0 10px;
+  border: 1px solid color-mix(in srgb, var(--sb-accent, var(--primary, #8f3f2f)) 28%, transparent);
+  border-radius: 8px;
+  color: var(--sb-accent, var(--primary, #8f3f2f));
+  background: color-mix(in srgb, var(--sb-accent, var(--primary, #8f3f2f)) 10%, var(--surface, #fffaf2));
+  font: inherit;
+  font-size: 0.76rem;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.status-bar-custom :deep(button:hover) {
+  border-color: color-mix(in srgb, var(--sb-accent, var(--primary, #8f3f2f)) 46%, transparent);
+  background: color-mix(in srgb, var(--sb-accent, var(--primary, #8f3f2f)) 16%, var(--surface, #fffaf2));
 }
 
 :root[data-theme="dark"] .status-bar-container {
@@ -718,6 +1406,27 @@ function onQuickReply(text) {
   min-width: 100px;
 }
 
+.status-bar-container.sb-collapsed,
+.status-bar-container.sb-collapsed.sb-compact,
+.status-bar-container.sb-collapsed.sb-minimal,
+.status-bar-container.sb-collapsed.sb-density-cozy,
+.status-bar-container.sb-collapsed.sb-density-compact,
+.status-bar-container.sb-collapsed.sb-immersive {
+  min-height: 48px;
+  gap: 0;
+  padding: 10px 14px;
+  border: 1px solid color-mix(in srgb, var(--line, rgba(62,48,38,0.14)) 80%, transparent);
+  border-radius: 14px;
+  background:
+    linear-gradient(135deg,
+      color-mix(in srgb, var(--surface, #fffaf2) 86%, transparent),
+      color-mix(in srgb, var(--sb-accent, var(--primary, #8f3f2f)) 6%, transparent));
+  box-shadow:
+    0 2px 12px rgba(67, 45, 30, 0.06),
+    inset 0 1px 0 color-mix(in srgb, #ffffff 32%, transparent);
+  backdrop-filter: blur(10px);
+}
+
 /* -- Quick Replies -- */
 .sb-quick-replies {
   display: flex;
@@ -754,6 +1463,13 @@ function onQuickReply(text) {
   .status-bar-container {
     padding: 10px 12px;
     border-radius: 10px;
+  }
+
+  .flai-statusbar-toggle {
+    min-width: 62px;
+    min-height: 28px;
+    padding: 0 9px;
+    font-size: 0.68rem;
   }
 
   .status-bar-header {
@@ -841,6 +1557,24 @@ function onQuickReply(text) {
 @media (max-width: 480px) {
   .status-bar-container {
     padding: 8px 10px;
+  }
+
+  .flai-statusbar-header {
+    gap: 6px;
+  }
+
+  .flai-statusbar-title {
+    font-size: 0.76rem;
+  }
+
+  .flai-statusbar-meta {
+    display: none;
+  }
+
+  .flai-statusbar-toggle {
+    min-width: 56px;
+    min-height: 28px;
+    padding: 0 8px;
   }
 
   .status-bar-header {

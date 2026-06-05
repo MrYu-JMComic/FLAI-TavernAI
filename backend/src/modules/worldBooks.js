@@ -560,10 +560,27 @@ function matchPassWithState(entries, lowerText, rawText, matchedIds, matched, en
 // ── Sticky / Cooldown / Delay State Helpers ──
 
 let _messageCounter = 0;
+let _counterInitialized = false;
 
 function getNextMessageCount(database) {
-  // Use a simple in-memory counter that resets per process.
-  // For persistent tracking, callers should pass options.messageCount.
+  // Lazy-init: recover counter from persisted state so sticky/cooldown survive restarts
+  if (!_counterInitialized) {
+    _counterInitialized = true;
+    try {
+      const row = database
+        .prepare(
+          `SELECT MAX(last_activated_message) AS a, MAX(last_deactivated_message) AS d,
+                  MAX(first_seen_message) AS f FROM world_book_entry_state`
+        )
+        .get();
+      const maxSeen = Math.max(row?.a || 0, row?.d || 0, row?.f || 0);
+      if (maxSeen > _messageCounter) {
+        _messageCounter = maxSeen;
+      }
+    } catch {
+      // Table may not exist yet; ignore
+    }
+  }
   return ++_messageCounter;
 }
 

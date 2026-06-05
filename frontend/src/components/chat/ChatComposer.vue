@@ -44,14 +44,14 @@ defineExpose({ wrapRef, textareaRef });
     >
       <ChevronDown :size="18" />
     </button>
-    <form class="deep-composer" @submit.prevent="emit('submit')">
+    <form class="deep-composer" @submit.prevent="emit('submit', { isEnter: false })">
       <textarea
         ref="textareaRef"
         :value="input"
         placeholder="给 AI 发送消息"
         :rows="chatViewportIsPhone ? 1 : 2"
         @input="emit('update:input', $event.target.value); emit('composer-input', $event)"
-        @keydown.enter.exact="emit('submit', $event)"
+        @keydown.enter.exact="emit('submit', { isEnter: true, event: $event })"
       />
       <div class="composer-actions">
         <select
@@ -82,7 +82,7 @@ defineExpose({ wrapRef, textareaRef });
           type="button"
           :aria-pressed="String(canToggleThinking && thinkingEnabled)"
           :disabled="!canToggleThinking"
-          title="DeepSeek thinking.enabled / thinking.disabled"
+          title="Model thinking mode"
           @click="emit('toggle-thinking')"
         >
           <Brain :size="16" />

@@ -3,6 +3,9 @@ import { newId, nowIso } from '../security.js';
 // ── Save CRUD ──
 
 export function listSaves(database, userId, conversationId) {
+  if (!hasConversationAccess(database, userId, conversationId)) {
+    return [];
+  }
   return database
     .prepare(
       `SELECT id, conversation_id, name, preview, created_at
@@ -22,6 +25,7 @@ export function getSave(database, userId, saveId) {
 }
 
 export function createSave(database, userId, conversationId, payload) {
+  assertConversationAccess(database, userId, conversationId);
   const id = newId();
   const timestamp = nowIso();
   const name = normalizeSaveName(payload.name);
@@ -81,35 +85,44 @@ export function loadSave(database, userId, saveId) {
 
   const conversationId = row.conversation_id;
 
-  // Clear existing messages for this conversation
-  database
-    .prepare('DELETE FROM messages WHERE user_id = ? AND conversation_id = ?')
-    .run(userId, conversationId);
+  // Wrap DELETE + INSERT in a transaction to prevent message loss on failure
+  database.exec('BEGIN');
+  try {
+    // Clear existing messages for this conversation
+    database
+      .prepare('DELETE FROM messages WHERE user_id = ? AND conversation_id = ?')
+      .run(userId, conversationId);
 
-  // Restore messages from snapshot
-  if (Array.isArray(snapshot.messages) && snapshot.messages.length > 0) {
-    const insert = database.prepare(
-      `INSERT INTO messages (id, user_id, conversation_id, role, content, reasoning, usage_json, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
-    );
-    for (const msg of snapshot.messages) {
-      insert.run(
-        msg.id || newId(),
-        userId,
-        conversationId,
-        msg.role,
-        msg.content,
-        msg.reasoning || '',
-        msg.usage ? JSON.stringify(msg.usage) : null,
-        msg.createdAt || nowIso()
+    // Restore messages from snapshot
+    if (Array.isArray(snapshot.messages) && snapshot.messages.length > 0) {
+      const insert = database.prepare(
+        `INSERT INTO messages (id, user_id, conversation_id, role, content, reasoning, usage_json, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
       );
+      for (const msg of snapshot.messages) {
+        insert.run(
+          msg.id || newId(),
+          userId,
+          conversationId,
+          msg.role,
+          msg.content,
+          msg.reasoning || '',
+          msg.usage ? JSON.stringify(msg.usage) : null,
+          msg.createdAt || nowIso()
+        );
+      }
     }
-  }
 
-  // Update conversation timestamp
-  database
-    .prepare('UPDATE conversations SET updated_at = ? WHERE id = ? AND user_id = ?')
-    .run(nowIso(), conversationId, userId);
+    // Update conversation timestamp
+    database
+      .prepare('UPDATE conversations SET updated_at = ? WHERE id = ? AND user_id = ?')
+      .run(nowIso(), conversationId, userId);
+
+    database.exec('COMMIT');
+  } catch (error) {
+    database.exec('ROLLBACK');
+    throw error;
+  }
 
   return {
     conversationId,
@@ -164,6 +177,18 @@ function normalizeSaveName(name) {
     return value.slice(0, 80);
   }
   return value;
+}
+
+function assertConversationAccess(database, userId, conversationId) {
+  if (!hasConversationAccess(database, userId, conversationId)) {
+    throw new Error('对话不存在');
+  }
+}
+
+function hasConversationAccess(database, userId, conversationId) {
+  return Boolean(database
+    .prepare('SELECT id FROM conversations WHERE id = ? AND user_id = ?')
+    .get(conversationId, userId));
 }
 
 function toSaveSummary(row) {

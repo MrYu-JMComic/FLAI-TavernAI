@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
+import { newId } from './security.js';
 
 const sourceDir = path.dirname(fileURLToPath(import.meta.url));
 export const backendRoot = path.resolve(sourceDir, '..');
@@ -9,13 +10,39 @@ export const dataDir = path.join(backendRoot, 'data');
 const uploadsDir = path.join(backendRoot, 'uploads');
 export const avatarUploadDir = path.join(uploadsDir, 'avatars');
 
+// ── Cached PRAGMA table_info to avoid 30+ repeated queries per startup ──
+const _tableColumnCache = new Map();
+
+function getCachedTableColumns(database, tableName) {
+  if (_tableColumnCache.has(tableName)) {
+    return _tableColumnCache.get(tableName);
+  }
+  const columns = database.prepare(`PRAGMA table_info(${tableName})`).all();
+  const nameSet = new Set(columns.map((c) => c.name));
+  _tableColumnCache.set(tableName, nameSet);
+  return nameSet;
+}
+
 export function ensureStorageDirs() {
-  fs.mkdirSync(dataDir, { recursive: true });
-  fs.mkdirSync(avatarUploadDir, { recursive: true });
+  try {
+    fs.mkdirSync(dataDir, { recursive: true });
+  } catch (error) {
+    console.error(`[db] Failed to create data directory: ${dataDir}`, error.message);
+    throw new Error(`无法创建数据目录 ${dataDir}: ${error.message}`);
+  }
+  try {
+    fs.mkdirSync(avatarUploadDir, { recursive: true });
+  } catch (error) {
+    console.error(`[db] Failed to create avatar directory: ${avatarUploadDir}`, error.message);
+    throw new Error(`无法创建头像目录 ${avatarUploadDir}: ${error.message}`);
+  }
 }
 
 export function createAppDatabase(filename = path.join(dataDir, 'flai.sqlite')) {
   ensureStorageDirs();
+  // Clear column cache so each database instance starts fresh (prevents
+  // cross-instance cache pollution in tests using :memory: databases)
+  _tableColumnCache.clear();
   const database = new DatabaseSync(filename);
   database.exec('PRAGMA foreign_keys = ON');
   database.exec('PRAGMA journal_mode = WAL');
@@ -232,32 +259,50 @@ export function initializeDatabase(database) {
   ensureColumn(database, 'conversations', 'branched_from_message_id', 'TEXT');
   ensureColumn(database, 'conversations', 'branched_from_title', "TEXT NOT NULL DEFAULT ''");
 
+  // ── Schema version tracking to skip completed migrations ──
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS _schema_meta (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL
+    );
+  `);
+  function getSchemaVersion(key) {
+    const row = database.prepare("SELECT value FROM _schema_meta WHERE key = ?").get(key);
+    return row?.value || '';
+  }
+  function setSchemaVersion(key, value) {
+    database.prepare("INSERT OR REPLACE INTO _schema_meta (key, value) VALUES (?, ?)").run(key, value);
+  }
+
   // Migration: Remove FOREIGN KEY constraint on regex_rules.character_id
   // This allows global rules where character_id = ''
-  const regexTableInfo = database.prepare("SELECT sql FROM sqlite_master WHERE name = 'regex_rules' AND type = 'table'").get();
-  if (regexTableInfo && regexTableInfo.sql.includes('FOREIGN KEY (character_id)')) {
-    database.exec(`
-      CREATE TABLE IF NOT EXISTS regex_rules_new (
-        id TEXT PRIMARY KEY,
-        user_id TEXT NOT NULL,
-        character_id TEXT NOT NULL DEFAULT '',
-        label TEXT NOT NULL,
-        pattern TEXT NOT NULL,
-        replacement TEXT NOT NULL DEFAULT '',
-        flags TEXT NOT NULL DEFAULT 'g',
-        scope TEXT NOT NULL DEFAULT 'input',
-        enabled INTEGER NOT NULL DEFAULT 1,
-        order_index INTEGER NOT NULL DEFAULT 0,
-        group_name TEXT NOT NULL DEFAULT '全局',
-        priority INTEGER NOT NULL DEFAULT 0,
-        script_mode INTEGER NOT NULL DEFAULT 0,
-        js_script TEXT NOT NULL DEFAULT '',
-        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
-      );
-      INSERT INTO regex_rules_new SELECT id, user_id, character_id, label, pattern, replacement, flags, scope, enabled, order_index, group_name, priority, COALESCE(script_mode, 0), COALESCE(js_script, '') FROM regex_rules;
-      DROP TABLE regex_rules;
-      ALTER TABLE regex_rules_new RENAME TO regex_rules;
-    `);
+  if (getSchemaVersion('regex_fk_removed') !== '1') {
+    const regexTableInfo = database.prepare("SELECT sql FROM sqlite_master WHERE name = 'regex_rules' AND type = 'table'").get();
+    if (regexTableInfo && regexTableInfo.sql.includes('FOREIGN KEY (character_id)')) {
+      database.exec(`
+        CREATE TABLE IF NOT EXISTS regex_rules_new (
+          id TEXT PRIMARY KEY,
+          user_id TEXT NOT NULL,
+          character_id TEXT NOT NULL DEFAULT '',
+          label TEXT NOT NULL,
+          pattern TEXT NOT NULL,
+          replacement TEXT NOT NULL DEFAULT '',
+          flags TEXT NOT NULL DEFAULT 'g',
+          scope TEXT NOT NULL DEFAULT 'input',
+          enabled INTEGER NOT NULL DEFAULT 1,
+          order_index INTEGER NOT NULL DEFAULT 0,
+          group_name TEXT NOT NULL DEFAULT '全局',
+          priority INTEGER NOT NULL DEFAULT 0,
+          script_mode INTEGER NOT NULL DEFAULT 0,
+          js_script TEXT NOT NULL DEFAULT '',
+          FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+        );
+        INSERT INTO regex_rules_new SELECT id, user_id, character_id, label, pattern, replacement, flags, scope, enabled, order_index, group_name, priority, COALESCE(script_mode, 0), COALESCE(js_script, '') FROM regex_rules;
+        DROP TABLE regex_rules;
+        ALTER TABLE regex_rules_new RENAME TO regex_rules;
+      `);
+    }
+    setSchemaVersion('regex_fk_removed', '1');
   }
 
   // Allow global rules (character_id = '') for rules that apply to all characters
@@ -344,9 +389,12 @@ export function initializeDatabase(database) {
 
     CREATE TABLE IF NOT EXISTS tags (
       id TEXT PRIMARY KEY,
-      name TEXT NOT NULL UNIQUE,
+      user_id TEXT NOT NULL,
+      name TEXT NOT NULL,
       color TEXT NOT NULL DEFAULT '',
-      created_at TEXT NOT NULL
+      created_at TEXT NOT NULL,
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+      UNIQUE(user_id, name)
     );
 
     CREATE TABLE IF NOT EXISTS character_tags (
@@ -443,6 +491,22 @@ export function initializeDatabase(database) {
     CREATE INDEX IF NOT EXISTS idx_npc_behaviors_conversation ON npc_behaviors(conversation_id);
     CREATE INDEX IF NOT EXISTS idx_npc_behaviors_npc ON npc_behaviors(conversation_id, npc_name);
 
+    CREATE TABLE IF NOT EXISTS npc_registry (
+      id TEXT PRIMARY KEY,
+      conversation_id TEXT NOT NULL,
+      npc_name TEXT NOT NULL,
+      source TEXT NOT NULL DEFAULT 'manual',
+      evidence TEXT NOT NULL DEFAULT '',
+      confidence REAL NOT NULL DEFAULT 0,
+      hidden INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE,
+      UNIQUE(conversation_id, npc_name)
+    );
+    CREATE INDEX IF NOT EXISTS idx_npc_registry_conversation ON npc_registry(conversation_id);
+    CREATE INDEX IF NOT EXISTS idx_npc_registry_hidden ON npc_registry(conversation_id, hidden);
+
     CREATE TABLE IF NOT EXISTS economy_accounts (
       id TEXT PRIMARY KEY,
       user_id TEXT NOT NULL,
@@ -507,16 +571,149 @@ export function initializeDatabase(database) {
     CREATE INDEX IF NOT EXISTS idx_character_talents_character ON character_talents(character_id);
     CREATE INDEX IF NOT EXISTS idx_character_talents_pool ON character_talents(pool_id);
   `);
+
+  migrateTagsToUserScoped(database);
 }
 
 export const db = createAppDatabase(process.env.FLAI_DB_PATH || path.join(dataDir, 'flai.sqlite'));
 
+function migrateTagsToUserScoped(database) {
+  const columns = getCachedTableColumns(database, 'tags');
+  if (columns.has('user_id')) {
+    normalizeUnsafeTagIds(database);
+    database.exec('CREATE INDEX IF NOT EXISTS idx_tags_user_name ON tags(user_id, name)');
+    return;
+  }
+
+  const users = database.prepare('SELECT id FROM users ORDER BY created_at ASC, id ASC').all();
+  const fallbackUserId = users[0]?.id || '';
+
+  database.exec('PRAGMA foreign_keys = OFF');
+  database.exec('BEGIN');
+  try {
+    database.exec(`
+      CREATE TABLE tags_new (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL,
+        name TEXT NOT NULL,
+        color TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL,
+        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+        UNIQUE(user_id, name)
+      );
+
+      CREATE TABLE character_tags_new (
+        character_id TEXT NOT NULL,
+        tag_id TEXT NOT NULL,
+        PRIMARY KEY (character_id, tag_id),
+        FOREIGN KEY (character_id) REFERENCES characters(id) ON DELETE CASCADE,
+        FOREIGN KEY (tag_id) REFERENCES tags_new(id) ON DELETE CASCADE
+      );
+    `);
+
+    const insertTag = database.prepare(
+      'INSERT OR IGNORE INTO tags_new (id, user_id, name, color, created_at) VALUES (?, ?, ?, ?, ?)'
+    );
+    const insertLink = database.prepare(
+      'INSERT OR IGNORE INTO character_tags_new (character_id, tag_id) VALUES (?, ?)'
+    );
+    const scopedTagIds = new Map();
+    const ensureScopedTag = (row, userId) => {
+      if (!userId) return '';
+      const key = `${userId}\u0000${row.name}`;
+      if (scopedTagIds.has(key)) {
+        return scopedTagIds.get(key);
+      }
+      const tagId = newId();
+      insertTag.run(tagId, userId, row.name, row.color || '', row.created_at);
+      scopedTagIds.set(key, tagId);
+      return tagId;
+    };
+
+    const linkedRows = database
+      .prepare(
+        `SELECT tags.id, tags.name, tags.color, tags.created_at, character_tags.character_id, characters.user_id
+         FROM tags
+         JOIN character_tags ON character_tags.tag_id = tags.id
+         JOIN characters ON characters.id = character_tags.character_id
+         ORDER BY tags.created_at ASC, tags.name COLLATE NOCASE ASC`
+      )
+      .all();
+
+    for (const row of linkedRows) {
+      const tagId = ensureScopedTag(row, row.user_id);
+      if (tagId) {
+        insertLink.run(row.character_id, tagId);
+      }
+    }
+
+    if (fallbackUserId) {
+      const unusedRows = database
+        .prepare(
+          `SELECT tags.id, tags.name, tags.color, tags.created_at
+           FROM tags
+           WHERE NOT EXISTS (SELECT 1 FROM character_tags WHERE character_tags.tag_id = tags.id)
+           ORDER BY tags.created_at ASC, tags.name COLLATE NOCASE ASC`
+        )
+        .all();
+      for (const row of unusedRows) {
+        ensureScopedTag(row, fallbackUserId);
+      }
+    }
+
+    database.exec(`
+      DROP TABLE character_tags;
+      DROP TABLE tags;
+      ALTER TABLE tags_new RENAME TO tags;
+      ALTER TABLE character_tags_new RENAME TO character_tags;
+      CREATE INDEX IF NOT EXISTS idx_tags_user_name ON tags(user_id, name);
+      CREATE INDEX IF NOT EXISTS idx_character_tags_character ON character_tags(character_id);
+      CREATE INDEX IF NOT EXISTS idx_character_tags_tag ON character_tags(tag_id);
+    `);
+    database.exec('COMMIT');
+  } catch (error) {
+    database.exec('ROLLBACK');
+    throw error;
+  } finally {
+    database.exec('PRAGMA foreign_keys = ON');
+  }
+}
+
+function normalizeUnsafeTagIds(database) {
+  const unsafeRows = database
+    .prepare("SELECT id FROM tags WHERE id LIKE '%?%' OR id LIKE '%#%' OR id LIKE '%/%'")
+    .all();
+  if (!unsafeRows.length) {
+    return;
+  }
+
+  database.exec('PRAGMA foreign_keys = OFF');
+  database.exec('BEGIN');
+  try {
+    const updateTag = database.prepare('UPDATE tags SET id = ? WHERE id = ?');
+    const updateLinks = database.prepare('UPDATE character_tags SET tag_id = ? WHERE tag_id = ?');
+    for (const row of unsafeRows) {
+      const nextId = newId();
+      updateTag.run(nextId, row.id);
+      updateLinks.run(nextId, row.id);
+    }
+    database.exec('COMMIT');
+  } catch (error) {
+    database.exec('ROLLBACK');
+    throw error;
+  } finally {
+    database.exec('PRAGMA foreign_keys = ON');
+  }
+}
+
 function ensureColumn(database, tableName, columnName, definition) {
   const rawName = columnName.replace(/[`"]/g, '');
-  const columns = database.prepare(`PRAGMA table_info(${tableName})`).all();
-  if (columns.some((column) => column.name === rawName)) {
+  const columnNames = getCachedTableColumns(database, tableName);
+  if (columnNames.has(rawName)) {
     return;
   }
 
   database.exec(`ALTER TABLE ${tableName} ADD COLUMN ${columnName} ${definition}`);
+  // Invalidate cache so subsequent checks on the same table see the new column
+  _tableColumnCache.delete(tableName);
 }

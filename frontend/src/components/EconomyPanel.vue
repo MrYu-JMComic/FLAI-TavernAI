@@ -27,6 +27,8 @@ const historyLimit = 20;
 const historyCurrencyFilter = ref('');
 const historyLoading = ref(false);
 const detailTab = ref('balance');
+let economyLoadToken = 0;
+let historyLoadToken = 0;
 
 const currencyMeta = {
   gold:   { icon: '💰', label: '金币', color: '#d4a017' },
@@ -64,24 +66,54 @@ watch(() => props.open, async (isOpen) => {
   if (isOpen) await loadEconomy();
 });
 
+watch(() => props.conversationId, () => {
+  resetEconomyState();
+  if (props.open) {
+    loadEconomy();
+  }
+});
+
+function resetEconomyState() {
+  economyLoadToken += 1;
+  historyLoadToken += 1;
+  accounts.value = [];
+  transactions.value = [];
+  historyTotal.value = 0;
+  historyOffset.value = 0;
+  historyCurrencyFilter.value = '';
+  loading.value = false;
+  historyLoading.value = false;
+}
+
 async function loadEconomy() {
-  if (!props.conversationId) return;
+  const conversationId = props.conversationId;
+  if (!conversationId) {
+    resetEconomyState();
+    return;
+  }
+  const requestToken = ++economyLoadToken;
   loading.value = true;
   try {
-    const result = await fetchConversationEconomy(props.conversationId);
+    const result = await fetchConversationEconomy(conversationId);
+    if (requestToken !== economyLoadToken || conversationId !== props.conversationId) return;
     accounts.value = result.accounts || [];
-    await loadHistory(0);
+    await loadHistory(0, conversationId);
   } catch (err) {
+    if (requestToken !== economyLoadToken || conversationId !== props.conversationId) return;
     notify.error(err.message || '加载经济数据失败');
     accounts.value = [];
     transactions.value = [];
   } finally {
-    loading.value = false;
+    if (requestToken === economyLoadToken && conversationId === props.conversationId) {
+      loading.value = false;
+    }
   }
 }
 
-async function loadHistory(offset = 0) {
-  if (!props.conversationId) return;
+async function loadHistory(offset = 0, expectedConversationId = '') {
+  const conversationId = expectedConversationId || props.conversationId;
+  if (!conversationId) return;
+  const requestToken = ++historyLoadToken;
   historyLoading.value = true;
   try {
     const params = {
@@ -91,15 +123,19 @@ async function loadHistory(offset = 0) {
     if (historyCurrencyFilter.value) {
       params.currencyType = historyCurrencyFilter.value;
     }
-    const result = await fetchEconomyHistory(props.conversationId, params);
+    const result = await fetchEconomyHistory(conversationId, params);
+    if (requestToken !== historyLoadToken || conversationId !== props.conversationId) return;
     transactions.value = result.transactions || [];
     historyTotal.value = result.total || 0;
     historyOffset.value = offset;
   } catch (err) {
+    if (requestToken !== historyLoadToken || conversationId !== props.conversationId) return;
     notify.error(err.message || '加载交易历史失败');
     transactions.value = [];
   } finally {
-    historyLoading.value = false;
+    if (requestToken === historyLoadToken && conversationId === props.conversationId) {
+      historyLoading.value = false;
+    }
   }
 }
 

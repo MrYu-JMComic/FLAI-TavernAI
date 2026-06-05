@@ -1,5 +1,9 @@
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
+import express from 'express';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import test from 'node:test';
 
 process.env.FLAI_DB_PATH = ':memory:';
@@ -17,13 +21,16 @@ const {
   setCharacterLike,
   updateCharacter
 } = await import('../modules/characters.js');
-const { apiKeyHint, decryptSecret, encryptSecret, hashPassword, newId, nowIso, verifyPassword } = await import('../security.js');
+const { apiKeyHint, decryptSecret, encryptSecret, hashPassword, newId, nowIso, parseCookies, verifyPassword } = await import('../security.js');
 const {
   buildProviderBody,
   buildUsageSnapshot,
+  generateCompletion,
+  hasUsableProvider,
   listProviderModels,
   normalizeProviderRow,
   providerWithSecret,
+  runToolCompletion,
   streamCompletion,
   summarizeUsageSnapshots
 } = await import('../services/providers.js');
@@ -37,7 +44,12 @@ const {
   saveConversationAppearance
 } = await import('../modules/conversationAppearance.js');
 const { completeCharacterDraft } = await import('../services/characterAssistant.js');
+const { completeWorldBookDraft } = await import('../services/worldBookAssistant.js');
+const { createCharactersRouter } = await import('../routes/characters.js');
+const { createConversationsRouter } = await import('../routes/conversations.js');
+const { normalizeAdvancedSettings } = await import('../modules/advancedSettings.js');
 const { renderPromptVariables, resolvePromptUserName } = await import('../services/promptVariables.js');
+const { createCharacterSchema, updateCharacterSchema, createWorldBookSchema, updateWorldBookSchema, saveProviderSchema } = await import('../validations/schemas.js');
 const {
   createWorldBook,
   getWorldBook,
@@ -114,6 +126,17 @@ test('password hashes verify and reject wrong passwords', async () => {
   const hash = await hashPassword('correct horse battery');
   assert.equal(await verifyPassword('correct horse battery', hash), true);
   assert.equal(await verifyPassword('wrong horse battery', hash), false);
+});
+
+test('parseCookies skips malformed percent-encoded pairs', () => {
+  assert.deepEqual(
+    parseCookies('flai_session=session%201; broken=%E0%A4%A; bad%ZZ=value; empty=; theme=dark'),
+    {
+      flai_session: 'session 1',
+      empty: '',
+      theme: 'dark'
+    }
+  );
 });
 
 test('provider API keys are encrypted and decryptable', () => {
@@ -202,6 +225,94 @@ test('prompt variables render the current user name', () => {
   assert.equal(renderPromptVariables('没有变量', user), '没有变量');
 });
 
+test('character schema accepts null worldBookId for unlinked characters', () => {
+  const createResult = createCharacterSchema.safeParse({
+    name: 'Unlinked Character',
+    worldBookId: null
+  });
+  const updateResult = updateCharacterSchema.safeParse({
+    worldBookId: null
+  });
+
+  assert.equal(createResult.success, true);
+  assert.equal(createResult.data.worldBookId, null);
+  assert.equal(updateResult.success, true);
+  assert.equal(updateResult.data.worldBookId, null);
+});
+
+test('provider settings schema accepts form-encoded extra body JSON', () => {
+  const result = saveProviderSchema.safeParse({
+    providerType: 'custom',
+    gatewayName: 'Local proxy',
+    baseUrl: 'http://127.0.0.1:8317/v1',
+    model: 'deepseek-v4-flash',
+    apiKey: '',
+    clearApiKey: false,
+    supportsReasoning: false,
+    extraBody: '{}'
+  });
+
+  assert.equal(result.success, true);
+  assert.equal(result.data.extraBody, '{}');
+});
+
+test('character routes pass database into tag updates', async () => {
+  const database = createAppDatabase(':memory:');
+  database.prepare('INSERT INTO users (id, username, password_hash, created_at) VALUES (?, ?, ?, ?)').run(
+    'route-user',
+    'routeuser',
+    'hash',
+    new Date().toISOString()
+  );
+  const app = express();
+  app.use(express.json());
+  app.use('/api/characters', createCharactersRouter({
+    db: database,
+    requireAuth: (request, _response, next) => {
+      request.auth = { user: { id: 'route-user', username: 'routeuser' } };
+      next();
+    },
+    asyncRoute: (handler) => (request, response, next) => Promise.resolve(handler(request, response, next)).catch(next),
+    withCharacterTags: (character) => character,
+    withWorldBookId: (character) => character,
+    hasUsableProvider: () => true,
+    getChatProviderSettings: () => ({ ok: false, error: 'unused' }),
+    withEtag: (_request, response, data) => response.json(data),
+    withListCache: (_request, response, data) => response.json(data),
+    nowIso: () => new Date().toISOString()
+  }));
+  app.use((error, _request, response, _next) => {
+    response.status(500).json({ error: error.message });
+  });
+
+  const server = await new Promise((resolve) => {
+    const listener = app.listen(0, () => resolve(listener));
+  });
+  try {
+    const baseUrl = `http://127.0.0.1:${server.address().port}`;
+    const createdResponse = await fetch(`${baseUrl}/api/characters`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: 'Tagged Route Character', tags: ['route-tag'] })
+    });
+    const created = await createdResponse.json();
+
+    assert.equal(createdResponse.status, 201);
+    assert.equal(getCharacterTagNames(database, created.id).includes('route-tag'), true);
+
+    const updatedResponse = await fetch(`${baseUrl}/api/characters/${created.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ tags: ['route-tag-2'] })
+    });
+
+    assert.equal(updatedResponse.status, 200);
+    assert.deepEqual(getCharacterTagNames(database, created.id), ['route-tag-2']);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
 test('character assistant completes drafts through multiple tool rounds', async () => {
   const originalFetch = globalThis.fetch;
   let calls = 0;
@@ -210,6 +321,15 @@ test('character assistant completes drafts through multiple tool rounds', async 
     const body = JSON.parse(request.body);
     assert.equal(body.tools.length, 4);
     assert.ok(body.tools.some((tool) => tool.function?.name === 'set_character_extensions'));
+    const extensionsTool = body.tools.find((tool) => tool.function?.name === 'set_character_extensions');
+    const statusBlueprintSchema = extensionsTool.function.parameters.properties.statusBarBlueprint;
+    const statusValueSchema = statusBlueprintSchema.properties.variables.items.properties.value;
+    assert.deepEqual(statusValueSchema.oneOf.map((schema) => schema.type), ['number', 'string']);
+    assert.match(statusBlueprintSchema.description, /\{\{姓名\}\}/);
+    assert.match(statusBlueprintSchema.description, /\{\{体力\.percent\}\}/);
+    assert.match(body.messages[0].content, /\{\{变量名\}\}/);
+    assert.match(body.messages[0].content, /\.sb-val/);
+    assert.match(body.messages[0].content, /Do not hardcode dynamic fallback text/);
 
     if (calls === 1) {
       return jsonResponse({
@@ -273,23 +393,27 @@ test('character assistant completes drafts through multiple tool rounds', async 
     });
   };
 
-  const result = await completeCharacterDraft(
-    {
-      providerType: 'deepseek',
-      gatewayName: 'DeepSeek',
-      baseUrl: 'https://api.deepseek.com',
-      model: 'deepseek-v4-flash',
-      apiKey: 'sk-test',
-      extraBody: {},
-      supportsReasoning: true
-    },
-    {
-      requirement: '做一个温和的推理角色',
-      current: {},
-      user: { displayName: '赵雨乐', username: 'baigei' }
-    }
-  );
-  globalThis.fetch = originalFetch;
+  let result;
+  try {
+    result = await completeCharacterDraft(
+      {
+        providerType: 'deepseek',
+        gatewayName: 'DeepSeek',
+        baseUrl: 'https://api.deepseek.com',
+        model: 'deepseek-v4-flash',
+        apiKey: 'sk-test',
+        extraBody: {},
+        supportsReasoning: true
+      },
+      {
+        requirement: '做一个温和的推理角色',
+        current: {},
+        user: { displayName: '赵雨乐', username: 'baigei' }
+      }
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 
   assert.equal(calls, 3);
   assert.equal(result.character.name, '澄灯');
@@ -297,6 +421,382 @@ test('character assistant completes drafts through multiple tool rounds', async 
   assert.deepEqual(result.character.tags, ['温和', '推理']);
   assert.equal(result.character.regexRules[0].pattern, '老板');
   assert.equal(result.toolCalls.length, 2);
+});
+
+test('character assistant respects disabled generation sections', async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (_url, request = {}) => {
+    const body = JSON.parse(request.body);
+    assert.match(body.messages[0].content, /Only modify these enabled sections/);
+    return jsonResponse({
+      choices: [
+        {
+          message: {
+            role: 'assistant',
+            content: null,
+            tool_calls: [
+              {
+                id: 'call-disabled',
+                type: 'function',
+                function: {
+                  name: 'set_character_profile',
+                  arguments: JSON.stringify({
+                    name: 'Changed Name',
+                    persona: 'Changed persona',
+                    background: 'Changed background',
+                    tags: ['changed']
+                  })
+                }
+              },
+              {
+                id: 'call-regex',
+                type: 'function',
+                function: {
+                  name: 'add_regex_rule',
+                  arguments: JSON.stringify({
+                    label: 'Blocked rule',
+                    pattern: 'foo',
+                    replacement: 'bar'
+                  })
+                }
+              }
+            ]
+          }
+        }
+      ]
+    });
+  };
+
+  const result = await completeCharacterDraft(
+    {
+      providerType: 'deepseek',
+      gatewayName: 'DeepSeek',
+      baseUrl: 'https://api.deepseek.com',
+      model: 'deepseek-v4-flash',
+      apiKey: 'sk-test',
+      extraBody: {}
+    },
+    {
+      requirement: 'only persona',
+      current: {
+        name: 'Original Name',
+        persona: 'Original persona',
+        background: 'Original background',
+        tags: ['original'],
+        regexRules: []
+      },
+      options: {
+        profile: false,
+        background: false,
+        persona: true,
+        tags: false,
+        regexRules: false,
+        renderPlugins: false,
+        worldBookSuggestion: false,
+        advancedSettings: false,
+        modSuggestions: false
+      }
+    }
+  );
+  globalThis.fetch = originalFetch;
+
+  assert.equal(result.character.name, 'Original Name');
+  assert.equal(result.character.background, 'Original background');
+  assert.equal(result.character.persona, 'Changed persona');
+  assert.deepEqual(result.character.tags, ['original']);
+  assert.equal(result.character.regexRules.length, 0);
+});
+
+test('world book assistant normalizes AI draft fields for real entry creation', async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => jsonResponse({
+    choices: [
+      {
+        message: {
+          role: 'assistant',
+          content: null,
+          tool_calls: [
+            {
+              id: 'wb-profile',
+              type: 'function',
+              function: {
+                name: 'set_world_book_profile',
+                arguments: JSON.stringify({
+                  name: 'Court Lore',
+                  description: 'Faction lore',
+                  scanDepth: 8,
+                  lorebookContextPercent: 30
+                })
+              }
+            },
+            {
+              id: 'wb-entries',
+              type: 'function',
+              function: {
+                name: 'replace_world_book_entries',
+                arguments: JSON.stringify({
+                  entries: [
+                    {
+                      name: 'Duke House',
+                      triggerKeys: 'duke,house',
+                      content: 'The duke house controls the old port.',
+                      position: 'at_depth',
+                      role: 'assistant',
+                      depth: 3,
+                      useProbability: true,
+                      probability: 50,
+                      inclusionGroup: 'noble-rumor',
+                      groupWeight: 2,
+                      sticky: 2,
+                      cooldown: 1,
+                      delay: 0
+                    }
+                  ]
+                })
+              }
+            }
+          ]
+        }
+      }
+    ]
+  });
+
+  const result = await completeWorldBookDraft(
+    {
+      providerType: 'deepseek',
+      gatewayName: 'DeepSeek',
+      baseUrl: 'https://api.deepseek.com',
+      model: 'deepseek-v4-flash',
+      apiKey: 'sk-test',
+      extraBody: {}
+    },
+    { requirement: 'noble court lore' }
+  );
+  globalThis.fetch = originalFetch;
+
+  const database = createAppDatabase(':memory:');
+  database.prepare('INSERT INTO users (id, username, password_hash, created_at) VALUES (?, ?, ?, ?)').run(
+    'wb-user',
+    'worldbooker',
+    'hash',
+    new Date().toISOString()
+  );
+  const book = createWorldBook(database, 'wb-user', result.worldBook);
+  const entry = createEntry(database, 'wb-user', book.id, result.worldBook.entries[0]);
+
+  assert.equal(result.worldBook.scanDepth, 8);
+  assert.equal(result.worldBook.entries[0].group, 'noble-rumor');
+  assert.equal(result.worldBook.entries[0].role, 2);
+  assert.equal(entry.group, 'noble-rumor');
+  assert.equal(entry.role, 2);
+  assert.equal(entry.position, 'at_depth');
+});
+
+test('world book assistant rejects empty AI drafts', async () => {
+  const originalFetch = globalThis.fetch;
+  try {
+    globalThis.fetch = async () => jsonResponse({
+      choices: [
+        {
+          message: {
+            role: 'assistant',
+            content: null,
+            tool_calls: [
+              {
+                id: 'wb-profile',
+                type: 'function',
+                function: {
+                  name: 'set_world_book_profile',
+                  arguments: JSON.stringify({
+                    name: 'Empty Lore',
+                    description: 'No usable entries'
+                  })
+                }
+              },
+              {
+                id: 'wb-entries',
+                type: 'function',
+                function: {
+                  name: 'replace_world_book_entries',
+                  arguments: JSON.stringify({ entries: [] })
+                }
+              }
+            ]
+          }
+        }
+      ]
+    });
+
+    await assert.rejects(
+      completeWorldBookDraft(
+        {
+          providerType: 'deepseek',
+          gatewayName: 'DeepSeek',
+          baseUrl: 'https://api.deepseek.com',
+          model: 'deepseek-v4-flash',
+          apiKey: 'sk-test',
+          extraBody: {}
+        },
+        { requirement: 'empty lore' }
+      ),
+      /没有生成有效/
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('world book assistant rejects entries without usable content', async () => {
+  const originalFetch = globalThis.fetch;
+  try {
+    globalThis.fetch = async () => jsonResponse({
+      choices: [
+        {
+          message: {
+            role: 'assistant',
+            content: null,
+            tool_calls: [
+              {
+                id: 'wb-invalid-entries',
+                type: 'function',
+                function: {
+                  name: 'replace_world_book_entries',
+                  arguments: JSON.stringify({
+                    entries: [
+                      { name: 'Only Name', content: '' },
+                      { name: 'Whitespace', content: '   ' }
+                    ]
+                  })
+                }
+              }
+            ]
+          }
+        }
+      ]
+    });
+
+    await assert.rejects(
+      completeWorldBookDraft(
+        {
+          providerType: 'deepseek',
+          gatewayName: 'DeepSeek',
+          baseUrl: 'https://api.deepseek.com',
+          model: 'deepseek-v4-flash',
+          apiKey: 'sk-test',
+          extraBody: {}
+        },
+        { requirement: 'invalid lore' }
+      ),
+      /没有生成有效/
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('world book assistant continues when model promises entries without tool call', async () => {
+  const originalFetch = globalThis.fetch;
+  let callCount = 0;
+  try {
+    globalThis.fetch = async () => {
+      callCount += 1;
+      if (callCount === 1) {
+        return jsonResponse({
+          choices: [
+            {
+              message: {
+                role: 'assistant',
+                content: null,
+                tool_calls: [
+                  {
+                    id: 'wb-profile',
+                    type: 'function',
+                    function: {
+                      name: 'set_world_book_profile',
+                      arguments: JSON.stringify({
+                        name: 'Court Lore',
+                        description: 'Faction lore'
+                      })
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        });
+      }
+      if (callCount === 2) {
+        return jsonResponse({
+          choices: [
+            {
+              message: {
+                role: 'assistant',
+                content: '基本信息已设定。接下来一次性写入全部条目。'
+              }
+            }
+          ]
+        });
+      }
+      if (callCount === 3) {
+        return jsonResponse({
+          choices: [
+            {
+              message: {
+                role: 'assistant',
+                content: null,
+                tool_calls: [
+                  {
+                    id: 'wb-entries',
+                    type: 'function',
+                    function: {
+                      name: 'replace_world_book_entries',
+                      arguments: JSON.stringify({
+                        entries: [
+                          {
+                            name: 'Duke House',
+                            triggerKeys: 'duke,house',
+                            content: 'The duke house controls the old port.'
+                          }
+                        ]
+                      })
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        });
+      }
+      return jsonResponse({
+        choices: [
+          {
+            message: {
+              role: 'assistant',
+              content: '完成。'
+            }
+          }
+        ]
+      });
+    };
+
+    const result = await completeWorldBookDraft(
+      {
+        providerType: 'deepseek',
+        gatewayName: 'DeepSeek',
+        baseUrl: 'https://api.deepseek.com',
+        model: 'deepseek-v4-flash',
+        apiKey: 'sk-test',
+        extraBody: {}
+      },
+      { requirement: 'noble court lore' }
+    );
+
+    assert.equal(callCount, 4);
+    assert.equal(result.worldBook.entries.length, 1);
+    assert.equal(result.worldBook.entries[0].name, 'Duke House');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });
 
 test('new users start without built-in characters', () => {
@@ -529,6 +1029,208 @@ test('OpenAI-compatible streaming parser separates reasoning and content', async
   );
 });
 
+test('OpenAI-compatible parser strips thinking tags from non-stream content', async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () =>
+    jsonResponse({
+      choices: [
+        {
+          message: {
+            content: '<thinking>plan</thinking>正文'
+          }
+        }
+      ]
+    });
+
+  try {
+    const result = await generateCompletion(
+      {
+        providerType: 'custom',
+        gatewayName: 'Custom',
+        baseUrl: 'https://example.test',
+        model: 'local-model',
+        apiKey: 'sk-test',
+        supportsReasoning: false,
+        extraBody: {}
+      },
+      [{ role: 'user', content: 'hi' }]
+    );
+
+    assert.equal(result.content, '正文');
+    assert.equal(result.reasoning, 'plan');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('OpenAI-compatible streaming parser strips split thinking tags from content', async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () =>
+    new Response(sseStream([
+      'data: {"choices":[{"delta":{"content":"<thin"}}]}',
+      'data: {"choices":[{"delta":{"content":"king>plan</thi"}}]}',
+      'data: {"choices":[{"delta":{"content":"nking>正文"}}]}',
+      'data: [DONE]'
+    ]));
+
+  const events = [];
+  try {
+    const result = await streamCompletion(
+      {
+        providerType: 'custom',
+        gatewayName: 'Custom',
+        baseUrl: 'https://example.test',
+        model: 'local-model',
+        apiKey: 'sk-test',
+        supportsReasoning: false,
+        extraBody: {}
+      },
+      [{ role: 'user', content: 'hi' }],
+      (event, data) => events.push({ event, data })
+    );
+
+    assert.equal(result.content, '正文');
+    assert.equal(result.reasoning, 'plan');
+    assert.deepEqual(
+      events.filter((event) => event.event === 'content').map((event) => event.data.text),
+      ['正文']
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('OpenAI-compatible streaming parser reads reasoning_details deltas', async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () =>
+    new Response(sseStream([
+      'data: {"choices":[{"delta":{"reasoning_details":[{"type":"reasoning.text.delta","text":"plan"}]}}]}',
+      'data: {"choices":[{"delta":{"content":" done"}}]}',
+      'data: [DONE]'
+    ]));
+
+  const result = await streamCompletion(
+    {
+      providerType: 'custom',
+      gatewayName: 'Custom',
+      baseUrl: 'https://example.test',
+      model: 'claude-thinking',
+      apiKey: 'sk-test',
+      supportsReasoning: true,
+      extraBody: {}
+    },
+    [{ role: 'user', content: 'hi' }],
+    () => {}
+  );
+  globalThis.fetch = originalFetch;
+
+  assert.equal(result.reasoning, 'plan');
+  assert.equal(result.content, ' done');
+});
+
+test('OpenAI-compatible parser reads DashScope-style output message reasoning', async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () =>
+    jsonResponse({
+      output: {
+        choices: [
+          {
+            message: {
+              reasoning_content: 'plan',
+              content: 'answer'
+            }
+          }
+        ]
+      }
+    });
+
+  try {
+    const result = await generateCompletion(
+      {
+        providerType: 'qwen',
+        gatewayName: 'Qwen',
+        baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+        model: 'qwen3-plus',
+        apiKey: 'sk-test',
+        supportsReasoning: true,
+        extraBody: {}
+      },
+      [{ role: 'user', content: 'hi' }]
+    );
+
+    assert.equal(result.reasoning, 'plan');
+    assert.equal(result.content, 'answer');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('OpenAI-compatible streaming parser reads output message reasoning chunks', async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () =>
+    new Response(sseStream([
+      'data: {"output":{"choices":[{"message":{"reasoning_content":"plan"}}]}}',
+      'data: {"output":{"choices":[{"message":{"content":"answer"}}]}}',
+      'data: [DONE]'
+    ]));
+
+  const events = [];
+  try {
+    const result = await streamCompletion(
+      {
+        providerType: 'qwen',
+        gatewayName: 'Qwen',
+        baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+        model: 'qwen3-plus',
+        apiKey: 'sk-test',
+        supportsReasoning: true,
+        extraBody: {}
+      },
+      [{ role: 'user', content: 'hi' }],
+      (event, data) => events.push({ event, data })
+    );
+
+    assert.equal(result.reasoning, 'plan');
+    assert.equal(result.content, 'answer');
+    assert.deepEqual(events.map((event) => event.event), ['reasoning', 'content']);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('OpenAI-compatible streaming parser reads thought content array chunks', async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () =>
+    new Response(sseStream([
+      'data: {"choices":[{"delta":{"content":[{"type":"text","thought":true,"text":"plan"}]}}]}',
+      'data: {"choices":[{"delta":{"content":[{"type":"text","text":"answer"}]}}]}',
+      'data: [DONE]'
+    ]));
+
+  const events = [];
+  try {
+    const result = await streamCompletion(
+      {
+        providerType: 'gemini',
+        gatewayName: 'Gemini',
+        baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai',
+        model: 'gemini-2.5-flash',
+        apiKey: 'sk-test',
+        supportsReasoning: true,
+        extraBody: {}
+      },
+      [{ role: 'user', content: 'hi' }],
+      (event, data) => events.push({ event, data })
+    );
+
+    assert.equal(result.reasoning, 'plan');
+    assert.equal(result.content, 'answer');
+    assert.deepEqual(events.map((event) => event.event), ['reasoning', 'content']);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test('OpenAI Responses streaming parser reads summary deltas', async () => {
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async () =>
@@ -558,6 +1260,39 @@ test('OpenAI Responses streaming parser reads summary deltas', async () => {
   assert.equal(result.usage.total_tokens, 12);
 });
 
+test('Responses streaming parser forwards non-summary reasoning deltas', async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () =>
+    new Response(sseStream([
+      'event: response.reasoning_text.delta\ndata: {"type":"response.reasoning_text.delta","delta":"plan"}',
+      'event: response.output_text.delta\ndata: {"type":"response.output_text.delta","delta":"answer"}',
+      'event: response.completed\ndata: {"type":"response.completed","response":{"usage":{"total_tokens":12}}}'
+    ]));
+
+  const events = [];
+  try {
+    const result = await streamCompletion(
+      {
+        providerType: 'xai',
+        gatewayName: 'xAI',
+        baseUrl: 'https://api.x.ai/v1',
+        model: 'grok-4.1',
+        apiKey: 'sk-test',
+        supportsReasoning: true,
+        extraBody: {}
+      },
+      [{ role: 'user', content: 'hi' }],
+      (event, data) => events.push({ event, data })
+    );
+
+    assert.equal(result.reasoning, 'plan');
+    assert.equal(result.content, 'answer');
+    assert.deepEqual(events.map((event) => event.event), ['reasoning', 'content']);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test('provider model list normalizes official /models responses', async () => {
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async () =>
@@ -581,6 +1316,122 @@ test('provider model list normalizes official /models responses', async () => {
     models.map((model) => model.id),
     ['deepseek-chat', 'deepseek-reasoner']
   );
+});
+
+test('provider model cache refreshes when API key changes', async () => {
+  const originalFetch = globalThis.fetch;
+  const calls = [];
+  globalThis.fetch = async (_url, request = {}) => {
+    const authorization = new Headers(request.headers).get('authorization') || '';
+    calls.push(authorization);
+    const suffix = authorization.endsWith('sk-second') ? 'second' : 'first';
+    return new Response(JSON.stringify({ data: [{ id: `model-${suffix}` }] }), {
+      headers: { 'Content-Type': 'application/json' }
+    });
+  };
+
+  try {
+    const settings = {
+      providerType: 'custom',
+      gatewayName: 'Cache Test',
+      baseUrl: 'https://cache-key.example/v1',
+      model: 'model-first',
+      apiKey: 'sk-first',
+      extraBody: {}
+    };
+
+    const first = await listProviderModels(settings);
+    const cached = await listProviderModels(settings);
+    const refreshed = await listProviderModels({ ...settings, apiKey: 'sk-second' });
+
+    assert.deepEqual(first.map((model) => model.id), ['model-first']);
+    assert.deepEqual(cached.map((model) => model.id), ['model-first']);
+    assert.deepEqual(refreshed.map((model) => model.id), ['model-second']);
+    assert.deepEqual(calls, ['Bearer sk-first', 'Bearer sk-second']);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('provider model list preserves non-JSON upstream error text', async () => {
+  const originalFetch = globalThis.fetch;
+  try {
+    globalThis.fetch = async () =>
+      new Response('upstream gateway overloaded', {
+        status: 502,
+        statusText: 'Bad Gateway',
+        headers: { 'Content-Type': 'text/plain' }
+      });
+
+    await assert.rejects(
+      () =>
+        listProviderModels({
+          providerType: 'custom',
+          gatewayName: 'Plain Text Error',
+          baseUrl: 'https://plain-error.example/v1',
+          model: 'model',
+          apiKey: 'sk-test',
+          extraBody: {}
+        }),
+      { message: /upstream gateway overloaded/ }
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('custom local proxy can be used without an API key', async () => {
+  const settings = {
+    providerType: 'custom',
+    gatewayName: 'Local proxy',
+    baseUrl: 'http://127.0.0.1:8317/v1',
+    model: 'local-model',
+    apiKey: ''
+  };
+  const originalFetch = globalThis.fetch;
+  let authorization = 'unset';
+  globalThis.fetch = async (_url, request = {}) => {
+    authorization = new Headers(request.headers).get('authorization');
+    return new Response(JSON.stringify({ data: [{ id: 'local-model' }] }), {
+      headers: { 'Content-Type': 'application/json' }
+    });
+  };
+
+  const models = await listProviderModels(settings);
+  globalThis.fetch = originalFetch;
+
+  assert.equal(hasUsableProvider(settings), true);
+  assert.equal(authorization, null);
+  assert.deepEqual(models.map((model) => model.id), ['local-model']);
+});
+
+test('custom local proxy retries without Authorization after auth rejection', async () => {
+  const originalFetch = globalThis.fetch;
+  const authorizations = [];
+  globalThis.fetch = async (_url, request = {}) => {
+    authorizations.push(new Headers(request.headers).get('authorization'));
+    if (authorizations.length === 1) {
+      return new Response(JSON.stringify({ error: { message: 'bad token' } }), {
+        status: 401,
+        headers: { 'Content-Type': 'application/json' }
+      });
+    }
+    return new Response(JSON.stringify({ data: [{ id: 'local-model' }] }), {
+      headers: { 'Content-Type': 'application/json' }
+    });
+  };
+
+  const models = await listProviderModels({
+    providerType: 'custom',
+    gatewayName: 'Local proxy',
+    baseUrl: 'http://127.0.0.1:8317/v1',
+    model: 'local-model',
+    apiKey: 'sk-wrong'
+  });
+  globalThis.fetch = originalFetch;
+
+  assert.deepEqual(authorizations, ['Bearer sk-wrong', null]);
+  assert.deepEqual(models.map((model) => model.id), ['local-model']);
 });
 
 test('DeepSeek usage snapshots calculate total tokens and CNY cost', () => {
@@ -627,11 +1478,102 @@ test('unknown provider usage snapshots count tokens without pricing', () => {
   });
 });
 
-test('DeepSeek thinking switch maps to official thinking request field', () => {
+test('DeepSeek thinking switch maps to official V4 thinking request fields', () => {
   const enabled = buildProviderBody(
     {
       providerType: 'deepseek',
-      model: 'deepseek-chat',
+      model: 'deepseek-v4-flash',
+      supportsReasoning: true,
+      extraBody: {}
+    },
+    [{ role: 'user', content: 'hi' }],
+    true,
+    { thinkingEnabled: true, temperature: 0.7, topP: 0.9 }
+  );
+  const disabled = buildProviderBody(
+    {
+      providerType: 'deepseek',
+      model: 'deepseek-v4-flash',
+      supportsReasoning: true,
+      extraBody: {}
+    },
+    [{ role: 'user', content: 'hi' }],
+    true,
+    { thinkingEnabled: false, temperature: 0.7 }
+  );
+
+  assert.deepEqual(enabled.thinking, { type: 'enabled' });
+  assert.equal(enabled.reasoning_effort, 'high');
+  assert.equal(enabled.temperature, undefined);
+  assert.deepEqual(disabled.thinking, { type: 'disabled' });
+  assert.equal(enabled.model, 'deepseek-v4-flash');
+  assert.equal(disabled.model, 'deepseek-v4-flash');
+  assert.equal(disabled.reasoning_effort, undefined);
+  assert.equal(disabled.temperature, 0.7);
+});
+
+test('custom reasoning provider does not synthesize provider-specific thinking fields', () => {
+  const enabled = buildProviderBody(
+    {
+      providerType: 'custom',
+      model: 'claude-opus-thinking',
+      supportsReasoning: true,
+      extraBody: {}
+    },
+    [{ role: 'user', content: 'hi' }],
+    true,
+    { thinkingEnabled: true }
+  );
+  const preserved = buildProviderBody(
+    {
+      providerType: 'custom',
+      model: 'claude-opus-thinking',
+      supportsReasoning: true,
+      extraBody: { thinking: { type: 'enabled', budget_tokens: 2048 } }
+    },
+    [{ role: 'user', content: 'hi' }],
+    true,
+    { thinkingEnabled: false }
+  );
+
+  assert.equal(enabled.thinking, undefined);
+  assert.deepEqual(preserved.thinking, { type: 'enabled', budget_tokens: 2048 });
+});
+
+test('Gemini thinking switch uses OpenAI-compatible native reasoning effort', () => {
+  const enabled = buildProviderBody(
+    {
+      providerType: 'gemini',
+      model: 'gemini-2.5-flash',
+      supportsReasoning: true,
+      extraBody: {}
+    },
+    [{ role: 'user', content: 'hi' }],
+    true,
+    { thinkingEnabled: true, temperature: 0.7, topP: 0.9 }
+  );
+  const disabled = buildProviderBody(
+    {
+      providerType: 'gemini',
+      model: 'gemini-2.5-flash',
+      supportsReasoning: true,
+      extraBody: {}
+    },
+    [{ role: 'user', content: 'hi' }],
+    true,
+    { thinkingEnabled: false, temperature: 0.7 }
+  );
+
+  assert.equal(enabled.reasoning_effort, 'high');
+  assert.equal(disabled.reasoning_effort, 'none');
+  assert.equal(enabled.thinking, undefined);
+});
+
+test('Mistral thinking switch uses native reasoning effort', () => {
+  const enabled = buildProviderBody(
+    {
+      providerType: 'mistral',
+      model: 'mistral-medium-3-5',
       supportsReasoning: true,
       extraBody: {}
     },
@@ -641,8 +1583,65 @@ test('DeepSeek thinking switch maps to official thinking request field', () => {
   );
   const disabled = buildProviderBody(
     {
-      providerType: 'deepseek',
-      model: 'deepseek-chat',
+      providerType: 'mistral',
+      model: 'mistral-medium-3-5',
+      supportsReasoning: true,
+      extraBody: {}
+    },
+    [{ role: 'user', content: 'hi' }],
+    true,
+    { thinkingEnabled: false }
+  );
+
+  assert.equal(enabled.reasoning_effort, 'high');
+  assert.equal(disabled.reasoning_effort, 'none');
+});
+
+test('Qwen thinking switch uses native enable_thinking flag', () => {
+  const enabled = buildProviderBody(
+    {
+      providerType: 'qwen',
+      model: 'qwen3-plus',
+      supportsReasoning: true,
+      extraBody: {}
+    },
+    [{ role: 'user', content: 'hi' }],
+    true,
+    { thinkingEnabled: true }
+  );
+  const disabled = buildProviderBody(
+    {
+      providerType: 'qwen',
+      model: 'qwen3-plus',
+      supportsReasoning: true,
+      extraBody: {}
+    },
+    [{ role: 'user', content: 'hi' }],
+    true,
+    { thinkingEnabled: false }
+  );
+
+  assert.equal(enabled.enable_thinking, true);
+  assert.equal(disabled.enable_thinking, false);
+  assert.equal(enabled.thinking, undefined);
+});
+
+test('GLM thinking switch uses native thinking object', () => {
+  const enabled = buildProviderBody(
+    {
+      providerType: 'glm',
+      model: 'glm-5.1',
+      supportsReasoning: true,
+      extraBody: {}
+    },
+    [{ role: 'user', content: 'hi' }],
+    true,
+    { thinkingEnabled: true }
+  );
+  const disabled = buildProviderBody(
+    {
+      providerType: 'glm',
+      model: 'glm-5.1',
       supportsReasoning: true,
       extraBody: {}
     },
@@ -653,8 +1652,223 @@ test('DeepSeek thinking switch maps to official thinking request field', () => {
 
   assert.deepEqual(enabled.thinking, { type: 'enabled' });
   assert.deepEqual(disabled.thinking, { type: 'disabled' });
-  assert.equal(enabled.model, 'deepseek-v4-flash');
-  assert.equal(disabled.model, 'deepseek-v4-flash');
+});
+
+test('Kimi thinking switch uses native disabled flag and drops fixed sampling fields', () => {
+  const enabled = buildProviderBody(
+    {
+      providerType: 'kimi',
+      model: 'kimi-k2.5',
+      supportsReasoning: true,
+      extraBody: {}
+    },
+    [{ role: 'user', content: 'hi' }],
+    true,
+    { thinkingEnabled: true, temperature: 0.7, topP: 0.9 }
+  );
+  const disabled = buildProviderBody(
+    {
+      providerType: 'kimi',
+      model: 'kimi-k2.5',
+      supportsReasoning: true,
+      extraBody: {}
+    },
+    [{ role: 'user', content: 'hi' }],
+    true,
+    { thinkingEnabled: false }
+  );
+
+  assert.equal(enabled.thinking, undefined);
+  assert.deepEqual(disabled.thinking, { type: 'disabled' });
+  assert.equal(enabled.temperature, undefined);
+  assert.equal(enabled.top_p, undefined);
+});
+
+test('xAI reasoning provider uses Responses API native reasoning object', async () => {
+  const originalFetch = globalThis.fetch;
+  const requests = [];
+  globalThis.fetch = async (url, request = {}) => {
+    requests.push({
+      url: String(url),
+      body: JSON.parse(request.body)
+    });
+    return jsonResponse({
+      output_text: '正文',
+      usage: { total_tokens: 3 }
+    });
+  };
+
+  try {
+    const result = await generateCompletion(
+      {
+        providerType: 'xai',
+        gatewayName: 'xAI',
+        baseUrl: 'https://api.x.ai/v1',
+        model: 'grok-4.1',
+        apiKey: 'xai-test',
+        supportsReasoning: true,
+        extraBody: {}
+      },
+      [{ role: 'user', content: 'hi' }],
+      { thinkingEnabled: true }
+    );
+
+    assert.equal(requests[0].url, 'https://api.x.ai/v1/responses');
+    assert.deepEqual(requests[0].body.reasoning, { effort: 'high' });
+    assert.equal(result.content, '正文');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('Anthropic provider uses Messages API native thinking config and x-api-key auth', async () => {
+  const originalFetch = globalThis.fetch;
+  const requests = [];
+  globalThis.fetch = async (url, request = {}) => {
+    const headers = new Headers(request.headers);
+    requests.push({
+      url: String(url),
+      headers,
+      body: JSON.parse(request.body)
+    });
+    return jsonResponse({
+      model: 'claude-sonnet-4-6',
+      content: [
+        { type: 'thinking', thinking: 'plan' },
+        { type: 'text', text: '正文' }
+      ],
+      usage: { input_tokens: 1, output_tokens: 2 }
+    });
+  };
+
+  try {
+    const result = await generateCompletion(
+      {
+        providerType: 'anthropic',
+        gatewayName: 'Anthropic',
+        baseUrl: 'https://api.anthropic.com/v1',
+        model: 'claude-sonnet-4-6',
+        apiKey: 'sk-ant-test',
+        supportsReasoning: true,
+        extraBody: {}
+      },
+      [
+        { role: 'system', content: 'system note' },
+        { role: 'user', content: 'hi' }
+      ],
+      { thinkingEnabled: true }
+    );
+
+    assert.equal(requests[0].url, 'https://api.anthropic.com/v1/messages');
+    assert.equal(requests[0].headers.get('x-api-key'), 'sk-ant-test');
+    assert.equal(requests[0].headers.get('authorization'), null);
+    assert.equal(requests[0].headers.get('anthropic-version'), '2023-06-01');
+    assert.deepEqual(requests[0].body.thinking, { type: 'adaptive', display: 'summarized' });
+    assert.equal(requests[0].body.output_config.effort, 'high');
+    assert.equal(requests[0].body.system, 'system note');
+    assert.equal(result.content, '正文');
+    assert.equal(result.reasoning, 'plan');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('Anthropic streaming parser separates thinking deltas and text deltas', async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () =>
+    new Response(sseStream([
+      'event: content_block_delta\ndata: {"type":"content_block_delta","delta":{"type":"thinking_delta","thinking":"plan"}}',
+      'event: content_block_delta\ndata: {"type":"content_block_delta","delta":{"type":"text_delta","text":"正文"}}',
+      'event: message_stop\ndata: {"type":"message_stop"}'
+    ]));
+
+  const events = [];
+  try {
+    const result = await streamCompletion(
+      {
+        providerType: 'anthropic',
+        gatewayName: 'Anthropic',
+        baseUrl: 'https://api.anthropic.com/v1',
+        model: 'claude-sonnet-4-6',
+        apiKey: 'sk-ant-test',
+        supportsReasoning: true,
+        extraBody: {}
+      },
+      [{ role: 'user', content: 'hi' }],
+      (event, data) => events.push({ event, data })
+    );
+
+    assert.equal(result.reasoning, 'plan');
+    assert.equal(result.content, '正文');
+    assert.deepEqual(events.map((event) => event.event), ['reasoning', 'content']);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('Anthropic tool completion maps OpenAI tool schema to native tool_use loop', async () => {
+  const originalFetch = globalThis.fetch;
+  const requests = [];
+  globalThis.fetch = async (_url, request = {}) => {
+    const body = JSON.parse(request.body);
+    requests.push(body);
+    if (requests.length === 1) {
+      return jsonResponse({
+        content: [
+          { type: 'thinking', thinking: 'plan' },
+          { type: 'tool_use', id: 'toolu_1', name: 'set_value', input: { value: 42 } }
+        ],
+        usage: { input_tokens: 1, output_tokens: 2 }
+      });
+    }
+    return jsonResponse({
+      content: [
+        { type: 'text', text: 'done' }
+      ],
+      usage: { input_tokens: 2, output_tokens: 1 }
+    });
+  };
+
+  try {
+    const result = await runToolCompletion(
+      {
+        providerType: 'anthropic',
+        gatewayName: 'Anthropic',
+        baseUrl: 'https://api.anthropic.com/v1',
+        model: 'claude-sonnet-4-6',
+        apiKey: 'sk-ant-test',
+        supportsReasoning: true,
+        extraBody: {}
+      },
+      [{ role: 'user', content: 'set it' }],
+      [
+        {
+          type: 'function',
+          function: {
+            name: 'set_value',
+            description: 'set a value',
+            parameters: {
+              type: 'object',
+              properties: { value: { type: 'number' } },
+              required: ['value']
+            }
+          }
+        }
+      ],
+      async (_name, args) => ({ ok: true, value: args.value }),
+      { thinkingEnabled: true }
+    );
+
+    assert.equal(requests[0].tools[0].name, 'set_value');
+    assert.deepEqual(requests[0].tools[0].input_schema.required, ['value']);
+    assert.equal(requests[1].messages.at(-1).content[0].type, 'tool_result');
+    assert.equal(requests[1].messages.at(-1).content[0].tool_use_id, 'toolu_1');
+    assert.equal(result.content, 'done');
+    assert.equal(result.process[0].reasoning, 'plan');
+    assert.equal(result.toolCalls[0].arguments.value, 42);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });
 
 test('buildProviderBody applies preset parameters', () => {
@@ -668,7 +1882,7 @@ test('buildProviderBody applies preset parameters', () => {
     [{ role: 'user', content: 'hi' }],
     false,
     {
-      thinkingEnabled: true,
+      thinkingEnabled: false,
       temperature: 0.7,
       maxTokens: 4096,
       topP: 0.9,
@@ -682,6 +1896,34 @@ test('buildProviderBody applies preset parameters', () => {
   assert.equal(body.top_p, 0.9);
   assert.equal(body.frequency_penalty, 0.5);
   assert.equal(body.presence_penalty, 0.3);
+});
+
+test('buildProviderBody ignores non-object extra body values', () => {
+  const arrayBody = buildProviderBody(
+    {
+      providerType: 'custom',
+      model: 'custom-model',
+      supportsReasoning: false,
+      extraBody: ['unexpected']
+    },
+    [{ role: 'user', content: 'hi' }],
+    false
+  );
+  const stringBody = buildProviderBody(
+    {
+      providerType: 'custom',
+      model: 'custom-model',
+      supportsReasoning: false,
+      extraBody: 'bad'
+    },
+    [{ role: 'user', content: 'hi' }],
+    false
+  );
+
+  assert.equal(arrayBody[0], undefined);
+  assert.equal(stringBody[0], undefined);
+  assert.deepEqual(Object.keys(arrayBody).sort(), ['messages', 'model', 'stream']);
+  assert.deepEqual(Object.keys(stringBody).sort(), ['messages', 'model', 'stream']);
 });
 
 function sseStream(lines) {
@@ -699,6 +1941,38 @@ function jsonResponse(value) {
     headers: { 'Content-Type': 'application/json' }
   });
 }
+
+test('world book schema accepts null characterId for unlinked books', () => {
+  const createResult = createWorldBookSchema.safeParse({
+    name: 'Unlinked World Book',
+    characterId: null
+  });
+  const updateResult = updateWorldBookSchema.safeParse({
+    characterId: null
+  });
+
+  assert.equal(createResult.success, true);
+  assert.equal(createResult.data.characterId, null);
+  assert.equal(updateResult.success, true);
+  assert.equal(updateResult.data.characterId, null);
+});
+
+test('world book create stores null characterId as unlinked', () => {
+  const database = createAppDatabase(':memory:');
+  database.prepare('INSERT INTO users (id, username, password_hash, created_at) VALUES (?, ?, ?, ?)').run(
+    'wb-null-user',
+    'nullworldbooker',
+    'hash',
+    new Date().toISOString()
+  );
+
+  const book = createWorldBook(database, 'wb-null-user', {
+    name: 'Unlinked World Book',
+    characterId: null
+  });
+
+  assert.equal(book.characterId, null);
+});
 
 test('world books CRUD with entries', () => {
   const database = createAppDatabase(':memory:');
@@ -991,8 +2265,8 @@ test('tags CRUD with usage count', () => {
   );
 
   // Create tags
-  const tag1 = createTag(database, { name: '温柔', color: '#ff6b6b' });
-  const tag2 = createTag(database, { name: '悬疑' });
+  const tag1 = createTag(database, userId, { name: '温柔', color: '#ff6b6b' });
+  const tag2 = createTag(database, userId, { name: '悬疑' });
   assert.equal(tag1.name, '温柔');
   assert.equal(tag1.color, '#ff6b6b');
   assert.equal(tag2.name, '悬疑');
@@ -1000,24 +2274,148 @@ test('tags CRUD with usage count', () => {
 
   // Create a character and assign tags
   const character = createCharacter(database, userId, { name: '标签测试角色' });
-  setCharacterTags(database, character.id, ['温柔', '悬疑']);
+  setCharacterTags(database, userId, character.id, ['温柔', '悬疑']);
 
   // List tags with usage count
-  const tags = listTags(database);
+  const tags = listTags(database, userId);
   assert.equal(tags.length, 2);
   assert.equal(tags[0].usageCount, 1); // sorted by usage desc
   assert.equal(tags[1].usageCount, 1);
 
   // Duplicate tag name rejected
-  assert.throws(() => createTag(database, { name: '温柔' }), /标签名已存在/);
+  assert.throws(() => createTag(database, userId, { name: '温柔' }), /标签名已存在/);
 
   // Delete tag
-  assert.equal(deleteTag(database, tag1.id), true);
-  assert.equal(deleteTag(database, 'nonexistent'), false);
+  assert.equal(deleteTag(database, userId, tag1.id), true);
+  assert.equal(deleteTag(database, userId, 'nonexistent'), false);
 
   // After deletion, usage count updates
-  const remaining = listTags(database);
+  const remaining = listTags(database, userId);
   assert.equal(remaining.length, 1);
+});
+
+test('tags are isolated per user', () => {
+  const database = createAppDatabase(':memory:');
+  const createdAt = new Date().toISOString();
+  const userA = 'tag-user-a';
+  const userB = 'tag-user-b';
+  database.prepare('INSERT INTO users (id, username, password_hash, created_at) VALUES (?, ?, ?, ?)').run(
+    userA, 'taggera', 'hash', createdAt
+  );
+  database.prepare('INSERT INTO users (id, username, password_hash, created_at) VALUES (?, ?, ?, ?)').run(
+    userB, 'taggerb', 'hash', createdAt
+  );
+
+  const tagA = createTag(database, userA, { name: '共享名', color: '#111111' });
+  const tagB = createTag(database, userB, { name: '共享名', color: '#222222' });
+  assert.notEqual(tagA.id, tagB.id);
+  assert.deepEqual(listTags(database, userA).map((tag) => tag.color), ['#111111']);
+  assert.deepEqual(listTags(database, userB).map((tag) => tag.color), ['#222222']);
+
+  const charA = createCharacter(database, userA, { name: '用户A角色' });
+  const charB = createCharacter(database, userB, { name: '用户B角色' });
+  setCharacterTags(database, userA, charA.id, ['共享名']);
+  setCharacterTags(database, userB, charB.id, ['共享名']);
+
+  assert.deepEqual(listCharacters(database, userA, { tag: '共享名' }).map((item) => item.name), ['用户A角色']);
+  assert.deepEqual(listCharacters(database, userB, { tag: '共享名' }).map((item) => item.name), ['用户B角色']);
+  assert.equal(deleteTag(database, userA, tagB.id), false);
+  assert.equal(listTags(database, userB).length, 1);
+});
+
+test('legacy global tags migrate into user scoped tags', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'flai-tags-'));
+  const dbPath = path.join(dir, 'legacy.sqlite');
+  let database = createAppDatabase(dbPath);
+  try {
+    const createdAt = new Date().toISOString();
+    const userA = 'legacy-tag-user-a';
+    const userB = 'legacy-tag-user-b';
+    database.prepare('INSERT INTO users (id, username, password_hash, created_at) VALUES (?, ?, ?, ?)').run(
+      userA, 'legacya', 'hash', createdAt
+    );
+    database.prepare('INSERT INTO users (id, username, password_hash, created_at) VALUES (?, ?, ?, ?)').run(
+      userB, 'legacyb', 'hash', createdAt
+    );
+    const charA = createCharacter(database, userA, { name: '旧库A' });
+    const charB = createCharacter(database, userB, { name: '旧库B' });
+
+    database.exec(`
+      PRAGMA foreign_keys = OFF;
+      DROP TABLE character_tags;
+      DROP TABLE tags;
+      CREATE TABLE tags (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL UNIQUE,
+        color TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL
+      );
+      CREATE TABLE character_tags (
+        character_id TEXT NOT NULL,
+        tag_id TEXT NOT NULL,
+        PRIMARY KEY (character_id, tag_id)
+      );
+      PRAGMA foreign_keys = ON;
+    `);
+    database.prepare('INSERT INTO tags (id, name, color, created_at) VALUES (?, ?, ?, ?)').run(
+      'legacy-shared-tag', '???', '#333333', createdAt
+    );
+    database.prepare('INSERT INTO character_tags (character_id, tag_id) VALUES (?, ?)').run(charA.id, 'legacy-shared-tag');
+    database.prepare('INSERT INTO character_tags (character_id, tag_id) VALUES (?, ?)').run(charB.id, 'legacy-shared-tag');
+    database.close();
+    database = null;
+
+    database = createAppDatabase(dbPath);
+    const columns = database.prepare('PRAGMA table_info(tags)').all().map((column) => column.name);
+    assert.ok(columns.includes('user_id'));
+    const tagsA = listTags(database, userA);
+    const tagsB = listTags(database, userB);
+    assert.deepEqual(tagsA.map((tag) => tag.name), ['???']);
+    assert.deepEqual(tagsB.map((tag) => tag.name), ['???']);
+    assert.notEqual(tagsA[0].id, tagsB[0].id);
+    assert.equal(/[?#/]/.test(tagsA[0].id), false);
+    assert.equal(/[?#/]/.test(tagsB[0].id), false);
+    assert.deepEqual(listCharacters(database, userA, { tag: '???' }).map((item) => item.name), ['旧库A']);
+    assert.deepEqual(listCharacters(database, userB, { tag: '???' }).map((item) => item.name), ['旧库B']);
+  } finally {
+    if (database) {
+      database.close();
+    }
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('unsafe migrated tag ids are normalized on startup', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'flai-tags-unsafe-'));
+  const dbPath = path.join(dir, 'unsafe.sqlite');
+  let database = createAppDatabase(dbPath);
+  try {
+    const userId = 'unsafe-tag-user';
+    const createdAt = new Date().toISOString();
+    database.prepare('INSERT INTO users (id, username, password_hash, created_at) VALUES (?, ?, ?, ?)').run(
+      userId, 'unsafe', 'hash', createdAt
+    );
+    const character = createCharacter(database, userId, { name: '危险ID角色' });
+    database.prepare('INSERT INTO tags (id, user_id, name, color, created_at) VALUES (?, ?, ?, ?, ?)').run(
+      `tag:${userId}:???`, userId, '???', '', createdAt
+    );
+    database.prepare('INSERT INTO character_tags (character_id, tag_id) VALUES (?, ?)').run(
+      character.id, `tag:${userId}:???`
+    );
+    database.close();
+    database = null;
+
+    database = createAppDatabase(dbPath);
+    const tag = listTags(database, userId)[0];
+    assert.equal(tag.name, '???');
+    assert.equal(/[?#/]/.test(tag.id), false);
+    assert.deepEqual(getCharacterTagNames(database, character.id), ['???']);
+  } finally {
+    if (database) {
+      database.close();
+    }
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test('character tags sync replaces old tags', () => {
@@ -1030,15 +2428,15 @@ test('character tags sync replaces old tags', () => {
   const character = createCharacter(database, userId, { name: '同步测试' });
 
   // Set initial tags
-  setCharacterTags(database, character.id, ['A', 'B', 'C']);
+  setCharacterTags(database, userId, character.id, ['A', 'B', 'C']);
   assert.deepEqual(getCharacterTagNames(database, character.id), ['A', 'B', 'C']);
 
   // Replace with new tags
-  setCharacterTags(database, character.id, ['B', 'D']);
+  setCharacterTags(database, userId, character.id, ['B', 'D']);
   assert.deepEqual(getCharacterTagNames(database, character.id), ['B', 'D']);
 
   // Clear all tags
-  setCharacterTags(database, character.id, []);
+  setCharacterTags(database, userId, character.id, []);
   assert.deepEqual(getCharacterTagNames(database, character.id), []);
 });
 
@@ -1052,9 +2450,9 @@ test('character list filters by tag name', () => {
   const c1 = createCharacter(database, userId, { name: '角色A' });
   const c2 = createCharacter(database, userId, { name: '角色B' });
   const c3 = createCharacter(database, userId, { name: '角色C' });
-  setCharacterTags(database, c1.id, ['温柔']);
-  setCharacterTags(database, c2.id, ['温柔', '悬疑']);
-  setCharacterTags(database, c3.id, ['悬疑']);
+  setCharacterTags(database, userId, c1.id, ['温柔']);
+  setCharacterTags(database, userId, c2.id, ['温柔', '悬疑']);
+  setCharacterTags(database, userId, c3.id, ['悬疑']);
 
   const all = listCharacters(database, userId, {});
   assert.equal(all.length, 3);
@@ -1074,10 +2472,15 @@ test('character list filters by tag name', () => {
 test('tag color validation rejects invalid hex', () => {
   const database = createAppDatabase(':memory:');
 
-  const tag1 = createTag(database, { name: '颜色测试', color: '#abc' });
+  const userId = 'color-user';
+  database.prepare('INSERT INTO users (id, username, password_hash, created_at) VALUES (?, ?, ?, ?)').run(
+    userId, 'colorer', 'hash', new Date().toISOString()
+  );
+
+  const tag1 = createTag(database, userId, { name: '颜色测试', color: '#abc' });
   assert.equal(tag1.color, '#abc');
 
-  const tag2 = createTag(database, { name: '无颜色', color: 'not-a-color' });
+  const tag2 = createTag(database, userId, { name: '无颜色', color: 'not-a-color' });
   assert.equal(tag2.color, '');
 });
 
@@ -1219,7 +2622,7 @@ test('character export includes character, regex rules, tags and world book', ()
     ],
     tags: ['温柔', '助手']
   });
-  setCharacterTags(database, character.id, ['温柔', '助手']);
+  setCharacterTags(database, userId, character.id, ['温柔', '助手']);
 
   // Create a world book linked to the character
   const book = createWorldBook(database, userId, {
@@ -1273,7 +2676,7 @@ test('character export includes character, regex rules, tags and world book', ()
   assert.equal(exportData.character.gender, '女');
   assert.equal(exportData.regex_rules.length, 1);
   assert.equal(exportData.regex_rules[0].pattern, '猫');
-  assert.deepEqual(exportData.tags, ['助手', '温柔']);
+  assert.deepEqual([...exportData.tags].sort(), ['助手', '温柔'].sort());
   assert.equal(exportData.world_book.name, '世界观');
   assert.equal(exportData.world_book.entries.length, 1);
   assert.equal(exportData.world_book.entries[0].name, '魔法');
@@ -1313,7 +2716,7 @@ test('character import creates new character with new ID', () => {
     regexRules: importData.regex_rules,
     tags: importData.tags
   });
-  setCharacterTags(database, character.id, importData.tags);
+  setCharacterTags(database, userId, character.id, importData.tags);
 
   assert.equal(character.name, '导入角色');
   assert.equal(character.gender, '男');
@@ -1512,6 +2915,203 @@ test('buildModSystemPrompt combines enabled mod contents', () => {
 
   // Empty mods list
   assert.equal(buildModSystemPrompt([]), '');
+});
+
+test('advanced settings normalize status bar blueprint', () => {
+  const longTemplate = `<style>${'a'.repeat(6000)}</style><div>{{HP}}</div>`;
+  const settings = normalizeAdvancedSettings({
+    statusBarPrompt: '状态变化时更新',
+    statusBarBlueprint: {
+      name: '战斗面板',
+      variables: [
+        { name: 'HP', value: 80, max: 100, color: '#e74c3c' },
+        { name: '', value: 1 },
+        { name: 'Mood', value: '5', max: '10', color: 'bad-color' }
+      ],
+      template: '<div>HP: {{HP}} / {{HP.max}}</div>'
+    }
+  });
+
+  assert.equal(settings.statusBarBlueprint.name, '战斗面板');
+  assert.equal(settings.statusBarBlueprint.variables.length, 2);
+  assert.equal(settings.statusBarBlueprint.variables[0].name, 'HP');
+  assert.equal(settings.statusBarBlueprint.variables[1].value, 5);
+  assert.equal(settings.statusBarBlueprint.variables[1].color, '');
+  assert.equal(settings.statusBarBlueprint.template, '<div>HP: {{HP}} / {{HP.max}}</div>');
+
+  const longSettings = normalizeAdvancedSettings({
+    statusBarBlueprint: {
+      name: '长模板',
+      variables: [{ name: 'HP', value: 80, max: 100, color: '#e74c3c' }],
+      template: longTemplate
+    }
+  });
+  assert.equal(longSettings.statusBarBlueprint.template.length, longTemplate.length);
+  assert.equal(updateCharacterSchema.safeParse({
+    authorAdvancedSettings: {
+      statusBarBlueprint: {
+        name: '长模板',
+        variables: [{ name: 'HP', value: 80, max: 100, color: '#e74c3c' }],
+        template: longTemplate
+      }
+    }
+  }).success, true);
+});
+
+test('creating a conversation applies character status bar blueprint', async () => {
+  const database = createAppDatabase(':memory:');
+  const userId = 'conv-blueprint-user';
+  database.prepare('INSERT INTO users (id, username, password_hash, created_at) VALUES (?, ?, ?, ?)').run(
+    userId, 'conv-blueprint', 'hash', new Date().toISOString()
+  );
+  const character = createCharacter(database, userId, {
+    name: '状态角色',
+    visibility: 'private',
+    authorAdvancedSettings: {
+      statusBarPrompt: '受伤时更新 HP',
+      statusBarBlueprint: {
+        name: '角色状态',
+        variables: [{ name: 'HP', value: 100, max: 100, color: '#e74c3c' }],
+        template: '<div class="state">HP {{HP}}</div>'
+      }
+    }
+  });
+
+  const app = express();
+  app.use(express.json());
+  app.use('/api/conversations', createConversationsRouter({
+    db: database,
+    requireAuth: (request, _response, next) => {
+      request.auth = { user: { id: userId, username: 'conv-blueprint' } };
+      next();
+    },
+    asyncRoute: (handler) => (request, response, next) => Promise.resolve(handler(request, response, next)).catch(next),
+    newId: (() => {
+      let counter = 0;
+      return () => `conv-blueprint-${++counter}`;
+    })(),
+    nowIso: () => new Date().toISOString(),
+    withEtag: (_request, response, data) => response.json(data),
+    withListCache: (_request, response, data) => response.json(data),
+    providerWithSecret: (row) => row,
+    getProviderRow: () => null,
+    hasUsableProvider
+  }));
+  app.use((error, _request, response, _next) => {
+    response.status(500).json({ error: error.message });
+  });
+
+  const server = await new Promise((resolve) => {
+    const listener = app.listen(0, () => resolve(listener));
+  });
+  try {
+    const baseUrl = `http://127.0.0.1:${server.address().port}`;
+    const createdResponse = await fetch(`${baseUrl}/api/conversations`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ characterId: character.id })
+    });
+    const created = await createdResponse.json();
+
+    assert.equal(createdResponse.status, 201);
+    const statusBar = getStatusBar(database, userId, created.id);
+    assert.equal(statusBar.name, '角色状态');
+    assert.equal(statusBar.variables[0].name, 'HP');
+    assert.equal(statusBar.variables[0].value, 100);
+    assert.equal(statusBar.template, '<div class="state">HP {{HP}}</div>');
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
+test('streaming chat does not persist empty assistant messages', async () => {
+  const database = createAppDatabase(':memory:');
+  const userId = 'empty-stream-user';
+  database.prepare('INSERT INTO users (id, username, password_hash, created_at) VALUES (?, ?, ?, ?)').run(
+    userId, 'empty-stream', 'hash', new Date().toISOString()
+  );
+  const character = createCharacter(database, userId, { name: 'EmptyStream', visibility: 'private' });
+  const conversationId = 'empty-stream-conv';
+  const timestamp = new Date().toISOString();
+  database.prepare(
+    'INSERT INTO conversations (id, user_id, character_id, title, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)'
+  ).run(conversationId, userId, character.id, 'Empty Stream', timestamp, timestamp);
+  database.prepare(
+    'INSERT INTO messages (id, user_id, conversation_id, role, content, reasoning, usage_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+  ).run('stale-empty-assistant', userId, conversationId, 'assistant', '', '', null, timestamp);
+
+  const app = express();
+  app.use(express.json());
+  app.use('/api/conversations', createConversationsRouter({
+    db: database,
+    requireAuth: (request, _response, next) => {
+      request.auth = { user: { id: userId, username: 'empty-stream' } };
+      next();
+    },
+    asyncRoute: (handler) => (request, response, next) => Promise.resolve(handler(request, response, next)).catch(next),
+    newId: (() => {
+      let counter = 0;
+      return () => `empty-stream-${++counter}`;
+    })(),
+    nowIso: () => new Date().toISOString(),
+    withEtag: (_request, response, data) => response.json(data),
+    withListCache: (_request, response, data) => response.json(data),
+    providerWithSecret: (row) => row,
+    getProviderRow: () => ({
+      providerType: 'deepseek',
+      gatewayName: 'Test Gateway',
+      baseUrl: 'https://provider.test',
+      model: 'test-model',
+      apiKey: 'sk-test',
+      supportsReasoning: false,
+      extraBody: {}
+    }),
+    hasUsableProvider
+  }));
+  app.use((error, _request, response, _next) => {
+    response.status(500).json({ error: error.message });
+  });
+
+  const server = await new Promise((resolve) => {
+    const listener = app.listen(0, () => resolve(listener));
+  });
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url, options) => {
+    const href = String(url);
+    if (href.startsWith('http://127.0.0.1:')) {
+      return originalFetch(url, options);
+    }
+    return new Response(sseStream(['data: [DONE]']), {
+      headers: { 'Content-Type': 'text/event-stream' }
+    });
+  };
+
+  try {
+    const baseUrl = `http://127.0.0.1:${server.address().port}`;
+    const response = await fetch(`${baseUrl}/api/conversations/${conversationId}/messages`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ content: 'next chapter' })
+    });
+    const text = await response.text();
+    assert.equal(response.status, 200);
+    assert.match(text, /event: error/);
+    assert.match(text, /模型没有返回正文/);
+
+    const rows = database.prepare(
+      'SELECT role, content FROM messages WHERE conversation_id = ? ORDER BY created_at ASC'
+    ).all(conversationId);
+    assert.equal(rows.filter((row) => row.role === 'assistant').length, 1);
+    assert.equal(rows.filter((row) => row.role === 'user').length, 1);
+    assert.equal(rows.find((row) => row.role === 'user').content, 'next chapter');
+
+    const listResponse = await fetch(`${baseUrl}/api/conversations/${conversationId}/messages`);
+    const listed = await listResponse.json();
+    assert.deepEqual(listed.messages.map((message) => message.role), ['user']);
+  } finally {
+    globalThis.fetch = originalFetch;
+    await new Promise((resolve) => server.close(resolve));
+  }
 });
 
 test('status bar CRUD operations', () => {
@@ -2054,6 +3654,10 @@ test('saves ownership isolation between users', () => {
 
   // Other user cannot list saves for this conversation
   assert.equal(listSaves(database, otherUserId, conversationId).length, 0);
+  assert.throws(
+    () => createSave(database, otherUserId, conversationId, { name: '入侵存档' }),
+    /对话不存在/
+  );
 
   // Other user cannot get the save
   assert.equal(getSave(database, otherUserId, save.id), null);
@@ -2729,6 +4333,35 @@ test('streamCompletion throws on HTTP 500 response', async () => {
   globalThis.fetch = originalFetch;
 });
 
+test('streamCompletion normalizes provider fetch failures', async () => {
+  const originalFetch = globalThis.fetch;
+  try {
+    globalThis.fetch = async () => {
+      throw new TypeError('fetch failed');
+    };
+
+    await assert.rejects(
+      () =>
+        streamCompletion(
+          {
+            providerType: 'deepseek',
+            gatewayName: 'DeepSeek',
+            baseUrl: 'https://network-error.example',
+            model: 'deepseek-chat',
+            apiKey: 'sk-test',
+            supportsReasoning: false,
+            extraBody: {}
+          },
+          [{ role: 'user', content: 'hi' }],
+          () => {}
+        ),
+      { message: /请求失败/ }
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test('streamCompletion skips invalid JSON in SSE data lines without crashing', async () => {
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async () =>
@@ -2758,6 +4391,44 @@ test('streamCompletion skips invalid JSON in SSE data lines without crashing', a
   assert.equal(result.reasoning, '');
   assert.equal(events.length, 1);
   assert.equal(events[0].event, 'content');
+});
+
+test('streamCompletion parses final SSE event without trailing blank line', async () => {
+  const originalFetch = globalThis.fetch;
+  try {
+    globalThis.fetch = async () => {
+      const encoder = new TextEncoder();
+      return new Response(
+        new ReadableStream({
+          start(controller) {
+            controller.enqueue(encoder.encode('data: {"choices":[{"delta":{"content":"tail"}}]}'));
+            controller.close();
+          }
+        }),
+        { headers: { 'Content-Type': 'text/event-stream' } }
+      );
+    };
+
+    const events = [];
+    const result = await streamCompletion(
+      {
+        providerType: 'deepseek',
+        gatewayName: 'DeepSeek',
+        baseUrl: 'https://example.test',
+        model: 'deepseek-chat',
+        apiKey: 'sk-test',
+        supportsReasoning: false,
+        extraBody: {}
+      },
+      [{ role: 'user', content: 'hi' }],
+      (event, data) => events.push({ event, data })
+    );
+
+    assert.equal(result.content, 'tail');
+    assert.deepEqual(events.map((event) => event.event), ['content']);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });
 
 test('streamCompletion returns empty content for immediately closed empty stream', async () => {
@@ -2793,6 +4464,67 @@ test('streamCompletion returns empty content for immediately closed empty stream
   assert.equal(result.content, '');
   assert.equal(result.reasoning, '');
   assert.equal(events.length, 0);
+});
+
+test('streamCompletion throws a friendly error when SSE body is missing', async () => {
+  const originalFetch = globalThis.fetch;
+  try {
+    globalThis.fetch = async () =>
+      new Response(null, {
+        headers: { 'Content-Type': 'text/event-stream' }
+      });
+
+    await assert.rejects(
+      () =>
+        streamCompletion(
+          {
+            providerType: 'deepseek',
+            gatewayName: 'DeepSeek',
+            baseUrl: 'https://api.deepseek.com',
+            model: 'deepseek-chat',
+            apiKey: 'sk-test'
+          },
+          [{ role: 'user', content: 'hi' }],
+          () => {}
+        ),
+      { message: /流式响应不可用/ }
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('streamCompletion throws a friendly error when SSE reader fails', async () => {
+  const originalFetch = globalThis.fetch;
+  try {
+    globalThis.fetch = async () =>
+      new Response(
+        new ReadableStream({
+          start(controller) {
+            controller.error(new TypeError('socket closed unexpectedly'));
+          }
+        }),
+        { headers: { 'Content-Type': 'text/event-stream' } }
+      );
+
+    await assert.rejects(
+      () =>
+        streamCompletion(
+          {
+            providerType: 'deepseek',
+            gatewayName: 'DeepSeek',
+            baseUrl: 'https://api.deepseek.com',
+            model: 'deepseek-chat',
+            apiKey: 'sk-test'
+          },
+          [{ role: 'user', content: 'hi' }],
+          () => {}
+        ),
+      { message: /流式响应中断/ }
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });
 
 test('streamCompletion handles AbortController signal', async () => {

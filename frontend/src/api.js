@@ -7,10 +7,22 @@ let csrfToken = '';
 
 function getCsrfToken() {
   if (csrfToken) return csrfToken;
+  if (typeof document === 'undefined' || !document.cookie) return csrfToken;
   // 从 cookie 中读取
   const match = document.cookie.match(/flai_csrf=([^;]+)/);
-  if (match) csrfToken = decodeURIComponent(match[1]);
+  if (match) {
+    const decoded = safeDecodeCookieValue(match[1]);
+    if (decoded) csrfToken = decoded;
+  }
   return csrfToken;
+}
+
+function safeDecodeCookieValue(value) {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return '';
+  }
 }
 
 export async function ensureCsrfToken() {
@@ -38,19 +50,27 @@ if (typeof window !== 'undefined') {
 const configuredApiBase = normalizeBaseUrl(import.meta.env.VITE_API_BASE_URL || '');
 
 export async function apiRequest(path, options = {}) {
-  let { response, data, base } = await requestJson(path, options);
+  let response;
+  let data;
+  let base;
+
+  try {
+    ({ response, data, base } = await requestJson(path, options));
+  } catch (error) {
+    throwApiError(normalizeNetworkError(error), null, { cause: error?.message || String(error) });
+  }
 
   if (shouldRetryApiOnBackend(path, response, data)) {
-    ({ response, data, base } = await requestJson(path, options, devBackendBase()));
+    ({ response, data, base } = await guardedRequestJson(path, options, devBackendBase()));
   }
 
   if (shouldRetryAfterCsrf(response, data, options)) {
     await refreshCsrfToken();
-    ({ response, data } = await requestJson(path, options, base));
+    ({ response, data } = await guardedRequestJson(path, options, base));
   }
 
   if (!response.ok) {
-    throwApiError(data.error || `请求失败：${response.status}`, response, data);
+    throwApiError(data.error || normalizeHttpError(response), response, data);
   }
   return data;
 }
@@ -159,6 +179,10 @@ export function completeCharacterDraft(payload) {
   });
 }
 
+export function streamCharacterDraft(payload, handlers = {}, signal) {
+  return streamAssistantDraft('/api/characters/complete-draft', payload, handlers, signal);
+}
+
 export function setCharacterFavorite(id, favorited) {
   return apiRequest(`/api/characters/${id}/favorite`, {
     method: 'PUT',
@@ -210,6 +234,17 @@ export function reorderCharacterImages(characterId, orderedIds) {
 
 export function fetchWorldBooks() {
   return apiRequest('/api/world-books');
+}
+
+export function completeWorldBookDraft(payload) {
+  return apiRequest('/api/world-books/complete-draft', {
+    method: 'POST',
+    body: JSON.stringify(payload)
+  });
+}
+
+export function streamWorldBookDraft(payload, handlers = {}, signal) {
+  return streamAssistantDraft('/api/world-books/complete-draft', payload, handlers, signal);
 }
 
 export function createWorldBook(payload) {
@@ -270,7 +305,7 @@ export function createTag(payload) {
 }
 
 export function deleteTag(id) {
-  return apiRequest(`/api/tags/${id}`, {
+  return apiRequest(`/api/tags/${encodeURIComponent(id)}`, {
     method: 'DELETE'
   });
 }
@@ -286,10 +321,13 @@ export function saveProviderSettings(payload) {
   });
 }
 
-export function fetchProviderModels(payload) {
+export function fetchProviderModels(payload = {}, options = {}) {
   return apiRequest('/api/providers/models', {
     method: 'POST',
-    body: JSON.stringify(payload)
+    body: JSON.stringify({
+      ...payload,
+      forceRefresh: Boolean(options.forceRefresh ?? payload.forceRefresh)
+    })
   });
 }
 
@@ -636,6 +674,18 @@ export function fetchConversationNpcs(conversationId) {
   return apiRequest(`/api/conversations/${conversationId}/npcs`);
 }
 
+export function hideConversationNpc(conversationId, npcName) {
+  return apiRequest(`/api/conversations/${conversationId}/npcs/${encodeURIComponent(npcName)}`, {
+    method: 'DELETE'
+  });
+}
+
+export function hideEmptyConversationNpcs(conversationId) {
+  return apiRequest(`/api/conversations/${conversationId}/npcs-empty`, {
+    method: 'DELETE'
+  });
+}
+
 export function fetchNpcMemories(conversationId, npcName) {
   return apiRequest(`/api/conversations/${conversationId}/npcs/${encodeURIComponent(npcName)}/memories`);
 }
@@ -677,8 +727,18 @@ export function deleteNpcBehavior(conversationId, npcName, behaviorId) {
   });
 }
 
-export async function streamMessage(conversationId, payload, handlers = {}, signal) {
-  const path = `/api/conversations/${conversationId}/messages`;
+/**
+ * Shared SSE streaming implementation.
+ * Handles CSRF, retry, response validation, and SSE block parsing.
+ * @param {string} path - API path
+ * @param {object} payload - request payload (will be merged with { stream: true })
+ * @param {object} handlers - event name → handler map
+ * @param {AbortSignal} signal - abort signal
+ * @param {object} options - { throwOnError, doneEventName, returnDoneData }
+ * @returns {Promise<object|undefined>} - { aborted } or done event data
+ */
+async function streamSSE(path, payload, handlers = {}, signal, options = {}) {
+  const { throwOnError = false, returnDoneData = false } = options;
   await ensureCsrfToken();
   const body = JSON.stringify({ ...payload, stream: true });
   const buildRequest = () => ({
@@ -691,30 +751,38 @@ export async function streamMessage(conversationId, payload, handlers = {}, sign
     body,
     signal
   });
+
   let streamBase = configuredApiBase;
-  let response = await fetch(apiUrl(path, streamBase), buildRequest());
+  let result = await fetchSseResponse(path, streamBase, buildRequest, signal);
+  if (result.aborted) return { aborted: true };
+  let response = result.response;
 
   if (shouldRetryApiOnBackend(path, response)) {
     streamBase = devBackendBase();
-    response = await fetch(apiUrl(path, streamBase), buildRequest());
+    result = await fetchSseResponse(path, streamBase, buildRequest, signal);
+    if (result.aborted) return { aborted: true };
+    response = result.response;
   }
 
   if (response.status === 403 || response.status === 419) {
     const detail = await response.clone().json().catch(() => ({}));
     if (isCsrfFailure(response, detail)) {
       await refreshCsrfToken();
-      response = await fetch(apiUrl(path, streamBase), buildRequest());
+      result = await fetchSseResponse(path, streamBase, buildRequest, signal);
+      if (result.aborted) return { aborted: true };
+      response = result.response;
     }
   }
 
   if (!response.ok) {
     const detail = await response.json().catch(() => ({}));
-    throwApiError(detail.error || `请求失败：${response.status}`, response, detail);
+    throwApiError(detail.error || normalizeHttpError(response), response, detail);
   }
 
-  const reader = response.body.getReader();
+  const reader = getSseReader(response);
   const decoder = new TextDecoder();
   let buffer = '';
+  let doneData = null;
 
   while (true) {
     let chunk;
@@ -722,6 +790,10 @@ export async function streamMessage(conversationId, payload, handlers = {}, sign
       chunk = await reader.read();
     } catch (err) {
       if (signal?.aborted || err.name === 'AbortError') {
+        return { aborted: true };
+      }
+      // Handle stream cancellation from browser/network layer
+      if (err.name === 'TypeError' || /cancel|closed|network/i.test(String(err.message))) {
         return { aborted: true };
       }
       throw err;
@@ -738,14 +810,50 @@ export async function streamMessage(conversationId, payload, handlers = {}, sign
       const block = buffer.slice(0, match.index);
       buffer = buffer.slice(match.index + match[0].length);
       const event = parseSseBlock(block);
-      if (event.name && handlers[event.name]) {
+      if (returnDoneData && event.name === 'done') {
+        doneData = event.data;
+      }
+      if (throwOnError && event.name === 'error') {
+        if (handlers.error) {
+          await handlers.error(event.data);
+        }
+        throwApiError(event.data?.error || 'AI 助手生成失败', null, event.data);
+      } else if (event.name && handlers[event.name]) {
         await handlers[event.name](event.data);
-      } else if (event.name === 'content' || event.name === 'reasoning') {
+      } else if (['content', 'reasoning', 'tool', 'step', 'nudge', 'ping'].includes(event.name)) {
         await nextPaint();
       }
       match = buffer.match(/\r?\n\r?\n/);
     }
   }
+
+  return returnDoneData ? doneData : undefined;
+}
+
+export async function streamMessage(conversationId, payload, handlers = {}, signal) {
+  return streamSSE(`/api/conversations/${conversationId}/messages`, payload, handlers, signal);
+}
+
+async function streamAssistantDraft(path, payload, handlers = {}, signal) {
+  return streamSSE(path, payload, handlers, signal, { throwOnError: true, returnDoneData: true });
+}
+
+async function fetchSseResponse(path, base, buildRequest, signal) {
+  try {
+    return { response: await fetch(apiUrl(path, base), buildRequest()) };
+  } catch (error) {
+    if (signal?.aborted || error.name === 'AbortError') {
+      return { aborted: true };
+    }
+    throwApiError(normalizeNetworkError(error), null, { cause: error?.message || String(error) });
+  }
+}
+
+function getSseReader(response) {
+  if (response.body && typeof response.body.getReader === 'function') {
+    return response.body.getReader();
+  }
+  throwApiError('流式响应不可用，请稍后重试。', response, { error: 'Missing response body' });
 }
 
 function parseSseBlock(block) {
@@ -840,9 +948,32 @@ function normalizeBaseUrl(value) {
   return String(value || '').replace(/\/+$/, '');
 }
 
+async function guardedRequestJson(path, options = {}, base = configuredApiBase) {
+  try {
+    return await requestJson(path, options, base);
+  } catch (error) {
+    throwApiError(normalizeNetworkError(error), null, { cause: error?.message || String(error) });
+  }
+}
+
+function normalizeHttpError(response) {
+  if (response.status === 502) {
+    return '后端连接中断或正在重启，请看后端日志窗口，等 3001 启动完成后重试。';
+  }
+  return `请求失败：${response.status}`;
+}
+
+function normalizeNetworkError(error) {
+  const message = String(error?.message || error || '');
+  if (/Failed to fetch|NetworkError|fetch/i.test(message)) {
+    return '无法连接后端服务，请确认 3001 后端窗口正在运行。';
+  }
+  return message || '请求失败，请稍后重试。';
+}
+
 function throwApiError(message, response, data) {
   const error = new Error(message);
-  error.status = response.status;
+  error.status = response?.status || 0;
   error.data = data;
   throw error;
 }

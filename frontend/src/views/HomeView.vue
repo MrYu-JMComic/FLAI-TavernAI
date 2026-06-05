@@ -1,7 +1,27 @@
 <script setup>
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 import { measureElement, useVirtualizer } from '@tanstack/vue-virtual';
-import { AlertTriangle, Bot, Clock3, Download, Eye, Heart, MessageSquareText, Pencil, Plus, RefreshCw, Search, Star, Upload } from '@lucide/vue';
+import {
+  AlertTriangle,
+  BookOpen,
+  Bot,
+  Clock3,
+  Compass,
+  Download,
+  Eye,
+  Heart,
+  MessageSquareText,
+  Pencil,
+  Plus,
+  RefreshCw,
+  Search,
+  Settings,
+  SlidersHorizontal,
+  Sparkles,
+  Star,
+  Upload,
+  WandSparkles
+} from '@lucide/vue';
 import {
   createConversation,
   fetchCharacters,
@@ -13,7 +33,7 @@ import {
 } from '../api';
 import { useNotify } from '../composables/useNotify';
 
-defineProps({
+const props = defineProps({
   provider: {
     type: Object,
     default: null
@@ -34,21 +54,22 @@ const importPreview = ref(null);
 const importLoading = ref(false);
 const scrollContainerRef = ref(null);
 const containerWidth = ref(0);
-const CARD_MIN_WIDTH = 280;
-const CARD_ESTIMATED_HEIGHT = 320;
-const MOBILE_CARD_ESTIMATED_HEIGHT = 380;
-const GRID_GAP = 14;
+const isMobileListLayout = ref(false);
+const CARD_MIN_WIDTH = 320;
+const CARD_ESTIMATED_HEIGHT = 372;
+const MOBILE_CARD_ESTIMATED_HEIGHT = 436;
+const GRID_GAP = 18;
 
 const columnsPerRow = computed(() => {
-  const w = containerWidth.value || (typeof window !== 'undefined' ? Math.max(320, window.innerWidth - 28) : 1200);
-  return Math.max(1, Math.floor((w + GRID_GAP) / (CARD_MIN_WIDTH + GRID_GAP)));
+  const width = containerWidth.value || (typeof window !== 'undefined' ? Math.max(320, window.innerWidth - 28) : 1200);
+  return Math.max(1, Math.floor((width + GRID_GAP) / (CARD_MIN_WIDTH + GRID_GAP)));
 });
 
 const characterRows = computed(() => {
   const cols = columnsPerRow.value;
   const rows = [];
-  for (let i = 0; i < characters.value.length; i += cols) {
-    rows.push(characters.value.slice(i, i + cols));
+  for (let index = 0; index < characters.value.length; index += cols) {
+    rows.push(characters.value.slice(index, index + cols));
   }
   return rows;
 });
@@ -63,6 +84,56 @@ const virtualizerOptions = computed(() => ({
 
 const rowVirtualizer = useVirtualizer(virtualizerOptions);
 
+const homeStats = computed(() => {
+  const total = characters.value.length;
+  const publicCount = characters.value.filter((item) => item.visibility === 'public').length;
+  const favoriteCount = characters.value.filter((item) => item.favoritedByMe).length;
+  return [
+    { label: '全部角色', value: total },
+    { label: '公开角色', value: publicCount },
+    { label: '我的收藏', value: favoriteCount },
+    { label: '标签数量', value: tags.value.length }
+  ];
+});
+
+const activeFilterLabel = computed(() => {
+  const parts = [];
+  if (search.value) parts.push(`搜索：${search.value}`);
+  if (selectedTag.value) parts.push(`标签：${selectedTag.value}`);
+  return parts.join(' / ') || '全部角色';
+});
+
+const hasActiveFilters = computed(() => Boolean(search.value || selectedTag.value));
+
+const providerLabel = computed(() => {
+  if (!props.provider?.model && !props.provider?.gatewayName) {
+    return '未配置模型';
+  }
+  return [props.provider.gatewayName, props.provider.model].filter(Boolean).join(' · ');
+});
+
+const providerReady = computed(() => Boolean(props.provider?.model || props.provider?.gatewayName));
+
+const topTags = computed(() => (
+  tags.value
+    .slice()
+    .sort((left, right) => (right.usageCount || 0) - (left.usageCount || 0))
+    .slice(0, 18)
+));
+
+const quickActions = computed(() => [
+  { label: '新角色', icon: Plus, view: 'characterNew', tone: 'primary' },
+  { label: '世界书', icon: BookOpen, view: 'worldBooks', tone: 'quiet' },
+  { label: '模型设置', icon: Settings, view: 'settings', tone: providerReady.value ? 'quiet' : 'warning' }
+]);
+
+const emptyTitle = computed(() => (hasActiveFilters.value ? '没有匹配的角色' : '还没有角色'));
+const emptyCopy = computed(() => (
+  hasActiveFilters.value
+    ? '换一个关键词或标签，角色可能就在旁边。'
+    : '创建第一个角色，补齐头像、人设、世界观和开场白。'
+));
+
 function measureVirtualRow(element) {
   rowVirtualizer.value?.measureElement(element);
 }
@@ -74,15 +145,55 @@ function measureContainerWidth() {
 }
 
 let resizeObserver = null;
+let mobileLayoutQuery = null;
 
-onMounted(async () => {
-  await Promise.all([loadCharacters(), loadTags()]);
-  await nextTick();
+function syncMobileListLayout() {
+  isMobileListLayout.value = Boolean(mobileLayoutQuery?.matches);
+}
+
+function addMobileLayoutListener() {
+  if (typeof window === 'undefined' || !window.matchMedia) {
+    return;
+  }
+  mobileLayoutQuery = window.matchMedia('(max-width: 920px)');
+  syncMobileListLayout();
+  if (mobileLayoutQuery.addEventListener) {
+    mobileLayoutQuery.addEventListener('change', syncMobileListLayout);
+  } else if (mobileLayoutQuery.addListener) {
+    mobileLayoutQuery.addListener(syncMobileListLayout);
+  }
+}
+
+function removeMobileLayoutListener() {
+  if (!mobileLayoutQuery) {
+    return;
+  }
+  if (mobileLayoutQuery.removeEventListener) {
+    mobileLayoutQuery.removeEventListener('change', syncMobileListLayout);
+  } else if (mobileLayoutQuery.removeListener) {
+    mobileLayoutQuery.removeListener(syncMobileListLayout);
+  }
+  mobileLayoutQuery = null;
+}
+
+function refreshScrollMeasurements() {
+  if (resizeObserver) {
+    resizeObserver.disconnect();
+    resizeObserver = null;
+  }
+
   measureContainerWidth();
   if (scrollContainerRef.value && typeof ResizeObserver !== 'undefined') {
     resizeObserver = new ResizeObserver(() => measureContainerWidth());
     resizeObserver.observe(scrollContainerRef.value);
   }
+}
+
+onMounted(async () => {
+  addMobileLayoutListener();
+  await Promise.all([loadCharacters(), loadTags()]);
+  await nextTick();
+  refreshScrollMeasurements();
 });
 
 onUnmounted(() => {
@@ -90,8 +201,14 @@ onUnmounted(() => {
     resizeObserver.disconnect();
     resizeObserver = null;
   }
+  removeMobileLayoutListener();
 });
+
 watch([search, sort, selectedTag], loadCharacters);
+watch(isMobileListLayout, async () => {
+  await nextTick();
+  refreshScrollMeasurements();
+});
 
 async function loadTags() {
   try {
@@ -103,6 +220,11 @@ async function loadTags() {
 
 function selectTag(name) {
   selectedTag.value = selectedTag.value === name ? '' : name;
+}
+
+function clearFilters() {
+  search.value = '';
+  selectedTag.value = '';
 }
 
 async function loadCharacters() {
@@ -216,16 +338,96 @@ function visibilityLabel(character) {
   }
   return '私人 · 拥有者';
 }
+
+function getCharacterTags(character) {
+  const source = (character.characterTags || []).length
+    ? character.characterTags
+    : (character.tags || []).map((name) => ({ name }));
+  return source.slice(0, 5);
+}
+
+function getExtraTagCount(character) {
+  const count = (character.characterTags || character.tags || []).length;
+  return Math.max(0, count - 5);
+}
+
+function getInitial(name) {
+  return (name || '?').trim().slice(0, 1).toUpperCase();
+}
+
+function characterSummary(character) {
+  return character.persona || character.background || '还没有填写人设。';
+}
+
+function formatCount(value) {
+  const count = Number(value || 0);
+  if (count >= 1000) {
+    return `${(count / 1000).toFixed(count >= 10000 ? 0 : 1)}k`;
+  }
+  return String(count);
+}
 </script>
 
 <template>
-  <section class="page-stack">
-    <section class="toolbar home-toolbar">
-      <label class="search-box">
+  <section class="page-stack home-workbench">
+    <section class="home-hero">
+      <div class="home-hero-main">
+        <p class="home-eyebrow">
+          <Sparkles :size="16" />
+          <span>角色工作台</span>
+        </p>
+        <h1>角色库</h1>
+        <p class="home-hero-copy">管理角色、整理标签，并快速回到正在发生的故事。</p>
+        <div class="home-hero-actions">
+          <button class="home-primary-action" type="button" @click="emit('navigate', 'characterNew')">
+            <Plus :size="18" />
+            <span>创建角色</span>
+          </button>
+          <label class="home-secondary-action home-file-action">
+            <Upload :size="18" />
+            <span>导入角色卡</span>
+            <input type="file" accept=".json" @change="handleImportFile" />
+          </label>
+        </div>
+      </div>
+
+      <div class="home-hero-aside" aria-label="首页状态">
+        <div class="home-provider-chip" :class="{ ready: providerReady }">
+          <WandSparkles :size="18" />
+          <div>
+            <span>{{ providerReady ? '当前模型' : '模型状态' }}</span>
+            <strong>{{ providerLabel }}</strong>
+          </div>
+        </div>
+        <div class="home-stat-grid" aria-label="角色库概览">
+          <div v-for="item in homeStats" :key="item.label" class="home-stat-tile">
+            <strong>{{ item.value }}</strong>
+            <span>{{ item.label }}</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="home-quick-row" aria-label="快捷入口">
+      <button
+        v-for="action in quickActions"
+        :key="action.label"
+        class="home-quick-action"
+        :class="action.tone"
+        type="button"
+        @click="emit('navigate', action.view)"
+      >
+        <component :is="action.icon" :size="18" />
+        <span>{{ action.label }}</span>
+      </button>
+    </section>
+
+    <section class="home-control-panel" aria-label="角色筛选">
+      <label class="home-search-field">
         <Search :size="18" />
         <input v-model.trim="search" placeholder="搜索名称、标签或人设" />
       </label>
-      <label class="select-field">
+      <label class="home-select-field">
         <Clock3 :size="18" />
         <select v-model="sort">
           <option value="created">按创建时间</option>
@@ -233,156 +435,241 @@ function visibilityLabel(character) {
           <option value="name">按名称</option>
         </select>
       </label>
-      <label class="ghost-button file-import-button">
-        <Upload :size="17" />
-        <span>导入角色卡</span>
-        <input type="file" accept=".json" @change="handleImportFile" />
-      </label>
+      <button class="home-icon-button" type="button" title="重新加载" aria-label="重新加载" @click="loadCharacters">
+        <RefreshCw :size="18" />
+      </button>
     </section>
 
-    <section v-if="tags.length" class="tag-cloud-bar">
+    <section v-if="topTags.length" class="home-tag-rail" aria-label="常用标签">
+      <button class="home-tag-chip" :class="{ active: !selectedTag }" type="button" @click="selectedTag = ''">
+        <Compass :size="14" />
+        <span>全部</span>
+      </button>
       <button
-        v-for="tag in tags.slice(0, 20)"
+        v-for="tag in topTags"
         :key="tag.id"
-        class="tag-chip"
+        class="home-tag-chip"
         :class="{ active: selectedTag === tag.name }"
         :style="tag.color ? { '--tag-color': tag.color } : {}"
         type="button"
         @click="selectTag(tag.name)"
       >
-        {{ tag.name }}
-        <span v-if="tag.usageCount" class="tag-count">{{ tag.usageCount }}</span>
+        <span>{{ tag.name }}</span>
+        <small v-if="tag.usageCount">{{ tag.usageCount }}</small>
       </button>
     </section>
 
-    <section v-if="loading" class="home-skeleton-grid">
-      <article v-for="n in 6" :key="n" class="skeleton-card">
-        <div class="skeleton-reactions">
-          <div class="skeleton-circle" />
-          <div class="skeleton-circle" />
+    <section class="home-section-head">
+      <div>
+        <p>
+          <SlidersHorizontal :size="15" />
+          <span>当前视图</span>
+        </p>
+        <h2>{{ activeFilterLabel }}</h2>
+      </div>
+      <button v-if="hasActiveFilters" class="home-text-button" type="button" @click="clearFilters">清除筛选</button>
+    </section>
+
+    <section v-if="loading" class="home-skeleton-grid redesigned">
+      <article v-for="n in 6" :key="n" class="home-skeleton-card">
+        <div class="home-skeleton-hero" />
+        <div class="home-skeleton-line wide" />
+        <div class="home-skeleton-line medium" />
+        <div class="home-skeleton-tags">
+          <div />
+          <div />
+          <div />
         </div>
-        <div class="skeleton-body">
-          <div class="skeleton-avatar" />
-          <div class="skeleton-lines">
-            <div class="skeleton-line w60" />
-            <div class="skeleton-line w40" />
-          </div>
-          <div class="skeleton-line w90" />
-          <div class="skeleton-line w70" />
-          <div class="skeleton-tags">
-            <div class="skeleton-tag" />
-            <div class="skeleton-tag w50" />
-          </div>
-        </div>
-        <div class="skeleton-actions">
-          <div class="skeleton-btn" />
-          <div class="skeleton-btn" />
+        <div class="home-skeleton-actions">
+          <div />
+          <div />
         </div>
       </article>
     </section>
 
-    <section v-else-if="loadError" class="empty-state error-state">
-      <AlertTriangle :size="34" />
+    <section v-else-if="loadError" class="home-empty-panel error-state">
+      <AlertTriangle :size="36" />
       <h2>加载失败</h2>
       <p>{{ loadError }}</p>
-      <button class="primary-button" type="button" @click="loadCharacters">
+      <button class="home-primary-action" type="button" @click="loadCharacters">
         <RefreshCw :size="18" />
         <span>重新加载</span>
       </button>
     </section>
 
-    <section v-else-if="characters.length" ref="scrollContainerRef" class="character-virtual-scroll">
-      <div
-        class="character-virtual-spacer"
-        :style="{ height: rowVirtualizer.getTotalSize() + 'px', position: 'relative', width: '100%' }"
-      >
-      <div
-        v-for="virtualRow in rowVirtualizer.getVirtualItems()"
-        :key="virtualRow.key"
-        :ref="measureVirtualRow"
-        :data-index="virtualRow.index"
-        class="character-virtual-row"
-        :style="{
-          position: 'absolute',
-          top: virtualRow.start + 'px',
-          left: 0,
-          width: '100%',
-          paddingBottom: GRID_GAP + 'px'
-        }"
-      >
-      <article v-for="character in characterRows[virtualRow.index]" :key="character.id" class="character-card">
-        <div class="character-reactions">
-          <button
-            class="reaction-button favorite"
-            :class="{ active: character.favoritedByMe }"
-            type="button"
-            :title="character.favoritedByMe ? `取消收藏（${character.favoriteCount || 0}）` : `收藏（${character.favoriteCount || 0}）`"
-            :aria-label="character.favoritedByMe ? '取消收藏' : '收藏'"
-            :disabled="isReactionPending(character, 'favorite')"
-            @click.stop="toggleFavorite(character)"
-          >
-            <Star :size="17" :fill="character.favoritedByMe ? 'currentColor' : 'none'" />
-          </button>
-          <button
-            class="reaction-button like"
-            :class="{ active: character.likedByMe }"
-            type="button"
-            :title="character.likedByMe ? `取消点赞（${character.likeCount || 0}）` : `点赞（${character.likeCount || 0}）`"
-            :aria-label="character.likedByMe ? '取消点赞' : '点赞'"
-            :disabled="isReactionPending(character, 'like')"
-            @click.stop="toggleLike(character)"
-          >
-            <Heart :size="17" :fill="character.likedByMe ? 'currentColor' : 'none'" />
-          </button>
-        </div>
-        <div class="character-body">
-          <div class="character-avatar">
-            <img v-if="character.avatarUrl" :src="character.avatarUrl" :alt="character.name" />
-            <span v-else>{{ character.name.slice(0, 1) }}</span>
+    <section v-else-if="characters.length && isMobileListLayout" class="home-character-list">
+      <article v-for="character in characters" :key="character.id" class="home-character-card">
+        <div class="home-card-topline">
+          <span class="home-visibility-badge" :class="character.visibility">{{ visibilityLabel(character) }}</span>
+          <div class="home-reaction-group">
+            <button
+              class="home-reaction-button favorite"
+              :class="{ active: character.favoritedByMe }"
+              type="button"
+              :title="character.favoritedByMe ? `取消收藏（${character.favoriteCount || 0}）` : `收藏（${character.favoriteCount || 0}）`"
+              :aria-label="character.favoritedByMe ? '取消收藏' : '收藏'"
+              :disabled="isReactionPending(character, 'favorite')"
+              @click.stop="toggleFavorite(character)"
+            >
+              <Star :size="16" :fill="character.favoritedByMe ? 'currentColor' : 'none'" />
+              <span>{{ formatCount(character.favoriteCount) }}</span>
+            </button>
+            <button
+              class="home-reaction-button like"
+              :class="{ active: character.likedByMe }"
+              type="button"
+              :title="character.likedByMe ? `取消点赞（${character.likeCount || 0}）` : `点赞（${character.likeCount || 0}）`"
+              :aria-label="character.likedByMe ? '取消点赞' : '点赞'"
+              :disabled="isReactionPending(character, 'like')"
+              @click.stop="toggleLike(character)"
+            >
+              <Heart :size="16" :fill="character.likedByMe ? 'currentColor' : 'none'" />
+              <span>{{ formatCount(character.likeCount) }}</span>
+            </button>
           </div>
-          <div class="character-title">
+        </div>
+
+        <div class="home-character-identity">
+          <div class="home-character-avatar">
+            <img v-if="character.avatarUrl" :src="character.avatarUrl" :alt="character.name" />
+            <span v-else>{{ getInitial(character.name) }}</span>
+          </div>
+          <div class="home-character-title">
             <h2>{{ character.name }}</h2>
             <small>{{ character.gender || '未设置' }} · {{ character.age || '年龄未知' }}</small>
           </div>
-          <div class="permission-badges">
-            <span class="visibility-badge" :class="character.visibility">{{ visibilityLabel(character) }}</span>
-          </div>
-          <p>{{ character.persona || character.background || '还没有填写人设。' }}</p>
-          <div class="tag-row">
-            <span
-              v-for="tag in (character.characterTags || []).length ? character.characterTags : (character.tags || []).map((t) => ({ name: t }))"
-              :key="tag.id || tag.name"
-              class="tag-badge"
-              :style="tag.color ? { '--tag-color': tag.color } : {}"
-            >{{ tag.name }}</span>
-          </div>
         </div>
-        <div class="card-actions">
-          <button class="ghost-button" type="button" @click="emit('navigate', 'characterEdit', { id: character.id })">
-            <Pencil v-if="character.canEdit" :size="17" />
-            <Eye v-else :size="17" />
+
+        <p class="home-character-summary">{{ characterSummary(character) }}</p>
+
+        <div class="home-card-tags">
+          <span
+            v-for="tag in getCharacterTags(character)"
+            :key="tag.id || tag.name"
+            class="home-card-tag"
+            :style="tag.color ? { '--tag-color': tag.color } : {}"
+          >
+            {{ tag.name }}
+          </span>
+          <span v-if="getExtraTagCount(character)" class="home-card-tag muted">+{{ getExtraTagCount(character) }}</span>
+        </div>
+
+        <div class="home-card-actions">
+          <button class="home-secondary-action compact" type="button" @click="emit('navigate', 'characterEdit', { id: character.id })">
+            <Pencil v-if="character.canEdit" :size="16" />
+            <Eye v-else :size="16" />
             <span>{{ character.canEdit ? '编辑' : '查看' }}</span>
           </button>
-          <button class="primary-button" type="button" @click="openChat(character)">
-            <MessageSquareText :size="17" />
+          <button class="home-primary-action compact" type="button" @click="openChat(character)">
+            <MessageSquareText :size="16" />
             <span>对话</span>
           </button>
         </div>
       </article>
-      </div>
+    </section>
+
+    <section v-else-if="characters.length" ref="scrollContainerRef" class="home-character-scroll">
+      <div
+        class="home-character-spacer"
+        :style="{ height: rowVirtualizer.getTotalSize() + 'px', position: 'relative', width: '100%' }"
+      >
+        <div
+          v-for="virtualRow in rowVirtualizer.getVirtualItems()"
+          :key="virtualRow.key"
+          :ref="measureVirtualRow"
+          :data-index="virtualRow.index"
+          class="home-character-row"
+          :style="{
+            position: 'absolute',
+            top: virtualRow.start + 'px',
+            left: 0,
+            width: '100%',
+            paddingBottom: GRID_GAP + 'px'
+          }"
+        >
+          <article v-for="character in characterRows[virtualRow.index]" :key="character.id" class="home-character-card">
+            <div class="home-card-topline">
+              <span class="home-visibility-badge" :class="character.visibility">{{ visibilityLabel(character) }}</span>
+              <div class="home-reaction-group">
+                <button
+                  class="home-reaction-button favorite"
+                  :class="{ active: character.favoritedByMe }"
+                  type="button"
+                  :title="character.favoritedByMe ? `取消收藏（${character.favoriteCount || 0}）` : `收藏（${character.favoriteCount || 0}）`"
+                  :aria-label="character.favoritedByMe ? '取消收藏' : '收藏'"
+                  :disabled="isReactionPending(character, 'favorite')"
+                  @click.stop="toggleFavorite(character)"
+                >
+                  <Star :size="16" :fill="character.favoritedByMe ? 'currentColor' : 'none'" />
+                  <span>{{ formatCount(character.favoriteCount) }}</span>
+                </button>
+                <button
+                  class="home-reaction-button like"
+                  :class="{ active: character.likedByMe }"
+                  type="button"
+                  :title="character.likedByMe ? `取消点赞（${character.likeCount || 0}）` : `点赞（${character.likeCount || 0}）`"
+                  :aria-label="character.likedByMe ? '取消点赞' : '点赞'"
+                  :disabled="isReactionPending(character, 'like')"
+                  @click.stop="toggleLike(character)"
+                >
+                  <Heart :size="16" :fill="character.likedByMe ? 'currentColor' : 'none'" />
+                  <span>{{ formatCount(character.likeCount) }}</span>
+                </button>
+              </div>
+            </div>
+
+            <div class="home-character-identity">
+              <div class="home-character-avatar">
+                <img v-if="character.avatarUrl" :src="character.avatarUrl" :alt="character.name" />
+                <span v-else>{{ getInitial(character.name) }}</span>
+              </div>
+              <div class="home-character-title">
+                <h2>{{ character.name }}</h2>
+                <small>{{ character.gender || '未设置' }} · {{ character.age || '年龄未知' }}</small>
+              </div>
+            </div>
+
+            <p class="home-character-summary">{{ characterSummary(character) }}</p>
+
+            <div class="home-card-tags">
+              <span
+                v-for="tag in getCharacterTags(character)"
+                :key="tag.id || tag.name"
+                class="home-card-tag"
+                :style="tag.color ? { '--tag-color': tag.color } : {}"
+              >
+                {{ tag.name }}
+              </span>
+              <span v-if="getExtraTagCount(character)" class="home-card-tag muted">+{{ getExtraTagCount(character) }}</span>
+            </div>
+
+            <div class="home-card-actions">
+              <button class="home-secondary-action compact" type="button" @click="emit('navigate', 'characterEdit', { id: character.id })">
+                <Pencil v-if="character.canEdit" :size="16" />
+                <Eye v-else :size="16" />
+                <span>{{ character.canEdit ? '编辑' : '查看' }}</span>
+              </button>
+              <button class="home-primary-action compact" type="button" @click="openChat(character)">
+                <MessageSquareText :size="16" />
+                <span>对话</span>
+              </button>
+            </div>
+          </article>
+        </div>
       </div>
     </section>
 
-    <section v-else class="empty-state">
-      <Bot :size="34" />
-      <h2>还没有角色</h2>
-      <p>创建第一个角色，设置头像、世界观、人设和开场白。</p>
-      <div class="empty-state-actions">
-        <button class="primary-button" type="button" @click="emit('navigate', 'characterNew')">
+    <section v-else class="home-empty-panel">
+      <Bot :size="38" />
+      <h2>{{ emptyTitle }}</h2>
+      <p>{{ emptyCopy }}</p>
+      <div class="home-empty-actions">
+        <button v-if="hasActiveFilters" class="home-secondary-action" type="button" @click="clearFilters">清除筛选</button>
+        <button class="home-primary-action" type="button" @click="emit('navigate', 'characterNew')">
           <Plus :size="18" />
           <span>创建角色</span>
         </button>
-        <label class="ghost-button file-import-button">
+        <label v-if="!hasActiveFilters" class="home-secondary-action home-file-action">
           <Upload :size="18" />
           <span>导入角色卡</span>
           <input type="file" accept=".json" @change="handleImportFile" />
@@ -390,7 +677,6 @@ function visibilityLabel(character) {
       </div>
     </section>
 
-    <!-- Import Preview Dialog -->
     <Teleport to="body">
       <div v-if="importPreview" class="import-overlay" @click.self="cancelImport">
         <div class="import-dialog">
@@ -398,7 +684,7 @@ function visibilityLabel(character) {
           <div class="import-preview-content">
             <div class="import-preview-avatar">
               <img v-if="importPreview.character?.avatarUrl" :src="importPreview.character.avatarUrl" :alt="importPreview.character?.name" />
-              <span v-else>{{ (importPreview.character?.name || '?').slice(0, 1) }}</span>
+              <span v-else>{{ getInitial(importPreview.character?.name) }}</span>
             </div>
             <div class="import-preview-info">
               <h3>{{ importPreview.character?.name }}</h3>

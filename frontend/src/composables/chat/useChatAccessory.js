@@ -82,12 +82,115 @@ function parseTemplateConfig(raw) {
   }
 }
 
-export { parseTemplateConfig };
+const CUSTOM_TEMPLATE_ALLOWED_TAGS = new Set([
+  'article',
+  'b',
+  'br',
+  'button',
+  'div',
+  'em',
+  'footer',
+  'header',
+  'hr',
+  'i',
+  'li',
+  'ol',
+  'p',
+  'section',
+  'small',
+  'span',
+  'strong',
+  'style',
+  'ul'
+]);
+const CUSTOM_TEMPLATE_VOID_TAGS = new Set(['br', 'hr']);
+const CUSTOM_TEMPLATE_DANGEROUS_CSS = /@import|expression\s*\(|javascript:|url\s*\(|behavior\s*:/i;
+
+function validateStatusBarCustomTemplate(template) {
+  const raw = String(template || '').trim();
+  const issues = [];
+  if (!raw) {
+    return ['自定义模板不能为空；如果只想显示变量，请切回“内置样式”。'];
+  }
+  if (raw[0] === '{') {
+    return [];
+  }
+  if (/<\s*script\b|<\/\s*script\s*>/i.test(raw)) {
+    issues.push('自定义模板不支持 <script> 或 JavaScript。');
+  }
+  if (/<\s*(iframe|object|embed|link|meta|base|form|input|textarea|select)\b/i.test(raw)) {
+    issues.push('自定义模板只能使用安全展示标签，不支持表单、外链或嵌入标签。');
+  }
+  if (/\son[a-z]+\s*=/i.test(raw) || /javascript:/i.test(raw)) {
+    issues.push('自定义模板不支持 onClick 等事件属性或 javascript: 链接。');
+  }
+  if (/\{\{\s*\}\}|\{\s*\}/.test(raw)) {
+    issues.push('占位符不能为空，请使用 {{HP}}、{{HP.max}} 或 {HP}。');
+  }
+  if ((raw.match(/\{\{/g) || []).length !== (raw.match(/\}\}/g) || []).length) {
+    issues.push('双花括号占位符数量不匹配，请检查 {{变量}} 是否闭合。');
+  }
+
+  const styleBlocks = raw.match(/<style\b[^>]*>[\s\S]*?<\/style>/gi) || [];
+  for (const block of styleBlocks) {
+    const css = block.replace(/^<style\b[^>]*>/i, '').replace(/<\/style>$/i, '');
+    if (CUSTOM_TEMPLATE_DANGEROUS_CSS.test(css)) {
+      issues.push('CSS 不支持 @import、url()、expression()、behavior 或 javascript:。');
+      break;
+    }
+    if (!hasBalancedCssBraces(css)) {
+      issues.push('CSS 花括号不成对，请检查 <style> 里的规则。');
+      break;
+    }
+  }
+
+  const stack = [];
+  const tagPattern = /<\s*(\/?)([a-z][\w:-]*)(?:\s[^<>]*)?>/gi;
+  let match;
+  while ((match = tagPattern.exec(raw))) {
+    const tag = match[2].toLowerCase();
+    const isClosing = match[1] === '/';
+    const tagText = match[0];
+    if (!CUSTOM_TEMPLATE_ALLOWED_TAGS.has(tag)) {
+      issues.push(`不支持 <${tag}> 标签；请改用 div/span/p/ul/li 等展示标签。`);
+      continue;
+    }
+    if (isClosing) {
+      const previous = stack.pop();
+      if (previous !== tag) {
+        issues.push(`标签闭合顺序不正确：遇到 </${tag}>，但上一个未闭合标签是 <${previous || '无'}>。`);
+        break;
+      }
+      continue;
+    }
+    if (!CUSTOM_TEMPLATE_VOID_TAGS.has(tag) && !/\/\s*>$/.test(tagText)) {
+      stack.push(tag);
+    }
+  }
+  if (stack.length) {
+    issues.push(`标签未闭合：<${stack[stack.length - 1]}>。`);
+  }
+
+  return [...new Set(issues)].slice(0, 5);
+}
+
+function hasBalancedCssBraces(css) {
+  let depth = 0;
+  for (const char of String(css || '')) {
+    if (char === '{') depth += 1;
+    if (char === '}') depth -= 1;
+    if (depth < 0) return false;
+  }
+  return depth === 0;
+}
+
+export { parseTemplateConfig, validateStatusBarCustomTemplate };
 
 export function useChatAccessory({ conversation, showActionNotice, showError }) {
   const statusBar = ref(null);
   const statusBarEditorOpen = ref(false);
   const statusBarSaving = ref(false);
+  const statusBarTemplateMode = ref('builtin');
   const accessorySettingsOpen = ref(false);
   const accessorySaving = ref(false);
   const accessorySkillResults = ref([]);
@@ -109,6 +212,11 @@ export function useChatAccessory({ conversation, showActionNotice, showError }) 
   });
   const accessorySkills = reactive(createDefaultAccessorySkills());
 
+  const statusBarTemplateIssues = computed(() => {
+    if (statusBarTemplateMode.value !== 'custom') return [];
+    return validateStatusBarCustomTemplate(statusBarForm.template);
+  });
+
   const accessorySkillItems = [
     { key: 'npcAgent', label: 'NPC Agent', auto: false },
     { key: 'statusBarAgent', label: '状态栏 Agent', auto: true },
@@ -117,8 +225,25 @@ export function useChatAccessory({ conversation, showActionNotice, showError }) 
     { key: 'cgScene', label: 'CG 场景', auto: false }
   ];
 
-  const hasStatusBarContent = computed(() => {
+  const hasStatusBarVariables = computed(() => {
     return Boolean(statusBar.value && Array.isArray(statusBar.value.variables) && statusBar.value.variables.length);
+  });
+
+  const hasStatusBarContent = computed(() => {
+    if (!statusBar.value) return false;
+    if (hasStatusBarVariables.value) return true;
+    const template = String(statusBar.value.template || '').trim();
+    if (template && template[0] !== '{') return true;
+    const parsed = parseTemplateConfig(template);
+    return parsed.displayMode === 'immersive' && Array.isArray(parsed.characters) && parsed.characters.length > 0;
+  });
+
+  const hasStatusBarAutomationContext = computed(() => {
+    if (hasStatusBarContent.value) return true;
+    return getStatusBarSettingSources().some((settings) => (
+      String(settings.statusBarPrompt || '').trim() ||
+        hasStatusBarBlueprintContent(settings.statusBarBlueprint)
+    ));
   });
 
   const statusBarTemplateConfig = computed(() => ({
@@ -139,43 +264,62 @@ export function useChatAccessory({ conversation, showActionNotice, showError }) 
   const showNpcFeature = computed(() => isAccessorySkillActiveLocal('npcAgent'));
 
   async function loadStatusBar() {
-    if (!conversation.value?.id) {
+    const conversationId = conversation.value?.id;
+    if (!conversationId) {
       statusBar.value = null;
-      return;
+      return null;
     }
     try {
-      const result = await fetchStatusBar(conversation.value.id);
+      const result = await fetchStatusBar(conversationId);
+      if (conversation.value?.id !== conversationId) {
+        return statusBar.value;
+      }
       statusBar.value = result;
       if (result) {
         syncStatusBarForm(result);
       }
+      return result;
     } catch {
-      statusBar.value = null;
+      return statusBar.value;
     }
   }
 
   async function loadEconomyBalance() {
-    if (!conversation.value?.id) {
+    const conversationId = conversation.value?.id;
+    if (!conversationId) {
       economyAccounts.value = [];
       return;
     }
     try {
-      const result = await fetchConversationEconomy(conversation.value.id, { ensure: false });
+      const result = await fetchConversationEconomy(conversationId, { ensure: false });
+      if (conversation.value?.id !== conversationId) {
+        return;
+      }
       economyAccounts.value = result.accounts || [];
     } catch {
+      if (conversation.value?.id !== conversationId) {
+        return;
+      }
       economyAccounts.value = [];
     }
   }
 
   async function loadAccessorySkills() {
-    if (!conversation.value?.id) {
+    const conversationId = conversation.value?.id;
+    if (!conversationId) {
       syncAccessorySkills();
       return;
     }
     try {
-      const payload = await fetchConversationAccessorySkills(conversation.value.id);
+      const payload = await fetchConversationAccessorySkills(conversationId);
+      if (conversation.value?.id !== conversationId) {
+        return;
+      }
       syncAccessorySkills(payload.skills);
     } catch {
+      if (conversation.value?.id !== conversationId) {
+        return;
+      }
       syncAccessorySkills(conversation.value?.settings?.accessorySkills);
     }
   }
@@ -212,14 +356,18 @@ export function useChatAccessory({ conversation, showActionNotice, showError }) 
     const skill = accessorySkills[key] || {};
     if (skill.enabled === true) return true;
     if (skill.enabled !== 'auto') return false;
-    return key === 'statusBarAgent' && hasStatusBarContent.value;
+    return key === 'statusBarAgent' && hasStatusBarAutomationContext.value;
   }
 
   async function saveAccessorySkillChanges() {
-    if (!conversation.value?.id || accessorySaving.value) return;
+    const conversationId = conversation.value?.id;
+    if (!conversationId || accessorySaving.value) return;
     accessorySaving.value = true;
     try {
-      const payload = await saveConversationAccessorySkills(conversation.value.id, { accessorySkills });
+      const payload = await saveConversationAccessorySkills(conversationId, { accessorySkills });
+      if (conversation.value?.id !== conversationId) {
+        return;
+      }
       syncAccessorySkills(payload.skills);
       conversation.value = {
         ...conversation.value,
@@ -235,9 +383,14 @@ export function useChatAccessory({ conversation, showActionNotice, showError }) 
       await loadEconomyBalance();
       showActionNotice('附属技能已保存');
     } catch (err) {
+      if (conversation.value?.id !== conversationId) {
+        return;
+      }
       showError(err.message);
     } finally {
-      accessorySaving.value = false;
+      if (conversation.value?.id === conversationId) {
+        accessorySaving.value = false;
+      }
     }
   }
 
@@ -262,6 +415,7 @@ export function useChatAccessory({ conversation, showActionNotice, showError }) 
       ? data.variables.map((v) => ({ ...v }))
       : [];
     statusBarForm.template = data.template || '';
+    statusBarTemplateMode.value = isCustomTemplate(statusBarForm.template) ? 'custom' : 'builtin';
     syncTemplateCfgFromForm();
   }
 
@@ -280,12 +434,17 @@ export function useChatAccessory({ conversation, showActionNotice, showError }) 
 
   async function saveStatusBarChanges() {
     if (!conversation.value?.id || statusBarSaving.value) return;
-    syncTemplateCfgToForm();
+    if (statusBarTemplateMode.value === 'builtin') {
+      syncTemplateCfgToForm();
+    } else if (statusBarTemplateIssues.value.length) {
+      showError(statusBarTemplateIssues.value.join('\n'));
+      return;
+    }
     statusBarSaving.value = true;
     try {
       const result = await saveStatusBar(conversation.value.id, {
         name: statusBarForm.name,
-        variables: statusBarForm.variables,
+        variables: normalizeStatusVariablesForPayload(statusBarForm.variables),
         template: statusBarForm.template
       });
       statusBar.value = result;
@@ -306,6 +465,7 @@ export function useChatAccessory({ conversation, showActionNotice, showError }) 
       statusBarForm.name = '';
       statusBarForm.variables = [];
       statusBarForm.template = '';
+      statusBarTemplateMode.value = 'builtin';
       showActionNotice('状态栏已删除');
     } catch (err) {
       showError(err.message);
@@ -322,6 +482,7 @@ export function useChatAccessory({ conversation, showActionNotice, showError }) 
         { name: 'MP', value: 50, max: 50, color: '#3498db' }
       ];
       statusBarForm.template = '';
+      statusBarTemplateMode.value = 'builtin';
     }
     syncTemplateCfgFromForm();
     if (!statusBar.value) {
@@ -343,6 +504,10 @@ export function useChatAccessory({ conversation, showActionNotice, showError }) 
   }
 
   function syncTemplateCfgFromForm() {
+    if (statusBarTemplateMode.value !== 'builtin') {
+      resetTemplateCfg();
+      return;
+    }
     const parsed = parseTemplateConfig(statusBarForm.template);
     statusBarTemplateCfg.variant = parsed.variant || 'default';
     statusBarTemplateCfg.density = parsed.density || 'default';
@@ -359,6 +524,9 @@ export function useChatAccessory({ conversation, showActionNotice, showError }) 
   }
 
   function syncTemplateCfgToForm() {
+    if (statusBarTemplateMode.value !== 'builtin') {
+      return;
+    }
     const cfg = {};
     if (statusBarTemplateCfg.variant !== 'default') cfg.variant = statusBarTemplateCfg.variant;
     if (statusBarTemplateCfg.density !== 'default') cfg.density = statusBarTemplateCfg.density;
@@ -369,6 +537,100 @@ export function useChatAccessory({ conversation, showActionNotice, showError }) 
     if (statusBarTemplateCfg.characters.length) cfg.characters = statusBarTemplateCfg.characters;
     if (statusBarTemplateCfg.quickReplies.length) cfg.quickReplies = statusBarTemplateCfg.quickReplies;
     statusBarForm.template = Object.keys(cfg).length ? JSON.stringify(cfg) : '';
+  }
+
+  function resetTemplateCfg() {
+    statusBarTemplateCfg.variant = 'default';
+    statusBarTemplateCfg.density = 'default';
+    statusBarTemplateCfg.accentColor = '';
+    statusBarTemplateCfg.effects = [];
+    statusBarTemplateCfg.customCss = '';
+    statusBarTemplateCfg.displayMode = 'compact';
+    statusBarTemplateCfg.characters = [];
+    statusBarTemplateCfg.quickReplies = [];
+  }
+
+  function normalizeStatusVariablesForPayload(variables = []) {
+    if (!Array.isArray(variables)) {
+      return [];
+    }
+    return variables
+      .map((variable) => {
+        const hasMax = hasExplicitVariableMax(variable);
+        const value = normalizeStatusVariableValue(variable?.value, { emptyText: !hasMax });
+        const max = hasMax
+          ? Number(variable.max)
+          : typeof value === 'number'
+            ? 100
+            : undefined;
+        return {
+          name: String(variable?.name || '').trim(),
+          value,
+          ...(max !== undefined ? { max } : {}),
+          color: String(variable?.color || '').trim()
+        };
+      })
+      .filter((variable) => variable.name)
+      .slice(0, 20);
+  }
+
+  function normalizeStatusVariableValue(value, options = {}) {
+    if (typeof value === 'number' && Number.isFinite(value)) {
+      return value;
+    }
+    const text = String(value ?? '').trim();
+    if (!text) {
+      return options.emptyText ? '' : 0;
+    }
+    const numeric = Number(text);
+    if (Number.isFinite(numeric) && /^[-+]?(?:\d+|\d*\.\d+)$/.test(text)) {
+      return numeric;
+    }
+    return text.length > 200 ? text.slice(0, 200) : text;
+  }
+
+  function hasExplicitVariableMax(variable) {
+    return String(variable?.max ?? '').trim() !== '' && Number.isFinite(Number(variable?.max));
+  }
+
+  function setStatusBarTemplateMode(mode) {
+    const nextMode = mode === 'custom' ? 'custom' : 'builtin';
+    if (statusBarTemplateMode.value === nextMode) {
+      return;
+    }
+    statusBarTemplateMode.value = nextMode;
+    if (nextMode === 'custom') {
+      if (!isCustomTemplate(statusBarForm.template)) {
+        statusBarForm.template = '';
+      }
+      resetTemplateCfg();
+      return;
+    }
+    syncTemplateCfgToForm();
+    syncTemplateCfgFromForm();
+  }
+
+  function isCustomTemplate(raw) {
+    const trimmed = String(raw || '').trim();
+    return Boolean(trimmed && trimmed[0] !== '{');
+  }
+
+  function hasStatusBarBlueprintContent(input = {}) {
+    if (!input || typeof input !== 'object') return false;
+    const variables = Array.isArray(input.variables) ? input.variables : [];
+    return Boolean(
+      String(input.name || '').trim() ||
+        String(input.template || '').trim() ||
+        variables.some((item) => String(item?.name || '').trim())
+    );
+  }
+
+  function getStatusBarSettingSources() {
+    return [
+      conversation.value?.settings,
+      conversation.value?.authorSettings,
+      conversation.value?.userSettings
+    ].filter((item) => item && typeof item === 'object');
   }
 
   function closeStatusBarEditor() {
@@ -418,7 +680,9 @@ export function useChatAccessory({ conversation, showActionNotice, showError }) 
     statusBarForm,
     statusBarEditorOpen,
     statusBarSaving,
+    statusBarTemplateMode,
     statusBarTemplateConfig,
+    statusBarTemplateIssues,
     statusBarTemplateCfg,
     accessorySettingsOpen,
     accessorySaving,
@@ -427,6 +691,7 @@ export function useChatAccessory({ conversation, showActionNotice, showError }) 
     economyAccounts,
     accessorySkillItems,
     hasStatusBarContent,
+    hasStatusBarAutomationContext,
     showEconomyFeature,
     showNpcFeature,
     loadStatusBar,
@@ -443,6 +708,7 @@ export function useChatAccessory({ conversation, showActionNotice, showError }) 
     deleteStatusBarAction,
     openStatusBarEditor,
     closeStatusBarEditor,
+    setStatusBarTemplateMode,
     addStatusCharacter,
     removeStatusCharacter,
     addCharacterVariable,

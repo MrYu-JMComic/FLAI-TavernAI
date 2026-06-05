@@ -190,10 +190,22 @@ export function parseCookies(cookieHeader = '') {
       if (index === -1) {
         return cookies;
       }
-      const key = decodeURIComponent(part.slice(0, index));
-      cookies[key] = decodeURIComponent(part.slice(index + 1));
+      const key = safeDecodeCookiePart(part.slice(0, index));
+      const value = safeDecodeCookiePart(part.slice(index + 1));
+      if (!key || value === null) {
+        return cookies;
+      }
+      cookies[key] = value;
       return cookies;
     }, {});
+}
+
+function safeDecodeCookiePart(value) {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return null;
+  }
 }
 
 export function setSessionCookie(response, sessionId) {
@@ -215,48 +227,6 @@ export function clearSessionCookie(response) {
   });
 }
 
-// ── CSRF Protection (Double-Submit Cookie) ──
-
-export const csrfCookieName = 'flai_csrf';
-const csrfHeaderName = 'x-csrf-token';
-const safeMethods = new Set(['GET', 'HEAD', 'OPTIONS']);
-
-export function generateCsrfToken() {
-  return crypto.randomBytes(32).toString('base64url');
-}
-
-export function setCsrfCookie(response, token) {
-  response.cookie(csrfCookieName, token, {
-    httpOnly: false,
-    sameSite: 'lax',
-    secure: process.env.NODE_ENV === 'production',
-    maxAge: sessionDays * 24 * 60 * 60 * 1000,
-    path: '/'
-  });
-}
-
-export function csrfProtection(request, response, next) {
-  if (safeMethods.has(request.method)) {
-    // Ensure CSRF cookie exists for safe methods
-    const existingToken = parseCookies(request.headers.cookie)[csrfCookieName];
-    if (!existingToken) {
-      setCsrfCookie(response, generateCsrfToken());
-    }
-    next();
-    return;
-  }
-
-  // Validate CSRF token on state-changing requests
-  const cookieToken = parseCookies(request.headers.cookie)[csrfCookieName];
-  const headerToken = request.headers[csrfHeaderName];
-
-  if (!cookieToken || !headerToken || cookieToken !== headerToken) {
-    response.status(403).json({ error: 'CSRF 验证失败，请刷新页面后重试' });
-    return;
-  }
-
-  next();
-}
 
 export function createSession(database, userId) {
   const sessionId = newId();
