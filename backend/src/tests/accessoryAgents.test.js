@@ -255,6 +255,37 @@ test('advanced settings infers and dedupes custom status blueprint variables', (
   assert.equal(variables.find((item) => item.name === 'HP')?.max, 100);
 });
 
+test('status blueprint infers late custom placeholders beyond first twenty variables', () => {
+  const filler = Array.from({ length: 24 }, (_, index) => `<span>{{占位${index + 1}}}</span>`).join('');
+  const template = `${filler}<div class='sb-mem-item'><span class='sb-mem-tag'>模糊记忆</span><span class='sb-mem-text'>{{模糊记忆}}</span></div><div class='sb-mem-item'><span class='sb-mem-tag'>深刻记忆</span><span class='sb-mem-text'>{{深刻记忆}}</span></div><div class='sb-mem-item'><span class='sb-mem-tag'>淡忘之事</span><span class='sb-mem-text'>{{淡忘之事}}</span></div><hr class='sb-divider'><div class='sb-section'><div class='sb-section-head'><em>◆</em> 当前事件</div><div class='sb-event-box'>{{当前事件}}</div></div><hr class='sb-divider'><div class='sb-section'><div class='sb-section-head'><em>◆</em> 衣着携带</div><div class='sb-outfit-grid'><div class='sb-outfit-item'><strong>上装：</strong>{{上装}}</div><div class='sb-outfit-item'><strong>下装：</strong>{{下装}}</div><div class='sb-outfit-item'><strong>鞋袜：</strong>{{鞋袜}}</div><div class='sb-outfit-item'><strong>随身：</strong>{{随身物}}</div></div></div>`;
+  const settings = normalizeAdvancedSettings({
+    statusBarBlueprint: { template }
+  });
+
+  const names = settings.statusBarBlueprint.variables.map((item) => item.name);
+  assert.ok(names.length > 20);
+  for (const name of ['模糊记忆', '深刻记忆', '淡忘之事', '当前事件', '上装', '下装', '鞋袜', '随身物']) {
+    assert.ok(names.includes(name), `${name} should be inferred`);
+  }
+});
+
+test('status bar creation preserves late inferred custom placeholders', () => {
+  const env = setupConversation({ statusBarAgent: skill(false) });
+  const filler = Array.from({ length: 24 }, (_, index) => `<span>{{占位${index + 1}}}</span>`).join('');
+  const template = `${filler}<div class='sb-event-box'>{{当前事件}}</div><div class='sb-outfit-item'><strong>上装：</strong>{{上装}}</div><div class='sb-outfit-item'><strong>鞋袜：</strong>{{鞋袜}}</div>`;
+  const statusBar = upsertStatusBar(env.db, env.userId, env.conversation.id, {
+    name: 'State',
+    variables: [],
+    template
+  });
+
+  const names = statusBar.variables.map((item) => item.name);
+  assert.ok(names.length > 20);
+  assert.ok(names.includes('当前事件'));
+  assert.ok(names.includes('上装'));
+  assert.ok(names.includes('鞋袜'));
+});
+
 test('npc agent does not create fallback memories from text patterns', async () => {
   const env = setupConversation({ npcAgent: skill(true), statusBarAgent: skill(false) });
   const assistantMessage = { content: '**Lily** says the bridge is closed.' };

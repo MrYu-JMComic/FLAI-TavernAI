@@ -1,5 +1,7 @@
 import { newId, nowIso } from '../security.js';
 
+const STATUS_BAR_VARIABLE_LIMIT = 60;
+
 // ── Status Bar CRUD ──
 
 export function getStatusBar(database, userId, conversationId) {
@@ -96,8 +98,8 @@ export function extractVariablesFromText(text, currentVariables = []) {
     }
 
     // Fast pre-filter: skip regex matching entirely if the variable name
-    // doesn't appear anywhere in the text. This avoids running up to 4 regex
-    // patterns per variable (80 total for 20 variables) on large texts.
+    // doesn't appear anywhere in the text. This avoids running several regex
+    // patterns per variable on large texts.
     if (!textKey.includes(nameKey)) {
       continue;
     }
@@ -246,8 +248,8 @@ function normalizeVariables(variables, template = '') {
       };
     })
     .filter((v) => v.name)
-    .slice(0, 20);
-  return inferTemplateVariables(template, normalized).slice(0, 20);
+    .slice(0, STATUS_BAR_VARIABLE_LIMIT);
+  return inferTemplateVariables(template, normalized).slice(0, STATUS_BAR_VARIABLE_LIMIT);
 }
 
 function normalizeVariableValue(value, options = {}) {
@@ -309,7 +311,7 @@ function inferTemplateVariables(template, variables = []) {
       ? { name: name.slice(0, 40), value: 0, max: 100, color: '' }
       : { name: name.slice(0, 40), value: '', color: '' });
     seen.add(key);
-    if (inferred.length >= 20) {
+    if (inferred.length >= STATUS_BAR_VARIABLE_LIMIT) {
       break;
     }
   }

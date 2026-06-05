@@ -1,3 +1,5 @@
+const STATUS_BLUEPRINT_VARIABLE_LIMIT = 60;
+
 export function createDefaultAdvancedSettings() {
   return {
     desktopBackgroundUrl: '',
@@ -153,8 +155,8 @@ function normalizeStatusVariables(value, template = '') {
       };
     })
     .filter((item) => item.name)
-    .slice(0, 20);
-  return inferStatusVariablesFromTemplate(template, normalized).slice(0, 20);
+    .slice(0, STATUS_BLUEPRINT_VARIABLE_LIMIT);
+  return inferStatusVariablesFromTemplate(template, normalized).slice(0, STATUS_BLUEPRINT_VARIABLE_LIMIT);
 }
 
 function normalizeStatusVariableValue(value, options = {}) {
@@ -207,7 +209,7 @@ function inferStatusVariablesFromTemplate(template, variables = []) {
       ? { name: name.slice(0, 40), value: 0, max: 100, color: '' }
       : { name: name.slice(0, 40), value: '', color: '' });
     seen.add(key);
-    if (inferred.length >= 20) {
+    if (inferred.length >= STATUS_BLUEPRINT_VARIABLE_LIMIT) {
       break;
     }
   }

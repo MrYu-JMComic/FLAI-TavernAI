@@ -44,6 +44,7 @@ const assistantModel = ref(loadAssistantModel());
 const aiUseCurrentDraft = ref(loadAiUseCurrentDraft());
 const { providerModelOptionsFor } = useProviderModels(computed(() => props.provider));
 const assistantModelOptions = computed(() => providerModelOptionsFor(assistantModel.value, '使用全局模型'));
+const STATUS_BLUEPRINT_VARIABLE_LIMIT = 60;
 const STATUS_BLUEPRINT_SAMPLE_TEMPLATE = [
   '<section class="sb-sample-card">',
   '  <style>',
@@ -1160,11 +1161,11 @@ function inferStatusVariablesFromTemplate(template, variables = []) {
         : { name: name.slice(0, 40), value: defaultStatusTextValueForName(name) }
     );
     seen.add(key);
-    if (inferred.length >= 20) {
+    if (inferred.length >= STATUS_BLUEPRINT_VARIABLE_LIMIT) {
       break;
     }
   }
-  return inferred.slice(0, 20);
+  return inferred.slice(0, STATUS_BLUEPRINT_VARIABLE_LIMIT);
 }
 
 function extractTemplateRowVariables(template) {

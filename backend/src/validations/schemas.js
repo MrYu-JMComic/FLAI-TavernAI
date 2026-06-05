@@ -5,6 +5,8 @@
 
 import { z } from 'zod';
 
+const STATUS_BLUEPRINT_VARIABLE_LIMIT = 60;
+
 const accessorySkillConfigSchema = z.object({
   enabled: z.union([z.boolean(), z.literal('auto')]).optional(),
   modelOverride: z.string().max(100).trim().optional().default('')
@@ -27,7 +29,7 @@ const statusBarBlueprintVariableSchema = z.object({
 
 const statusBarBlueprintSchema = z.object({
   name: z.string().max(50).trim().optional().default(''),
-  variables: z.array(statusBarBlueprintVariableSchema).max(20).optional().default([]),
+  variables: z.array(statusBarBlueprintVariableSchema).max(STATUS_BLUEPRINT_VARIABLE_LIMIT).optional().default([]),
   template: z.string().max(50000).trim().optional().default('')
 }).partial().optional().default({});
 

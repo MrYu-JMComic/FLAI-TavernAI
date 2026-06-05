@@ -2956,6 +2956,25 @@ test('advanced settings normalize status bar blueprint', () => {
       }
     }
   }).success, true);
+
+  const maxVariables = Array.from({ length: 60 }, (_item, index) => ({
+    name: `Var${index + 1}`,
+    value: index
+  }));
+  assert.equal(updateCharacterSchema.safeParse({
+    authorAdvancedSettings: {
+      statusBarBlueprint: {
+        variables: maxVariables
+      }
+    }
+  }).success, true);
+  assert.equal(updateCharacterSchema.safeParse({
+    authorAdvancedSettings: {
+      statusBarBlueprint: {
+        variables: [...maxVariables, { name: 'Var61', value: 61 }]
+      }
+    }
+  }).success, false);
 });
 
 test('creating a conversation applies character status bar blueprint', async () => {
