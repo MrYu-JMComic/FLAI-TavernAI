@@ -23,6 +23,7 @@ The backend and frontend normalization paths now allow up to 60 inferred status 
 
 ## Validation
 
+- `backend` `node --test src/tests/backend.test.js`: PASS, 142 tests.
 - `node scripts/check-encoding.mjs`: PASS.
 - `powershell -ExecutionPolicy Bypass -File scripts\review-gate.ps1`: PASS, including encoding check, 239 backend tests, frontend build, and git status audit.
 
