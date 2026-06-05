@@ -64,7 +64,7 @@ try {
     $HealthStatus = "failed"
 }
 
-$BasePrompt = Get-Content -LiteralPath (Join-Path $Root "automation\opencode-self-evolve.prompt.md") -Raw
+$BasePrompt = Get-Content -LiteralPath (Join-Path $Root "automation\prompts\opencode-self-evolve.prompt.md") -Raw
 $ModeInstruction = if ($Mode -eq "iterate") {
     "Mode: iterate. You may make one small code or documentation change if it is safe, then run relevant validation."
 } else {

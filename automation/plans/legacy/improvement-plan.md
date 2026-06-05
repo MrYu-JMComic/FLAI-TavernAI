@@ -68,5 +68,5 @@
 
 - AI风月: https://aisearches.xyz/zh/explore/apps?ranking=recommended
 - 项目: D:\Cat\FLAI-TavernAI
-- 路线图: D:\Cat\FLAI-TavernAI\automation\feature-roadmap.md
+- 路线图: D:\Cat\FLAI-TavernAI\automation\plans\legacy\feature-roadmap.md
 - Backlog: D:\Cat\FLAI-TavernAI\automation\backlog.md

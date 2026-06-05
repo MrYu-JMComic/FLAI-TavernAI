@@ -196,4 +196,4 @@ YYYY-MM-DD-[task-slug].md
 1. 先文字回"已接旨"（不使用 reaction）
 2. 长任务先登记、回短消息，然后转派后台
 3. 完成后回摘要 + 报告路径
-4. 复杂报告写入 `reports/` 后回摘要和路径
+4. 复杂审计/分析报告写入 `automation/reports/audits/` 后回摘要和路径

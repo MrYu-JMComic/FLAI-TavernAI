@@ -273,14 +273,12 @@ scripts/
 automation/
 ├── backlog.md                 # 自主任务 backlog
 ├── claude-prompt.txt          # Claude Code 提示词
-├── edict-*.md                 # 诏令文件
-├── feature-roadmap.md         # 功能路线图
-├── improvement-plan.md        # 改进计划
-├── opencode-self-evolve.prompt.md # OpenCode 自进化提示
-├── optimize-plan.md           # 优化计划
-├── phase3-plan.md             # 第三阶段计划
-├── task-*.md                  # 任务描述文件
+├── plans/                     # 当前规划文件
+│   └── legacy/                # 早期散落规划归档
+├── prompts/                   # Agent/工具提示词
+├── tasks/                     # 任务描述文件
 └── reports/                   # 执行报告
+    ├── audits/                # 审计、分析、鲁棒性报告
     ├── 2026-05-29-*.md
     ├── 2026-05-30-*.md
     ├── 2026-06-02-*.md

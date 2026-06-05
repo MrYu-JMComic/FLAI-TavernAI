@@ -62,4 +62,4 @@ This repo includes a guarded autonomous iteration setup:
 .\scripts\start-ai-workstation.bat
 ```
 
-Read `AGENTS.md` and `automation/backlog.md` before allowing autonomous code changes. Reports are written to `automation/reports`.
+Read `AGENTS.md` and `automation/backlog.md` before allowing autonomous code changes. Reports are written to `automation/reports`. Markdown storage rules are documented in `docs/markdown-organization.md`.
