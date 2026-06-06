@@ -7,6 +7,7 @@ import {
 } from '../modules/characters.js';
 import { withSavepoint } from '../modules/savepoint.js';
 import { validate } from '../validations/schemas.js';
+import { normalizeBoolean } from '../utils/boolean.js';
 import { z } from 'zod';
 
 const reorderRegexSchema = z.object({
@@ -96,8 +97,8 @@ export function createRegexRouter(ctx) {
         withSavepoint(db, 'sp_import_regex', () => {
           const insert = db.prepare(
             `INSERT INTO regex_rules (
-              id, user_id, character_id, label, pattern, replacement, flags, scope, enabled, order_index, group_name, priority
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+              id, user_id, character_id, label, pattern, replacement, flags, scope, enabled, order_index, group_name, priority, script_mode, js_script
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
           );
           for (const rule of validItems) {
             insert.run(
@@ -112,7 +113,9 @@ export function createRegexRouter(ctx) {
               rule.enabled ? 1 : 0,
               rule.order,
               rule.groupName,
-              rule.priority
+              rule.priority,
+              rule.scriptMode ? 1 : 0,
+              rule.jsScript || ''
             );
             imported += 1;
           }
@@ -142,10 +145,12 @@ function normalizeImportedRule(item = {}, index = 0) {
     replacement: String(item.replacement || '').slice(0, 5000),
     flags,
     scope: ['input', 'output', 'both'].includes(item.scope) ? item.scope : 'input',
-    enabled: item.enabled !== false,
+    enabled: normalizeBoolean(item.enabled, true),
     order: Number.isFinite(Number(item.order ?? item.orderIndex)) ? Math.round(Number(item.order ?? item.orderIndex)) : index,
     groupName: String(item.groupName || item.group_name || '全局').trim().slice(0, 50) || '全局',
-    priority: Number.isFinite(Number(item.priority)) ? Math.round(Number(item.priority)) : index
+    priority: Number.isFinite(Number(item.priority)) ? Math.round(Number(item.priority)) : index,
+    scriptMode: normalizeBoolean(item.scriptMode ?? item.script_mode),
+    jsScript: String(item.jsScript || item.js_script || '').slice(0, 10000)
   };
 }
 

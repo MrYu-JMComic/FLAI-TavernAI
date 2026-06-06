@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { decryptSecret } from '../security.js';
+import { parseJson } from '../utils/json.js';
 
 const deepSeekPricingCnyPerMillion = {
   'deepseek-v4-flash': {
@@ -151,7 +152,7 @@ export function providerWithSecret(row) {
 
 export function buildProviderBody(settings, messages, stream, options = {}) {
   options = options ?? {};
-  const extraBody = providerExtraBody(settings.extraBody);
+  const extraBody = normalizeProviderExtraBody(settings.extraBody);
   const body = {
     model: resolveProviderModel(settings, options),
     messages,
@@ -466,7 +467,7 @@ function cloneModels(models = []) {
   return models.map((model) => ({ ...model }));
 }
 
-function providerExtraBody(value) {
+export function normalizeProviderExtraBody(value) {
   if (!value || Array.isArray(value) || typeof value !== 'object') {
     return {};
   }
@@ -478,7 +479,7 @@ function providerExtraBody(value) {
 }
 
 function stableStringifyExtraBody(value) {
-  const extraBody = providerExtraBody(value);
+  const extraBody = normalizeProviderExtraBody(value);
   if (!Object.keys(extraBody).length) {
     return '{}';
   }
@@ -1005,7 +1006,7 @@ function buildAnthropicBody(settings, messages, stream, options = {}) {
 }
 
 function buildAnthropicRequestBody(settings, system, messages, stream, options = {}) {
-  const extraBody = providerExtraBody(settings.extraBody);
+  const extraBody = normalizeProviderExtraBody(settings.extraBody);
   const maxTokens = Math.max(1, Number(options.maxTokens ?? extraBody.max_tokens ?? extraBody.maxTokens ?? 4096));
   const body = {
     model: normalizeProviderModel(settings.providerType, settings.model),
@@ -1290,7 +1291,7 @@ async function generateOpenAiResponse(settings, messages, options = {}) {
       model: resolveProviderModel(settings, options),
       input: messages,
       reasoning: buildOpenAiReasoning(settings, options),
-      ...providerExtraBody(settings.extraBody)
+      ...normalizeProviderExtraBody(settings.extraBody)
     })
   });
 
@@ -1315,7 +1316,7 @@ async function streamOpenAiResponse(settings, messages, emit, signal, options = 
       input: messages,
       reasoning: buildOpenAiReasoning(settings, options),
       stream: true,
-      ...providerExtraBody(settings.extraBody)
+      ...normalizeProviderExtraBody(settings.extraBody)
     }),
     signal
   });
@@ -1833,14 +1834,6 @@ function extractResponsesReasoningDelta(type, json = {}) {
     return extractText(json.delta || json.text || json.reasoning || json.reasoning_content || json.summary || json.output_text || '');
   }
   return extractReasoning(json);
-}
-
-function parseJson(value, fallback) {
-  try {
-    return JSON.parse(value);
-  } catch {
-    return fallback;
-  }
 }
 
 function trimSlash(value) {

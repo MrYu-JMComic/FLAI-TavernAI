@@ -36,6 +36,9 @@ import { completeCharacterDraft, streamCharacterDraft } from '../services/charac
 import { rollTalent, getCharacterTalents, deleteAllCharacterTalents, deleteCharacterTalent } from '../modules/talents.js';
 import { createCharacterSchema, updateCharacterSchema, importCharacterSchema, validate } from '../validations/schemas.js';
 import { sanitizeCharacterPayload, sanitizeText } from '../services/sanitize.js';
+import { normalizeBoolean } from '../utils/boolean.js';
+import { normalizeFiniteNumber } from '../utils/number.js';
+import { parseJson, withModelOverride, writeSse } from './helpers.js';
 
 export function createCharactersRouter({
   db,
@@ -268,7 +271,7 @@ export function createCharactersRouter({
             triggerKeys: entry.trigger_keys || entry.triggerKeys || '',
             content: entry.content || '',
             position: entry.position || 'before_char',
-            enabled: entry.enabled !== false
+            enabled: normalizeBoolean(entry.enabled, true)
           });
         }
       }
@@ -280,7 +283,7 @@ export function createCharactersRouter({
   // ── Character Reactions ──
 
   router.put('/:id/favorite', requireAuth, (request, response) => {
-    const character = setCharacterFavorite(db, request.auth.user.id, request.params.id, Boolean(request.body?.favorited));
+    const character = setCharacterFavorite(db, request.auth.user.id, request.params.id, normalizeBoolean(request.body?.favorited));
     if (!character) {
       response.status(404).json({ error: '角色不存在' });
       return;
@@ -289,7 +292,7 @@ export function createCharactersRouter({
   });
 
   router.put('/:id/like', requireAuth, (request, response) => {
-    const character = setCharacterLike(db, request.auth.user.id, request.params.id, Boolean(request.body?.liked));
+    const character = setCharacterLike(db, request.auth.user.id, request.params.id, normalizeBoolean(request.body?.liked));
     if (!character) {
       response.status(404).json({ error: '角色不存在' });
       return;
@@ -331,7 +334,7 @@ export function createCharactersRouter({
         imageUrl,
         sceneTag: request.body?.sceneTag || '',
         emotionTag: request.body?.emotionTag || '',
-        isDefault: Boolean(request.body?.isDefault)
+        isDefault: normalizeBoolean(request.body?.isDefault)
       });
       response.status(201).json(image);
     } catch (error) {
@@ -353,7 +356,7 @@ export function createCharactersRouter({
     const image = updateCharacterImage(db, request.params.id, request.params.imageId, {
       sceneTag: request.body?.sceneTag,
       emotionTag: request.body?.emotionTag,
-      isDefault: request.body?.isDefault
+      isDefault: request.body?.isDefault === undefined ? undefined : normalizeBoolean(request.body.isDefault)
     });
     if (!image) {
       response.status(404).json({ error: '立绘不存在' });
@@ -571,7 +574,7 @@ export function createCharactersRouter({
       response.status(400).json({ error: '请提供世界书 ID' });
       return;
     }
-    const orderIndex = Number(request.body?.orderIndex) || 0;
+    const orderIndex = normalizeFiniteNumber(request.body?.orderIndex);
     if (!linkWorldBookToCharacter(db, bookId, request.params.id, orderIndex, request.auth.user.id)) {
       response.status(404).json({ error: '世界书不存在' });
       return;
@@ -620,28 +623,4 @@ function normalizeCharacterAssistantError(error) {
     return 'AI 服务连接中断，请检查网关地址、网络或稍后重试。';
   }
   return message;
-}
-
-function withModelOverride(settings, modelOverride) {
-  const model = String(modelOverride || '').trim();
-  return model ? { ...settings, model } : settings;
-}
-
-function writeSse(response, event, data) {
-  if (response.destroyed) return;
-  try {
-    response.write(`event: ${event}\n`);
-    response.write(`data: ${JSON.stringify(data)}\n\n`);
-    response.flush?.();
-  } catch {
-    // Response stream may have been destroyed by client disconnect
-  }
-}
-
-function parseJson(value, fallback) {
-  try {
-    return JSON.parse(value || '');
-  } catch {
-    return fallback;
-  }
 }

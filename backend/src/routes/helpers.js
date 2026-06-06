@@ -5,12 +5,30 @@
 
 import { normalizeAdvancedSettings, mergeAdvancedSettings } from '../modules/advancedSettings.js';
 import { summarizeUsageSnapshots } from '../services/providers.js';
+import { parseJson } from '../utils/json.js';
 
-export function parseJson(value, fallback) {
+export { parseJson };
+
+/**
+ * Override the model in provider settings if a valid override is provided.
+ */
+export function withModelOverride(settings, modelOverride) {
+  const model = String(modelOverride || '').trim();
+  return model ? { ...settings, model } : settings;
+}
+
+/**
+ * Write a single SSE event to the response stream.
+ * Safe to call after response is destroyed (no-op).
+ */
+export function writeSse(response, event, data) {
+  if (response.destroyed) return;
   try {
-    return JSON.parse(value || '');
+    response.write(`event: ${event}\n`);
+    response.write(`data: ${JSON.stringify(data)}\n\n`);
+    response.flush?.();
   } catch {
-    return fallback;
+    // Response stream may have been destroyed by client disconnect
   }
 }
 
@@ -39,7 +57,7 @@ export function toConversation(row, db) {
   };
 }
 
-export function mergeConversationAppearance(row) {
+function mergeConversationAppearance(row) {
   return {
     desktopBackgroundUrl: row.desktop_background_url || '',
     mobileBackgroundUrl: row.mobile_background_url || '',
@@ -49,7 +67,7 @@ export function mergeConversationAppearance(row) {
   };
 }
 
-export function getConversationUsage(userId, conversationId, db) {
+function getConversationUsage(userId, conversationId, db) {
   const usages = db
     .prepare(
       `SELECT usage_json FROM messages
@@ -85,4 +103,23 @@ export function normalizeIdList(ids) {
     return [];
   }
   return [...new Set(ids.map((id) => String(id || '').trim()).filter(Boolean))].slice(0, 100);
+}
+
+export function getChatProviderSettingsFromContext(ctx, userId) {
+  if (typeof ctx.getChatProviderSettings === 'function') {
+    return ctx.getChatProviderSettings(userId);
+  }
+
+  const settings = ctx.providerWithSecret(ctx.getProviderRow(userId));
+  if (settings.apiKeyError) {
+    return { ok: false, error: settings.apiKeyError };
+  }
+  const providerReady = ctx.hasUsableProvider(settings);
+  if (!settings.apiKey && !providerReady) {
+    return { ok: false, error: '请先在用户页保存 API Key / SK，再开始真实对话。' };
+  }
+  if (!providerReady) {
+    return { ok: false, error: 'AI 供应商配置不完整，请检查网关地址、模型和 API Key。' };
+  }
+  return { ok: true, value: settings };
 }

@@ -4,6 +4,7 @@ import {
   fetchDeepSeekBalance,
   hasUsableProvider,
   listProviderModels,
+  normalizeProviderExtraBody,
   normalizeProviderRow,
   providerPresets,
   providerWithSecret
@@ -11,6 +12,8 @@ import {
 import { encryptSecret, apiKeyHint } from '../security.js';
 import { CURRENCY_TYPES } from '../modules/economy.js';
 import { saveAvatarInput } from '../services/avatars.js';
+import { normalizeBoolean } from '../utils/boolean.js';
+import { parseJson } from '../utils/json.js';
 import { saveProviderSchema, updateProfileSchema, validate } from '../validations/schemas.js';
 
 export function createSettingsRouter(ctx) {
@@ -54,7 +57,7 @@ export function createSettingsRouter(ctx) {
 
   router.post('/providers/models', requireAuth, asyncRoute(async (request, response) => {
     const settings = buildProviderProbeSettings(request.auth.user.id, request.body || {});
-    response.json({ models: await listProviderModels(settings, { forceRefresh: Boolean(request.body?.forceRefresh) }) });
+    response.json({ models: await listProviderModels(settings, { forceRefresh: normalizeBoolean(request.body?.forceRefresh) }) });
   }));
 
   // ── Economy currencies ──
@@ -145,7 +148,7 @@ export function createSettingsRouter(ctx) {
       gatewayName: String(payload.gatewayName || preset.gatewayName).trim() || preset.gatewayName,
       baseUrl: String(payload.baseUrl ?? preset.baseUrl).trim(),
       model: String(payload.model ?? preset.model).trim(),
-      supportsReasoning: Boolean(payload.supportsReasoning),
+      supportsReasoning: normalizeBoolean(payload.supportsReasoning),
       extraBody: parseExtraBody(payload.extraBody ?? preset.extraBody),
       encryptedApiKey,
       apiKeyHint: apiKey
@@ -202,7 +205,7 @@ export function createSettingsRouter(ctx) {
       gatewayName: String(payload.gatewayName || saved.gatewayName || preset.gatewayName).trim() || preset.gatewayName,
       baseUrl: String(payload.baseUrl ?? saved.baseUrl ?? preset.baseUrl).trim(),
       model: String(payload.model ?? saved.model ?? preset.model).trim(),
-      supportsReasoning: Boolean(payload.supportsReasoning ?? saved.supportsReasoning ?? preset.supportsReasoning),
+      supportsReasoning: normalizeBoolean(payload.supportsReasoning, saved.supportsReasoning ?? preset.supportsReasoning),
       extraBody: parseExtraBody(payload.extraBody ?? saved.extraBody ?? preset.extraBody),
       apiKey,
       apiKeyError: apiKey ? null : saved.apiKeyError || null
@@ -210,17 +213,10 @@ export function createSettingsRouter(ctx) {
   }
 
   function parseExtraBody(value) {
-    if (!value) {
-      return {};
-    }
     if (typeof value === 'string') {
-      try {
-        return JSON.parse(value);
-      } catch {
-        return {};
-      }
+      return normalizeProviderExtraBody(parseJson(value, {}));
     }
-    return value;
+    return normalizeProviderExtraBody(value);
   }
 
   return router;

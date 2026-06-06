@@ -1,4 +1,6 @@
 import { newId, nowIso } from '../security.js';
+import { normalizeBoolean } from '../utils/boolean.js';
+import { normalizeFiniteNumber } from '../utils/number.js';
 
 const VALID_TYPES = ['prompt_inject', 'style_enhance', 'custom'];
 
@@ -159,8 +161,9 @@ function normalizeModPayload(payload = {}, existing = null) {
   const description = String(payload.description ?? existing?.description ?? '').trim();
   const type = normalizeType(payload.type ?? existing?.type ?? 'prompt_inject');
   const content = String(payload.content ?? existing?.content ?? '').trim();
-  const enabled = Boolean(payload.enabled ?? existing?.enabled ?? true);
-  const orderIndex = Number(payload.orderIndex ?? payload.order_index ?? existing?.order_index ?? existing?.orderIndex ?? 0);
+  const enabled = normalizeBoolean(payload.enabled, normalizeBoolean(existing?.enabled, true));
+  const currentOrderIndex = normalizeFiniteNumber(existing?.order_index ?? existing?.orderIndex ?? 0);
+  const orderIndex = normalizeFiniteNumber(payload.orderIndex ?? payload.order_index, currentOrderIndex);
 
   return { name, description, type, content, enabled, orderIndex };
 }

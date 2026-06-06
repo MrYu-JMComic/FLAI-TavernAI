@@ -1,4 +1,5 @@
 import { newId, nowIso } from '../security.js';
+import { parseJson } from '../utils/json.js';
 import { withSavepoint } from './savepoint.js';
 
 // ── Save CRUD ──
@@ -204,12 +205,4 @@ function toSaveDetail(row) {
     preview: row.preview || '',
     createdAt: row.created_at
   };
-}
-
-function parseJson(value, fallback) {
-  try {
-    return JSON.parse(value || '');
-  } catch {
-    return fallback;
-  }
 }

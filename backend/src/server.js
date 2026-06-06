@@ -26,6 +26,7 @@ import { createSettingsRouter } from './routes/settings.js';
 import { createRegexRouter } from './routes/regex.js';
 import { createSwipesRouter } from './routes/swipes.js';
 import { createBranchesRouter } from './routes/branches.js';
+import { getChatProviderSettingsFromContext } from './routes/helpers.js';
 import { createBackup, listBackups, scheduleDailyBackup } from './services/backup.js';
 import { csrfProtection, csrfTokenEndpoint } from './services/csrf.js';
 
@@ -208,17 +209,7 @@ function getProviderRow(userId) {
 }
 
 function getChatProviderSettings(userId) {
-  const settings = providerWithSecret(getProviderRow(userId));
-  if (settings.apiKeyError) {
-    return { ok: false, error: settings.apiKeyError };
-  }
-  if (!settings.apiKey && !hasUsableProvider(settings)) {
-    return { ok: false, error: '请先在用户页保存 API Key / SK，再开始使用 AI 助手。' };
-  }
-  if (!hasUsableProvider(settings)) {
-    return { ok: false, error: 'AI 供应商配置不完整，请检查网关地址、模型和 API Key。' };
-  }
-  return { ok: true, value: settings };
+  return getChatProviderSettingsFromContext({ providerWithSecret, hasUsableProvider, getProviderRow }, userId);
 }
 
 // ── User helpers ──

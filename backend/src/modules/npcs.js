@@ -1,4 +1,5 @@
 import { newId, nowIso } from '../security.js';
+import { normalizeBoolean } from '../utils/boolean.js';
 
 // ── NPC Memories ──
 
@@ -69,7 +70,7 @@ export function addNpcBehavior(database, userId, conversationId, npcName, payloa
   const triggerCondition = normalizeContent(payload.triggerCondition);
   const action = normalizeContent(payload.action);
   const priority = clampNumber(payload.priority, 0, 100, 0);
-  const enabled = payload.enabled !== false ? 1 : 0;
+  const enabled = normalizeBoolean(payload.enabled, true) ? 1 : 0;
 
   database
     .prepare(
@@ -99,7 +100,7 @@ export function updateNpcBehavior(database, userId, conversationId, behaviorId, 
   const triggerCondition = payload.triggerCondition !== undefined ? normalizeContent(payload.triggerCondition) : existing.trigger_condition;
   const action = payload.action !== undefined ? normalizeContent(payload.action) : existing.action;
   const priority = payload.priority !== undefined ? clampNumber(payload.priority, 0, 100, existing.priority) : existing.priority;
-  const enabled = payload.enabled !== undefined ? (payload.enabled ? 1 : 0) : existing.enabled;
+  const enabled = payload.enabled !== undefined ? (normalizeBoolean(payload.enabled, existing.enabled) ? 1 : 0) : existing.enabled;
 
   database
     .prepare(
@@ -137,13 +138,14 @@ export function upsertConversationNpc(database, userId, conversationId, payload 
   const source = normalizeNpcSource(payload.source);
   const evidence = normalizeEvidence(payload.evidence);
   const confidence = clampNumber(payload.confidence, 0, 100, 0);
-  const hidden = payload.hidden === true ? 1 : 0;
+  const hidden = normalizeBoolean(payload.hidden) ? 1 : 0;
+  const shouldUnhide = normalizeBoolean(payload.unhide);
   const existing = database
     .prepare('SELECT * FROM npc_registry WHERE conversation_id = ? AND npc_name = ?')
     .get(conversationId, npcName);
 
   if (existing) {
-    const nextHidden = existing.hidden && payload.unhide !== true ? 1 : hidden;
+    const nextHidden = existing.hidden && !shouldUnhide ? 1 : hidden;
     database
       .prepare(
         `UPDATE npc_registry

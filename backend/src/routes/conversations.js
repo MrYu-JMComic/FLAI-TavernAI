@@ -71,11 +71,21 @@ import { saveConversationAppearance } from '../modules/conversationAppearance.js
 import { mergeAdvancedSettings } from '../modules/advancedSettings.js';
 import { withSavepoint } from '../modules/savepoint.js';
 import { getAccessorySkillsPayload, runAccessoryAgents } from '../services/accessoryAgents.js';
-import { toConversation, toMessage, withConversationUsage, parseJson, normalizeIdList } from './helpers.js';
+import {
+  getChatProviderSettingsFromContext,
+  toConversation,
+  toMessage,
+  withConversationUsage,
+  parseJson,
+  normalizeIdList,
+  withModelOverride,
+  writeSse
+} from './helpers.js';
 import { sendMessageSchema, updateMessageSchema, saveConversationSettingsSchema, saveStatusBarSchema, economyTransactionSchema, addNpcMemorySchema, addNpcBehaviorSchema, updateNpcBehaviorSchema, createSaveSchema, renameSaveSchema, createConversationSchema, bulkDeleteSchema, validate } from '../validations/schemas.js';
 
 export function createConversationsRouter(ctx) {
   const { db, requireAuth, asyncRoute, newId, nowIso, withEtag, withListCache } = ctx;
+  const getChatProviderSettings = (userId) => getChatProviderSettingsFromContext(ctx, userId);
   const router = Router();
 
   // ── Conversation List ──
@@ -767,21 +777,6 @@ export function createConversationsRouter(ctx) {
     );
   }
 
-  function getChatProviderSettings(userId) {
-    const { providerWithSecret, hasUsableProvider } = ctx;
-    const settings = providerWithSecret(ctx.getProviderRow(userId));
-    if (settings.apiKeyError) {
-      return { ok: false, error: settings.apiKeyError };
-    }
-    if (!settings.apiKey && !hasUsableProvider(settings)) {
-      return { ok: false, error: '请先在用户页保存 API Key / SK，再开始真实对话。' };
-    }
-    if (!hasUsableProvider(settings)) {
-      return { ok: false, error: 'AI 供应商配置不完整，请检查网关地址、模型和 API Key。' };
-    }
-    return { ok: true, value: settings };
-  }
-
   function saveConversationAccessorySkills(userId, conversationId, payload = {}) {
     const row = db
       .prepare('SELECT user_advanced_settings FROM conversations WHERE id = ? AND user_id = ?')
@@ -1012,17 +1007,6 @@ export function createConversationsRouter(ctx) {
       return true;
     }
     return Boolean(String(row.content || '').trim() || String(row.reasoning || '').trim());
-  }
-
-  function writeSse(response, event, data) {
-    if (response.destroyed) return;
-    try {
-      response.write(`event: ${event}\n`);
-      response.write(`data: ${JSON.stringify(data)}\n\n`);
-      response.flush?.();
-    } catch {
-      // Response stream may have been destroyed by client disconnect
-    }
   }
 
   function isAbortError(error) {

@@ -8750,9 +8750,26 @@ p {
     width: 100%;
   }
 
-  .home-stat-grid,
-  .home-quick-row {
+  .home-stat-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .home-quick-row {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 6px;
+  }
+
+  .home-quick-action {
+    gap: 5px;
+    min-height: 40px;
+    padding: 0 8px;
+    font-size: 0.84rem;
+  }
+
+  .home-quick-action svg {
+    width: 16px;
+    height: 16px;
+    flex: 0 0 auto;
   }
 
   .home-control-panel {
@@ -8831,9 +8848,25 @@ p {
 }
 
 @media (max-width: 460px) {
-  .home-stat-grid,
-  .home-quick-row {
+  .home-stat-grid {
     grid-template-columns: 1fr;
+  }
+
+  .home-quick-row {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 5px;
+  }
+
+  .home-quick-action {
+    gap: 4px;
+    min-height: 38px;
+    padding: 0 6px;
+    font-size: 0.8rem;
+  }
+
+  .home-quick-action svg {
+    width: 15px;
+    height: 15px;
   }
 
   .home-card-topline {
@@ -8858,5 +8891,17 @@ p {
   .home-character-avatar {
     width: 62px;
     height: 62px;
+  }
+}
+
+@media (max-width: 380px) {
+  .home-quick-action {
+    padding: 0 4px;
+    font-size: 0.76rem;
+  }
+
+  .home-quick-action svg {
+    width: 14px;
+    height: 14px;
   }
 }

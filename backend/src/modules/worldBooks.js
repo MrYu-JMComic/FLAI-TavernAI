@@ -1,4 +1,5 @@
 import { newId, nowIso } from '../security.js';
+import { normalizeBoolean } from '../utils/boolean.js';
 
 // ── World Book CRUD ──
 
@@ -759,17 +760,17 @@ function normalizeEntryPayload(payload = {}) {
   const position = ['before_char', 'after_char', 'at_start', 'at_depth'].includes(payload.position)
     ? payload.position
     : 'before_char';
-  const enabled = payload.enabled !== false;
+  const enabled = normalizeBoolean(payload.enabled, true);
   const orderIndex = Number.isFinite(Number(payload.orderIndex)) ? Number(payload.orderIndex) : 0;
-  const regexMode = payload.regexMode ? 1 : 0;
-  const alwaysActive = payload.alwaysActive ? 1 : 0;
+  const regexMode = normalizeBoolean(payload.regexMode) ? 1 : 0;
+  const alwaysActive = normalizeBoolean(payload.alwaysActive) ? 1 : 0;
   const depth = Number.isFinite(Number(payload.depth)) ? Math.max(0, Math.min(10, Number(payload.depth))) : 0;
-  const selective = payload.selective ? 1 : 0;
+  const selective = normalizeBoolean(payload.selective) ? 1 : 0;
   const selectiveLogic = [0, 1, 2].includes(Number(payload.selectiveLogic)) ? Number(payload.selectiveLogic) : 0;
   const keysSecondary = String(payload.keysSecondary || '').trim().slice(0, 2000);
 
   const probability = Number.isFinite(Number(payload.probability)) ? Math.max(0, Math.min(100, Number(payload.probability))) : 100;
-  const useProbability = payload.useProbability ? 1 : 0;
+  const useProbability = normalizeBoolean(payload.useProbability) ? 1 : 0;
   const group = String(payload.group || '').trim().slice(0, 100);
   const groupWeight = Number.isFinite(Number(payload.groupWeight)) ? Math.max(0, Number(payload.groupWeight)) : 0;
   const role = [0, 1, 2].includes(Number(payload.role)) ? Number(payload.role) : 0;

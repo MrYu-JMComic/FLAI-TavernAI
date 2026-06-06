@@ -1,4 +1,5 @@
 import { newId, nowIso } from '../security.js';
+import { parseJson } from '../utils/json.js';
 import { withSavepoint } from './savepoint.js';
 
 export function listSwipes(db, userId, messageId) {
@@ -12,7 +13,7 @@ export function listSwipes(db, userId, messageId) {
       messageId: row.message_id,
       content: row.content,
       reasoning: row.reasoning || '',
-      usage: safeParseJson(row.usage_json),
+      usage: parseJson(row.usage_json, null),
       createdAt: row.created_at
     }));
 }
@@ -53,7 +54,7 @@ export function getActiveSwipe(db, userId, messageId) {
   return {
     content: message.content,
     reasoning: message.reasoning || '',
-    usage: safeParseJson(message.usage_json),
+    usage: parseJson(message.usage_json, null),
     createdAt: message.created_at,
     swipeCount: swipes.length + 1,
     activeIndex: 0
@@ -77,7 +78,7 @@ export function setActiveSwipe(db, userId, messageId, swipeId) {
       createSwipe(db, userId, messageId, {
         content: message.content,
         reasoning: message.reasoning || '',
-        usage: safeParseJson(message.usage_json)
+        usage: parseJson(message.usage_json, null)
       });
     }
 
@@ -92,13 +93,9 @@ export function setActiveSwipe(db, userId, messageId, swipeId) {
   return {
     content: swipe.content,
     reasoning: swipe.reasoning || '',
-    usage: safeParseJson(swipe.usage_json),
+    usage: parseJson(swipe.usage_json, null),
     createdAt: swipe.created_at,
     swipeCount: allSwipes.length + 1,
     activeIndex: activeIdx >= 0 ? activeIdx + 1 : 0
   };
-}
-
-function safeParseJson(text) {
-  try { return JSON.parse(text || 'null'); } catch { return null; }
 }

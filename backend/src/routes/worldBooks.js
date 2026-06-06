@@ -12,6 +12,7 @@ import {
 import { createWorldBookSchema, updateWorldBookSchema, createWorldBookEntrySchema, updateWorldBookEntrySchema, validate } from '../validations/schemas.js';
 import { sanitizeText } from '../services/sanitize.js';
 import { completeWorldBookDraft, streamWorldBookDraft } from '../services/worldBookAssistant.js';
+import { withModelOverride, writeSse } from './helpers.js';
 
 export function createWorldBooksRouter(ctx) {
   const { db, requireAuth, asyncRoute, withListCache, getChatProviderSettings } = ctx;
@@ -181,20 +182,4 @@ function normalizeWorldBookAssistantError(error) {
     return 'AI 服务连接中断，请检查网关地址、网络或稍后重试。';
   }
   return message;
-}
-
-function withModelOverride(settings, modelOverride) {
-  const model = String(modelOverride || '').trim();
-  return model ? { ...settings, model } : settings;
-}
-
-function writeSse(response, event, data) {
-  if (response.destroyed) return;
-  try {
-    response.write(`event: ${event}\n`);
-    response.write(`data: ${JSON.stringify(data)}\n\n`);
-    response.flush?.();
-  } catch {
-    // Response stream may have been destroyed by client disconnect
-  }
 }

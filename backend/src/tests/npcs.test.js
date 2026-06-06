@@ -153,6 +153,39 @@ test('NPC mutators treat null payloads as empty input', () => {
   assert.equal(upsertConversationNpc(database, userId, conversationId, null), null);
 });
 
+test('NPC mutators normalize string boolean flags', () => {
+  const { database, userId, conversationId } = setupDatabase();
+
+  const disabledBehavior = addNpcBehavior(database, userId, conversationId, 'NPC', {
+    enabled: 'false'
+  });
+  assert.equal(disabledBehavior.enabled, false);
+
+  const enabledBehavior = updateNpcBehavior(database, userId, conversationId, disabledBehavior.id, {
+    enabled: 'true'
+  });
+  assert.equal(enabledBehavior.enabled, true);
+
+  const hiddenNpc = upsertConversationNpc(database, userId, conversationId, {
+    npcName: 'String Flag NPC',
+    hidden: 'true'
+  });
+  assert.equal(hiddenNpc.hidden, true);
+
+  const stillHidden = upsertConversationNpc(database, userId, conversationId, {
+    npcName: 'String Flag NPC',
+    hidden: 'false'
+  });
+  assert.equal(stillHidden.hidden, true);
+
+  const unhidden = upsertConversationNpc(database, userId, conversationId, {
+    npcName: 'String Flag NPC',
+    hidden: 'false',
+    unhide: 'true'
+  });
+  assert.equal(unhidden.hidden, false);
+});
+
 test('NPC behaviors CRUD with priority and toggle', () => {
   const { database, userId, conversationId } = setupDatabase();
 

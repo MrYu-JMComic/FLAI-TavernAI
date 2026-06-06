@@ -1,4 +1,5 @@
 import { newId, nowIso } from '../security.js';
+import { parseJson } from '../utils/json.js';
 import {
   avatarShortUrl,
   characterBackgroundOwnerTypes,
@@ -212,7 +213,9 @@ export function getRegexRules(database, userId, characterId) {
       enabled: Boolean(row.enabled),
       order: row.order_index,
       groupName: row.group_name || '全局',
-      priority: row.priority ?? 0
+      priority: row.priority ?? 0,
+      scriptMode: Boolean(row.script_mode),
+      jsScript: row.js_script || ''
     }));
 }
 
@@ -238,7 +241,9 @@ export function getRegexRulesByGroup(database, userId, group) {
       enabled: Boolean(row.enabled),
       order: row.order_index,
       groupName: row.group_name || '全局',
-      priority: row.priority ?? 0
+      priority: row.priority ?? 0,
+      scriptMode: Boolean(row.script_mode),
+      jsScript: row.js_script || ''
     }));
 }
 
@@ -252,8 +257,8 @@ export function replaceRegexRules(database, userId, characterId, rules = []) {
 
     const insert = database.prepare(
       `INSERT INTO regex_rules (
-        id, user_id, character_id, label, pattern, replacement, flags, scope, enabled, order_index, group_name, priority
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        id, user_id, character_id, label, pattern, replacement, flags, scope, enabled, order_index, group_name, priority, script_mode, js_script
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     );
 
     normalizeRegexRules(rules).forEach((rule, index) => {
@@ -269,7 +274,9 @@ export function replaceRegexRules(database, userId, characterId, rules = []) {
         rule.enabled ? 1 : 0,
         index,
         rule.groupName || '全局',
-        rule.priority ?? 0
+        rule.priority ?? 0,
+        rule.scriptMode ? 1 : 0,
+        rule.jsScript || ''
       );
     });
   });
@@ -291,7 +298,9 @@ export function toggleRegexRule(database, userId, ruleId) {
     enabled: Boolean(newEnabled),
     order: row.order_index,
     groupName: row.group_name || '全局',
-    priority: row.priority ?? 0
+    priority: row.priority ?? 0,
+    scriptMode: Boolean(row.script_mode),
+    jsScript: row.js_script || ''
   };
 }
 
@@ -486,7 +495,9 @@ function normalizeRegexRules(rules = []) {
       scope: ['input', 'output', 'both'].includes(rule.scope) ? rule.scope : 'input',
       enabled: rule.enabled !== false,
       groupName: String(rule.groupName || '全局').trim().slice(0, 60) || '全局',
-      priority: Math.max(0, Math.round(Number(rule.priority) || 0))
+      priority: Math.max(0, Math.round(Number(rule.priority) || 0)),
+      scriptMode: Boolean(rule.scriptMode),
+      jsScript: String(rule.jsScript || '').slice(0, 10000)
     };
   });
 }
@@ -568,12 +579,4 @@ function toCharacter(row, regexRules = undefined, viewerId = undefined) {
     lastUsedAt: row.last_used_at || null,
     regexRules
   };
-}
-
-function parseJson(value, fallback) {
-  try {
-    return JSON.parse(value || '');
-  } catch {
-    return fallback;
-  }
 }

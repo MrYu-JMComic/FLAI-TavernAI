@@ -1,4 +1,5 @@
 import { newId, nowIso } from '../security.js';
+import { parseJson } from '../utils/json.js';
 
 export const STATUS_BAR_VARIABLE_LIMIT = 60;
 
@@ -397,12 +398,4 @@ function toStatusBar(row) {
     createdAt: row.created_at,
     updatedAt: row.updated_at
   };
-}
-
-function parseJson(value, fallback) {
-  try {
-    return JSON.parse(value || '');
-  } catch {
-    return fallback;
-  }
 }

@@ -1,4 +1,5 @@
 import { nowIso } from '../security.js';
+import { parseJson } from '../utils/json.js';
 import { normalizeAdvancedSettings } from './advancedSettings.js';
 
 export function normalizeConversationAppearance(input = {}) {
@@ -104,12 +105,4 @@ function toLegacyAppearance(appearance) {
     customCss: appearance.customCss,
     customJs: appearance.customJs
   };
-}
-
-function parseJson(value, fallback) {
-  try {
-    return JSON.parse(value || '');
-  } catch {
-    return fallback;
-  }
 }

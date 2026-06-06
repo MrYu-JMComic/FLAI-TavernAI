@@ -1,4 +1,5 @@
 import { newId, nowIso } from '../security.js';
+import { parseJson } from '../utils/json.js';
 
 // ── Rarity weights for weighted random roll ──
 const RARITY_WEIGHTS = {
@@ -272,12 +273,4 @@ function toCharacterTalent(row) {
     poolId: row.pool_id,
     rolledAt: row.rolled_at
   };
-}
-
-function parseJson(value, fallback) {
-  try {
-    return JSON.parse(value || '');
-  } catch {
-    return fallback;
-  }
 }

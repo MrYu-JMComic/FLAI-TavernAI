@@ -56,6 +56,7 @@ const { createCharactersRouter } = await import('../routes/characters.js');
 const { createConversationsRouter } = await import('../routes/conversations.js');
 const { createRegexRouter } = await import('../routes/regex.js');
 const { createSwipesRouter } = await import('../routes/swipes.js');
+const { createSettingsRouter } = await import('../routes/settings.js');
 const { isAccessorySkillActive, mergeAdvancedSettings, normalizeAdvancedSettings } = await import('../modules/advancedSettings.js');
 const { renderPromptVariables, resolvePromptUserName } = await import('../services/promptVariables.js');
 const { expandMacros } = await import('../services/macros.js');
@@ -497,6 +498,68 @@ test('regex import route rolls back earlier inserts when a later insert fails', 
   }
 });
 
+test('regex import route normalizes string boolean flags', async () => {
+  const database = createAppDatabase(':memory:');
+  const userId = 'regex-import-boolean-user';
+  database.prepare('INSERT INTO users (id, username, password_hash, created_at) VALUES (?, ?, ?, ?)').run(
+    userId,
+    'regeximportboolean',
+    'hash',
+    new Date().toISOString()
+  );
+  const character = createCharacter(database, userId, { name: 'Regex Import Boolean' });
+
+  const app = express();
+  app.use(express.json());
+  app.use('/api/regex', createRegexRouter({
+    db: database,
+    requireAuth: (request, _response, next) => {
+      request.auth = { user: { id: userId, username: 'regeximportboolean' } };
+      next();
+    },
+    newId
+  }));
+  app.use((error, _request, response, _next) => {
+    response.status(500).json({ error: error.message });
+  });
+
+  const server = await new Promise((resolve) => {
+    const listener = app.listen(0, () => resolve(listener));
+  });
+
+  try {
+    const baseUrl = `http://127.0.0.1:${server.address().port}`;
+    const importResponse = await fetch(`${baseUrl}/api/regex/import`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        rules: [
+          {
+            characterId: character.id,
+            label: 'String false import',
+            pattern: 'string-false-import',
+            enabled: 'false',
+            script_mode: 'false',
+            js_script: 'return "unused";'
+          }
+        ]
+      })
+    });
+    const body = await importResponse.json();
+    const row = database
+      .prepare('SELECT enabled, script_mode, js_script FROM regex_rules WHERE character_id = ? AND pattern = ?')
+      .get(character.id, 'string-false-import');
+
+    assert.equal(importResponse.status, 201);
+    assert.equal(body.imported, 1);
+    assert.equal(row.enabled, 0);
+    assert.equal(row.script_mode, 0);
+    assert.equal(row.js_script, 'return "unused";');
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
 test('prompt variables render the current user name', () => {
   const user = {
     username: 'account_name',
@@ -663,6 +726,153 @@ test('character routes reject foreign world book links', async () => {
 
     assert.equal(updateResponse.status, 404);
     assert.equal(getCharacter(database, 'route-user', existing.id).name, 'Existing Character');
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
+test('character world book route normalizes non-finite order index', async () => {
+  const database = createAppDatabase(':memory:');
+  const userId = 'route-order-index-user';
+  database.prepare('INSERT INTO users (id, username, password_hash, created_at) VALUES (?, ?, ?, ?)').run(
+    userId,
+    'routeorderindex',
+    'hash',
+    new Date().toISOString()
+  );
+  const character = createCharacter(database, userId, { name: 'Order Index Character' });
+  const book = createWorldBook(database, userId, { name: 'Order Index Book' });
+
+  const app = express();
+  app.use(express.json());
+  app.use('/api/characters', createCharactersRouter({
+    db: database,
+    requireAuth: (request, _response, next) => {
+      request.auth = { user: { id: userId, username: 'routeorderindex' } };
+      next();
+    },
+    asyncRoute: (handler) => (request, response, next) => Promise.resolve(handler(request, response, next)).catch(next),
+    withCharacterTags: (value) => value,
+    withWorldBookId: (value) => value,
+    hasUsableProvider: () => true,
+    getChatProviderSettings: () => ({ ok: false, error: 'unused' }),
+    withEtag: (_request, response, data) => response.json(data),
+    withListCache: (_request, response, data) => response.json(data),
+    nowIso: () => new Date().toISOString()
+  }));
+  app.use((error, _request, response, _next) => {
+    response.status(500).json({ error: error.message });
+  });
+
+  const server = await new Promise((resolve) => {
+    const listener = app.listen(0, () => resolve(listener));
+  });
+
+  try {
+    const baseUrl = `http://127.0.0.1:${server.address().port}`;
+    const response = await fetch(`${baseUrl}/api/characters/${character.id}/world-books`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ worldBookId: book.id, orderIndex: 'Infinity' })
+    });
+    const row = database
+      .prepare('SELECT order_index FROM character_world_books WHERE character_id = ? AND world_book_id = ?')
+      .get(character.id, book.id);
+
+    assert.equal(response.status, 200);
+    assert.equal(row.order_index, 0);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
+test('character routes normalize string boolean flags', async () => {
+  const database = createAppDatabase(':memory:');
+  database.prepare('INSERT INTO users (id, username, password_hash, created_at) VALUES (?, ?, ?, ?)').run(
+    'boolean-route-user',
+    'booleanrouteuser',
+    'hash',
+    new Date().toISOString()
+  );
+  const character = createCharacter(database, 'boolean-route-user', { name: 'Boolean Route Character' });
+
+  const app = express();
+  app.use(express.json());
+  app.use('/api/characters', createCharactersRouter({
+    db: database,
+    requireAuth: (request, _response, next) => {
+      request.auth = { user: { id: 'boolean-route-user', username: 'booleanrouteuser' } };
+      next();
+    },
+    asyncRoute: (handler) => (request, response, next) => Promise.resolve(handler(request, response, next)).catch(next),
+    withCharacterTags: (value) => value,
+    withWorldBookId: (value) => value,
+    hasUsableProvider: () => true,
+    getChatProviderSettings: () => ({ ok: false, error: 'unused' }),
+    withEtag: (_request, response, data) => response.json(data),
+    withListCache: (_request, response, data) => response.json(data),
+    nowIso: () => new Date().toISOString()
+  }));
+  app.use((error, _request, response, _next) => {
+    response.status(500).json({ error: error.message });
+  });
+
+  const server = await new Promise((resolve) => {
+    const listener = app.listen(0, () => resolve(listener));
+  });
+
+  try {
+    const baseUrl = `http://127.0.0.1:${server.address().port}`;
+    const favoriteOn = await fetch(`${baseUrl}/api/characters/${character.id}/favorite`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ favorited: 'true' })
+    });
+    assert.equal((await favoriteOn.json()).favoritedByMe, true);
+
+    const favoriteOff = await fetch(`${baseUrl}/api/characters/${character.id}/favorite`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ favorited: 'false' })
+    });
+    assert.equal((await favoriteOff.json()).favoritedByMe, false);
+
+    const likeOn = await fetch(`${baseUrl}/api/characters/${character.id}/like`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ liked: 'true' })
+    });
+    assert.equal((await likeOn.json()).likedByMe, true);
+
+    const likeOff = await fetch(`${baseUrl}/api/characters/${character.id}/like`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ liked: 'false' })
+    });
+    assert.equal((await likeOff.json()).likedByMe, false);
+
+    const firstImageResponse = await fetch(`${baseUrl}/api/characters/${character.id}/images`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ imageUrl: 'https://example.test/first.png', isDefault: 'false' })
+    });
+    const firstImage = await firstImageResponse.json();
+    assert.equal(firstImage.isDefault, false);
+
+    const defaultImageResponse = await fetch(`${baseUrl}/api/characters/${character.id}/images`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ imageUrl: 'https://example.test/default.png', isDefault: 'true' })
+    });
+    const defaultImage = await defaultImageResponse.json();
+    assert.equal(defaultImage.isDefault, true);
+
+    const unsetDefaultResponse = await fetch(`${baseUrl}/api/characters/${character.id}/images/${defaultImage.id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ isDefault: 'false' })
+    });
+    assert.equal((await unsetDefaultResponse.json()).isDefault, false);
   } finally {
     await new Promise((resolve) => server.close(resolve));
   }
@@ -3345,6 +3555,49 @@ test('world book entries treat null payload as defaults', () => {
   assert.equal(entry.useProbability, false);
 });
 
+test('world book entries normalize string boolean flags', () => {
+  const database = createAppDatabase(':memory:');
+  const userId = 'wb-entry-boolean-user';
+  database.prepare('INSERT INTO users (id, username, password_hash, created_at) VALUES (?, ?, ?, ?)').run(
+    userId,
+    'entrybooleanworldbooker',
+    'hash',
+    new Date().toISOString()
+  );
+  const book = createWorldBook(database, userId, {
+    name: 'Entry Boolean Flags'
+  });
+
+  const entry = createEntry(database, userId, book.id, {
+    name: 'String Boolean Entry',
+    enabled: 'false',
+    regexMode: 'false',
+    alwaysActive: 'false',
+    selective: 'false',
+    useProbability: 'false'
+  });
+
+  assert.equal(entry.enabled, false);
+  assert.equal(entry.regexMode, false);
+  assert.equal(entry.alwaysActive, false);
+  assert.equal(entry.selective, false);
+  assert.equal(entry.useProbability, false);
+
+  const updated = updateEntry(database, userId, book.id, entry.id, {
+    enabled: 'true',
+    regexMode: 'true',
+    alwaysActive: 'true',
+    selective: 'true',
+    useProbability: 'true'
+  });
+
+  assert.equal(updated.enabled, true);
+  assert.equal(updated.regexMode, true);
+  assert.equal(updated.alwaysActive, true);
+  assert.equal(updated.selective, true);
+  assert.equal(updated.useProbability, true);
+});
+
 test('world books CRUD with entries', () => {
   const database = createAppDatabase(':memory:');
   database.prepare('INSERT INTO users (id, username, password_hash, created_at) VALUES (?, ?, ?, ?)').run(
@@ -4592,6 +4845,35 @@ test('mods CRUD with type and ordering', () => {
   assert.equal(deleteMod(database, userId, mod1.id), true);
   assert.equal(listMods(database, userId).length, 1);
   assert.equal(deleteMod(database, userId, 'nonexistent'), false);
+});
+
+test('mods normalize string booleans and non-finite order indexes', () => {
+  const database = createAppDatabase(':memory:');
+  const userId = 'mod-normalize-user';
+  database.prepare('INSERT INTO users (id, username, password_hash, created_at) VALUES (?, ?, ?, ?)').run(
+    userId, 'mod-normalizer', 'hash', new Date().toISOString()
+  );
+
+  const disabled = createMod(database, userId, {
+    name: 'String disabled mod',
+    enabled: 'false'
+  });
+  const ordered = createMod(database, userId, {
+    name: 'Ordered mod',
+    enabled: true
+  });
+
+  assert.equal(disabled.enabled, false);
+  assert.equal(ordered.orderIndex, 1);
+
+  const updated = updateMod(database, userId, ordered.id, {
+    name: 'Ordered mod updated',
+    enabled: 'false',
+    orderIndex: 'Infinity'
+  });
+
+  assert.equal(updated.enabled, false);
+  assert.equal(updated.orderIndex, 1);
 });
 
 test('mods partial reorder keeps order indexes unique', () => {
@@ -7086,6 +7368,121 @@ test('streamOpenAiResponse throws on HTTP error', async () => {
 });
 
 // ── Provider Settings Persistence ──
+
+test('provider settings route normalizes string extra body to a plain object', async () => {
+  const database = createAppDatabase(':memory:');
+  const userId = 'provider-extra-body-user';
+  database.prepare('INSERT INTO users (id, username, password_hash, created_at) VALUES (?, ?, ?, ?)').run(
+    userId, 'provider-extra-body', 'hash', new Date().toISOString()
+  );
+
+  const app = express();
+  app.use(express.json());
+  app.use('/api', createSettingsRouter({
+    db: database,
+    requireAuth: (request, _response, next) => {
+      request.auth = { user: { id: userId } };
+      next();
+    },
+    asyncRoute: (handler) => (request, response, next) => Promise.resolve(handler(request, response, next)).catch(next),
+    nowIso: () => new Date().toISOString(),
+    getUserProfile: () => ({ id: userId })
+  }));
+
+  const server = await new Promise((resolve) => {
+    const listener = app.listen(0, () => resolve(listener));
+  });
+
+  try {
+    const baseUrl = `http://127.0.0.1:${server.address().port}`;
+    const response = await fetch(`${baseUrl}/api/settings/provider`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        providerType: 'custom',
+        gatewayName: 'Local proxy',
+        baseUrl: 'http://127.0.0.1:8317/v1',
+        model: 'local-model',
+        supportsReasoning: false,
+        extraBody: '["unexpected"]'
+      })
+    });
+
+    assert.equal(response.status, 200);
+    const body = await response.json();
+    const row = database.prepare('SELECT extra_body FROM provider_settings WHERE user_id = ?').get(userId);
+
+    assert.deepEqual(body.extraBody, {});
+    assert.equal(row.extra_body, '{}');
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
+test('provider model probe treats string false forceRefresh as false', async () => {
+  const database = createAppDatabase(':memory:');
+  const userId = 'provider-force-refresh-user';
+  database.prepare('INSERT INTO users (id, username, password_hash, created_at) VALUES (?, ?, ?, ?)').run(
+    userId, 'provider-force-refresh', 'hash', new Date().toISOString()
+  );
+
+  const app = express();
+  app.use(express.json());
+  app.use('/api', createSettingsRouter({
+    db: database,
+    requireAuth: (request, _response, next) => {
+      request.auth = { user: { id: userId } };
+      next();
+    },
+    asyncRoute: (handler) => (request, response, next) => Promise.resolve(handler(request, response, next)).catch(next),
+    nowIso: () => new Date().toISOString(),
+    getUserProfile: () => ({ id: userId })
+  }));
+
+  const originalFetch = globalThis.fetch;
+  let requests = 0;
+  globalThis.fetch = async (url, request) => {
+    if (String(url).startsWith('http://127.0.0.1:')) {
+      return originalFetch(url, request);
+    }
+    requests += 1;
+    return jsonResponse({ data: [{ id: 'cached-model' }] });
+  };
+
+  const server = await new Promise((resolve) => {
+    const listener = app.listen(0, () => resolve(listener));
+  });
+
+  try {
+    const baseUrl = `http://127.0.0.1:${server.address().port}`;
+    const payload = {
+      providerType: 'custom',
+      gatewayName: 'Local probe',
+      baseUrl: 'https://force-refresh-false.example/v1',
+      model: 'local-model',
+      apiKey: 'sk-test',
+      forceRefresh: 'false'
+    };
+
+    const first = await fetch(`${baseUrl}/api/providers/models`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    const second = await fetch(`${baseUrl}/api/providers/models`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+
+    assert.equal(first.status, 200);
+    assert.equal(second.status, 200);
+    assert.equal(requests, 1);
+  } finally {
+    globalThis.fetch = originalFetch;
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
 
 test('provider_settings table INSERT and ON CONFLICT UPDATE', () => {
   const database = createAppDatabase(':memory:');
