@@ -1,4 +1,5 @@
 import { newId, nowIso } from '../security.js';
+import { normalizeBoolean } from '../utils/boolean.js';
 import { withSavepoint } from './savepoint.js';
 
 // ── Preset CRUD ──
@@ -159,7 +160,10 @@ function normalizePresetPayload(payload = {}, existing = null) {
   const topP = clampNumber(payload.topP ?? payload.top_p ?? existing?.top_p ?? 1.0, 0, 1);
   const frequencyPenalty = clampNumber(payload.frequencyPenalty ?? payload.frequency_penalty ?? existing?.frequency_penalty ?? 0, -2, 2);
   const presencePenalty = clampNumber(payload.presencePenalty ?? payload.presence_penalty ?? existing?.presence_penalty ?? 0, -2, 2);
-  const isDefault = Boolean(payload.isDefault ?? payload.is_default ?? existing?.is_default ?? false);
+  const isDefault = normalizeBoolean(
+    payload.isDefault ?? payload.is_default,
+    normalizeBoolean(existing?.is_default, false)
+  );
 
   return {
     name,

@@ -4371,6 +4371,35 @@ test('presets CRUD with default management', () => {
   assert.equal(deletePreset(database, userId, 'nonexistent'), false);
 });
 
+test('presets treat string false isDefault as false', () => {
+  const database = createAppDatabase(':memory:');
+  const userId = 'preset-string-false-user';
+  database.prepare('INSERT INTO users (id, username, password_hash, created_at) VALUES (?, ?, ?, ?)').run(
+    userId, 'presetstringfalse', 'hash', new Date().toISOString()
+  );
+
+  const existingDefault = createPreset(database, userId, {
+    name: 'Existing default',
+    isDefault: true
+  });
+
+  const created = createPreset(database, userId, {
+    name: 'String false create',
+    isDefault: 'false'
+  });
+  assert.equal(created.isDefault, false);
+  assert.equal(getDefaultPreset(database, userId).id, existingDefault.id);
+
+  const target = createPreset(database, userId, {
+    name: 'String false update target'
+  });
+  const updated = updatePreset(database, userId, target.id, {
+    isDefault: 'false'
+  });
+  assert.equal(updated.isDefault, false);
+  assert.equal(getDefaultPreset(database, userId).id, existingDefault.id);
+});
+
 test('createPreset keeps existing default when default insert fails', () => {
   const database = createAppDatabase(':memory:');
   const userId = 'preset-create-rollback-user';
