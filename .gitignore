@@ -1,5 +1,8 @@
 node_modules/
 dist/
+coverage/
+.nyc_output/
+.vite/
 
 .env
 .env.*
@@ -27,6 +30,9 @@ automation/prompts/claude-prompt.*
 *.db
 *.db-*
 *.log
+*.tmp
+*.bak
+*.orig
 logs/
 automation/reports/*.txt
 automation/reports/*.log

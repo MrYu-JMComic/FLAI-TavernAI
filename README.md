@@ -51,6 +51,18 @@ cd ../frontend
 npm run build
 ```
 
+## Repository Hygiene
+
+Before committing, use the guarded preparation script instead of a broad `git add -A`:
+
+```powershell
+.\scripts\prepare-commit.ps1
+.\scripts\prepare-commit.ps1 -Stage -Path README.md,scripts\prepare-commit.ps1
+.\scripts\prepare-commit.ps1 -Stage -AllAllowed -IncludeUntracked
+```
+
+The dry run checks UTF-8 encoding and shows the worktree, including ignored local files. The staging mode blocks local data, uploads, env files, build output, logs, dependency folders, generated prompt drafts, and common temporary files. Prefer `-Path` for reviewed files; reserve `-AllAllowed` for fully reviewed worktrees.
+
 ## AI Workstation
 
 This repo includes a guarded autonomous iteration setup:
