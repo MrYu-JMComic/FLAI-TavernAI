@@ -150,6 +150,7 @@ export function providerWithSecret(row) {
 }
 
 export function buildProviderBody(settings, messages, stream, options = {}) {
+  options = options ?? {};
   const extraBody = providerExtraBody(settings.extraBody);
   const body = {
     model: resolveProviderModel(settings, options),
@@ -309,6 +310,7 @@ export function buildUsageSnapshot(usage, metadata = {}) {
   if (!usage) {
     return null;
   }
+  metadata = metadata ?? {};
 
   const providerType = metadata.providerType || metadata.provider_type || '';
   const model = normalizeProviderModel(providerType, metadata.model);
@@ -355,6 +357,7 @@ export function buildUsageSnapshot(usage, metadata = {}) {
 }
 
 export function summarizeUsageSnapshots(usages = []) {
+  usages = usages && typeof usages[Symbol.iterator] === 'function' ? usages : [];
   let totalTokens = 0;
   let totalCostCny = 0;
   let hasCost = false;
@@ -390,6 +393,7 @@ export function hasUsableProvider(settings) {
 }
 
 export async function listProviderModels(settings, options = {}) {
+  options = options ?? {};
   if (!settings?.baseUrl) {
     throw new Error('请先填写 Base URL');
   }
@@ -501,6 +505,7 @@ function sortObject(value) {
 }
 
 export async function runToolCompletion(settings, messages, tools, executeTool, options = {}) {
+  options = options ?? {};
   if (!hasUsableProvider(settings)) {
     throw new Error('请先在用户页保存 API Key / SK，并确认网关和模型可用。');
   }
@@ -603,6 +608,7 @@ export async function runToolCompletion(settings, messages, tools, executeTool, 
 }
 
 export async function streamToolCompletion(settings, messages, tools, executeTool, emit, signal, options = {}) {
+  options = options ?? {};
   if (!hasUsableProvider(settings)) {
     return streamMockCompletion(messages, emit, settings);
   }
@@ -778,6 +784,7 @@ export async function streamToolCompletion(settings, messages, tools, executeToo
 }
 
 export async function generateCompletion(settings, messages, options = {}) {
+  options = options ?? {};
   if (!hasUsableProvider(settings)) {
     return mockCompletion(messages, settings);
   }
@@ -810,6 +817,7 @@ export async function generateCompletion(settings, messages, options = {}) {
 }
 
 export async function streamCompletion(settings, messages, emit, signal, options = {}) {
+  options = options ?? {};
   if (!hasUsableProvider(settings)) {
     return streamMockCompletion(messages, emit, settings);
   }
@@ -1199,6 +1207,7 @@ function usesAnthropicAdaptiveThinking(model) {
 }
 
 function convertMessagesForAnthropic(messages = []) {
+  messages = messages && typeof messages[Symbol.iterator] === 'function' ? messages : [];
   const system = [];
   const converted = [];
 
@@ -1485,6 +1494,10 @@ async function readJsonResponse(response) {
 
   if (!response.ok) {
     throw new Error(providerJsonErrorMessage(json) || responseErrorMessage(response, text));
+  }
+
+  if (Array.isArray(json) || typeof json !== 'object') {
+    throw new Error('AI response JSON must be an object.');
   }
 
   return json;

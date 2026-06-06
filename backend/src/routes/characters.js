@@ -63,10 +63,16 @@ export function createCharactersRouter({
   });
 
   router.post('/', requireAuth, validate(createCharacterSchema), (request, response) => {
+    const worldBookId = String(request.body?.worldBookId || '').trim();
+    if (worldBookId && !getWorldBook(db, request.auth.user.id, worldBookId)) {
+      response.status(404).json({ error: '世界书不存在' });
+      return;
+    }
+
     const payload = prepareCharacterPayload(request.auth.user.id, sanitizeCharacterPayload(request.body));
     const character = createCharacter(db, request.auth.user.id, payload);
-    if (request.body?.worldBookId) {
-      linkWorldBookToCharacter(db, request.body.worldBookId, character.id);
+    if (worldBookId) {
+      linkWorldBookToCharacter(db, worldBookId, character.id, 0, request.auth.user.id);
     }
     setCharacterTags(db, request.auth.user.id, character.id, request.body?.tags);
     response.status(201).json(withCharacterTags(withWorldBookId(character)));
@@ -92,14 +98,21 @@ export function createCharactersRouter({
       return;
     }
 
+    const hasWorldBookId = Object.prototype.hasOwnProperty.call(request.body || {}, 'worldBookId');
+    const worldBookId = hasWorldBookId ? String(request.body.worldBookId || '').trim() : '';
+    if (worldBookId && !getWorldBook(db, request.auth.user.id, worldBookId)) {
+      response.status(404).json({ error: '世界书不存在' });
+      return;
+    }
+
     const payload = prepareCharacterPayload(request.auth.user.id, sanitizeCharacterPayload(request.body));
     const character = updateCharacter(db, request.auth.user.id, request.params.id, payload);
     if (!character) {
       response.status(404).json({ error: '角色不存在' });
       return;
     }
-    if (Object.prototype.hasOwnProperty.call(request.body || {}, 'worldBookId')) {
-      linkWorldBookToCharacter(db, request.body.worldBookId, character.id);
+    if (worldBookId) {
+      linkWorldBookToCharacter(db, worldBookId, character.id, 0, request.auth.user.id);
     }
     if (Object.prototype.hasOwnProperty.call(request.body || {}, 'tags')) {
       setCharacterTags(db, request.auth.user.id, character.id, request.body.tags);
@@ -166,7 +179,8 @@ export function createCharactersRouter({
       .prepare(
         `SELECT tags.name, tags.color FROM character_tags
          JOIN tags ON tags.id = character_tags.tag_id
-         WHERE character_tags.character_id = ? AND tags.user_id = ?`
+         WHERE character_tags.character_id = ? AND tags.user_id = ?
+         ORDER BY tags.name COLLATE NOCASE ASC, tags.name ASC, tags.rowid ASC`
       )
       .all(character.id, character.ownerId);
 
@@ -176,7 +190,7 @@ export function createCharactersRouter({
       const entries = db
         .prepare(
           `SELECT name, trigger_keys, content, position, enabled, order_index
-           FROM world_book_entries WHERE world_book_id = ? ORDER BY order_index ASC`
+           FROM world_book_entries WHERE world_book_id = ? ORDER BY order_index ASC, rowid ASC`
         )
         .all(worldBookRow.id);
       worldBook = {
@@ -558,7 +572,10 @@ export function createCharactersRouter({
       return;
     }
     const orderIndex = Number(request.body?.orderIndex) || 0;
-    linkWorldBookToCharacter(db, bookId, request.params.id, orderIndex);
+    if (!linkWorldBookToCharacter(db, bookId, request.params.id, orderIndex, request.auth.user.id)) {
+      response.status(404).json({ error: '世界书不存在' });
+      return;
+    }
     response.json({ ok: true });
   });
 

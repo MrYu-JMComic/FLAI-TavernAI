@@ -56,6 +56,7 @@ function randomHex(len = 8) {
  */
 export function expandMacros(text, context = {}) {
   if (!text || typeof text !== 'string') return String(text || '');
+  context = context ?? {};
 
   const userName = context.userName || context.user || '';
   const charName = context.charName || context.char || '';

@@ -12,6 +12,7 @@ export function useChatSubmit({
   loadStatusBar,
   loadSidebarData,
   loadEconomyBalance,
+  onAccessoryRefreshStart,
   onAccessoryRefresh,
   stickToBottomIfNeeded,
   expandReasoning,
@@ -302,7 +303,11 @@ export function useChatSubmit({
     }
     const runId = ++accessoryRefreshRun;
     clearAccessoryRefreshTimers();
+    if (typeof onAccessoryRefreshStart === 'function') {
+      onAccessoryRefreshStart({ runId });
+    }
     for (const delay of accessoryRefreshDelays) {
+      const isFinal = delay === accessoryRefreshDelays[accessoryRefreshDelays.length - 1];
       const timer = window.setTimeout(async () => {
         if (runId !== accessoryRefreshRun) {
           return;
@@ -315,7 +320,7 @@ export function useChatSubmit({
           return;
         }
         if (typeof onAccessoryRefresh === 'function') {
-          onAccessoryRefresh(results);
+          await onAccessoryRefresh({ runId, delay, isFinal, results });
         }
       }, delay);
       accessoryRefreshTimers.push(timer);

@@ -26,9 +26,10 @@ import { useNotify } from '../composables/useNotify';
 const props = defineProps({
   conversationId: { type: String, required: true },
   open: { type: Boolean, default: false },
-  refreshKey: { type: Number, default: 0 }
+  refreshKey: { type: Number, default: 0 },
+  updateStatus: { type: String, default: 'not-updated' }
 });
-const emit = defineEmits(['close', 'update:open']);
+const emit = defineEmits(['close', 'update:open', 'npcs-loaded']);
 
 const notify = useNotify();
 const loading = ref(false);
@@ -50,8 +51,14 @@ const behaviorForm = reactive({
   priority: 0,
   enabled: true
 });
+const UPDATE_STATUS_META = {
+  updating: { key: 'updating', label: '更新中' },
+  updated: { key: 'updated', label: '已更新' },
+  'not-updated': { key: 'not-updated', label: '未更新' }
+};
 
 const selectedNpcData = computed(() => npcs.value.find((n) => n.name === selectedNpc.value) || null);
+const updateStatusMeta = computed(() => UPDATE_STATUS_META[props.updateStatus] || UPDATE_STATUS_META['not-updated']);
 const npcPanelStats = computed(() => ({
   npcCount: npcs.value.length,
   memoryCount: npcs.value.reduce((sum, npc) => sum + Number(npc.memoryCount || 0), 0),
@@ -131,6 +138,7 @@ async function loadNpcs() {
     const nextNpcs = await fetchConversationNpcs(conversationId);
     if (requestToken !== npcLoadToken || conversationId !== props.conversationId) return;
     npcs.value = nextNpcs;
+    emit('npcs-loaded', nextNpcs);
     if (selectedNpc.value && !npcs.value.find((n) => n.name === selectedNpc.value)) {
       selectedNpc.value = '';
     }
@@ -354,6 +362,15 @@ function formatTime(iso) {
             <div class="npc-panel-title">
               <Users :size="20" />
               <h2>NPC 管理</h2>
+              <span
+                class="npc-update-badge"
+                :class="`is-${updateStatusMeta.key}`"
+                role="status"
+                aria-live="polite"
+              >
+                <span class="npc-update-dot" aria-hidden="true"></span>
+                <span>{{ updateStatusMeta.label }}</span>
+              </span>
             </div>
             <button class="npc-close" type="button" @pointerdown.stop @click.stop="requestClose">
               <X :size="18" />
@@ -653,6 +670,47 @@ function formatTime(iso) {
   font-weight: 800;
 }
 
+.npc-update-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  min-height: 24px;
+  padding: 0 9px;
+  border: 1px solid color-mix(in srgb, var(--text-muted, #888) 24%, transparent);
+  border-radius: 999px;
+  color: var(--text-muted, #888);
+  background: color-mix(in srgb, var(--text-muted, #888) 8%, transparent);
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.npc-update-badge.is-updating {
+  border-color: color-mix(in srgb, #d97706 36%, transparent);
+  color: #d97706;
+  background: color-mix(in srgb, #f59e0b 13%, transparent);
+}
+
+.npc-update-badge.is-updated {
+  border-color: color-mix(in srgb, #16a34a 32%, transparent);
+  color: #16a34a;
+  background: color-mix(in srgb, #22c55e 12%, transparent);
+}
+
+.npc-update-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: currentColor;
+  opacity: 0.75;
+}
+
+.npc-update-badge.is-updating .npc-update-dot {
+  animation: npcUpdatePulse 1s ease-in-out infinite;
+}
+
 .npc-close {
   background: none;
   border: none;
@@ -666,6 +724,17 @@ function formatTime(iso) {
 .npc-close:hover {
   background: var(--hover, rgba(255,255,255,0.08));
   color: var(--text, #e8e6e3);
+}
+
+@keyframes npcUpdatePulse {
+  0%, 100% {
+    opacity: 0.45;
+    transform: scale(0.82);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.15);
+  }
 }
 
 .npc-panel-body {

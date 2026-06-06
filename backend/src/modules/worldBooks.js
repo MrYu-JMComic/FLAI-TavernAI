@@ -9,7 +9,7 @@ export function listWorldBooks(database, userId) {
         (SELECT COUNT(*) FROM world_book_entries WHERE world_book_id = wb.id) AS entry_count
        FROM world_books wb
        WHERE wb.user_id = ?
-       ORDER BY wb.updated_at DESC`
+       ORDER BY wb.updated_at DESC, wb.rowid DESC`
     )
     .all(userId)
     .map(toWorldBook);
@@ -30,7 +30,7 @@ export function getWorldBook(database, userId, bookId) {
 
   // Collect linked character IDs from junction table
   const linkedCharacters = database
-    .prepare('SELECT character_id FROM character_world_books WHERE world_book_id = ?')
+    .prepare('SELECT character_id FROM character_world_books WHERE world_book_id = ? ORDER BY created_at ASC, rowid ASC')
     .all(bookId)
     .map((r) => r.character_id);
 
@@ -98,7 +98,11 @@ export function deleteWorldBook(database, userId, bookId) {
 
 // ── Character ↔ World Book Linking ──
 
-export function linkWorldBookToCharacter(database, bookId, characterId, orderIndex = 0) {
+export function linkWorldBookToCharacter(database, bookId, characterId, orderIndex = 0, userId = null) {
+  if (userId && !getOwnedWorldBook(database, userId, bookId)) {
+    return false;
+  }
+
   const timestamp = nowIso();
   try {
     database
@@ -129,7 +133,7 @@ export function listCharacterWorldBooks(database, characterId) {
        FROM character_world_books cwb
        JOIN world_books wb ON wb.id = cwb.world_book_id
        WHERE cwb.character_id = ?
-       ORDER BY cwb.order_index ASC`
+       ORDER BY cwb.order_index ASC, cwb.created_at ASC, cwb.rowid ASC`
     )
     .all(characterId)
     .map(toWorldBook);
@@ -205,6 +209,7 @@ export function deleteEntry(database, userId, bookId, entryId) {
 const RECURSIVE_MAX_DEPTH = 5;
 
 export function matchWorldBookEntries(database, characterId, texts, options = {}) {
+  options = options ?? {};
   if (!characterId && !options.conversationId) {
     return [];
   }
@@ -264,7 +269,7 @@ export function matchWorldBookEntries(database, characterId, texts, options = {}
     .prepare(
       `SELECT * FROM world_book_entries
        WHERE world_book_id IN (${placeholders}) AND enabled = 1
-       ORDER BY order_index ASC`
+       ORDER BY order_index ASC, rowid ASC`
     )
     .all(...allBookIds);
 
@@ -661,7 +666,8 @@ export function resetMessageCounter() {
   _messageCounter = 0;
 }
 
-export function buildWorldBookContext(entries) {
+export function buildWorldBookContext(entries = []) {
+  entries = Array.isArray(entries) ? entries : [];
   if (!entries.length) {
     return '';
   }
@@ -685,6 +691,7 @@ const ROLE_MAP = { 0: 'system', 1: 'user', 2: 'assistant' };
  * @returns {Array} - The modified messages array
  */
 export function injectAtDepthEntries(messages, entries) {
+  entries = Array.isArray(entries) ? entries : [];
   const atDepthEntries = entries.filter((e) => e.position === 'at_depth');
   if (!atDepthEntries.length) {
     return messages;
@@ -710,7 +717,7 @@ function listEntries(database, bookId) {
     .prepare(
       `SELECT * FROM world_book_entries
        WHERE world_book_id = ?
-       ORDER BY order_index ASC`
+       ORDER BY order_index ASC, rowid ASC`
     )
     .all(bookId)
     .map(toEntry);
@@ -745,6 +752,7 @@ function normalizeName(name) {
 }
 
 function normalizeEntryPayload(payload = {}) {
+  payload = payload ?? {};
   const name = String(payload.name || '').trim().slice(0, 120);
   const triggerKeys = String(payload.triggerKeys || '').trim().slice(0, 2000);
   const content = String(payload.content || '').slice(0, 10000);

@@ -13,6 +13,7 @@ const VALID_DENSITIES = ['default', 'cozy', 'compact'];
 const VALID_EFFECTS = ['glow', 'striped', 'pulse'];
 const VALID_DISPLAY_MODES = ['immersive', 'compact'];
 const VALID_CHAR_STATUSES = ['active', 'dead', 'forgotten', 'left', 'hidden'];
+const STATUS_BAR_VARIABLE_LIMIT = 60;
 
 function parseCharacter(raw) {
   if (!raw || typeof raw !== 'object') return null;
@@ -571,7 +572,7 @@ export function useChatAccessory({ conversation, showActionNotice, showError }) 
         };
       })
       .filter((variable) => variable.name)
-      .slice(0, 20);
+      .slice(0, STATUS_BAR_VARIABLE_LIMIT);
   }
 
   function normalizeStatusVariableValue(value, options = {}) {

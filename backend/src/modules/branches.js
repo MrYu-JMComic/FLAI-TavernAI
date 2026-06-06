@@ -1,4 +1,5 @@
 import { newId, nowIso } from '../security.js';
+import { withSavepoint } from './savepoint.js';
 
 export function branchConversation(db, userId, conversationId, branchFromMessageId) {
   const conversation = db
@@ -7,16 +8,14 @@ export function branchConversation(db, userId, conversationId, branchFromMessage
   if (!conversation) return null;
 
   const branchMessage = db
-    .prepare('SELECT * FROM messages WHERE id = ? AND conversation_id = ? AND user_id = ?')
+    .prepare('SELECT rowid AS message_rowid, * FROM messages WHERE id = ? AND conversation_id = ? AND user_id = ?')
     .get(branchFromMessageId, conversationId, userId);
   if (!branchMessage) return null;
 
   const newConversationId = newId();
   const timestamp = nowIso();
 
-  // Wrap entire branch operation in a transaction to prevent incomplete branches
-  db.exec('BEGIN');
-  try {
+  withSavepoint(db, 'sp_branch_conversation', () => {
     // Create new conversation as a branch
     db.prepare(
       `INSERT INTO conversations (id, user_id, character_id, title, branched_from_id, branched_from_message_id, branched_from_title, created_at, updated_at)
@@ -36,9 +35,13 @@ export function branchConversation(db, userId, conversationId, branchFromMessage
     // Copy messages up to and including the branch point
     const messages = db
       .prepare(
-        'SELECT * FROM messages WHERE conversation_id = ? AND user_id = ? AND created_at <= ? ORDER BY created_at ASC'
+        `SELECT * FROM messages
+         WHERE conversation_id = ?
+           AND user_id = ?
+           AND (created_at < ? OR (created_at = ? AND rowid <= ?))
+         ORDER BY created_at ASC, rowid ASC`
       )
-      .all(conversationId, userId, branchMessage.created_at);
+      .all(conversationId, userId, branchMessage.created_at, branchMessage.created_at, branchMessage.message_rowid);
 
     for (const msg of messages) {
       const newMsgId = newId();
@@ -65,12 +68,7 @@ export function branchConversation(db, userId, conversationId, branchFromMessage
         'INSERT INTO status_bars (id, conversation_id, name, variables, template, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)'
       ).run(newId(), newConversationId, statusBar.name, statusBar.variables, statusBar.template, timestamp, timestamp);
     }
-
-    db.exec('COMMIT');
-  } catch (error) {
-    db.exec('ROLLBACK');
-    throw error;
-  }
+  });
 
   return getBranchConversation(db, userId, newConversationId);
 }
@@ -112,7 +110,7 @@ export function getConversationBranches(db, userId, conversationId) {
        FROM conversations c
        JOIN characters ch ON ch.id = c.character_id
        WHERE c.branched_from_id = ? AND c.user_id = ?
-       ORDER BY c.created_at DESC`
+       ORDER BY c.created_at DESC, c.rowid DESC`
     )
     .all(conversationId, userId)
     .map((row) => ({

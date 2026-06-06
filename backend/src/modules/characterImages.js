@@ -41,7 +41,7 @@ export function listCharacterImages(database, characterId) {
       `SELECT id, character_id, image_url, scene_tag, emotion_tag, is_default, order_index, created_at
        FROM character_images
        WHERE character_id = ?
-       ORDER BY order_index ASC, created_at ASC`
+       ORDER BY order_index ASC, created_at ASC, rowid ASC`
     )
     .all(characterId)
     .map(toCharacterImage);
@@ -60,6 +60,9 @@ export function createCharacterImage(database, { characterId, imageUrl, sceneTag
   }
 
   const orderIndex = existingCount;
+  if (isDefault) {
+    clearDefaultCharacterImages(database, characterId);
+  }
 
   database
     .prepare(
@@ -86,6 +89,10 @@ export function updateCharacterImage(database, characterId, imageId, { sceneTag,
     .get(imageId, characterId);
   if (!existing) {
     return null;
+  }
+
+  if (isDefault === true) {
+    clearDefaultCharacterImages(database, characterId, imageId);
   }
 
   database
@@ -117,11 +124,33 @@ export function deleteCharacterImage(database, characterId, imageId) {
 }
 
 export function reorderCharacterImages(database, characterId, orderedIds) {
+  const current = database
+    .prepare('SELECT id FROM character_images WHERE character_id = ? ORDER BY order_index ASC, created_at ASC, rowid ASC')
+    .all(characterId);
+  const existingIds = new Set(current.map((row) => row.id));
+  const seen = new Set();
+  const nextIds = [];
+
+  for (const rawId of Array.isArray(orderedIds) ? orderedIds : []) {
+    const id = String(rawId || '').trim();
+    if (!id || seen.has(id) || !existingIds.has(id)) {
+      continue;
+    }
+    seen.add(id);
+    nextIds.push(id);
+  }
+
+  for (const row of current) {
+    if (!seen.has(row.id)) {
+      nextIds.push(row.id);
+    }
+  }
+
   const update = database.prepare(
     'UPDATE character_images SET order_index = ? WHERE id = ? AND character_id = ?'
   );
   let changed = 0;
-  orderedIds.forEach((id, index) => {
+  nextIds.forEach((id, index) => {
     const result = update.run(index, id, characterId);
     changed += result.changes;
   });
@@ -204,9 +233,15 @@ function normalizeTag(value) {
   return String(value || '').trim().slice(0, 32);
 }
 
+function clearDefaultCharacterImages(database, characterId, exceptImageId = '') {
+  database
+    .prepare('UPDATE character_images SET is_default = 0 WHERE character_id = ? AND id != ?')
+    .run(characterId, exceptImageId || '');
+}
+
 function reorderAfterDelete(database, characterId) {
   const rows = database
-    .prepare('SELECT id FROM character_images WHERE character_id = ? ORDER BY order_index ASC')
+    .prepare('SELECT id FROM character_images WHERE character_id = ? ORDER BY order_index ASC, created_at ASC, rowid ASC')
     .all(characterId);
   const update = database.prepare('UPDATE character_images SET order_index = ? WHERE id = ?');
   rows.forEach((row, index) => update.run(index, row.id));

@@ -1,4 +1,5 @@
 import { newId, nowIso } from '../security.js';
+import { withSavepoint } from './savepoint.js';
 
 // ── Default currency types ──
 
@@ -119,9 +120,8 @@ export function createTransaction(database, userId, accountId, payload) {
   const transactionId = newId();
   const timestamp = nowIso();
 
-  // Wrap balance check + INSERT + UPDATE in a transaction to prevent TOCTOU race
-  database.exec('BEGIN');
-  try {
+  // Use a savepoint so callers already inside a transaction can still create transactions.
+  withSavepoint(database, 'sp_create_transaction', () => {
     // Re-read balance inside the transaction to get a consistent snapshot
     const freshAccount = database
       .prepare('SELECT balance FROM economy_accounts WHERE id = ?')
@@ -129,7 +129,6 @@ export function createTransaction(database, userId, accountId, payload) {
     const currentBalance = freshAccount?.balance ?? account.balance;
 
     if (isDebit && currentBalance + signedAmount < 0) {
-      database.exec('ROLLBACK');
       throw new Error(`余额不足：当前 ${currentBalance}，需要 ${Math.abs(signedAmount)}`);
     }
 
@@ -145,12 +144,7 @@ export function createTransaction(database, userId, accountId, payload) {
     database
       .prepare('UPDATE economy_accounts SET balance = ?, updated_at = ? WHERE id = ?')
       .run(newBalance, timestamp, accountId);
-
-    database.exec('COMMIT');
-  } catch (error) {
-    try { database.exec('ROLLBACK'); } catch { /* already rolled back */ }
-    throw error;
-  }
+  });
 
   return {
     transaction: toTransaction(
@@ -177,6 +171,7 @@ export function createConversationTransaction(database, userId, conversationId, 
  * Get transaction history for a conversation.
  */
 export function getTransactionHistory(database, userId, conversationId, options = {}) {
+  options = normalizeOptions(options);
   // Verify conversation belongs to user
   const conversation = database
     .prepare('SELECT id FROM conversations WHERE id = ? AND user_id = ?')
@@ -317,8 +312,8 @@ export function processTransactionIntents(database, userId, conversationId, text
   const results = [];
   for (const intent of intents) {
     try {
-      // All balance checks happen inside createTransaction's atomic BEGIN/COMMIT block.
-      // No outer pre-check needed — the transaction block re-reads balance and
+      // All balance checks happen inside createTransaction's atomic savepoint block.
+      // No outer pre-check needed — the savepoint block re-reads balance and
       // rejects insufficient funds atomically, avoiding TOCTOU race conditions.
       const result = createConversationTransaction(database, userId, conversationId, {
         currencyType: intent.currencyType,
@@ -344,6 +339,7 @@ export function processTransactionIntents(database, userId, conversationId, text
  * Get the full economy state for a conversation.
  */
 export function getConversationEconomyState(database, userId, conversationId, options = {}) {
+  options = normalizeOptions(options);
   const accounts = getConversationAccounts(database, userId, conversationId);
   if (accounts === null) {
     return null;
@@ -395,6 +391,10 @@ function normalizeDescription(value) {
 function normalizeRelatedNpc(value) {
   const str = String(value || '').trim();
   return str.length > 100 ? str.slice(0, 100) : str;
+}
+
+function normalizeOptions(value) {
+  return value && typeof value === 'object' ? value : {};
 }
 
 function toAccount(row) {

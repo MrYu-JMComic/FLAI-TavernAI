@@ -1,4 +1,5 @@
 import { newId, nowIso } from '../security.js';
+import { withSavepoint } from './savepoint.js';
 
 // ── Tag CRUD ──
 
@@ -12,7 +13,7 @@ export function listTags(database, userId) {
          WHERE character_tags.tag_id = tags.id AND characters.user_id = tags.user_id) AS usage_count
        FROM tags
        WHERE tags.user_id = ?
-       ORDER BY usage_count DESC, tags.name COLLATE NOCASE ASC`
+       ORDER BY usage_count DESC, tags.name COLLATE NOCASE ASC, tags.name ASC, tags.rowid ASC`
     )
     .all(userId)
     .map(toTag);
@@ -60,9 +61,7 @@ export function setCharacterTags(database, userId, characterId, tagNames) {
     return;
   }
 
-  // Wrap DELETE + INSERT in a transaction to prevent partial tag loss on failure
-  database.exec('BEGIN');
-  try {
+  withSavepoint(database, 'sp_set_character_tags', () => {
     // Remove all existing associations
     database.prepare('DELETE FROM character_tags WHERE character_id = ?').run(characterId);
 
@@ -89,12 +88,7 @@ export function setCharacterTags(database, userId, characterId, tagNames) {
         }
       }
     }
-
-    database.exec('COMMIT');
-  } catch (error) {
-    database.exec('ROLLBACK');
-    throw error;
-  }
+  });
 }
 
 export function getCharacterTagNames(database, characterId, userId = '') {
@@ -109,7 +103,7 @@ export function getCharacterTagNames(database, characterId, userId = '') {
       `SELECT tags.name FROM character_tags
        JOIN tags ON tags.id = character_tags.tag_id
        WHERE character_tags.character_id = ?${userFilter}
-       ORDER BY tags.name COLLATE NOCASE ASC`
+       ORDER BY tags.name COLLATE NOCASE ASC, tags.name ASC, tags.rowid ASC`
     )
     .all(...params)
     .map((row) => row.name);

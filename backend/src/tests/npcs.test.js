@@ -71,6 +71,88 @@ test('NPC memories CRUD', () => {
   assert.equal(listNpcMemories(database, userId, conversationId, '酒馆老板').length, 1);
 });
 
+test('NPC memories preserve newest insertion order when timestamps tie', () => {
+  const { database, userId, conversationId } = setupDatabase();
+  const tiedTimestamp = '2026-01-01T00:00:00.000Z';
+
+  database.prepare(
+    'INSERT INTO npc_memories (id, conversation_id, npc_name, memory_type, content, created_at) VALUES (?, ?, ?, ?, ?, ?)'
+  ).run('npc-memory-first', conversationId, 'NPC', 'event', 'first memory', tiedTimestamp);
+  database.prepare(
+    'INSERT INTO npc_memories (id, conversation_id, npc_name, memory_type, content, created_at) VALUES (?, ?, ?, ?, ?, ?)'
+  ).run('npc-memory-second', conversationId, 'NPC', 'event', 'second memory', tiedTimestamp);
+
+  const memories = listNpcMemories(database, userId, conversationId, 'NPC');
+
+  assert.deepEqual(memories.map((memory) => memory.id), ['npc-memory-second', 'npc-memory-first']);
+});
+
+test('NPC behaviors preserve insertion order when priority and timestamps tie', () => {
+  const { database, userId, conversationId } = setupDatabase();
+  const tiedTimestamp = '2026-01-01T00:00:00.000Z';
+
+  database.prepare(
+    'INSERT INTO npc_behaviors (id, conversation_id, npc_name, behavior_type, trigger_condition, action, priority, enabled, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
+  ).run('npc-behavior-first', conversationId, 'NPC', 'reaction', 'same trigger', 'first action', 10, 1, tiedTimestamp);
+  database.prepare(
+    'INSERT INTO npc_behaviors (id, conversation_id, npc_name, behavior_type, trigger_condition, action, priority, enabled, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
+  ).run('npc-behavior-second', conversationId, 'NPC', 'reaction', 'same trigger', 'second action', 10, 1, tiedTimestamp);
+
+  const behaviors = listNpcBehaviors(database, userId, conversationId, 'NPC');
+
+  assert.deepEqual(behaviors.map((behavior) => behavior.id), ['npc-behavior-first', 'npc-behavior-second']);
+
+  const prompt = buildNpcBehaviorPrompt(database, conversationId);
+  assert.ok(prompt.indexOf('first action') < prompt.indexOf('second action'));
+});
+
+test('NPC behavior prompt uses newest tied memories first', () => {
+  const { database, conversationId } = setupDatabase();
+  const tiedTimestamp = '2026-01-01T00:00:00.000Z';
+
+  database.prepare(
+    'INSERT INTO npc_behaviors (id, conversation_id, npc_name, behavior_type, trigger_condition, action, priority, enabled, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
+  ).run('npc-prompt-memory-behavior', conversationId, 'NPC', 'reaction', '', 'act from memory', 1, 1, tiedTimestamp);
+
+  for (let index = 1; index <= 6; index += 1) {
+    database.prepare(
+      'INSERT INTO npc_memories (id, conversation_id, npc_name, memory_type, content, created_at) VALUES (?, ?, ?, ?, ?, ?)'
+    ).run(`npc-prompt-memory-${index}`, conversationId, 'NPC', 'event', `memory-${index}`, tiedTimestamp);
+  }
+
+  const prompt = buildNpcBehaviorPrompt(database, conversationId);
+
+  assert.ok(!prompt.includes('memory-1'));
+  assert.ok(prompt.indexOf('memory-6') < prompt.indexOf('memory-5'));
+  assert.ok(prompt.indexOf('memory-5') < prompt.indexOf('memory-4'));
+  assert.ok(prompt.indexOf('memory-4') < prompt.indexOf('memory-3'));
+  assert.ok(prompt.indexOf('memory-3') < prompt.indexOf('memory-2'));
+});
+
+test('NPC mutators treat null payloads as empty input', () => {
+  const { database, userId, conversationId } = setupDatabase();
+
+  const memory = addNpcMemory(database, userId, conversationId, 'NPC', null);
+  assert.equal(memory.memoryType, 'event');
+  assert.equal(memory.content, '');
+
+  const behavior = addNpcBehavior(database, userId, conversationId, 'NPC', null);
+  assert.equal(behavior.behaviorType, 'reaction');
+  assert.equal(behavior.triggerCondition, '');
+  assert.equal(behavior.action, '');
+  assert.equal(behavior.priority, 0);
+  assert.equal(behavior.enabled, true);
+
+  const updated = updateNpcBehavior(database, userId, conversationId, behavior.id, null);
+  assert.equal(updated.behaviorType, behavior.behaviorType);
+  assert.equal(updated.triggerCondition, behavior.triggerCondition);
+  assert.equal(updated.action, behavior.action);
+  assert.equal(updated.priority, behavior.priority);
+  assert.equal(updated.enabled, behavior.enabled);
+
+  assert.equal(upsertConversationNpc(database, userId, conversationId, null), null);
+});
+
 test('NPC behaviors CRUD with priority and toggle', () => {
   const { database, userId, conversationId } = setupDatabase();
 

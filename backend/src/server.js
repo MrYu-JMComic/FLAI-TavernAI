@@ -8,9 +8,7 @@ import express from 'express';
 import rateLimit, { ipKeyGenerator } from 'express-rate-limit';
 import { db } from './db.js';
 import {
-  resolveSession,
-  setSessionCookie,
-  parseCookies
+  resolveSession
 } from './security.js';
 import { migrateLegacyAvatarUploads, getAvatarAssetForViewer } from './services/avatars.js';
 import { providerWithSecret, hasUsableProvider, defaultProviderSettings, normalizeProviderRow } from './services/providers.js';
@@ -186,22 +184,6 @@ function asyncRoute(handler) {
 
 // ── Character helpers (shared between routes) ──
 
-import {
-  getRegexRules as getRegexRulesForCharacter
-} from './modules/characters.js';
-import { setCharacterTags } from './modules/tags.js';
-import { getConversationAppearance } from './modules/conversationAppearance.js';
-import { normalizeAdvancedSettings, mergeAdvancedSettings } from './modules/advancedSettings.js';
-import { summarizeUsageSnapshots } from './services/providers.js';
-
-function parseJson(value, fallback) {
-  try {
-    return JSON.parse(value || '');
-  } catch {
-    return fallback;
-  }
-}
-
 function withWorldBookId(character) {
   if (!character) return character;
   const row = db.prepare('SELECT id FROM world_books WHERE character_id = ?').get(character.id);
@@ -215,7 +197,7 @@ function withCharacterTags(character) {
       `SELECT tags.id, tags.name, tags.color FROM character_tags
        JOIN tags ON tags.id = character_tags.tag_id
        WHERE character_tags.character_id = ? AND tags.user_id = ?
-       ORDER BY tags.name COLLATE NOCASE ASC`
+       ORDER BY tags.name COLLATE NOCASE ASC, tags.name ASC, tags.rowid ASC`
     )
     .all(character.id, character.ownerId);
   return { ...character, characterTags };
@@ -241,7 +223,7 @@ function getChatProviderSettings(userId) {
 
 // ── User helpers ──
 
-import { publicUser, getUserProfile, getUserStats, getOwnedCharacterStats } from './modules/users.js';
+import { publicUser, getUserProfile } from './modules/users.js';
 import { newId, nowIso } from './security.js';
 
 // ── Dependency context for route modules ──

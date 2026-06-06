@@ -208,6 +208,86 @@ test('createTransaction rejects expense exceeding balance', () => {
   );
 });
 
+test('createTransaction works inside an existing transaction', () => {
+  const { database, userId, conversationId } = setupTestEnv();
+  const account = getOrCreateAccount(database, userId, conversationId, 'gold');
+  let transactionId = '';
+
+  database.exec('BEGIN');
+  try {
+    const result = createTransaction(database, userId, account.id, {
+      amount: 25,
+      type: 'income',
+      description: 'nested income'
+    });
+    assert.ok(result);
+    transactionId = result.transaction.id;
+    assert.equal(result.account.balance, 125);
+    assert.equal(getAccount(database, userId, account.id).balance, 125);
+  } finally {
+    database.exec('ROLLBACK');
+  }
+
+  assert.equal(getAccount(database, userId, account.id).balance, 100);
+  assert.equal(
+    database.prepare('SELECT COUNT(*) AS count FROM economy_transactions WHERE id = ?').get(transactionId).count,
+    0
+  );
+});
+
+test('createTransaction insufficient funds preserves existing transaction', () => {
+  const { database, userId, conversationId } = setupTestEnv();
+  const account = getOrCreateAccount(database, userId, conversationId, 'gold');
+
+  database.exec('BEGIN');
+  try {
+    database.prepare('UPDATE economy_accounts SET balance = ? WHERE id = ?').run(90, account.id);
+    assert.throws(
+      () => createTransaction(database, userId, account.id, { amount: 500, type: 'expense', description: 'too much' }),
+      /余额不足/
+    );
+    assert.equal(getAccount(database, userId, account.id).balance, 90);
+    database.prepare('UPDATE economy_accounts SET balance = ? WHERE id = ?').run(80, account.id);
+    assert.equal(getAccount(database, userId, account.id).balance, 80);
+  } finally {
+    database.exec('ROLLBACK');
+  }
+
+  assert.equal(getAccount(database, userId, account.id).balance, 100);
+  assert.equal(
+    database.prepare('SELECT COUNT(*) AS count FROM economy_transactions WHERE account_id = ?').get(account.id).count,
+    0
+  );
+});
+
+test('createTransaction rolls back inserted transaction when balance update fails', () => {
+  const { database, userId, conversationId } = setupTestEnv();
+  const account = getOrCreateAccount(database, userId, conversationId, 'gold');
+
+  database.exec(`
+    CREATE TRIGGER fail_economy_balance_update
+    BEFORE UPDATE OF balance ON economy_accounts
+    WHEN NEW.id = '${account.id}' AND NEW.balance = 150
+    BEGIN
+      SELECT RAISE(ABORT, 'forced economy balance update failure');
+    END
+  `);
+
+  assert.throws(
+    () => createTransaction(database, userId, account.id, {
+      amount: 50,
+      type: 'income',
+      description: 'forced rollback'
+    }),
+    /forced economy balance update failure/
+  );
+  assert.equal(getAccount(database, userId, account.id).balance, 100);
+  assert.equal(
+    database.prepare('SELECT COUNT(*) AS count FROM economy_transactions WHERE account_id = ?').get(account.id).count,
+    0
+  );
+});
+
 test('createTransaction rejects zero amount', () => {
   const { database, userId, conversationId } = setupTestEnv();
 
@@ -349,6 +429,37 @@ test('getTransactionHistory supports currency type filter', () => {
 
   const all = getTransactionHistory(database, userId, conversationId);
   assert.equal(all.transactions.length, 2);
+});
+
+test('economy query helpers treat null options as defaults', () => {
+  const { database, userId, characterId, conversationId } = setupTestEnv();
+
+  createConversationTransaction(database, userId, conversationId, {
+    amount: 15,
+    type: 'income',
+    description: 'null options history'
+  });
+
+  const history = getTransactionHistory(database, userId, conversationId, null);
+  assert.equal(history.transactions.length, 1);
+  assert.equal(history.total, 1);
+  assert.equal(history.limit, 50);
+  assert.equal(history.offset, 0);
+
+  const emptyConversationId = newId();
+  database.prepare('INSERT INTO conversations (id, user_id, character_id, title, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)').run(
+    emptyConversationId,
+    userId,
+    characterId,
+    'null options economy state',
+    nowIso(),
+    nowIso()
+  );
+
+  const state = getConversationEconomyState(database, userId, emptyConversationId, null);
+  assert.equal(state.accounts.length, 1);
+  assert.equal(state.accounts[0].currencyType, 'gold');
+  assert.equal(state.accounts[0].balance, DEFAULT_INITIAL_BALANCE.gold);
 });
 
 test('getTransactionHistory returns null for invalid conversation', () => {

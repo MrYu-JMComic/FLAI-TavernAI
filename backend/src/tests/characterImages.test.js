@@ -87,6 +87,42 @@ test('character images CRUD operations', () => {
   assert.equal(deleteCharacterImage(database, character.id, 'nonexistent'), false);
 });
 
+test('character images keep only one default per character', () => {
+  const { database, character } = setupDatabase();
+
+  const img1 = createCharacterImage(database, {
+    characterId: character.id,
+    imageUrl: 'data:image/png;base64,1111',
+    isDefault: true
+  });
+  const img2 = createCharacterImage(database, {
+    characterId: character.id,
+    imageUrl: 'data:image/png;base64,2222',
+    isDefault: true
+  });
+  const img3 = createCharacterImage(database, {
+    characterId: character.id,
+    imageUrl: 'data:image/png;base64,3333',
+    isDefault: false
+  });
+
+  let images = listCharacterImages(database, character.id);
+  assert.deepEqual(images.map((image) => [image.id, image.isDefault]), [
+    [img1.id, false],
+    [img2.id, true],
+    [img3.id, false]
+  ]);
+
+  updateCharacterImage(database, character.id, img3.id, { isDefault: true });
+
+  images = listCharacterImages(database, character.id);
+  assert.deepEqual(images.map((image) => [image.id, image.isDefault]), [
+    [img1.id, false],
+    [img2.id, false],
+    [img3.id, true]
+  ]);
+});
+
 test('character images reorder', () => {
   const { database, character } = setupDatabase();
 
@@ -117,6 +153,68 @@ test('character images reorder', () => {
   assert.equal(ordered[1].orderIndex, 1);
   assert.equal(ordered[2].id, img2.id);
   assert.equal(ordered[2].orderIndex, 2);
+});
+
+test('character images partial reorder keeps indexes unique', () => {
+  const { database, character } = setupDatabase();
+
+  const img1 = createCharacterImage(database, {
+    characterId: character.id,
+    imageUrl: 'data:image/png;base64,1111',
+    sceneTag: 'A'
+  });
+  const img2 = createCharacterImage(database, {
+    characterId: character.id,
+    imageUrl: 'data:image/png;base64,2222',
+    sceneTag: 'B'
+  });
+  const img3 = createCharacterImage(database, {
+    characterId: character.id,
+    imageUrl: 'data:image/png;base64,3333',
+    sceneTag: 'C'
+  });
+
+  reorderCharacterImages(database, character.id, [img3.id]);
+
+  const ordered = listCharacterImages(database, character.id);
+  assert.deepEqual(ordered.map((image) => image.id), [img3.id, img1.id, img2.id]);
+  assert.deepEqual(ordered.map((image) => image.orderIndex), [0, 1, 2]);
+});
+
+test('character images preserve deterministic order when order indexes tie', () => {
+  const { database, character } = setupDatabase();
+  const timestamp = '2026-01-01T00:00:00.000Z';
+  const insertImage = database.prepare(
+    `INSERT INTO character_images (id, character_id, image_url, scene_tag, emotion_tag, is_default, order_index, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+  );
+  insertImage.run('image-first', character.id, 'data:image/png;base64,1111', 'A', '', 0, 0, timestamp);
+  insertImage.run('image-second', character.id, 'data:image/png;base64,2222', 'B', '', 0, 0, timestamp);
+  insertImage.run('image-third', character.id, 'data:image/png;base64,3333', 'C', '', 0, 0, timestamp);
+
+  assert.deepEqual(
+    listCharacterImages(database, character.id).map((image) => image.id),
+    ['image-first', 'image-second', 'image-third']
+  );
+
+  reorderCharacterImages(database, character.id, ['image-third']);
+  assert.deepEqual(
+    listCharacterImages(database, character.id).map((image) => [image.id, image.orderIndex]),
+    [
+      ['image-third', 0],
+      ['image-first', 1],
+      ['image-second', 2]
+    ]
+  );
+
+  deleteCharacterImage(database, character.id, 'image-third');
+  assert.deepEqual(
+    listCharacterImages(database, character.id).map((image) => [image.id, image.orderIndex]),
+    [
+      ['image-first', 0],
+      ['image-second', 1]
+    ]
+  );
 });
 
 test('character images max limit', () => {

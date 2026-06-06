@@ -45,6 +45,7 @@ const aiUseCurrentDraft = ref(loadAiUseCurrentDraft());
 const { providerModelOptionsFor } = useProviderModels(computed(() => props.provider));
 const assistantModelOptions = computed(() => providerModelOptionsFor(assistantModel.value, '使用全局模型'));
 const STATUS_BLUEPRINT_VARIABLE_LIMIT = 60;
+const ADVANCED_BACKGROUND_FIELDS = new Set(['desktopBackgroundUrl', 'mobileBackgroundUrl']);
 const STATUS_BLUEPRINT_SAMPLE_TEMPLATE = [
   '<section class="sb-sample-card">',
   '  <style>',
@@ -87,6 +88,10 @@ const availableTags = ref([]);
 const tagSearch = ref('');
 const activeSection = ref('basic');
 const form = reactive(emptyCharacter());
+const backgroundUploading = reactive({
+  desktopBackgroundUrl: false,
+  mobileBackgroundUrl: false
+});
 
 const statusBarBlueprintPreview = computed(() => {
   const blueprint = normalizeStatusBarBlueprintForPayload(form.authorAdvancedSettings.statusBarBlueprint || {});
@@ -566,6 +571,45 @@ async function handleAvatar(event) {
   }
 
   form.avatarUrl = await readAsDataUrl(file);
+}
+
+async function handleAdvancedBackground(event, field) {
+  if (!canEdit.value || !ADVANCED_BACKGROUND_FIELDS.has(field)) {
+    return;
+  }
+
+  const file = event.target.files?.[0];
+  event.target.value = '';
+  if (!file) {
+    return;
+  }
+
+  if (!['image/png', 'image/jpeg', 'image/webp', 'image/gif'].includes(file.type)) {
+    notify.warning('背景图片仅支持 PNG、JPG、WebP 或 GIF');
+    return;
+  }
+
+  if (file.size > 4 * 1024 * 1024) {
+    notify.warning('背景图片不能超过 4MB');
+    return;
+  }
+
+  backgroundUploading[field] = true;
+  try {
+    form.authorAdvancedSettings[field] = await readAsDataUrl(file, '背景图片读取失败');
+    notify.success('背景图片已读取，保存角色后会生成短链');
+  } catch (err) {
+    notify.warning(err.message || '背景图片读取失败');
+  } finally {
+    backgroundUploading[field] = false;
+  }
+}
+
+function clearAdvancedBackground(field) {
+  if (!canEdit.value || !ADVANCED_BACKGROUND_FIELDS.has(field)) {
+    return;
+  }
+  form.authorAdvancedSettings[field] = '';
 }
 
 function toPayload() {
@@ -1418,11 +1462,11 @@ function removeStatusBlueprintVariable(index) {
   form.authorAdvancedSettings.statusBarBlueprint.variables.splice(index, 1);
 }
 
-function readAsDataUrl(file) {
+function readAsDataUrl(file, errorMessage = '头像读取失败') {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
-    reader.onload = () => resolve(reader.result);
-    reader.onerror = () => reject(new Error('头像读取失败'));
+    reader.onload = () => resolve(String(reader.result || ''));
+    reader.onerror = () => reject(new Error(errorMessage));
     reader.readAsDataURL(file);
   });
 }
@@ -1839,7 +1883,7 @@ function applyLocalRules(text, rules, phase) {
           </div>
 
           <div class="advanced-grid">
-            <label class="field">
+            <div class="field background-url-field">
               <span>电脑端背景</span>
               <input
                 v-model="form.authorAdvancedSettings.desktopBackgroundUrl"
@@ -1847,8 +1891,23 @@ function applyLocalRules(text, rules, phase) {
                 placeholder="图片链接、短链或 data URL，可留空"
                 :disabled="!canEdit"
               />
-            </label>
-            <label class="field">
+              <div v-if="canEdit" class="background-upload-actions">
+                <label class="chat-setting-inline-button background-upload-button" :class="{ disabled: backgroundUploading.desktopBackgroundUrl }">
+                  <Upload :size="14" />
+                  <span>{{ backgroundUploading.desktopBackgroundUrl ? '读取中...' : '上传图片' }}</span>
+                  <input
+                    type="file"
+                    accept="image/png,image/jpeg,image/webp,image/gif"
+                    :disabled="backgroundUploading.desktopBackgroundUrl"
+                    @change="handleAdvancedBackground($event, 'desktopBackgroundUrl')"
+                  />
+                </label>
+                <button class="chat-setting-inline-button" type="button" @click="clearAdvancedBackground('desktopBackgroundUrl')">
+                  清空
+                </button>
+              </div>
+            </div>
+            <div class="field background-url-field">
               <span>手机端背景</span>
               <input
                 v-model="form.authorAdvancedSettings.mobileBackgroundUrl"
@@ -1856,7 +1915,22 @@ function applyLocalRules(text, rules, phase) {
                 placeholder="手机端专用背景，可留空"
                 :disabled="!canEdit"
               />
-            </label>
+              <div v-if="canEdit" class="background-upload-actions">
+                <label class="chat-setting-inline-button background-upload-button" :class="{ disabled: backgroundUploading.mobileBackgroundUrl }">
+                  <Upload :size="14" />
+                  <span>{{ backgroundUploading.mobileBackgroundUrl ? '读取中...' : '上传图片' }}</span>
+                  <input
+                    type="file"
+                    accept="image/png,image/jpeg,image/webp,image/gif"
+                    :disabled="backgroundUploading.mobileBackgroundUrl"
+                    @change="handleAdvancedBackground($event, 'mobileBackgroundUrl')"
+                  />
+                </label>
+                <button class="chat-setting-inline-button" type="button" @click="clearAdvancedBackground('mobileBackgroundUrl')">
+                  清空
+                </button>
+              </div>
+            </div>
           </div>
 
           <label class="field">

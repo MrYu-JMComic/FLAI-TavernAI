@@ -16,11 +16,15 @@ const {
   deleteCharacter,
   getCharacter,
   getRegexRules,
+  getRegexRulesByGroup,
   listCharacters,
+  replaceRegexRules,
+  reorderRegexRules,
   setCharacterFavorite,
   setCharacterLike,
   updateCharacter
 } = await import('../modules/characters.js');
+const { getOwnedCharacterStats } = await import('../modules/users.js');
 const { apiKeyHint, decryptSecret, encryptSecret, hashPassword, newId, nowIso, parseCookies, verifyPassword } = await import('../security.js');
 const {
   buildProviderBody,
@@ -32,6 +36,7 @@ const {
   providerWithSecret,
   runToolCompletion,
   streamCompletion,
+  streamToolCompletion,
   summarizeUsageSnapshots
 } = await import('../services/providers.js');
 const {
@@ -41,18 +46,24 @@ const {
 } = await import('../services/avatars.js');
 const {
   getConversationAppearance,
+  normalizeConversationAppearance,
   saveConversationAppearance
 } = await import('../modules/conversationAppearance.js');
+const { branchConversation, getConversationBranches } = await import('../modules/branches.js');
 const { completeCharacterDraft } = await import('../services/characterAssistant.js');
 const { completeWorldBookDraft } = await import('../services/worldBookAssistant.js');
 const { createCharactersRouter } = await import('../routes/characters.js');
 const { createConversationsRouter } = await import('../routes/conversations.js');
-const { normalizeAdvancedSettings } = await import('../modules/advancedSettings.js');
+const { createRegexRouter } = await import('../routes/regex.js');
+const { createSwipesRouter } = await import('../routes/swipes.js');
+const { isAccessorySkillActive, mergeAdvancedSettings, normalizeAdvancedSettings } = await import('../modules/advancedSettings.js');
 const { renderPromptVariables, resolvePromptUserName } = await import('../services/promptVariables.js');
+const { expandMacros } = await import('../services/macros.js');
 const { createCharacterSchema, updateCharacterSchema, createWorldBookSchema, updateWorldBookSchema, saveProviderSchema } = await import('../validations/schemas.js');
 const {
   createWorldBook,
   getWorldBook,
+  listCharacterWorldBooks,
   listWorldBooks,
   updateWorldBook,
   deleteWorldBook,
@@ -121,6 +132,13 @@ const {
   RARITY_LABEL_MAP,
   weightedRandomPick
 } = await import('../modules/talents.js');
+const {
+  createSwipe,
+  getSwipeIndex,
+  getActiveSwipe,
+  listSwipes,
+  setActiveSwipe
+} = await import('../modules/swipes.js');
 
 test('password hashes verify and reject wrong passwords', async () => {
   const hash = await hashPassword('correct horse battery');
@@ -214,6 +232,271 @@ test('characters persist with regex rules in order', () => {
   assert.equal(applyRegexRules('窗外有雨', saved.regexRules, 'output'), '窗外有灯光');
 });
 
+test('replaceRegexRules keeps existing rules when replacement insert fails', () => {
+  const database = createAppDatabase(':memory:');
+  const userId = 'regex-replace-rollback-user';
+  database.prepare('INSERT INTO users (id, username, password_hash, created_at) VALUES (?, ?, ?, ?)').run(
+    userId,
+    'regexreplace',
+    'hash',
+    new Date().toISOString()
+  );
+
+  const character = createCharacter(database, userId, {
+    name: 'Regex Replace Rollback',
+    regexRules: [
+      { id: 'regex-keep-rule', label: 'Keep', pattern: 'old', replacement: 'kept' }
+    ]
+  });
+  const other = createCharacter(database, userId, {
+    name: 'Regex Existing Id',
+    regexRules: [
+      { id: 'regex-taken-rule', label: 'Taken', pattern: 'taken', replacement: 'taken' }
+    ]
+  });
+
+  assert.throws(
+    () => replaceRegexRules(database, userId, character.id, [
+      { id: other.regexRules[0].id, label: 'Colliding', pattern: 'new', replacement: 'new' }
+    ]),
+    /constraint|UNIQUE/i
+  );
+
+  assert.deepEqual(
+    getRegexRules(database, userId, character.id).map((rule) => [rule.id, rule.pattern, rule.replacement]),
+    [['regex-keep-rule', 'old', 'kept']]
+  );
+  assert.deepEqual(
+    getRegexRules(database, userId, other.id).map((rule) => rule.id),
+    ['regex-taken-rule']
+  );
+});
+
+test('applyRegexRules treats null rules as no rules', () => {
+  assert.equal(applyRegexRules('unchanged text', null, 'input'), 'unchanged text');
+});
+
+test('applyRegexRules skips null rule items', () => {
+  assert.equal(
+    applyRegexRules(
+      'alpha beta',
+      [
+        null,
+        {
+          enabled: true,
+          pattern: 'alpha',
+          replacement: 'omega',
+          scope: 'input'
+        },
+        undefined
+      ],
+      'input'
+    ),
+    'omega beta'
+  );
+});
+
+test('regex partial reorder keeps priorities unique', () => {
+  const database = createAppDatabase(':memory:');
+  const userId = 'regex-partial-user';
+  database.prepare('INSERT INTO users (id, username, password_hash, created_at) VALUES (?, ?, ?, ?)').run(
+    userId,
+    'regex-partial',
+    'hash',
+    new Date().toISOString()
+  );
+
+  const character = createCharacter(database, userId, {
+    name: 'Regex Partial',
+    regexRules: [
+      { label: 'First rule', pattern: 'first', replacement: '1' },
+      { label: 'Second rule', pattern: 'second', replacement: '2' },
+      { label: 'Third rule', pattern: 'third', replacement: '3' }
+    ]
+  });
+  const [rule1, rule2, rule3] = character.regexRules;
+
+  reorderRegexRules(database, userId, ['missing-rule', rule3.id, rule3.id]);
+
+  const ordered = getRegexRules(database, userId, character.id);
+  assert.deepEqual(ordered.map((rule) => rule.id), [rule3.id, rule1.id, rule2.id]);
+  assert.deepEqual(ordered.map((rule) => rule.priority), [0, 1, 2]);
+
+  reorderRegexRules(database, userId, [rule2.id], null);
+  const nullOptionsOrdered = getRegexRules(database, userId, character.id);
+  assert.deepEqual(nullOptionsOrdered.map((rule) => rule.id), [rule2.id, rule3.id, rule1.id]);
+  assert.deepEqual(nullOptionsOrdered.map((rule) => rule.priority), [0, 1, 2]);
+});
+
+test('regex group reorder only updates that group', () => {
+  const database = createAppDatabase(':memory:');
+  const userId = 'regex-group-user';
+  database.prepare('INSERT INTO users (id, username, password_hash, created_at) VALUES (?, ?, ?, ?)').run(
+    userId,
+    'regex-group',
+    'hash',
+    new Date().toISOString()
+  );
+
+  const character = createCharacter(database, userId, {
+    name: 'Regex Groups',
+    regexRules: [
+      { label: 'Alpha one', pattern: 'a1', groupName: 'Alpha', priority: 0 },
+      { label: 'Beta one', pattern: 'b1', groupName: 'Beta', priority: 0 },
+      { label: 'Alpha two', pattern: 'a2', groupName: 'Alpha', priority: 1 }
+    ]
+  });
+  const [alphaOne, betaOne, alphaTwo] = character.regexRules;
+
+  reorderRegexRules(database, userId, [alphaTwo.id], { group: 'Alpha' });
+
+  const alphaRules = getRegexRulesByGroup(database, userId, 'Alpha');
+  const betaRules = getRegexRulesByGroup(database, userId, 'Beta');
+  assert.deepEqual(alphaRules.map((rule) => rule.id), [alphaTwo.id, alphaOne.id]);
+  assert.deepEqual(alphaRules.map((rule) => rule.priority), [0, 1]);
+  assert.deepEqual(betaRules.map((rule) => [rule.id, rule.priority]), [[betaOne.id, 0]]);
+});
+
+test('reorderRegexRules rolls back priority changes when an update fails', () => {
+  const database = createAppDatabase(':memory:');
+  const userId = 'regex-reorder-rollback-user';
+  database.prepare('INSERT INTO users (id, username, password_hash, created_at) VALUES (?, ?, ?, ?)').run(
+    userId,
+    'regexreorder',
+    'hash',
+    new Date().toISOString()
+  );
+
+  const character = createCharacter(database, userId, {
+    name: 'Regex Reorder Rollback',
+    regexRules: [
+      { id: 'regex-first-rule', label: 'First', pattern: 'first', priority: 0 },
+      { id: 'regex-second-rule', label: 'Second', pattern: 'second', priority: 1 },
+      { id: 'regex-third-rule', label: 'Third', pattern: 'third', priority: 2 }
+    ]
+  });
+  const [rule1, rule2, rule3] = character.regexRules;
+
+  database.exec(`
+    CREATE TRIGGER fail_regex_priority_update
+    BEFORE UPDATE OF priority ON regex_rules
+    WHEN NEW.id = '${rule2.id}'
+    BEGIN
+      SELECT RAISE(ABORT, 'forced regex reorder failure');
+    END
+  `);
+
+  assert.throws(
+    () => reorderRegexRules(database, userId, [rule3.id, rule2.id, rule1.id]),
+    /forced regex reorder failure/
+  );
+
+  const ordered = getRegexRules(database, userId, character.id);
+  assert.deepEqual(ordered.map((rule) => rule.id), [rule1.id, rule2.id, rule3.id]);
+  assert.deepEqual(ordered.map((rule) => rule.priority), [0, 1, 2]);
+});
+
+test('regex rule reads keep insertion order when priority and order index tie', () => {
+  const database = createAppDatabase(':memory:');
+  const userId = 'regex-tie-user';
+  database.prepare('INSERT INTO users (id, username, password_hash, created_at) VALUES (?, ?, ?, ?)').run(
+    userId,
+    'regex-tie',
+    'hash',
+    new Date().toISOString()
+  );
+
+  const character = createCharacter(database, userId, {
+    name: 'Regex Tie',
+    regexRules: [
+      { label: 'First cascade', pattern: 'alpha', replacement: 'beta', groupName: 'Tie' },
+      { label: 'Second cascade', pattern: 'beta', replacement: 'gamma', groupName: 'Tie' }
+    ]
+  });
+  const [firstRule, secondRule] = character.regexRules;
+  database
+    .prepare('UPDATE regex_rules SET priority = 0, order_index = 0 WHERE id IN (?, ?)')
+    .run(firstRule.id, secondRule.id);
+
+  database.exec('PRAGMA reverse_unordered_selects = ON');
+  try {
+    const characterRules = getRegexRules(database, userId, character.id);
+    const groupRules = getRegexRulesByGroup(database, userId, 'Tie');
+
+    assert.deepEqual(characterRules.map((rule) => rule.id), [firstRule.id, secondRule.id]);
+    assert.deepEqual(groupRules.map((rule) => rule.id), [firstRule.id, secondRule.id]);
+    assert.equal(applyRegexRules('alpha', characterRules, 'input'), 'gamma');
+  } finally {
+    database.exec('PRAGMA reverse_unordered_selects = OFF');
+  }
+});
+
+test('regex import route rolls back earlier inserts when a later insert fails', async () => {
+  const database = createAppDatabase(':memory:');
+  const userId = 'regex-import-rollback-user';
+  database.prepare('INSERT INTO users (id, username, password_hash, created_at) VALUES (?, ?, ?, ?)').run(
+    userId,
+    'regeximport',
+    'hash',
+    new Date().toISOString()
+  );
+  const character = createCharacter(database, userId, { name: 'Regex Import Rollback' });
+
+  database.exec(`
+    CREATE TRIGGER fail_regex_import_insert
+    BEFORE INSERT ON regex_rules
+    WHEN NEW.pattern = 'fail-import'
+    BEGIN
+      SELECT RAISE(ABORT, 'forced regex import failure');
+    END
+  `);
+
+  const app = express();
+  app.use(express.json());
+  app.use('/api/regex', createRegexRouter({
+    db: database,
+    requireAuth: (request, _response, next) => {
+      request.auth = { user: { id: userId, username: 'regeximport' } };
+      next();
+    },
+    newId
+  }));
+  app.use((error, _request, response, _next) => {
+    response.status(500).json({ error: error.message });
+  });
+
+  const server = await new Promise((resolve) => {
+    const listener = app.listen(0, () => resolve(listener));
+  });
+  try {
+    const baseUrl = `http://127.0.0.1:${server.address().port}`;
+    const importResponse = await fetch(`${baseUrl}/api/regex/import`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        rules: [
+          { characterId: character.id, label: 'First import', pattern: 'ok-import' },
+          { characterId: character.id, label: 'Failing import', pattern: 'fail-import' }
+        ]
+      })
+    });
+    const body = await importResponse.json();
+
+    assert.equal(importResponse.status, 500);
+    assert.equal(body.imported, 0);
+    assert.equal(
+      database
+        .prepare(
+          "SELECT COUNT(*) AS count FROM regex_rules WHERE character_id = ? AND pattern IN ('ok-import', 'fail-import')"
+        )
+        .get(character.id).count,
+      0
+    );
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
 test('prompt variables render the current user name', () => {
   const user = {
     username: 'account_name',
@@ -223,6 +506,13 @@ test('prompt variables render the current user name', () => {
   assert.equal(resolvePromptUserName(user), '赵雨乐');
   assert.equal(renderPromptVariables('你好，{user}。{user} 已进入故事。', user), '你好，赵雨乐。赵雨乐 已进入故事。');
   assert.equal(renderPromptVariables('没有变量', user), '没有变量');
+  const fallbackName = resolvePromptUserName({});
+  assert.equal(resolvePromptUserName(null), fallbackName);
+  assert.equal(renderPromptVariables('Hello {user}', null), `Hello ${fallbackName}`);
+});
+
+test('expandMacros treats null context as defaults', () => {
+  assert.equal(expandMacros('plain {{unknown}}', null), 'plain {{unknown}}');
 });
 
 test('character schema accepts null worldBookId for unlinked characters', () => {
@@ -311,6 +601,294 @@ test('character routes pass database into tag updates', async () => {
   } finally {
     await new Promise((resolve) => server.close(resolve));
   }
+});
+
+test('character routes reject foreign world book links', async () => {
+  const database = createAppDatabase(':memory:');
+  database.prepare('INSERT INTO users (id, username, password_hash, created_at) VALUES (?, ?, ?, ?)').run(
+    'route-user',
+    'routeuser',
+    'hash',
+    new Date().toISOString()
+  );
+  database.prepare('INSERT INTO users (id, username, password_hash, created_at) VALUES (?, ?, ?, ?)').run(
+    'other-user',
+    'otheruser',
+    'hash',
+    new Date().toISOString()
+  );
+  const otherBook = createWorldBook(database, 'other-user', { name: 'Other World Book' });
+  const existing = createCharacter(database, 'route-user', { name: 'Existing Character' });
+
+  const app = express();
+  app.use(express.json());
+  app.use('/api/characters', createCharactersRouter({
+    db: database,
+    requireAuth: (request, _response, next) => {
+      request.auth = { user: { id: 'route-user', username: 'routeuser' } };
+      next();
+    },
+    asyncRoute: (handler) => (request, response, next) => Promise.resolve(handler(request, response, next)).catch(next),
+    withCharacterTags: (character) => character,
+    withWorldBookId: (character) => character,
+    hasUsableProvider: () => true,
+    getChatProviderSettings: () => ({ ok: false, error: 'unused' }),
+    withEtag: (_request, response, data) => response.json(data),
+    withListCache: (_request, response, data) => response.json(data),
+    nowIso: () => new Date().toISOString()
+  }));
+  app.use((error, _request, response, _next) => {
+    response.status(500).json({ error: error.message });
+  });
+
+  const server = await new Promise((resolve) => {
+    const listener = app.listen(0, () => resolve(listener));
+  });
+  try {
+    const baseUrl = `http://127.0.0.1:${server.address().port}`;
+    const createResponse = await fetch(`${baseUrl}/api/characters`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: 'Blocked Create', worldBookId: otherBook.id })
+    });
+
+    assert.equal(createResponse.status, 404);
+    assert.equal(listCharacters(database, 'route-user', { search: 'Blocked Create' }).length, 0);
+
+    const updateResponse = await fetch(`${baseUrl}/api/characters/${existing.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: 'Blocked Update', worldBookId: otherBook.id })
+    });
+
+    assert.equal(updateResponse.status, 404);
+    assert.equal(getCharacter(database, 'route-user', existing.id).name, 'Existing Character');
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
+test('swipe active lookup respects message ownership', async () => {
+  const database = createAppDatabase(':memory:');
+  database.prepare('INSERT INTO users (id, username, password_hash, created_at) VALUES (?, ?, ?, ?)').run(
+    'swipe-owner',
+    'swipeowner',
+    'hash',
+    new Date().toISOString()
+  );
+  database.prepare('INSERT INTO users (id, username, password_hash, created_at) VALUES (?, ?, ?, ?)').run(
+    'swipe-other',
+    'swipeother',
+    'hash',
+    new Date().toISOString()
+  );
+  const character = createCharacter(database, 'swipe-owner', { name: 'Swipe Character' });
+  const timestamp = new Date().toISOString();
+  database.prepare(
+    'INSERT INTO conversations (id, user_id, character_id, title, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)'
+  ).run('swipe-conv', 'swipe-owner', character.id, 'Swipe Conversation', timestamp, timestamp);
+  database.prepare(
+    'INSERT INTO messages (id, user_id, conversation_id, role, content, reasoning, usage_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+  ).run('swipe-message', 'swipe-owner', 'swipe-conv', 'assistant', 'owner-only message', 'private reasoning', null, timestamp);
+  createSwipe(database, 'swipe-owner', 'swipe-message', {
+    content: 'alternate owner-only message',
+    reasoning: 'alternate reasoning'
+  });
+
+  assert.equal(getActiveSwipe(database, 'swipe-other', 'swipe-message'), null);
+  assert.equal(getActiveSwipe(database, 'swipe-owner', 'swipe-message').content, 'owner-only message');
+
+  const app = express();
+  app.use(express.json());
+  app.use('/api/swipes', createSwipesRouter({
+    db: database,
+    requireAuth: (request, _response, next) => {
+      request.auth = { user: { id: request.headers['x-test-user'], username: 'test' } };
+      next();
+    }
+  }));
+  app.use((error, _request, response, _next) => {
+    response.status(500).json({ error: error.message });
+  });
+
+  const server = await new Promise((resolve) => {
+    const listener = app.listen(0, () => resolve(listener));
+  });
+  try {
+    const baseUrl = `http://127.0.0.1:${server.address().port}`;
+    const foreignResponse = await fetch(`${baseUrl}/api/swipes/swipe-message/swipes/active`, {
+      headers: { 'x-test-user': 'swipe-other' }
+    });
+    const ownerResponse = await fetch(`${baseUrl}/api/swipes/swipe-message/swipes/active`, {
+      headers: { 'x-test-user': 'swipe-owner' }
+    });
+    const ownerBody = await ownerResponse.json();
+
+    assert.equal(foreignResponse.status, 404);
+    assert.equal(ownerResponse.status, 200);
+    assert.equal(ownerBody.content, 'owner-only message');
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
+test('createSwipe rejects messages owned by another user', () => {
+  const database = createAppDatabase(':memory:');
+  database.prepare('INSERT INTO users (id, username, password_hash, created_at) VALUES (?, ?, ?, ?)').run(
+    'swipe-owner',
+    'swipeowner',
+    'hash',
+    new Date().toISOString()
+  );
+  database.prepare('INSERT INTO users (id, username, password_hash, created_at) VALUES (?, ?, ?, ?)').run(
+    'swipe-other',
+    'swipeother',
+    'hash',
+    new Date().toISOString()
+  );
+  const character = createCharacter(database, 'swipe-owner', { name: 'Swipe Character' });
+  const timestamp = new Date().toISOString();
+  database.prepare(
+    'INSERT INTO conversations (id, user_id, character_id, title, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)'
+  ).run('swipe-conv', 'swipe-owner', character.id, 'Swipe Conversation', timestamp, timestamp);
+  database.prepare(
+    'INSERT INTO messages (id, user_id, conversation_id, role, content, reasoning, usage_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+  ).run('swipe-message', 'swipe-owner', 'swipe-conv', 'assistant', 'owner-only message', 'private reasoning', null, timestamp);
+
+  const swipe = createSwipe(database, 'swipe-other', 'swipe-message', {
+    content: 'foreign alternative'
+  });
+
+  assert.equal(swipe, null);
+  assert.equal(
+    database.prepare('SELECT COUNT(*) AS count FROM message_swipes WHERE message_id = ?').get('swipe-message').count,
+    0
+  );
+});
+
+test('setActiveSwipe saves current message against foreign duplicate content', () => {
+  const database = createAppDatabase(':memory:');
+  database.prepare('INSERT INTO users (id, username, password_hash, created_at) VALUES (?, ?, ?, ?)').run(
+    'swipe-owner',
+    'swipeowner',
+    'hash',
+    new Date().toISOString()
+  );
+  database.prepare('INSERT INTO users (id, username, password_hash, created_at) VALUES (?, ?, ?, ?)').run(
+    'swipe-other',
+    'swipeother',
+    'hash',
+    new Date().toISOString()
+  );
+  const character = createCharacter(database, 'swipe-owner', { name: 'Swipe Character' });
+  const timestamp = new Date().toISOString();
+  database.prepare(
+    'INSERT INTO conversations (id, user_id, character_id, title, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)'
+  ).run('swipe-conv', 'swipe-owner', character.id, 'Swipe Conversation', timestamp, timestamp);
+  database.prepare(
+    'INSERT INTO messages (id, user_id, conversation_id, role, content, reasoning, usage_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+  ).run('swipe-message', 'swipe-owner', 'swipe-conv', 'assistant', 'owner-only message', 'private reasoning', null, timestamp);
+  database.prepare(
+    'INSERT INTO message_swipes (id, message_id, user_id, content, reasoning, usage_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)'
+  ).run('foreign-duplicate', 'swipe-message', 'swipe-other', 'owner-only message', '', null, timestamp);
+
+  const alternate = createSwipe(database, 'swipe-owner', 'swipe-message', {
+    content: 'alternate owner-only message',
+    reasoning: 'alternate reasoning'
+  });
+
+  const result = setActiveSwipe(database, 'swipe-owner', 'swipe-message', alternate.id);
+
+  assert.ok(result);
+  assert.equal(result.content, 'alternate owner-only message');
+  assert.equal(
+    database
+      .prepare('SELECT COUNT(*) AS count FROM message_swipes WHERE message_id = ? AND user_id = ? AND content = ?')
+      .get('swipe-message', 'swipe-owner', 'owner-only message').count,
+    1
+  );
+});
+
+test('setActiveSwipe rolls back saved current message when activation update fails', () => {
+  const database = createAppDatabase(':memory:');
+  database.prepare('INSERT INTO users (id, username, password_hash, created_at) VALUES (?, ?, ?, ?)').run(
+    'swipe-owner',
+    'swipeowner',
+    'hash',
+    new Date().toISOString()
+  );
+  const character = createCharacter(database, 'swipe-owner', { name: 'Swipe Character' });
+  const timestamp = new Date().toISOString();
+  database.prepare(
+    'INSERT INTO conversations (id, user_id, character_id, title, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)'
+  ).run('swipe-conv', 'swipe-owner', character.id, 'Swipe Conversation', timestamp, timestamp);
+  database.prepare(
+    'INSERT INTO messages (id, user_id, conversation_id, role, content, reasoning, usage_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+  ).run('swipe-message', 'swipe-owner', 'swipe-conv', 'assistant', 'current message', 'current reasoning', null, timestamp);
+
+  const alternate = createSwipe(database, 'swipe-owner', 'swipe-message', {
+    content: 'blocked alternate message',
+    reasoning: 'alternate reasoning'
+  });
+  database.exec(`
+    CREATE TRIGGER fail_active_swipe_message_update
+    BEFORE UPDATE OF content ON messages
+    WHEN NEW.id = 'swipe-message' AND NEW.content = 'blocked alternate message'
+    BEGIN
+      SELECT RAISE(ABORT, 'forced active swipe update failure');
+    END
+  `);
+
+  assert.throws(
+    () => setActiveSwipe(database, 'swipe-owner', 'swipe-message', alternate.id),
+    /forced active swipe update failure/
+  );
+  assert.equal(
+    database.prepare('SELECT content FROM messages WHERE id = ?').get('swipe-message').content,
+    'current message'
+  );
+  assert.equal(
+    database
+      .prepare('SELECT COUNT(*) AS count FROM message_swipes WHERE message_id = ? AND user_id = ? AND content = ?')
+      .get('swipe-message', 'swipe-owner', 'current message').count,
+    0
+  );
+  assert.deepEqual(
+    listSwipes(database, 'swipe-owner', 'swipe-message').map((swipe) => swipe.content),
+    ['blocked alternate message']
+  );
+});
+
+test('swipes preserve insertion order when timestamps tie', () => {
+  const database = createAppDatabase(':memory:');
+  database.prepare('INSERT INTO users (id, username, password_hash, created_at) VALUES (?, ?, ?, ?)').run(
+    'swipe-owner',
+    'swipeowner',
+    'hash',
+    new Date().toISOString()
+  );
+  const character = createCharacter(database, 'swipe-owner', { name: 'Swipe Character' });
+  const timestamp = new Date().toISOString();
+  const tiedTimestamp = '2000-01-01T00:00:00.000Z';
+  database.prepare(
+    'INSERT INTO conversations (id, user_id, character_id, title, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)'
+  ).run('swipe-conv', 'swipe-owner', character.id, 'Swipe Conversation', timestamp, timestamp);
+  database.prepare(
+    'INSERT INTO messages (id, user_id, conversation_id, role, content, reasoning, usage_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+  ).run('swipe-message', 'swipe-owner', 'swipe-conv', 'assistant', 'current message', '', null, timestamp);
+  database.prepare(
+    'INSERT INTO message_swipes (id, message_id, user_id, content, reasoning, usage_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)'
+  ).run('swipe-first', 'swipe-message', 'swipe-owner', 'first alternate', '', null, tiedTimestamp);
+  database.prepare(
+    'INSERT INTO message_swipes (id, message_id, user_id, content, reasoning, usage_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)'
+  ).run('swipe-second', 'swipe-message', 'swipe-owner', 'second alternate', '', null, tiedTimestamp);
+
+  assert.deepEqual(
+    listSwipes(database, 'swipe-owner', 'swipe-message').map((swipe) => swipe.id),
+    ['swipe-first', 'swipe-second']
+  );
+  assert.deepEqual(getSwipeIndex(database, 'swipe-message', 'swipe-second'), { index: 1, total: 2 });
+  assert.equal(setActiveSwipe(database, 'swipe-owner', 'swipe-message', 'swipe-second').activeIndex, 2);
 });
 
 test('character assistant completes drafts through multiple tool rounds', async () => {
@@ -507,6 +1085,215 @@ test('character assistant respects disabled generation sections', async () => {
   assert.equal(result.character.regexRules.length, 0);
 });
 
+test('character assistant ignores null tool arguments', async () => {
+  const originalFetch = globalThis.fetch;
+  let calls = 0;
+  try {
+    globalThis.fetch = async () => {
+      calls += 1;
+      if (calls === 1) {
+        return jsonResponse({
+          choices: [
+            {
+              message: {
+                role: 'assistant',
+                content: null,
+                tool_calls: [
+                  {
+                    id: 'character-null-profile',
+                    type: 'function',
+                    function: {
+                      name: 'set_character_profile',
+                      arguments: 'null'
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        });
+      }
+      return jsonResponse({
+        choices: [{ message: { role: 'assistant', content: 'No profile changes.' } }]
+      });
+    };
+
+    const result = await completeCharacterDraft(
+      {
+        providerType: 'deepseek',
+        gatewayName: 'DeepSeek',
+        baseUrl: 'https://api.deepseek.com',
+        model: 'deepseek-v4-flash',
+        apiKey: 'sk-test',
+        extraBody: {}
+      },
+      {
+        requirement: 'keep existing profile',
+        current: {
+          name: 'Original Name',
+          persona: 'Original persona',
+          regexRules: []
+        }
+      }
+    );
+
+    assert.equal(calls, 2);
+    assert.equal(result.character.name, 'Original Name');
+    assert.equal(result.character.persona, 'Original persona');
+    assert.equal(result.toolCalls[0].result.ok, true);
+    assert.deepEqual(result.toolCalls[0].result.applied, {});
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('character assistant ignores non-object loose JSON fallback', async () => {
+  const originalFetch = globalThis.fetch;
+  try {
+    globalThis.fetch = async () => jsonResponse({
+      choices: [{ message: { role: 'assistant', content: 'null' } }]
+    });
+
+    const result = await completeCharacterDraft(
+      {
+        providerType: 'deepseek',
+        gatewayName: 'DeepSeek',
+        baseUrl: 'https://api.deepseek.com',
+        model: 'deepseek-v4-flash',
+        apiKey: 'sk-test',
+        extraBody: {}
+      },
+      {
+        requirement: 'keep current draft',
+        current: {
+          name: 'Existing Draft',
+          persona: 'Existing persona'
+        }
+      }
+    );
+
+    assert.equal(result.character.name, 'Existing Draft');
+    assert.equal(result.character.persona, 'Existing persona');
+    assert.equal(result.toolCalls.length, 0);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('character assistant treats null request as defaults', async () => {
+  const originalFetch = globalThis.fetch;
+  try {
+    globalThis.fetch = async (_url, request = {}) => {
+      const body = JSON.parse(request.body);
+      const payload = JSON.parse(body.messages[1].content);
+      assert.equal(payload.requirement, '');
+      assert.equal(payload.optimizeExisting, false);
+      assert.equal(payload.currentCharacter.name, '');
+
+      return jsonResponse({
+        choices: [{ message: { role: 'assistant', content: 'null' } }]
+      });
+    };
+
+    const result = await completeCharacterDraft(
+      {
+        providerType: 'deepseek',
+        gatewayName: 'DeepSeek',
+        baseUrl: 'https://api.deepseek.com',
+        model: 'deepseek-v4-flash',
+        apiKey: 'sk-test',
+        extraBody: {}
+      },
+      null
+    );
+
+    assert.equal(result.character.name, '');
+    assert.equal(result.character.regexRules.length, 0);
+    assert.equal(result.toolCalls.length, 0);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('character assistant skips non-object generated array entries', async () => {
+  const originalFetch = globalThis.fetch;
+  let calls = 0;
+  try {
+    globalThis.fetch = async () => {
+      calls += 1;
+      if (calls === 1) {
+        return jsonResponse({
+          choices: [
+            {
+              message: {
+                role: 'assistant',
+                content: null,
+                tool_calls: [
+                  {
+                    id: 'character-mixed-regex',
+                    type: 'function',
+                    function: {
+                      name: 'replace_regex_rules',
+                      arguments: JSON.stringify({
+                        rules: [
+                          null,
+                          'not a regex rule',
+                          { label: 'Valid rule', pattern: 'foo', replacement: 'bar' }
+                        ]
+                      })
+                    }
+                  },
+                  {
+                    id: 'character-mixed-extensions',
+                    type: 'function',
+                    function: {
+                      name: 'set_character_extensions',
+                      arguments: JSON.stringify({
+                        renderPlugins: [
+                          null,
+                          'not a render plugin',
+                          { label: 'Valid fold', pattern: '\\[note\\]([\\s\\S]+?)\\[/note\\]', titleTemplate: 'Note' }
+                        ],
+                        modSuggestions: [
+                          null,
+                          'not a mod',
+                          { name: 'Valid Mod', type: 'style', content: 'Use concise prose.' }
+                        ]
+                      })
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        });
+      }
+      return jsonResponse({
+        choices: [{ message: { role: 'assistant', content: 'Done.' } }]
+      });
+    };
+
+    const result = await completeCharacterDraft(
+      {
+        providerType: 'deepseek',
+        gatewayName: 'DeepSeek',
+        baseUrl: 'https://api.deepseek.com',
+        model: 'deepseek-v4-flash',
+        apiKey: 'sk-test',
+        extraBody: {}
+      },
+      { requirement: 'mixed generated arrays', current: null }
+    );
+
+    assert.equal(calls, 2);
+    assert.deepEqual(result.character.regexRules.map((rule) => rule.pattern), ['foo']);
+    assert.deepEqual(result.character.renderPlugins.map((plugin) => plugin.label), ['Valid fold']);
+    assert.deepEqual(result.character.modSuggestions.map((mod) => mod.name), ['Valid Mod']);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test('world book assistant normalizes AI draft fields for real entry creation', async () => {
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async () => jsonResponse({
@@ -590,6 +1377,241 @@ test('world book assistant normalizes AI draft fields for real entry creation', 
   assert.equal(entry.group, 'noble-rumor');
   assert.equal(entry.role, 2);
   assert.equal(entry.position, 'at_depth');
+});
+
+test('world book assistant skips non-object AI entries', async () => {
+  const originalFetch = globalThis.fetch;
+  try {
+    globalThis.fetch = async () => jsonResponse({
+      choices: [
+        {
+          message: {
+            role: 'assistant',
+            content: null,
+            tool_calls: [
+              {
+                id: 'wb-mixed-entries',
+                type: 'function',
+                function: {
+                  name: 'replace_world_book_entries',
+                  arguments: JSON.stringify({
+                    entries: [
+                      null,
+                      'not an entry',
+                      {
+                        name: 'Hidden Gate',
+                        triggerKeys: 'gate,hidden',
+                        content: 'The hidden gate opens at moonrise.'
+                      }
+                    ]
+                  })
+                }
+              }
+            ]
+          }
+        }
+      ]
+    });
+
+    const result = await completeWorldBookDraft(
+      {
+        providerType: 'deepseek',
+        gatewayName: 'DeepSeek',
+        baseUrl: 'https://api.deepseek.com',
+        model: 'deepseek-v4-flash',
+        apiKey: 'sk-test',
+        extraBody: {}
+      },
+      { requirement: 'hidden gate lore', current: null }
+    );
+
+    assert.equal(result.worldBook.entries.length, 1);
+    assert.equal(result.worldBook.entries[0].name, 'Hidden Gate');
+    assert.equal(result.worldBook.entries[0].content, 'The hidden gate opens at moonrise.');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('world book assistant treats null request as defaults', async () => {
+  const originalFetch = globalThis.fetch;
+  let calls = 0;
+  try {
+    globalThis.fetch = async (_url, request = {}) => {
+      calls += 1;
+      const body = JSON.parse(request.body);
+      if (calls === 1) {
+        const payload = JSON.parse(body.messages[1].content);
+        assert.equal(payload.requirement, '');
+        assert.equal(payload.currentWorldBook.name, '');
+        assert.equal(payload.currentWorldBook.entries.length, 0);
+
+        return jsonResponse({
+          choices: [
+            {
+              message: {
+                role: 'assistant',
+                content: null,
+                tool_calls: [
+                  {
+                    id: 'wb-null-request-entry',
+                    type: 'function',
+                    function: {
+                      name: 'replace_world_book_entries',
+                      arguments: JSON.stringify({
+                        entries: [
+                          {
+                            name: 'Fallback Entry',
+                            triggerKeys: 'fallback',
+                            content: 'A safe default request can still create lore.'
+                          }
+                        ]
+                      })
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        });
+      }
+
+      return jsonResponse({
+        choices: [{ message: { role: 'assistant', content: 'Done.' } }]
+      });
+    };
+
+    const result = await completeWorldBookDraft(
+      {
+        providerType: 'deepseek',
+        gatewayName: 'DeepSeek',
+        baseUrl: 'https://api.deepseek.com',
+        model: 'deepseek-v4-flash',
+        apiKey: 'sk-test',
+        extraBody: {}
+      },
+      null
+    );
+
+    assert.equal(calls, 2);
+    assert.equal(result.worldBook.name, 'Fallback Entry世界书');
+    assert.equal(result.worldBook.entries.length, 1);
+    assert.equal(result.worldBook.entries[0].content, 'A safe default request can still create lore.');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('world book assistant accepts fenced JSON drafts after no-tool retries', async () => {
+  const originalFetch = globalThis.fetch;
+  let callCount = 0;
+  try {
+    globalThis.fetch = async () => {
+      callCount += 1;
+      return jsonResponse({
+        choices: [
+          {
+            message: {
+              role: 'assistant',
+              content: [
+                'The draft is ready:',
+                '```json',
+                JSON.stringify(
+                  {
+                    name: 'Fenced Lore',
+                    description: 'Recovered from markdown JSON.',
+                    entries: [
+                      {
+                        name: 'Hidden Gate',
+                        triggerKeys: 'gate,hidden',
+                        content: 'The hidden gate opens at moonrise.',
+                        position: 'before_char'
+                      }
+                    ]
+                  },
+                  null,
+                  2
+                ),
+                '```'
+              ].join('\n')
+            }
+          }
+        ]
+      });
+    };
+
+    const result = await completeWorldBookDraft(
+      {
+        providerType: 'deepseek',
+        gatewayName: 'DeepSeek',
+        baseUrl: 'https://api.deepseek.com',
+        model: 'deepseek-v4-flash',
+        apiKey: 'sk-test',
+        extraBody: {}
+      },
+      { requirement: 'hidden gate lore' }
+    );
+
+    assert.equal(callCount, 6);
+    assert.equal(result.worldBook.name, 'Fenced Lore');
+    assert.equal(result.worldBook.entries.length, 1);
+    assert.equal(result.worldBook.entries[0].name, 'Hidden Gate');
+    assert.equal(result.worldBook.entries[0].content, 'The hidden gate opens at moonrise.');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('world book assistant rejects null tool arguments as empty draft', async () => {
+  const originalFetch = globalThis.fetch;
+  let callCount = 0;
+  try {
+    globalThis.fetch = async () => {
+      callCount += 1;
+      if (callCount === 1) {
+        return jsonResponse({
+          choices: [
+            {
+              message: {
+                role: 'assistant',
+                content: null,
+                tool_calls: [
+                  {
+                    id: 'wb-null-entries',
+                    type: 'function',
+                    function: {
+                      name: 'replace_world_book_entries',
+                      arguments: 'null'
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        });
+      }
+      return jsonResponse({
+        choices: [{ message: { role: 'assistant', content: 'No usable entries.' } }]
+      });
+    };
+
+    await assert.rejects(
+      completeWorldBookDraft(
+        {
+          providerType: 'deepseek',
+          gatewayName: 'DeepSeek',
+          baseUrl: 'https://api.deepseek.com',
+          model: 'deepseek-v4-flash',
+          apiKey: 'sk-test',
+          extraBody: {}
+        },
+        { requirement: 'null tool args' }
+      ),
+      (error) => error instanceof Error && error.message.startsWith('AI ')
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });
 
 test('world book assistant rejects empty AI drafts', async () => {
@@ -813,6 +1835,25 @@ test('new users start without built-in characters', () => {
   assert.equal(count.count, 0);
 });
 
+test('owned character stats preserve newest insertion order when activity timestamps tie', () => {
+  const database = createAppDatabase(':memory:');
+  const userId = 'owned-character-order-user';
+  const timestamp = '2026-01-01T00:00:00.000Z';
+  database.prepare('INSERT INTO users (id, username, password_hash, created_at) VALUES (?, ?, ?, ?)').run(
+    userId, 'owned-character-order', 'hash', timestamp
+  );
+  const character1 = createCharacter(database, userId, { name: 'First Owned Character', visibility: 'private' });
+  const character2 = createCharacter(database, userId, { name: 'Second Owned Character', visibility: 'public' });
+  database
+    .prepare('UPDATE characters SET created_at = ?, last_used_at = ? WHERE id IN (?, ?)')
+    .run(timestamp, timestamp, character1.id, character2.id);
+
+  assert.deepEqual(
+    getOwnedCharacterStats(database, userId).map((character) => character.id),
+    [character2.id, character1.id]
+  );
+});
+
 test('character visibility separates owners from public users', () => {
   const database = createAppDatabase(':memory:');
   database.prepare('INSERT INTO users (id, username, password_hash, created_at) VALUES (?, ?, ?, ?)').run(
@@ -946,6 +1987,36 @@ test('avatars are stored as base64 assets and exposed through short URLs', () =>
   assert.equal(getAvatarAssetForViewer(database, 'viewer-1', userAvatarUrl.split('/').pop()), null);
 });
 
+test('avatar data URLs reject malformed base64 payloads', () => {
+  const database = createAppDatabase(':memory:');
+  database.prepare('INSERT INTO users (id, username, password_hash, created_at) VALUES (?, ?, ?, ?)').run(
+    'owner-1',
+    'owner',
+    'hash',
+    new Date().toISOString()
+  );
+
+  assert.throws(
+    () => saveAvatarInput(database, {
+      userId: 'owner-1',
+      ownerType: 'user',
+      ownerId: 'owner-1',
+      value: 'data:image/png;base64,A'
+    }),
+    /Invalid avatar image data/
+  );
+  assert.throws(
+    () => saveAvatarInput(database, {
+      userId: 'owner-1',
+      ownerType: 'user',
+      ownerId: 'owner-1',
+      value: 'data:image/png;base64,AA=A'
+    }),
+    /Invalid avatar image data/
+  );
+  assert.equal(database.prepare('SELECT COUNT(*) AS count FROM avatar_assets').get().count, 0);
+});
+
 test('conversation appearance settings persist empty values and custom code', () => {
   const database = createAppDatabase(':memory:');
   database.prepare('INSERT INTO users (id, username, password_hash, created_at) VALUES (?, ?, ?, ?)').run(
@@ -996,6 +2067,16 @@ test('conversation appearance settings persist empty values and custom code', ()
   assert.equal(database.prepare('SELECT mobile_background_url FROM conversations WHERE id = ?').get(conversationId).mobile_background_url, '');
 });
 
+test('conversation appearance treats null input as defaults', () => {
+  assert.deepEqual(normalizeConversationAppearance(null), {
+    desktopBackgroundUrl: '',
+    mobileBackgroundUrl: '',
+    customCss: '',
+    customJs: '',
+    statusBarPrompt: ''
+  });
+});
+
 test('OpenAI-compatible streaming parser separates reasoning and content', async () => {
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async () =>
@@ -1029,6 +2110,132 @@ test('OpenAI-compatible streaming parser separates reasoning and content', async
   );
 });
 
+test('streamToolCompletion treats null options as defaults', async () => {
+  const originalFetch = globalThis.fetch;
+  let requestBody = null;
+  try {
+    globalThis.fetch = async (_url, request = {}) => {
+      requestBody = JSON.parse(request.body);
+      return new Response(sseStream([
+        'data: {"choices":[{"delta":{"content":"done"}}]}',
+        'data: [DONE]'
+      ]));
+    };
+
+    const events = [];
+    const result = await streamToolCompletion(
+      {
+        providerType: 'custom',
+        gatewayName: 'Custom',
+        baseUrl: 'https://provider.test',
+        model: 'custom-model',
+        apiKey: 'sk-test',
+        supportsReasoning: false,
+        extraBody: {}
+      },
+      [{ role: 'user', content: 'hi' }],
+      [
+        {
+          type: 'function',
+          function: {
+            name: 'set_value',
+            description: 'set a value',
+            parameters: {
+              type: 'object',
+              properties: { value: { type: 'number' } }
+            }
+          }
+        }
+      ],
+      async () => ({ ok: true }),
+      (event, data) => events.push({ event, data }),
+      undefined,
+      null
+    );
+
+    assert.equal(result.content, 'done');
+    assert.equal(requestBody.tool_choice, 'auto');
+    assert.equal(requestBody.tools[0].function.name, 'set_value');
+    assert.deepEqual(events.map((event) => event.event), ['step', 'content']);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('generateCompletion treats null options as defaults', async () => {
+  const originalFetch = globalThis.fetch;
+  let requestBody = null;
+  try {
+    globalThis.fetch = async (_url, request = {}) => {
+      requestBody = JSON.parse(request.body);
+      return jsonResponse({
+        output_text: 'done',
+        usage: { total_tokens: 3 }
+      });
+    };
+
+    const result = await generateCompletion(
+      {
+        providerType: 'xai',
+        gatewayName: 'xAI',
+        baseUrl: 'https://api.x.ai/v1',
+        model: 'grok-4.1',
+        apiKey: 'sk-test',
+        supportsReasoning: true,
+        extraBody: {}
+      },
+      [{ role: 'user', content: 'hi' }],
+      null
+    );
+
+    assert.equal(result.content, 'done');
+    assert.equal(result.usage.total_tokens, 3);
+    assert.equal(requestBody.model, 'grok-4.1');
+    assert.deepEqual(requestBody.reasoning, { effort: 'high' });
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('streamCompletion treats null options as defaults', async () => {
+  const originalFetch = globalThis.fetch;
+  let requestBody = null;
+  try {
+    globalThis.fetch = async (_url, request = {}) => {
+      requestBody = JSON.parse(request.body);
+      return new Response(sseStream([
+        'event: response.output_text.delta\ndata: {"type":"response.output_text.delta","delta":"done"}',
+        'event: response.completed\ndata: {"type":"response.completed","response":{"usage":{"total_tokens":4}}}'
+      ]));
+    };
+
+    const events = [];
+    const result = await streamCompletion(
+      {
+        providerType: 'xai',
+        gatewayName: 'xAI',
+        baseUrl: 'https://api.x.ai/v1',
+        model: 'grok-4.1',
+        apiKey: 'sk-test',
+        supportsReasoning: true,
+        extraBody: {}
+      },
+      [{ role: 'user', content: 'hi' }],
+      (event, data) => events.push({ event, data }),
+      undefined,
+      null
+    );
+
+    assert.equal(result.content, 'done');
+    assert.equal(result.usage.total_tokens, 4);
+    assert.equal(requestBody.stream, true);
+    assert.deepEqual(requestBody.reasoning, { effort: 'high' });
+    assert.deepEqual(events.map((event) => event.event), ['content']);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test('OpenAI-compatible parser strips thinking tags from non-stream content', async () => {
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async () =>
@@ -1058,6 +2265,31 @@ test('OpenAI-compatible parser strips thinking tags from non-stream content', as
 
     assert.equal(result.content, '正文');
     assert.equal(result.reasoning, 'plan');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('generateCompletion rejects non-object JSON responses', async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => jsonResponse('upstream-ok-but-invalid-shape');
+
+  try {
+    await assert.rejects(
+      generateCompletion(
+        {
+          providerType: 'custom',
+          gatewayName: 'Custom',
+          baseUrl: 'https://example.test',
+          model: 'local-model',
+          apiKey: 'sk-test',
+          supportsReasoning: false,
+          extraBody: {}
+        },
+        [{ role: 'user', content: 'hi' }]
+      ),
+      /response JSON must be an object/
+    );
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -1318,6 +2550,36 @@ test('provider model list normalizes official /models responses', async () => {
   );
 });
 
+test('provider model list treats null options as defaults', async () => {
+  const originalFetch = globalThis.fetch;
+  let calls = 0;
+  try {
+    globalThis.fetch = async () => {
+      calls += 1;
+      return new Response(JSON.stringify({ models: ['zeta-model', 'alpha-model'] }), {
+        headers: { 'Content-Type': 'application/json' }
+      });
+    };
+
+    const models = await listProviderModels(
+      {
+        providerType: 'custom',
+        gatewayName: 'Null Options Models',
+        baseUrl: 'https://null-options-models.example/v1',
+        model: 'alpha-model',
+        apiKey: 'sk-null-options',
+        extraBody: {}
+      },
+      null
+    );
+
+    assert.equal(calls, 1);
+    assert.deepEqual(models.map((model) => model.id), ['alpha-model', 'zeta-model']);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test('provider model cache refreshes when API key changes', async () => {
   const originalFetch = globalThis.fetch;
   const calls = [];
@@ -1476,6 +2738,20 @@ test('unknown provider usage snapshots count tokens without pricing', () => {
     totalCostCny: null,
     currency: 'CNY'
   });
+});
+
+test('usage snapshots treat null metadata as defaults', () => {
+  const usage = buildUsageSnapshot(
+    {
+      prompt_tokens: 4,
+      completion_tokens: 6
+    },
+    null
+  );
+
+  assert.equal(usage._flai.providerType, '');
+  assert.equal(usage._flai.totalTokens, 10);
+  assert.equal(usage._flai.totalCostCny, null);
 });
 
 test('DeepSeek thinking switch maps to official V4 thinking request fields', () => {
@@ -1871,6 +3147,56 @@ test('Anthropic tool completion maps OpenAI tool schema to native tool_use loop'
   }
 });
 
+test('runToolCompletion treats null options as defaults', async () => {
+  const originalFetch = globalThis.fetch;
+  const requests = [];
+  try {
+    globalThis.fetch = async (_url, request = {}) => {
+      const body = JSON.parse(request.body);
+      requests.push(body);
+      return jsonResponse({
+        choices: [{ message: { role: 'assistant', content: 'done' } }],
+        usage: { total_tokens: 3 }
+      });
+    };
+
+    const result = await runToolCompletion(
+      {
+        providerType: 'custom',
+        gatewayName: 'Custom',
+        baseUrl: 'https://provider.test',
+        model: 'custom-model',
+        apiKey: 'sk-test',
+        supportsReasoning: false,
+        extraBody: {}
+      },
+      [{ role: 'user', content: 'hi' }],
+      [
+        {
+          type: 'function',
+          function: {
+            name: 'set_value',
+            description: 'set a value',
+            parameters: {
+              type: 'object',
+              properties: { value: { type: 'number' } }
+            }
+          }
+        }
+      ],
+      async () => ({ ok: true }),
+      null
+    );
+
+    assert.equal(result.content, 'done');
+    assert.equal(requests.length, 1);
+    assert.equal(requests[0].tool_choice, 'auto');
+    assert.equal(requests[0].tools[0].function.name, 'set_value');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test('buildProviderBody applies preset parameters', () => {
   const body = buildProviderBody(
     {
@@ -1926,6 +3252,26 @@ test('buildProviderBody ignores non-object extra body values', () => {
   assert.deepEqual(Object.keys(stringBody).sort(), ['messages', 'model', 'stream']);
 });
 
+test('buildProviderBody treats null options as defaults', () => {
+  const body = buildProviderBody(
+    {
+      providerType: 'custom',
+      model: 'custom-model',
+      supportsReasoning: false,
+      extraBody: {}
+    },
+    [{ role: 'user', content: 'hi' }],
+    false,
+    null
+  );
+
+  assert.deepEqual(body, {
+    model: 'custom-model',
+    messages: [{ role: 'user', content: 'hi' }],
+    stream: false
+  });
+});
+
 function sseStream(lines) {
   const encoder = new TextEncoder();
   return new ReadableStream({
@@ -1972,6 +3318,31 @@ test('world book create stores null characterId as unlinked', () => {
   });
 
   assert.equal(book.characterId, null);
+});
+
+test('world book entries treat null payload as defaults', () => {
+  const database = createAppDatabase(':memory:');
+  database.prepare('INSERT INTO users (id, username, password_hash, created_at) VALUES (?, ?, ?, ?)').run(
+    'wb-entry-null-user',
+    'entrynullworldbooker',
+    'hash',
+    new Date().toISOString()
+  );
+  const book = createWorldBook(database, 'wb-entry-null-user', {
+    name: 'Entry Defaults'
+  });
+
+  const entry = createEntry(database, 'wb-entry-null-user', book.id, null);
+
+  assert.ok(entry);
+  assert.equal(entry.name, '');
+  assert.equal(entry.triggerKeys, '');
+  assert.equal(entry.content, '');
+  assert.equal(entry.position, 'before_char');
+  assert.equal(entry.enabled, true);
+  assert.equal(entry.orderIndex, 0);
+  assert.equal(entry.probability, 100);
+  assert.equal(entry.useProbability, false);
 });
 
 test('world books CRUD with entries', () => {
@@ -2030,6 +3401,44 @@ test('world books CRUD with entries', () => {
   assert.equal(listWorldBooks(database, 'user-1').length, 0);
 });
 
+test('world book lists preserve deterministic tie order', () => {
+  const database = createAppDatabase(':memory:');
+  const userId = 'world-book-order-user';
+  const timestamp = '2025-01-01T00:00:00.000Z';
+  database.prepare('INSERT INTO users (id, username, password_hash, created_at) VALUES (?, ?, ?, ?)').run(
+    userId,
+    'worldbookorder',
+    'hash',
+    timestamp
+  );
+  const character = createCharacter(database, userId, { name: 'WorldBookOrder', visibility: 'private' });
+  database.prepare(
+    'INSERT INTO world_books (id, user_id, name, description, character_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)'
+  ).run('world-book-first', userId, 'First Book', '', character.id, timestamp, timestamp);
+  database.prepare(
+    'INSERT INTO world_books (id, user_id, name, description, character_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)'
+  ).run('world-book-second', userId, 'Second Book', '', null, timestamp, timestamp);
+  database.prepare(
+    'INSERT INTO world_book_entries (id, world_book_id, name, trigger_keys, content, enabled, order_index, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+  ).run('world-entry-first', 'world-book-first', 'First Entry', 'alpha', 'first content', 1, 0, timestamp);
+  database.prepare(
+    'INSERT INTO world_book_entries (id, world_book_id, name, trigger_keys, content, enabled, order_index, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+  ).run('world-entry-second', 'world-book-first', 'Second Entry', 'alpha', 'second content', 1, 0, timestamp);
+
+  assert.deepEqual(
+    listWorldBooks(database, userId).map((book) => book.id),
+    ['world-book-second', 'world-book-first']
+  );
+  assert.deepEqual(
+    getWorldBook(database, userId, 'world-book-first').entries.map((entry) => entry.id),
+    ['world-entry-first', 'world-entry-second']
+  );
+  assert.deepEqual(
+    matchWorldBookEntries(database, character.id, ['alpha']).map((entry) => entry.id),
+    ['world-entry-first', 'world-entry-second']
+  );
+});
+
 test('world book trigger matching finds entries by keywords', () => {
   const database = createAppDatabase(':memory:');
   database.prepare('INSERT INTO users (id, username, password_hash, created_at) VALUES (?, ?, ?, ?)').run(
@@ -2073,11 +3482,27 @@ test('world book trigger matching finds entries by keywords', () => {
   const noMatches = matchWorldBookEntries(database, character.id, '今天天气不错');
   assert.equal(noMatches.length, 0);
 
+  const nullOptionsMatches = matchWorldBookEntries(database, character.id, '魔法', null);
+  assert.equal(nullOptionsMatches.length, 1);
+  assert.equal(nullOptionsMatches[0].name, '魔法');
+
   const context = buildWorldBookContext(matches);
   assert.equal(context, '魔法系统说明');
 
   const emptyContext = buildWorldBookContext([]);
   assert.equal(emptyContext, '');
+});
+
+test('world book context treats null entries as empty', () => {
+  assert.equal(buildWorldBookContext(null), '');
+});
+
+test('world book at_depth injection treats null entries as empty', () => {
+  const messages = [{ role: 'user', content: 'hello' }];
+  const result = injectAtDepthEntries(messages, null);
+
+  assert.equal(result, messages);
+  assert.deepEqual(messages, [{ role: 'user', content: 'hello' }]);
 });
 
 test('world book name validation rejects empty or too long names', () => {
@@ -2106,6 +3531,88 @@ test('world book entries respect ownership', () => {
   assert.equal(getWorldBook(database, 'other', book.id), null);
   assert.equal(createEntry(database, 'other', book.id, { name: '入侵' }), null);
   assert.equal(deleteWorldBook(database, 'other', book.id), false);
+});
+
+test('world book character links respect ownership', () => {
+  const database = createAppDatabase(':memory:');
+  database.prepare('INSERT INTO users (id, username, password_hash, created_at) VALUES (?, ?, ?, ?)').run(
+    'owner', 'owner', 'hash', new Date().toISOString()
+  );
+  database.prepare('INSERT INTO users (id, username, password_hash, created_at) VALUES (?, ?, ?, ?)').run(
+    'other', 'other', 'hash', new Date().toISOString()
+  );
+
+  const ownerCharacter = createCharacter(database, 'owner', { name: 'Owner Character' });
+  const otherCharacter = createCharacter(database, 'other', { name: 'Other Character' });
+  const ownerBook = createWorldBook(database, 'owner', { name: 'Owner World Book' });
+
+  assert.equal(linkWorldBookToCharacter(database, ownerBook.id, ownerCharacter.id, 0, 'owner'), true);
+  assert.equal(linkWorldBookToCharacter(database, ownerBook.id, otherCharacter.id, 0, 'other'), false);
+  assert.deepEqual(listCharacterWorldBooks(database, otherCharacter.id), []);
+});
+
+test('character world books preserve link insertion order when order indexes tie', () => {
+  const database = createAppDatabase(':memory:');
+  const userId = 'linked-world-book-order-user';
+  const timestamp = '2025-01-01T00:00:00.000Z';
+  database.prepare('INSERT INTO users (id, username, password_hash, created_at) VALUES (?, ?, ?, ?)').run(
+    userId,
+    'linkedworldbookorder',
+    'hash',
+    timestamp
+  );
+  const character = createCharacter(database, userId, { name: 'LinkedWorldBookOrder', visibility: 'private' });
+  database.prepare(
+    'INSERT INTO world_books (id, user_id, name, description, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)'
+  ).run('linked-book-first', userId, 'First Linked Book', '', timestamp, timestamp);
+  database.prepare(
+    'INSERT INTO world_books (id, user_id, name, description, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)'
+  ).run('linked-book-second', userId, 'Second Linked Book', '', timestamp, timestamp);
+  database.prepare(
+    'INSERT INTO character_world_books (character_id, world_book_id, order_index, created_at) VALUES (?, ?, ?, ?)'
+  ).run(character.id, 'linked-book-first', 0, timestamp);
+  database.prepare(
+    'INSERT INTO character_world_books (character_id, world_book_id, order_index, created_at) VALUES (?, ?, ?, ?)'
+  ).run(character.id, 'linked-book-second', 0, timestamp);
+
+  assert.deepEqual(
+    listCharacterWorldBooks(database, character.id).map((book) => book.id),
+    ['linked-book-first', 'linked-book-second']
+  );
+});
+
+test('world book linked characters preserve link insertion order when timestamps tie', () => {
+  const database = createAppDatabase(':memory:');
+  const userId = 'world-book-linked-character-user';
+  const timestamp = '2025-01-01T00:00:00.000Z';
+  database.prepare('INSERT INTO users (id, username, password_hash, created_at) VALUES (?, ?, ?, ?)').run(
+    userId,
+    'worldbooklinkedcharacter',
+    'hash',
+    timestamp
+  );
+  const firstCharacter = createCharacter(database, userId, { name: 'First Linked Character', visibility: 'private' });
+  const secondCharacter = createCharacter(database, userId, { name: 'Second Linked Character', visibility: 'private' });
+  const book = createWorldBook(database, userId, { name: 'Linked Character Book' });
+  database
+    .prepare('UPDATE world_books SET created_at = ?, updated_at = ? WHERE id = ?')
+    .run(timestamp, timestamp, book.id);
+  database.prepare(
+    'INSERT INTO character_world_books (character_id, world_book_id, order_index, created_at) VALUES (?, ?, ?, ?)'
+  ).run(firstCharacter.id, book.id, 0, timestamp);
+  database.prepare(
+    'INSERT INTO character_world_books (character_id, world_book_id, order_index, created_at) VALUES (?, ?, ?, ?)'
+  ).run(secondCharacter.id, book.id, 0, timestamp);
+
+  database.exec('PRAGMA reverse_unordered_selects = ON');
+  try {
+    assert.deepEqual(
+      getWorldBook(database, userId, book.id).linkedCharacters,
+      [firstCharacter.id, secondCharacter.id]
+    );
+  } finally {
+    database.exec('PRAGMA reverse_unordered_selects = OFF');
+  }
 });
 
 test('world book regex key auto-detection in string mode', () => {
@@ -2294,6 +3801,20 @@ test('tags CRUD with usage count', () => {
   assert.equal(remaining.length, 1);
 });
 
+test('tag name reads use deterministic case-insensitive tie order', () => {
+  const database = createAppDatabase(':memory:');
+  const userId = 'tag-order-user';
+  database.prepare('INSERT INTO users (id, username, password_hash, created_at) VALUES (?, ?, ?, ?)').run(
+    userId, 'tagorder', 'hash', new Date().toISOString()
+  );
+  const character = createCharacter(database, userId, { name: 'Tag Order' });
+
+  setCharacterTags(database, userId, character.id, ['beta', 'alpha', 'Alpha']);
+
+  assert.deepEqual(getCharacterTagNames(database, character.id, userId), ['Alpha', 'alpha', 'beta']);
+  assert.deepEqual(listTags(database, userId).map((tag) => tag.name), ['Alpha', 'alpha', 'beta']);
+});
+
 test('tags are isolated per user', () => {
   const database = createAppDatabase(':memory:');
   const createdAt = new Date().toISOString();
@@ -2440,6 +3961,51 @@ test('character tags sync replaces old tags', () => {
   assert.deepEqual(getCharacterTagNames(database, character.id), []);
 });
 
+test('setCharacterTags works inside an existing transaction', () => {
+  const database = createAppDatabase(':memory:');
+  const userId = 'tag-savepoint-user';
+  database.prepare('INSERT INTO users (id, username, password_hash, created_at) VALUES (?, ?, ?, ?)').run(
+    userId, 'tagsavepoint', 'hash', new Date().toISOString()
+  );
+  const character = createCharacter(database, userId, { name: 'Tag Savepoint' });
+
+  database.exec('BEGIN');
+  try {
+    setCharacterTags(database, userId, character.id, ['Nested', 'Tags']);
+    assert.deepEqual(getCharacterTagNames(database, character.id), ['Nested', 'Tags']);
+  } finally {
+    database.exec('ROLLBACK');
+  }
+
+  assert.deepEqual(getCharacterTagNames(database, character.id), []);
+});
+
+test('setCharacterTags rolls back old links when a new link insert fails', () => {
+  const database = createAppDatabase(':memory:');
+  const userId = 'tag-rollback-user';
+  database.prepare('INSERT INTO users (id, username, password_hash, created_at) VALUES (?, ?, ?, ?)').run(
+    userId, 'tagrollback', 'hash', new Date().toISOString()
+  );
+  const character = createCharacter(database, userId, { name: 'Tag Rollback' });
+  setCharacterTags(database, userId, character.id, ['Original']);
+  const failingTag = createTag(database, userId, { name: 'Fail Link' });
+
+  database.exec(`
+    CREATE TRIGGER fail_character_tag_link
+    BEFORE INSERT ON character_tags
+    WHEN NEW.tag_id = '${failingTag.id}'
+    BEGIN
+      SELECT RAISE(ABORT, 'forced character tag link failure');
+    END
+  `);
+
+  assert.throws(
+    () => setCharacterTags(database, userId, character.id, ['Fail Link']),
+    /forced character tag link failure/
+  );
+  assert.deepEqual(getCharacterTagNames(database, character.id), ['Original']);
+});
+
 test('character list filters by tag name', () => {
   const database = createAppDatabase(':memory:');
   const userId = 'filter-user';
@@ -2552,6 +4118,101 @@ test('presets CRUD with default management', () => {
   assert.equal(deletePreset(database, userId, 'nonexistent'), false);
 });
 
+test('createPreset keeps existing default when default insert fails', () => {
+  const database = createAppDatabase(':memory:');
+  const userId = 'preset-create-rollback-user';
+  database.prepare('INSERT INTO users (id, username, password_hash, created_at) VALUES (?, ?, ?, ?)').run(
+    userId, 'presetcreaterollback', 'hash', new Date().toISOString()
+  );
+
+  const existing = createPreset(database, userId, {
+    name: 'Existing default',
+    isDefault: true
+  });
+
+  database.exec(`
+    CREATE TRIGGER fail_default_preset_insert
+    BEFORE INSERT ON presets
+    WHEN NEW.name = 'forced insert failure'
+    BEGIN
+      SELECT RAISE(ABORT, 'forced insert failure');
+    END
+  `);
+
+  assert.throws(() => createPreset(database, userId, {
+    name: 'forced insert failure',
+    isDefault: true
+  }), /forced insert failure/);
+
+  assert.equal(getPreset(database, userId, existing.id).isDefault, true);
+  assert.equal(getDefaultPreset(database, userId).id, existing.id);
+  assert.equal(listPresets(database, userId).length, 1);
+});
+
+test('updatePreset keeps existing default when default update fails', () => {
+  const database = createAppDatabase(':memory:');
+  const userId = 'preset-update-rollback-user';
+  database.prepare('INSERT INTO users (id, username, password_hash, created_at) VALUES (?, ?, ?, ?)').run(
+    userId, 'presetupdaterollback', 'hash', new Date().toISOString()
+  );
+
+  const existingDefault = createPreset(database, userId, {
+    name: 'Existing default',
+    isDefault: true
+  });
+  const target = createPreset(database, userId, {
+    name: 'Target preset',
+    isDefault: false
+  });
+
+  database.exec(`
+    CREATE TRIGGER fail_default_preset_update
+    BEFORE UPDATE ON presets
+    WHEN NEW.name = 'forced update failure'
+    BEGIN
+      SELECT RAISE(ABORT, 'forced update failure');
+    END
+  `);
+
+  assert.throws(() => updatePreset(database, userId, target.id, {
+    name: 'forced update failure',
+    isDefault: true
+  }), /forced update failure/);
+
+  assert.equal(getPreset(database, userId, existingDefault.id).isDefault, true);
+  assert.equal(getPreset(database, userId, target.id).isDefault, false);
+  assert.equal(getDefaultPreset(database, userId).id, existingDefault.id);
+});
+
+test('presets preserve newest insertion order when update timestamps tie', () => {
+  const database = createAppDatabase(':memory:');
+  const userId = 'preset-order-user';
+  const timestamp = '2000-01-01T00:00:00.000Z';
+  database.prepare('INSERT INTO users (id, username, password_hash, created_at) VALUES (?, ?, ?, ?)').run(
+    userId,
+    'presetorder',
+    'hash',
+    timestamp
+  );
+  database.prepare(
+    `INSERT INTO presets (
+      id, user_id, name, system_prompt, temperature, max_tokens, top_p,
+      frequency_penalty, presence_penalty, is_default, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  ).run('preset-first', userId, 'First Preset', '', 1, 4096, 1, 0, 0, 0, timestamp, timestamp);
+  database.prepare(
+    `INSERT INTO presets (
+      id, user_id, name, system_prompt, temperature, max_tokens, top_p,
+      frequency_penalty, presence_penalty, is_default, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  ).run('preset-second', userId, 'Second Preset', '', 1, 4096, 1, 0, 0, 0, timestamp, timestamp);
+
+  assert.deepEqual(
+    listPresets(database, userId).map((preset) => preset.id),
+    ['preset-second', 'preset-first']
+  );
+});
+
 test('preset name validation and defaults', () => {
   const database = createAppDatabase(':memory:');
   const userId = 'preset-validate';
@@ -2636,6 +4297,19 @@ test('character export includes character, regex rules, tags and world book', ()
     content: '魔法系统',
     position: 'before_char'
   });
+  database.prepare(
+    'INSERT INTO world_book_entries (id, world_book_id, name, trigger_keys, content, position, enabled, order_index, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
+  ).run(
+    'export-world-entry-tied',
+    book.id,
+    '同序号目',
+    '同序号',
+    '同序号内容',
+    'before_char',
+    1,
+    0,
+    '2025-01-01T00:00:00.000Z'
+  );
 
   // Simulate export logic
   const regexRules = getRegexRules(database, userId, character.id);
@@ -2652,7 +4326,7 @@ test('character export includes character, regex rules, tags and world book', ()
     const entries = database
       .prepare(
         `SELECT name, trigger_keys, content, position, enabled, order_index
-         FROM world_book_entries WHERE world_book_id = ? ORDER BY order_index ASC`
+         FROM world_book_entries WHERE world_book_id = ? ORDER BY order_index ASC, rowid ASC`
       )
       .all(worldBookRow.id);
     worldBook = { name: worldBookRow.name, description: worldBookRow.description, entries };
@@ -2678,8 +4352,62 @@ test('character export includes character, regex rules, tags and world book', ()
   assert.equal(exportData.regex_rules[0].pattern, '猫');
   assert.deepEqual([...exportData.tags].sort(), ['助手', '温柔'].sort());
   assert.equal(exportData.world_book.name, '世界观');
-  assert.equal(exportData.world_book.entries.length, 1);
+  assert.equal(exportData.world_book.entries.length, 2);
   assert.equal(exportData.world_book.entries[0].name, '魔法');
+  assert.equal(exportData.world_book.entries[1].name, '同序号目');
+});
+
+test('character export tags use deterministic name order', async () => {
+  const database = createAppDatabase(':memory:');
+  const userId = 'export-tag-order-user';
+  const timestamp = '2026-01-01T00:00:00.000Z';
+  database.prepare('INSERT INTO users (id, username, password_hash, created_at) VALUES (?, ?, ?, ?)').run(
+    userId, 'exporttagorder', 'hash', timestamp
+  );
+  const character = createCharacter(database, userId, { name: 'Export Tag Order', visibility: 'private' });
+  const insertTag = database.prepare('INSERT INTO tags (id, user_id, name, color, created_at) VALUES (?, ?, ?, ?, ?)');
+  const insertLink = database.prepare('INSERT INTO character_tags (character_id, tag_id) VALUES (?, ?)');
+  insertTag.run('tag-beta', userId, 'beta', '', timestamp);
+  insertTag.run('tag-alpha-lower', userId, 'alpha', '', timestamp);
+  insertTag.run('tag-alpha-upper', userId, 'Alpha', '', timestamp);
+  insertLink.run(character.id, 'tag-beta');
+  insertLink.run(character.id, 'tag-alpha-lower');
+  insertLink.run(character.id, 'tag-alpha-upper');
+
+  const app = express();
+  app.use(express.json());
+  app.use('/api/characters', createCharactersRouter({
+    db: database,
+    requireAuth: (request, _response, next) => {
+      request.auth = { user: { id: userId, username: 'exporttagorder' } };
+      next();
+    },
+    asyncRoute: (handler) => (request, response, next) => Promise.resolve(handler(request, response, next)).catch(next),
+    withCharacterTags: (routeCharacter) => routeCharacter,
+    withWorldBookId: (routeCharacter) => routeCharacter,
+    hasUsableProvider: () => false,
+    getChatProviderSettings: () => ({ ok: false, error: 'unused' }),
+    withEtag: (_request, response, data) => response.json(data),
+    withListCache: (_request, response, data) => response.json(data),
+    nowIso: () => timestamp
+  }));
+  app.use((error, _request, response, _next) => {
+    response.status(500).json({ error: error.message });
+  });
+
+  const server = await new Promise((resolve) => {
+    const listener = app.listen(0, () => resolve(listener));
+  });
+  try {
+    const baseUrl = `http://127.0.0.1:${server.address().port}`;
+    const response = await fetch(`${baseUrl}/api/characters/${character.id}/export`);
+    const body = await response.json();
+
+    assert.equal(response.status, 200);
+    assert.deepEqual(body.tags, ['Alpha', 'alpha', 'beta']);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
 });
 
 test('character import creates new character with new ID', () => {
@@ -2866,6 +4594,54 @@ test('mods CRUD with type and ordering', () => {
   assert.equal(deleteMod(database, userId, 'nonexistent'), false);
 });
 
+test('mods partial reorder keeps order indexes unique', () => {
+  const database = createAppDatabase(':memory:');
+  const userId = 'mod-partial-order';
+  database.prepare('INSERT INTO users (id, username, password_hash, created_at) VALUES (?, ?, ?, ?)').run(
+    userId, 'modder-partial', 'hash', new Date().toISOString()
+  );
+
+  const mod1 = createMod(database, userId, { name: 'First mod' });
+  const mod2 = createMod(database, userId, { name: 'Second mod' });
+  const mod3 = createMod(database, userId, { name: 'Third mod' });
+
+  const reordered = reorderMods(database, userId, ['missing-mod', mod3.id, mod3.id]);
+
+  assert.deepEqual(reordered.map((mod) => mod.id), [mod3.id, mod1.id, mod2.id]);
+  assert.deepEqual(reordered.map((mod) => mod.orderIndex), [0, 1, 2]);
+});
+
+test('mods preserve deterministic order when order indexes and timestamps tie', () => {
+  const database = createAppDatabase(':memory:');
+  const userId = 'mod-tie-order';
+  const timestamp = '2026-01-01T00:00:00.000Z';
+  database.prepare('INSERT INTO users (id, username, password_hash, created_at) VALUES (?, ?, ?, ?)').run(
+    userId, 'mod-tie-order', 'hash', timestamp
+  );
+  const mod1 = createMod(database, userId, { name: 'First mod', content: 'first content', enabled: true });
+  const mod2 = createMod(database, userId, { name: 'Second mod', content: 'second content', enabled: true });
+  const mod3 = createMod(database, userId, { name: 'Third mod', content: 'third content', enabled: true });
+  database
+    .prepare('UPDATE mods SET order_index = 0, created_at = ? WHERE id IN (?, ?, ?)')
+    .run(timestamp, mod1.id, mod2.id, mod3.id);
+
+  assert.deepEqual(
+    listMods(database, userId).map((mod) => mod.id),
+    [mod3.id, mod2.id, mod1.id]
+  );
+  assert.deepEqual(
+    getEnabledModsForUser(database, userId).map((mod) => mod.id),
+    [mod3.id, mod2.id, mod1.id]
+  );
+  const prompt = buildModSystemPrompt(getEnabledModsForUser(database, userId));
+  assert.ok(prompt.indexOf('third content') < prompt.indexOf('second content'));
+  assert.ok(prompt.indexOf('second content') < prompt.indexOf('first content'));
+
+  const reordered = reorderMods(database, userId, [mod1.id]);
+  assert.deepEqual(reordered.map((mod) => mod.id), [mod1.id, mod3.id, mod2.id]);
+  assert.deepEqual(reordered.map((mod) => mod.orderIndex), [0, 1, 2]);
+});
+
 test('mod name validation rejects empty names', () => {
   const database = createAppDatabase(':memory:');
   const userId = 'mod-validate';
@@ -2977,6 +4753,20 @@ test('advanced settings normalize status bar blueprint', () => {
   }).success, false);
 });
 
+test('advanced settings helpers treat null inputs as defaults', () => {
+  const normalized = normalizeAdvancedSettings(null);
+  assert.equal(normalized.desktopBackgroundUrl, '');
+  assert.equal(normalized.statusBarPrompt, '');
+  assert.equal(normalized.statusBarBlueprint.variables.length, 0);
+  assert.equal(normalized.accessorySkills.statusBarAgent.enabled, 'auto');
+
+  const merged = mergeAdvancedSettings({ statusBarPrompt: 'author prompt' }, null);
+  assert.equal(merged.statusBarPrompt, 'author prompt');
+  assert.equal(merged.accessorySkills.statusBarAgent.enabled, 'auto');
+
+  assert.equal(isAccessorySkillActive({ statusBarAgent: { enabled: 'auto' } }, 'statusBarAgent', null), false);
+});
+
 test('creating a conversation applies character status bar blueprint', async () => {
   const database = createAppDatabase(':memory:');
   const userId = 'conv-blueprint-user';
@@ -3038,6 +4828,219 @@ test('creating a conversation applies character status bar blueprint', async () 
     assert.equal(statusBar.variables[0].name, 'HP');
     assert.equal(statusBar.variables[0].value, 100);
     assert.equal(statusBar.template, '<div class="state">HP {{HP}}</div>');
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
+test('conversation settings invalid lorebook rolls back appearance inside transaction', async () => {
+  const database = createAppDatabase(':memory:');
+  const userId = 'conv-settings-user';
+  const timestamp = new Date().toISOString();
+  database.prepare('INSERT INTO users (id, username, password_hash, created_at) VALUES (?, ?, ?, ?)').run(
+    userId, 'conv-settings', 'hash', timestamp
+  );
+  const character = createCharacter(database, userId, { name: 'Settings Character', visibility: 'private' });
+  const conversationId = 'conv-settings-rollback';
+  database.prepare(
+    'INSERT INTO conversations (id, user_id, character_id, title, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)'
+  ).run(conversationId, userId, character.id, 'Settings Rollback', timestamp, timestamp);
+
+  const app = express();
+  app.use(express.json());
+  app.use('/api/conversations', createConversationsRouter({
+    db: database,
+    requireAuth: (request, _response, next) => {
+      request.auth = { user: { id: userId, username: 'conv-settings' } };
+      next();
+    },
+    asyncRoute: (handler) => (request, response, next) => Promise.resolve(handler(request, response, next)).catch(next),
+    newId: () => 'unused-settings-id',
+    nowIso: () => '2026-01-01T00:00:00.000Z',
+    withEtag: (_request, response, data) => response.json(data),
+    withListCache: (_request, response, data) => response.json(data),
+    providerWithSecret: (row) => row,
+    getProviderRow: () => null,
+    hasUsableProvider
+  }));
+  app.use((error, _request, response, _next) => {
+    response.status(500).json({ error: error.message });
+  });
+
+  const server = await new Promise((resolve) => {
+    const listener = app.listen(0, () => resolve(listener));
+  });
+  try {
+    const baseUrl = `http://127.0.0.1:${server.address().port}`;
+    database.exec('BEGIN');
+    try {
+      const response = await fetch(`${baseUrl}/api/conversations/${conversationId}/settings`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          desktopBackgroundUrl: '/should-not-stick.png',
+          customCss: '.should-not-stick { color: red; }',
+          chatLorebookId: 'missing-lorebook'
+        })
+      });
+
+      assert.equal(response.status, 400);
+      assert.deepEqual(getConversationAppearance(database, userId, conversationId), {
+        desktopBackgroundUrl: '',
+        mobileBackgroundUrl: '',
+        customCss: '',
+        customJs: ''
+      });
+
+      database.prepare('UPDATE conversations SET title = ? WHERE id = ?').run('Outer Transaction Still Open', conversationId);
+      assert.equal(
+        database.prepare('SELECT title FROM conversations WHERE id = ?').get(conversationId).title,
+        'Outer Transaction Still Open'
+      );
+    } finally {
+      database.exec('ROLLBACK');
+    }
+
+    assert.equal(
+      database.prepare('SELECT title FROM conversations WHERE id = ?').get(conversationId).title,
+      'Settings Rollback'
+    );
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
+test('conversation settings save succeeds inside an existing transaction', async () => {
+  const database = createAppDatabase(':memory:');
+  const userId = 'conv-settings-nested-user';
+  const timestamp = new Date().toISOString();
+  database.prepare('INSERT INTO users (id, username, password_hash, created_at) VALUES (?, ?, ?, ?)').run(
+    userId, 'conv-settings-nested', 'hash', timestamp
+  );
+  const character = createCharacter(database, userId, { name: 'Settings Nested Character', visibility: 'private' });
+  const book = createWorldBook(database, userId, { name: 'Settings Nested Book' });
+  const conversationId = 'conv-settings-nested';
+  database.prepare(
+    'INSERT INTO conversations (id, user_id, character_id, title, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)'
+  ).run(conversationId, userId, character.id, 'Settings Nested', timestamp, timestamp);
+
+  const app = express();
+  app.use(express.json());
+  app.use('/api/conversations', createConversationsRouter({
+    db: database,
+    requireAuth: (request, _response, next) => {
+      request.auth = { user: { id: userId, username: 'conv-settings-nested' } };
+      next();
+    },
+    asyncRoute: (handler) => (request, response, next) => Promise.resolve(handler(request, response, next)).catch(next),
+    newId: () => 'unused-settings-nested-id',
+    nowIso: () => '2026-01-01T00:00:00.000Z',
+    withEtag: (_request, response, data) => response.json(data),
+    withListCache: (_request, response, data) => response.json(data),
+    providerWithSecret: (row) => row,
+    getProviderRow: () => null,
+    hasUsableProvider
+  }));
+  app.use((error, _request, response, _next) => {
+    response.status(500).json({ error: error.message });
+  });
+
+  const server = await new Promise((resolve) => {
+    const listener = app.listen(0, () => resolve(listener));
+  });
+  try {
+    const baseUrl = `http://127.0.0.1:${server.address().port}`;
+    database.exec('BEGIN');
+    try {
+      const response = await fetch(`${baseUrl}/api/conversations/${conversationId}/settings`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          desktopBackgroundUrl: '/nested-settings.png',
+          customCss: '.nested-settings { color: green; }',
+          chatLorebookId: book.id
+        })
+      });
+      const body = await response.json();
+
+      assert.equal(response.status, 200);
+      assert.equal(body.desktopBackgroundUrl, '/nested-settings.png');
+      assert.equal(body.chatLorebookId, book.id);
+      assert.deepEqual(getConversationAppearance(database, userId, conversationId), {
+        desktopBackgroundUrl: '/nested-settings.png',
+        mobileBackgroundUrl: '',
+        customCss: '.nested-settings { color: green; }',
+        customJs: ''
+      });
+      assert.equal(
+        database.prepare('SELECT chat_lorebook_id FROM conversations WHERE id = ?').get(conversationId).chat_lorebook_id,
+        book.id
+      );
+    } finally {
+      database.exec('ROLLBACK');
+    }
+
+    assert.deepEqual(getConversationAppearance(database, userId, conversationId), {
+      desktopBackgroundUrl: '',
+      mobileBackgroundUrl: '',
+      customCss: '',
+      customJs: ''
+    });
+    assert.equal(
+      database.prepare('SELECT chat_lorebook_id FROM conversations WHERE id = ?').get(conversationId).chat_lorebook_id,
+      null
+    );
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
+test('conversation list preserves newest insertion order when update timestamps tie', async () => {
+  const database = createAppDatabase(':memory:');
+  const userId = 'conversation-list-order-user';
+  const timestamp = '2026-01-01T00:00:00.000Z';
+  database.prepare('INSERT INTO users (id, username, password_hash, created_at) VALUES (?, ?, ?, ?)').run(
+    userId, 'conversation-list-order', 'hash', timestamp
+  );
+  const character = createCharacter(database, userId, { name: 'Conversation List Order', visibility: 'private' });
+  database.prepare(
+    'INSERT INTO conversations (id, user_id, character_id, title, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)'
+  ).run('conversation-first', userId, character.id, 'First Conversation', timestamp, timestamp);
+  database.prepare(
+    'INSERT INTO conversations (id, user_id, character_id, title, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)'
+  ).run('conversation-second', userId, character.id, 'Second Conversation', timestamp, timestamp);
+
+  const app = express();
+  app.use(express.json());
+  app.use('/api/conversations', createConversationsRouter({
+    db: database,
+    requireAuth: (request, _response, next) => {
+      request.auth = { user: { id: userId, username: 'conversation-list-order' } };
+      next();
+    },
+    asyncRoute: (handler) => (request, response, next) => Promise.resolve(handler(request, response, next)).catch(next),
+    newId: () => 'unused-conversation-list-order-id',
+    nowIso: () => timestamp,
+    withEtag: (_request, response, data) => response.json(data),
+    withListCache: (_request, response, data) => response.json(data),
+    providerWithSecret: (row) => row,
+    getProviderRow: () => null,
+    hasUsableProvider
+  }));
+  app.use((error, _request, response, _next) => {
+    response.status(500).json({ error: error.message });
+  });
+
+  const server = await new Promise((resolve) => {
+    const listener = app.listen(0, () => resolve(listener));
+  });
+  try {
+    const baseUrl = `http://127.0.0.1:${server.address().port}`;
+    const response = await fetch(`${baseUrl}/api/conversations`);
+    const body = await response.json();
+
+    assert.equal(response.status, 200);
+    assert.deepEqual(body.map((conversation) => conversation.id), ['conversation-second', 'conversation-first']);
   } finally {
     await new Promise((resolve) => server.close(resolve));
   }
@@ -3131,6 +5134,329 @@ test('streaming chat does not persist empty assistant messages', async () => {
     globalThis.fetch = originalFetch;
     await new Promise((resolve) => server.close(resolve));
   }
+});
+
+test('conversation messages preserve insertion order when timestamps tie', async () => {
+  const database = createAppDatabase(':memory:');
+  const { userId, conversationId } = createTestSetup(database);
+  const tiedTimestamp = '2026-01-01T00:00:00.000Z';
+  insertMessage(database, userId, conversationId, 'user', 'First tied message', tiedTimestamp);
+  insertMessage(database, userId, conversationId, 'assistant', 'Second tied message', tiedTimestamp);
+  insertMessage(database, userId, conversationId, 'user', 'Third tied message', tiedTimestamp);
+
+  const app = express();
+  app.use(express.json());
+  app.use('/api/conversations', createConversationsRouter({
+    db: database,
+    requireAuth: (request, _response, next) => {
+      request.auth = { user: { id: userId, username: 'message-order-user' } };
+      next();
+    },
+    asyncRoute: (handler) => (request, response, next) => Promise.resolve(handler(request, response, next)).catch(next),
+    newId: () => 'unused-message-order-id',
+    nowIso: () => tiedTimestamp,
+    withEtag: (_request, response, data) => response.json(data),
+    withListCache: (_request, response, data) => response.json(data),
+    providerWithSecret: (row) => row,
+    getProviderRow: () => null,
+    hasUsableProvider
+  }));
+  app.use((error, _request, response, _next) => {
+    response.status(500).json({ error: error.message });
+  });
+
+  const server = await new Promise((resolve) => {
+    const listener = app.listen(0, () => resolve(listener));
+  });
+  try {
+    const baseUrl = `http://127.0.0.1:${server.address().port}`;
+    const response = await fetch(`${baseUrl}/api/conversations/${conversationId}/messages`);
+    const body = await response.json();
+
+    assert.equal(response.status, 200);
+    assert.deepEqual(
+      body.messages.map((message) => message.content),
+      ['First tied message', 'Second tied message', 'Third tied message']
+    );
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
+test('chat prompt history keeps latest tied-timestamp messages in insertion order', async () => {
+  const database = createAppDatabase(':memory:');
+  const { userId, conversationId } = createTestSetup(database);
+  const tiedTimestamp = '2026-01-01T00:00:00.000Z';
+  for (let index = 1; index <= 25; index += 1) {
+    insertMessage(database, userId, conversationId, 'user', `history-${String(index).padStart(2, '0')}`, tiedTimestamp);
+  }
+
+  let providerBody = null;
+  const app = express();
+  app.use(express.json());
+  app.use('/api/conversations', createConversationsRouter({
+    db: database,
+    requireAuth: (request, _response, next) => {
+      request.auth = { user: { id: userId, username: 'history-window-user' } };
+      next();
+    },
+    asyncRoute: (handler) => (request, response, next) => Promise.resolve(handler(request, response, next)).catch(next),
+    newId: (() => {
+      let counter = 0;
+      return () => `history-window-${++counter}`;
+    })(),
+    nowIso: () => '2026-01-01T00:00:01.000Z',
+    withEtag: (_request, response, data) => response.json(data),
+    withListCache: (_request, response, data) => response.json(data),
+    providerWithSecret: (row) => row,
+    getProviderRow: () => ({
+      providerType: 'deepseek',
+      gatewayName: 'Test Gateway',
+      baseUrl: 'https://provider.test',
+      model: 'test-model',
+      apiKey: 'sk-test',
+      supportsReasoning: false,
+      extraBody: {}
+    }),
+    hasUsableProvider
+  }));
+  app.use((error, _request, response, _next) => {
+    response.status(500).json({ error: error.message });
+  });
+
+  const server = await new Promise((resolve) => {
+    const listener = app.listen(0, () => resolve(listener));
+  });
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url, options = {}) => {
+    const href = String(url);
+    if (href.startsWith('http://127.0.0.1:')) {
+      return originalFetch(url, options);
+    }
+    providerBody = JSON.parse(options.body);
+    return jsonResponse({
+      choices: [{ message: { content: 'assistant answer' } }],
+      usage: { total_tokens: 1 }
+    });
+  };
+
+  try {
+    const baseUrl = `http://127.0.0.1:${server.address().port}`;
+    const response = await fetch(`${baseUrl}/api/conversations/${conversationId}/messages`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ content: 'new prompt', stream: false })
+    });
+
+    assert.equal(response.status, 200);
+    assert.deepEqual(
+      providerBody.messages
+        .map((message) => message.content)
+        .filter((content) => /^history-\d+$/.test(content)),
+      Array.from({ length: 20 }, (_, index) => `history-${String(index + 6).padStart(2, '0')}`)
+    );
+    assert.equal(providerBody.messages.at(-1).content, 'new prompt');
+  } finally {
+    globalThis.fetch = originalFetch;
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
+test('chat prompt does not inject status bar context into main model', async () => {
+  const database = createAppDatabase(':memory:');
+  const { userId, conversationId } = createTestSetup(database);
+  database
+    .prepare('UPDATE conversations SET user_advanced_settings = ? WHERE id = ?')
+    .run(
+      JSON.stringify({
+        statusBarPrompt: 'STATUS_RULE_SENTINEL',
+        accessorySkills: { statusBarAgent: { enabled: false, modelOverride: '' } }
+      }),
+      conversationId
+    );
+  upsertStatusBar(database, userId, conversationId, {
+    name: 'STATUS_BAR_NAME_SENTINEL',
+    variables: [{ name: 'STATUS_VAR_SENTINEL', value: 65, max: 100 }],
+    template: '<div>{{STATUS_VAR_SENTINEL}}</div>'
+  });
+
+  let providerBody = null;
+  const app = express();
+  app.use(express.json());
+  app.use('/api/conversations', createConversationsRouter({
+    db: database,
+    requireAuth: (request, _response, next) => {
+      request.auth = { user: { id: userId, username: 'status-prompt-user' } };
+      next();
+    },
+    asyncRoute: (handler) => (request, response, next) => Promise.resolve(handler(request, response, next)).catch(next),
+    newId: (() => {
+      let counter = 0;
+      return () => `status-prompt-${++counter}`;
+    })(),
+    nowIso: () => '2026-01-01T00:00:01.000Z',
+    withEtag: (_request, response, data) => response.json(data),
+    withListCache: (_request, response, data) => response.json(data),
+    providerWithSecret: (row) => row,
+    getProviderRow: () => ({
+      providerType: 'deepseek',
+      gatewayName: 'Test Gateway',
+      baseUrl: 'https://provider.test',
+      model: 'test-model',
+      apiKey: 'sk-test',
+      supportsReasoning: false,
+      extraBody: {}
+    }),
+    hasUsableProvider
+  }));
+  app.use((error, _request, response, _next) => {
+    response.status(500).json({ error: error.message });
+  });
+
+  const server = await new Promise((resolve) => {
+    const listener = app.listen(0, () => resolve(listener));
+  });
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url, options = {}) => {
+    const href = String(url);
+    if (href.startsWith('http://127.0.0.1:')) {
+      return originalFetch(url, options);
+    }
+    providerBody = JSON.parse(options.body);
+    return jsonResponse({
+      choices: [{ message: { content: 'assistant answer' } }],
+      usage: { total_tokens: 1 }
+    });
+  };
+
+  try {
+    const baseUrl = `http://127.0.0.1:${server.address().port}`;
+    const response = await fetch(`${baseUrl}/api/conversations/${conversationId}/messages`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ content: 'new prompt', stream: false })
+    });
+
+    assert.equal(response.status, 200);
+    const promptText = JSON.stringify(providerBody.messages);
+    assert.equal(promptText.includes('STATUS_RULE_SENTINEL'), false);
+    assert.equal(promptText.includes('STATUS_VAR_SENTINEL'), false);
+    assert.equal(promptText.includes('STATUS_BAR_NAME_SENTINEL'), false);
+    assert.equal(providerBody.messages.at(-1).content, 'new prompt');
+  } finally {
+    globalThis.fetch = originalFetch;
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
+test('branchConversation works inside an existing transaction', () => {
+  const database = createAppDatabase(':memory:');
+  const { userId, conversationId } = createTestSetup(database);
+  insertMessage(database, userId, conversationId, 'user', 'Branch start', '2026-01-01T00:00:00.000Z');
+  const branchMessageId = insertMessage(
+    database,
+    userId,
+    conversationId,
+    'assistant',
+    'Branch point',
+    '2026-01-01T00:00:01.000Z'
+  );
+
+  let branchId = '';
+  database.exec('BEGIN');
+  try {
+    const branch = branchConversation(database, userId, conversationId, branchMessageId);
+    assert.ok(branch);
+    branchId = branch.id;
+    assert.equal(branch.branchedFromId, conversationId);
+    assert.equal(
+      database.prepare('SELECT COUNT(*) AS count FROM messages WHERE conversation_id = ?').get(branchId).count,
+      2
+    );
+  } finally {
+    database.exec('ROLLBACK');
+  }
+
+  assert.equal(
+    database.prepare('SELECT COUNT(*) AS count FROM conversations WHERE id = ?').get(branchId).count,
+    0
+  );
+});
+
+test('branchConversation rolls back partial branch when message copy fails', () => {
+  const database = createAppDatabase(':memory:');
+  const { userId, conversationId } = createTestSetup(database);
+  insertMessage(database, userId, conversationId, 'user', 'Branch survives source', '2026-01-01T00:00:00.000Z');
+  const branchMessageId = insertMessage(
+    database,
+    userId,
+    conversationId,
+    'assistant',
+    'Force branch failure',
+    '2026-01-01T00:00:01.000Z'
+  );
+
+  database.exec(`
+    CREATE TRIGGER fail_branch_message_copy
+    BEFORE INSERT ON messages
+    WHEN NEW.conversation_id <> '${conversationId}' AND NEW.content = 'Force branch failure'
+    BEGIN
+      SELECT RAISE(ABORT, 'forced branch message copy failure');
+    END
+  `);
+
+  assert.throws(
+    () => branchConversation(database, userId, conversationId, branchMessageId),
+    /forced branch message copy failure/
+  );
+  assert.equal(
+    database.prepare('SELECT COUNT(*) AS count FROM conversations WHERE branched_from_id = ?').get(conversationId).count,
+    0
+  );
+});
+
+test('branchConversation stops at the selected message when timestamps tie', () => {
+  const database = createAppDatabase(':memory:');
+  const { userId, conversationId } = createTestSetup(database);
+  const tiedTimestamp = '2026-01-01T00:00:00.000Z';
+  insertMessage(database, userId, conversationId, 'user', 'Before branch', tiedTimestamp);
+  const branchMessageId = insertMessage(database, userId, conversationId, 'assistant', 'Branch here', tiedTimestamp);
+  insertMessage(database, userId, conversationId, 'user', 'After branch', tiedTimestamp);
+
+  const branch = branchConversation(database, userId, conversationId, branchMessageId);
+
+  assert.ok(branch);
+  const copied = database.prepare(
+    'SELECT content FROM messages WHERE conversation_id = ? ORDER BY created_at ASC, rowid ASC'
+  ).all(branch.id);
+  assert.deepEqual(copied.map((row) => row.content), ['Before branch', 'Branch here']);
+});
+
+test('conversation branches preserve newest insertion order when timestamps tie', () => {
+  const database = createAppDatabase(':memory:');
+  const { userId, conversationId, character } = createTestSetup(database);
+  const branchMessageId = insertMessage(
+    database,
+    userId,
+    conversationId,
+    'assistant',
+    'Branch point',
+    '2026-01-01T00:00:00.000Z'
+  );
+  const tiedTimestamp = '2026-01-01T00:00:01.000Z';
+
+  database.prepare(
+    `INSERT INTO conversations (id, user_id, character_id, title, branched_from_id, branched_from_message_id, branched_from_title, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  ).run('branch-first', userId, character.id, 'First Branch', conversationId, branchMessageId, 'Parent', tiedTimestamp, tiedTimestamp);
+  database.prepare(
+    `INSERT INTO conversations (id, user_id, character_id, title, branched_from_id, branched_from_message_id, branched_from_title, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  ).run('branch-second', userId, character.id, 'Second Branch', conversationId, branchMessageId, 'Parent', tiedTimestamp, tiedTimestamp);
+
+  const branches = getConversationBranches(database, userId, conversationId);
+
+  assert.deepEqual(branches.map((branch) => branch.id), ['branch-second', 'branch-first']);
 });
 
 test('status bar CRUD operations', () => {
@@ -3319,6 +5645,43 @@ test('talent pool name validation', () => {
 test('talent pool update returns null for nonexistent pool', () => {
   const database = createAppDatabase(':memory:');
   assert.equal(updateTalentPool(database, 'nonexistent', { name: 'test' }), null);
+});
+
+test('talent lists preserve newest insertion order when timestamps tie', () => {
+  const database = createAppDatabase(':memory:');
+  const timestamp = '2000-01-01T00:00:00.000Z';
+  database.prepare(
+    'INSERT INTO talent_pools (id, name, description, talents_json, created_at) VALUES (?, ?, ?, ?, ?)'
+  ).run('talent-pool-first', 'First Pool', '', '[]', timestamp);
+  database.prepare(
+    'INSERT INTO talent_pools (id, name, description, talents_json, created_at) VALUES (?, ?, ?, ?, ?)'
+  ).run('talent-pool-second', 'Second Pool', '', '[]', timestamp);
+
+  assert.deepEqual(
+    listTalentPools(database).map((pool) => pool.id),
+    ['talent-pool-second', 'talent-pool-first']
+  );
+
+  database.prepare('INSERT INTO users (id, username, password_hash, created_at) VALUES (?, ?, ?, ?)').run(
+    'talent-order-user',
+    'talentorder',
+    'hash',
+    timestamp
+  );
+  const character = createCharacter(database, 'talent-order-user', { name: 'TalentOrder', visibility: 'private' });
+  database.prepare(
+    'INSERT INTO character_talents (id, character_id, talent_name, talent_rarity, talent_description, talent_effect, pool_id, rolled_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+  ).run('character-talent-first', character.id, 'First Talent', 'common', '', '', 'talent-pool-first', timestamp);
+  database.prepare(
+    'INSERT INTO character_talents (id, character_id, talent_name, talent_rarity, talent_description, talent_effect, pool_id, rolled_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+  ).run('character-talent-second', character.id, 'Second Talent', 'rare', '', '', 'talent-pool-second', timestamp);
+
+  assert.deepEqual(
+    getCharacterTalents(database, character.id).map((talent) => talent.id),
+    ['character-talent-second', 'character-talent-first']
+  );
+  const prompt = buildTalentSystemPrompt(database, character.id);
+  assert.ok(prompt.indexOf('Second Talent') < prompt.indexOf('First Talent'));
 });
 
 // ── Roll Engine ──
@@ -3591,6 +5954,40 @@ test('saves getSave returns snapshot with messages', () => {
   assert.equal(detail.snapshot.messages[1].content, '今天天气晴朗，适合出门。');
 });
 
+test('saves snapshot preserves insertion order when timestamps tie', () => {
+  const database = createAppDatabase(':memory:');
+  const { userId, conversationId } = createTestSetup(database);
+  const tiedTimestamp = '2026-01-01T00:00:00.000Z';
+  insertMessage(database, userId, conversationId, 'user', 'First tied message', tiedTimestamp);
+  insertMessage(database, userId, conversationId, 'assistant', 'Second tied message', tiedTimestamp);
+  insertMessage(database, userId, conversationId, 'user', 'Third tied message', tiedTimestamp);
+
+  const save = createSave(database, userId, conversationId, { name: 'Tied timestamp save' });
+  const detail = getSave(database, userId, save.id);
+
+  assert.deepEqual(
+    detail.snapshot.messages.map((message) => message.content),
+    ['First tied message', 'Second tied message', 'Third tied message']
+  );
+});
+
+test('saves list preserves newest insertion order when timestamps tie', () => {
+  const database = createAppDatabase(':memory:');
+  const { userId, conversationId } = createTestSetup(database);
+  const tiedTimestamp = '2026-01-01T00:00:00.000Z';
+
+  database.prepare(
+    'INSERT INTO saves (id, conversation_id, user_id, name, snapshot, preview, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)'
+  ).run('save-first', conversationId, userId, 'First Save', '{}', 'first preview', tiedTimestamp);
+  database.prepare(
+    'INSERT INTO saves (id, conversation_id, user_id, name, snapshot, preview, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)'
+  ).run('save-second', conversationId, userId, 'Second Save', '{}', 'second preview', tiedTimestamp);
+
+  const saves = listSaves(database, userId, conversationId);
+
+  assert.deepEqual(saves.map((save) => save.id), ['save-second', 'save-first']);
+});
+
 test('saves updateSave renames a save', () => {
   const database = createAppDatabase(':memory:');
   const { userId, conversationId, timestamp } = createTestSetup(database);
@@ -3661,6 +6058,58 @@ test('saves loadSave restores messages to saved state', () => {
   assert.equal(afterLoad.length, 2);
   assert.equal(afterLoad[0].content, '第一条消息');
   assert.equal(afterLoad[1].content, '第一条回复');
+});
+
+test('saves loadSave works inside an existing transaction', () => {
+  const database = createAppDatabase(':memory:');
+  const { userId, conversationId, timestamp } = createTestSetup(database);
+
+  insertMessage(database, userId, conversationId, 'user', 'Before save', timestamp);
+  const save = createSave(database, userId, conversationId, { name: 'Nested transaction save' });
+  insertMessage(database, userId, conversationId, 'assistant', 'After save', timestamp);
+
+  database.exec('BEGIN');
+  try {
+    const result = loadSave(database, userId, save.id);
+    assert.ok(result);
+    assert.equal(result.messageCount, 1);
+
+    const restored = database.prepare(
+      'SELECT content FROM messages WHERE user_id = ? AND conversation_id = ? ORDER BY created_at ASC'
+    ).all(userId, conversationId);
+    assert.deepEqual(restored.map((row) => row.content), ['Before save']);
+  } finally {
+    database.exec('ROLLBACK');
+  }
+});
+
+test('saves loadSave rolls back deleted messages when restore insert fails', () => {
+  const database = createAppDatabase(':memory:');
+  const { userId, conversationId, timestamp } = createTestSetup(database);
+
+  insertMessage(database, userId, conversationId, 'user', 'Force save restore failure', timestamp);
+  const save = createSave(database, userId, conversationId, { name: 'Failing restore save' });
+  database.prepare('DELETE FROM messages WHERE user_id = ? AND conversation_id = ?').run(userId, conversationId);
+  insertMessage(database, userId, conversationId, 'assistant', 'Current message should remain', timestamp);
+
+  database.exec(`
+    CREATE TRIGGER fail_save_message_restore
+    BEFORE INSERT ON messages
+    WHEN NEW.content = 'Force save restore failure'
+    BEGIN
+      SELECT RAISE(ABORT, 'forced save restore failure');
+    END
+  `);
+
+  assert.throws(
+    () => loadSave(database, userId, save.id),
+    /forced save restore failure/
+  );
+
+  const messages = database
+    .prepare('SELECT content FROM messages WHERE user_id = ? AND conversation_id = ? ORDER BY created_at ASC, rowid ASC')
+    .all(userId, conversationId);
+  assert.deepEqual(messages.map((row) => row.content), ['Current message should remain']);
 });
 
 test('saves ownership isolation between users', () => {
@@ -4801,6 +7250,23 @@ test('character name over 40 characters is rejected', () => {
   );
 });
 
+test('character create rejects null payload with validation error', () => {
+  const database = createAppDatabase(':memory:');
+  const userId = 'character-null-payload-user';
+  database.prepare('INSERT INTO users (id, username, password_hash, created_at) VALUES (?, ?, ?, ?)').run(
+    userId,
+    'characternull',
+    'hash',
+    new Date().toISOString()
+  );
+
+  assert.throws(
+    () => createCharacter(database, userId, null),
+    /1-40/
+  );
+  assert.equal(database.prepare('SELECT COUNT(*) AS count FROM characters WHERE user_id = ?').get(userId).count, 0);
+});
+
 test('batch created characters list in descending created_at order by default', () => {
   const database = createAppDatabase(':memory:');
   const userId = 'batch-user';
@@ -4848,6 +7314,44 @@ test('batch created characters sort by name alphabetically when sort=name', () =
   // Should be sorted by name COLLATE NOCASE ASC
   const names = list.map((c) => c.name);
   assert.deepEqual(names, ['Alpha', 'Bravo', 'Charlie']);
+});
+
+test('character lists preserve deterministic tie order across sort modes', () => {
+  const database = createAppDatabase(':memory:');
+  const userId = 'character-order-user';
+  const timestamp = '2025-01-01T00:00:00.000Z';
+  database.prepare('INSERT INTO users (id, username, password_hash, created_at) VALUES (?, ?, ?, ?)').run(
+    userId,
+    'characterorder',
+    'hash',
+    timestamp
+  );
+  database.prepare(
+    'INSERT INTO characters (id, user_id, name, visibility, tags, render_plugins, author_advanced_settings, created_at, updated_at, last_used_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+  ).run('character-first', userId, 'Alpha', 'private', '[]', '[]', '{}', timestamp, timestamp, timestamp);
+  database.prepare(
+    'INSERT INTO characters (id, user_id, name, visibility, tags, render_plugins, author_advanced_settings, created_at, updated_at, last_used_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+  ).run('character-second', userId, 'Alpha', 'private', '[]', '[]', '{}', timestamp, timestamp, timestamp);
+  database.prepare(
+    'INSERT INTO characters (id, user_id, name, visibility, tags, render_plugins, author_advanced_settings, created_at, updated_at, last_used_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+  ).run('character-bravo', userId, 'Bravo', 'private', '[]', '[]', '{}', timestamp, timestamp, timestamp);
+
+  assert.deepEqual(
+    listCharacters(database, userId).map((character) => character.id),
+    ['character-bravo', 'character-second', 'character-first']
+  );
+  assert.deepEqual(
+    listCharacters(database, userId, null).map((character) => character.id),
+    ['character-bravo', 'character-second', 'character-first']
+  );
+  assert.deepEqual(
+    listCharacters(database, userId, { sort: 'used' }).map((character) => character.id),
+    ['character-bravo', 'character-second', 'character-first']
+  );
+  assert.deepEqual(
+    listCharacters(database, userId, { sort: 'name' }).map((character) => character.id),
+    ['character-second', 'character-first', 'character-bravo']
+  );
 });
 
 test('world book alwaysActive entry matches without any trigger keys', () => {

@@ -17,6 +17,12 @@ const STATUS_LABELS = {
   hidden: '隐藏'
 };
 
+const UPDATE_STATUS_META = {
+  updating: { key: 'updating', label: '更新中' },
+  updated: { key: 'updated', label: '已更新' },
+  'not-updated': { key: 'not-updated', label: '未更新' }
+};
+
 const props = defineProps({
   statusBar: {
     type: Object,
@@ -25,6 +31,10 @@ const props = defineProps({
   templateConfig: {
     type: Object,
     default: () => ({})
+  },
+  updateStatus: {
+    type: String,
+    default: 'not-updated'
   }
 });
 
@@ -124,6 +134,7 @@ const collapsedSummary = computed(() => {
 });
 
 const statusBarVisible = computed(() => hasCustomTemplate.value || hasContent.value || hasImmersiveContent.value);
+const updateStatusMeta = computed(() => UPDATE_STATUS_META[props.updateStatus] || UPDATE_STATUS_META['not-updated']);
 
 watch(collapseStorageKey, (key) => {
   collapsed.value = readCollapsedState(key);
@@ -596,6 +607,15 @@ function escapeHtml(value) {
       <span class="status-bar-collapsed-label">状态栏</span>
       <span class="flai-statusbar-title">{{ statusBarTitle }}</span>
       <span v-if="statusBarMeta" class="flai-statusbar-meta">{{ statusBarMeta }}</span>
+      <span
+        class="flai-statusbar-update-badge"
+        :class="`is-${updateStatusMeta.key}`"
+        role="status"
+        aria-live="polite"
+      >
+        <span class="flai-statusbar-update-dot" aria-hidden="true"></span>
+        <span>{{ updateStatusMeta.label }}</span>
+      </span>
       <span class="flai-statusbar-action">
         <ChevronDown :size="16" class="flai-statusbar-toggle-icon" />
         <span>展开</span>
@@ -614,6 +634,15 @@ function escapeHtml(value) {
           <span class="status-bar-collapsed-label">状态栏</span>
           <span class="flai-statusbar-title">{{ statusBarTitle }}</span>
           <span v-if="statusBarMeta" class="flai-statusbar-meta">{{ statusBarMeta }}</span>
+          <span
+            class="flai-statusbar-update-badge"
+            :class="`is-${updateStatusMeta.key}`"
+            role="status"
+            aria-live="polite"
+          >
+            <span class="flai-statusbar-update-dot" aria-hidden="true"></span>
+            <span>{{ updateStatusMeta.label }}</span>
+          </span>
         </button>
         <button
           class="flai-statusbar-toggle"
@@ -639,6 +668,16 @@ function escapeHtml(value) {
         <ChevronDown :size="16" class="flai-statusbar-toggle-icon expanded" />
         <span>收起</span>
       </button>
+      <span
+        v-if="hasCustomTemplate"
+        class="flai-statusbar-floating-status flai-statusbar-update-badge"
+        :class="`is-${updateStatusMeta.key}`"
+        role="status"
+        aria-live="polite"
+      >
+        <span class="flai-statusbar-update-dot" aria-hidden="true"></span>
+        <span>{{ updateStatusMeta.label }}</span>
+      </span>
 
       <div class="status-bar-collapse-body" :class="{ 'status-bar-collapse-body-custom': hasCustomTemplate }">
         <div v-if="hasCustomTemplate" class="status-bar-custom" @click="onCustomTemplateClick" v-html="customTemplateHtml"></div>
@@ -646,6 +685,15 @@ function escapeHtml(value) {
           <div v-if="hasContent" class="status-bar-header">
             <span class="status-bar-label">状态同步</span>
             <span class="status-bar-context">关联最新 AI 回复</span>
+            <span
+              class="flai-statusbar-update-badge"
+              :class="`is-${updateStatusMeta.key}`"
+              role="status"
+              aria-live="polite"
+            >
+              <span class="flai-statusbar-update-dot" aria-hidden="true"></span>
+              <span>{{ updateStatusMeta.label }}</span>
+            </span>
             <span class="status-bar-name">{{ statusBar.name || '状态栏' }}</span>
           </div>
           <div v-if="hasContent" class="status-bar-variables">
@@ -875,6 +923,59 @@ function escapeHtml(value) {
   color: color-mix(in srgb, var(--muted, #75685e) 58%, transparent);
 }
 
+.flai-statusbar-update-badge {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  min-height: 22px;
+  padding: 0 8px;
+  border: 1px solid color-mix(in srgb, var(--muted, #75685e) 22%, transparent);
+  border-radius: 999px;
+  color: color-mix(in srgb, var(--muted, #75685e) 92%, var(--text, #241f1b));
+  background: color-mix(in srgb, var(--muted, #75685e) 7%, transparent);
+  font-size: 0.68rem;
+  font-weight: 800;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.flai-statusbar-update-badge.is-updating {
+  border-color: color-mix(in srgb, #d97706 34%, transparent);
+  color: #a86400;
+  background: color-mix(in srgb, #f59e0b 13%, transparent);
+}
+
+.flai-statusbar-update-badge.is-updated {
+  border-color: color-mix(in srgb, #16a34a 30%, transparent);
+  color: #17803a;
+  background: color-mix(in srgb, #22c55e 12%, transparent);
+}
+
+.flai-statusbar-update-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: currentColor;
+  opacity: 0.75;
+}
+
+.flai-statusbar-update-badge.is-updating .flai-statusbar-update-dot {
+  animation: statusBarUpdatePulse 1s ease-in-out infinite;
+}
+
+.flai-statusbar-floating-status {
+  position: absolute;
+  top: 6px;
+  right: 78px;
+  z-index: 12;
+  min-height: 28px;
+  background: color-mix(in srgb, var(--surface, #fffaf2) 88%, transparent);
+  box-shadow: 0 8px 18px rgba(67, 45, 30, 0.10);
+  backdrop-filter: blur(8px);
+}
+
 .flai-statusbar-toggle {
   display: inline-flex !important;
   flex: 0 0 auto;
@@ -900,6 +1001,17 @@ function escapeHtml(value) {
   transform: translateY(-1px);
   border-color: color-mix(in srgb, var(--sb-accent, var(--primary, #8f3f2f)) 42%, var(--line, rgba(62,48,38,0.14)));
   background: color-mix(in srgb, var(--sb-accent, var(--primary, #8f3f2f)) 10%, var(--surface, #fffaf2));
+}
+
+@keyframes statusBarUpdatePulse {
+  0%, 100% {
+    opacity: 0.45;
+    transform: scale(0.82);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.15);
+  }
 }
 
 .flai-statusbar-toggle-icon {
@@ -1565,6 +1677,13 @@ function escapeHtml(value) {
 
   .flai-statusbar-title {
     font-size: 0.76rem;
+  }
+
+  .flai-statusbar-update-badge {
+    gap: 4px;
+    min-height: 20px;
+    padding: 0 6px;
+    font-size: 0.62rem;
   }
 
   .flai-statusbar-meta {

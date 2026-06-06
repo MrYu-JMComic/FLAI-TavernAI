@@ -1,7 +1,7 @@
 import { normalizeAccessorySkills, isAccessorySkillActive, normalizeAdvancedSettings } from '../modules/advancedSettings.js';
 import { processTransactionIntents, createConversationTransaction } from '../modules/economy.js';
 import { addNpcMemory, isConversationNpcHidden, upsertConversationNpc } from '../modules/npcs.js';
-import { applyVariableUpdates, extractVariablesFromText, upsertStatusBar } from '../modules/statusBars.js';
+import { STATUS_BAR_VARIABLE_LIMIT, applyVariableUpdates, extractVariablesFromText, upsertStatusBar } from '../modules/statusBars.js';
 import { detectSceneAndEmotion, findBestMatch, listCharacterImages } from '../modules/characterImages.js';
 import { hasUsableProvider, runToolCompletion } from './providers.js';
 
@@ -390,7 +390,7 @@ function normalizeStatusUpdates(args = {}) {
       };
     })
     .filter((item) => item.name && item.value !== '')
-    .slice(0, 20);
+    .slice(0, STATUS_BAR_VARIABLE_LIMIT);
 }
 
 function mergeStatusVariables(variables = [], updates = []) {
@@ -411,7 +411,7 @@ function mergeStatusVariables(variables = [], updates = []) {
           : {}),
       color: item.color || ''
     }));
-  return [...current, ...additions].slice(0, 20);
+  return [...current, ...additions].slice(0, STATUS_BAR_VARIABLE_LIMIT);
 }
 
 function statusVariableKey(value) {

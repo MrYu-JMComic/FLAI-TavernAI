@@ -21,7 +21,6 @@ import { getDefaultPreset, getPreset } from '../modules/presets.js';
 import { buildModSystemPrompt, getEnabledModsForUser } from '../modules/mods.js';
 import { buildTalentSystemPrompt } from '../modules/talents.js';
 import {
-  createDefaultAdvancedSettings,
   hasStatusBarBlueprint,
   normalizeAdvancedSettings,
   normalizeAccessorySkills
@@ -70,6 +69,7 @@ import {
 import { renderPromptVariables, resolvePromptUserName } from '../services/promptVariables.js';
 import { saveConversationAppearance } from '../modules/conversationAppearance.js';
 import { mergeAdvancedSettings } from '../modules/advancedSettings.js';
+import { withSavepoint } from '../modules/savepoint.js';
 import { getAccessorySkillsPayload, runAccessoryAgents } from '../services/accessoryAgents.js';
 import { toConversation, toMessage, withConversationUsage, parseJson, normalizeIdList } from './helpers.js';
 import { sendMessageSchema, updateMessageSchema, saveConversationSettingsSchema, saveStatusBarSchema, economyTransactionSchema, addNpcMemorySchema, addNpcBehaviorSchema, updateNpcBehaviorSchema, createSaveSchema, renameSaveSchema, createConversationSchema, bulkDeleteSchema, validate } from '../validations/schemas.js';
@@ -95,7 +95,7 @@ export function createConversationsRouter(ctx) {
          FROM conversations
          JOIN characters ON characters.id = conversations.character_id
          ${where}
-         ORDER BY conversations.updated_at DESC`
+         ORDER BY conversations.updated_at DESC, conversations.rowid DESC`
       )
       .all(...params);
 
@@ -236,7 +236,6 @@ export function createConversationsRouter(ctx) {
     const accessoryState = getAccessorySkillsPayload(conversation, statusBar);
     const npcPrompt = accessoryState.active.npcAgent ? buildNpcBehaviorPrompt(db, conversation.id) : '';
     const talentPrompt = accessoryState.active.talentPrompt ? buildTalentSystemPrompt(db, character.id) : '';
-    const activeAdvancedSettings = conversation.settings || createDefaultAdvancedSettings();
     const modelMessages = buildModelMessagesV2({
       character,
       history: getRecentMessages(request.auth.user.id, conversation.id),
@@ -248,10 +247,8 @@ export function createConversationsRouter(ctx) {
       modSystemPrompt: buildModSystemPrompt(userMods),
       npcBehaviorPrompt: npcPrompt,
       talentPrompt,
-      statusBar,
       authorAdvancedSettings: conversation.authorSettings || {},
-      userAdvancedSettings: conversation.userSettings || {},
-      statusBarPrompt: activeAdvancedSettings.statusBarPrompt || ''
+      userAdvancedSettings: conversation.userSettings || {}
     });
 
     const userMessage = insertMessage({
@@ -403,35 +400,35 @@ export function createConversationsRouter(ctx) {
       return;
     }
 
-    // Wrap multi-field update in a transaction for atomicity
-    db.exec('BEGIN');
-    try {
-      const settings = saveConversationAppearance(db, request.auth.user.id, request.params.id, request.body || {});
-      if (!settings) {
-        db.exec('ROLLBACK');
-        response.status(404).json({ error: '对话不存在' });
+    const requestedLorebookId = request.body?.chatLorebookId !== undefined
+      ? request.body.chatLorebookId ? String(request.body.chatLorebookId).trim() : null
+      : undefined;
+    if (requestedLorebookId) {
+      const book = db.prepare('SELECT id FROM world_books WHERE id = ? AND user_id = ?').get(requestedLorebookId, request.auth.user.id);
+      if (!book) {
+        response.status(400).json({ error: '指定的世界书不存在' });
         return;
       }
-      if (request.body?.chatLorebookId !== undefined) {
-        const lorebookId = request.body.chatLorebookId ? String(request.body.chatLorebookId).trim() : null;
-        if (lorebookId) {
-          const book = db.prepare('SELECT id FROM world_books WHERE id = ? AND user_id = ?').get(lorebookId, request.auth.user.id);
-          if (!book) {
-            db.exec('ROLLBACK');
-            response.status(400).json({ error: '指定的世界书不存在' });
-            return;
-          }
-        }
-        db.prepare('UPDATE conversations SET chat_lorebook_id = ?, updated_at = ? WHERE id = ? AND user_id = ?')
-          .run(lorebookId, nowIso(), request.params.id, request.auth.user.id);
-      }
-      db.exec('COMMIT');
-      const updated = getConversation(request.auth.user.id, request.params.id);
-      response.json({ ...(updated?.settings || settings), chatLorebookId: updated?.chatLorebookId ?? null });
-    } catch (error) {
-      try { db.exec('ROLLBACK'); } catch { /* already rolled back */ }
-      throw error;
     }
+
+    const settings = withSavepoint(db, 'sp_save_conversation_settings', () => {
+      const savedSettings = saveConversationAppearance(db, request.auth.user.id, request.params.id, request.body || {});
+      if (!savedSettings) {
+        return null;
+      }
+      if (requestedLorebookId !== undefined) {
+        db.prepare('UPDATE conversations SET chat_lorebook_id = ?, updated_at = ? WHERE id = ? AND user_id = ?')
+          .run(requestedLorebookId, nowIso(), request.params.id, request.auth.user.id);
+      }
+      return savedSettings;
+    });
+    if (!settings) {
+      response.status(404).json({ error: '对话不存在' });
+      return;
+    }
+
+    const updated = getConversation(request.auth.user.id, request.params.id);
+    response.json({ ...(updated?.settings || settings), chatLorebookId: updated?.chatLorebookId ?? null });
   });
 
   router.get('/:id/accessory-skills', requireAuth, (request, response) => {
@@ -673,7 +670,7 @@ export function createConversationsRouter(ctx) {
       .prepare(
         `SELECT * FROM messages
          WHERE user_id = ? AND conversation_id = ?
-         ORDER BY created_at ASC`
+         ORDER BY created_at ASC, rowid ASC`
       )
       .all(userId, conversationId)
       .filter(isDisplayableMessageRow)
@@ -744,7 +741,7 @@ export function createConversationsRouter(ctx) {
       .prepare(
         `SELECT * FROM messages
          WHERE user_id = ? AND conversation_id = ?
-         ORDER BY created_at DESC
+         ORDER BY created_at DESC, rowid DESC
          LIMIT 20`
       )
       .all(userId, conversationId)
@@ -828,28 +825,11 @@ export function createConversationsRouter(ctx) {
     modSystemPrompt = '',
     npcBehaviorPrompt = '',
     talentPrompt = '',
-    statusBar = null,
     authorAdvancedSettings = {},
-    userAdvancedSettings = {},
-    statusBarPrompt = ''
+    userAdvancedSettings = {}
   }) {
     const promptUserName = resolvePromptUserName(userName || user);
     const renderField = (value) => renderPromptVariables(value, promptUserName);
-    const statusBarLines = Array.isArray(statusBar?.variables) && statusBar.variables.length
-      ? [
-          '[状态栏]',
-          `名称：${statusBar.name || '状态栏'}`,
-          ...statusBar.variables.map((item) => `- ${item.name}: ${Number(item.value || 0)}/${Number(item.max || 0)}`),
-          '将这些变量视为当前状态上下文；后台状态栏 Agent 会异步更新变量；正文只写角色内容，不要手写状态栏表格。'
-        ]
-      : [];
-    const statusBarPromptLines = String(statusBarPrompt || '').trim()
-      ? [
-          '[状态栏更新规则]',
-          renderField(statusBarPrompt),
-          '后台状态栏 Agent 会异步处理这些规则；回复正文只写角色内容，不要输出状态栏更新记录。'
-        ]
-      : [];
     const baseSystemPrompt = [
       `你正在扮演角色「${character.name}」。`,
       character.gender ? `性别：${character.gender}` : '',
@@ -861,8 +841,6 @@ export function createConversationsRouter(ctx) {
       modSystemPrompt ? `\n[Mod 指令]\n${modSystemPrompt}` : '',
       npcBehaviorPrompt ? npcBehaviorPrompt : '',
       talentPrompt ? `\n${talentPrompt}` : '',
-      statusBarPromptLines.length ? `\n${statusBarPromptLines.join('\n')}` : '',
-      statusBarLines.length ? `\n${statusBarLines.join('\n')}` : '',
       '保持角色一致，用自然中文回复。不要伪造内部思考；如果模型接口返回思考内容，系统会单独展示。'
     ]
       .filter(Boolean)
@@ -931,6 +909,14 @@ export function createConversationsRouter(ctx) {
         controller.abort();
       }
     });
+
+    // Server-side timeout: abort if AI provider hangs for 5 minutes
+    const serverTimeout = setTimeout(() => {
+      if (!response.destroyed) {
+        controller.abort(new Error('服务端生成超时，请重试。'));
+      }
+    }, 300_000);
+
     const emit = (event, data) => writeSse(response, event, data);
     emit('meta', {
       provider: settings.gatewayName,
@@ -991,6 +977,8 @@ export function createConversationsRouter(ctx) {
         emit('error', { error: error?.message || '生成失败' });
         response.end();
       }
+    } finally {
+      clearTimeout(serverTimeout);
     }
   }
 

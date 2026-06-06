@@ -1,15 +1,8 @@
 import { nowIso } from '../security.js';
 import { normalizeAdvancedSettings } from './advancedSettings.js';
 
-const defaultAppearance = () => ({
-  desktopBackgroundUrl: '',
-  mobileBackgroundUrl: '',
-  customCss: '',
-  customJs: '',
-  statusBarPrompt: ''
-});
-
 export function normalizeConversationAppearance(input = {}) {
+  input = input ?? {};
   const desktopBackgroundUrl = normalizeImageUrl(
     input.desktopBackgroundUrl ?? input.desktop_background_url ?? input.desktopBgUrl ?? ''
   );
@@ -79,13 +72,6 @@ export function saveConversationAppearance(database, userId, conversationId, pay
   );
 
   return toLegacyAppearance(appearance);
-}
-
-export function mergeConversationAppearance(row = {}) {
-  return {
-    ...defaultAppearance(),
-    ...normalizeConversationAppearance(row)
-  };
 }
 
 function normalizeImageUrl(value) {

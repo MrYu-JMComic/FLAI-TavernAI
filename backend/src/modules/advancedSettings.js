@@ -1,30 +1,20 @@
 const STATUS_BLUEPRINT_VARIABLE_LIMIT = 60;
 
-export function createDefaultAdvancedSettings() {
-  return {
-    desktopBackgroundUrl: '',
-    mobileBackgroundUrl: '',
-    customCss: '',
-    customJs: '',
-    statusBarPrompt: '',
-    statusBarBlueprint: createDefaultStatusBarBlueprint(),
-    accessorySkills: createDefaultAccessorySkills()
-  };
-}
-
 export function normalizeAdvancedSettings(input = {}) {
+  const source = normalizeObject(input);
   return {
-    desktopBackgroundUrl: normalizeImageUrl(input.desktopBackgroundUrl ?? input.desktop_background_url ?? ''),
-    mobileBackgroundUrl: normalizeImageUrl(input.mobileBackgroundUrl ?? input.mobile_background_url ?? ''),
-    customCss: normalizeText(input.customCss ?? input.custom_css ?? ''),
-    customJs: normalizeText(input.customJs ?? input.custom_js ?? ''),
-    statusBarPrompt: normalizeText(input.statusBarPrompt ?? input.status_bar_prompt ?? input.status_bar_prompt_text ?? ''),
-    statusBarBlueprint: normalizeStatusBarBlueprint(input.statusBarBlueprint ?? input.status_bar_blueprint ?? {}),
-    accessorySkills: normalizeAccessorySkills(input.accessorySkills ?? input.accessory_skills ?? {})
+    desktopBackgroundUrl: normalizeImageUrl(source.desktopBackgroundUrl ?? source.desktop_background_url ?? ''),
+    mobileBackgroundUrl: normalizeImageUrl(source.mobileBackgroundUrl ?? source.mobile_background_url ?? ''),
+    customCss: normalizeText(source.customCss ?? source.custom_css ?? ''),
+    customJs: normalizeText(source.customJs ?? source.custom_js ?? ''),
+    statusBarPrompt: normalizeText(source.statusBarPrompt ?? source.status_bar_prompt ?? source.status_bar_prompt_text ?? ''),
+    statusBarBlueprint: normalizeStatusBarBlueprint(source.statusBarBlueprint ?? source.status_bar_blueprint ?? {}),
+    accessorySkills: normalizeAccessorySkills(source.accessorySkills ?? source.accessory_skills ?? {})
   };
 }
 
 export function mergeAdvancedSettings(author = {}, user = {}) {
+  const userSource = normalizeObject(user);
   const authorSettings = normalizeAdvancedSettings(author);
   const userSettings = normalizeAdvancedSettings(user);
   return {
@@ -38,31 +28,8 @@ export function mergeAdvancedSettings(author = {}, user = {}) {
       : authorSettings.statusBarBlueprint,
     accessorySkills: mergeAccessorySkills(
       authorSettings.accessorySkills,
-      user.accessorySkills ?? user.accessory_skills ?? {}
+      userSource.accessorySkills ?? userSource.accessory_skills ?? {}
     )
-  };
-}
-
-export function splitAdvancedSettings(settings = {}) {
-  const normalized = normalizeAdvancedSettings(settings);
-  return {
-    appearance: {
-      desktopBackgroundUrl: normalized.desktopBackgroundUrl,
-      mobileBackgroundUrl: normalized.mobileBackgroundUrl,
-      customCss: normalized.customCss,
-      customJs: normalized.customJs
-    },
-    statusBarPrompt: normalized.statusBarPrompt,
-    statusBarBlueprint: normalized.statusBarBlueprint,
-    accessorySkills: normalized.accessorySkills
-  };
-}
-
-export function createDefaultStatusBarBlueprint() {
-  return {
-    name: '',
-    variables: [],
-    template: ''
   };
 }
 
@@ -110,6 +77,7 @@ export function mergeAccessorySkills(author = {}, user = {}) {
 }
 
 export function isAccessorySkillActive(skills = {}, key, context = {}) {
+  context = normalizeObject(context);
   const normalized = normalizeAccessorySkills(skills);
   const skill = normalized[key];
   if (!skill) {
@@ -307,6 +275,10 @@ function normalizeSkillConfig(value, fallback = createSkillConfig(false)) {
     enabled: normalizeEnabled(input.enabled, fallback.enabled),
     modelOverride: normalizeModelOverride(input.modelOverride ?? input.model_override ?? fallback.modelOverride)
   };
+}
+
+function normalizeObject(value) {
+  return value && typeof value === 'object' ? value : {};
 }
 
 function normalizeEnabled(value, fallback) {

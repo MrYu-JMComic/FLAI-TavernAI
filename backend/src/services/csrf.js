@@ -21,14 +21,14 @@ const TOKEN_LENGTH = 32;
 /**
  * 生成随机 CSRF token
  */
-export function generateCsrfToken() {
+function generateCsrfToken() {
   return crypto.randomBytes(TOKEN_LENGTH).toString('base64url');
 }
 
 /**
  * 设置 CSRF cookie（不可被 JS 读取，但会自动随请求发送）
  */
-export function setCsrfCookie(response, token) {
+function setCsrfCookie(response, token) {
   response.cookie(CSRF_COOKIE_NAME, token, {
     httpOnly: false, // 前端需要读取此 cookie 来设置 header
     sameSite: 'lax',

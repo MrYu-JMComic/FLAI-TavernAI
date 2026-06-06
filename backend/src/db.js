@@ -3,6 +3,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
 import { newId } from './security.js';
+import { resetMessageCounter } from './modules/worldBooks.js';
 
 const sourceDir = path.dirname(fileURLToPath(import.meta.url));
 export const backendRoot = path.resolve(sourceDir, '..');
@@ -43,6 +44,7 @@ export function createAppDatabase(filename = path.join(dataDir, 'flai.sqlite')) 
   // Clear column cache so each database instance starts fresh (prevents
   // cross-instance cache pollution in tests using :memory: databases)
   _tableColumnCache.clear();
+  resetMessageCounter();
   const database = new DatabaseSync(filename);
   database.exec('PRAGMA foreign_keys = ON');
   database.exec('PRAGMA journal_mode = WAL');

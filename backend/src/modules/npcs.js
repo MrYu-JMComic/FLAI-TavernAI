@@ -8,7 +8,7 @@ export function listNpcMemories(database, userId, conversationId, npcName) {
     .prepare(
       `SELECT * FROM npc_memories
        WHERE conversation_id = ? AND npc_name = ?
-       ORDER BY created_at DESC`
+       ORDER BY created_at DESC, rowid DESC`
     )
     .all(conversationId, npcName)
     .map(toNpcMemory);
@@ -16,6 +16,7 @@ export function listNpcMemories(database, userId, conversationId, npcName) {
 
 export function addNpcMemory(database, userId, conversationId, npcName, payload = {}) {
   assertConversationAccess(database, userId, conversationId);
+  payload = normalizePayload(payload);
   const id = newId();
   const timestamp = nowIso();
   const memoryType = normalizeMemoryType(payload.memoryType);
@@ -53,7 +54,7 @@ export function listNpcBehaviors(database, userId, conversationId, npcName) {
     .prepare(
       `SELECT * FROM npc_behaviors
        WHERE conversation_id = ? AND npc_name = ?
-       ORDER BY priority DESC, created_at ASC`
+       ORDER BY priority DESC, created_at ASC, rowid ASC`
     )
     .all(conversationId, npcName)
     .map(toNpcBehavior);
@@ -61,6 +62,7 @@ export function listNpcBehaviors(database, userId, conversationId, npcName) {
 
 export function addNpcBehavior(database, userId, conversationId, npcName, payload = {}) {
   assertConversationAccess(database, userId, conversationId);
+  payload = normalizePayload(payload);
   const id = newId();
   const timestamp = nowIso();
   const behaviorType = normalizeBehaviorType(payload.behaviorType);
@@ -80,6 +82,7 @@ export function addNpcBehavior(database, userId, conversationId, npcName, payloa
 }
 
 export function updateNpcBehavior(database, userId, conversationId, behaviorId, payload = {}) {
+  payload = normalizePayload(payload);
   const row = database
     .prepare(
       `SELECT npc_behaviors.id FROM npc_behaviors
@@ -125,6 +128,7 @@ export function deleteNpcBehavior(database, userId, conversationId, behaviorId) 
 
 export function upsertConversationNpc(database, userId, conversationId, payload = {}) {
   assertConversationAccess(database, userId, conversationId);
+  payload = normalizePayload(payload);
   const npcName = normalizeNpcName(payload.npcName ?? payload.name);
   if (!npcName) {
     return null;
@@ -284,7 +288,7 @@ export function buildNpcBehaviorPrompt(database, conversationId) {
     .prepare(
       `SELECT * FROM npc_behaviors
        WHERE conversation_id = ? AND enabled = 1
-       ORDER BY priority DESC, created_at ASC`
+       ORDER BY priority DESC, created_at ASC, rowid ASC`
     )
     .all(conversationId);
 
@@ -309,7 +313,7 @@ export function buildNpcBehaviorPrompt(database, conversationId) {
       .prepare(
         `SELECT content, memory_type FROM npc_memories
          WHERE conversation_id = ? AND npc_name = ?
-         ORDER BY created_at DESC LIMIT 5`
+         ORDER BY created_at DESC, rowid DESC LIMIT 5`
       )
       .all(conversationId, npcName);
 
@@ -412,6 +416,10 @@ function normalizeNpcCandidate(value) {
 
 function normalizeNpcName(value) {
   return normalizeNpcCandidate(value).slice(0, 80);
+}
+
+function normalizePayload(value) {
+  return value && typeof value === 'object' ? value : {};
 }
 
 function normalizeNpcSource(value) {

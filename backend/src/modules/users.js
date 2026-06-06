@@ -86,7 +86,7 @@ export function getOwnedCharacterStats(database, userId) {
        LEFT JOIN character_likes ON character_likes.character_id = characters.id
        WHERE characters.user_id = ?
        GROUP BY characters.id
-       ORDER BY COALESCE(characters.last_used_at, characters.created_at) DESC`
+       ORDER BY COALESCE(characters.last_used_at, characters.created_at) DESC, characters.rowid DESC`
     )
     .all(userId)
     .map((row) => ({

@@ -845,7 +845,7 @@ async function onRegexDrop(dropIndex) {
   regexRules.value = items;
   dragIndex.value = -1;
   try {
-    await reorderRegexRules(items.map((r) => r.id));
+    await reorderRegexRules(items.map((r) => r.id), regexGroupFilter.value);
     notify.success('排序已保存');
   } catch (err) {
     notify.error(err.message);

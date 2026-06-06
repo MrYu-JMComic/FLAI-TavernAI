@@ -8,7 +8,7 @@ export function listMods(database, userId) {
       `SELECT id, user_id, name, description, type, content, enabled, order_index, created_at
        FROM mods
        WHERE user_id = ?
-       ORDER BY order_index ASC, created_at DESC`
+       ORDER BY order_index ASC, created_at DESC, rowid DESC`
     )
     .all(userId)
     .map(toMod);
@@ -89,11 +89,38 @@ export function deleteMod(database, userId, modId) {
 }
 
 export function reorderMods(database, userId, orderedIds) {
+  const current = database
+    .prepare(
+      `SELECT id
+       FROM mods
+       WHERE user_id = ?
+       ORDER BY order_index ASC, created_at DESC, rowid DESC`
+    )
+    .all(userId);
+  const existingIds = new Set(current.map((row) => row.id));
+  const seen = new Set();
+  const nextIds = [];
+
+  for (const rawId of Array.isArray(orderedIds) ? orderedIds : []) {
+    const id = String(rawId || '').trim();
+    if (!id || seen.has(id) || !existingIds.has(id)) {
+      continue;
+    }
+    seen.add(id);
+    nextIds.push(id);
+  }
+
+  for (const row of current) {
+    if (!seen.has(row.id)) {
+      nextIds.push(row.id);
+    }
+  }
+
   const statement = database.prepare(
     'UPDATE mods SET order_index = ? WHERE id = ? AND user_id = ?'
   );
-  for (let i = 0; i < orderedIds.length; i++) {
-    statement.run(i, orderedIds[i], userId);
+  for (let i = 0; i < nextIds.length; i++) {
+    statement.run(i, nextIds[i], userId);
   }
   return listMods(database, userId);
 }
@@ -104,7 +131,7 @@ export function getEnabledModsForUser(database, userId) {
       `SELECT id, name, type, content
        FROM mods
        WHERE user_id = ? AND enabled = 1
-       ORDER BY order_index ASC, created_at DESC`
+       ORDER BY order_index ASC, created_at DESC, rowid DESC`
     )
     .all(userId)
     .map(toMod);

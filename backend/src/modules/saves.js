@@ -1,4 +1,5 @@
 import { newId, nowIso } from '../security.js';
+import { withSavepoint } from './savepoint.js';
 
 // ── Save CRUD ──
 
@@ -11,7 +12,7 @@ export function listSaves(database, userId, conversationId) {
       `SELECT id, conversation_id, name, preview, created_at
        FROM saves
        WHERE user_id = ? AND conversation_id = ?
-       ORDER BY created_at DESC`
+       ORDER BY created_at DESC, rowid DESC`
     )
     .all(userId, conversationId)
     .map(toSaveSummary);
@@ -85,9 +86,7 @@ export function loadSave(database, userId, saveId) {
 
   const conversationId = row.conversation_id;
 
-  // Wrap DELETE + INSERT in a transaction to prevent message loss on failure
-  database.exec('BEGIN');
-  try {
+  withSavepoint(database, 'sp_load_save', () => {
     // Clear existing messages for this conversation
     database
       .prepare('DELETE FROM messages WHERE user_id = ? AND conversation_id = ?')
@@ -117,12 +116,7 @@ export function loadSave(database, userId, saveId) {
     database
       .prepare('UPDATE conversations SET updated_at = ? WHERE id = ? AND user_id = ?')
       .run(nowIso(), conversationId, userId);
-
-    database.exec('COMMIT');
-  } catch (error) {
-    database.exec('ROLLBACK');
-    throw error;
-  }
+  });
 
   return {
     conversationId,
@@ -138,7 +132,7 @@ function buildSnapshot(database, userId, conversationId) {
       `SELECT id, role, content, reasoning, usage_json, created_at
        FROM messages
        WHERE user_id = ? AND conversation_id = ?
-       ORDER BY created_at ASC`
+       ORDER BY created_at ASC, rowid ASC`
     )
     .all(userId, conversationId)
     .map((row) => ({

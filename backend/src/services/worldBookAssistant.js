@@ -1,4 +1,5 @@
 import { runToolCompletion, streamToolCompletion } from './providers.js';
+import { nullToEmptyObject, objectOrEmpty, parseLooseJsonObject } from './assistantUtils.js';
 
 const positionValues = ['at_start', 'before_char', 'after_char', 'at_depth'];
 
@@ -64,7 +65,8 @@ const worldBookTools = [
   }
 ];
 
-export async function completeWorldBookDraft(settings, { requirement = '', current = {}, signal } = {}) {
+export async function completeWorldBookDraft(settings, request = {}) {
+  const { requirement = '', current = {}, signal } = nullToEmptyObject(request);
   const draft = normalizeDraft(current);
 
   const result = await runToolCompletion(
@@ -102,7 +104,7 @@ export async function completeWorldBookDraft(settings, { requirement = '', curre
   );
 
   if (!result.toolCalls.length && result.content) {
-    mergeProfile(draft, parseLooseJson(result.content));
+    mergeProfile(draft, parseLooseJsonObject(result.content));
   }
 
   const normalized = normalizeDraft(draft);
@@ -127,7 +129,8 @@ export async function completeWorldBookDraft(settings, { requirement = '', curre
   };
 }
 
-export async function streamWorldBookDraft(settings, { requirement = '', current = {}, signal, emit = () => {} } = {}) {
+export async function streamWorldBookDraft(settings, request = {}) {
+  const { requirement = '', current = {}, signal, emit = () => {} } = nullToEmptyObject(request);
   const draft = normalizeDraft(current);
 
   const result = await streamToolCompletion(
@@ -167,7 +170,7 @@ export async function streamWorldBookDraft(settings, { requirement = '', current
   );
 
   if (!result.toolCalls.length && result.content) {
-    mergeProfile(draft, parseLooseJson(result.content));
+    mergeProfile(draft, parseLooseJsonObject(result.content));
   }
 
   const normalized = normalizeDraft(draft);
@@ -193,12 +196,13 @@ export async function streamWorldBookDraft(settings, { requirement = '', current
 }
 
 function executeWorldBookTool(name, args, draft) {
+  const toolArgs = objectOrEmpty(args);
   if (name === 'set_world_book_profile') {
-    return { ok: true, applied: mergeProfile(draft, args) };
+    return { ok: true, applied: mergeProfile(draft, toolArgs) };
   }
   if (name === 'replace_world_book_entries') {
-    draft.entries = Array.isArray(args.entries)
-      ? args.entries.map((entry, index) => normalizeEntry(entry, index)).filter((entry) => entry.name && entry.content)
+    draft.entries = Array.isArray(toolArgs.entries)
+      ? toolArgs.entries.map((entry, index) => normalizeEntry(entry, index)).filter((entry) => entry.name && entry.content)
       : [];
     return { ok: true, count: draft.entries.length };
   }
@@ -220,6 +224,7 @@ function worldBookNoToolNudge(draft) {
 }
 
 function mergeProfile(draft, args = {}) {
+  args = objectOrEmpty(args);
   const applied = {};
   if (Object.prototype.hasOwnProperty.call(args, 'name')) {
     draft.name = limitText(args.name, 80);
@@ -245,19 +250,21 @@ function mergeProfile(draft, args = {}) {
 }
 
 function normalizeDraft(value = {}) {
+  const draft = objectOrEmpty(value);
   return {
-    name: limitText(value.name || '', 80),
-    description: limitText(value.description || '', 2000),
-    characterId: String(value.characterId || '').trim(),
-    scanDepth: clampInt(value.scanDepth, 1, 50, 4),
-    lorebookContextPercent: clampInt(value.lorebookContextPercent, 1, 100, 25),
-    entries: Array.isArray(value.entries)
-      ? value.entries.map((entry, index) => normalizeEntry(entry, index)).filter((entry) => entry.name || entry.content)
+    name: limitText(draft.name || '', 80),
+    description: limitText(draft.description || '', 2000),
+    characterId: String(draft.characterId || '').trim(),
+    scanDepth: clampInt(draft.scanDepth, 1, 50, 4),
+    lorebookContextPercent: clampInt(draft.lorebookContextPercent, 1, 100, 25),
+    entries: Array.isArray(draft.entries)
+      ? draft.entries.map((entry, index) => normalizeEntry(entry, index)).filter((entry) => entry.name || entry.content)
       : []
   };
 }
 
 function normalizeEntry(entry = {}, index = 0) {
+  entry = objectOrEmpty(entry);
   const position = positionValues.includes(entry.position) ? entry.position : 'before_char';
   const alwaysActive = Boolean(entry.alwaysActive);
   return {
@@ -301,14 +308,6 @@ function clampInt(value, min, max, fallback) {
 
 function limitText(value, max) {
   return String(value || '').trim().slice(0, max);
-}
-
-function parseLooseJson(text) {
-  try {
-    return JSON.parse(text);
-  } catch {
-    return {};
-  }
 }
 
 function inferWorldBookName(requirement, entries = []) {

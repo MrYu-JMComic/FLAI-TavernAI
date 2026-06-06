@@ -5,6 +5,7 @@ import {
   toggleRegexRule,
   reorderRegexRules
 } from '../modules/characters.js';
+import { withSavepoint } from '../modules/savepoint.js';
 import { validate } from '../validations/schemas.js';
 import { z } from 'zod';
 
@@ -46,7 +47,8 @@ export function createRegexRouter(ctx) {
       response.status(400).json({ error: '请提供排序后的规则 ID 列表' });
       return;
     }
-    const changed = reorderRegexRules(db, request.auth.user.id, orderedIds);
+    const group = String(request.body?.group || '').trim();
+    const changed = reorderRegexRules(db, request.auth.user.id, orderedIds, { group });
     response.json({ ok: true, changed });
   });
 
@@ -61,14 +63,10 @@ export function createRegexRouter(ctx) {
       : Array.isArray(request.body)
         ? request.body
         : [request.body].filter(Boolean);
-    const insert = db.prepare(
-      `INSERT INTO regex_rules (
-        id, user_id, character_id, label, pattern, replacement, flags, scope, enabled, order_index, group_name, priority
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-    );
-    let imported = 0;
-    const skipped = [];
 
+    // Pre-validate and filter items outside the transaction
+    const validItems = [];
+    const skipped = [];
     for (const [index, item] of items.entries()) {
       let rule;
       try {
@@ -88,21 +86,41 @@ export function createRegexRouter(ctx) {
         skipped.push({ index, reason: 'character not found or not owned' });
         continue;
       }
-      insert.run(
-        newId(),
-        request.auth.user.id,
-        rule.characterId,
-        rule.label,
-        rule.pattern,
-        rule.replacement,
-        rule.flags,
-        rule.scope,
-        rule.enabled ? 1 : 0,
-        rule.order,
-        rule.groupName,
-        rule.priority
-      );
-      imported += 1;
+      validItems.push(rule);
+    }
+
+    // Wrap all inserts in a single transaction for atomicity
+    let imported = 0;
+    if (validItems.length > 0) {
+      try {
+        withSavepoint(db, 'sp_import_regex', () => {
+          const insert = db.prepare(
+            `INSERT INTO regex_rules (
+              id, user_id, character_id, label, pattern, replacement, flags, scope, enabled, order_index, group_name, priority
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+          );
+          for (const rule of validItems) {
+            insert.run(
+              newId(),
+              request.auth.user.id,
+              rule.characterId,
+              rule.label,
+              rule.pattern,
+              rule.replacement,
+              rule.flags,
+              rule.scope,
+              rule.enabled ? 1 : 0,
+              rule.order,
+              rule.groupName,
+              rule.priority
+            );
+            imported += 1;
+          }
+        });
+      } catch (error) {
+        response.status(500).json({ error: '导入失败，已回滚所有变更', imported: 0, skipped });
+        return;
+      }
     }
 
     response.status(201).json({ imported, skipped });

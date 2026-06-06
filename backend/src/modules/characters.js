@@ -1,6 +1,13 @@
 import { newId, nowIso } from '../security.js';
-import { avatarShortUrl, deleteAvatarAsset, saveAvatarInput } from '../services/avatars.js';
+import {
+  avatarShortUrl,
+  characterBackgroundOwnerTypes,
+  deleteAvatarAsset,
+  saveAvatarInput,
+  saveBackgroundImageInput
+} from '../services/avatars.js';
 import { normalizeAdvancedSettings } from './advancedSettings.js';
+import { withSavepoint } from './savepoint.js';
 
 const characterColumns = `characters.*,
   avatar_assets.id AS avatar_asset_id,
@@ -11,7 +18,8 @@ const characterColumns = `characters.*,
 const avatarAssetJoin =
   "LEFT JOIN avatar_assets ON avatar_assets.owner_type = 'character' AND avatar_assets.owner_id = characters.id";
 
-export function listCharacters(database, userId, { search = '', sort = 'created', tag = '' } = {}) {
+export function listCharacters(database, userId, options = {}) {
+  const { search = '', sort = 'created', tag = '' } = options ?? {};
   const query = String(search || '').trim();
   const tagFilter = String(tag || '').trim();
   const params = [userId, userId, userId];
@@ -29,11 +37,11 @@ export function listCharacters(database, userId, { search = '', sort = 'created'
   }
 
   if (sort === 'used') {
-    sql += ' ORDER BY COALESCE(characters.last_used_at, characters.created_at) DESC';
+    sql += ' ORDER BY COALESCE(characters.last_used_at, characters.created_at) DESC, characters.rowid DESC';
   } else if (sort === 'name') {
-    sql += ' ORDER BY characters.name COLLATE NOCASE ASC';
+    sql += ' ORDER BY characters.name COLLATE NOCASE ASC, characters.created_at DESC, characters.rowid DESC';
   } else {
-    sql += ' ORDER BY characters.created_at DESC';
+    sql += ' ORDER BY characters.created_at DESC, characters.rowid DESC';
   }
 
   return database.prepare(sql).all(...params).map((row) => toCharacter(row, undefined, userId));
@@ -64,6 +72,11 @@ export function createCharacter(database, userId, payload) {
     ownerType: 'character',
     ownerId: id,
     value: data.avatarUrl
+  });
+  data.authorAdvancedSettings = saveCharacterAdvancedBackgrounds(database, {
+    userId,
+    characterId: id,
+    settings: data.authorAdvancedSettings
   });
   database
     .prepare(
@@ -109,6 +122,11 @@ export function updateCharacter(database, userId, characterId, payload) {
     ownerId: characterId,
     value: data.avatarUrl
   });
+  data.authorAdvancedSettings = saveCharacterAdvancedBackgrounds(database, {
+    userId,
+    characterId,
+    settings: data.authorAdvancedSettings
+  });
   database
     .prepare(
       `UPDATE characters
@@ -144,6 +162,8 @@ export function deleteCharacter(database, userId, characterId) {
     .run(characterId, userId);
   if (result.changes > 0) {
     deleteAvatarAsset(database, 'character', characterId);
+    deleteAvatarAsset(database, characterBackgroundOwnerTypes.desktop, characterId);
+    deleteAvatarAsset(database, characterBackgroundOwnerTypes.mobile, characterId);
   }
   return result.changes > 0;
 }
@@ -177,11 +197,11 @@ export function touchCharacter(database, userId, characterId) {
 export function getRegexRules(database, userId, characterId) {
   return database
     .prepare(
-      `SELECT * FROM regex_rules
+      `SELECT *, rowid AS _rowid FROM regex_rules
        WHERE user_id = ? AND character_id = ?`
     )
     .all(userId, characterId)
-    .sort((a, b) => (a.priority ?? 0) - (b.priority ?? 0) || a.order_index - b.order_index)
+    .sort((a, b) => (a.priority ?? 0) - (b.priority ?? 0) || a.order_index - b.order_index || a._rowid - b._rowid)
     .map((row) => ({
       id: row.id,
       label: row.label,
@@ -197,7 +217,7 @@ export function getRegexRules(database, userId, characterId) {
 }
 
 export function getRegexRulesByGroup(database, userId, group) {
-  let sql = 'SELECT * FROM regex_rules WHERE user_id = ?';
+  let sql = 'SELECT *, rowid AS _rowid FROM regex_rules WHERE user_id = ?';
   const params = [userId];
   if (group) {
     sql += ' AND group_name = ?';
@@ -206,7 +226,7 @@ export function getRegexRulesByGroup(database, userId, group) {
   return database
     .prepare(sql)
     .all(...params)
-    .sort((a, b) => (a.priority ?? 0) - (b.priority ?? 0) || a.order_index - b.order_index)
+    .sort((a, b) => (a.priority ?? 0) - (b.priority ?? 0) || a.order_index - b.order_index || a._rowid - b._rowid)
     .map((row) => ({
       id: row.id,
       characterId: row.character_id,
@@ -225,8 +245,7 @@ export function getRegexRulesByGroup(database, userId, group) {
 export function replaceRegexRules(database, userId, characterId, rules = []) {
   // Use SAVEPOINT so callers already inside a transaction don't trigger
   // "cannot start a transaction within a transaction" errors.
-  database.exec('SAVEPOINT sp_replace_regex');
-  try {
+  withSavepoint(database, 'sp_replace_regex', () => {
     database
       .prepare('DELETE FROM regex_rules WHERE user_id = ? AND character_id = ?')
       .run(userId, characterId);
@@ -253,13 +272,7 @@ export function replaceRegexRules(database, userId, characterId, rules = []) {
         rule.priority ?? 0
       );
     });
-
-    database.exec('RELEASE SAVEPOINT sp_replace_regex');
-  } catch (error) {
-    database.exec('ROLLBACK TO SAVEPOINT sp_replace_regex');
-    database.exec('RELEASE SAVEPOINT sp_replace_regex');
-    throw error;
-  }
+  });
 }
 
 export function toggleRegexRule(database, userId, ruleId) {
@@ -282,21 +295,48 @@ export function toggleRegexRule(database, userId, ruleId) {
   };
 }
 
-export function reorderRegexRules(database, userId, orderedIds) {
-  database.exec('BEGIN');
-  try {
+export function reorderRegexRules(database, userId, orderedIds, options = {}) {
+  const { group = null } = options ?? {};
+  const groupFilter = String(group || '').trim();
+  const params = [userId];
+  let sql = `SELECT id
+             FROM regex_rules
+             WHERE user_id = ?`;
+  if (groupFilter) {
+    sql += ' AND group_name = ?';
+    params.push(groupFilter);
+  }
+  sql += ' ORDER BY priority ASC, order_index ASC, rowid ASC';
+
+  const current = database.prepare(sql).all(...params);
+  const existingIds = new Set(current.map((row) => row.id));
+  const seen = new Set();
+  const nextIds = [];
+
+  for (const rawId of Array.isArray(orderedIds) ? orderedIds : []) {
+    const id = String(rawId || '').trim();
+    if (!id || seen.has(id) || !existingIds.has(id)) {
+      continue;
+    }
+    seen.add(id);
+    nextIds.push(id);
+  }
+
+  for (const row of current) {
+    if (!seen.has(row.id)) {
+      nextIds.push(row.id);
+    }
+  }
+
+  return withSavepoint(database, 'sp_reorder_regex', () => {
     const update = database.prepare('UPDATE regex_rules SET priority = ? WHERE id = ? AND user_id = ?');
     let changed = 0;
-    orderedIds.forEach((id, index) => {
+    nextIds.forEach((id, index) => {
       const result = update.run(index, id, userId);
       changed += result.changes;
     });
-    database.exec('COMMIT');
     return changed;
-  } catch (error) {
-    database.exec('ROLLBACK');
-    throw error;
-  }
+  });
 }
 
 export function testRegexRule(rule, text) {
@@ -328,9 +368,10 @@ export function testRegexRule(rule, text) {
 }
 
 export function applyRegexRules(text, rules, phase) {
-  const sorted = [...rules].sort((a, b) => (a.priority ?? 0) - (b.priority ?? 0));
+  const ruleList = rules && typeof rules[Symbol.iterator] === 'function' ? [...rules].filter((rule) => rule != null) : [];
+  const sorted = ruleList.sort((a, b) => (a?.priority ?? 0) - (b?.priority ?? 0));
   return sorted.reduce((value, rule) => {
-    if (!rule.enabled || !rule.pattern || !scopeApplies(rule.scope, phase)) {
+    if (!rule?.enabled || !rule.pattern || !scopeApplies(rule.scope, phase)) {
       return value;
     }
 
@@ -352,6 +393,7 @@ export function applyRegexRules(text, rules, phase) {
 }
 
 function normalizeCharacterPayload(payload = {}) {
+  payload = payload ?? {};
   const name = String(payload.name || '').trim();
   if (name.length < 1 || name.length > 40) {
     throw new Error('角色名长度需为 1-40 个字符');
@@ -372,6 +414,23 @@ function normalizeCharacterPayload(payload = {}) {
     regexRules: normalizeRegexRules(payload.regexRules),
     authorAdvancedSettings: normalizeAdvancedSettings(payload.authorAdvancedSettings || payload.advancedSettings || {})
   };
+}
+
+function saveCharacterAdvancedBackgrounds(database, { userId, characterId, settings }) {
+  const advancedSettings = normalizeAdvancedSettings(settings);
+  advancedSettings.desktopBackgroundUrl = saveBackgroundImageInput(database, {
+    userId,
+    ownerType: characterBackgroundOwnerTypes.desktop,
+    ownerId: characterId,
+    value: advancedSettings.desktopBackgroundUrl
+  });
+  advancedSettings.mobileBackgroundUrl = saveBackgroundImageInput(database, {
+    userId,
+    ownerType: characterBackgroundOwnerTypes.mobile,
+    ownerId: characterId,
+    value: advancedSettings.mobileBackgroundUrl
+  });
+  return advancedSettings;
 }
 
 function getOwnedCharacter(database, userId, characterId) {
@@ -411,7 +470,7 @@ function normalizeRegexRules(rules = []) {
     return [];
   }
 
-  return rules.slice(0, 40).map((rule, index) => {
+  return rules.slice(0, 40).filter((rule) => rule && typeof rule === 'object').map((rule, index) => {
     const flags = normalizeFlags(rule.flags);
     const pattern = String(rule.pattern || '').trim();
     if (pattern) {
@@ -437,7 +496,7 @@ function normalizeRenderPlugins(plugins = []) {
     return [];
   }
 
-  return plugins.slice(0, 20).map((plugin, index) => {
+  return plugins.slice(0, 20).filter((plugin) => plugin && typeof plugin === 'object').map((plugin, index) => {
     const flags = normalizeFlags(plugin.flags || 'u').replace(/[gy]/g, '') || 'u';
     const pattern = String(plugin.pattern || '').trim().slice(0, 260);
     if (pattern) {

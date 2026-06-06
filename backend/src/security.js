@@ -4,7 +4,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 
-export const sessionCookieName = 'flai_session';
+const sessionCookieName = 'flai_session';
 const scryptAsync = promisify(crypto.scrypt);
 const passwordKeyLength = 64;
 const sessionDays = 30;

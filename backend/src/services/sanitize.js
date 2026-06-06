@@ -42,15 +42,6 @@ export function sanitizeRichText(value) {
 }
 
 /**
- * 对消息内容做 sanitize（去除危险标签但保留文本）
- * 聊天消息可能包含 Markdown，不做格式保留
- */
-export function sanitizeMessage(value) {
-  if (typeof value !== 'string') return '';
-  return DOMPurify.sanitize(value, STRICT_CONFIG).trim();
-}
-
-/**
  * sanitize 对象中的指定文本字段
  * @param {object} obj - 原始对象
  * @param {string[]} textFields - 需要严格 sanitize 的字段
@@ -58,6 +49,8 @@ export function sanitizeMessage(value) {
  */
 export function sanitizeFields(obj, textFields = [], richFields = []) {
   if (!obj || typeof obj !== 'object') return obj;
+  textFields = Array.isArray(textFields) ? textFields : [];
+  richFields = Array.isArray(richFields) ? richFields : [];
   const result = { ...obj };
 
   for (const field of textFields) {
@@ -83,19 +76,4 @@ export function sanitizeCharacterPayload(body) {
     ['name', 'gender', 'age', 'visibility'],  // 严格
     ['background', 'worldview', 'persona', 'openingMessage']  // 宽松
   );
-}
-
-/**
- * 消息内容 sanitize
- */
-export function sanitizeMessagePayload(body) {
-  if (!body || typeof body !== 'object') return body;
-  const result = { ...body };
-  if (typeof result.content === 'string') {
-    result.content = sanitizeMessage(result.content);
-  }
-  if (typeof result.message === 'string') {
-    result.message = sanitizeMessage(result.message);
-  }
-  return result;
 }

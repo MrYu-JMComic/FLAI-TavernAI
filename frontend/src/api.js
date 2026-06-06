@@ -468,10 +468,12 @@ export function toggleRegexRule(ruleId) {
   return apiRequest(`/api/regex-rules/${ruleId}/toggle`, { method: 'PUT' });
 }
 
-export function reorderRegexRules(orderedIds) {
+export function reorderRegexRules(orderedIds, group = '') {
+  const body = { orderedIds };
+  if (group) body.group = group;
   return apiRequest('/api/regex-rules/order', {
     method: 'PUT',
-    body: JSON.stringify({ orderedIds })
+    body: JSON.stringify(body)
   });
 }
 

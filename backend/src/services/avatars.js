@@ -4,11 +4,25 @@ import { avatarUploadDir } from '../db.js';
 import { newId, nowIso } from '../security.js';
 
 const avatarMaxBytes = 2 * 1024 * 1024;
+const backgroundMaxBytes = 4 * 1024 * 1024;
 const supportedImageTypes = new Map([
   ['png', 'image/png'],
   ['jpeg', 'image/jpeg'],
   ['jpg', 'image/jpeg'],
   ['webp', 'image/webp']
+]);
+const supportedBackgroundImageTypes = new Map([
+  ...supportedImageTypes,
+  ['gif', 'image/gif']
+]);
+export const characterBackgroundOwnerTypes = {
+  desktop: 'character-background-desktop',
+  mobile: 'character-background-mobile'
+};
+const characterAssetOwnerTypes = new Set([
+  'character',
+  characterBackgroundOwnerTypes.desktop,
+  characterBackgroundOwnerTypes.mobile
 ]);
 
 export function avatarShortUrl(assetId) {
@@ -46,6 +60,41 @@ export function migrateLegacyAvatarUploads(database) {
 }
 
 export function saveAvatarInput(database, { userId, ownerType, ownerId, value }) {
+  return saveImageAssetInput(database, {
+    userId,
+    ownerType,
+    ownerId,
+    value,
+    maxBytes: avatarMaxBytes,
+    imageTypes: supportedImageTypes,
+    unsupportedMessage: '头像仅支持 PNG、JPG 或 WebP',
+    tooLargeMessage: '头像不能超过 2MB'
+  });
+}
+
+export function saveBackgroundImageInput(database, { userId, ownerType, ownerId, value }) {
+  return saveImageAssetInput(database, {
+    userId,
+    ownerType,
+    ownerId,
+    value,
+    maxBytes: backgroundMaxBytes,
+    imageTypes: supportedBackgroundImageTypes,
+    unsupportedMessage: '背景图片仅支持 PNG、JPG、WebP 或 GIF',
+    tooLargeMessage: '背景图片不能超过 4MB'
+  });
+}
+
+function saveImageAssetInput(database, {
+  userId,
+  ownerType,
+  ownerId,
+  value,
+  maxBytes,
+  imageTypes,
+  unsupportedMessage,
+  tooLargeMessage
+}) {
   const input = String(value || '').trim();
   if (!input) {
     deleteAvatarAsset(database, ownerType, ownerId);
@@ -57,8 +106,8 @@ export function saveAvatarInput(database, { userId, ownerType, ownerId, value })
   }
 
   const normalized = input.startsWith('data:')
-    ? parseAvatarDataUrl(input)
-    : readLegacyUpload(input);
+    ? parseAvatarDataUrl(input, { maxBytes, imageTypes, unsupportedMessage, tooLargeMessage })
+    : readLegacyUpload(input, { maxBytes, imageTypes, tooLargeMessage });
 
   if (!normalized) {
     return input;
@@ -115,7 +164,7 @@ export function getAvatarAssetForViewer(database, viewerId, assetId) {
     return toAvatarAsset(row);
   }
 
-  if (row.owner_type === 'character') {
+  if (characterAssetOwnerTypes.has(row.owner_type)) {
     const character = database
       .prepare("SELECT id FROM characters WHERE id = ? AND (user_id = ? OR visibility = 'public')")
       .get(row.owner_id, viewerId);
@@ -127,19 +176,35 @@ export function getAvatarAssetForViewer(database, viewerId, assetId) {
   return null;
 }
 
-export function parseAvatarDataUrl(dataUrl) {
-  const match = /^data:image\/(png|jpeg|jpg|webp);base64,([A-Za-z0-9+/=]+)$/i.exec(String(dataUrl || ''));
+export function parseAvatarDataUrl(dataUrl, options = {}) {
+  const {
+    maxBytes = avatarMaxBytes,
+    imageTypes = supportedImageTypes,
+    unsupportedMessage = '头像仅支持 PNG、JPG 或 WebP',
+    tooLargeMessage = '头像不能超过 2MB'
+  } = options;
+  const match = /^data:image\/([a-z0-9.+-]+);base64,([A-Za-z0-9+/=]+)$/i.exec(String(dataUrl || ''));
   if (!match) {
-    throw new Error('头像仅支持 PNG、JPG 或 WebP');
+    throw new Error(unsupportedMessage);
   }
 
   const extension = match[1].toLowerCase();
-  const mimeType = supportedImageTypes.get(extension);
+  const mimeType = imageTypes.get(extension);
+  if (!mimeType) {
+    throw new Error(unsupportedMessage);
+  }
   const base64Data = match[2];
+  if (!isValidBase64Payload(base64Data)) {
+    throw new Error('Invalid avatar image data');
+  }
   const buffer = Buffer.from(base64Data, 'base64');
 
-  if (buffer.length > avatarMaxBytes) {
-    throw new Error('头像不能超过 2MB');
+  if (buffer.length === 0) {
+    throw new Error('Invalid avatar image data');
+  }
+
+  if (buffer.length > maxBytes) {
+    throw new Error(tooLargeMessage);
   }
 
   return {
@@ -149,28 +214,45 @@ export function parseAvatarDataUrl(dataUrl) {
   };
 }
 
+function isValidBase64Payload(value) {
+  if (!value || value.length % 4 === 1) {
+    return false;
+  }
+  if (!/^[A-Za-z0-9+/]+={0,2}$/.test(value)) {
+    return false;
+  }
+  return !value.includes('=') || value.length % 4 === 0;
+}
+
 function keepExistingShortUrl(database, { userId, ownerType, ownerId, input }) {
   const assetId = input.split('/').pop();
   const row = database.prepare('SELECT * FROM avatar_assets WHERE id = ?').get(assetId);
   if (!row) {
-    return '';
+    // Asset no longer exists — preserve the existing URL to avoid silently clearing the avatar
+    return input;
   }
 
   if (row.user_id === userId && row.owner_type === ownerType && row.owner_id === ownerId) {
     return avatarShortUrl(row.id);
   }
 
+  // Ownership mismatch — clear the URL (belongs to another user/type)
   return '';
 }
 
-function readLegacyUpload(value) {
+function readLegacyUpload(value, options = {}) {
+  const {
+    maxBytes = avatarMaxBytes,
+    imageTypes = supportedImageTypes,
+    tooLargeMessage = '头像不能超过 2MB'
+  } = options;
   if (!String(value || '').startsWith('/uploads/avatars/')) {
     return null;
   }
 
   const filename = path.basename(value);
   const extension = path.extname(filename).slice(1).toLowerCase();
-  const mimeType = supportedImageTypes.get(extension);
+  const mimeType = imageTypes.get(extension);
   if (!mimeType) {
     return null;
   }
@@ -184,8 +266,8 @@ function readLegacyUpload(value) {
   }
 
   const buffer = fs.readFileSync(filePath);
-  if (buffer.length > avatarMaxBytes) {
-    throw new Error('头像不能超过 2MB');
+  if (buffer.length > maxBytes) {
+    throw new Error(tooLargeMessage);
   }
 
   return {

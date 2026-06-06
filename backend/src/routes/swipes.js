@@ -36,13 +36,17 @@ export function createSwipesRouter(ctx) {
       reasoning: reasoning || '',
       usage: usage || null
     });
+    if (!swipe) {
+      response.status(404).json({ error: '消息不存在' });
+      return;
+    }
     response.status(201).json(swipe);
   });
 
   // Get active swipe info for a message
   router.get('/:messageId/swipes/active', requireAuth, (request, response) => {
     const messageId = request.params.messageId;
-    const active = getActiveSwipe(db, messageId);
+    const active = getActiveSwipe(db, request.auth.user.id, messageId);
     if (!active) {
       response.status(404).json({ error: '消息不存在' });
       return;

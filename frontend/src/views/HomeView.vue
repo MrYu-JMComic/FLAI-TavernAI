@@ -45,6 +45,11 @@ const notify = useNotify();
 const characters = ref([]);
 const search = ref('');
 const sort = ref('created');
+const sortOptions = [
+  { value: 'created', label: '按创建时间' },
+  { value: 'used', label: '按最近使用' },
+  { value: 'name', label: '按名称' }
+];
 const selectedTag = ref('');
 const tags = ref([]);
 const loading = ref(false);
@@ -104,6 +109,10 @@ const activeFilterLabel = computed(() => {
 });
 
 const hasActiveFilters = computed(() => Boolean(search.value || selectedTag.value));
+
+const currentSortOption = computed(() => (
+  sortOptions.find((option) => option.value === sort.value) || sortOptions[0]
+));
 
 const providerLabel = computed(() => {
   if (!props.provider?.model && !props.provider?.gatewayName) {
@@ -225,6 +234,12 @@ function selectTag(name) {
 function clearFilters() {
   search.value = '';
   selectedTag.value = '';
+}
+
+function cycleSort() {
+  const currentIndex = sortOptions.findIndex((option) => option.value === sort.value);
+  const nextIndex = (currentIndex + 1) % sortOptions.length;
+  sort.value = sortOptions[nextIndex].value;
 }
 
 async function loadCharacters() {
@@ -430,11 +445,20 @@ function formatCount(value) {
       <label class="home-select-field">
         <Clock3 :size="18" />
         <select v-model="sort">
-          <option value="created">按创建时间</option>
-          <option value="used">按最近使用</option>
-          <option value="name">按名称</option>
+          <option v-for="option in sortOptions" :key="option.value" :value="option.value">{{ option.label }}</option>
         </select>
       </label>
+      <button
+        class="home-sort-button"
+        :class="`sort-${sort}`"
+        type="button"
+        :title="`切换排序：${currentSortOption.label}`"
+        :aria-label="`当前排序 ${currentSortOption.label}，点击切换`"
+        @click="cycleSort"
+      >
+        <SlidersHorizontal :size="17" />
+        <span>{{ currentSortOption.label.replace(/^按/, '') }}</span>
+      </button>
       <button class="home-icon-button" type="button" title="重新加载" aria-label="重新加载" @click="loadCharacters">
         <RefreshCw :size="18" />
       </button>

@@ -286,6 +286,33 @@ test('status bar creation preserves late inferred custom placeholders', () => {
   assert.ok(names.includes('鞋袜'));
 });
 
+test('status bar agent preserves variables beyond first twenty when updating', async () => {
+  const env = setupConversation({ statusBarAgent: skill('auto') });
+  const statusBar = upsertStatusBar(env.db, env.userId, env.conversation.id, {
+    name: 'State',
+    variables: Array.from({ length: 25 }, (_, index) => ({
+      name: `Var${index + 1}`,
+      value: 0,
+      max: 100
+    })),
+    template: ''
+  });
+
+  await runAccessoryAgents({
+    db: env.db,
+    userId: env.userId,
+    conversation: env.conversation,
+    character: env.character,
+    assistantMessage: { content: 'Var25: 88/100.' },
+    settings: {},
+    statusBar
+  });
+
+  const variables = getStatusBar(env.db, env.userId, env.conversation.id).variables;
+  assert.equal(variables.length, 25);
+  assert.equal(variables.find((item) => item.name === 'Var25')?.value, 88);
+});
+
 test('npc agent does not create fallback memories from text patterns', async () => {
   const env = setupConversation({ npcAgent: skill(true), statusBarAgent: skill(false) });
   const assistantMessage = { content: '**Lily** says the bridge is closed.' };

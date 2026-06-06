@@ -1,6 +1,6 @@
 import { newId, nowIso } from '../security.js';
 
-const STATUS_BAR_VARIABLE_LIMIT = 60;
+export const STATUS_BAR_VARIABLE_LIMIT = 60;
 
 // ── Status Bar CRUD ──
 

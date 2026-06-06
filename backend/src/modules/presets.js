@@ -1,4 +1,5 @@
 import { newId, nowIso } from '../security.js';
+import { withSavepoint } from './savepoint.js';
 
 // ── Preset CRUD ──
 
@@ -9,7 +10,7 @@ export function listPresets(database, userId) {
               frequency_penalty, presence_penalty, is_default, created_at, updated_at
        FROM presets
        WHERE user_id = ?
-       ORDER BY is_default DESC, updated_at DESC`
+       ORDER BY is_default DESC, updated_at DESC, rowid DESC`
     )
     .all(userId)
     .map(toPreset);
@@ -27,33 +28,40 @@ export function createPreset(database, userId, payload) {
   const timestamp = nowIso();
   const normalized = normalizePresetPayload(payload);
 
-  // If marked as default, clear other defaults first
-  if (normalized.isDefault) {
-    database
-      .prepare('UPDATE presets SET is_default = 0 WHERE user_id = ? AND is_default = 1')
-      .run(userId);
-  }
+  const insertPreset = () => {
+    if (normalized.isDefault) {
+      database
+        .prepare('UPDATE presets SET is_default = 0 WHERE user_id = ? AND is_default = 1')
+        .run(userId);
+    }
 
-  database
-    .prepare(
-      `INSERT INTO presets (id, user_id, name, system_prompt, temperature, max_tokens,
-        top_p, frequency_penalty, presence_penalty, is_default, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-    )
-    .run(
-      id,
-      userId,
-      normalized.name,
-      normalized.systemPrompt,
-      normalized.temperature,
-      normalized.maxTokens,
-      normalized.topP,
-      normalized.frequencyPenalty,
-      normalized.presencePenalty,
-      normalized.isDefault ? 1 : 0,
-      timestamp,
-      timestamp
-    );
+    database
+      .prepare(
+        `INSERT INTO presets (id, user_id, name, system_prompt, temperature, max_tokens,
+          top_p, frequency_penalty, presence_penalty, is_default, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      )
+      .run(
+        id,
+        userId,
+        normalized.name,
+        normalized.systemPrompt,
+        normalized.temperature,
+        normalized.maxTokens,
+        normalized.topP,
+        normalized.frequencyPenalty,
+        normalized.presencePenalty,
+        normalized.isDefault ? 1 : 0,
+        timestamp,
+        timestamp
+      );
+  };
+
+  if (normalized.isDefault) {
+    withSavepoint(database, 'sp_create_preset_default', insertPreset);
+  } else {
+    insertPreset();
+  }
 
   return getPreset(database, userId, id);
 }
@@ -68,34 +76,41 @@ export function updatePreset(database, userId, presetId, payload) {
 
   const normalized = normalizePresetPayload(payload, existing);
 
-  // If marked as default, clear other defaults first
-  if (normalized.isDefault && !existing.is_default) {
-    database
-      .prepare('UPDATE presets SET is_default = 0 WHERE user_id = ? AND is_default = 1')
-      .run(userId);
-  }
+  const savePreset = () => {
+    if (normalized.isDefault && !existing.is_default) {
+      database
+        .prepare('UPDATE presets SET is_default = 0 WHERE user_id = ? AND is_default = 1')
+        .run(userId);
+    }
 
-  database
-    .prepare(
-      `UPDATE presets SET
-        name = ?, system_prompt = ?, temperature = ?, max_tokens = ?,
-        top_p = ?, frequency_penalty = ?, presence_penalty = ?,
-        is_default = ?, updated_at = ?
-       WHERE id = ? AND user_id = ?`
-    )
-    .run(
-      normalized.name,
-      normalized.systemPrompt,
-      normalized.temperature,
-      normalized.maxTokens,
-      normalized.topP,
-      normalized.frequencyPenalty,
-      normalized.presencePenalty,
-      normalized.isDefault ? 1 : 0,
-      nowIso(),
-      presetId,
-      userId
-    );
+    database
+      .prepare(
+        `UPDATE presets SET
+          name = ?, system_prompt = ?, temperature = ?, max_tokens = ?,
+          top_p = ?, frequency_penalty = ?, presence_penalty = ?,
+          is_default = ?, updated_at = ?
+         WHERE id = ? AND user_id = ?`
+      )
+      .run(
+        normalized.name,
+        normalized.systemPrompt,
+        normalized.temperature,
+        normalized.maxTokens,
+        normalized.topP,
+        normalized.frequencyPenalty,
+        normalized.presencePenalty,
+        normalized.isDefault ? 1 : 0,
+        nowIso(),
+        presetId,
+        userId
+      );
+  };
+
+  if (normalized.isDefault && !existing.is_default) {
+    withSavepoint(database, 'sp_update_preset_default', savePreset);
+  } else {
+    savePreset();
+  }
 
   return getPreset(database, userId, presetId);
 }
@@ -115,15 +130,14 @@ export function setDefaultPreset(database, userId, presetId) {
     return null;
   }
 
-  // Clear all defaults for this user
-  database
-    .prepare('UPDATE presets SET is_default = 0 WHERE user_id = ? AND is_default = 1')
-    .run(userId);
-
-  // Set the target as default
-  database
-    .prepare('UPDATE presets SET is_default = 1, updated_at = ? WHERE id = ? AND user_id = ?')
-    .run(nowIso(), presetId, userId);
+  withSavepoint(database, 'sp_set_default_preset', () => {
+    database
+      .prepare('UPDATE presets SET is_default = 0 WHERE user_id = ? AND is_default = 1')
+      .run(userId);
+    database
+      .prepare('UPDATE presets SET is_default = 1, updated_at = ? WHERE id = ? AND user_id = ?')
+      .run(nowIso(), presetId, userId);
+  });
 
   return getPreset(database, userId, presetId);
 }

@@ -1,4 +1,5 @@
 <script setup>
+import { ref, watch } from 'vue';
 import {
   CheckSquare,
   MessageSquarePlus,
@@ -9,7 +10,7 @@ import {
   UserRound
 } from '@lucide/vue';
 
-defineProps({
+const props = defineProps({
   open: { type: Boolean, default: false },
   user: { type: Object, default: null },
   conversation: { type: Object, default: null },
@@ -34,18 +35,43 @@ const emit = defineEmits([
   'delete-selected',
   'open-settings'
 ]);
+
+const backdropRef = ref(null);
+const sidebarRef = ref(null);
+
+watch(() => props.open, (open) => {
+  if (!open) {
+    releaseSidebarFocus();
+  }
+}, { flush: 'sync' });
+
+function releaseSidebarFocus() {
+  if (typeof document === 'undefined') {
+    return;
+  }
+  const active = document.activeElement;
+  if (!active) {
+    return;
+  }
+  const focusInsideSidebar = sidebarRef.value?.contains?.(active);
+  if (active === backdropRef.value || focusInsideSidebar) {
+    active.blur?.();
+  }
+}
 </script>
 
 <template>
   <button
+    ref="backdropRef"
     class="sidebar-backdrop"
     :class="{ visible: open }"
     type="button"
     aria-label="关闭对话历史"
-    :aria-hidden="String(!open)"
+    :inert="!open"
+    :tabindex="open ? 0 : -1"
     @click="emit('close')"
   ></button>
-  <aside class="deep-sidebar" :class="{ collapsed: !open }" aria-label="对话历史" :aria-hidden="String(!open)">
+  <aside ref="sidebarRef" class="deep-sidebar" :class="{ collapsed: !open }" aria-label="对话历史" :inert="!open">
     <div class="deep-sidebar-top">
       <button class="deep-brand" type="button" @click="emit('navigate', 'home')">
         <span class="deep-logo">F</span>

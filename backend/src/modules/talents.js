@@ -22,7 +22,7 @@ export function listTalentPools(database) {
     .prepare(
       `SELECT id, name, description, talents_json, created_at
        FROM talent_pools
-       ORDER BY created_at DESC`
+       ORDER BY created_at DESC, rowid DESC`
     )
     .all()
     .map(toTalentPool);
@@ -148,7 +148,7 @@ export function getCharacterTalents(database, characterId) {
       `SELECT id, character_id, talent_name, talent_rarity, talent_description, talent_effect, pool_id, rolled_at
        FROM character_talents
        WHERE character_id = ?
-       ORDER BY rolled_at DESC`
+       ORDER BY rolled_at DESC, rowid DESC`
     )
     .all(characterId)
     .map(toCharacterTalent);

@@ -9,7 +9,7 @@ import ChatSettingsDrawer from '../components/chat/ChatSettingsDrawer.vue';
 import ChatHeader from '../components/chat/ChatHeader.vue';
 import ChatMessageItem from '../components/chat/ChatMessageItem.vue';
 import ChatComposer from '../components/chat/ChatComposer.vue';
-import { fetchConversationMessages } from '../api';
+import { fetchConversationMessages, fetchConversationNpcs } from '../api';
 import { useNotify } from '../composables/useNotify';
 import { useChatConversation } from '../composables/chat/useChatConversation';
 import { useChatAccessory } from '../composables/chat/useChatAccessory';
@@ -33,7 +33,19 @@ const messageScroller = ref(null);
 const composerWrap = ref(null);
 const composerTextarea = ref(null);
 const npcRefreshKey = ref(0);
+const statusBarUpdateStatus = ref('not-updated');
+const npcUpdateStatus = ref('not-updated');
 let conversationLoadToken = 0;
+let latestNpcFingerprint = '';
+let accessoryRefreshSnapshot = {
+  conversationId: '',
+  statusBar: '',
+  npc: ''
+};
+
+const ACCESSORY_UPDATING = 'updating';
+const ACCESSORY_UPDATED = 'updated';
+const ACCESSORY_NOT_UPDATED = 'not-updated';
 
 function showError(message) {
   const needsFix = /API Key|SK|密钥|供应商|网关|模型/.test(message);
@@ -139,9 +151,10 @@ const {
 } = useChatSubmit({
   route: props.route, messages, provider: computed(() => props.provider),
   selectedPresetId, statusBar,
-  syncStatusBarForm, handleSkillResult,
+  syncStatusBarForm, handleSkillResult: handleAccessorySkillResult,
   loadStatusBar,
   loadSidebarData, loadEconomyBalance,
+  onAccessoryRefreshStart: beginAccessoryRefreshStatus,
   onAccessoryRefresh: refreshAccessoryPanels,
   stickToBottomIfNeeded, expandReasoning, showError
 });
@@ -156,6 +169,7 @@ async function loadConversation() {
     messages.value = [];
     statusBar.value = null;
     syncAccessorySkills();
+    resetAccessoryUpdateStatus({ clearNpcFingerprint: true });
   }
   loading.value = true;
   error.value = '';
@@ -178,6 +192,9 @@ async function loadConversation() {
       loadConversationBranches(conversationId)
     ]);
     if (requestToken !== conversationLoadToken || props.route.params.id !== conversationId) return;
+    await syncNpcFingerprint(conversationId);
+    if (requestToken !== conversationLoadToken || props.route.params.id !== conversationId) return;
+    resetAccessoryUpdateStatus();
     restoreMessageScrollPosition(messages);
   } catch (err) {
     if (requestToken !== conversationLoadToken || props.route.params.id !== conversationId) return;
@@ -216,10 +233,167 @@ function handleNpcPanelOpenUpdate(value) {
   }
 }
 
-function refreshAccessoryPanels() {
+function beginAccessoryRefreshStatus() {
+  const conversationId = conversation.value?.id || '';
+  accessoryRefreshSnapshot = {
+    conversationId,
+    statusBar: serializeStatusBarSnapshot(statusBar.value),
+    npc: latestNpcFingerprint
+  };
+  statusBarUpdateStatus.value = isAccessorySkillActiveLocal('statusBarAgent')
+    ? ACCESSORY_UPDATING
+    : ACCESSORY_NOT_UPDATED;
+  npcUpdateStatus.value = showNpcFeature.value
+    ? ACCESSORY_UPDATING
+    : ACCESSORY_NOT_UPDATED;
+}
+
+function handleAccessorySkillResult(data = {}) {
+  const result = data.result || {};
+  if (data.skill === 'statusBarAgent') {
+    const hasUpdates = Array.isArray(result.updates)
+      ? result.updates.length > 0
+      : Boolean(result.statusBar);
+    statusBarUpdateStatus.value = data.ok && hasUpdates
+      ? ACCESSORY_UPDATED
+      : ACCESSORY_NOT_UPDATED;
+  }
+  if (data.skill === 'npcAgent') {
+    const hasUpdates = (Array.isArray(result.npcs) && result.npcs.length > 0) ||
+      (Array.isArray(result.memories) && result.memories.length > 0);
+    npcUpdateStatus.value = data.ok && hasUpdates
+      ? ACCESSORY_UPDATED
+      : ACCESSORY_NOT_UPDATED;
+  }
+  handleSkillResult(data);
+}
+
+async function refreshAccessoryPanels(payload = {}) {
+  refreshStatusBarUpdateStatus(payload);
+  await refreshNpcUpdateStatus(Boolean(payload?.isFinal));
   if (npcPanelOpen.value) {
     npcRefreshKey.value += 1;
   }
+}
+
+function refreshStatusBarUpdateStatus(payload = {}) {
+  if (statusBarUpdateStatus.value !== ACCESSORY_UPDATING) {
+    return;
+  }
+  if (!accessoryRefreshSnapshot.conversationId || accessoryRefreshSnapshot.conversationId !== conversation.value?.id) {
+    return;
+  }
+  const statusBarResult = Array.isArray(payload.results) ? payload.results[0] : null;
+  if (statusBarResult?.status === 'fulfilled') {
+    const nextFingerprint = serializeStatusBarSnapshot(statusBarResult.value);
+    if (nextFingerprint !== accessoryRefreshSnapshot.statusBar) {
+      accessoryRefreshSnapshot.statusBar = nextFingerprint;
+      statusBarUpdateStatus.value = ACCESSORY_UPDATED;
+      return;
+    }
+  }
+  if (payload.isFinal) {
+    statusBarUpdateStatus.value = ACCESSORY_NOT_UPDATED;
+  }
+}
+
+async function refreshNpcUpdateStatus(isFinal = false) {
+  if (!showNpcFeature.value) {
+    npcUpdateStatus.value = ACCESSORY_NOT_UPDATED;
+    return;
+  }
+  const conversationId = conversation.value?.id;
+  if (!conversationId || accessoryRefreshSnapshot.conversationId !== conversationId) {
+    return;
+  }
+  try {
+    const npcs = await fetchConversationNpcs(conversationId);
+    if (conversation.value?.id !== conversationId || accessoryRefreshSnapshot.conversationId !== conversationId) {
+      return;
+    }
+    const nextFingerprint = serializeNpcSnapshot(npcs);
+    if (npcUpdateStatus.value === ACCESSORY_UPDATING && nextFingerprint !== accessoryRefreshSnapshot.npc) {
+      npcUpdateStatus.value = ACCESSORY_UPDATED;
+    }
+    latestNpcFingerprint = nextFingerprint;
+  } catch {
+    // Keep the visible state pending until the final scheduled poll can settle it.
+  } finally {
+    if (isFinal && npcUpdateStatus.value === ACCESSORY_UPDATING) {
+      npcUpdateStatus.value = ACCESSORY_NOT_UPDATED;
+    }
+  }
+}
+
+async function syncNpcFingerprint(conversationId = conversation.value?.id) {
+  if (!conversationId || !showNpcFeature.value) {
+    latestNpcFingerprint = '';
+    return latestNpcFingerprint;
+  }
+  try {
+    const npcs = await fetchConversationNpcs(conversationId);
+    if (conversation.value?.id !== conversationId) {
+      return latestNpcFingerprint;
+    }
+    latestNpcFingerprint = serializeNpcSnapshot(npcs);
+  } catch {
+    latestNpcFingerprint = '';
+  }
+  return latestNpcFingerprint;
+}
+
+function handleNpcPanelLoaded(npcs = []) {
+  if (npcUpdateStatus.value === ACCESSORY_UPDATING) {
+    return;
+  }
+  latestNpcFingerprint = serializeNpcSnapshot(npcs);
+}
+
+function resetAccessoryUpdateStatus(options = {}) {
+  statusBarUpdateStatus.value = ACCESSORY_NOT_UPDATED;
+  npcUpdateStatus.value = ACCESSORY_NOT_UPDATED;
+  if (options.clearNpcFingerprint) {
+    latestNpcFingerprint = '';
+  }
+  accessoryRefreshSnapshot = {
+    conversationId: conversation.value?.id || '',
+    statusBar: serializeStatusBarSnapshot(statusBar.value),
+    npc: latestNpcFingerprint
+  };
+}
+
+function serializeStatusBarSnapshot(value = null) {
+  if (!value) {
+    return '';
+  }
+  return JSON.stringify({
+    id: value.id || '',
+    name: value.name || '',
+    template: value.template || '',
+    updatedAt: value.updatedAt || '',
+    variables: Array.isArray(value.variables)
+      ? value.variables.map((item) => ({
+        name: item?.name || '',
+        value: item?.value ?? '',
+        max: item?.max ?? '',
+        color: item?.color || ''
+      }))
+      : []
+  });
+}
+
+function serializeNpcSnapshot(value = []) {
+  const items = Array.isArray(value) ? value : [];
+  return JSON.stringify(items
+    .map((npc) => ({
+      name: String(npc?.name || ''),
+      memoryCount: Number(npc?.memoryCount || 0),
+      behaviorCount: Number(npc?.behaviorCount || 0),
+      source: String(npc?.source || ''),
+      confidence: Number(npc?.confidence || 0),
+      evidence: String(npc?.evidence || '')
+    }))
+    .sort((a, b) => a.name.localeCompare(b.name)));
 }
 
 async function createBranchFromMessage(message) {
@@ -466,6 +640,15 @@ watch(settingsDrawerOpen, (isOpen) => {
     loadWorldBooks();
   }
 });
+
+watch(showNpcFeature, (active) => {
+  if (active && conversation.value?.id) {
+    void syncNpcFingerprint(conversation.value.id);
+  } else if (!active) {
+    latestNpcFingerprint = '';
+    npcUpdateStatus.value = ACCESSORY_NOT_UPDATED;
+  }
+});
 </script>
 
 <template>
@@ -562,7 +745,25 @@ watch(settingsDrawerOpen, (isOpen) => {
         @touchstart.passive="handleTouchStart"
         @touchmove.passive="handleTouchMove"
       >
-        <p v-if="loading" class="deep-muted">正在加载对话...</p>
+        <article
+          v-if="loading"
+          class="deep-message assistant chat-loading-notice"
+          role="status"
+          aria-live="polite"
+        >
+          <div class="deep-message-author" aria-hidden="true">
+            <span class="deep-message-avatar">
+              <span>F</span>
+            </span>
+            <small>FLAI</small>
+          </div>
+          <div class="deep-message-content">
+            <div class="deep-message-name">系统通知</div>
+            <div class="deep-bubble is-typing is-waiting">
+              <span class="typing-text">正在加载对话</span>
+            </div>
+          </div>
+        </article>
         <template
           v-for="message in messages"
           :key="message.id"
@@ -598,7 +799,12 @@ watch(settingsDrawerOpen, (isOpen) => {
             @branch="createBranchFromMessage"
           />
           <div v-if="hasStatusBarVisible && message === latestAssistantMessage" class="status-bar-wrapper">
-            <StatusBar :status-bar="statusBar" :template-config="statusBarTemplateConfig" @quick-reply="handleStatusBarQuickReply" />
+            <StatusBar
+              :status-bar="statusBar"
+              :template-config="statusBarTemplateConfig"
+              :update-status="statusBarUpdateStatus"
+              @quick-reply="handleStatusBarQuickReply"
+            />
           </div>
         </template>
       </div>
@@ -637,7 +843,9 @@ watch(settingsDrawerOpen, (isOpen) => {
       :conversation-id="conversation.id"
       :open="npcPanelOpen"
       :refresh-key="npcRefreshKey"
+      :update-status="npcUpdateStatus"
       @update:open="handleNpcPanelOpenUpdate"
+      @npcs-loaded="handleNpcPanelLoaded"
       @close="closeNpcPanel"
     />
     <SaveLoadPanel

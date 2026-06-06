@@ -1,6 +1,7 @@
 import { runToolCompletion, streamToolCompletion } from './providers.js';
 import { resolvePromptUserName, userVariableToken } from './promptVariables.js';
 import { normalizeAdvancedSettings, normalizeAccessorySkills } from '../modules/advancedSettings.js';
+import { nullToEmptyObject, objectOrEmpty, parseLooseJsonObject } from './assistantUtils.js';
 
 const characterTools = [
   {
@@ -218,7 +219,9 @@ const statusBarBlueprintInstructions = [
   'Keep statusBarBlueprint.template syntactically valid: balanced HTML tags, balanced quotes, balanced CSS braces, and balanced placeholders. If unsure, leave template empty and rely on variables.'
 ];
 
-export async function completeCharacterDraft(settings, { requirement = '', current = {}, user = {}, options = {}, signal } = {}) {
+export async function completeCharacterDraft(settings, request = {}) {
+  const { requirement = '', current = {}, user = {}, options: rawOptions = {}, signal } = nullToEmptyObject(request);
+  const options = rawOptions ?? {};
   const draft = normalizeDraft(current);
   let summary = '';
   const userName = resolvePromptUserName(user);
@@ -269,7 +272,7 @@ export async function completeCharacterDraft(settings, { requirement = '', curre
   );
 
   if (!result.toolCalls.length && result.content) {
-    mergeProfile(draft, parseLooseJson(result.content));
+    mergeProfile(draft, parseLooseJsonObject(result.content));
   }
   summary = result.content || summarizeDraft(result.toolCalls);
 
@@ -287,7 +290,9 @@ export async function completeCharacterDraft(settings, { requirement = '', curre
   };
 }
 
-export async function streamCharacterDraft(settings, { requirement = '', current = {}, user = {}, options = {}, signal, emit = () => {} } = {}) {
+export async function streamCharacterDraft(settings, request = {}) {
+  const { requirement = '', current = {}, user = {}, options: rawOptions = {}, signal, emit = () => {} } = nullToEmptyObject(request);
+  const options = rawOptions ?? {};
   const draft = normalizeDraft(current);
   const userName = resolvePromptUserName(user);
   const enabledSections = normalizeGenerationOptions(options);
@@ -339,7 +344,7 @@ export async function streamCharacterDraft(settings, { requirement = '', current
   );
 
   if (!result.toolCalls.length && result.content) {
-    mergeProfile(draft, parseLooseJson(result.content));
+    mergeProfile(draft, parseLooseJsonObject(result.content));
   }
   const summary = result.content || summarizeDraft(result.toolCalls);
 
@@ -358,31 +363,33 @@ export async function streamCharacterDraft(settings, { requirement = '', current
 }
 
 function executeCharacterTool(name, args, draft) {
+  const toolArgs = objectOrEmpty(args);
   if (name === 'set_character_profile') {
-    const applied = mergeProfile(draft, args);
+    const applied = mergeProfile(draft, toolArgs);
     return { ok: true, applied };
   }
   if (name === 'add_regex_rule') {
-    const rule = normalizeRegexRule(args, draft.regexRules.length);
+    const rule = normalizeRegexRule(toolArgs, draft.regexRules.length);
     if (rule.pattern) {
       draft.regexRules.push(rule);
     }
     return { ok: true, rule };
   }
   if (name === 'replace_regex_rules') {
-    draft.regexRules = Array.isArray(args.rules)
-      ? args.rules.map((rule, index) => normalizeRegexRule(rule, index)).filter((rule) => rule.pattern)
+    draft.regexRules = Array.isArray(toolArgs.rules)
+      ? toolArgs.rules.map((rule, index) => normalizeRegexRule(rule, index)).filter((rule) => rule.pattern)
       : [];
     return { ok: true, count: draft.regexRules.length };
   }
   if (name === 'set_character_extensions') {
-    const applied = mergeExtensions(draft, args);
+    const applied = mergeExtensions(draft, toolArgs);
     return { ok: true, applied };
   }
   return { ok: false, error: `未知工具：${name}` };
 }
 
 function mergeProfile(draft, args = {}) {
+  args = objectOrEmpty(args);
   const applied = {};
   for (const key of ['name', 'gender', 'age', 'background', 'worldview', 'persona', 'openingMessage']) {
     if (Object.prototype.hasOwnProperty.call(args, key)) {
@@ -407,6 +414,7 @@ function mergeProfile(draft, args = {}) {
 }
 
 function mergeExtensions(draft, args = {}) {
+  args = objectOrEmpty(args);
   const applied = {};
   if (Array.isArray(args.renderPlugins)) {
     draft.renderPlugins = args.renderPlugins
@@ -452,6 +460,7 @@ function mergeExtensions(draft, args = {}) {
 }
 
 function normalizeDraft(value = {}) {
+  value = objectOrEmpty(value);
   return {
     name: limitText(value.name, 'name'),
     gender: limitText(value.gender, 'gender'),
@@ -496,46 +505,48 @@ function normalizeGenerationOptions(options = {}) {
 }
 
 function filterToolArgs(name, args = {}, enabled = {}) {
+  const toolArgs = objectOrEmpty(args);
   if (name === 'set_character_profile') {
     const allowed = {};
     for (const key of ['name', 'gender', 'age', 'visibility']) {
-      if (enabled.profile && Object.prototype.hasOwnProperty.call(args, key)) allowed[key] = args[key];
+      if (enabled.profile && Object.prototype.hasOwnProperty.call(toolArgs, key)) allowed[key] = toolArgs[key];
     }
     for (const key of ['background', 'worldview', 'persona', 'openingMessage']) {
-      if (enabled[key] && Object.prototype.hasOwnProperty.call(args, key)) allowed[key] = args[key];
+      if (enabled[key] && Object.prototype.hasOwnProperty.call(toolArgs, key)) allowed[key] = toolArgs[key];
     }
-    if (enabled.tags && Array.isArray(args.tags)) allowed.tags = args.tags;
+    if (enabled.tags && Array.isArray(toolArgs.tags)) allowed.tags = toolArgs.tags;
     return allowed;
   }
   if (name === 'add_regex_rule' || name === 'replace_regex_rules') {
-    return enabled.regexRules ? args : {};
+    return enabled.regexRules ? toolArgs : {};
   }
   if (name === 'set_character_extensions') {
     const allowed = {};
-    if (enabled.worldBookSuggestion && Object.prototype.hasOwnProperty.call(args, 'worldBookSuggestion')) {
-      allowed.worldBookSuggestion = args.worldBookSuggestion;
+    if (enabled.worldBookSuggestion && Object.prototype.hasOwnProperty.call(toolArgs, 'worldBookSuggestion')) {
+      allowed.worldBookSuggestion = toolArgs.worldBookSuggestion;
     }
-    if (enabled.renderPlugins && Array.isArray(args.renderPlugins)) {
-      allowed.renderPlugins = args.renderPlugins;
+    if (enabled.renderPlugins && Array.isArray(toolArgs.renderPlugins)) {
+      allowed.renderPlugins = toolArgs.renderPlugins;
     }
     if (enabled.advancedSettings) {
-      if (Object.prototype.hasOwnProperty.call(args, 'statusBarPrompt')) allowed.statusBarPrompt = args.statusBarPrompt;
-      if (Object.prototype.hasOwnProperty.call(args, 'desktopBackgroundUrl')) allowed.desktopBackgroundUrl = args.desktopBackgroundUrl;
-      if (Object.prototype.hasOwnProperty.call(args, 'mobileBackgroundUrl')) allowed.mobileBackgroundUrl = args.mobileBackgroundUrl;
-      if (Object.prototype.hasOwnProperty.call(args, 'customCss')) allowed.customCss = args.customCss;
-      if (Object.prototype.hasOwnProperty.call(args, 'customJs')) allowed.customJs = args.customJs;
-      if (Object.prototype.hasOwnProperty.call(args, 'statusBarBlueprint')) allowed.statusBarBlueprint = args.statusBarBlueprint;
-      if (Object.prototype.hasOwnProperty.call(args, 'accessorySkills')) allowed.accessorySkills = args.accessorySkills;
+      if (Object.prototype.hasOwnProperty.call(toolArgs, 'statusBarPrompt')) allowed.statusBarPrompt = toolArgs.statusBarPrompt;
+      if (Object.prototype.hasOwnProperty.call(toolArgs, 'desktopBackgroundUrl')) allowed.desktopBackgroundUrl = toolArgs.desktopBackgroundUrl;
+      if (Object.prototype.hasOwnProperty.call(toolArgs, 'mobileBackgroundUrl')) allowed.mobileBackgroundUrl = toolArgs.mobileBackgroundUrl;
+      if (Object.prototype.hasOwnProperty.call(toolArgs, 'customCss')) allowed.customCss = toolArgs.customCss;
+      if (Object.prototype.hasOwnProperty.call(toolArgs, 'customJs')) allowed.customJs = toolArgs.customJs;
+      if (Object.prototype.hasOwnProperty.call(toolArgs, 'statusBarBlueprint')) allowed.statusBarBlueprint = toolArgs.statusBarBlueprint;
+      if (Object.prototype.hasOwnProperty.call(toolArgs, 'accessorySkills')) allowed.accessorySkills = toolArgs.accessorySkills;
     }
-    if (enabled.modSuggestions && Array.isArray(args.modSuggestions)) {
-      allowed.modSuggestions = args.modSuggestions;
+    if (enabled.modSuggestions && Array.isArray(toolArgs.modSuggestions)) {
+      allowed.modSuggestions = toolArgs.modSuggestions;
     }
     return allowed;
   }
-  return args;
+  return toolArgs;
 }
 
 function normalizeModSuggestion(mod = {}, index = 0) {
+  mod = objectOrEmpty(mod);
   const type = normalizeModType(mod.type);
   return {
     name: String(mod.name || `AI Mod ${index + 1}`).trim().slice(0, 80),
@@ -556,10 +567,12 @@ function normalizeModType(type) {
 }
 
 function normalizeTags(tags = []) {
+  tags = Array.isArray(tags) ? tags : [];
   return tags.map((tag) => String(tag || '').trim()).filter(Boolean).slice(0, 8);
 }
 
 function normalizeRegexRule(rule = {}, index = 0) {
+  rule = objectOrEmpty(rule);
   const flags = normalizeFlags(rule.flags);
   const pattern = String(rule.pattern || '').trim();
   if (pattern) {
@@ -587,6 +600,7 @@ function normalizeRegexRule(rule = {}, index = 0) {
 }
 
 function normalizeRenderPlugin(plugin = {}, index = 0) {
+  plugin = objectOrEmpty(plugin);
   const flags = normalizeFlags(plugin.flags || 'u').replace(/g/g, '') || 'u';
   const pattern = String(plugin.pattern || '').trim();
   if (pattern) {
@@ -640,26 +654,6 @@ function limitText(value, key) {
     worldBookSuggestion: 3000
   };
   return String(value || '').trim().slice(0, limits[key] || 1000);
-}
-
-function parseLooseJson(text) {
-  const value = String(text || '').trim();
-  if (!value) {
-    return {};
-  }
-  try {
-    return JSON.parse(value);
-  } catch {
-    const match = value.match(/\{[\s\S]*\}/);
-    if (!match) {
-      return {};
-    }
-    try {
-      return JSON.parse(match[0]);
-    } catch {
-      return {};
-    }
-  }
 }
 
 function summarizeDraft(toolCalls = []) {
