@@ -355,10 +355,11 @@ function resetAiPanel() {
 }
 
 let aiPanelResizeObserver = null;
+let aiPanelLayoutRafId = null;
+let pendingAiPanelSizeSync = false;
 let skipFirstResize = true;
 
-function onAiPanelResize() {
-  if (skipFirstResize) { skipFirstResize = false; return; }
+function syncAiPanelSizeAndPosition() {
   if (window.innerWidth <= 760) return;
   const el = aiPanelRef.value;
   if (!el) return;
@@ -374,12 +375,53 @@ function onAiPanelResize() {
   }
 }
 
-function onWindowResize() {
+function syncAiPanelPosition() {
   const clamped = clampAiPanelPos(aiPanelPos.value.x, aiPanelPos.value.y);
   if (clamped.x !== aiPanelPos.value.x || clamped.y !== aiPanelPos.value.y) {
     aiPanelPos.value = clamped;
     saveAiPanelState();
   }
+}
+
+function flushScheduledAiPanelLayout() {
+  const includeSize = pendingAiPanelSizeSync;
+  aiPanelLayoutRafId = null;
+  pendingAiPanelSizeSync = false;
+  if (includeSize) {
+    syncAiPanelSizeAndPosition();
+    return;
+  }
+  syncAiPanelPosition();
+}
+
+function scheduleAiPanelLayoutSync({ includeSize = false } = {}) {
+  if (includeSize) {
+    pendingAiPanelSizeSync = true;
+  }
+  if (aiPanelLayoutRafId !== null) return;
+  if (typeof requestAnimationFrame === 'function') {
+    aiPanelLayoutRafId = requestAnimationFrame(flushScheduledAiPanelLayout);
+    return;
+  }
+  flushScheduledAiPanelLayout();
+}
+
+function cancelAiPanelLayoutSync() {
+  if (aiPanelLayoutRafId !== null && typeof cancelAnimationFrame === 'function') {
+    cancelAnimationFrame(aiPanelLayoutRafId);
+  }
+  aiPanelLayoutRafId = null;
+  pendingAiPanelSizeSync = false;
+}
+
+function onAiPanelResize() {
+  if (skipFirstResize) { skipFirstResize = false; return; }
+  if (window.innerWidth <= 760) return;
+  scheduleAiPanelLayoutSync({ includeSize: true });
+}
+
+function onWindowResize() {
+  scheduleAiPanelLayoutSync();
 }
 
 watch(aiPanelRef, (el) => {
@@ -424,6 +466,7 @@ onBeforeUnmount(() => {
     aiPanelResizeObserver.disconnect();
     aiPanelResizeObserver = null;
   }
+  cancelAiPanelLayoutSync();
   window.removeEventListener('resize', onWindowResize);
 });
 

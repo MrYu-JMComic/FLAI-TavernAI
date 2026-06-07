@@ -48,18 +48,6 @@ export function deleteTag(database, userId, tagId) {
   return result.changes > 0;
 }
 
-export function getTagByName(database, userId, name) {
-  const row = database
-    .prepare(
-      `SELECT tags.*,
-        (SELECT COUNT(*) FROM character_tags WHERE tag_id = tags.id) AS usage_count
-       FROM tags
-       WHERE tags.user_id = ? AND tags.name = ?`
-    )
-    .get(userId, name);
-  return row ? toTag(row) : null;
-}
-
 // ── Character-Tag Association ──
 
 export function setCharacterTags(database, userId, characterId, tagNames) {

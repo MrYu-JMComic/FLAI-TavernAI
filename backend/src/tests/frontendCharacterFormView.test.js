@@ -103,3 +103,32 @@ test('CharacterFormView tag creation freezes tag controls while pending', () => 
     /class="tag-option"[\s\S]*:disabled="tagCreating"[\s\S]*@click="toggleTagSelection\(tag\.name\)"/
   );
 });
+
+test('CharacterFormView coalesces AI panel layout work into animation frames', () => {
+  assert.match(characterFormScript, /let aiPanelLayoutRafId = null;/);
+  assert.match(characterFormScript, /let pendingAiPanelSizeSync = false;/);
+  assert.match(
+    characterFormScript,
+    /function scheduleAiPanelLayoutSync\(\{ includeSize = false \} = \{\}\) \{[\s\S]*if \(includeSize\) \{[\s\S]*pendingAiPanelSizeSync = true;[\s\S]*if \(aiPanelLayoutRafId !== null\) return;[\s\S]*requestAnimationFrame\(flushScheduledAiPanelLayout\);/
+  );
+  assert.match(
+    characterFormScript,
+    /function flushScheduledAiPanelLayout\(\) \{[\s\S]*const includeSize = pendingAiPanelSizeSync;[\s\S]*aiPanelLayoutRafId = null;[\s\S]*pendingAiPanelSizeSync = false;[\s\S]*syncAiPanelSizeAndPosition\(\);/
+  );
+  assert.match(
+    characterFormScript,
+    /function cancelAiPanelLayoutSync\(\) \{[\s\S]*cancelAnimationFrame\(aiPanelLayoutRafId\);[\s\S]*pendingAiPanelSizeSync = false;/
+  );
+  assert.match(
+    characterFormScript,
+    /function onAiPanelResize\(\) \{[\s\S]*scheduleAiPanelLayoutSync\(\{ includeSize: true \}\);[\s\S]*\}/
+  );
+  assert.match(
+    characterFormScript,
+    /function onWindowResize\(\) \{\s*scheduleAiPanelLayoutSync\(\);\s*\}/
+  );
+  assert.match(
+    characterFormScript,
+    /onBeforeUnmount\(\(\) => \{[\s\S]*cancelAiPanelLayoutSync\(\);[\s\S]*window\.removeEventListener\('resize', onWindowResize\);/
+  );
+});

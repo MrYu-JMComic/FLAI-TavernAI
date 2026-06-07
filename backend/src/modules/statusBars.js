@@ -215,13 +215,6 @@ function textValuePatternsSafe(varName, variables = [], currentName = '') {
   ];
 }
 
-function textValuePatterns(varName) {
-  return [
-    new RegExp(`${varName}\\s*[:：]\\s*([^\\n，。；;,.]{1,80})`, 'i'),
-    new RegExp(`[【\\[]${varName}[】\\]]\\s*([^\\n，。；;,.]{1,80})`, 'i')
-  ];
-}
-
 function normalizeName(name) {
   const value = String(name || '').trim();
   if (!value) {

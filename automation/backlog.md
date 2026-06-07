@@ -263,4 +263,7 @@ The autonomous loop should choose one small item per run. Add new findings here 
 - 2026-06-07: Locked ChatSidebar conversation-open and new-chat actions while conversation actions are busy.
 - 2026-06-07: Coalesced VariableEditor mirror scroll synchronization into animation frames.
 - 2026-06-07: Added a source hygiene guard to keep JS-like import declarations before runtime code.
+- 2026-06-07: Guarded HomeView character import preview reads against stale file selections.
 - 2026-06-07: Added a source hygiene guard against duplicate JS-like top-level function declarations.
+- 2026-06-07: Removed the unused backend tag lookup export after verifying no references remain.
+- 2026-06-07: Removed the unused legacy status-bar text-value matcher after verifying the safe matcher is the only caller.

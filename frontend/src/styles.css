@@ -3477,6 +3477,7 @@ section[id^="extension-section-"] {
 
 .deep-chat-shell.sidebar-collapsed {
   --chat-readable-width: min(100%, calc(100vw - 32px));
+  --chat-composer-width: var(--chat-readable-width);
 }
 
 :root[data-theme="dark"] .deep-chat-shell {
@@ -5445,10 +5446,6 @@ fieldset.accessory-skills-grid:disabled {
     display: inline-grid;
   }
 
-  .deep-composer-wrap {
-    padding: 0;
-  }
-
   .scroll-bottom-button {
     right: 12px;
     bottom: calc(100% + 12px);
@@ -5456,10 +5453,6 @@ fieldset.accessory-skills-grid:disabled {
 
   .message-actions {
     opacity: 1;
-  }
-
-  .deep-composer {
-    width: 100%;
   }
 
   .deep-message-scroll {
