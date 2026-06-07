@@ -229,6 +229,67 @@ function isSameTag(left, right) {
   return Boolean(left?.id && right?.id && left.id === right.id) || left?.name === right?.name;
 }
 
+function setCharactersIfChanged(nextCharacters) {
+  const normalizedCharacters = Array.isArray(nextCharacters) ? nextCharacters : [];
+  const currentCharacters = Array.isArray(characters.value) ? characters.value : [];
+  if (sameListItems(currentCharacters, normalizedCharacters, sameCharacterSummary)) {
+    return false;
+  }
+  characters.value = normalizedCharacters;
+  return true;
+}
+
+function setTagsIfChanged(nextTags) {
+  const normalizedTags = Array.isArray(nextTags) ? nextTags : [];
+  const currentTags = Array.isArray(tags.value) ? tags.value : [];
+  if (sameListItems(currentTags, normalizedTags, sameTagSummary)) {
+    return false;
+  }
+  tags.value = normalizedTags;
+  return true;
+}
+
+function sameListItems(currentItems, nextItems, sameItem) {
+  if (currentItems === nextItems) {
+    return true;
+  }
+  if (currentItems.length !== nextItems.length) {
+    return false;
+  }
+  return currentItems.every((item, index) => sameItem(item, nextItems[index]));
+}
+
+function sameCharacterSummary(current = {}, next = {}) {
+  return current?.id === next?.id
+    && current?.name === next?.name
+    && current?.visibility === next?.visibility
+    && Boolean(current?.canEdit) === Boolean(next?.canEdit)
+    && Boolean(current?.favoritedByMe) === Boolean(next?.favoritedByMe)
+    && Boolean(current?.likedByMe) === Boolean(next?.likedByMe)
+    && Number(current?.favoriteCount || 0) === Number(next?.favoriteCount || 0)
+    && Number(current?.likeCount || 0) === Number(next?.likeCount || 0)
+    && String(current?.avatarUrl || '') === String(next?.avatarUrl || '')
+    && String(current?.gender || '') === String(next?.gender || '')
+    && String(current?.age || '') === String(next?.age || '')
+    && String(current?.persona || '') === String(next?.persona || '')
+    && String(current?.background || '') === String(next?.background || '')
+    && sameListItems(normalizeCharacterTagList(current), normalizeCharacterTagList(next), sameTagSummary);
+}
+
+function sameTagSummary(current = {}, next = {}) {
+  return String(current?.id || '') === String(next?.id || '')
+    && String(current?.name || '') === String(next?.name || '')
+    && String(current?.color || '') === String(next?.color || '')
+    && Number(current?.usageCount || 0) === Number(next?.usageCount || 0);
+}
+
+function normalizeCharacterTagList(character = {}) {
+  if (Array.isArray(character.characterTags) && character.characterTags.length) {
+    return character.characterTags;
+  }
+  return Array.isArray(character.tags) ? character.tags.map((name) => ({ name })) : [];
+}
+
 function hashHotTag(value = '') {
   let hash = 2166136261;
   for (const char of String(value)) {
@@ -245,12 +306,32 @@ function measureContainerWidth() {
 }
 
 let resizeObserver = null;
+let containerMeasureRafId = null;
 let mobileLayoutQuery = null;
 let characterLoadToken = 0;
 let tagLoadToken = 0;
 let importFileReadToken = 0;
 let searchLoadTimer = null;
 let homeActive = true;
+
+function scheduleContainerWidthMeasurement() {
+  if (containerMeasureRafId !== null) return;
+  if (typeof requestAnimationFrame === 'function') {
+    containerMeasureRafId = requestAnimationFrame(() => {
+      containerMeasureRafId = null;
+      measureContainerWidth();
+    });
+    return;
+  }
+  measureContainerWidth();
+}
+
+function cancelContainerWidthMeasurement() {
+  if (containerMeasureRafId !== null && typeof cancelAnimationFrame === 'function') {
+    cancelAnimationFrame(containerMeasureRafId);
+  }
+  containerMeasureRafId = null;
+}
 
 function syncMobileListLayout() {
   isMobileListLayout.value = Boolean(mobileLayoutQuery?.matches);
@@ -287,9 +368,10 @@ function refreshScrollMeasurements() {
     resizeObserver = null;
   }
 
+  cancelContainerWidthMeasurement();
   measureContainerWidth();
   if (scrollContainerRef.value && typeof ResizeObserver !== 'undefined') {
-    resizeObserver = new ResizeObserver(() => measureContainerWidth());
+    resizeObserver = new ResizeObserver(scheduleContainerWidthMeasurement);
     resizeObserver.observe(scrollContainerRef.value);
   }
 }
@@ -310,6 +392,7 @@ onUnmounted(() => {
     resizeObserver.disconnect();
     resizeObserver = null;
   }
+  cancelContainerWidthMeasurement();
   removeMobileLayoutListener();
 });
 
@@ -362,11 +445,11 @@ async function loadTags() {
   try {
     const nextTags = await fetchTags();
     if (!isCurrentTagLoad(requestToken)) return;
-    tags.value = nextTags;
+    setTagsIfChanged(nextTags);
   } catch (err) {
     if (!isCurrentTagLoad(requestToken)) return;
     tagLoadError.value = err.message || '标签加载失败';
-    tags.value = [];
+    setTagsIfChanged([]);
   } finally {
     if (isCurrentTagLoad(requestToken)) {
       tagLoading.value = false;
@@ -406,7 +489,7 @@ async function loadCharacters() {
   try {
     const nextCharacters = await fetchCharacters(filters);
     if (!isCurrentCharacterLoad(requestToken)) return;
-    characters.value = nextCharacters;
+    setCharactersIfChanged(nextCharacters);
   } catch (err) {
     if (!isCurrentCharacterLoad(requestToken)) return;
     loadError.value = err.message || '加载角色失败';
@@ -495,9 +578,9 @@ function isReactionPending(character, type) {
 }
 
 function mergeCharacter(nextCharacter) {
-  characters.value = characters.value.map((character) => (
+  setCharactersIfChanged(characters.value.map((character) => (
     character.id === nextCharacter.id ? { ...character, ...nextCharacter } : character
-  ));
+  )));
 }
 
 async function handleImportFile(event) {
@@ -648,11 +731,11 @@ function formatCount(value) {
     <section class="home-control-panel" aria-label="角色筛选">
       <label class="home-search-field">
         <Search :size="18" />
-        <input v-model.trim="search" placeholder="搜索名称、标签或人设" />
+        <input v-model.trim="search" placeholder="搜索名称、标签或人设" aria-label="搜索名称、标签或人设" />
       </label>
       <label class="home-select-field">
         <Clock3 :size="18" />
-        <select v-model="sort">
+        <select v-model="sort" aria-label="角色排序方式">
           <option v-for="option in sortOptions" :key="option.value" :value="option.value">{{ option.label }}</option>
         </select>
       </label>

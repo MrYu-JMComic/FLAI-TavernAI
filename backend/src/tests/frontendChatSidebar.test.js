@@ -1,13 +1,13 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { readRepoText, readVueBlocks } from './frontendSfcTestUtils.js';
+import { readFrontendStyles, readRepoText, readVueBlocks } from './frontendSfcTestUtils.js';
 
 const { template: chatSidebarTemplate } = readVueBlocks(
   'frontend/src/components/chat/ChatSidebar.vue',
   ['template']
 );
 const chatConversationSource = readRepoText('frontend/src/composables/chat/useChatConversation.js');
-const stylesSource = readRepoText('frontend/src/styles.css');
+const stylesSource = readFrontendStyles();
 const { useChatConversation } = await import('../../../frontend/src/composables/chat/useChatConversation.js');
 
 test('ChatSidebar locks conversation open rows while conversation actions are busy', () => {

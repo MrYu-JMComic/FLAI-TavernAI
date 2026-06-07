@@ -21,6 +21,25 @@ test('PresetView retry action ignores events while presets are loading', () => {
   );
 });
 
+test('PresetView preserves unchanged preset list references during refreshes', () => {
+  assert.match(
+    presetViewScript,
+    /const nextPresets = await fetchPresets\(\);[\s\S]*setPresetsIfChanged\(nextPresets\);/
+  );
+  assert.match(
+    presetViewScript,
+    /function setPresetsIfChanged\(nextPresets\) \{[\s\S]*samePresetList\(presets\.value, normalizedNextPresets\)[\s\S]*presets\.value = normalizedNextPresets;[\s\S]*return true;[\s\S]*\}/
+  );
+  assert.match(
+    presetViewScript,
+    /function samePresetSummary\(currentPreset, nextPreset\) \{[\s\S]*currentPreset\?\.id === nextPreset\?\.id[\s\S]*currentPreset\?\.systemPrompt === nextPreset\?\.systemPrompt[\s\S]*Boolean\(currentPreset\?\.isDefault\) === Boolean\(nextPreset\?\.isDefault\);[\s\S]*\}/
+  );
+  assert.doesNotMatch(
+    presetViewScript.replace(/function setPresetsIfChanged\(nextPresets\) \{[\s\S]*?\n\}/, ''),
+    /presets\.value\s*=/
+  );
+});
+
 test('PresetView freezes list entry actions while preset work is busy', () => {
   assert.match(
     presetViewScript,

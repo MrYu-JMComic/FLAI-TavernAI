@@ -16,6 +16,7 @@ export function useChatScroll({ messageScroller, conversationId }) {
   let disposed = false;
   let scrollToBottomRafId = null;
   let restoreScrollRafId = null;
+  let scrollStateRafId = null;
   let smoothScrollStateTimer = null;
 
   const showScrollBottomButton = computed(() => {
@@ -23,7 +24,7 @@ export function useChatScroll({ messageScroller, conversationId }) {
   });
 
   function handleMessageScroll() {
-    updateScrollState();
+    scheduleScrollStateUpdate();
     scheduleSaveMessageScrollPosition();
   }
 
@@ -88,6 +89,20 @@ export function useChatScroll({ messageScroller, conversationId }) {
     return Math.max(0, el.scrollHeight - el.scrollTop - el.clientHeight);
   }
 
+  function scheduleScrollStateUpdate() {
+    if (disposed || scrollStateRafId) {
+      return;
+    }
+    if (typeof requestAnimationFrame !== 'function') {
+      updateScrollState();
+      return;
+    }
+    scrollStateRafId = requestAnimationFrame(() => {
+      scrollStateRafId = null;
+      updateScrollState();
+    });
+  }
+
   function isPinnedToBottom() {
     if (disposed) {
       return false;
@@ -100,6 +115,10 @@ export function useChatScroll({ messageScroller, conversationId }) {
       return false;
     }
     return isScrollPinned.value || getDistanceToBottom(el) <= scrollStickThreshold;
+  }
+
+  function hasUserPausedAutoScroll() {
+    return userPausedAutoScroll || hasRecentManualScrollIntent();
   }
 
   function stickToBottomIfNeeded(smooth = false) {
@@ -365,6 +384,10 @@ export function useChatScroll({ messageScroller, conversationId }) {
       cancelAnimationFrame(restoreScrollRafId);
       restoreScrollRafId = null;
     }
+    if (scrollStateRafId) {
+      cancelAnimationFrame(scrollStateRafId);
+      scrollStateRafId = null;
+    }
   }
 
   return {
@@ -376,6 +399,7 @@ export function useChatScroll({ messageScroller, conversationId }) {
     handleTouchStart,
     handleTouchMove,
     isPinnedToBottom,
+    hasUserPausedAutoScroll,
     stickToBottomIfNeeded,
     scrollToBottom,
     scrollToMessage,

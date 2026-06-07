@@ -696,6 +696,13 @@ export function hideEmptyConversationNpcs(conversationId) {
   });
 }
 
+export function updateConversationNpc(conversationId, npcName, payload) {
+  return apiRequest(`/api/conversations/${conversationId}/npcs/${encodeURIComponent(npcName)}`, {
+    method: 'PUT',
+    body: JSON.stringify(payload)
+  });
+}
+
 export function fetchNpcMemories(conversationId, npcName) {
   return apiRequest(`/api/conversations/${conversationId}/npcs/${encodeURIComponent(npcName)}/memories`);
 }

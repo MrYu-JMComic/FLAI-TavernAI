@@ -8,6 +8,7 @@ export function useChatSubmit({
   selectedPresetId,
   statusBar,
   syncStatusBarForm,
+  applyStatusBarUpdate = null,
   handleSkillResult,
   loadStatusBar,
   loadSidebarData,
@@ -15,6 +16,7 @@ export function useChatSubmit({
   onAccessoryRefreshStart,
   onAccessoryRefresh,
   isPinnedToBottom = () => false,
+  hasUserPausedAutoScroll = () => false,
   stickToBottomIfNeeded,
   scrollToMessage,
   prepareExpandedStatusBarForSubmit = () => false,
@@ -34,6 +36,10 @@ export function useChatSubmit({
   let submitRunId = 0;
   let submitDisposed = false;
   const accessoryRefreshTimers = [];
+
+  const updateStatusBar = typeof applyStatusBarUpdate === 'function'
+    ? applyStatusBarUpdate
+    : applyStatusBarDirectly;
 
   const streamIdleTimeoutMs = 60000;
   const accessoryRefreshDelays = [1200, 4000, 9000, 16000, 25000, 38000, 55000];
@@ -132,7 +138,7 @@ export function useChatSubmit({
       sending.value = false;
       return;
     }
-    const assistantReplyAnchored = anchorAssistantReply && scrollToAssistantReply(assistant, true);
+    const assistantReplyAnchored = shouldAnchorAssistantReply(anchorAssistantReply) && scrollToAssistantReply(assistant, true);
     if (!assistantReplyAnchored) {
       stickToBottomIfNeeded(true);
     }
@@ -209,8 +215,7 @@ export function useChatSubmit({
             tool(data) {
               if (!isCurrentSubmit(submitId)) return;
               if (data?.result?.statusBar) {
-                statusBar.value = data.result.statusBar;
-                syncStatusBarForm(data.result.statusBar);
+                updateStatusBar(data.result.statusBar);
               }
             },
             skill_result(data) {
@@ -243,13 +248,12 @@ export function useChatSubmit({
                 provider: data.provider || providerMeta.value?.provider
               };
               if (data.statusBar) {
-                statusBar.value = data.statusBar;
-                syncStatusBarForm(data.statusBar);
+                updateStatusBar(data.statusBar);
               }
               if (data.accessoryBackground) {
                 scheduleAccessoryRefresh();
               }
-              if (anchorAssistantReply) {
+              if (shouldAnchorAssistantReply(anchorAssistantReply)) {
                 await nextTick();
                 if (isCurrentSubmit(submitId)) {
                   scrollToAssistantReply(assistant, false);
@@ -304,13 +308,12 @@ export function useChatSubmit({
           result.skillResults.forEach((item) => handleSkillResult(item));
         }
         if (result.statusBar) {
-          statusBar.value = result.statusBar;
-          syncStatusBarForm(result.statusBar);
+          updateStatusBar(result.statusBar);
         }
         if (result.accessoryBackground) {
           scheduleAccessoryRefresh();
         }
-        if (anchorAssistantReply) {
+        if (shouldAnchorAssistantReply(anchorAssistantReply)) {
           await nextTick();
           if (isCurrentSubmit(submitId)) {
             scrollToAssistantReply(assistant, false);
@@ -387,11 +390,21 @@ export function useChatSubmit({
     }
   }
 
+  function applyStatusBarDirectly(nextStatusBar) {
+    statusBar.value = nextStatusBar;
+    syncStatusBarForm(nextStatusBar);
+    return true;
+  }
+
   function followSubmitScroll(message, anchorAssistantReply, smooth = false) {
-    if (anchorAssistantReply && scrollToAssistantReply(message, smooth)) {
+    if (shouldAnchorAssistantReply(anchorAssistantReply) && scrollToAssistantReply(message, smooth)) {
       return;
     }
     stickToBottomIfNeeded(smooth);
+  }
+
+  function shouldAnchorAssistantReply(anchorAssistantReply) {
+    return Boolean(anchorAssistantReply && !hasUserPausedAutoScroll());
   }
 
   function scrollToAssistantReply(message, smooth = false) {

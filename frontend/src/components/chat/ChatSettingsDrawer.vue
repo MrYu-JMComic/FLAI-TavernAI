@@ -231,6 +231,13 @@ function setColorValue(target, key, value) {
 function modelOverrideOptions(value = '') {
   return buildModelSelectOptions(props.providerModelOptions, value, '使用当前模型');
 }
+
+const drawerCloseLocked = computed(() => props.appearanceSaving || props.accessorySaving || props.statusBarSaving);
+
+function requestClose() {
+  if (drawerCloseLocked.value) return;
+  emit('close');
+}
 </script>
 
 <template>
@@ -240,7 +247,9 @@ function modelOverrideOptions(value = '') {
     type="button"
     aria-label="关闭高阶设置"
     :aria-hidden="String(!open)"
-    @click="emit('close')"
+    :disabled="drawerCloseLocked"
+    :aria-busy="drawerCloseLocked"
+    @click="requestClose"
   ></button>
 
   <aside class="chat-settings-drawer" :class="{ open: open }" aria-label="高阶设置" :aria-hidden="String(!open)">
@@ -249,7 +258,7 @@ function modelOverrideOptions(value = '') {
         <p>高阶设置</p>
         <h2>{{ conversation?.title || '当前会话' }}</h2>
       </div>
-      <button class="deep-icon-button" type="button" aria-label="关闭设置" title="关闭设置" @click="emit('close')">
+      <button class="deep-icon-button" type="button" aria-label="关闭设置" title="关闭设置" :disabled="drawerCloseLocked" :aria-busy="drawerCloseLocked" @click="requestClose">
         <X :size="18" />
       </button>
     </header>

@@ -72,7 +72,7 @@ async function loadImages() {
   const characterId = props.characterId;
   const requestToken = ++imageLoadToken;
   if (!characterId) {
-    images.value = [];
+    setImagesIfChanged([]);
     loadError.value = '';
     loading.value = false;
     return;
@@ -82,10 +82,10 @@ async function loadImages() {
   try {
     const nextImages = await fetchCharacterImages(characterId);
     if (!isCurrentImageLoad(requestToken, characterId)) return;
-    images.value = nextImages;
+    setImagesIfChanged(nextImages);
   } catch (err) {
     if (!isCurrentImageLoad(requestToken, characterId)) return;
-    images.value = [];
+    setImagesIfChanged([]);
     loadError.value = err?.message || '立绘加载失败';
   } finally {
     if (isCurrentImageLoad(requestToken, characterId)) {
@@ -101,6 +101,35 @@ function retryLoadImages() {
 
 function isCurrentImageLoad(requestToken, characterId) {
   return !imagePanelDisposed && requestToken === imageLoadToken && props.characterId === characterId;
+}
+
+function setImagesIfChanged(nextImages) {
+  const normalizedImages = Array.isArray(nextImages) ? nextImages : [];
+  const currentImages = Array.isArray(images.value) ? images.value : [];
+  if (sameListItems(currentImages, normalizedImages, sameImageSummary)) {
+    return false;
+  }
+  images.value = normalizedImages;
+  return true;
+}
+
+function sameListItems(currentItems, nextItems, sameItem) {
+  if (currentItems === nextItems) {
+    return true;
+  }
+  if (currentItems.length !== nextItems.length) {
+    return false;
+  }
+  return currentItems.every((item, index) => sameItem(item, nextItems[index]));
+}
+
+function sameImageSummary(current = {}, next = {}) {
+  return current?.id === next?.id
+    && current?.characterId === next?.characterId
+    && String(current?.imageUrl || '') === String(next?.imageUrl || '')
+    && String(current?.sceneTag || '') === String(next?.sceneTag || '')
+    && String(current?.emotionTag || '') === String(next?.emotionTag || '')
+    && Boolean(current?.isDefault) === Boolean(next?.isDefault);
 }
 
 async function handleUpload(event) {
@@ -267,7 +296,9 @@ function onDragStart(index) {
 
 function onDragOver(index) {
   if (isImageActionDisabled()) return;
-  dragOverIndex.value = index;
+  if (dragOverIndex.value !== index) {
+    dragOverIndex.value = index;
+  }
 }
 
 function onDragEnd() {
@@ -286,7 +317,7 @@ function onDragEnd() {
   const reordered = [...images.value];
   const [moved] = reordered.splice(dragIndex.value, 1);
   reordered.splice(dragOverIndex.value, 0, moved);
-  images.value = reordered;
+  setImagesIfChanged(reordered);
   const orderedIds = reordered.map((img) => img.id);
   const characterId = props.characterId;
   dragIndex.value = -1;

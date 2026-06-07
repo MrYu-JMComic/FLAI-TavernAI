@@ -104,6 +104,7 @@ function releaseSidebarFocus() {
       <input
         :value="historySearch"
         placeholder="搜索当前角色的对话"
+        aria-label="搜索当前角色的对话"
         @input="emit('update:historySearch', $event.target.value)"
       />
     </label>
@@ -157,6 +158,7 @@ function releaseSidebarFocus() {
             type="checkbox"
             :checked="selectedConversationIds.has(item.id)"
             :disabled="conversationActionBusy"
+            :aria-label="`选择对话：${item.title || '未命名对话'}`"
             @change="emit('toggle-selection', item.id)"
           />
           <span aria-hidden="true"></span>

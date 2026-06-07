@@ -62,8 +62,58 @@ test('HomeView debounces search reloads while keeping sort and tag changes immed
 
   assert.match(
     homeViewTemplate,
-    /<input v-model\.trim="search" placeholder="[^"]+" \/>/
+    /<input v-model\.trim="search" placeholder="[^"]+" aria-label="[^"]+" \/>/
   );
+  assert.match(homeViewTemplate, /<select v-model="sort" aria-label="[^"]+">/);
+});
+
+test('HomeView coalesces character-list width measurements into animation frames', () => {
+  assert.match(homeViewScript, /let containerMeasureRafId = null;/);
+  assert.match(
+    homeViewScript,
+    /function scheduleContainerWidthMeasurement\(\) \{[\s\S]*if \(containerMeasureRafId !== null\) return;[\s\S]*requestAnimationFrame\(\(\) => \{[\s\S]*containerMeasureRafId = null;[\s\S]*measureContainerWidth\(\);/
+  );
+  assert.match(
+    homeViewScript,
+    /function cancelContainerWidthMeasurement\(\) \{[\s\S]*cancelAnimationFrame\(containerMeasureRafId\);[\s\S]*containerMeasureRafId = null;/
+  );
+  assert.match(
+    homeViewScript,
+    /function refreshScrollMeasurements\(\) \{[\s\S]*cancelContainerWidthMeasurement\(\);[\s\S]*measureContainerWidth\(\);[\s\S]*new ResizeObserver\(scheduleContainerWidthMeasurement\);/
+  );
+  assert.match(
+    homeViewScript,
+    /onUnmounted\(\(\) => \{[\s\S]*cancelContainerWidthMeasurement\(\);[\s\S]*removeMobileLayoutListener\(\);/
+  );
+});
+
+test('HomeView preserves unchanged character and tag list references during refreshes', () => {
+  assert.match(
+    homeViewScript,
+    /function setCharactersIfChanged\(nextCharacters\)\s*{\s*const normalizedCharacters = Array\.isArray\(nextCharacters\) \? nextCharacters : \[\];[\s\S]*if \(sameListItems\(currentCharacters, normalizedCharacters, sameCharacterSummary\)\) {\s*return false;\s*}[\s\S]*characters\.value = normalizedCharacters;[\s\S]*return true;[\s\S]*}/
+  );
+  assert.match(
+    homeViewScript,
+    /function setTagsIfChanged\(nextTags\)\s*{\s*const normalizedTags = Array\.isArray\(nextTags\) \? nextTags : \[\];[\s\S]*if \(sameListItems\(currentTags, normalizedTags, sameTagSummary\)\) {\s*return false;\s*}[\s\S]*tags\.value = normalizedTags;[\s\S]*return true;[\s\S]*}/
+  );
+  assert.match(
+    homeViewScript,
+    /function sameListItems\(currentItems, nextItems, sameItem\)\s*{[\s\S]*if \(currentItems === nextItems\) {\s*return true;\s*}[\s\S]*if \(currentItems\.length !== nextItems\.length\) {\s*return false;\s*}[\s\S]*currentItems\.every\(\(item, index\) => sameItem\(item, nextItems\[index\]\)\);[\s\S]*}/
+  );
+  assert.match(
+    homeViewScript,
+    /function sameCharacterSummary\(current = {}, next = {}\)\s*{[\s\S]*current\?\.id === next\?\.id[\s\S]*current\?\.name === next\?\.name[\s\S]*Boolean\(current\?\.favoritedByMe\) === Boolean\(next\?\.favoritedByMe\)[\s\S]*Number\(current\?\.likeCount \|\| 0\) === Number\(next\?\.likeCount \|\| 0\)[\s\S]*sameListItems\(normalizeCharacterTagList\(current\), normalizeCharacterTagList\(next\), sameTagSummary\);[\s\S]*}/
+  );
+  assert.match(
+    homeViewScript,
+    /function sameTagSummary\(current = {}, next = {}\)\s*{[\s\S]*String\(current\?\.id \|\| ''\) === String\(next\?\.id \|\| ''\)[\s\S]*String\(current\?\.name \|\| ''\) === String\(next\?\.name \|\| ''\)[\s\S]*Number\(current\?\.usageCount \|\| 0\) === Number\(next\?\.usageCount \|\| 0\);[\s\S]*}/
+  );
+  assert.match(homeViewScript, /setTagsIfChanged\(nextTags\);/);
+  assert.match(homeViewScript, /setTagsIfChanged\(\[\]\);/);
+  assert.match(homeViewScript, /setCharactersIfChanged\(nextCharacters\);/);
+  assert.match(homeViewScript, /function mergeCharacter\(nextCharacter\) {\s*setCharactersIfChanged\(characters\.value\.map/);
+  assert.ok(countMatches(homeViewScript, /setCharactersIfChanged\(/g) >= 3);
+  assert.ok(countMatches(homeViewScript, /setTagsIfChanged\(/g) >= 3);
 });
 
 test('HomeView ignores stale character import file reads', () => {

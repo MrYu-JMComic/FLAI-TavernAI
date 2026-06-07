@@ -1,6 +1,7 @@
-import { readdirSync, readFileSync, statSync } from 'node:fs';
+import { readdirSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { readSmallTextFile } from './diagnostic-file-utils.mjs';
 
 const rawArgs = process.argv.slice(2);
 const args = new Set(rawArgs);
@@ -40,14 +41,6 @@ function* walk(dir) {
   }
 }
 
-function readSmallTextFile(filePath) {
-  const stats = statSync(filePath);
-  if (stats.size > 1024 * 1024) {
-    return '';
-  }
-  return readFileSync(filePath, 'utf8');
-}
-
 function toPosixPath(filePath) {
   return filePath.split(path.sep).join('/');
 }
@@ -60,21 +53,94 @@ function maskHtmlComments(text) {
   return text.replace(/<!--[\s\S]*?-->/g, (match) => match.replace(/[^\r\n]/g, ' '));
 }
 
+function maskSfcScriptAndStyleBlocks(text) {
+  return text.replace(/<(script|style)\b[\s\S]*?<\/\1>/gi, (match) => match.replace(/[^\r\n]/g, ' '));
+}
+
+function maskNonTemplateNoise(text) {
+  return maskHtmlComments(maskSfcScriptAndStyleBlocks(text));
+}
+
 function lineNumberAt(text, index) {
   return text.slice(0, index).split(/\r?\n/).length;
 }
 
-function hasAttribute(attrs, names) {
-  return names.some((name) => new RegExp(`(?:^|\\s)(?::|v-bind:)?${name}\\s*=`, 'i').test(attrs));
+function hasBoundAttribute(attrs, names) {
+  return names.some((name) => new RegExp(`(?:^|\\s)(?::|v-bind:)${name}\\s*=`, 'i').test(attrs));
 }
 
 function getStaticAttribute(attrs, name) {
-  const match = attrs.match(new RegExp(`(?:^|\\s)${name}\\s*=\\s*(['"])(.*?)\\1`, 'i'));
-  return match ? match[2] : '';
+  const match = attrs.match(new RegExp(`(?:^|\\s)${name}\\s*=\\s*(?:(['"])(.*?)\\1|([^\\s>]+))`, 'i'));
+  return match ? (match[2] ?? match[3] ?? '') : '';
 }
 
-function hasAccessibleNameAttribute(attrs) {
-  return hasAttribute(attrs, ['aria-label', 'aria-labelledby']);
+function hasNonEmptyStaticAttribute(attrs, names) {
+  return names.some((name) => getStaticAttribute(attrs, name).trim().length > 0);
+}
+
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function findElementByStaticId(text, id) {
+  const tagPattern = /<([a-z][\w:-]*)\b/gi;
+  let match;
+
+  while ((match = tagPattern.exec(text))) {
+    const tagEnd = findTagEnd(text, tagPattern.lastIndex);
+    if (tagEnd === -1) {
+      break;
+    }
+
+    const attrs = text.slice(tagPattern.lastIndex, tagEnd);
+    if (getStaticAttribute(attrs, 'id').trim() !== id) {
+      tagPattern.lastIndex = tagEnd + 1;
+      continue;
+    }
+
+    const tagName = match[1];
+    if (text[tagEnd - 1] === '/') {
+      return { attrs, body: '' };
+    }
+
+    const closePattern = new RegExp(`</${escapeRegExp(tagName)}\\s*>`, 'i');
+    const closeMatch = closePattern.exec(text.slice(tagEnd + 1));
+    return {
+      attrs,
+      body: closeMatch ? text.slice(tagEnd + 1, tagEnd + 1 + closeMatch.index) : ''
+    };
+  }
+
+  return null;
+}
+
+function referencedElementProvidesName(text, id) {
+  const element = findElementByStaticId(text, id);
+  if (!element) {
+    return false;
+  }
+  return hasNonEmptyStaticAttribute(element.attrs, ['aria-label', 'title']) || hasLabelTextContent(element.body);
+}
+
+function hasStaticAriaLabelledByReference(attrs, text) {
+  const labelledBy = getStaticAttribute(attrs, 'aria-labelledby').trim();
+  if (!labelledBy || !text) {
+    return false;
+  }
+
+  return labelledBy.split(/\s+/).some((id) => referencedElementProvidesName(text, id));
+}
+
+function hasAccessibleNameAttribute(attrs, text = '') {
+  return (
+    hasBoundAttribute(attrs, ['aria-label', 'aria-labelledby']) ||
+    hasNonEmptyStaticAttribute(attrs, ['aria-label']) ||
+    hasStaticAriaLabelledByReference(attrs, text)
+  );
+}
+
+function hasTitleAttribute(attrs) {
+  return hasBoundAttribute(attrs, ['title']) || hasNonEmptyStaticAttribute(attrs, ['title']);
 }
 
 function findTagEnd(text, startIndex) {
@@ -101,8 +167,18 @@ function findTagEnd(text, startIndex) {
   return -1;
 }
 
-function stripTags(text) {
+function isAriaHidden(attrs) {
+  return /^true$/i.test(getStaticAttribute(attrs, 'aria-hidden').trim());
+}
+
+function stripAriaHiddenContent(text) {
   return text
+    .replace(/<([a-z][\w:-]*)\b(?=[^>]*\baria-hidden\s*=)([^>]*)>[\s\S]*?<\/\1\s*>/gi, (match, _tag, attrs) => (isAriaHidden(attrs) ? ' ' : match))
+    .replace(/<([a-z][\w:-]*)\b(?=[^>]*\baria-hidden\s*=)([^>]*)\/?>/gi, (match, _tag, attrs) => (isAriaHidden(attrs) ? ' ' : match));
+}
+
+function stripTags(text) {
+  return stripAriaHiddenContent(text)
     .replace(/<script\b[\s\S]*?<\/script>/gi, ' ')
     .replace(/<style\b[\s\S]*?<\/style>/gi, ' ')
     .replace(/<[^>]+>/g, ' ')
@@ -117,14 +193,50 @@ function isHiddenInput(attrs) {
   return /^hidden$/i.test(getStaticAttribute(attrs, 'type').trim());
 }
 
-function isInsideLabel(text, index) {
+function stripLabelControlContent(text) {
+  return text
+    .replace(/<textarea\b[\s\S]*?<\/textarea>/gi, ' ')
+    .replace(/<select\b[\s\S]*?<\/select>/gi, ' ')
+    .replace(/<input\b[^>]*>/gi, ' ');
+}
+
+function hasLabelTextContent(text) {
+  return stripTags(stripLabelControlContent(text)).replace(/\s+/g, '').length > 0;
+}
+
+function labelProvidesName(attrs, body, text) {
+  return hasAccessibleNameAttribute(attrs, text) || hasLabelTextContent(body);
+}
+
+function findWrappingLabel(text, index) {
   const before = text.slice(0, index);
-  return before.lastIndexOf('<label') > before.lastIndexOf('</label>');
+  const labelStart = before.lastIndexOf('<label');
+  if (labelStart <= before.lastIndexOf('</label>')) {
+    return null;
+  }
+
+  const labelStartEnd = findTagEnd(text, labelStart + '<label'.length);
+  if (labelStartEnd === -1 || labelStartEnd >= index) {
+    return null;
+  }
+
+  const labelClosePattern = /<\/label\s*>/gi;
+  labelClosePattern.lastIndex = index;
+  const labelClose = labelClosePattern.exec(text);
+  if (!labelClose) {
+    return null;
+  }
+
+  return {
+    attrs: text.slice(labelStart + '<label'.length, labelStartEnd),
+    body: text.slice(labelStartEnd + 1, labelClose.index)
+  };
 }
 
 function hasAssociatedLabel(text, attrs, index) {
-  if (isInsideLabel(text, index)) {
-    return true;
+  const wrappingLabel = findWrappingLabel(text, index);
+  if (wrappingLabel) {
+    return labelProvidesName(wrappingLabel.attrs, wrappingLabel.body, text);
   }
 
   const id = getStaticAttribute(attrs, 'id').trim();
@@ -132,8 +244,14 @@ function hasAssociatedLabel(text, attrs, index) {
     return false;
   }
 
-  const escapedId = id.replace(/[\\^$.*+?()[\]{}|]/g, '\\$&');
-  return new RegExp(`<label\\b[^>]*\\bfor\\s*=\\s*(['"])${escapedId}\\1`, 'i').test(text);
+  const labelPattern = /<label\b([^>]*)>([\s\S]*?)<\/label\s*>/gi;
+  let match;
+  while ((match = labelPattern.exec(text))) {
+    if (getStaticAttribute(match[1], 'for').trim() === id && labelProvidesName(match[1], match[2], text)) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function findButtonViolations(fileLabel, text) {
@@ -157,7 +275,7 @@ function findButtonViolations(fileLabel, text) {
 
     const body = text.slice(tagEnd + 1, closeMatch.index);
     buttonPattern.lastIndex = closePattern.lastIndex;
-    if (hasAccessibleNameAttribute(attrs) || hasVisibleButtonText(body)) {
+    if (hasAccessibleNameAttribute(attrs, text) || hasVisibleButtonText(body)) {
       continue;
     }
 
@@ -189,7 +307,7 @@ function findFormControlViolations(fileLabel, text) {
     if (control.toLowerCase() === 'input' && isHiddenInput(attrs)) {
       continue;
     }
-    if (hasAccessibleNameAttribute(attrs) || hasAttribute(attrs, ['title']) || hasAssociatedLabel(text, attrs, match.index)) {
+    if (hasAccessibleNameAttribute(attrs, text) || hasTitleAttribute(attrs) || hasAssociatedLabel(text, attrs, match.index)) {
       continue;
     }
 
@@ -212,7 +330,7 @@ function findViolations() {
       continue;
     }
 
-    const text = maskHtmlComments(readSmallTextFile(filePath));
+    const text = maskNonTemplateNoise(readSmallTextFile(filePath));
     const fileLabel = relativePath(filePath);
     violations.push(...findButtonViolations(fileLabel, text));
     violations.push(...findFormControlViolations(fileLabel, text));

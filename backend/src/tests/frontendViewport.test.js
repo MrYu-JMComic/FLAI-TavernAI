@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
 const { isPhoneViewport, isViewportMatch, useViewport } = await import('../../../frontend/src/composables/useViewport.js');
 const { buildChatScriptContext } = await import('../../../frontend/src/utils/chatAppearance.js');
+const useViewportSource = readFileSync(new URL('../../../frontend/src/composables/useViewport.js', import.meta.url), 'utf8');
 
 function withWindow(windowValue, callback) {
   const hadWindow = Object.prototype.hasOwnProperty.call(globalThis, 'window');
@@ -56,6 +58,22 @@ test('useViewport initializes from fallback width without matchMedia', () => {
       assert.equal(viewport.isPhone.value, true);
     });
   });
+});
+
+test('useViewport coalesces fallback resize checks into animation frames', () => {
+  assert.match(useViewportSource, /let resizeRafId = null;/);
+  assert.match(
+    useViewportSource,
+    /function scheduleCheck\(\) \{[\s\S]*if \(resizeRafId !== null\) return;[\s\S]*window\.requestAnimationFrame\(\(\) => \{[\s\S]*resizeRafId = null;[\s\S]*check\(\);/
+  );
+  assert.match(
+    useViewportSource,
+    /function cancelScheduledCheck\(\) \{[\s\S]*window\.cancelAnimationFrame\(resizeRafId\);[\s\S]*resizeRafId = null;/
+  );
+  assert.match(
+    useViewportSource,
+    /window\.addEventListener\('resize', scheduleCheck\);[\s\S]*window\.removeEventListener\('resize', scheduleCheck\);[\s\S]*cancelScheduledCheck\(\);/
+  );
 });
 
 test('chat appearance script context uses viewport fallback without matchMedia', () => {

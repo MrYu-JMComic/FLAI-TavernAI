@@ -138,6 +138,39 @@ test('encoding checker keeps reports in scope and reports scan coverage', () => 
   assert.match(encodingCheck, /scanned\s+\$\{scannedFileCount\}\s+files/);
 });
 
+test('encoding checker flags common UTF-8-as-GBK mojibake markers', () => {
+  const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'flai-encoding-check-'));
+  try {
+    writeFixtureFile(fixtureRoot, 'scripts/check-encoding.mjs', readText('scripts/check-encoding.mjs'));
+    writeFixtureFile(fixtureRoot, 'automation/backlog.md', `# ${String.fromCodePoint(0x951b)}\n`);
+
+    const result = spawnSync(process.execPath, [path.join(fixtureRoot, 'scripts', 'check-encoding.mjs')], {
+      cwd: fixtureRoot,
+      encoding: 'utf8'
+    });
+
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /Possible Chinese encoding corruption found/);
+    assert.match(result.stderr, /automation[\\/]backlog\.md/);
+  } finally {
+    fs.rmSync(fixtureRoot, { recursive: true, force: true });
+  }
+});
+
+test('diagnostic scripts share safe file-read helpers', () => {
+  const fileUtils = readText('scripts/diagnostic-file-utils.mjs');
+  const unreferencedScanner = readText('scripts/find-unreferenced-vue-components.mjs');
+  const accessibilityScanner = readText('scripts/find-inaccessible-vue-controls.mjs');
+
+  assert.match(fileUtils, /const smallTextFileLimitBytes = 1024 \* 1024;/);
+  assert.match(fileUtils, /export function readSmallTextFile/);
+  assert.match(fileUtils, /export function readJsonFile/);
+  assert.match(unreferencedScanner, /import \{ readJsonFile, readSmallTextFile \} from '\.\/diagnostic-file-utils\.mjs';/);
+  assert.match(accessibilityScanner, /import \{ readSmallTextFile \} from '\.\/diagnostic-file-utils\.mjs';/);
+  assert.doesNotMatch(unreferencedScanner, /function readSmallTextFile/);
+  assert.doesNotMatch(accessibilityScanner, /function readSmallTextFile/);
+});
+
 test('prepare commit stages single tracked and untracked paths as separate targets', {
   skip: !gitCommand || !powershellCommand
 }, () => {
@@ -190,12 +223,18 @@ test('unreferenced Vue component scanner reports candidates without failing by d
   assert.ok(Array.isArray(parsed.candidates));
   assert.ok(Array.isArray(parsed.reviewed));
   assert.match(scanner, /function\s+toKebabCase/);
-  assert.match(scanner, /<\$\{kebabName\}/);
-  assert.match(scanner, /is="\$\{kebabName\}"/);
-  assert.match(scanner, /\.component\('\$\{kebabName\}'/);
-  assert.match(scanner, /frontendRelativeWithoutExtension/);
-  assert.match(scanner, /@\/\$\{frontendRelative\}/);
-  assert.match(scanner, /@\/\$\{frontendRelativeWithoutExtension\}/);
+  assert.match(scanner, /function\s+componentTagPatterns/);
+  assert.match(scanner, /<\\\\s\*\$\{escapedName\}/);
+  assert.match(scanner, /function\s+componentIsAttributePatterns/);
+  assert.match(scanner, /v-bind:is/);
+  assert.match(scanner, /function\s+maskComponentTokenSearchText/);
+  assert.match(scanner, /function\s+maskVueScriptAndStyleBlocks/);
+  assert.match(scanner, /function\s+maskVueAttributeValueNoise/);
+  assert.match(scanner, /function\s+collectComponentReferenceLiterals/);
+  assert.match(scanner, /import\\\.meta\\\.glob/);
+  assert.doesNotMatch(scanner, /frontendRelativeWithoutExtension/);
+  assert.doesNotMatch(scanner, /@\/\$\{frontendRelative/);
+  assert.doesNotMatch(scanner, /\.component\('\$\{/);
   assert.match(scanner, /function\s+resolveComponentReference/);
   assert.match(scanner, /function\s+resolveComponentGlob/);
   assert.match(scanner, /function\s+globToRegExp/);
@@ -228,9 +267,31 @@ test('unreferenced Vue component scanner resolves path aliases and globbed refer
   const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'flai-vue-scan-'));
   try {
     writeFixtureFile(fixtureRoot, 'frontend/src/components/AliasWidget.vue', '<template><div /></template>');
+    writeFixtureFile(fixtureRoot, 'frontend/src/components/BoundKebabWidget.vue', '<template><div /></template>');
+    writeFixtureFile(fixtureRoot, 'frontend/src/components/BoundStringWidget.vue', '<template><div /></template>');
     writeFixtureFile(fixtureRoot, 'frontend/src/components/DirectWidget.vue', '<template><div /></template>');
+    writeFixtureFile(fixtureRoot, 'frontend/src/components/DynamicExpressionOnlyWidget.vue', '<template><div /></template>');
     writeFixtureFile(fixtureRoot, 'frontend/src/components/SrcWidget.vue', '<template><div /></template>');
     writeFixtureFile(fixtureRoot, 'frontend/src/components/globbed/GlobbedWidget.vue', '<template><div /></template>');
+    writeFixtureFile(fixtureRoot, 'frontend/src/components/CommentOnlyWidget.vue', '<template><div /></template>');
+    writeFixtureFile(fixtureRoot, 'frontend/src/components/JsStringOnlyWidget.vue', '<template><div /></template>');
+    writeFixtureFile(fixtureRoot, 'frontend/src/components/NameOnlyWidget.vue', '<template><div /></template>');
+    writeFixtureFile(fixtureRoot, 'frontend/src/components/PascalWidget.vue', '<template><div /></template>');
+    writeFixtureFile(fixtureRoot, 'frontend/src/components/PathOnlyWidget.vue', '<template><div /></template>');
+    writeFixtureFile(fixtureRoot, 'frontend/src/components/PrefixOnlyWidget.vue', '<template><div /></template>');
+    writeFixtureFile(fixtureRoot, 'frontend/src/components/PrefixOnlyWidgetPanel.vue', '<template><div /></template>');
+    writeFixtureFile(fixtureRoot, 'frontend/src/components/ReExportedWidget.vue', '<template><div /></template>');
+    writeFixtureFile(fixtureRoot, 'frontend/src/components/RegexStaticImportOnlyWidget.vue', '<template><div /></template>');
+    writeFixtureFile(fixtureRoot, 'frontend/src/components/RegexTokenOnlyWidget.vue', '<template><div /></template>');
+    writeFixtureFile(fixtureRoot, 'frontend/src/components/StaticIsWidget.vue', '<template><div /></template>');
+    writeFixtureFile(fixtureRoot, 'frontend/src/components/StaticSpacedBoundKebabWidget.vue', '<template><div /></template>');
+    writeFixtureFile(fixtureRoot, 'frontend/src/components/StaticSpacedBoundStringWidget.vue', '<template><div /></template>');
+    writeFixtureFile(fixtureRoot, 'frontend/src/components/StaticSpacedIsWidget.vue', '<template><div /></template>');
+    writeFixtureFile(fixtureRoot, 'frontend/src/components/StaticUnquotedIsWidget.vue', '<template><div /></template>');
+    writeFixtureFile(fixtureRoot, 'frontend/src/components/StaticUnquotedKebabWidget.vue', '<template><div /></template>');
+    writeFixtureFile(fixtureRoot, 'frontend/src/components/StringImportOnlyWidget.vue', '<template><div /></template>');
+    writeFixtureFile(fixtureRoot, 'frontend/src/components/StringOnlyWidget.vue', '<template><div /></template>');
+    writeFixtureFile(fixtureRoot, 'frontend/src/components/TemplateAttributeStringOnlyWidget.vue', '<template><div /></template>');
     writeFixtureFile(fixtureRoot, 'frontend/src/components/UnusedWidget.vue', '<template><div /></template>');
     writeFixtureFile(fixtureRoot, 'frontend/src/components/ReviewedWidget.vue', '<template><div /></template>');
     writeFixtureFile(
@@ -257,11 +318,68 @@ import DirectWidget from '../components/DirectWidget.vue';
 const AliasWidget = defineAsyncComponent(() => import('@/components/AliasWidget'));
 const SrcWidget = defineAsyncComponent(() => import('/src/components/SrcWidget.vue?component'));
 const globbed = import.meta.glob('../components/globbed/*.vue');
+export { default as ReExportedWidget } from '../components/ReExportedWidget.vue';
 </script>
 <template>
   <DirectWidget />
   <AliasWidget />
   <SrcWidget />
+  <PascalWidget />
+  <PrefixOnlyWidgetPanel />
+  <component is="StaticIsWidget" />
+  <component is = "StaticSpacedIsWidget" />
+  <component is=StaticUnquotedIsWidget />
+  <component is=static-unquoted-kebab-widget />
+  <component :is="'BoundStringWidget'" />
+  <component :is = "'StaticSpacedBoundStringWidget'" />
+  <component v-bind:is="'bound-kebab-widget'" />
+  <component v-bind:is = "'static-spaced-bound-kebab-widget'" />
+  <component :is="DynamicExpressionOnlyWidget" />
+</template>
+`
+    );
+    writeFixtureFile(
+      fixtureRoot,
+      'frontend/src/views/NameOnlyNoise.vue',
+      `
+<script setup>
+const cleanupNote = 'NameOnlyWidget should be reviewed before removal';
+const pathNote = '@/components/PathOnlyWidget.vue should be reviewed before removal';
+const htmlSnippet = '<StringOnlyWidget />';
+</script>
+<template>
+  <p>NameOnlyWidget is mentioned as text, not rendered.</p>
+  <p>@/components/PathOnlyWidget.vue is mentioned as text, not rendered.</p>
+  <div data-example="<TemplateAttributeStringOnlyWidget />"></div>
+</template>
+<style>
+.string-only::after {
+  content: '<string-only-widget></string-only-widget>';
+}
+</style>
+`
+    );
+    writeFixtureFile(
+      fixtureRoot,
+      'frontend/src/views/JsStringOnlyNoise.js',
+      `
+const htmlSnippet = '<JsStringOnlyWidget />';
+const isSnippet = '<component is="JsStringOnlyWidget" />';
+const importSnippet = "import('../components/StringImportOnlyWidget.vue')";
+const regexSnippet = /<RegexTokenOnlyWidget \\/>/;
+const regexStaticImportSnippet = /import RegexStaticImportOnlyWidget from '..\\/components\\/RegexStaticImportOnlyWidget.vue'/;
+`
+    );
+    writeFixtureFile(
+      fixtureRoot,
+      'frontend/src/views/CommentNoise.vue',
+      `
+<script setup>
+// import('@/components/CommentOnlyWidget.vue');
+/* const CommentOnlyWidget = defineAsyncComponent(() => import('../components/CommentOnlyWidget.vue')); */
+</script>
+<template>
+  <!-- <comment-only-widget /> -->
 </template>
 `
     );
@@ -275,7 +393,20 @@ const globbed = import.meta.glob('../components/globbed/*.vue');
 
     assert.deepEqual(
       parsed.candidates.map((candidate) => candidate.file),
-      ['frontend/src/components/UnusedWidget.vue']
+      [
+        'frontend/src/components/CommentOnlyWidget.vue',
+        'frontend/src/components/DynamicExpressionOnlyWidget.vue',
+        'frontend/src/components/JsStringOnlyWidget.vue',
+        'frontend/src/components/NameOnlyWidget.vue',
+        'frontend/src/components/PathOnlyWidget.vue',
+        'frontend/src/components/PrefixOnlyWidget.vue',
+        'frontend/src/components/RegexStaticImportOnlyWidget.vue',
+        'frontend/src/components/RegexTokenOnlyWidget.vue',
+        'frontend/src/components/StringImportOnlyWidget.vue',
+        'frontend/src/components/StringOnlyWidget.vue',
+        'frontend/src/components/TemplateAttributeStringOnlyWidget.vue',
+        'frontend/src/components/UnusedWidget.vue'
+      ]
     );
     assert.deepEqual(
       parsed.reviewed.map((component) => [component.file, component.review.status]),
@@ -307,6 +438,74 @@ test('Vue accessibility scanner reports unlabeled controls without failing by de
     aria-label="Template"
   ></textarea>
 </template>
+<script setup>
+const exampleMarkup = '<button><Icon /></button><input />';
+</script>
+<style>
+.sample::after {
+  content: '<select></select>';
+}
+</style>
+`
+    );
+    writeFixtureFile(
+      fixtureRoot,
+      'frontend/src/components/DynamicNamePanel.vue',
+      `
+<template>
+  <button :aria-label="buttonLabel"><Icon /></button>
+  <input v-bind:title="inputTitle" />
+  <input aria-label=UnquotedName />
+  <input title=UnquotedTitle />
+  <label aria-label="Wrapped input name"><input /></label>
+  <label for="external-label-name" aria-label="External input name"></label>
+  <input id="external-label-name" />
+  <label for=unquoted-external-name>Unquoted external input name</label>
+  <input id=unquoted-external-name />
+  <span id=unquoted-button-label>Unquoted dismiss</span>
+  <button aria-labelledby=unquoted-button-label><Icon /></button>
+  <span id=unquoted-input-label>Unquoted input name</span>
+  <input aria-labelledby=unquoted-input-label />
+</template>
+`
+    );
+    writeFixtureFile(
+      fixtureRoot,
+      'frontend/src/components/EmptyNamePanel.vue',
+      `
+<template>
+  <button aria-label=""><Icon /></button>
+  <input title=" " />
+  <textarea aria-labelledby=""></textarea>
+  <label for="empty-external"></label>
+  <input id="empty-external" />
+  <label><input /></label>
+  <button><span aria-hidden="true">x</span></button>
+  <label><span aria-hidden=true>Hidden only</span><input /></label>
+  <label><select><option>Auto</option></select></label>
+  <span id="visible-button-label">Dismiss</span>
+  <button aria-labelledby="visible-button-label"><Icon /></button>
+  <span id="empty-button-label"><Icon /></span>
+  <button aria-labelledby="empty-button-label"><Icon /></button>
+  <span id="visible-input-label">Name</span>
+  <input aria-labelledby="visible-input-label" />
+  <input aria-labelledby="missing-input-label" />
+  <span id="empty-input-label"></span>
+  <input aria-labelledby="empty-input-label" />
+</template>
+`
+    );
+    writeFixtureFile(
+      fixtureRoot,
+      'frontend/src/components/ScriptFirstPanel.vue',
+      `
+<script setup>
+const commentPrefix = '<!--';
+</script>
+<template>
+  <button><Icon /></button>
+  <!-- comment close marker -->
+</template>
 `
     );
 
@@ -321,13 +520,25 @@ test('Vue accessibility scanner reports unlabeled controls without failing by de
       parsed.violations.map((violation) => [violation.file, violation.control, violation.message]),
       [
         ['frontend/src/components/ControlPanel.vue', 'button', 'Icon-only button needs aria-label or aria-labelledby'],
-        ['frontend/src/components/ControlPanel.vue', 'textarea', 'Form control needs an accessible label']
+        ['frontend/src/components/ControlPanel.vue', 'textarea', 'Form control needs an accessible label'],
+        ['frontend/src/components/EmptyNamePanel.vue', 'button', 'Icon-only button needs aria-label or aria-labelledby'],
+        ['frontend/src/components/EmptyNamePanel.vue', 'input', 'Form control needs an accessible label'],
+        ['frontend/src/components/EmptyNamePanel.vue', 'textarea', 'Form control needs an accessible label'],
+        ['frontend/src/components/EmptyNamePanel.vue', 'input', 'Form control needs an accessible label'],
+        ['frontend/src/components/EmptyNamePanel.vue', 'input', 'Form control needs an accessible label'],
+        ['frontend/src/components/EmptyNamePanel.vue', 'button', 'Icon-only button needs aria-label or aria-labelledby'],
+        ['frontend/src/components/EmptyNamePanel.vue', 'input', 'Form control needs an accessible label'],
+        ['frontend/src/components/EmptyNamePanel.vue', 'select', 'Form control needs an accessible label'],
+        ['frontend/src/components/EmptyNamePanel.vue', 'button', 'Icon-only button needs aria-label or aria-labelledby'],
+        ['frontend/src/components/EmptyNamePanel.vue', 'input', 'Form control needs an accessible label'],
+        ['frontend/src/components/EmptyNamePanel.vue', 'input', 'Form control needs an accessible label'],
+        ['frontend/src/components/ScriptFirstPanel.vue', 'button', 'Icon-only button needs aria-label or aria-labelledby']
       ]
     );
 
     const defaultRun = spawnNodeScript('scripts/find-inaccessible-vue-controls.mjs', ['--project-root', fixtureRoot]);
     assert.equal(defaultRun.status, 0);
-    assert.match(defaultRun.stdout, /Potentially inaccessible Vue controls: 2/);
+    assert.match(defaultRun.stdout, /Potentially inaccessible Vue controls: 14/);
 
     const strictRun = spawnNodeScript('scripts/find-inaccessible-vue-controls.mjs', [
       '--project-root',

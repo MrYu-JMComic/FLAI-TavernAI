@@ -1,12 +1,12 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { readRepoText, readVueBlocks } from './frontendSfcTestUtils.js';
+import { readFrontendStyles, readRepoText, readVueBlocks } from './frontendSfcTestUtils.js';
 
 const { template: chatComposerTemplate } = readVueBlocks(
   'frontend/src/components/chat/ChatComposer.vue',
   ['template']
 );
-const stylesSource = readRepoText('frontend/src/styles.css');
+const stylesSource = readFrontendStyles();
 const chatSubmitSource = readRepoText('frontend/src/composables/chat/useChatSubmit.js');
 const { script: chatViewScript, template: chatViewTemplate } = readVueBlocks('frontend/src/views/ChatView.vue');
 const { script: statusBarScript } = readVueBlocks('frontend/src/components/StatusBar.vue', ['script']);

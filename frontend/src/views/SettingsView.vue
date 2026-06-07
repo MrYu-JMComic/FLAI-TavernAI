@@ -29,6 +29,7 @@ import {
 } from '../api';
 import { useNotify } from '../composables/useNotify';
 import {
+  areProviderModelListsEqual,
   buildModelSelectOptions,
   readCachedProviderModels,
   refreshProviderModels
@@ -199,7 +200,14 @@ const canFetchModels = computed(() => Boolean(
 ));
 
 watch(
-  () => [form.providerType, form.gatewayName, form.baseUrl, form.supportsReasoning, form.extraBody],
+  () => [
+    form.providerType,
+    form.gatewayName,
+    form.baseUrl,
+    Boolean(form.apiKey || form.apiKeySet),
+    form.supportsReasoning,
+    form.extraBody
+  ],
   ([providerType], [previousProviderType] = []) => {
     syncCachedModelOptions();
     if (previousProviderType !== undefined && providerType !== previousProviderType) {
@@ -271,14 +279,14 @@ async function loadModels() {
   try {
     const nextOptions = await refreshProviderModels(request, { forceRefresh: true });
     if (!isCurrentModelLoadResult(requestToken, request)) return;
-    modelOptions.value = nextOptions;
-    if (!modelOptions.value.length) {
+    applyModelOptions(nextOptions);
+    if (!nextOptions.length) {
       notify.info('网关没有返回可选模型，请确认 /models 接口可用。');
-    } else if (!modelOptions.value.some((model) => model.id === form.model)) {
-      form.model = modelOptions.value[0].id;
-      notify.success(`已刷新 ${modelOptions.value.length} 个模型，并自动选择第一个。`);
+    } else if (!nextOptions.some((model) => model.id === form.model)) {
+      form.model = nextOptions[0].id;
+      notify.success(`已刷新 ${nextOptions.length} 个模型，并自动选择第一个。`);
     } else {
-      notify.success(`已刷新 ${modelOptions.value.length} 个模型。`);
+      notify.success(`已刷新 ${nextOptions.length} 个模型。`);
     }
   } catch (err) {
     if (!isCurrentModelLoadResult(requestToken, request)) return;
@@ -544,7 +552,15 @@ function applySettings(settings) {
 }
 
 function syncCachedModelOptions() {
-  modelOptions.value = readCachedProviderModels(form);
+  applyModelOptions(readCachedProviderModels(form));
+}
+
+function applyModelOptions(nextOptions) {
+  if (areProviderModelListsEqual(modelOptions.value, nextOptions)) {
+    return false;
+  }
+  modelOptions.value = nextOptions;
+  return true;
 }
 
 function readAsDataUrl(file) {
@@ -567,6 +583,42 @@ function visibilityText(value) {
 // ── Tag Management ──
 function loadFailureMessage(error, fallback) {
   return error?.message || fallback;
+}
+
+function samePlainValue(left, right) {
+  if (Object.is(left, right)) {
+    return true;
+  }
+  if (!left || !right || typeof left !== 'object' || typeof right !== 'object') {
+    return false;
+  }
+  if (Array.isArray(left) || Array.isArray(right)) {
+    return Array.isArray(left)
+      && Array.isArray(right)
+      && left.length === right.length
+      && left.every((item, index) => samePlainValue(item, right[index]));
+  }
+  const leftKeys = Object.keys(left);
+  const rightKeys = Object.keys(right);
+  return leftKeys.length === rightKeys.length
+    && leftKeys.every((key) => Object.prototype.hasOwnProperty.call(right, key)
+      && samePlainValue(left[key], right[key]));
+}
+
+function sameListItems(currentList, nextList) {
+  return Array.isArray(currentList)
+    && Array.isArray(nextList)
+    && currentList.length === nextList.length
+    && currentList.every((item, index) => samePlainValue(item, nextList[index]));
+}
+
+function setListIfChanged(listRef, nextList) {
+  const normalizedNextList = Array.isArray(nextList) ? nextList : [];
+  if (sameListItems(listRef.value, normalizedNextList)) {
+    return false;
+  }
+  listRef.value = normalizedNextList;
+  return true;
 }
 
 function canUseNoAuthProvider() {
@@ -625,7 +677,7 @@ async function loadTags() {
   try {
     const nextTags = await fetchTags({ limit });
     if (!isCurrentTagLoad(requestToken)) return;
-    tagList.value = nextTags;
+    setListIfChanged(tagList, nextTags);
   } catch (err) {
     if (!isCurrentTagLoad(requestToken)) return;
     tagLoadError.value = loadFailureMessage(err, '标签加载失败');
@@ -690,7 +742,9 @@ async function addTag() {
   try {
     const tag = await createTag({ name });
     if (!isCurrentTagMutation(mutationToken)) return;
-    tagList.value = [tag, ...tagList.value.filter((item) => item.id !== tag.id)].slice(0, normalizedTagLoadLimit.value);
+    const nextTags = [tag, ...tagList.value.filter((item) => item.id !== tag.id)]
+      .slice(0, normalizedTagLoadLimit.value);
+    setListIfChanged(tagList, nextTags);
     newTagName.value = '';
     notify.success(`标签「${tag.name}」已创建`);
   } catch (err) {
@@ -730,12 +784,12 @@ async function removeTag(id, name) {
   try {
     await deleteTag(id);
     if (!isCurrentTagMutation(mutationToken)) return;
-    tagList.value = tagList.value.filter((t) => t.id !== id);
+    setListIfChanged(tagList, tagList.value.filter((t) => t.id !== id));
     notify.success(`标签「${name}」已删除`);
   } catch (err) {
     if (!isCurrentTagMutation(mutationToken)) return;
     if (/标签不存在/.test(err.message || '')) {
-      tagList.value = tagList.value.filter((t) => t.id !== id);
+      setListIfChanged(tagList, tagList.value.filter((t) => t.id !== id));
       notify.info(`标签「${name}」已从列表移除`);
       return;
     }
@@ -779,7 +833,7 @@ async function loadPresets() {
   try {
     const nextPresets = await fetchPresets();
     if (!isCurrentPresetLoad(requestToken)) return;
-    presetList.value = nextPresets;
+    setListIfChanged(presetList, nextPresets);
   } catch (err) {
     if (!isCurrentPresetLoad(requestToken)) return;
     presetLoadError.value = loadFailureMessage(err, '预设加载失败');
@@ -924,7 +978,7 @@ async function removePreset(id, name) {
   try {
     await deletePreset(id);
     if (!isCurrentPresetMutation(mutationToken)) return;
-    presetList.value = presetList.value.filter((p) => p.id !== id);
+    setListIfChanged(presetList, presetList.value.filter((p) => p.id !== id));
     if (presetEditing.value === id) {
       showPresetEditor.value = false;
       presetEditing.value = null;
@@ -1062,7 +1116,7 @@ async function loadMods() {
   try {
     const nextMods = await fetchMods();
     if (!isCurrentModLoad(requestToken)) return;
-    modList.value = nextMods;
+    setListIfChanged(modList, nextMods);
   } catch (err) {
     if (!isCurrentModLoad(requestToken)) return;
     modLoadError.value = loadFailureMessage(err, 'Mod 加载失败');
@@ -1087,9 +1141,12 @@ async function loadModCharacterOptions() {
   try {
     const characters = await fetchCharacters({ sort: 'name' });
     if (!isCurrentModCharacterLoad(requestToken)) return;
-    modCharacterOptions.value = Array.isArray(characters)
-      ? characters.filter((character) => character?.canUse !== false)
-      : [];
+    setListIfChanged(
+      modCharacterOptions,
+      Array.isArray(characters)
+        ? characters.filter((character) => character?.canUse !== false)
+        : []
+    );
   } catch (err) {
     if (!isCurrentModCharacterLoad(requestToken)) return;
     modCharactersLoadError.value = loadFailureMessage(err, '角色加载失败');
@@ -1254,7 +1311,7 @@ async function removeMod(id, name) {
   try {
     await deleteMod(id);
     if (!isCurrentModMutation(mutationToken)) return;
-    modList.value = modList.value.filter((m) => m.id !== id);
+    setListIfChanged(modList, modList.value.filter((m) => m.id !== id));
     if (modEditing.value === id) {
       closeModEditor();
     }
@@ -1340,7 +1397,9 @@ function onModDragStart(event, mod) {
 function onModDragOver(event, mod) {
   if (modControlsBusy.value) return;
   event.preventDefault();
-  dragOverMod.value = mod.id;
+  if (dragOverMod.value !== mod.id) {
+    dragOverMod.value = mod.id;
+  }
 }
 
 function onModDragEnd() {
@@ -1369,7 +1428,7 @@ async function onModDrop(event, targetMod) {
   const newList = [...modList.value];
   const [moved] = newList.splice(fromIndex, 1);
   newList.splice(toIndex, 0, moved);
-  modList.value = newList;
+  setListIfChanged(modList, newList);
   dragOverMod.value = null;
 
   try {
@@ -1377,7 +1436,7 @@ async function onModDrop(event, targetMod) {
     if (!isCurrentModMutation(mutationToken)) return;
   } catch (err) {
     if (!isCurrentModMutation(mutationToken)) return;
-    modList.value = previousList;
+    setListIfChanged(modList, previousList);
     notify.error(err.message);
     finishModMutation(mutationToken);
     await loadMods();
@@ -1452,7 +1511,7 @@ async function loadRegexRules() {
   try {
     const nextRules = await fetchRegexRules(groupFilter);
     if (!isCurrentRegexLoad(requestToken, groupFilter)) return;
-    regexRules.value = nextRules;
+    setListIfChanged(regexRules, nextRules);
   } catch (err) {
     if (!isCurrentRegexLoad(requestToken, groupFilter)) return;
     regexLoadError.value = loadFailureMessage(err, '正则规则加载失败');
@@ -1552,7 +1611,7 @@ async function onRegexDrop(dropIndex) {
   const items = [...regexRules.value];
   const [moved] = items.splice(dragIndex.value, 1);
   items.splice(dropIndex, 0, moved);
-  regexRules.value = items;
+  setListIfChanged(regexRules, items);
   dragIndex.value = -1;
   const mutationToken = beginRegexMutation('regex-reorder');
   try {

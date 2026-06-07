@@ -104,7 +104,7 @@ const {
   hasStatusBarContent, showEconomyFeature, showNpcFeature,
   loadStatusBar, loadEconomyBalance, loadAccessorySkills,
   syncAccessorySkills, isAccessorySkillActiveLocal,
-  saveAccessorySkillChanges, handleSkillResult,
+  saveAccessorySkillChanges, applyStatusBarUpdate, handleSkillResult,
   syncStatusBarForm, addStatusBarVariable, removeStatusBarVariable,
   saveStatusBarChanges, deleteStatusBarAction,
   openStatusBarEditor, closeStatusBarEditor, setStatusBarTemplateMode,
@@ -158,7 +158,7 @@ const {
   showScrollBottomButton,
   handleMessageScroll, handleWheelScrollIntent,
   handleTouchStart, handleTouchMove,
-  isPinnedToBottom, stickToBottomIfNeeded, scrollToBottom, scrollToMessage, restoreMessageScrollPosition,
+  isPinnedToBottom, hasUserPausedAutoScroll, stickToBottomIfNeeded, scrollToBottom, scrollToMessage, restoreMessageScrollPosition,
   saveMessageScrollPosition, cleanup: cleanupScroll
 } = scroll;
 
@@ -180,12 +180,13 @@ const {
 } = useChatSubmit({
   route: props.route, messages, provider: computed(() => props.provider),
   selectedPresetId, statusBar,
-  syncStatusBarForm, handleSkillResult: handleAccessorySkillResult,
+  syncStatusBarForm, applyStatusBarUpdate, handleSkillResult: handleAccessorySkillResult,
   loadStatusBar,
   loadSidebarData, loadEconomyBalance,
   onAccessoryRefreshStart: beginAccessoryRefreshStatus,
   onAccessoryRefresh: refreshAccessoryPanels,
   isPinnedToBottom,
+  hasUserPausedAutoScroll,
   stickToBottomIfNeeded,
   scrollToMessage,
   prepareExpandedStatusBarForSubmit,

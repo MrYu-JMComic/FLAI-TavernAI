@@ -319,22 +319,12 @@ export const addNpcBehaviorSchema = z.object({
 
 export const updateNpcBehaviorSchema = addNpcBehaviorSchema.partial();
 
-// ── Regex 规则 ──
-
-export const createRegexRuleSchema = z.object({
-  label: z.string().min(1).max(100).trim(),
-  pattern: z.string().min(1).max(5000).trim().refine(
-    (val) => { try { new RegExp(val); return true; } catch { return false; } },
-    { message: '无效的正则表达式' }
-  ),
-  replacement: z.string().max(5000).trim().optional().default(''),
-  flags: z.string().max(10).trim().optional().default('g'),
-  scope: z.enum(['input', 'output']).optional().default('input'),
-  enabled: z.boolean().optional().default(true),
-  groupName: z.string().max(50).trim().optional().default('全局'),
-  priority: z.number().int().optional().default(0),
-  scriptMode: z.boolean().optional().default(false),
-  jsScript: z.string().max(10000).trim().optional().default('')
+export const updateNpcSchema = z.object({
+  status: z.enum(['active', 'left', 'permanently_left', 'dead', 'on_mission', 'following', 'custom']).optional(),
+  customStatus: z.string().max(80).trim().optional(),
+  aliases: z.array(z.string().max(80).trim()).max(20).optional(),
+  aliasesText: z.string().max(1000).trim().optional(),
+  memorySealed: booleanLikeSchema.optional()
 });
 
 // ── 存档相关 ──

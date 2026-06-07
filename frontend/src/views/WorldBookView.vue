@@ -124,7 +124,7 @@ watch(
     if (id) {
       await loadBook(id);
     } else {
-      currentBook.value = null;
+      setCurrentBookIfChanged(null);
       await loadBooks();
     }
   }
@@ -153,7 +153,7 @@ async function loadBooks() {
   try {
     const nextBooks = await fetchWorldBooks();
     if (!isCurrentBooksLoad(requestToken)) return;
-    books.value = nextBooks;
+    setBooksIfChanged(nextBooks);
   } catch (err) {
     if (!isCurrentBooksLoad(requestToken)) return;
     error.value = err.message;
@@ -172,7 +172,7 @@ async function loadBook(id) {
   try {
     const nextBook = await fetchWorldBook(id);
     if (!isCurrentBookLoad(requestToken, id)) return;
-    currentBook.value = nextBook;
+    setCurrentBookIfChanged(nextBook);
   } catch (err) {
     if (!isCurrentBookLoad(requestToken, id)) return;
     error.value = err.message;
@@ -186,6 +186,87 @@ async function loadBook(id) {
 
 function isCurrentBooksLoad(requestToken) {
   return requestToken === worldBookLoadToken && !isDetailView.value;
+}
+
+function setBooksIfChanged(nextBooks) {
+  const normalizedNextBooks = Array.isArray(nextBooks) ? nextBooks : [];
+  if (sameBookList(books.value, normalizedNextBooks)) {
+    return false;
+  }
+  books.value = normalizedNextBooks;
+  return true;
+}
+
+function setCurrentBookIfChanged(nextBook) {
+  if (!nextBook) {
+    if (!currentBook.value) {
+      return false;
+    }
+    currentBook.value = null;
+    return true;
+  }
+  if (sameBookDetail(currentBook.value, nextBook)) {
+    return false;
+  }
+  currentBook.value = nextBook;
+  return true;
+}
+
+function sameBookList(currentBooks, nextBooks) {
+  return Array.isArray(currentBooks)
+    && Array.isArray(nextBooks)
+    && currentBooks.length === nextBooks.length
+    && currentBooks.every((book, index) => sameBookSummary(book, nextBooks[index]));
+}
+
+function sameBookSummary(currentBookSummary, nextBookSummary) {
+  return currentBookSummary?.id === nextBookSummary?.id
+    && currentBookSummary?.name === nextBookSummary?.name
+    && currentBookSummary?.description === nextBookSummary?.description
+    && currentBookSummary?.characterId === nextBookSummary?.characterId
+    && Number(currentBookSummary?.scanDepth || 4) === Number(nextBookSummary?.scanDepth || 4)
+    && Number(currentBookSummary?.lorebookContextPercent || 25) === Number(nextBookSummary?.lorebookContextPercent || 25)
+    && Number(currentBookSummary?.entryCount || 0) === Number(nextBookSummary?.entryCount || 0);
+}
+
+function sameBookDetail(currentDetail, nextDetail) {
+  return sameBookSummary(currentDetail, nextDetail)
+    && sameEntryList(currentDetail?.entries || [], nextDetail?.entries || []);
+}
+
+function sameEntryList(currentEntries, nextEntries) {
+  return Array.isArray(currentEntries)
+    && Array.isArray(nextEntries)
+    && currentEntries.length === nextEntries.length
+    && currentEntries.every((entry, index) => sameEntrySummary(entry, nextEntries[index]));
+}
+
+function sameEntrySummary(currentEntry, nextEntry) {
+  return currentEntry?.id === nextEntry?.id
+    && currentEntry?.name === nextEntry?.name
+    && currentEntry?.triggerKeys === nextEntry?.triggerKeys
+    && currentEntry?.content === nextEntry?.content
+    && currentEntry?.position === nextEntry?.position
+    && Boolean(currentEntry?.enabled !== false) === Boolean(nextEntry?.enabled !== false)
+    && Boolean(currentEntry?.regexMode) === Boolean(nextEntry?.regexMode)
+    && Boolean(currentEntry?.alwaysActive) === Boolean(nextEntry?.alwaysActive)
+    && Number(currentEntry?.depth || 0) === Number(nextEntry?.depth || 0)
+    && Number(currentEntry?.role || 0) === Number(nextEntry?.role || 0)
+    && nullableComparable(currentEntry?.sticky) === nullableComparable(nextEntry?.sticky)
+    && nullableComparable(currentEntry?.cooldown) === nullableComparable(nextEntry?.cooldown)
+    && nullableComparable(currentEntry?.delay) === nullableComparable(nextEntry?.delay)
+    && Boolean(currentEntry?.selective) === Boolean(nextEntry?.selective)
+    && Number(currentEntry?.selectiveLogic || 0) === Number(nextEntry?.selectiveLogic || 0)
+    && currentEntry?.keysSecondary === nextEntry?.keysSecondary
+    && Boolean(currentEntry?.useProbability) === Boolean(nextEntry?.useProbability)
+    && Number(currentEntry?.probability ?? 100) === Number(nextEntry?.probability ?? 100)
+    && currentEntry?.group === nextEntry?.group
+    && Number(currentEntry?.groupWeight || 0) === Number(nextEntry?.groupWeight || 0)
+    && Number(currentEntry?.orderIndex || 0) === Number(nextEntry?.orderIndex || 0);
+}
+
+function nullableComparable(value) {
+  return value === null || value === undefined || value === '' ? null : Number(value);
 }
 
 function isCurrentBookLoad(requestToken, id) {
@@ -285,9 +366,9 @@ async function removeBook(id) {
   try {
     await deleteWorldBook(id);
     if (!isCurrentWorldBookRouteMutation(mutationToken, routeKey)) return;
-    books.value = books.value.filter((book) => book.id !== id);
+    setBooksIfChanged(books.value.filter((book) => book.id !== id));
     if (currentBook.value?.id === id) {
-      currentBook.value = null;
+      setCurrentBookIfChanged(null);
     }
     notify.success('世界书已删除');
     if (isDetailView.value) {

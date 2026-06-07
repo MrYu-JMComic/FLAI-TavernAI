@@ -367,6 +367,13 @@ export function useChatMessageActions({
   const swipeLoading = ref(new Set());
   let swipeInitToken = 0;
 
+  function clearSetRef(setRef) {
+    if (!setRef.value.size) {
+      return;
+    }
+    setRef.value = new Set();
+  }
+
   function resetMessageSwipeState({ invalidate = true } = {}) {
     if (invalidate) {
       swipeInitToken += 1;
@@ -374,32 +381,35 @@ export function useChatMessageActions({
     for (const key of Object.keys(messageSwipeState)) {
       delete messageSwipeState[key];
     }
-    swipeLoading.value = new Set();
+    clearSetRef(swipeLoading);
   }
 
   async function initMessageSwipes(conversationId) {
     if (disposed) return;
     const requestToken = ++swipeInitToken;
     resetMessageSwipeState({ invalidate: false });
-    for (const msg of messages.value) {
-      if (msg.role === 'assistant') {
-        try {
-          const swipes = await fetchMessageSwipes(conversationId, msg.id);
-          if (!isCurrentSwipeInit(requestToken, conversationId, msg.id)) {
-            return;
-          }
-          messageSwipeState[msg.id] = {
-            swipes: swipes || [],
-            activeIndex: 0,
-            swipeCount: (swipes?.length || 0) + 1
-          };
-        } catch {
-          if (!isCurrentSwipeInit(requestToken, conversationId, msg.id)) {
-            return;
-          }
-          messageSwipeState[msg.id] = { swipes: [], activeIndex: 0, swipeCount: 1 };
-        }
+    const assistantMessages = messages.value.filter((msg) => msg.role === 'assistant');
+    await Promise.all(
+      assistantMessages.map((msg) => initMessageSwipe(conversationId, msg.id, requestToken))
+    );
+  }
+
+  async function initMessageSwipe(conversationId, messageId, requestToken) {
+    try {
+      const swipes = await fetchMessageSwipes(conversationId, messageId);
+      if (!isCurrentSwipeInit(requestToken, conversationId, messageId)) {
+        return;
       }
+      messageSwipeState[messageId] = {
+        swipes: swipes || [],
+        activeIndex: 0,
+        swipeCount: (swipes?.length || 0) + 1
+      };
+    } catch {
+      if (!isCurrentSwipeInit(requestToken, conversationId, messageId)) {
+        return;
+      }
+      messageSwipeState[messageId] = { swipes: [], activeIndex: 0, swipeCount: 1 };
     }
   }
 
@@ -467,10 +477,33 @@ export function useChatMessageActions({
   }
 
   // ── Branch ──
+  const branchComparisonFields = ['id', 'title', 'branchedFromMessageId', 'createdAt', 'characterName'];
   const conversationBranches = ref([]);
   const branchBusy = ref(false);
   let branchLoadToken = 0;
   let branchActionToken = 0;
+
+  function setConversationBranches(branches) {
+    const nextBranches = Array.isArray(branches) ? branches : [];
+    if (sameConversationBranches(conversationBranches.value, nextBranches)) {
+      return;
+    }
+    conversationBranches.value = nextBranches;
+  }
+
+  function sameConversationBranches(currentBranches, nextBranches) {
+    if (currentBranches === nextBranches) {
+      return true;
+    }
+    if (currentBranches.length !== nextBranches.length) {
+      return false;
+    }
+    return currentBranches.every((branch, index) => sameConversationBranch(branch, nextBranches[index]));
+  }
+
+  function sameConversationBranch(currentBranch = {}, nextBranch = {}) {
+    return branchComparisonFields.every((field) => currentBranch?.[field] === nextBranch?.[field]);
+  }
 
   async function loadConversationBranches(conversationId) {
     if (disposed || !conversationId) return;
@@ -480,12 +513,12 @@ export function useChatMessageActions({
       if (!isCurrentBranchLoad(requestToken, conversationId)) {
         return;
       }
-      conversationBranches.value = branches;
+      setConversationBranches(branches);
     } catch {
       if (!isCurrentBranchLoad(requestToken, conversationId)) {
         return;
       }
-      conversationBranches.value = [];
+      setConversationBranches([]);
     }
   }
 
@@ -519,10 +552,10 @@ export function useChatMessageActions({
     branchLoadToken += 1;
     branchActionToken += 1;
     clearMessageEdit();
-    expandedReasoning.value = new Set();
+    clearSetRef(expandedReasoning);
     messageActionBusy.value = '';
     branchBusy.value = false;
-    conversationBranches.value = [];
+    setConversationBranches([]);
     resetMessageSwipeState();
     if (focusEditorRafId) {
       window.cancelAnimationFrame(focusEditorRafId);
@@ -542,7 +575,7 @@ export function useChatMessageActions({
     }
     messageActionBusy.value = '';
     branchBusy.value = false;
-    swipeLoading.value = new Set();
+    clearSetRef(swipeLoading);
   }
 
   return {

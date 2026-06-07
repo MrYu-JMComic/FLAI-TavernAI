@@ -1374,6 +1374,52 @@ p {
   50% { opacity: 1; }
 }
 
+@keyframes character-nav-settle {
+  from {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes character-panel-enter {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes status-preview-overlay-in {
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes status-preview-dialog-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.985);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
 /* ---------------------------------------
    PHASE 3 -- FORM SECTION NAVIGATION
    --------------------------------------- */
@@ -1423,6 +1469,76 @@ p {
   font-weight: 800;
 }
 
+.character-section-nav {
+  position: sticky;
+  top: calc(var(--character-section-nav-top, 78px) + env(safe-area-inset-top, 0px));
+  z-index: 19;
+  min-height: 48px;
+  align-items: center;
+  scroll-padding-inline: 8px;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: thin;
+  scrollbar-color:
+    color-mix(in srgb, var(--green) 44%, var(--primary))
+    color-mix(in srgb, var(--surface-strong) 72%, transparent);
+  border-color: color-mix(in srgb, var(--line) 82%, var(--primary) 18%);
+  background: color-mix(in srgb, var(--surface-strong) 92%, transparent);
+  box-shadow: 0 12px 30px rgba(67, 45, 30, 0.11);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  animation: character-nav-settle 0.22s ease both;
+}
+
+.character-section-nav::-webkit-scrollbar {
+  display: block;
+  height: 8px;
+}
+
+.character-section-nav::-webkit-scrollbar-track {
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--surface-strong) 68%, transparent);
+}
+
+.character-section-nav::-webkit-scrollbar-thumb {
+  border: 2px solid transparent;
+  border-radius: 999px;
+  background:
+    linear-gradient(
+      90deg,
+      color-mix(in srgb, var(--green) 56%, var(--primary)),
+      color-mix(in srgb, var(--primary) 64%, var(--surface))
+    )
+    padding-box;
+}
+
+.character-section-nav .form-section-tab {
+  position: relative;
+  overflow: hidden;
+}
+
+.character-section-nav .form-section-tab::after {
+  position: absolute;
+  right: 12px;
+  bottom: 5px;
+  left: 12px;
+  height: 2px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--green) 54%, var(--primary));
+  content: "";
+  opacity: 0;
+  transform: scaleX(0.36);
+  transition: opacity 0.16s ease, transform 0.16s ease;
+}
+
+.character-section-nav .form-section-tab.active {
+  transform: translateY(-1px);
+}
+
+.character-section-nav .form-section-tab.active::after {
+  opacity: 1;
+  transform: scaleX(1);
+}
+
 .extension-section-nav {
   position: sticky;
   top: calc(78px + env(safe-area-inset-top, 0px));
@@ -1444,6 +1560,19 @@ section[id^="extension-section-"] {
   scroll-margin-top: 146px;
 }
 
+#section-basic,
+#section-settings,
+#section-ai,
+#section-images,
+#section-talents,
+#section-advanced-settings,
+#section-status-blueprint,
+#section-accessories,
+#section-render-plugins,
+#section-regex {
+  scroll-margin-top: 150px;
+}
+
 /* ---------------------------------------
    PHASE 3 -- FORM SECTION GROUPS
    --------------------------------------- */
@@ -1458,6 +1587,12 @@ section[id^="extension-section-"] {
   margin-top: 8px;
   padding-top: 20px;
   border-top: 1px solid color-mix(in srgb, var(--line) 60%, transparent);
+}
+
+.character-main-sections > .form-section-group + .form-section-group {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: 0;
 }
 
 .section-load-status {
@@ -1531,18 +1666,51 @@ section[id^="extension-section-"] {
 }
 
 .editor-layout {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(300px, 430px);
+  display: flex;
+  flex-wrap: wrap;
   gap: 18px;
-  align-items: start;
+  align-items: flex-start;
   max-width: 100%;
 }
 
-.editor-side {
-  display: grid;
-  gap: 18px;
-  min-width: 0;
-  overflow: hidden;
+.character-main-sections,
+.editor-side,
+.form-section-group-advanced {
+  display: contents;
+}
+
+.editor-layout .form-panel {
+  flex: 1 1 520px;
+  min-width: min(100%, 340px);
+  max-width: 100%;
+  animation: character-panel-enter 0.24s ease both;
+  transition:
+    border-color 0.18s ease,
+    box-shadow 0.18s ease,
+    transform 0.18s ease;
+}
+
+.editor-layout .form-panel:focus-within {
+  border-color: color-mix(in srgb, var(--primary) 36%, var(--line));
+  box-shadow: 0 14px 34px rgba(67, 45, 30, 0.11);
+}
+
+.editor-layout .character-basic-panel {
+  flex-basis: 500px;
+}
+
+.editor-layout .character-settings-panel,
+.editor-layout .advanced-settings-panel {
+  flex-basis: 640px;
+}
+
+.editor-layout .render-plugin-panel,
+.editor-layout .regex-panel {
+  flex-basis: 560px;
+}
+
+.editor-layout .talent-panel {
+  flex-basis: 420px;
 }
 
 .advanced-settings-panel {
@@ -1816,6 +1984,7 @@ section[id^="extension-section-"] {
 }
 
 .ai-draft-panel {
+  position: relative;
   border-color: color-mix(in srgb, var(--primary) 22%, var(--line));
   background:
     linear-gradient(135deg, color-mix(in srgb, var(--primary-soft) 34%, transparent), transparent 42%),
@@ -1830,11 +1999,12 @@ section[id^="extension-section-"] {
     z-index: 32;
     width: var(--ai-panel-w, 420px);
     max-width: calc(100vw - var(--ai-panel-x, 0px));
-    height: var(--ai-panel-h, auto);
+    height: min(var(--ai-panel-h, 640px), calc(100dvh - var(--ai-panel-y, 0px)));
     max-height: calc(100dvh - var(--ai-panel-y, 0px));
     min-height: 120px;
-    resize: both;
-    overflow: auto;
+    overflow-x: hidden;
+    overflow-y: auto;
+    scrollbar-gutter: stable;
     box-shadow: 0 18px 48px rgba(67, 45, 30, 0.18);
   }
 
@@ -1842,8 +2012,73 @@ section[id^="extension-section-"] {
     opacity: 0.92;
     box-shadow: 0 24px 60px rgba(67, 45, 30, 0.24);
     user-select: none;
-    pointer-events: none;
   }
+
+  .ai-draft-panel .ai-panel-resize-handle {
+    display: block;
+    position: fixed;
+    left: calc(
+      var(--ai-panel-x, 0px) + min(var(--ai-panel-w, 420px), calc(100vw - var(--ai-panel-x, 0px))) - 27px
+    );
+    right: auto;
+    top: calc(
+      var(--ai-panel-y, 0px) + min(var(--ai-panel-h, 640px), calc(100dvh - var(--ai-panel-y, 0px))) - 27px
+    );
+    bottom: auto;
+  }
+}
+
+.ai-draft-panel .field textarea {
+  height: 124px;
+  min-height: 124px;
+  max-height: min(360px, calc(100dvh - 220px));
+  resize: vertical;
+  overflow: auto;
+}
+
+.ai-draft-panel,
+.ai-draft-panel .field textarea {
+  scrollbar-width: thin;
+  scrollbar-color:
+    color-mix(in srgb, var(--green) 48%, var(--primary))
+    color-mix(in srgb, var(--surface-strong) 76%, transparent);
+}
+
+.ai-draft-panel::-webkit-scrollbar,
+.ai-draft-panel .field textarea::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+.ai-draft-panel::-webkit-scrollbar-track,
+.ai-draft-panel .field textarea::-webkit-scrollbar-track {
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--surface-strong) 68%, transparent);
+}
+
+.ai-draft-panel::-webkit-scrollbar-thumb,
+.ai-draft-panel .field textarea::-webkit-scrollbar-thumb {
+  min-height: 44px;
+  border: 2px solid transparent;
+  border-radius: 999px;
+  background:
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--green) 60%, var(--primary)),
+      color-mix(in srgb, var(--primary) 64%, var(--surface))
+    )
+    padding-box;
+}
+
+.ai-draft-panel::-webkit-scrollbar-thumb:hover,
+.ai-draft-panel .field textarea::-webkit-scrollbar-thumb:hover {
+  background:
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--green) 72%, var(--primary)),
+      color-mix(in srgb, var(--primary) 78%, var(--surface))
+    )
+    padding-box;
 }
 
 .ai-panel-heading {
@@ -1878,6 +2113,19 @@ section[id^="extension-section-"] {
 .ai-panel-reset:hover {
   color: var(--primary);
   background: var(--primary-soft);
+}
+
+.ai-panel-resize-handle {
+  display: none;
+  position: absolute;
+  right: 7px;
+  bottom: 7px;
+  width: 18px;
+  height: 18px;
+  border-right: 2px solid color-mix(in srgb, var(--primary) 46%, transparent);
+  border-bottom: 2px solid color-mix(in srgb, var(--primary) 46%, transparent);
+  cursor: nwse-resize;
+  touch-action: none;
 }
 
 .ai-draft-panel .inline-heading > svg {
@@ -3085,9 +3333,12 @@ section[id^="extension-section-"] {
     white-space: nowrap;
   }
 
-  .toolbar,
-  .editor-layout {
+  .toolbar {
     grid-template-columns: 1fr;
+  }
+
+  .editor-layout {
+    gap: 14px;
   }
 
   .ai-draft-panel {
@@ -3785,6 +4036,14 @@ fieldset.accessory-skills-grid:disabled {
   align-items: start;
 }
 
+.status-blueprint-heading-actions {
+  display: flex;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
 .status-blueprint-toolbar {
   display: flex;
   flex-wrap: wrap;
@@ -3889,18 +4148,62 @@ fieldset.accessory-skills-grid:disabled {
   overflow-wrap: anywhere;
 }
 
-.status-blueprint-preview {
+.status-blueprint-empty {
+  margin: 0;
+}
+
+.status-preview-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
   display: grid;
-  gap: 10px;
+  place-items: center;
+  padding: 20px;
+  background: color-mix(in srgb, var(--bg) 72%, rgba(0, 0, 0, 0.44));
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  animation: status-preview-overlay-in 0.16s ease both;
+}
+
+.status-preview-dialog {
+  display: grid;
+  gap: 14px;
+  width: min(720px, calc(100vw - 32px));
+  max-height: min(720px, calc(100dvh - 32px));
+  overflow: auto;
+  box-shadow: 0 28px 80px rgba(0, 0, 0, 0.36);
+  animation: status-preview-dialog-in 0.18s ease both;
+}
+
+.status-preview-header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: start;
+}
+
+.status-preview-header h2 {
+  margin: 0;
+  font-size: 1.15rem;
+}
+
+.status-preview-header p {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 0.88rem;
+  line-height: 1.5;
+}
+
+.status-preview-close {
+  align-self: start;
+}
+
+.status-preview-body {
   min-width: 0;
-  padding: 12px;
+  padding: 14px;
   border: 1px dashed color-mix(in srgb, var(--line) 86%, transparent);
   border-radius: 8px;
   background: color-mix(in srgb, var(--surface) 58%, transparent);
-}
-
-.status-blueprint-empty {
-  margin: 0;
 }
 
 .accessory-skill-row {
@@ -5831,9 +6134,8 @@ fieldset.accessory-skills-grid:disabled {
     padding: 6px 14px;
   }
 
-  /* -- Editor layout: single column -- */
+  /* -- Editor layout: tighter phone flow -- */
   .editor-layout {
-    grid-template-columns: 1fr;
     gap: 14px;
   }
 
@@ -6124,6 +6426,11 @@ fieldset.accessory-skills-grid:disabled {
     z-index: 10;
   }
 
+  .character-section-nav {
+    top: calc(var(--character-section-nav-top, 112px) + env(safe-area-inset-top, 0px));
+    z-index: 19;
+  }
+
   .extension-section-nav {
     top: calc(112px + env(safe-area-inset-top, 0px));
     z-index: 18;
@@ -6171,6 +6478,10 @@ fieldset.accessory-skills-grid:disabled {
     top: calc(78px + env(safe-area-inset-top, 0px));
   }
 
+  .character-section-nav {
+    top: calc(var(--character-section-nav-top, 78px) + env(safe-area-inset-top, 0px));
+  }
+
   section[id^="extension-section-"] {
     scroll-margin-top: 132px;
   }
@@ -6192,6 +6503,10 @@ fieldset.accessory-skills-grid:disabled {
 
   .extension-section-nav {
     top: calc(66px + env(safe-area-inset-top, 0px));
+  }
+
+  .character-section-nav {
+    top: calc(var(--character-section-nav-top, 66px) + env(safe-area-inset-top, 0px));
   }
 
   section[id^="extension-section-"] {
@@ -6528,10 +6843,6 @@ fieldset.accessory-skills-grid:disabled {
   /* Ensure desktop experience stays unchanged */
   .character-grid {
     grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-  }
-
-  .editor-layout {
-    grid-template-columns: minmax(0, 1fr) minmax(300px, 430px);
   }
 
   .home-toolbar {
@@ -6963,7 +7274,12 @@ fieldset.accessory-skills-grid:disabled {
 }
 
 .mod-editor-body textarea {
+  height: 220px;
   min-height: 220px;
+  max-height: 220px;
+  resize: none;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
 }
 
 .mod-scope-grid {
@@ -7130,7 +7446,9 @@ fieldset.accessory-skills-grid:disabled {
   }
 
   .mod-editor-body textarea {
+    height: 180px;
     min-height: 180px;
+    max-height: 180px;
   }
 
   .mod-scope-grid,

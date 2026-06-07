@@ -38,7 +38,7 @@ const rippleSelector = [
 ].join(',');
 const isAuthRoute = computed(() => ['login', 'register'].includes(route.value.name));
 const currentView = computed(() => views[route.value.name] || views.home);
-const routeKey = computed(() => `${route.value.name}:${route.value.params.id || ''}`);
+const routeKey = computed(() => getRouteKey(route.value));
 const notificationFallbackMessages = {
   error: '操作失败，请稍后重试。',
   warning: '操作未完成，请检查后重试。'
@@ -79,7 +79,11 @@ onBeforeUnmount(() => {
 });
 
 function syncRouteFromHash() {
-  route.value = parseRoute();
+  const nextRoute = parseRoute();
+  if (getRouteKey(route.value) === getRouteKey(nextRoute)) {
+    return;
+  }
+  route.value = nextRoute;
 }
 
 async function refreshSession() {
@@ -171,6 +175,10 @@ function isCurrentAuthScope(authScope) {
   return authScope === authScopeVersion;
 }
 
+function getRouteKey(value) {
+  return `${value?.name || 'home'}:${value?.params?.id || ''}`;
+}
+
 function navigate(name, params = {}) {
   const nextHash = routeToHash(name, params);
   if (window.location.hash === nextHash) {
@@ -190,11 +198,12 @@ function handleInteractionRipple(event) {
   }
 
   pruneStaleRippleTimers();
-  const target = event.target?.closest?.(rippleSelector);
-  if (!isRippleTargetConnected(target)) {
+  if (isFormControlRippleSource(event.target)) {
     return;
   }
-  if (target.matches?.('input, textarea, select, option')) {
+
+  const target = event.target?.closest?.(rippleSelector);
+  if (!isRippleTargetConnected(target)) {
     return;
   }
   if (target.disabled || target.getAttribute?.('aria-disabled') === 'true') {
@@ -225,6 +234,10 @@ function handleInteractionRipple(event) {
 
 function isRippleTargetConnected(target) {
   return Boolean(target?.isConnected && document.documentElement.contains(target));
+}
+
+function isFormControlRippleSource(source) {
+  return Boolean(source?.closest?.('input, textarea, select, option'));
 }
 
 function clearRippleTimer(target) {
@@ -318,18 +331,32 @@ function normalizeNotificationMessage(value, type) {
 }
 
 function dismissNotification(id) {
+  const notificationIndex = notifications.value.findIndex((item) => item.id === id);
   const timer = notificationTimers.get(id);
   if (timer) {
     window.clearTimeout(timer);
     notificationTimers.delete(id);
   }
-  notifications.value = notifications.value.filter((item) => item.id !== id);
+  if (notificationIndex === -1) {
+    return;
+  }
+  notifications.value = [
+    ...notifications.value.slice(0, notificationIndex),
+    ...notifications.value.slice(notificationIndex + 1)
+  ];
 }
 
 function clearNotifications() {
-  notificationTimers.forEach((timer) => window.clearTimeout(timer));
-  notificationTimers.clear();
-  notifications.value = [];
+  if (!notificationTimers.size && notifications.value.length === 0) {
+    return;
+  }
+  if (notificationTimers.size) {
+    notificationTimers.forEach((timer) => window.clearTimeout(timer));
+    notificationTimers.clear();
+  }
+  if (notifications.value.length > 0) {
+    notifications.value = [];
+  }
 }
 
 function parseRoute() {

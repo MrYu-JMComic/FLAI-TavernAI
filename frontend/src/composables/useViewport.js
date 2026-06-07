@@ -13,9 +13,29 @@ export function useViewport(options = {}) {
   const isPhone = ref(readBreakpointMatch(breakpoint));
   let mediaQuery = null;
   let unsubscribe = null;
+  let resizeRafId = null;
 
   function check() {
     isPhone.value = readBreakpointMatch(breakpoint, mediaQuery);
+  }
+
+  function scheduleCheck() {
+    if (resizeRafId !== null) return;
+    if (typeof window !== 'undefined' && typeof window.requestAnimationFrame === 'function') {
+      resizeRafId = window.requestAnimationFrame(() => {
+        resizeRafId = null;
+        check();
+      });
+      return;
+    }
+    check();
+  }
+
+  function cancelScheduledCheck() {
+    if (resizeRafId !== null && typeof window !== 'undefined' && typeof window.cancelAnimationFrame === 'function') {
+      window.cancelAnimationFrame(resizeRafId);
+    }
+    resizeRafId = null;
   }
 
   function handleMediaChange(event) {
@@ -35,8 +55,11 @@ export function useViewport(options = {}) {
       mediaQuery.addListener(handleMediaChange);
       unsubscribe = () => mediaQuery?.removeListener(handleMediaChange);
     } else {
-      window.addEventListener('resize', check);
-      unsubscribe = () => window.removeEventListener('resize', check);
+      window.addEventListener('resize', scheduleCheck);
+      unsubscribe = () => {
+        window.removeEventListener('resize', scheduleCheck);
+        cancelScheduledCheck();
+      };
     }
   });
 

@@ -30,6 +30,7 @@ let dialogDisposed = false;
 const selectedPool = computed(() => pools.value.find((p) => p.id === selectedPoolId.value));
 const talentMutationBusy = computed(() => clearingAll.value || Boolean(removingTalentId.value));
 const talentActionBusy = computed(() => loading.value || rolling.value || talentMutationBusy.value);
+const dialogCloseLocked = computed(() => rolling.value || talentMutationBusy.value);
 
 watch(
   () => [props.characterId, props.canEdit],
@@ -63,8 +64,8 @@ async function loadDialogData() {
     if (requestId !== loadRequestId || !isCurrentDialogContext(context)) {
       return;
     }
-    pools.value = poolData;
-    talents.value = talentData;
+    setPoolsIfChanged(poolData);
+    setTalentsIfChanged(talentData);
     if (!pools.value.some((pool) => pool.id === selectedPoolId.value)) {
       selectedPoolId.value = '';
     }
@@ -75,8 +76,8 @@ async function loadDialogData() {
     if (requestId !== loadRequestId || !isCurrentDialogContext(context)) {
       return;
     }
-    pools.value = [];
-    talents.value = [];
+    setPoolsIfChanged([]);
+    setTalentsIfChanged([]);
     loadError.value = err?.message || '天赋加载失败';
   } finally {
     if (requestId === loadRequestId && isCurrentDialogContext(context)) {
@@ -92,8 +93,8 @@ function retryLoadDialogData() {
 
 function resetDialogContext() {
   dialogContextVersion += 1;
-  pools.value = [];
-  talents.value = [];
+  setPoolsIfChanged([]);
+  setTalentsIfChanged([]);
   selectedPoolId.value = '';
   rolling.value = false;
   clearingAll.value = false;
@@ -115,6 +116,54 @@ function isCurrentDialogContext(context) {
     && context.version === dialogContextVersion
     && context.characterId === props.characterId
     && context.canEdit === props.canEdit;
+}
+
+function setPoolsIfChanged(nextPools) {
+  const normalizedPools = Array.isArray(nextPools) ? nextPools : [];
+  const currentPools = Array.isArray(pools.value) ? pools.value : [];
+  if (sameListItems(currentPools, normalizedPools, samePoolSummary)) {
+    return false;
+  }
+  pools.value = normalizedPools;
+  return true;
+}
+
+function setTalentsIfChanged(nextTalents) {
+  const normalizedTalents = Array.isArray(nextTalents) ? nextTalents : [];
+  const currentTalents = Array.isArray(talents.value) ? talents.value : [];
+  if (sameListItems(currentTalents, normalizedTalents, sameTalentSummary)) {
+    return false;
+  }
+  talents.value = normalizedTalents;
+  return true;
+}
+
+function sameListItems(currentItems, nextItems, sameItem) {
+  if (currentItems === nextItems) {
+    return true;
+  }
+  if (currentItems.length !== nextItems.length) {
+    return false;
+  }
+  return currentItems.every((item, index) => sameItem(item, nextItems[index]));
+}
+
+function samePoolSummary(current = {}, next = {}) {
+  return current?.id === next?.id
+    && String(current?.name || '') === String(next?.name || '')
+    && String(current?.description || '') === String(next?.description || '')
+    && Number(current?.talents?.length || 0) === Number(next?.talents?.length || 0);
+}
+
+function sameTalentSummary(current = {}, next = {}) {
+  return current?.id === next?.id
+    && current?.characterId === next?.characterId
+    && current?.poolId === next?.poolId
+    && String(current?.poolName || '') === String(next?.poolName || '')
+    && String(current?.talentName || '') === String(next?.talentName || '')
+    && String(current?.talentRarity || '') === String(next?.talentRarity || '')
+    && String(current?.talentDescription || '') === String(next?.talentDescription || '')
+    && String(current?.talentEffect || '') === String(next?.talentEffect || '');
 }
 
 function rarityClass(rarity) {
@@ -158,7 +207,7 @@ async function doRoll() {
     }
     rollResult.value = result;
     showResult.value = true;
-    talents.value = [result, ...talents.value];
+    setTalentsIfChanged([result, ...talents.value]);
     emit('updated');
   } catch (err) {
     if (isCurrentDialogContext(context)) {
@@ -182,7 +231,7 @@ async function removeTalent(talentId) {
     if (!isCurrentDialogContext(context)) {
       return;
     }
-    talents.value = talents.value.filter((t) => t.id !== talentId);
+    setTalentsIfChanged(talents.value.filter((t) => t.id !== talentId));
     emit('updated');
     notify.success('天赋已移除');
   } catch (err) {
@@ -207,7 +256,7 @@ async function clearAll() {
     if (!isCurrentDialogContext(context)) {
       return;
     }
-    talents.value = [];
+    setTalentsIfChanged([]);
     emit('updated');
     notify.success('已清空所有天赋');
   } catch (err) {
@@ -225,12 +274,17 @@ function closeResult() {
   showResult.value = false;
   rollResult.value = null;
 }
+
+function requestClose() {
+  if (dialogCloseLocked.value) return;
+  emit('close');
+}
 </script>
 
 <template>
   <Teleport to="body">
-    <div class="talent-overlay" @click.self="emit('close')">
-      <div class="talent-dialog" role="dialog" aria-modal="true" @keydown.esc.prevent="emit('close')">
+    <div class="talent-overlay" @click.self="requestClose">
+      <div class="talent-dialog" role="dialog" aria-modal="true" @keydown.esc.prevent="requestClose">
         <div class="talent-dialog-header">
           <div>
             <p>天赋 Roll</p>
@@ -241,7 +295,9 @@ function closeResult() {
             type="button"
             title="关闭"
             aria-label="关闭天赋 Roll 面板"
-            @click="emit('close')"
+            :disabled="dialogCloseLocked"
+            :aria-busy="dialogCloseLocked"
+            @click="requestClose"
           >
             <X :size="18" />
           </button>

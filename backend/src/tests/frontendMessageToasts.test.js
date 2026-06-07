@@ -16,7 +16,11 @@ test('MessageToasts prevents duplicate action clicks before dismissal renders', 
   );
   assert.match(
     messageToastsScript,
-    /watch\(\s*\(\) => props\.items\.map\(\(item\) => item\.id\),[\s\S]*pendingActionIds\.value = nextPendingIds;[\s\S]*\);/
+    /function syncPendingActionIds\(ids\)\s*{\s*const pendingIds = pendingActionIds\.value;\s*if \(!pendingIds\.size\) return;[\s\S]*for \(const id of pendingIds\) {[\s\S]*if \(!activeIds\.has\(id\)\) {[\s\S]*pendingActionIds\.value = new Set\(\[\.\.\.pendingIds\]\.filter\(\(pendingId\) => activeIds\.has\(pendingId\)\)\);[\s\S]*return;/
+  );
+  assert.match(
+    messageToastsScript,
+    /watch\(\s*\(\) => props\.items\.map\(\(item\) => item\.id\),\s*syncPendingActionIds\s*\);/
   );
 
   assert.match(messageToastsTemplate, /:disabled="isActionPending\(item\)"/);

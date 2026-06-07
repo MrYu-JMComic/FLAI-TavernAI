@@ -42,6 +42,19 @@ function markActionPending(id) {
   pendingActionIds.value = new Set(pendingActionIds.value).add(id);
 }
 
+function syncPendingActionIds(ids) {
+  const pendingIds = pendingActionIds.value;
+  if (!pendingIds.size) return;
+
+  const activeIds = new Set(ids);
+  for (const id of pendingIds) {
+    if (!activeIds.has(id)) {
+      pendingActionIds.value = new Set([...pendingIds].filter((pendingId) => activeIds.has(pendingId)));
+      return;
+    }
+  }
+}
+
 function runAction(item) {
   if (!item?.id || isActionPending(item)) return;
   markActionPending(item.id);
@@ -51,13 +64,7 @@ function runAction(item) {
 
 watch(
   () => props.items.map((item) => item.id),
-  (ids) => {
-    const activeIds = new Set(ids);
-    const nextPendingIds = new Set([...pendingActionIds.value].filter((id) => activeIds.has(id)));
-    if (nextPendingIds.size !== pendingActionIds.value.size) {
-      pendingActionIds.value = nextPendingIds;
-    }
-  }
+  syncPendingActionIds
 );
 </script>
 

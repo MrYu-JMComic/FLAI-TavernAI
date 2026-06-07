@@ -36,6 +36,48 @@ function withFakeWindow(callback) {
   }
 }
 
+function withFakeAnimationFrame(callback) {
+  const originalRequestAnimationFrame = globalThis.requestAnimationFrame;
+  const originalCancelAnimationFrame = globalThis.cancelAnimationFrame;
+  const frames = new Map();
+  let nextFrameId = 1;
+
+  globalThis.requestAnimationFrame = (handler) => {
+    const frameId = nextFrameId;
+    nextFrameId += 1;
+    frames.set(frameId, handler);
+    return frameId;
+  };
+  globalThis.cancelAnimationFrame = (frameId) => {
+    frames.delete(frameId);
+  };
+
+  function flushFrame() {
+    const [frameId, handler] = frames.entries().next().value || [];
+    if (!frameId) {
+      return false;
+    }
+    frames.delete(frameId);
+    handler();
+    return true;
+  }
+
+  try {
+    return callback({ frames, flushFrame });
+  } finally {
+    if (originalRequestAnimationFrame === undefined) {
+      delete globalThis.requestAnimationFrame;
+    } else {
+      globalThis.requestAnimationFrame = originalRequestAnimationFrame;
+    }
+    if (originalCancelAnimationFrame === undefined) {
+      delete globalThis.cancelAnimationFrame;
+    } else {
+      globalThis.cancelAnimationFrame = originalCancelAnimationFrame;
+    }
+  }
+}
+
 test('chat scroll can anchor a sent message above the composer padding', () => {
   withFakeWindow(() => {
     const messageElement = {
@@ -70,4 +112,35 @@ test('chat scroll can anchor a sent message above the composer padding', () => {
 
     scroll.cleanup();
   });
+});
+
+test('chat scroll coalesces passive scroll state updates into one animation frame', () => {
+  withFakeWindow(() => withFakeAnimationFrame(({ frames, flushFrame }) => {
+    const scroller = {
+      scrollTop: 100,
+      scrollHeight: 1000,
+      clientHeight: 300
+    };
+
+    const scroll = useChatScroll({
+      messageScroller: refValue(scroller),
+      conversationId: refValue('conv-1')
+    });
+
+    scroll.handleMessageScroll();
+    scroll.handleMessageScroll();
+    assert.equal(frames.size, 1);
+    assert.equal(scroll.distanceToBottom.value, 0);
+
+    assert.equal(flushFrame(), true);
+    assert.equal(scroll.distanceToBottom.value, 600);
+    assert.equal(frames.size, 0);
+
+    scroller.scrollTop = 250;
+    scroll.handleMessageScroll();
+    assert.equal(flushFrame(), true);
+    assert.equal(scroll.distanceToBottom.value, 450);
+
+    scroll.cleanup();
+  }));
 });

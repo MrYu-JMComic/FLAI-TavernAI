@@ -73,23 +73,23 @@ export function useChatConversation({ route, emit, showError }) {
 
       const failures = [];
       if (historyResult.status === 'fulfilled') {
-        conversations.value = historyResult.value;
+        setListRefIfChanged(conversations, historyResult.value, sameConversationSummary);
       } else {
-        conversations.value = [];
+        setListRefIfChanged(conversations, [], sameConversationSummary);
         failures.push(['会话历史', historyResult.reason]);
       }
 
       if (characterResult.status === 'fulfilled') {
-        characters.value = characterResult.value;
+        setListRefIfChanged(characters, characterResult.value, sameCharacterSummary);
       } else {
-        characters.value = [];
+        setListRefIfChanged(characters, [], sameCharacterSummary);
         failures.push(['角色列表', characterResult.reason]);
       }
 
       if (presetResult.status === 'fulfilled') {
-        presetList.value = presetResult.value;
+        setListRefIfChanged(presetList, presetResult.value, samePresetSummary);
       } else {
-        presetList.value = [];
+        setListRefIfChanged(presetList, [], samePresetSummary);
         selectedPresetId.value = '';
         failures.push(['预设列表', presetResult.reason]);
       }
@@ -102,6 +102,64 @@ export function useChatConversation({ route, emit, showError }) {
         sidebarLoading.value = false;
       }
     }
+  }
+
+  function setListRefIfChanged(listRef, nextItems, sameItem) {
+    const normalizedItems = Array.isArray(nextItems) ? nextItems : [];
+    const currentItems = Array.isArray(listRef.value) ? listRef.value : [];
+    if (sameListItems(currentItems, normalizedItems, sameItem)) {
+      return false;
+    }
+    listRef.value = normalizedItems;
+    return true;
+  }
+
+  function sameListItems(currentItems, nextItems, sameItem) {
+    if (currentItems === nextItems) {
+      return true;
+    }
+    if (currentItems.length !== nextItems.length) {
+      return false;
+    }
+    return currentItems.every((item, index) => sameItem(item, nextItems[index]));
+  }
+
+  function sameConversationSummary(current = {}, next = {}) {
+    return current?.id === next?.id
+      && current?.title === next?.title
+      && current?.characterId === next?.characterId
+      && current?.character?.name === next?.character?.name
+      && current?.usage?.totalTokens === next?.usage?.totalTokens
+      && current?.usage?.totalCostCny === next?.usage?.totalCostCny;
+  }
+
+  function sameCharacterSummary(current = {}, next = {}) {
+    return current?.id === next?.id
+      && current?.name === next?.name
+      && current?.avatarUrl === next?.avatarUrl
+      && current?.visibility === next?.visibility
+      && sameRenderPluginList(current?.renderPlugins, next?.renderPlugins);
+  }
+
+  function samePresetSummary(current = {}, next = {}) {
+    return current?.id === next?.id
+      && current?.name === next?.name
+      && current?.isDefault === next?.isDefault;
+  }
+
+  function sameRenderPluginList(currentItems = [], nextItems = []) {
+    const currentList = Array.isArray(currentItems) ? currentItems : [];
+    const nextList = Array.isArray(nextItems) ? nextItems : [];
+    return currentList.length === nextList.length
+      && currentList.every((item, index) => sameRenderPlugin(item, nextList[index]));
+  }
+
+  function sameRenderPlugin(current = {}, next = {}) {
+    return (current?.enabled !== false) === (next?.enabled !== false)
+      && (current?.type || 'fold') === (next?.type || 'fold')
+      && (current?.pattern || '') === (next?.pattern || '')
+      && (current?.flags || '') === (next?.flags || '')
+      && (current?.titleTemplate || current?.label || '') === (next?.titleTemplate || next?.label || '');
   }
 
   function formatSidebarLoadError(failures) {
@@ -235,13 +293,19 @@ export function useChatConversation({ route, emit, showError }) {
     if (conversationActionBusy.value) {
       return;
     }
-    if (allVisibleConversationsSelected.value) {
+    const visibleIds = visibleConversationIds.value;
+    if (!visibleIds.length) {
+      return;
+    }
+    const selectedIds = selectedConversationIds.value;
+    if (visibleIds.every((id) => selectedIds.has(id))) {
+      const visible = new Set(visibleIds);
       selectedConversationIds.value = new Set(
-        [...selectedConversationIds.value].filter((id) => !visibleConversationIds.value.includes(id))
+        [...selectedIds].filter((id) => !visible.has(id))
       );
       return;
     }
-    selectedConversationIds.value = new Set([...selectedConversationIds.value, ...visibleConversationIds.value]);
+    selectedConversationIds.value = new Set([...selectedIds, ...visibleIds]);
   }
 
   async function deleteOneConversation(item) {
@@ -272,7 +336,8 @@ export function useChatConversation({ route, emit, showError }) {
   }
 
   async function deleteSelectedConversations() {
-    const ids = [...selectedConversationIds.value].filter((id) => visibleConversationIds.value.includes(id));
+    const visibleIds = new Set(visibleConversationIds.value);
+    const ids = [...selectedConversationIds.value].filter((id) => visibleIds.has(id));
     if (conversationDisposed || !ids.length || conversationActionBusy.value) {
       return;
     }
@@ -304,8 +369,11 @@ export function useChatConversation({ route, emit, showError }) {
       return;
     }
     const deleted = new Set(ids);
-    conversations.value = conversations.value.filter((item) => !deleted.has(item.id));
-    selectedConversationIds.value = new Set([...selectedConversationIds.value].filter((id) => !deleted.has(id)));
+    const nextConversations = conversations.value.filter((item) => !deleted.has(item.id));
+    if (nextConversations.length !== conversations.value.length) {
+      conversations.value = nextConversations;
+    }
+    pruneSelectedConversationIds((id) => !deleted.has(id));
 
     if (deleted.has(route.params.id)) {
       const nextConversation = conversations.value[0];
@@ -319,7 +387,21 @@ export function useChatConversation({ route, emit, showError }) {
 
   function pruneSelectedConversations() {
     const valid = new Set(conversations.value.map((item) => item.id));
-    selectedConversationIds.value = new Set([...selectedConversationIds.value].filter((id) => valid.has(id)));
+    pruneSelectedConversationIds((id) => valid.has(id));
+  }
+
+  function pruneSelectedConversationIds(shouldKeep) {
+    const selectedIds = selectedConversationIds.value;
+    if (!selectedIds.size) {
+      return false;
+    }
+    for (const id of selectedIds) {
+      if (!shouldKeep(id)) {
+        selectedConversationIds.value = new Set([...selectedIds].filter(shouldKeep));
+        return true;
+      }
+    }
+    return false;
   }
 
   function syncSelectedPresetId() {

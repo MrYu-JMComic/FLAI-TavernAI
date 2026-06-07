@@ -336,8 +336,39 @@ function lineNumberAt(text, index) {
   return text.slice(0, index).split(/\r?\n/).length;
 }
 
+function addLineReference(linesByKey, key, lineNumber) {
+  if (!linesByKey.has(key)) {
+    linesByKey.set(key, []);
+  }
+  linesByKey.get(key).push(lineNumber);
+}
+
+function findDuplicateLineViolations(linesByKey, formatViolation) {
+  const violations = [];
+
+  for (const [key, lines] of linesByKey.entries()) {
+    if (lines.length > 1) {
+      violations.push(formatViolation(key, lines));
+    }
+  }
+
+  return violations;
+}
+
 function isJsLikeSourceFile(fileLabel) {
   return jsLikeSourceExtensions.has(path.extname(fileLabel));
+}
+
+function isTestSourceFile(fileLabel) {
+  return fileLabel.startsWith('backend/src/tests/');
+}
+
+function isSharedFrontendSfcTestHelper(fileLabel) {
+  return fileLabel === 'backend/src/tests/frontendSfcTestUtils.js';
+}
+
+function isFrontendSourceTestFile(fileLabel) {
+  return isTestSourceFile(fileLabel) && !isSharedFrontendSfcTestHelper(fileLabel);
 }
 
 function findStaticImportDeclarations(sourceFile) {
@@ -360,13 +391,12 @@ function findStaticImportDeclarations(sourceFile) {
   return declarations;
 }
 
-function findTopLevelFunctionDeclarations(sourceFile) {
+function findTopLevelDeclarations(sourceFile, declarationPattern) {
   const declarations = [];
-  const functionDeclarationPattern = /^[^\S\r\n]*(?:export[^\S\r\n]+(?:default[^\S\r\n]+)?)?(?:async[^\S\r\n]+)?function(?:[^\S\r\n]*\*)?[^\S\r\n]+([A-Za-z_$][\w$]*)\b/gm;
   let depth = 0;
   let cursor = 0;
 
-  for (const match of sourceFile.maskedText.matchAll(functionDeclarationPattern)) {
+  for (const match of sourceFile.maskedText.matchAll(declarationPattern)) {
     for (let i = cursor; i < match.index; i += 1) {
       if (sourceFile.maskedText[i] === '{') {
         depth += 1;
@@ -378,13 +408,24 @@ function findTopLevelFunctionDeclarations(sourceFile) {
     if (depth === 0) {
       declarations.push({
         name: match[1],
-        index: match.index
+        index: match.index,
+        exported: /^\s*export\b/.test(match[0])
       });
     }
     cursor = match.index;
   }
 
   return declarations;
+}
+
+function findTopLevelFunctionDeclarations(sourceFile) {
+  const functionDeclarationPattern = /^[^\S\r\n]*(?:export[^\S\r\n]+(?:default[^\S\r\n]+)?)?(?:async[^\S\r\n]+)?function(?:[^\S\r\n]*\*)?[^\S\r\n]+([A-Za-z_$][\w$]*)\b/gm;
+  return findTopLevelDeclarations(sourceFile, functionDeclarationPattern);
+}
+
+function findTopLevelFunctionLikeConstDeclarations(sourceFile) {
+  const functionLikeConstPattern = /^[^\S\r\n]*(?:export[^\S\r\n]+)?const[^\S\r\n]+([A-Za-z_$][\w$]*)[^\S\r\n]*(?::[^\r\n;]*)?=[^\S\r\n]*(?:async[^\S\r\n]+)?(?:function\b|(?:<[^=\r\n;{}]*>+[^\S\r\n]*)?\([^=\r\n;{}]*\)[^\S\r\n]*=>|[A-Za-z_$][\w$]*[^\S\r\n]*=>)/gm;
+  return findTopLevelDeclarations(sourceFile, functionLikeConstPattern);
 }
 
 function parseNamedImportAliases(specifiers) {
@@ -451,18 +492,15 @@ function findDuplicateImportSourceViolations(sourceFiles) {
   for (const sourceFile of sourceFiles) {
     const importsBySource = new Map();
     for (const declaration of findStaticImportDeclarations(sourceFile)) {
-      const moduleName = declaration.moduleName;
-      if (!importsBySource.has(moduleName)) {
-        importsBySource.set(moduleName, []);
-      }
-      importsBySource.get(moduleName).push(lineNumberAt(sourceFile.text, declaration.index));
+      addLineReference(importsBySource, declaration.moduleName, lineNumberAt(sourceFile.text, declaration.index));
     }
 
-    for (const [moduleName, lines] of importsBySource.entries()) {
-      if (lines.length > 1) {
-        violations.push(`${sourceFile.fileLabel} imports ${moduleName} from multiple declarations on lines ${lines.join(', ')}`);
-      }
-    }
+    violations.push(
+      ...findDuplicateLineViolations(
+        importsBySource,
+        (moduleName, lines) => `${sourceFile.fileLabel} imports ${moduleName} from multiple declarations on lines ${lines.join(', ')}`
+      )
+    );
   }
 
   return violations;
@@ -500,20 +538,55 @@ function findDuplicateTopLevelFunctionNameViolations(sourceFiles) {
 
     const linesByName = new Map();
     for (const declaration of findTopLevelFunctionDeclarations(sourceFile)) {
-      if (!linesByName.has(declaration.name)) {
-        linesByName.set(declaration.name, []);
-      }
-      linesByName.get(declaration.name).push(lineNumberAt(sourceFile.text, declaration.index));
+      addLineReference(linesByName, declaration.name, lineNumberAt(sourceFile.text, declaration.index));
     }
 
-    for (const [name, lines] of linesByName.entries()) {
-      if (lines.length > 1) {
-        violations.push(`${sourceFile.fileLabel} declares duplicate top-level function ${name} on lines ${lines.join(', ')}`);
+    violations.push(
+      ...findDuplicateLineViolations(
+        linesByName,
+        (name, lines) => `${sourceFile.fileLabel} declares duplicate top-level function ${name} on lines ${lines.join(', ')}`
+      )
+    );
+  }
+
+  return violations;
+}
+
+function findUnusedPrivateTopLevelDeclarationViolations(sourceFiles, { declarationsFor, declarationLabel }) {
+  const violations = [];
+
+  for (const sourceFile of sourceFiles) {
+    if (!isJsLikeSourceFile(sourceFile.fileLabel) || isTestSourceFile(sourceFile.fileLabel)) {
+      continue;
+    }
+
+    for (const declaration of declarationsFor(sourceFile)) {
+      if (declaration.exported) {
+        continue;
+      }
+      if (countIdentifier(sourceFile.maskedText, declaration.name) <= 1) {
+        violations.push(
+          `${sourceFile.fileLabel}:${lineNumberAt(sourceFile.text, declaration.index)} declares unused private top-level ${declarationLabel} ${declaration.name}`
+        );
       }
     }
   }
 
   return violations;
+}
+
+function findUnusedPrivateTopLevelFunctionViolations(sourceFiles) {
+  return findUnusedPrivateTopLevelDeclarationViolations(sourceFiles, {
+    declarationsFor: findTopLevelFunctionDeclarations,
+    declarationLabel: 'function'
+  });
+}
+
+function findUnusedPrivateTopLevelFunctionLikeConstViolations(sourceFiles) {
+  return findUnusedPrivateTopLevelDeclarationViolations(sourceFiles, {
+    declarationsFor: findTopLevelFunctionLikeConstDeclarations,
+    declarationLabel: 'function-like const'
+  });
 }
 
 function findDuplicateTestNameViolations(sourceFiles) {
@@ -531,16 +604,35 @@ function findDuplicateTestNameViolations(sourceFiles) {
         continue;
       }
 
-      const testName = match[2];
-      if (!linesByName.has(testName)) {
-        linesByName.set(testName, []);
-      }
-      linesByName.get(testName).push(lineNumberAt(sourceFile.text, match.index));
+      addLineReference(linesByName, match[2], lineNumberAt(sourceFile.text, match.index));
     }
 
-    for (const [testName, lines] of linesByName.entries()) {
-      if (lines.length > 1) {
-        violations.push(`${sourceFile.fileLabel} declares duplicate test "${testName}" on lines ${lines.join(', ')}`);
+    violations.push(
+      ...findDuplicateLineViolations(
+        linesByName,
+        (testName, lines) => `${sourceFile.fileLabel} declares duplicate test "${testName}" on lines ${lines.join(', ')}`
+      )
+    );
+  }
+
+  return violations;
+}
+
+function findDirectRepoTextReadViolations(sourceFiles, { isTargetPath, message }) {
+  const violations = [];
+  const directRepoTextReadPattern = /\breadRepoText\s*\(\s*(['"])([^'"]+)\1\s*\)/g;
+
+  for (const sourceFile of sourceFiles) {
+    if (!isFrontendSourceTestFile(sourceFile.fileLabel)) {
+      continue;
+    }
+
+    for (const match of sourceFile.text.matchAll(directRepoTextReadPattern)) {
+      if (
+        sourceFile.maskedText.slice(match.index, match.index + 'readRepoText'.length) === 'readRepoText'
+        && isTargetPath(match[2])
+      ) {
+        violations.push(`${sourceFile.fileLabel}:${lineNumberAt(sourceFile.text, match.index)} ${message}`);
       }
     }
   }
@@ -551,13 +643,9 @@ function findDuplicateTestNameViolations(sourceFiles) {
 function findDirectVueBlockReadViolations(sourceFiles) {
   const violations = [];
   const directVueBlockReadPattern = /\breadVueBlock\b/;
-  const directVueSourceReadPattern = /\breadRepoText\s*\(\s*(['"])[^'"]+\.vue\1\s*\)/g;
 
   for (const sourceFile of sourceFiles) {
-    if (
-      !sourceFile.fileLabel.startsWith('backend/src/tests/')
-      || sourceFile.fileLabel === 'backend/src/tests/frontendSfcTestUtils.js'
-    ) {
+    if (!isFrontendSourceTestFile(sourceFile.fileLabel)) {
       continue;
     }
 
@@ -569,15 +657,23 @@ function findDirectVueBlockReadViolations(sourceFiles) {
         'uses readVueBlock directly; use readVueBlocks()'
       )
     );
-
-    for (const match of sourceFile.text.matchAll(directVueSourceReadPattern)) {
-      if (sourceFile.maskedText.slice(match.index, match.index + 'readRepoText'.length) === 'readRepoText') {
-        violations.push(`${sourceFile.fileLabel}:${lineNumberAt(sourceFile.text, match.index)} reads a Vue SFC directly; use readVueBlocks()`);
-      }
-    }
   }
 
+  violations.push(
+    ...findDirectRepoTextReadViolations(sourceFiles, {
+      isTargetPath: (targetPath) => targetPath.endsWith('.vue'),
+      message: 'reads a Vue SFC directly; use readVueBlocks()'
+    })
+  );
+
   return violations;
+}
+
+function findDirectFrontendStyleReadViolations(sourceFiles) {
+  return findDirectRepoTextReadViolations(sourceFiles, {
+    isTargetPath: (targetPath) => targetPath === 'frontend/src/styles.css',
+    message: 'reads frontend styles directly; use readFrontendStyles()'
+  });
 }
 
 const backendSourceFiles = readSourceFiles(path.join(repoRoot, 'backend/src'));
@@ -819,6 +915,89 @@ test('source hygiene detects duplicate top-level function declarations only in J
   ]);
 });
 
+test('source hygiene detects unused private top-level functions in production JS-like files', () => {
+  const text = [
+    'function unusedHelper() {}',
+    'function usedHelper() {}',
+    'usedHelper();',
+    'export function exportedHelper() {}',
+    'function recursiveHelper() {',
+    '  return recursiveHelper();',
+    '}',
+    "const fixture = 'unusedHelper';",
+    '// unusedHelper',
+    'function parent() {',
+    '  function nestedUnused() {}',
+    '}',
+    'parent();'
+  ].join('\n');
+  const testText = [
+    'function unusedTestHelper() {}'
+  ].join('\n');
+  const sourceFiles = [
+    createSourceFile('backend/src/modules/sample.js', text),
+    createSourceFile('backend/src/tests/sample.test.js', testText)
+  ];
+
+  assert.deepEqual(findUnusedPrivateTopLevelFunctionViolations(sourceFiles), [
+    'backend/src/modules/sample.js:1 declares unused private top-level function unusedHelper'
+  ]);
+});
+
+test('source hygiene detects unused private top-level function-like const declarations only at top level', () => {
+  const text = [
+    'const unusedArrow = () => {};',
+    'const unusedTypedArrow: Handler = () => {};',
+    'const unusedGenericArrow = <T>(value: T) => value;',
+    'const unusedConstrainedGenericArrow = <T extends Array<string>>(value: T) => value;',
+    'const usedArrow = () => {};',
+    'usedArrow();',
+    'const usedTypedArrow: Handler = () => {};',
+    'usedTypedArrow();',
+    'const usedGenericArrow = <T>(value: T) => value;',
+    'usedGenericArrow("ok");',
+    'const usedConstrainedGenericArrow = <T extends Array<string>>(value: T) => value;',
+    'usedConstrainedGenericArrow(["ok"]);',
+    'const recursiveArrow = () => recursiveArrow();',
+    'const usedFunctionExpression = function () {};',
+    'usedFunctionExpression();',
+    'export const exportedConstrainedGenericArrow = <T extends Array<string>>(value: T) => value;',
+    'export const exportedGenericArrow = <T>(value: T) => value;',
+    'export const exportedTypedArrow: Handler = () => {};',
+    'export const exportedArrow = () => {};',
+    "const fixture = 'unusedArrow';",
+    "const typedFixture = 'unusedTypedArrow';",
+    "const genericFixture = 'unusedGenericArrow';",
+    "const constrainedGenericFixture = 'unusedConstrainedGenericArrow';",
+    '// unusedArrow',
+    '// unusedTypedArrow',
+    '// unusedGenericArrow',
+    '// unusedConstrainedGenericArrow',
+    'function parent() {',
+    '  const nestedUnusedArrow = () => {};',
+    '  const nestedTypedUnusedArrow: Handler = () => {};',
+    '  const nestedGenericUnusedArrow = <T>(value: T) => value;',
+    '  const nestedConstrainedGenericUnusedArrow = <T extends Array<string>>(value: T) => value;',
+    '  return nestedUnusedArrow;',
+    '}',
+    'parent();'
+  ].join('\n');
+  const testText = [
+    'const unusedTestArrow = () => {};'
+  ].join('\n');
+  const sourceFiles = [
+    createSourceFile('backend/src/modules/sample.ts', text),
+    createSourceFile('backend/src/tests/sample.test.js', testText)
+  ];
+
+  assert.deepEqual(findUnusedPrivateTopLevelFunctionLikeConstViolations(sourceFiles), [
+    'backend/src/modules/sample.ts:1 declares unused private top-level function-like const unusedArrow',
+    'backend/src/modules/sample.ts:2 declares unused private top-level function-like const unusedTypedArrow',
+    'backend/src/modules/sample.ts:3 declares unused private top-level function-like const unusedGenericArrow',
+    'backend/src/modules/sample.ts:4 declares unused private top-level function-like const unusedConstrainedGenericArrow'
+  ]);
+});
+
 test('source hygiene detects duplicate test names only in code', () => {
   const text = [
     "test('same test name', () => {});",
@@ -847,6 +1026,32 @@ test('source hygiene detects multiline direct Vue SFC source reads', () => {
 
   assert.deepEqual(findDirectVueBlockReadViolations(sourceFiles), [
     'backend/src/tests/sample.test.js:1 reads a Vue SFC directly; use readVueBlocks()'
+  ]);
+});
+
+test('source hygiene detects direct frontend style source reads', () => {
+  const text = [
+    "const styles = readRepoText('frontend/src/styles.css');",
+    "const splitStyles = readRepoText(",
+    "  'frontend/src/styles.css'",
+    ');',
+    'const sharedStyles = readFrontendStyles();',
+    "// readRepoText('frontend/src/styles.css');",
+    'const label = "readRepoText(\'frontend/src/styles.css\')"'
+  ].join('\n');
+  const helperText = [
+    "export function readFrontendStyles() {",
+    "  return readRepoText('frontend/src/styles.css');",
+    '}'
+  ].join('\n');
+  const sourceFiles = [
+    createSourceFile('backend/src/tests/sample.test.js', text),
+    createSourceFile('backend/src/tests/frontendSfcTestUtils.js', helperText)
+  ];
+
+  assert.deepEqual(findDirectFrontendStyleReadViolations(sourceFiles), [
+    'backend/src/tests/sample.test.js:1 reads frontend styles directly; use readFrontendStyles()',
+    'backend/src/tests/sample.test.js:2 reads frontend styles directly; use readFrontendStyles()'
   ]);
 });
 
@@ -896,10 +1101,22 @@ test('JS-like source files do not duplicate top-level function declarations', ()
   assert.deepEqual(findDuplicateTopLevelFunctionNameViolations([...backendSourceFiles, ...frontendSourceFiles]), []);
 });
 
+test('production JS-like source files do not contain unused private top-level function declarations', () => {
+  assert.deepEqual(findUnusedPrivateTopLevelFunctionViolations([...backendSourceFiles, ...frontendSourceFiles]), []);
+});
+
+test('production JS-like source files do not contain unused private top-level function-like const declarations', () => {
+  assert.deepEqual(findUnusedPrivateTopLevelFunctionLikeConstViolations([...backendSourceFiles, ...frontendSourceFiles]), []);
+});
+
 test('backend tests do not contain duplicate test names', () => {
   assert.deepEqual(findDuplicateTestNameViolations(backendSourceFiles), []);
 });
 
 test('frontend SFC source tests use the shared Vue block reader', () => {
   assert.deepEqual(findDirectVueBlockReadViolations(backendSourceFiles), []);
+});
+
+test('frontend style source tests use the shared styles reader', () => {
+  assert.deepEqual(findDirectFrontendStyleReadViolations(backendSourceFiles), []);
 });

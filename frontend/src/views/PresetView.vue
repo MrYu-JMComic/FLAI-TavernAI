@@ -81,7 +81,7 @@ async function loadPresets() {
   try {
     const nextPresets = await fetchPresets();
     if (!isCurrentPresetLoad(requestToken)) return;
-    presets.value = nextPresets;
+    setPresetsIfChanged(nextPresets);
   } catch (err) {
     if (!isCurrentPresetLoad(requestToken)) return;
     error.value = err.message;
@@ -96,6 +96,34 @@ async function loadPresets() {
 
 function isCurrentPresetLoad(requestToken) {
   return !presetViewDisposed && requestToken === presetLoadToken;
+}
+
+function setPresetsIfChanged(nextPresets) {
+  const normalizedNextPresets = Array.isArray(nextPresets) ? nextPresets : [];
+  if (samePresetList(presets.value, normalizedNextPresets)) {
+    return false;
+  }
+  presets.value = normalizedNextPresets;
+  return true;
+}
+
+function samePresetList(currentPresets, nextPresets) {
+  return Array.isArray(currentPresets)
+    && Array.isArray(nextPresets)
+    && currentPresets.length === nextPresets.length
+    && currentPresets.every((preset, index) => samePresetSummary(preset, nextPresets[index]));
+}
+
+function samePresetSummary(currentPreset, nextPreset) {
+  return currentPreset?.id === nextPreset?.id
+    && currentPreset?.name === nextPreset?.name
+    && currentPreset?.systemPrompt === nextPreset?.systemPrompt
+    && Number(currentPreset?.temperature) === Number(nextPreset?.temperature)
+    && Number(currentPreset?.maxTokens) === Number(nextPreset?.maxTokens)
+    && Number(currentPreset?.topP) === Number(nextPreset?.topP)
+    && Number(currentPreset?.frequencyPenalty) === Number(nextPreset?.frequencyPenalty)
+    && Number(currentPreset?.presencePenalty) === Number(nextPreset?.presencePenalty)
+    && Boolean(currentPreset?.isDefault) === Boolean(nextPreset?.isDefault);
 }
 
 function startCreate() {

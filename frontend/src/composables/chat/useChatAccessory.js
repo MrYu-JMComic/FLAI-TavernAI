@@ -256,7 +256,7 @@ export function useChatAccessory({ conversation, showActionNotice, showError }) 
     const conversationId = conversation.value?.id;
     const requestToken = ++statusBarLoadToken;
     if (!conversationId) {
-      statusBar.value = null;
+      setStatusBarIfChanged(null, { syncForm: false });
       return null;
     }
     try {
@@ -264,14 +264,64 @@ export function useChatAccessory({ conversation, showActionNotice, showError }) 
       if (!isCurrentStatusBarLoad(requestToken, conversationId)) {
         return statusBar.value;
       }
-      statusBar.value = result;
-      if (result) {
-        syncStatusBarForm(result);
-      }
-      return result;
+      setStatusBarIfChanged(result);
+      return statusBar.value;
     } catch {
       return statusBar.value;
     }
+  }
+
+  function setStatusBarIfChanged(nextStatusBar, options = {}) {
+    const normalizedStatusBar = nextStatusBar && typeof nextStatusBar === 'object'
+      ? nextStatusBar
+      : null;
+    if (sameStatusBarSummary(statusBar.value, normalizedStatusBar)) {
+      return false;
+    }
+    statusBar.value = normalizedStatusBar;
+    if (normalizedStatusBar && options.syncForm !== false) {
+      syncStatusBarForm(normalizedStatusBar);
+    }
+    return true;
+  }
+
+  function applyStatusBarUpdate(nextStatusBar, options = {}) {
+    return setStatusBarIfChanged(nextStatusBar, options);
+  }
+
+  function sameStatusBarSummary(current, next) {
+    if (current === next) {
+      return true;
+    }
+    if (!current || !next) {
+      return !current && !next;
+    }
+    return current.id === next.id
+      && current.conversationId === next.conversationId
+      && current.name === next.name
+      && current.template === next.template
+      && current.createdAt === next.createdAt
+      && current.updatedAt === next.updatedAt
+      && sameStatusVariableList(current.variables, next.variables);
+  }
+
+  function sameStatusVariableList(currentVariables, nextVariables) {
+    const currentList = Array.isArray(currentVariables) ? currentVariables : [];
+    const nextList = Array.isArray(nextVariables) ? nextVariables : [];
+    if (currentList === nextList) {
+      return true;
+    }
+    if (currentList.length !== nextList.length) {
+      return false;
+    }
+    return currentList.every((variable, index) => sameStatusVariableSummary(variable, nextList[index]));
+  }
+
+  function sameStatusVariableSummary(current = {}, next = {}) {
+    return current?.name === next?.name
+      && current?.value === next?.value
+      && current?.max === next?.max
+      && current?.color === next?.color;
   }
 
   async function loadEconomyBalance() {
@@ -279,7 +329,7 @@ export function useChatAccessory({ conversation, showActionNotice, showError }) 
     const conversationId = conversation.value?.id;
     const requestToken = ++economyLoadToken;
     if (!conversationId) {
-      economyAccounts.value = [];
+      setEconomyAccountsIfChanged([]);
       return;
     }
     try {
@@ -287,13 +337,40 @@ export function useChatAccessory({ conversation, showActionNotice, showError }) 
       if (!isCurrentEconomyLoad(requestToken, conversationId)) {
         return;
       }
-      economyAccounts.value = result.accounts || [];
+      setEconomyAccountsIfChanged(result.accounts);
     } catch {
       if (!isCurrentEconomyLoad(requestToken, conversationId)) {
         return;
       }
-      economyAccounts.value = [];
+      setEconomyAccountsIfChanged([]);
     }
+  }
+
+  function setEconomyAccountsIfChanged(nextAccounts) {
+    const normalizedAccounts = Array.isArray(nextAccounts) ? nextAccounts : [];
+    const currentAccounts = Array.isArray(economyAccounts.value) ? economyAccounts.value : [];
+    if (sameEconomyAccountList(currentAccounts, normalizedAccounts)) {
+      return false;
+    }
+    economyAccounts.value = normalizedAccounts;
+    return true;
+  }
+
+  function sameEconomyAccountList(currentAccounts, nextAccounts) {
+    if (currentAccounts === nextAccounts) {
+      return true;
+    }
+    if (currentAccounts.length !== nextAccounts.length) {
+      return false;
+    }
+    return currentAccounts.every((account, index) => sameEconomyAccountSummary(account, nextAccounts[index]));
+  }
+
+  function sameEconomyAccountSummary(current = {}, next = {}) {
+    return current?.id === next?.id
+      && current?.conversationId === next?.conversationId
+      && current?.currencyType === next?.currencyType
+      && current?.balance === next?.balance;
   }
 
   async function loadAccessorySkills() {
@@ -344,11 +421,19 @@ export function useChatAccessory({ conversation, showActionNotice, showError }) 
     const defaults = createDefaultAccessorySkills();
     for (const key of Object.keys(defaults)) {
       const source = next?.[key] || {};
-      accessorySkills[key] = {
+      const normalizedSkill = {
         enabled: normalizeSkillEnabled(source.enabled, defaults[key].enabled),
         modelOverride: String(source.modelOverride || source.model_override || '').trim()
       };
+      if (!sameAccessorySkillConfig(accessorySkills[key], normalizedSkill)) {
+        accessorySkills[key] = normalizedSkill;
+      }
     }
+  }
+
+  function sameAccessorySkillConfig(current = {}, next = {}) {
+    return current?.enabled === next?.enabled
+      && current?.modelOverride === next?.modelOverride;
   }
 
   function normalizeSkillEnabled(value, fallback = false) {
@@ -420,8 +505,7 @@ export function useChatAccessory({ conversation, showActionNotice, showError }) 
     }
     const result = data.result || {};
     if (data.skill === 'statusBarAgent' && result.statusBar) {
-      statusBar.value = result.statusBar;
-      syncStatusBarForm(result.statusBar);
+      applyStatusBarUpdate(result.statusBar);
     }
     if (data.skill === 'economyAgent' && Array.isArray(result.transactions) && result.transactions.length) {
       loadEconomyBalance();
@@ -805,6 +889,7 @@ export function useChatAccessory({ conversation, showActionNotice, showError }) 
     syncAccessorySkills,
     isAccessorySkillActiveLocal,
     saveAccessorySkillChanges,
+    applyStatusBarUpdate,
     handleSkillResult,
     syncStatusBarForm,
     addStatusBarVariable,

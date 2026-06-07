@@ -1,6 +1,6 @@
 import { normalizeAccessorySkills, isAccessorySkillActive, normalizeAdvancedSettings } from '../modules/advancedSettings.js';
 import { processTransactionIntents, createConversationTransaction } from '../modules/economy.js';
-import { addNpcMemory, isConversationNpcHidden, upsertConversationNpc } from '../modules/npcs.js';
+import { addNpcBehavior, addNpcMemory, isConversationNpcHidden, upsertConversationNpc } from '../modules/npcs.js';
 import { STATUS_BAR_VARIABLE_LIMIT, applyVariableUpdates, extractVariablesFromText, upsertStatusBar } from '../modules/statusBars.js';
 import { detectSceneAndEmotion, findBestMatch, listCharacterImages } from '../modules/characterImages.js';
 import { hasUsableProvider, runToolCompletion } from './providers.js';
@@ -134,13 +134,14 @@ async function runStatusBarAgent({ db, userId, conversation, assistantMessage, s
 
 async function runNpcAgent({ db, userId, conversation, character, assistantMessage, settings, skill }) {
   const recorded = [];
+  const behaviors = [];
   const npcs = [];
 
   if (hasUsableProvider(settings)) {
     await runToolCompletion(
       withModelOverride(settings, skill),
       buildNpcMessages(character, assistantMessage.content),
-      [npcUpsertTool(), npcMemoryTool()],
+      [npcUpsertTool(), npcMemoryTool(), npcBehaviorTool()],
       async (toolName, args) => {
         if (toolName === 'upsert_npc') {
           const npc = upsertNpcFromAgent(db, userId, conversation.id, args);
@@ -149,31 +150,52 @@ async function runNpcAgent({ db, userId, conversation, character, assistantMessa
           }
           return { ok: true, npc };
         }
-        if (toolName !== 'record_npc_memory') {
-          return { ok: false, error: `Unsupported tool: ${toolName}` };
+        if (toolName === 'record_npc_memory') {
+          const npc = upsertNpcFromAgent(db, userId, conversation.id, {
+            npcName: args.npcName,
+            evidence: args.content,
+            confidence: args.confidence ?? 75
+          });
+          if (npc) {
+            npcs.push(npc);
+          }
+          const memory = addNpcMemoryIfNew(db, userId, conversation.id, args.npcName, {
+            memoryType: args.memoryType || 'event',
+            content: args.content || ''
+          });
+          if (memory) {
+            recorded.push(memory);
+          }
+          return { ok: true, memory };
         }
-        const npc = upsertNpcFromAgent(db, userId, conversation.id, {
-          npcName: args.npcName,
-          evidence: args.content,
-          confidence: args.confidence ?? 75
-        });
-        if (npc) {
-          npcs.push(npc);
+        if (toolName === 'record_npc_behavior') {
+          const npc = upsertNpcFromAgent(db, userId, conversation.id, {
+            npcName: args.npcName,
+            evidence: args.triggerCondition || args.action,
+            confidence: args.confidence ?? 75
+          });
+          if (npc) {
+            npcs.push(npc);
+          }
+          const behavior = addNpcBehaviorIfNew(db, userId, conversation.id, args.npcName, {
+            behaviorType: args.behaviorType || 'reaction',
+            triggerCondition: args.triggerCondition || '',
+            action: args.action || '',
+            priority: args.priority ?? 0,
+            enabled: args.enabled ?? true
+          });
+          if (behavior) {
+            behaviors.push(behavior);
+          }
+          return { ok: true, behavior };
         }
-        const memory = addNpcMemoryIfNew(db, userId, conversation.id, args.npcName, {
-          memoryType: args.memoryType || 'event',
-          content: args.content || ''
-        });
-        if (memory) {
-          recorded.push(memory);
-        }
-        return { ok: true, memory };
+        return { ok: false, error: `Unsupported tool: ${toolName}` };
       },
       { maxRounds: 3, thinkingEnabled: false }
     ).catch(() => null);
   }
 
-  return { npcs, memories: recorded };
+  return { npcs, memories: recorded, behaviors };
 }
 
 async function runEconomyAgent({ db, userId, conversation, assistantMessage, settings, skill }) {
@@ -341,9 +363,12 @@ function buildNpcMessages(character, content) {
     {
       role: 'system',
       content: [
-        'You are an NPC memory extractor for a roleplay chat.',
+        'You are an NPC management assistant for a roleplay chat.',
         'Call upsert_npc for named side characters that clearly appear in the reply.',
+        'Update status when the reply clearly says an NPC left, permanently left, died, is on a mission, follows, or has another stable custom state.',
+        'Aliases are exact alternate ways this same individual is called. Stable nicknames or titles count only when they uniquely identify this NPC. Generic roles, vague references, pronouns, and group labels do not count.',
         'Call record_npc_memory only when there is a concise useful memory about that side character.',
+        'Call record_npc_behavior only when the reply establishes a reusable future behavior rule, not for a one-time action.',
         'Skip the main character, user/player, generic section titles, status panels, and markdown headings.',
         'Do not report narrative fragments, pronouns, or UI labels as NPCs.'
       ].join('\n')
@@ -370,9 +395,40 @@ function npcUpsertTool() {
         properties: {
           npcName: { type: 'string' },
           evidence: { type: 'string' },
-          confidence: { type: 'number', description: '0-100 confidence that this is a real side character name.' }
+          confidence: { type: 'number', description: '0-100 confidence that this is a real side character name.' },
+          status: { type: 'string', enum: ['active', 'left', 'permanently_left', 'dead', 'on_mission', 'following', 'custom'] },
+          customStatus: { type: 'string' },
+          aliases: {
+            type: 'array',
+            items: { type: 'string' },
+            description: 'Exact alternate proper names, stable nicknames, or unique titles for the same NPC.'
+          },
+          memorySealed: { type: 'boolean', description: 'Set true only when status is dead or permanently_left and stored memories should be omitted from main replies for token saving.' }
         },
         required: ['npcName', 'evidence']
+      }
+    }
+  };
+}
+
+function npcBehaviorTool() {
+  return {
+    type: 'function',
+    function: {
+      name: 'record_npc_behavior',
+      description: 'Record a reusable future behavior rule for an NPC side character.',
+      parameters: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          npcName: { type: 'string' },
+          behaviorType: { type: 'string', enum: ['reaction', 'dialogue', 'action', 'emotion', 'movement'] },
+          triggerCondition: { type: 'string' },
+          action: { type: 'string' },
+          priority: { type: 'number', description: '0-100 importance. Higher rules are injected first.' },
+          enabled: { type: 'boolean' }
+        },
+        required: ['npcName', 'action']
       }
     }
   };
@@ -548,6 +604,35 @@ function addNpcMemoryIfNew(db, userId, conversationId, npcName, payload) {
   });
 }
 
+function addNpcBehaviorIfNew(db, userId, conversationId, npcName, payload) {
+  const name = String(npcName || '').trim().slice(0, 80);
+  const action = String(payload?.action || '').trim();
+  const triggerCondition = String(payload?.triggerCondition || '').trim();
+  if (!name || !action) {
+    return null;
+  }
+  if (isConversationNpcHidden(db, conversationId, name)) {
+    return null;
+  }
+  const existing = db
+    .prepare(
+      `SELECT id FROM npc_behaviors
+       WHERE conversation_id = ? AND npc_name = ? AND trigger_condition = ? AND action = ?
+       LIMIT 1`
+    )
+    .get(conversationId, name, triggerCondition, action);
+  if (existing) {
+    return null;
+  }
+  return addNpcBehavior(db, userId, conversationId, name, {
+    behaviorType: payload.behaviorType || 'reaction',
+    triggerCondition,
+    action,
+    priority: payload.priority ?? 0,
+    enabled: payload.enabled ?? true
+  });
+}
+
 function upsertNpcFromAgent(db, userId, conversationId, args = {}) {
   const npcName = String(args.npcName || args.name || '').trim();
   if (!npcName || isConversationNpcHidden(db, conversationId, npcName)) {
@@ -557,7 +642,11 @@ function upsertNpcFromAgent(db, userId, conversationId, args = {}) {
     npcName,
     source: 'agent',
     evidence: args.evidence || '',
-    confidence: Number.isFinite(Number(args.confidence)) ? Number(args.confidence) : 75
+    confidence: Number.isFinite(Number(args.confidence)) ? Number(args.confidence) : 75,
+    status: args.status,
+    customStatus: args.customStatus,
+    aliases: args.aliases,
+    memorySealed: args.memorySealed
   });
 }
 

@@ -85,8 +85,8 @@ onBeforeUnmount(() => {
 function resetEconomyState() {
   economyLoadToken += 1;
   historyLoadToken += 1;
-  accounts.value = [];
-  transactions.value = [];
+  setAccountsIfChanged([]);
+  setTransactionsIfChanged([]);
   historyTotal.value = 0;
   historyOffset.value = 0;
   historyCurrencyFilter.value = '';
@@ -111,14 +111,14 @@ async function loadEconomy() {
     const result = await fetchConversationEconomy(conversationId);
     if (economyPanelDisposed || requestToken !== economyLoadToken || conversationId !== props.conversationId) return;
     loadError.value = '';
-    accounts.value = result.accounts || [];
+    setAccountsIfChanged(result.accounts);
     await loadHistory(0, conversationId);
   } catch (err) {
     if (economyPanelDisposed || requestToken !== economyLoadToken || conversationId !== props.conversationId) return;
     loadError.value = err.message || '加载经济数据失败';
     notify.error(loadError.value);
-    accounts.value = [];
-    transactions.value = [];
+    setAccountsIfChanged([]);
+    setTransactionsIfChanged([]);
     historyTotal.value = 0;
     historyOffset.value = 0;
     historyError.value = '';
@@ -147,14 +147,14 @@ async function loadHistory(offset = 0, expectedConversationId = '') {
     const result = await fetchEconomyHistory(conversationId, params);
     if (economyPanelDisposed || requestToken !== historyLoadToken || conversationId !== props.conversationId) return;
     historyError.value = '';
-    transactions.value = result.transactions || [];
+    setTransactionsIfChanged(result.transactions);
     historyTotal.value = result.total || 0;
     historyOffset.value = offset;
   } catch (err) {
     if (economyPanelDisposed || requestToken !== historyLoadToken || conversationId !== props.conversationId) return;
     historyError.value = err.message || '加载交易历史失败';
     notify.error(historyError.value);
-    transactions.value = [];
+    setTransactionsIfChanged([]);
     historyTotal.value = 0;
     historyOffset.value = offset;
   } finally {
@@ -162,6 +162,52 @@ async function loadHistory(offset = 0, expectedConversationId = '') {
       historyLoading.value = false;
     }
   }
+}
+
+function setAccountsIfChanged(nextAccounts) {
+  const normalizedAccounts = Array.isArray(nextAccounts) ? nextAccounts : [];
+  const currentAccounts = Array.isArray(accounts.value) ? accounts.value : [];
+  if (sameListItems(currentAccounts, normalizedAccounts, sameAccountSummary)) {
+    return false;
+  }
+  accounts.value = normalizedAccounts;
+  return true;
+}
+
+function setTransactionsIfChanged(nextTransactions) {
+  const normalizedTransactions = Array.isArray(nextTransactions) ? nextTransactions : [];
+  const currentTransactions = Array.isArray(transactions.value) ? transactions.value : [];
+  if (sameListItems(currentTransactions, normalizedTransactions, sameTransactionSummary)) {
+    return false;
+  }
+  transactions.value = normalizedTransactions;
+  return true;
+}
+
+function sameListItems(currentItems, nextItems, sameItem) {
+  if (currentItems === nextItems) {
+    return true;
+  }
+  if (currentItems.length !== nextItems.length) {
+    return false;
+  }
+  return currentItems.every((item, index) => sameItem(item, nextItems[index]));
+}
+
+function sameAccountSummary(current = {}, next = {}) {
+  return current?.id === next?.id
+    && current?.conversationId === next?.conversationId
+    && current?.currencyType === next?.currencyType
+    && current?.balance === next?.balance;
+}
+
+function sameTransactionSummary(current = {}, next = {}) {
+  return current?.id === next?.id
+    && current?.currencyType === next?.currencyType
+    && current?.type === next?.type
+    && current?.amount === next?.amount
+    && current?.description === next?.description
+    && current?.createdAt === next?.createdAt;
 }
 
 function handleCurrencyFilterChange() {

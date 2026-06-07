@@ -9,6 +9,10 @@ export function readRepoText(relativePath) {
   return fs.readFileSync(path.join(repoRoot, relativePath), 'utf8');
 }
 
+export function readFrontendStyles() {
+  return readRepoText('frontend/src/styles.css');
+}
+
 export function readVueBlock(source, tag) {
   if (tag === 'template') {
     const start = source.indexOf('<template>');

@@ -28,3 +28,36 @@ test('EconomyPanel disables history controls while economy or history is loading
   assert.match(economyPanelStyle, /\.economy-retry-button:disabled/);
   assert.match(economyPanelStyle, /\.history-currency-select:disabled/);
 });
+
+test('EconomyPanel preserves unchanged account and transaction list references', () => {
+  assert.match(
+    economyPanelScript,
+    /function setAccountsIfChanged\(nextAccounts\)\s*{\s*const normalizedAccounts = Array\.isArray\(nextAccounts\) \? nextAccounts : \[\];[\s\S]*if \(sameListItems\(currentAccounts, normalizedAccounts, sameAccountSummary\)\) {\s*return false;\s*}[\s\S]*accounts\.value = normalizedAccounts;[\s\S]*return true;[\s\S]*}/
+  );
+  assert.match(
+    economyPanelScript,
+    /function setTransactionsIfChanged\(nextTransactions\)\s*{\s*const normalizedTransactions = Array\.isArray\(nextTransactions\) \? nextTransactions : \[\];[\s\S]*if \(sameListItems\(currentTransactions, normalizedTransactions, sameTransactionSummary\)\) {\s*return false;\s*}[\s\S]*transactions\.value = normalizedTransactions;[\s\S]*return true;[\s\S]*}/
+  );
+  assert.match(
+    economyPanelScript,
+    /function sameListItems\(currentItems, nextItems, sameItem\)\s*{[\s\S]*if \(currentItems === nextItems\) {\s*return true;\s*}[\s\S]*if \(currentItems\.length !== nextItems\.length\) {\s*return false;\s*}[\s\S]*currentItems\.every\(\(item, index\) => sameItem\(item, nextItems\[index\]\)\);[\s\S]*}/
+  );
+  assert.match(
+    economyPanelScript,
+    /function sameAccountSummary\(current = {}, next = {}\)\s*{[\s\S]*current\?\.id === next\?\.id[\s\S]*current\?\.conversationId === next\?\.conversationId[\s\S]*current\?\.currencyType === next\?\.currencyType[\s\S]*current\?\.balance === next\?\.balance;[\s\S]*}/
+  );
+  assert.match(
+    economyPanelScript,
+    /function sameTransactionSummary\(current = {}, next = {}\)\s*{[\s\S]*current\?\.id === next\?\.id[\s\S]*current\?\.currencyType === next\?\.currencyType[\s\S]*current\?\.type === next\?\.type[\s\S]*current\?\.amount === next\?\.amount[\s\S]*current\?\.description === next\?\.description[\s\S]*current\?\.createdAt === next\?\.createdAt;[\s\S]*}/
+  );
+
+  assert.match(economyPanelScript, /setAccountsIfChanged\(\[\]\);[\s\S]*setTransactionsIfChanged\(\[\]\);/);
+  assert.match(economyPanelScript, /setAccountsIfChanged\(result\.accounts\);/);
+  assert.match(economyPanelScript, /setTransactionsIfChanged\(result\.transactions\);/);
+  assert.ok(countMatches(economyPanelScript, /setAccountsIfChanged\(/g) >= 4);
+  assert.ok(countMatches(economyPanelScript, /setTransactionsIfChanged\(/g) >= 5);
+  assert.doesNotMatch(economyPanelScript, /\n\s+accounts\.value = \[\];/);
+  assert.doesNotMatch(economyPanelScript, /\n\s+transactions\.value = \[\];/);
+  assert.doesNotMatch(economyPanelScript, /\n\s+accounts\.value = result\.accounts/);
+  assert.doesNotMatch(economyPanelScript, /\n\s+transactions\.value = result\.transactions/);
+});

@@ -25,6 +25,26 @@ test('SettingsView personal-page retry and balance handlers ignore disabled stat
 
 test('SettingsView model refresh ignores events while refresh is unavailable or already loading', () => {
   assert.match(
+    settingsViewScript,
+    /areProviderModelListsEqual,[\s\S]*buildModelSelectOptions,[\s\S]*readCachedProviderModels,[\s\S]*refreshProviderModels/
+  );
+  assert.match(
+    settingsViewScript,
+    /watch\(\s*\(\) => \[[\s\S]*form\.providerType,[\s\S]*form\.gatewayName,[\s\S]*form\.baseUrl,[\s\S]*Boolean\(form\.apiKey \|\| form\.apiKeySet\),[\s\S]*form\.supportsReasoning,[\s\S]*form\.extraBody[\s\S]*\]/
+  );
+  assert.match(
+    settingsViewScript,
+    /function syncCachedModelOptions\(\) \{\s*applyModelOptions\(readCachedProviderModels\(form\)\);\s*\}/
+  );
+  assert.match(
+    settingsViewScript,
+    /function applyModelOptions\(nextOptions\) \{\s*if \(areProviderModelListsEqual\(modelOptions\.value, nextOptions\)\) \{\s*return false;\s*\}\s*modelOptions\.value = nextOptions;\s*return true;\s*\}/
+  );
+  assert.match(
+    settingsViewScript,
+    /const nextOptions = await refreshProviderModels\(request, \{ forceRefresh: true \}\);[\s\S]*applyModelOptions\(nextOptions\);[\s\S]*if \(!nextOptions\.length\)[\s\S]*!nextOptions\.some\(\(model\) => model\.id === form\.model\)[\s\S]*form\.model = nextOptions\[0\]\.id;/
+  );
+  assert.match(
     settingsViewTemplate,
     /<button class="ghost-button compact-button" type="button" :disabled="providerControlsBusy \|\| !canFetchModels" @click="loadModels">/
   );
@@ -118,6 +138,37 @@ test('SettingsView extension retry handlers ignore events while already loading'
   );
 });
 
+test('SettingsView preserves unchanged extension list references during refreshes', () => {
+  assert.match(
+    settingsViewScript,
+    /function setListIfChanged\(listRef, nextList\) \{[\s\S]*sameListItems\(listRef\.value, normalizedNextList\)[\s\S]*listRef\.value = normalizedNextList;[\s\S]*return true;[\s\S]*\}/
+  );
+  assert.match(
+    settingsViewScript,
+    /const nextTags = await fetchTags\(\{ limit \}\);[\s\S]*setListIfChanged\(tagList, nextTags\);/
+  );
+  assert.match(
+    settingsViewScript,
+    /const nextPresets = await fetchPresets\(\);[\s\S]*setListIfChanged\(presetList, nextPresets\);/
+  );
+  assert.match(
+    settingsViewScript,
+    /const nextMods = await fetchMods\(\);[\s\S]*setListIfChanged\(modList, nextMods\);/
+  );
+  assert.match(
+    settingsViewScript,
+    /setListIfChanged\(\s*modCharacterOptions,[\s\S]*characters\.filter\(\(character\) => character\?\.canUse !== false\)[\s\S]*\);/
+  );
+  assert.match(
+    settingsViewScript,
+    /const nextRules = await fetchRegexRules\(groupFilter\);[\s\S]*setListIfChanged\(regexRules, nextRules\);/
+  );
+  assert.doesNotMatch(
+    settingsViewScript,
+    /(tagList|presetList|modList|modCharacterOptions|regexRules)\.value\s*=/
+  );
+});
+
 test('SettingsView tag mutations expose one busy guard for add, delete, and load-limit edits', () => {
   assert.match(settingsViewScript, /const tagActionBusyId = ref\(''\);/);
   assert.match(settingsViewScript, /const tagActionBusy = computed\(\(\) => Boolean\(tagActionBusyId\.value\)\);/);
@@ -197,6 +248,10 @@ test('SettingsView mod mutations expose visible busy guards for editor, toggle, 
   assert.match(settingsViewScript, /function selectAllModCharacters\(\) {\s*if \(modActionBusy\.value\) return;/);
   assert.match(settingsViewScript, /function clearModCharacters\(\) {\s*if \(modActionBusy\.value\) return;/);
   assert.match(settingsViewScript, /function onModDragStart\(event, mod\) {\s*if \(modControlsBusy\.value\) {[\s\S]*event\.preventDefault\(\);/);
+  assert.match(
+    settingsViewScript,
+    /function onModDragOver\(event, mod\) {\s*if \(modControlsBusy\.value\) return;\s*event\.preventDefault\(\);\s*if \(dragOverMod\.value !== mod\.id\) {\s*dragOverMod\.value = mod\.id;\s*}/
+  );
   assert.match(settingsViewScript, /async function onModDrop\(event, targetMod\) {[\s\S]*if \(modControlsBusy\.value\) return;[\s\S]*beginModMutation\('mod-reorder'\)[\s\S]*finally {\s*finishModMutation\(mutationToken\);/);
 
   assert.match(settingsViewTemplate, /<button class="ghost-button" type="button" :disabled="modControlsBusy" @click="startNewMod">/);

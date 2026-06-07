@@ -109,6 +109,86 @@ test('chat sidebar data load reports partial failures without discarding success
   }
 });
 
+test('chat sidebar data load preserves unchanged resource references', async () => {
+  const originalFetch = globalThis.fetch;
+  let totalTokens = 10;
+
+  globalThis.fetch = async (url) => {
+    const requestUrl = String(url);
+
+    if (requestUrl === '/api/conversations?characterId=char-1') {
+      return jsonResponse([
+        {
+          id: 'conv-1',
+          title: 'Current story',
+          characterId: 'char-1',
+          character: { name: 'Alice' },
+          usage: { totalTokens, totalCostCny: 0.01 }
+        }
+      ]);
+    }
+
+    if (requestUrl === '/api/characters?search=&sort=created&tag=') {
+      return jsonResponse([
+        {
+          id: 'char-1',
+          name: 'Alice',
+          avatarUrl: '/avatars/alice.png',
+          visibility: 'private',
+          renderPlugins: [
+            {
+              label: 'Fold profile',
+              type: 'fold',
+              pattern: '^Profile$',
+              flags: 'u',
+              enabled: true
+            }
+          ]
+        }
+      ]);
+    }
+
+    if (requestUrl === '/api/presets') {
+      return jsonResponse([
+        { id: 'preset-default', name: 'Default', isDefault: true }
+      ]);
+    }
+
+    return jsonResponse({ message: `Unexpected request: ${requestUrl}` }, 500);
+  };
+
+  try {
+    const chat = useChatConversation({
+      route: { params: { id: 'conv-1' } },
+      emit() {},
+      showError() {}
+    });
+
+    chat.conversation.value = { id: 'conv-1', characterId: 'char-1' };
+
+    await chat.loadSidebarData();
+    const conversations = chat.conversations.value;
+    const characters = chat.characters.value;
+    const presetList = chat.presetList.value;
+
+    await chat.loadSidebarData();
+
+    assert.equal(chat.conversations.value, conversations);
+    assert.equal(chat.characters.value, characters);
+    assert.equal(chat.presetList.value, presetList);
+
+    totalTokens = 11;
+    await chat.loadSidebarData();
+
+    assert.notEqual(chat.conversations.value, conversations);
+    assert.equal(chat.characters.value, characters);
+    assert.equal(chat.presetList.value, presetList);
+    assert.equal(chat.conversations.value[0].usage.totalTokens, 11);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test('chat sidebar data load ignores stale responses from older conversations', async () => {
   const originalFetch = globalThis.fetch;
   const slowHistory = createDeferred();
@@ -415,6 +495,125 @@ test('chat sidebar selection controls freeze while conversation actions are busy
   chat.conversationActionBusy.value = false;
   chat.toggleConversationSelection('conv-b');
   assert.deepEqual([...chat.selectedConversationIds.value].sort(), ['conv-a', 'conv-b']);
+});
+
+test('chat sidebar bulk selection skips reactive updates when no conversations are visible', () => {
+  const chat = useChatConversation({
+    route: { params: { id: 'conv-a' } },
+    emit() {},
+    showError() {}
+  });
+
+  chat.conversations.value = [
+    { id: 'conv-a', title: 'A', character: { name: 'A' }, usage: {} },
+    { id: 'conv-b', title: 'B', character: { name: 'B' }, usage: {} }
+  ];
+  const selected = new Set(['conv-a']);
+  chat.selectedConversationIds.value = selected;
+  const selectionReference = chat.selectedConversationIds.value;
+  chat.historySearch.value = 'no matching conversations';
+
+  chat.toggleAllVisibleConversations();
+  assert.equal(chat.selectedConversationIds.value, selectionReference);
+  assert.deepEqual([...chat.selectedConversationIds.value], ['conv-a']);
+
+  chat.historySearch.value = '';
+  chat.toggleAllVisibleConversations();
+  assert.notEqual(chat.selectedConversationIds.value, selectionReference);
+  assert.deepEqual([...chat.selectedConversationIds.value].sort(), ['conv-a', 'conv-b']);
+
+  const fullySelected = chat.selectedConversationIds.value;
+  chat.toggleAllVisibleConversations();
+  assert.notEqual(chat.selectedConversationIds.value, fullySelected);
+  assert.deepEqual([...chat.selectedConversationIds.value], []);
+});
+
+test('chat sidebar selection pruning keeps reactive references stable when nothing changes', () => {
+  const chat = useChatConversation({
+    route: { params: { id: 'conv-a' } },
+    emit() {},
+    showError() {}
+  });
+
+  const conversations = [
+    { id: 'conv-a', title: 'A', character: { name: 'A' }, usage: {} },
+    { id: 'conv-b', title: 'B', character: { name: 'B' }, usage: {} }
+  ];
+  const selected = new Set(['conv-a']);
+  chat.conversations.value = conversations;
+  chat.selectedConversationIds.value = selected;
+  const conversationsReference = chat.conversations.value;
+  const selectionReference = chat.selectedConversationIds.value;
+
+  chat.pruneSelectedConversations();
+  assert.equal(chat.selectedConversationIds.value, selectionReference);
+
+  chat.removeDeletedConversations(['conv-missing']);
+  assert.equal(chat.conversations.value, conversationsReference);
+  assert.equal(chat.selectedConversationIds.value, selectionReference);
+
+  const staleSelection = new Set(['conv-a', 'conv-b']);
+  chat.selectedConversationIds.value = staleSelection;
+  chat.removeDeletedConversations(['conv-b']);
+
+  assert.notEqual(chat.selectedConversationIds.value, staleSelection);
+  assert.deepEqual([...chat.selectedConversationIds.value], ['conv-a']);
+  assert.deepEqual(chat.conversations.value.map((item) => item.id), ['conv-a']);
+});
+
+test('chat sidebar bulk delete only sends visible selected conversation ids', async () => {
+  const originalFetch = globalThis.fetch;
+  const originalWindow = globalThis.window;
+  let bulkDeleteBody = null;
+
+  globalThis.window = { ...(originalWindow || {}), confirm: () => true };
+  globalThis.fetch = async (url, options = {}) => {
+    const requestUrl = String(url);
+    const method = String(options.method || 'GET').toUpperCase();
+
+    if (requestUrl === '/api/csrf-token') {
+      return jsonResponse({ csrfToken: 'bulk-delete-token' });
+    }
+
+    if (requestUrl === '/api/conversations/bulk-delete' && method === 'POST') {
+      bulkDeleteBody = JSON.parse(String(options.body || '{}'));
+      return jsonResponse({ deletedIds: bulkDeleteBody.ids });
+    }
+
+    return jsonResponse({ message: `Unexpected request: ${requestUrl}` }, 500);
+  };
+
+  try {
+    const emissions = [];
+    const chat = useChatConversation({
+      route: { params: { id: 'conv-hidden' } },
+      emit(...args) {
+        emissions.push(args);
+      },
+      showError() {}
+    });
+
+    chat.conversations.value = [
+      { id: 'conv-visible', title: 'Visible story', character: { name: 'Alice' }, usage: {} },
+      { id: 'conv-hidden', title: 'Hidden story', character: { name: 'Bob' }, usage: {} }
+    ];
+    chat.selectedConversationIds.value = new Set(['conv-visible', 'conv-hidden']);
+    chat.historySearch.value = 'visible';
+
+    await chat.deleteSelectedConversations();
+
+    assert.deepEqual(bulkDeleteBody, { ids: ['conv-visible'] });
+    assert.deepEqual([...chat.selectedConversationIds.value], ['conv-hidden']);
+    assert.deepEqual(chat.conversations.value.map((item) => item.id), ['conv-hidden']);
+    assert.deepEqual(emissions, []);
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (typeof originalWindow === 'undefined') {
+      delete globalThis.window;
+    } else {
+      globalThis.window = originalWindow;
+    }
+  }
 });
 
 test('starting a new chat blocks duplicate create requests while pending', async () => {

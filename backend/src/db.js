@@ -575,6 +575,10 @@ export function initializeDatabase(database) {
     CREATE INDEX IF NOT EXISTS idx_character_talents_character ON character_talents(character_id);
     CREATE INDEX IF NOT EXISTS idx_character_talents_pool ON character_talents(pool_id);
   `);
+  ensureColumn(database, 'npc_registry', 'status', "TEXT NOT NULL DEFAULT 'active'");
+  ensureColumn(database, 'npc_registry', 'custom_status', "TEXT NOT NULL DEFAULT ''");
+  ensureColumn(database, 'npc_registry', 'aliases', "TEXT NOT NULL DEFAULT '[]'");
+  ensureColumn(database, 'npc_registry', 'memory_sealed', 'INTEGER NOT NULL DEFAULT 0');
   ensureColumn(database, 'mods', 'scope', "TEXT NOT NULL DEFAULT 'global'");
   ensureColumn(database, 'mods', 'character_ids', "TEXT NOT NULL DEFAULT '[]'");
 

@@ -19,6 +19,7 @@ const {
   listNpcMemories,
   scanNpcsFromMessages,
   upsertConversationNpc,
+  updateConversationNpc,
   updateNpcBehavior
 } = await import('../modules/npcs.js');
 
@@ -127,6 +128,20 @@ test('NPC behavior prompt uses newest tied memories first', () => {
   assert.ok(prompt.indexOf('memory-5') < prompt.indexOf('memory-4'));
   assert.ok(prompt.indexOf('memory-4') < prompt.indexOf('memory-3'));
   assert.ok(prompt.indexOf('memory-3') < prompt.indexOf('memory-2'));
+});
+
+test('NPC behavior prompt includes memory-only NPCs', () => {
+  const { database, userId, conversationId } = setupDatabase();
+
+  addNpcMemory(database, userId, conversationId, 'MemoryOnlyNpc', {
+    memoryType: 'knowledge',
+    content: 'MEMORY_ONLY_SENTINEL'
+  });
+
+  const prompt = buildNpcBehaviorPrompt(database, conversationId);
+
+  assert.ok(prompt.includes('MemoryOnlyNpc'));
+  assert.ok(prompt.includes('MEMORY_ONLY_SENTINEL'));
 });
 
 test('NPC mutators treat null payloads as empty input', () => {
@@ -304,6 +319,46 @@ test('listConversationNpcs includes registry NPCs and hides removed NPCs', () =>
   assert.ok(!names.includes('老板娘'));
   assert.ok(!names.includes('误判标题'));
   assert.equal(npcs.find((npc) => npc.name === '巡逻队长').confidence, 88);
+});
+
+test('NPC status aliases and memory seal affect prompt memory injection', () => {
+  const { database, userId, conversationId } = setupDatabase();
+
+  addNpcMemory(database, userId, conversationId, 'Captain Aria', {
+    memoryType: 'knowledge',
+    content: 'SEALED_MEMORY_SENTINEL'
+  });
+  updateConversationNpc(database, userId, conversationId, 'Captain Aria', {
+    status: 'dead',
+    aliases: ['Aria Valen', 'Captain Aria', 'Aria Valen'],
+    memorySealed: true
+  });
+
+  const sealedList = listConversationNpcs(database, userId, conversationId, '');
+  const sealedNpc = sealedList.find((npc) => npc.name === 'Captain Aria');
+  assert.equal(sealedNpc.status, 'dead');
+  assert.deepEqual(sealedNpc.aliases, ['Aria Valen', 'Captain Aria']);
+  assert.equal(sealedNpc.memorySealed, true);
+  assert.equal(sealedNpc.memorySealActive, true);
+
+  const sealedPrompt = buildNpcBehaviorPrompt(database, conversationId);
+  assert.ok(sealedPrompt.includes('Status: dead'));
+  assert.ok(sealedPrompt.includes('Exact aliases: Aria Valen, Captain Aria'));
+  assert.ok(sealedPrompt.includes('Memories: sealed'));
+  assert.ok(!sealedPrompt.includes('SEALED_MEMORY_SENTINEL'));
+
+  updateConversationNpc(database, userId, conversationId, 'Captain Aria', {
+    status: 'following'
+  });
+
+  const unsealedNpc = listConversationNpcs(database, userId, conversationId, '')
+    .find((npc) => npc.name === 'Captain Aria');
+  assert.equal(unsealedNpc.memorySealed, true);
+  assert.equal(unsealedNpc.memorySealActive, false);
+
+  const unsealedPrompt = buildNpcBehaviorPrompt(database, conversationId);
+  assert.ok(unsealedPrompt.includes('Status: following'));
+  assert.ok(unsealedPrompt.includes('SEALED_MEMORY_SENTINEL'));
 });
 
 test('hideEmptyConversationNpcs hides NPCs without memories or behaviors only', () => {

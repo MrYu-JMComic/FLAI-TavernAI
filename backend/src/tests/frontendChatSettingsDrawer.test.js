@@ -1,12 +1,29 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { countMatches, readRepoText, readVueBlocks } from './frontendSfcTestUtils.js';
+import { countMatches, readFrontendStyles, readVueBlocks } from './frontendSfcTestUtils.js';
 
-const { template: chatSettingsDrawerTemplate } = readVueBlocks(
+const { script: chatSettingsDrawerScript, template: chatSettingsDrawerTemplate } = readVueBlocks(
   'frontend/src/components/chat/ChatSettingsDrawer.vue',
-  ['template']
+  ['script', 'template']
 );
-const stylesSource = readRepoText('frontend/src/styles.css');
+const stylesSource = readFrontendStyles();
+
+test('ChatSettingsDrawer keeps close actions visible but locked while saves are pending', () => {
+  assert.match(
+    chatSettingsDrawerScript,
+    /const drawerCloseLocked = computed\(\(\) => props\.appearanceSaving \|\| props\.accessorySaving \|\| props\.statusBarSaving\)/
+  );
+  assert.match(
+    chatSettingsDrawerScript,
+    /function requestClose\(\)\s*{\s*if \(drawerCloseLocked\.value\) return;\s*emit\('close'\);/
+  );
+  assert.match(chatSettingsDrawerTemplate, /:disabled="drawerCloseLocked"[\s\S]*:aria-busy="drawerCloseLocked"[\s\S]*@click="requestClose"/);
+  assert.match(
+    chatSettingsDrawerTemplate,
+    /class="deep-icon-button" type="button" aria-label="关闭设置" title="关闭设置" :disabled="drawerCloseLocked" :aria-busy="drawerCloseLocked" @click="requestClose"/
+  );
+  assert.doesNotMatch(chatSettingsDrawerTemplate, /@click="emit\('close'\)"/);
+});
 
 test('ChatSettingsDrawer locks appearance controls while saving appearance', () => {
   assert.equal(countMatches(chatSettingsDrawerTemplate, /:disabled="appearanceSaving"/g), 11);

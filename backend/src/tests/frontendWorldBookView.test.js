@@ -25,6 +25,27 @@ test('WorldBookView retry action ignores events while loading is active', () => 
   );
 });
 
+test('WorldBookView preserves unchanged book and entry references during refreshes', () => {
+  assert.match(
+    worldBookViewScript,
+    /const nextBooks = await fetchWorldBooks\(\);[\s\S]*setBooksIfChanged\(nextBooks\);/
+  );
+  assert.match(
+    worldBookViewScript,
+    /const nextBook = await fetchWorldBook\(id\);[\s\S]*setCurrentBookIfChanged\(nextBook\);/
+  );
+  assert.match(
+    worldBookViewScript,
+    /function setBooksIfChanged\(nextBooks\) \{[\s\S]*sameBookList\(books\.value, normalizedNextBooks\)[\s\S]*books\.value = normalizedNextBooks;[\s\S]*return true;[\s\S]*\}/
+  );
+  assert.match(
+    worldBookViewScript,
+    /function sameEntrySummary\(currentEntry, nextEntry\) \{[\s\S]*currentEntry\?\.triggerKeys === nextEntry\?\.triggerKeys[\s\S]*nullableComparable\(currentEntry\?\.sticky\) === nullableComparable\(nextEntry\?\.sticky\)[\s\S]*Number\(currentEntry\?\.orderIndex \|\| 0\) === Number\(nextEntry\?\.orderIndex \|\| 0\);[\s\S]*\}/
+  );
+  assert.equal(countMatches(worldBookViewScript, /books\.value\s*=/g), 1);
+  assert.equal(countMatches(worldBookViewScript, /currentBook\.value\s*=/g), 2);
+});
+
 test('WorldBookView locks world book mutations while saving is active', () => {
   [
     'openCreateBook',

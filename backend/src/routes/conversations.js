@@ -47,6 +47,7 @@ import {
   listConversationNpcs,
   listNpcBehaviors,
   listNpcMemories,
+  updateConversationNpc,
   updateNpcBehavior
 } from '../modules/npcs.js';
 import {
@@ -67,7 +68,7 @@ import {
   normalizeIdList,
   writeSse
 } from './helpers.js';
-import { sendMessageSchema, updateMessageSchema, saveConversationSettingsSchema, saveStatusBarSchema, economyTransactionSchema, addNpcMemorySchema, addNpcBehaviorSchema, updateNpcBehaviorSchema, createSaveSchema, renameSaveSchema, createConversationSchema, bulkDeleteSchema, validate } from '../validations/schemas.js';
+import { sendMessageSchema, updateMessageSchema, saveConversationSettingsSchema, saveStatusBarSchema, economyTransactionSchema, addNpcMemorySchema, addNpcBehaviorSchema, updateNpcBehaviorSchema, updateNpcSchema, createSaveSchema, renameSaveSchema, createConversationSchema, bulkDeleteSchema, validate } from '../validations/schemas.js';
 
 export function createConversationsRouter(ctx) {
   const { db, requireAuth, asyncRoute, newId, nowIso, withEtag, withListCache } = ctx;
@@ -541,6 +542,20 @@ export function createConversationsRouter(ctx) {
       return;
     }
     response.json(listNpcMemories(db, request.auth.user.id, request.params.id, request.params.npc));
+  });
+
+  router.put('/:id/npcs/:npc', requireAuth, validate(updateNpcSchema), (request, response) => {
+    const conversation = getConversation(request.auth.user.id, request.params.id);
+    if (!conversation) {
+      response.status(404).json({ error: 'Conversation not found' });
+      return;
+    }
+    const npc = updateConversationNpc(db, request.auth.user.id, request.params.id, request.params.npc, request.body || {});
+    if (!npc) {
+      response.status(400).json({ error: 'Invalid NPC name' });
+      return;
+    }
+    response.json(npc);
   });
 
   router.delete('/:id/npcs/:npc', requireAuth, (request, response) => {

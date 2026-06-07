@@ -1,4 +1,4 @@
-import { fetchProviderModels } from '../api';
+import { fetchProviderModels } from '../api.js';
 
 const CACHE_PREFIX = 'flai-provider-models:v1:';
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
@@ -98,6 +98,21 @@ export function normalizeModelList(models = []) {
     });
   }
   return [...byId.values()].sort((a, b) => a.id.localeCompare(b.id));
+}
+
+export function areProviderModelListsEqual(currentModels, nextModels) {
+  if (currentModels === nextModels) {
+    return true;
+  }
+  if (!Array.isArray(currentModels) || !Array.isArray(nextModels) || currentModels.length !== nextModels.length) {
+    return false;
+  }
+  return currentModels.every((model, index) => {
+    const nextModel = nextModels[index];
+    return model?.id === nextModel?.id
+      && model?.label === nextModel?.label
+      && model?.ownedBy === nextModel?.ownedBy;
+  });
 }
 
 function writeCachedProviderModels(settings = {}, models = []) {

@@ -1,6 +1,6 @@
 ﻿<script setup>
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
-import { ArrowLeft, Dice6, Download, ListChecks, Plus, RotateCcw, Save, Settings, Sparkles, Trash2, Upload, WandSparkles } from '@lucide/vue';
+import { ArrowLeft, Dice6, Download, Eye, ListChecks, Plus, RotateCcw, Save, Settings, Sparkles, Trash2, Upload, WandSparkles, X } from '@lucide/vue';
 import { createCharacter, createMod, createTag, deleteCharacter, exportCharacter, fetchCharacter, fetchCharacterWorldBooks, fetchTags, fetchWorldBooks, linkCharacterWorldBook, streamCharacterDraft, unlinkCharacterWorldBook, updateCharacter } from '../api';
 import CharacterImagePanel from '../components/CharacterImagePanel.vue';
 import MarkdownContent from '../components/MarkdownContent.vue';
@@ -35,6 +35,7 @@ const saving = ref(false);
 const deleting = ref(false);
 const exporting = ref(false);
 const showTalentDialog = ref(false);
+const showStatusPreviewDialog = ref(false);
 const aiLoading = ref(false);
 const aiRequirement = ref('');
 const aiToolCalls = ref([]);
@@ -106,6 +107,7 @@ const optionsLoadError = ref('');
 const tagSearch = ref('');
 const tagCreating = ref(false);
 const activeSection = ref('basic');
+const sectionNavRef = ref(null);
 const form = reactive(emptyCharacter());
 const backgroundUploading = reactive({
   desktopBackgroundUrl: false,
@@ -113,6 +115,7 @@ const backgroundUploading = reactive({
 });
 const backgroundUploadTokens = {};
 let avatarUploadToken = 0;
+let sectionNavRafId = null;
 
 const statusBarBlueprintPreview = computed(() => {
   const blueprint = normalizeStatusBarBlueprintForPayload(form.authorAdvancedSettings.statusBarBlueprint || {});
@@ -203,27 +206,53 @@ watch(
 // ---- AI draft panel drag / resize state ----
 const AI_PANEL_STORAGE_KEY = 'cf-ai-panel-pos';
 const AI_PANEL_VIEWPORT_GAP = 0;
+const AI_PANEL_DRAG_THRESHOLD = 8;
+const AI_PANEL_MIN_WIDTH = 320;
+const AI_PANEL_MIN_HEIGHT = 180;
+const AI_PANEL_DEFAULT_HEIGHT = 640;
 const AI_PANEL_DEFAULT = (() => {
   try {
-    return { x: Math.max(16, window.innerWidth - 460), y: 96, w: 420, h: 0 };
+    return { x: Math.max(16, window.innerWidth - 460), y: 96, w: 420, h: getAiPanelDefaultHeight() };
   } catch {
-    return { x: 16, y: 96, w: 420, h: 0 };
+    return { x: 16, y: 96, w: 420, h: AI_PANEL_DEFAULT_HEIGHT };
   }
 })();
 const aiPanelRef = ref(null);
 const aiPanelPos = ref(loadAiPanelPos());
 const aiPanelSize = ref(loadAiPanelSize());
 const aiPanelDragging = ref(false);
+let aiPanelDragTracking = false;
+let aiPanelResizing = false;
+let aiPanelLayoutRafId = null;
+let dragStartX = 0;
+let dragStartY = 0;
 let dragOffsetX = 0;
 let dragOffsetY = 0;
 let dragStarted = false;
+let resizeStartX = 0;
+let resizeStartY = 0;
+let resizeStartWidth = 0;
+let resizeStartHeight = 0;
+
+function getAiPanelDefaultHeight() {
+  try {
+    return Math.max(
+      AI_PANEL_MIN_HEIGHT,
+      Math.min(AI_PANEL_DEFAULT_HEIGHT, window.innerHeight - 112)
+    );
+  } catch {
+    return AI_PANEL_DEFAULT_HEIGHT;
+  }
+}
 
 function loadAiPanelPos() {
   try {
     const raw = localStorage.getItem(AI_PANEL_STORAGE_KEY);
     if (raw) {
-      const d = JSON.parse(raw);
-      if (typeof d.x === 'number' && typeof d.y === 'number') return { x: d.x, y: d.y };
+      const data = JSON.parse(raw);
+      if (typeof data.x === 'number' && typeof data.y === 'number') {
+        return { x: data.x, y: data.y };
+      }
     }
   } catch {}
   return { x: AI_PANEL_DEFAULT.x, y: AI_PANEL_DEFAULT.y };
@@ -233,8 +262,13 @@ function loadAiPanelSize() {
   try {
     const raw = localStorage.getItem(AI_PANEL_STORAGE_KEY);
     if (raw) {
-      const d = JSON.parse(raw);
-      if (typeof d.w === 'number' && typeof d.h === 'number' && d.w > 0) return { w: d.w, h: d.h };
+      const data = JSON.parse(raw);
+      if (typeof data.w === 'number' && typeof data.h === 'number' && data.w > 0) {
+        return {
+          w: Math.max(AI_PANEL_MIN_WIDTH, data.w),
+          h: data.h >= AI_PANEL_MIN_HEIGHT ? data.h : AI_PANEL_DEFAULT.h
+        };
+      }
     }
   } catch {}
   return { w: AI_PANEL_DEFAULT.w, h: AI_PANEL_DEFAULT.h };
@@ -315,37 +349,85 @@ function clampAiPanelPos(x, y, size = getAiPanelMeasuredSize()) {
 }
 
 function onAiPanelDragStart(e) {
-  if (window.innerWidth <= 760) return;
-  const evt = e.type === 'touchstart' ? e.touches[0] : e;
+  if (window.innerWidth <= 760 || aiPanelResizing) return;
+  const evt = e;
   const panel = aiPanelRef.value;
   if (!panel) return;
   const rect = panel.getBoundingClientRect();
+  dragStartX = evt.clientX;
+  dragStartY = evt.clientY;
   dragOffsetX = evt.clientX - rect.left;
   dragOffsetY = evt.clientY - rect.top;
-  aiPanelDragging.value = true;
+  aiPanelDragTracking = true;
+  aiPanelDragging.value = false;
   dragStarted = false;
-  document.addEventListener('mousemove', onAiPanelDragMove, { passive: false });
-  document.addEventListener('mouseup', onAiPanelDragEnd);
-  document.addEventListener('touchmove', onAiPanelDragMove, { passive: false });
-  document.addEventListener('touchend', onAiPanelDragEnd);
+  document.addEventListener('pointermove', onAiPanelDragMove, { passive: false });
+  document.addEventListener('pointerup', onAiPanelDragEnd);
+  document.addEventListener('pointercancel', onAiPanelDragEnd);
 }
 
 function onAiPanelDragMove(e) {
-  if (!aiPanelDragging.value) return;
+  if (!aiPanelDragTracking) return;
   e.preventDefault();
+  const evt = e;
+  const distance = Math.hypot(evt.clientX - dragStartX, evt.clientY - dragStartY);
+  if (distance < AI_PANEL_DRAG_THRESHOLD) {
+    return;
+  }
   dragStarted = true;
-  const evt = e.type === 'touchmove' ? e.touches[0] : e;
+  aiPanelDragging.value = true;
   const clamped = clampAiPanelPos(evt.clientX - dragOffsetX, evt.clientY - dragOffsetY);
   aiPanelPos.value = { x: clamped.x, y: clamped.y };
 }
 
 function onAiPanelDragEnd() {
+  if (!aiPanelDragTracking) return;
+  aiPanelDragTracking = false;
   aiPanelDragging.value = false;
-  document.removeEventListener('mousemove', onAiPanelDragMove);
-  document.removeEventListener('mouseup', onAiPanelDragEnd);
-  document.removeEventListener('touchmove', onAiPanelDragMove);
-  document.removeEventListener('touchend', onAiPanelDragEnd);
+  document.removeEventListener('pointermove', onAiPanelDragMove);
+  document.removeEventListener('pointerup', onAiPanelDragEnd);
+  document.removeEventListener('pointercancel', onAiPanelDragEnd);
   if (dragStarted) saveAiPanelState();
+  dragStarted = false;
+}
+
+function onAiPanelResizeStart(e) {
+  if (window.innerWidth <= 760) return;
+  const panel = aiPanelRef.value;
+  if (!panel) return;
+  e.preventDefault();
+  const rect = panel.getBoundingClientRect();
+  aiPanelResizing = true;
+  resizeStartX = e.clientX;
+  resizeStartY = e.clientY;
+  resizeStartWidth = rect.width || aiPanelSize.value.w;
+  resizeStartHeight = rect.height || aiPanelSize.value.h || AI_PANEL_MIN_HEIGHT;
+  document.addEventListener('pointermove', onAiPanelResizeMove, { passive: false });
+  document.addEventListener('pointerup', onAiPanelResizeEnd);
+  document.addEventListener('pointercancel', onAiPanelResizeEnd);
+}
+
+function onAiPanelResizeMove(e) {
+  if (!aiPanelResizing) return;
+  e.preventDefault();
+  const nextSize = {
+    w: Math.max(AI_PANEL_MIN_WIDTH, Math.round(resizeStartWidth + e.clientX - resizeStartX)),
+    h: Math.max(AI_PANEL_MIN_HEIGHT, Math.round(resizeStartHeight + e.clientY - resizeStartY))
+  };
+  aiPanelSize.value = nextSize;
+  const clamped = clampAiPanelPos(aiPanelPos.value.x, aiPanelPos.value.y, nextSize);
+  if (clamped.x !== aiPanelPos.value.x || clamped.y !== aiPanelPos.value.y) {
+    aiPanelPos.value = clamped;
+  }
+}
+
+function onAiPanelResizeEnd() {
+  if (!aiPanelResizing) return;
+  aiPanelResizing = false;
+  document.removeEventListener('pointermove', onAiPanelResizeMove);
+  document.removeEventListener('pointerup', onAiPanelResizeEnd);
+  document.removeEventListener('pointercancel', onAiPanelResizeEnd);
+  saveAiPanelState();
 }
 
 function resetAiPanel() {
@@ -354,28 +436,8 @@ function resetAiPanel() {
   saveAiPanelState();
 }
 
-let aiPanelResizeObserver = null;
-let aiPanelLayoutRafId = null;
-let pendingAiPanelSizeSync = false;
-let skipFirstResize = true;
-
-function syncAiPanelSizeAndPosition() {
-  if (window.innerWidth <= 760) return;
-  const el = aiPanelRef.value;
-  if (!el) return;
-  const rect = el.getBoundingClientRect();
-  if (rect.width > 0 && rect.height > 0) {
-    const nextSize = { w: Math.round(rect.width), h: Math.round(rect.height) };
-    aiPanelSize.value = nextSize;
-    const clamped = clampAiPanelPos(aiPanelPos.value.x, aiPanelPos.value.y, nextSize);
-    if (clamped.x !== aiPanelPos.value.x || clamped.y !== aiPanelPos.value.y) {
-      aiPanelPos.value = clamped;
-    }
-    saveAiPanelState();
-  }
-}
-
 function syncAiPanelPosition() {
+  if (window.innerWidth <= 760) return;
   const clamped = clampAiPanelPos(aiPanelPos.value.x, aiPanelPos.value.y);
   if (clamped.x !== aiPanelPos.value.x || clamped.y !== aiPanelPos.value.y) {
     aiPanelPos.value = clamped;
@@ -384,20 +446,11 @@ function syncAiPanelPosition() {
 }
 
 function flushScheduledAiPanelLayout() {
-  const includeSize = pendingAiPanelSizeSync;
   aiPanelLayoutRafId = null;
-  pendingAiPanelSizeSync = false;
-  if (includeSize) {
-    syncAiPanelSizeAndPosition();
-    return;
-  }
   syncAiPanelPosition();
 }
 
-function scheduleAiPanelLayoutSync({ includeSize = false } = {}) {
-  if (includeSize) {
-    pendingAiPanelSizeSync = true;
-  }
+function scheduleAiPanelLayoutSync() {
   if (aiPanelLayoutRafId !== null) return;
   if (typeof requestAnimationFrame === 'function') {
     aiPanelLayoutRafId = requestAnimationFrame(flushScheduledAiPanelLayout);
@@ -411,33 +464,20 @@ function cancelAiPanelLayoutSync() {
     cancelAnimationFrame(aiPanelLayoutRafId);
   }
   aiPanelLayoutRafId = null;
-  pendingAiPanelSizeSync = false;
-}
-
-function onAiPanelResize() {
-  if (skipFirstResize) { skipFirstResize = false; return; }
-  if (window.innerWidth <= 760) return;
-  scheduleAiPanelLayoutSync({ includeSize: true });
 }
 
 function onWindowResize() {
   scheduleAiPanelLayoutSync();
+  scheduleCharacterSectionNavSync();
 }
 
-watch(aiPanelRef, (el) => {
-  if (aiPanelResizeObserver) {
-    aiPanelResizeObserver.disconnect();
-    aiPanelResizeObserver = null;
-  }
-  if (el && window.ResizeObserver && window.innerWidth > 760) {
-    skipFirstResize = true;
-    aiPanelResizeObserver = new ResizeObserver(onAiPanelResize);
-    aiPanelResizeObserver.observe(el);
-  }
-});
+function onWindowScroll() {
+  scheduleCharacterSectionNavSync();
+}
 
 onMounted(() => {
   window.addEventListener('resize', onWindowResize);
+  window.addEventListener('scroll', onWindowScroll, { passive: true });
   onWindowResize();
 });
 
@@ -458,30 +498,162 @@ onBeforeUnmount(() => {
   }
   aiAbortController.value?.abort();
   advancedAiAbortController.value?.abort();
-  document.removeEventListener('mousemove', onAiPanelDragMove);
-  document.removeEventListener('mouseup', onAiPanelDragEnd);
-  document.removeEventListener('touchmove', onAiPanelDragMove);
-  document.removeEventListener('touchend', onAiPanelDragEnd);
-  if (aiPanelResizeObserver) {
-    aiPanelResizeObserver.disconnect();
-    aiPanelResizeObserver = null;
-  }
+  onAiPanelDragEnd();
+  onAiPanelResizeEnd();
   cancelAiPanelLayoutSync();
+  cancelCharacterSectionNavSync();
   window.removeEventListener('resize', onWindowResize);
+  window.removeEventListener('scroll', onWindowScroll);
 });
 
+const canEdit = computed(() => !isEditing.value || form.canEdit !== false);
 const formSections = [
   { id: 'basic', label: '基础信息' },
   { id: 'settings', label: '角色设定' },
-  { id: 'advanced', label: '高级功能' }
+  { id: 'ai', label: 'AI 完善', visible: () => canEdit.value },
+  { id: 'images', label: '角色图片', visible: () => isEditing.value && Boolean(editingCharacterId.value) },
+  { id: 'talents', label: '角色天赋', visible: () => isEditing.value && Boolean(editingCharacterId.value) },
+  { id: 'advanced-settings', label: '作者高级' },
+  { id: 'status-blueprint', label: '状态栏' },
+  { id: 'accessories', label: '附属技能' },
+  { id: 'render-plugins', label: '渲染插件' },
+  { id: 'regex', label: '正则规则' }
 ];
+const visibleFormSections = computed(() => formSections.filter(isSectionVisible));
+
+watch(
+  visibleFormSections,
+  (sections) => {
+    if (!sections.some((section) => section.id === activeSection.value)) {
+      activeSection.value = sections[0]?.id || 'basic';
+    }
+    scheduleCharacterSectionNavSync();
+  },
+  { flush: 'post' }
+);
 
 function scrollToSection(id) {
-  activeSection.value = id;
-  const el = document.getElementById(`section-${id}`);
-  if (el) {
-    el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  const scrollTarget = getCharacterSectionTarget(id);
+  if (!scrollTarget) {
+    return;
   }
+  setActiveCharacterSection(id);
+  scrollActiveSectionTab(id);
+  const top = scrollTarget.getBoundingClientRect().top + window.scrollY - getCharacterSectionActivationOffset();
+  window.scrollTo({ top: Math.max(0, Math.round(top)), behavior: 'smooth' });
+}
+
+function isSectionVisible(section) {
+  return typeof section.visible !== 'function' || section.visible();
+}
+
+function getCharacterSectionTarget(id) {
+  if (typeof document === 'undefined') {
+    return null;
+  }
+  const el = document.getElementById(`section-${id}`);
+  if (!el) {
+    return null;
+  }
+  return el.getClientRects().length
+    ? el
+    : el.querySelector('.form-panel, .form-section-group, [id^="section-"]') || el;
+}
+
+function setActiveCharacterSection(sectionId) {
+  if (!visibleFormSections.value.some((section) => section.id === sectionId)) {
+    return;
+  }
+  if (activeSection.value !== sectionId) {
+    activeSection.value = sectionId;
+    scrollActiveSectionTab(sectionId);
+  }
+}
+
+function scrollActiveSectionTab(sectionId) {
+  const nav = sectionNavRef.value;
+  const tab = nav?.querySelector(`[data-section-id="${sectionId}"]`);
+  if (tab) {
+    tab.scrollIntoView({ behavior: 'auto', block: 'nearest', inline: 'center' });
+  }
+}
+
+function getTopbarBottom() {
+  if (typeof document === 'undefined') {
+    return 0;
+  }
+  const topbarBottom = document.querySelector('.topbar')?.getBoundingClientRect().bottom;
+  return Math.max(0, Math.ceil(Number.isFinite(topbarBottom) ? topbarBottom : 0));
+}
+
+function syncCharacterSectionNavMetrics() {
+  const nav = sectionNavRef.value;
+  if (!nav) {
+    return;
+  }
+  nav.style.setProperty('--character-section-nav-top', `${getTopbarBottom()}px`);
+}
+
+function getCharacterSectionActivationOffset() {
+  const navHeight = sectionNavRef.value?.getBoundingClientRect().height || 0;
+  return getTopbarBottom() + navHeight + 14;
+}
+
+function syncActiveSectionFromScroll() {
+  const sections = visibleFormSections.value
+    .map((section) => ({
+      id: section.id,
+      target: getCharacterSectionTarget(section.id)
+    }))
+    .filter((section) => section.target);
+  if (!sections.length) {
+    return;
+  }
+  const activationOffset = getCharacterSectionActivationOffset();
+  let nextSectionId = sections[0].id;
+  let nextDistance = Number.POSITIVE_INFINITY;
+  for (const section of sections) {
+    const top = section.target.getBoundingClientRect().top;
+    if (top <= activationOffset) {
+      const distance = Math.abs(activationOffset - top);
+      if (distance <= nextDistance) {
+        nextSectionId = section.id;
+        nextDistance = distance;
+      }
+    }
+  }
+  const scrollHeight = Math.max(
+    document.documentElement?.scrollHeight || 0,
+    document.body?.scrollHeight || 0
+  );
+  if (window.innerHeight + window.scrollY >= scrollHeight - 2) {
+    nextSectionId = sections[sections.length - 1].id;
+  }
+  setActiveCharacterSection(nextSectionId);
+}
+
+function flushCharacterSectionNavSync() {
+  sectionNavRafId = null;
+  syncCharacterSectionNavMetrics();
+  syncActiveSectionFromScroll();
+}
+
+function scheduleCharacterSectionNavSync() {
+  if (sectionNavRafId !== null) {
+    return;
+  }
+  if (typeof requestAnimationFrame === 'function') {
+    sectionNavRafId = requestAnimationFrame(flushCharacterSectionNavSync);
+    return;
+  }
+  flushCharacterSectionNavSync();
+}
+
+function cancelCharacterSectionNavSync() {
+  if (sectionNavRafId !== null && typeof cancelAnimationFrame === 'function') {
+    cancelAnimationFrame(sectionNavRafId);
+  }
+  sectionNavRafId = null;
 }
 const accessorySkillItems = [
   { key: 'npcAgent', label: 'NPC Agent', auto: false },
@@ -490,7 +662,6 @@ const accessorySkillItems = [
   { key: 'talentPrompt', label: '天赋提示', auto: false },
   { key: 'cgScene', label: 'CG 场景', auto: false }
 ];
-const canEdit = computed(() => !isEditing.value || form.canEdit !== false);
 const characterFooterActionBusy = computed(() => saving.value || deleting.value || exporting.value);
 const characterAiActionBusy = computed(() => (
   aiLoading.value
@@ -2023,12 +2194,14 @@ function applyLocalRules(text, rules, phase) {
     </section>
     <p v-if="!loading && !loadError" class="permission-note" :class="{ readonly: !canEdit }">{{ permissionText }}</p>
 
-    <nav v-if="!loading && !loadError" class="form-section-nav">
+    <nav v-if="!loading && !loadError" ref="sectionNavRef" class="form-section-nav character-section-nav">
       <button
-        v-for="section in formSections"
+        v-for="section in visibleFormSections"
         :key="section.id"
         class="form-section-tab"
         :class="{ active: activeSection === section.id }"
+        :data-section-id="section.id"
+        :aria-current="activeSection === section.id ? 'true' : undefined"
         type="button"
         @click="scrollToSection(section.id)"
       >
@@ -2037,8 +2210,8 @@ function applyLocalRules(text, rules, phase) {
     </nav>
 
     <form v-if="!loading && !loadError" class="editor-layout" @submit.prevent="submit">
-      <section class="form-panel">
-        <div id="section-basic" class="form-section-group">
+      <div class="character-main-sections">
+        <section id="section-basic" class="form-panel form-section-group character-basic-panel">
           <div class="inline-heading">
             <div>
               <h2>基础信息</h2>
@@ -2170,9 +2343,9 @@ function applyLocalRules(text, rules, phase) {
               <input v-model.trim="form.age" maxlength="24" :disabled="!canEdit" />
             </label>
           </div>
-        </div>
+        </section>
 
-        <div id="section-settings" class="form-section-group">
+        <section id="section-settings" class="form-panel form-section-group character-settings-panel">
           <h3 class="form-section-title">角色设定</h3>
           <p class="form-section-desc">定义角色的背景、世界观、人设和开场白。支持 <span class="variable-token">{user}</span> 变量替换。</p>
 
@@ -2240,19 +2413,20 @@ function applyLocalRules(text, rules, phase) {
               placeholder=""
             />
           </div>
-        </div>
-      </section>
+        </section>
+      </div>
 
       <div class="editor-side">
         <div id="section-advanced" class="form-section-group-advanced">
         <section
           v-if="canEdit"
+          id="section-ai"
           ref="aiPanelRef"
           class="form-panel ai-draft-panel"
           :class="{ 'ai-panel-dragging': aiPanelDragging }"
-          :style="{ '--ai-panel-x': aiPanelPos.x + 'px', '--ai-panel-y': aiPanelPos.y + 'px', '--ai-panel-w': aiPanelSize.w + 'px', '--ai-panel-h': aiPanelSize.h ? aiPanelSize.h + 'px' : 'auto' }"
+          :style="{ '--ai-panel-x': aiPanelPos.x + 'px', '--ai-panel-y': aiPanelPos.y + 'px', '--ai-panel-w': aiPanelSize.w + 'px', '--ai-panel-h': aiPanelSize.h + 'px' }"
         >
-          <div class="inline-heading ai-panel-heading" @mousedown="onAiPanelDragStart" @touchstart="onAiPanelDragStart">
+          <div class="inline-heading ai-panel-heading" @pointerdown="onAiPanelDragStart">
             <div>
               <h2>AI 完善设定</h2>
               <p>按你的要求自动补全角色字段和正则规则。</p>
@@ -2263,7 +2437,7 @@ function applyLocalRules(text, rules, phase) {
                 type="button"
                 title="重置位置"
                 aria-label="重置 AI 完善面板位置"
-                @mousedown.stop
+                @pointerdown.stop
                 @click.stop="resetAiPanel"
               >
                 <RotateCcw :size="14" />
@@ -2378,13 +2552,14 @@ function applyLocalRules(text, rules, phase) {
               <span v-for="(call, index) in aiToolCalls" :key="`${call.name}-${index}`">{{ call.name }}</span>
             </div>
           </div>
+          <span class="ai-panel-resize-handle" aria-hidden="true" @pointerdown.stop="onAiPanelResizeStart"></span>
         </section>
 
-        <section v-if="isEditing && editingCharacterId" class="form-panel">
+        <section v-if="isEditing && editingCharacterId" id="section-images" class="form-panel character-image-section">
           <CharacterImagePanel :character-id="editingCharacterId" :disabled="!canEdit" />
         </section>
 
-        <section v-if="isEditing && editingCharacterId" class="form-panel talent-panel">
+        <section v-if="isEditing && editingCharacterId" id="section-talents" class="form-panel talent-panel">
           <div class="inline-heading">
             <div>
               <h2>角色天赋</h2>
@@ -2405,7 +2580,7 @@ function applyLocalRules(text, rules, phase) {
           @close="showTalentDialog = false"
         />
 
-        <section class="form-panel advanced-settings-panel">
+        <section id="section-advanced-settings" class="form-panel advanced-settings-panel">
           <div class="inline-heading">
             <div>
               <h2>作者高级设置</h2>
@@ -2506,16 +2681,22 @@ function applyLocalRules(text, rules, phase) {
             />
           </label>
 
-          <div class="accessory-defaults-panel status-blueprint-panel">
+          <div id="section-status-blueprint" class="accessory-defaults-panel status-blueprint-panel">
             <div class="inline-heading compact">
               <div>
                 <h3>初始状态栏</h3>
                 <p>创建新会话时自动写入；模板会自动同步变量，并支持安全 HTML/CSS 与 data-sb-action 按钮。</p>
               </div>
-              <button class="ghost-button" type="button" :disabled="!canEdit" @click="addStatusBlueprintVariable">
-                <Plus :size="16" />
-                <span>变量</span>
-              </button>
+              <div class="status-blueprint-heading-actions">
+                <button class="ghost-button" type="button" @click="showStatusPreviewDialog = true">
+                  <Eye :size="16" />
+                  <span>预览</span>
+                </button>
+                <button class="ghost-button" type="button" :disabled="!canEdit" @click="addStatusBlueprintVariable">
+                  <Plus :size="16" />
+                  <span>变量</span>
+                </button>
+              </div>
             </div>
             <div class="status-blueprint-toolbar" aria-live="polite">
               <div class="status-blueprint-summary">
@@ -2665,23 +2846,9 @@ function applyLocalRules(text, rules, phase) {
                 <span>按钮：<code>data-sb-action="quick-reply"</code>、<code>copy</code>、<code>collapse</code></span>
               </div>
             </div>
-            <div class="status-blueprint-preview">
-              <div class="inline-heading compact">
-                <div>
-                  <h3>实际效果预览</h3>
-                  <p>使用聊天页同一套状态栏渲染逻辑，保存后新会话会按此效果显示。</p>
-                </div>
-              </div>
-              <StatusBar
-                v-if="statusBarBlueprintPreview"
-                :status-bar="statusBarBlueprintPreview"
-                :template-config="statusBarBlueprintPreviewConfig"
-              />
-              <p v-else class="muted-text status-blueprint-empty">添加变量或模板后显示预览。</p>
-            </div>
           </div>
 
-          <div class="accessory-defaults-panel">
+          <div id="section-accessories" class="accessory-defaults-panel">
             <div class="inline-heading compact">
               <div>
                 <h3>附属技能默认值</h3>
@@ -2738,7 +2905,7 @@ function applyLocalRules(text, rules, phase) {
           </label>
         </section>
 
-        <section class="form-panel render-plugin-panel">
+        <section id="section-render-plugins" class="form-panel render-plugin-panel">
           <div class="inline-heading">
             <div>
               <h2>消息渲染插件</h2>
@@ -2821,7 +2988,7 @@ function applyLocalRules(text, rules, phase) {
           </div>
         </section>
 
-        <section class="form-panel regex-panel">
+        <section id="section-regex" class="form-panel regex-panel">
         <div class="inline-heading">
           <div>
             <h2>高阶正则替换</h2>
@@ -2936,5 +3103,43 @@ function applyLocalRules(text, rules, phase) {
         </div>
       </div>
     </form>
+
+    <div
+      v-if="showStatusPreviewDialog"
+      class="status-preview-overlay"
+      @click.self="showStatusPreviewDialog = false"
+    >
+      <section
+        class="status-preview-dialog form-panel"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="status-preview-title"
+        tabindex="-1"
+        @keydown.esc.prevent="showStatusPreviewDialog = false"
+      >
+        <div class="status-preview-header">
+          <div>
+            <h2 id="status-preview-title">实际效果预览</h2>
+            <p>保存后，新会话会按此状态栏效果显示。</p>
+          </div>
+          <button
+            class="icon-button status-preview-close"
+            type="button"
+            aria-label="关闭效果预览"
+            @click="showStatusPreviewDialog = false"
+          >
+            <X :size="18" />
+          </button>
+        </div>
+        <div class="status-preview-body">
+          <StatusBar
+            v-if="statusBarBlueprintPreview"
+            :status-bar="statusBarBlueprintPreview"
+            :template-config="statusBarBlueprintPreviewConfig"
+          />
+          <p v-else class="muted-text status-blueprint-empty">添加变量或模板后显示预览。</p>
+        </div>
+      </section>
+    </div>
   </section>
 </template>

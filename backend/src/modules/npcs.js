@@ -2,6 +2,18 @@ import { newId, nowIso } from '../security.js';
 import { normalizeBoolean } from '../utils/boolean.js';
 import { clampInteger } from '../utils/number.js';
 
+const NPC_STATUS_VALUES = new Set([
+  'active',
+  'left',
+  'permanently_left',
+  'dead',
+  'on_mission',
+  'following',
+  'custom'
+]);
+const TERMINAL_NPC_STATUSES = new Set(['permanently_left', 'dead']);
+const NPC_ALIAS_LIMIT = 20;
+
 // ── NPC Memories ──
 
 export function listNpcMemories(database, userId, conversationId, npcName) {
@@ -136,21 +148,36 @@ export function upsertConversationNpc(database, userId, conversationId, payload 
     return null;
   }
   const timestamp = nowIso();
-  const source = normalizeNpcSource(payload.source);
-  const evidence = normalizeEvidence(payload.evidence);
-  const confidence = clampInteger(payload.confidence, 0, 100, 0);
-  const hidden = normalizeBoolean(payload.hidden) ? 1 : 0;
-  const shouldUnhide = normalizeBoolean(payload.unhide);
   const existing = database
     .prepare('SELECT * FROM npc_registry WHERE conversation_id = ? AND npc_name = ?')
     .get(conversationId, npcName);
+  const source = payload.source !== undefined
+    ? normalizeNpcSource(payload.source)
+    : existing?.source || 'manual';
+  const evidence = payload.evidence !== undefined
+    ? normalizeEvidence(payload.evidence)
+    : existing?.evidence || '';
+  const confidence = payload.confidence !== undefined
+    ? clampInteger(payload.confidence, 0, 100, Number(existing?.confidence || 0))
+    : Number(existing?.confidence || 0);
+  const hidden = payload.hidden !== undefined
+    ? (normalizeBoolean(payload.hidden, Boolean(existing?.hidden)) ? 1 : 0)
+    : Number(existing?.hidden || 0);
+  const shouldUnhide = normalizeBoolean(payload.unhide);
+  const statusPayload = normalizeNpcStatusPayload(payload, existing);
+  const aliases = hasAliasPayload(payload)
+    ? normalizeNpcAliases(payload.aliases ?? payload.aliasesText ?? payload.alias)
+    : parseNpcAliases(existing?.aliases);
+  const memorySealed = hasMemorySealedPayload(payload)
+    ? (normalizeBoolean(payload.memorySealed ?? payload.memory_sealed, Boolean(existing?.memory_sealed)) ? 1 : 0)
+    : Number(existing?.memory_sealed || 0);
 
   if (existing) {
     const nextHidden = existing.hidden && !shouldUnhide ? 1 : hidden;
     database
       .prepare(
         `UPDATE npc_registry
-         SET source = ?, evidence = ?, confidence = ?, hidden = ?, updated_at = ?
+         SET source = ?, evidence = ?, confidence = ?, hidden = ?, status = ?, custom_status = ?, aliases = ?, memory_sealed = ?, updated_at = ?
          WHERE conversation_id = ? AND npc_name = ?`
       )
       .run(
@@ -158,6 +185,10 @@ export function upsertConversationNpc(database, userId, conversationId, payload 
         evidence || existing.evidence || '',
         Math.max(Number(existing.confidence || 0), confidence),
         nextHidden,
+        statusPayload.status,
+        statusPayload.customStatus,
+        JSON.stringify(aliases),
+        memorySealed,
         timestamp,
         conversationId,
         npcName
@@ -165,15 +196,37 @@ export function upsertConversationNpc(database, userId, conversationId, payload 
   } else {
     database
       .prepare(
-        `INSERT INTO npc_registry (id, conversation_id, npc_name, source, evidence, confidence, hidden, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        `INSERT INTO npc_registry (id, conversation_id, npc_name, source, evidence, confidence, hidden, status, custom_status, aliases, memory_sealed, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
-      .run(newId(), conversationId, npcName, source, evidence, confidence, hidden, timestamp, timestamp);
+      .run(
+        newId(),
+        conversationId,
+        npcName,
+        source,
+        evidence,
+        confidence,
+        hidden,
+        statusPayload.status,
+        statusPayload.customStatus,
+        JSON.stringify(aliases),
+        memorySealed,
+        timestamp,
+        timestamp
+      );
   }
 
   return toNpcRegistry(database
     .prepare('SELECT * FROM npc_registry WHERE conversation_id = ? AND npc_name = ?')
     .get(conversationId, npcName));
+}
+
+export function updateConversationNpc(database, userId, conversationId, npcName, payload = {}) {
+  return upsertConversationNpc(database, userId, conversationId, {
+    ...normalizePayload(payload),
+    npcName,
+    unhide: payload?.unhide ?? false
+  });
 }
 
 export function hideConversationNpc(database, userId, conversationId, npcName) {
@@ -275,7 +328,12 @@ export function listConversationNpcs(database, userId, conversationId, mainChara
       behaviorCount: Number(behaviorCount),
       source: registry?.source || (Number(memoryCount) > 0 ? 'memory' : Number(behaviorCount) > 0 ? 'behavior' : 'scan'),
       confidence: registry?.confidence || 0,
-      evidence: registry?.evidence || ''
+      evidence: registry?.evidence || '',
+      status: registry?.status || 'active',
+      customStatus: registry?.customStatus || '',
+      aliases: registry?.aliases || [],
+      memorySealed: Boolean(registry?.memorySealed),
+      memorySealActive: Boolean(registry?.memorySealActive)
     };
   }).filter(Boolean);
 }
@@ -295,119 +353,124 @@ export function buildNpcBehaviorPrompt(database, conversationId) {
     )
     .all(conversationId);
 
-  if (behaviors.length === 0) return '';
+  const memories = database
+    .prepare(
+      `SELECT * FROM npc_memories
+       WHERE conversation_id = ?
+       ORDER BY created_at DESC, rowid DESC`
+    )
+    .all(conversationId);
 
-  const npcMap = new Map();
-  for (const b of behaviors) {
-    if (!npcMap.has(b.npc_name)) {
-      npcMap.set(b.npc_name, []);
-    }
-    npcMap.get(b.npc_name).push(b);
-  }
-
-  const sections = [];
-  for (const [npcName, rules] of npcMap) {
-    const ruleLines = rules.map((r) => {
-      const trigger = r.trigger_condition ? `触发条件：${r.trigger_condition}` : '无特定触发条件';
-      return `  - [${r.behavior_type}] ${trigger} → 行动：${r.action}`;
-    });
-
-    const memories = database
-      .prepare(
-        `SELECT content, memory_type FROM npc_memories
-         WHERE conversation_id = ? AND npc_name = ?
-         ORDER BY created_at DESC, rowid DESC LIMIT 5`
-      )
-      .all(conversationId, npcName);
-
-    let memorySection = '';
-    if (memories.length > 0) {
-      const memoryLines = memories.map((m) => `  - [${m.memory_type}] ${m.content}`);
-      memorySection = `\n  记忆：\n${memoryLines.join('\n')}`;
-    }
-
-    sections.push(
-      `NPC「${npcName}」行为规则：\n${ruleLines.join('\n')}${memorySection}`
-    );
-  }
-
-  return `\n[NPC 自主行为引擎]\n${sections.join('\n\n')}\n请根据以上 NPC 行为规则，在回复中自然地体现 NPC 的自主行为和反应。`;
+  return buildNpcBehaviorPromptFromRows(database, conversationId, behaviors, memories);
 }
 
 // ── Helpers ──
 
-/**
- * Extract NPC names from AI reply text using common patterns.
- */
-function extractNpcNamesFromText(text) {
-  if (!text) return [];
-  const names = new Set();
+function buildNpcBehaviorPromptFromRows(database, conversationId, behaviors, memories) {
+  const registryRows = database
+    .prepare(
+      `SELECT * FROM npc_registry
+       WHERE conversation_id = ?`
+    )
+    .all(conversationId);
+  const hiddenNames = new Set(registryRows
+    .filter((row) => row.hidden)
+    .map((row) => normalizeNpcName(row.npc_name).toLowerCase())
+    .filter(Boolean));
+  const registryMeta = new Map(
+    registryRows.map((row) => [normalizeNpcName(row.npc_name).toLowerCase(), toNpcRegistry(row)])
+  );
+  const npcMap = new Map();
 
-  // Pattern 1: 【Name】dialogue
-  for (const match of text.matchAll(/【([^】]{1,20})】/g)) {
-    const name = normalizeNpcCandidate(match[1]);
-    if (isValidNpcName(name)) names.add(name);
+  const ensureNpcSection = (npcName) => {
+    const normalizedName = normalizeNpcName(npcName);
+    if (!normalizedName || hiddenNames.has(normalizedName.toLowerCase())) {
+      return null;
+    }
+    const key = normalizedName.toLowerCase();
+    if (!npcMap.has(key)) {
+      npcMap.set(key, {
+        name: normalizedName,
+        registry: registryMeta.get(key) || null,
+        behaviors: [],
+        memories: []
+      });
+    }
+    return npcMap.get(key);
+  };
+
+  for (const registry of registryMeta.values()) {
+    if (!registry.hidden && hasPromptRegistryMetadata(registry)) {
+      ensureNpcSection(registry.name);
+    }
   }
-
-  // Pattern 1b: 「Name」/《Name》 as dialogue speaker labels
-  for (const match of text.matchAll(/[「《]([^」》]{1,20})[」》]\s*(?:[:：，,。]|说|道|问|答|笑|叹|低语|喊|叫)/g)) {
-    const name = normalizeNpcCandidate(match[1]);
-    if (isValidNpcName(name)) names.add(name);
+  for (const behavior of behaviors) {
+    ensureNpcSection(behavior.npc_name)?.behaviors.push(behavior);
   }
-
-  // Pattern 2: **Name** (bold, likely character names in dialogue)
-  for (const match of text.matchAll(/\*\*([^*]{1,20})\*\*/g)) {
-    const name = normalizeNpcCandidate(match[1]);
-    if (isValidNpcName(name)) names.add(name);
-  }
-
-  // Pattern 3: "Name" said/说 patterns
-  for (const match of text.matchAll(/[\u201c"\u300c]([^"\u201d\u300d]{1,20})[\u201d"\u300d]\s*(?:说道|说|道|喊|叫|问|答|笑|叹|低语|大喊|轻声|冷冷|怒)/g)) {
-    const name = normalizeNpcCandidate(match[1]);
-    if (isValidNpcName(name)) names.add(name);
-  }
-
-  // Pattern 4: Name 说/道/曰 patterns (Chinese)
-  for (const match of text.matchAll(/(?:^|[\n\s])([^\n\s,，。.!?！？:：]{1,10})\s*(?:说道|说|道|喊道|叫道|问道|答道|笑道|叹道)/gm)) {
-    const name = normalizeNpcCandidate(match[1]);
-    if (isValidNpcName(name)) names.add(name);
-  }
-
-  // Pattern 5: speaker label lines, e.g. "老板娘：欢迎回来。"
-  for (const match of text.matchAll(/(?:^|\n)\s*([^\n,，。.!?！？:：]{1,12})\s*[:：]\s*(?:[“"「]|[^:：\n]{2,})/gm)) {
-    const name = normalizeNpcCandidate(match[1]);
-    if (isValidNpcName(name)) names.add(name);
-  }
-
-  return [...names];
-}
-
-function extractNpcNamesFromMessages(messages, mainCharacterName) {
-  const npcNames = new Set();
-  const mainName = (mainCharacterName || '').trim().toLowerCase();
-
-  for (const message of messages) {
-    const names = extractNpcNamesFromText(message.content || '');
-    for (const name of names) {
-      if (name.toLowerCase() !== mainName) {
-        npcNames.add(name);
-      }
+  for (const memory of memories) {
+    const section = ensureNpcSection(memory.npc_name);
+    if (section && !isNpcRegistryMemorySealActive(section.registry) && section.memories.length < 5) {
+      section.memories.push(memory);
     }
   }
 
-  return [...npcNames].sort();
+  const sections = [];
+  for (const npc of npcMap.values()) {
+    const metadataLines = buildNpcMetadataPromptLines(npc.registry);
+    const ruleLines = npc.behaviors.map((rule) => {
+      const trigger = rule.trigger_condition ? `Trigger: ${rule.trigger_condition}` : 'Trigger: always/contextual';
+      return `  - [${rule.behavior_type}] ${trigger}; Action: ${rule.action}`;
+    });
+    const memorySealActive = isNpcRegistryMemorySealActive(npc.registry);
+    const memoryLines = npc.memories.map((memory) => `  - [${memory.memory_type}] ${memory.content}`);
+    const metadataSection = metadataLines.length ? `\n${metadataLines.join('\n')}` : '';
+    const behaviorSection = ruleLines.length ? `\n  Behavior rules:\n${ruleLines.join('\n')}` : '';
+    const memorySection = memorySealActive
+      ? '\n  Memories: sealed for this status; stored memories are intentionally omitted until the status changes.'
+      : memoryLines.length
+        ? `\n  Memories:\n${memoryLines.join('\n')}`
+        : '';
+    sections.push(`NPC "${npc.name}" context:${metadataSection}${behaviorSection}${memorySection}`);
+  }
+
+  if (sections.length === 0) {
+    return '';
+  }
+  return `\n[NPC 自主行为引擎 / NPC autonomous behavior engine]\n${sections.join('\n\n')}\nUse the NPC status, exact aliases, behavior rules, and available memories to keep side characters consistent. Exact aliases identify the same NPC; stable nicknames or titles count only when they uniquely name this NPC. Generic roles, vague references, pronouns, and group labels are not aliases. If an NPC is dead or permanently_left, do not portray them as present or active unless the story explicitly changes that status. Do not invent memories that are not provided.\n`;
 }
 
-function isValidNpcName(name) {
-  if (!name || name.length < 1 || name.length > 20) return false;
-  if (isCommonNonNameWord(name)) return false;
-  if (isNarrativeFragmentName(name)) return false;
-  if (/^[\d\s]+$/.test(name)) return false;
-  if (/^[^\p{L}]+$/u.test(name)) return false;
-  if (/^[.…·•~\-]+/.test(name) || /[.…]{2,}/.test(name)) return false;
-  if (/[。！？!?，,；;：:、【】\[\]{}<>《》]/.test(name)) return false;
-  if (/\s{2,}/.test(name)) return false;
-  return true;
+function buildNpcMetadataPromptLines(registry) {
+  if (!registry) {
+    return [];
+  }
+  const lines = [];
+  if (registry.status && registry.status !== 'active') {
+    lines.push(`  Status: ${formatNpcStatusForPrompt(registry)}`);
+  }
+  if (registry.aliases.length > 0) {
+    lines.push(`  Exact aliases: ${registry.aliases.join(', ')}`);
+  }
+  if (isNpcRegistryMemorySealActive(registry)) {
+    lines.push('  Memory seal: active because this NPC is dead or permanently_left.');
+  }
+  return lines;
+}
+
+function hasPromptRegistryMetadata(registry) {
+  return Boolean(
+    registry &&
+      !registry.hidden &&
+      ((registry.status && registry.status !== 'active') ||
+        registry.aliases.length > 0 ||
+        isNpcRegistryMemorySealActive(registry))
+  );
+}
+
+function formatNpcStatusForPrompt(registry) {
+  if (registry.status === 'custom' && registry.customStatus) {
+    return `custom (${registry.customStatus})`;
+  }
+  return registry.status || 'active';
 }
 
 function normalizeNpcCandidate(value) {
@@ -434,31 +497,76 @@ function normalizeEvidence(value) {
   return String(value || '').replace(/\s+/g, ' ').trim().slice(0, 500);
 }
 
-function isCommonNonNameWord(word) {
-  const normalized = String(word || '').trim().toLowerCase();
-  const common = new Set([
-    '注意', '警告', '提示', '说明', '备注', '总结', '摘要', '标题', '正文', '附录',
-    '状态栏', '状态', '生理状态', '心理状态', '记忆', '近期清晰记忆', '模糊记忆', '深刻记忆',
-    '主角', '主角信息', '其他角色', '特殊要素', '基础信息', '角色信息', '人物信息',
-    '角色状态', '角色状态面板', '角色面板', '设定信息', '背景设定', '用户', '玩家', '旁白', '系统', '作者', '助手', 'ai', 'npc',
-    '角色', '角色名', '姓名', '性别', '年龄', '身份', '职业',
-    'hp', 'mp', 'sp', 'exp', 'level', '等级', '好感', '好感度',
-    '饥饿', '口渴', '疼痛', '伤病', '疲劳', '其他', '当前情绪', '压力水平', '心理倾向',
-    '无', '暂无', '待定', '未知', '平静', '低', '高', '轻微', '普通', '正常',
-    '我', '你', '他', '她', '它', '我们', '你们', '他们', '她们'
-  ]);
-  if (common.has(normalized) || common.has(word)) {
-    return true;
+function normalizeNpcStatusPayload(payload = {}, existing = null) {
+  const rawStatus = payload.status ?? payload.npcStatus ?? existing?.status ?? 'active';
+  const normalized = normalizeNpcStatus(rawStatus);
+  const customInput = payload.customStatus ?? payload.custom_status;
+  const customStatus = customInput !== undefined
+    ? normalizeCustomStatus(customInput)
+    : normalizeCustomStatus(existing?.custom_status || '');
+  if (normalized === 'custom') {
+    return {
+      status: 'custom',
+      customStatus: customStatus || normalizeCustomStatus(rawStatus)
+    };
   }
-  return /^(第[一二三四五六七八九十\d]+章|chapter\s*\d+|scene\s*\d+)$/i.test(normalized);
+  return {
+    status: normalized,
+    customStatus: normalized === 'active' ? '' : customStatus
+  };
 }
 
-function isNarrativeFragmentName(name) {
-  const normalized = String(name || '').trim();
-  if (/^(我|你|他|她|它|我们|你们|他们|她们|这|那|此|其)(没有|不是|已经|正在|只是|还是|不会|不能|可以|觉得|知道|看到|听到|说|问|答|笑|叹|想|看|听|走|拿|把|被|将|却|便|都|就|还|很|更|又|再|的)/.test(normalized)) {
-    return true;
+function normalizeNpcStatus(value) {
+  const normalized = String(value || 'active').trim().toLowerCase().replace(/[\s-]+/g, '_');
+  return NPC_STATUS_VALUES.has(normalized) ? normalized : 'custom';
+}
+
+function normalizeCustomStatus(value) {
+  return String(value || '').replace(/\s+/g, ' ').trim().slice(0, 80);
+}
+
+function hasAliasPayload(payload = {}) {
+  return payload.aliases !== undefined || payload.aliasesText !== undefined || payload.alias !== undefined;
+}
+
+function hasMemorySealedPayload(payload = {}) {
+  return payload.memorySealed !== undefined || payload.memory_sealed !== undefined;
+}
+
+function parseNpcAliases(value) {
+  if (Array.isArray(value)) {
+    return normalizeNpcAliases(value);
   }
-  return /(没有|不是|已经|正在|如果|因为|所以|但是|然后|突然|继续|开始|说道|问道|答道)$/.test(normalized);
+  try {
+    return normalizeNpcAliases(JSON.parse(String(value || '[]')));
+  } catch {
+    return [];
+  }
+}
+
+function normalizeNpcAliases(value) {
+  const rawItems = Array.isArray(value)
+    ? value
+    : String(value || '').split(/[\n,;|]+/);
+  const aliases = [];
+  const seen = new Set();
+  for (const item of rawItems) {
+    const alias = normalizeNpcName(item);
+    const key = alias.toLowerCase();
+    if (!alias || seen.has(key)) {
+      continue;
+    }
+    aliases.push(alias);
+    seen.add(key);
+    if (aliases.length >= NPC_ALIAS_LIMIT) {
+      break;
+    }
+  }
+  return aliases;
+}
+
+function isNpcRegistryMemorySealActive(registry) {
+  return Boolean(registry?.memorySealed && TERMINAL_NPC_STATUSES.has(registry.status));
 }
 
 function assertConversationAccess(database, userId, conversationId) {
@@ -496,7 +604,7 @@ function toNpcBehavior(row) {
 }
 
 function toNpcRegistry(row) {
-  return {
+  const registry = {
     id: row.id,
     conversationId: row.conversation_id,
     name: row.npc_name,
@@ -504,8 +612,16 @@ function toNpcRegistry(row) {
     evidence: row.evidence || '',
     confidence: Number(row.confidence || 0),
     hidden: Boolean(row.hidden),
+    status: normalizeNpcStatus(row.status || 'active'),
+    customStatus: normalizeCustomStatus(row.custom_status || ''),
+    aliases: parseNpcAliases(row.aliases),
+    memorySealed: Boolean(row.memory_sealed),
     createdAt: row.created_at,
     updatedAt: row.updated_at
+  };
+  return {
+    ...registry,
+    memorySealActive: isNpcRegistryMemorySealActive(registry)
   };
 }
 

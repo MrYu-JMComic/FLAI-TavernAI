@@ -40,6 +40,25 @@ The autonomous loop should choose one small item per run. Add new findings here 
 
 ## Done
 
+- 2026-06-08: Routed chat submit status-bar payloads through the reference-preserving accessory update helper.
+- 2026-06-08: Limited bound Vue dynamic `is` component references to string-literal expressions in the unreferenced component diagnostic.
+- 2026-06-08: Recognized Vue dynamic `is` component references with whitespace around `=` in the unreferenced component diagnostic.
+- 2026-06-08: Recognized unquoted static Vue `is` component references in the unreferenced component diagnostic to avoid false cleanup candidates.
+- 2026-06-08: Ignored aria-hidden text in the Vue accessibility diagnostic so hidden icon text cannot satisfy accessible-name checks.
+- 2026-06-08: Recognized unquoted static accessible-name attributes in the Vue accessibility diagnostic to avoid false unlabeled-control reports.
+- 2026-06-08: Ignored Vue template non-`is` attribute string noise in the unreferenced component diagnostic so examples cannot hide dormant components.
+- 2026-06-08: Ignored regex-literal static import/export/glob noise in the unreferenced Vue component diagnostic so examples cannot hide dormant components.
+- 2026-06-08: Realigned the NPC accessory agent prompt wording with its status alias and memory-seal source guard.
+- 2026-06-08: Ignored regex-literal component tag noise in the unreferenced Vue component diagnostic so examples cannot hide dormant components.
+- 2026-06-08: Ignored string-literal import/export/glob noise in the unreferenced Vue component diagnostic so examples cannot hide dormant components.
+- 2026-06-08: Scoped backend test-hygiene skip/todo/only option detection to test declaration headers so ordinary fixture objects are not flagged.
+- 2026-06-08: Hardened backend test-hygiene scans to ignore comments and string fixture text before matching skipped tests or global mock guards.
+- 2026-06-08: Hardened the Vue accessibility diagnostic so static aria-labelledby values must resolve to a named element.
+- 2026-06-08: Hardened the source-hygiene unused function-like const guard to cover constrained generic TypeScript arrow consts.
+- 2026-06-08: Hardened the source-hygiene unused function-like const guard to cover generic TypeScript arrow consts.
+- 2026-06-08: Hardened the source-hygiene unused function-like const guard to cover typed TypeScript const arrows.
+- 2026-06-08: Expanded the UTF-8 encoding guard to catch additional common GBK mojibake markers with fixture-backed coverage.
+- 2026-06-08: Required non-empty label text or label names in the Vue accessibility diagnostic and fixed newly exposed unlabeled chat/home controls.
 - 2026-05-25: Added autonomous iteration guardrails, scripts, and reporting structure.
 - 2026-06-07: Documented production startup and backup/restore steps for local SQLite data.
 - 2026-06-07: Reviewed dependency versions and recorded upgrade candidates before changing them.
@@ -269,3 +288,61 @@ The autonomous loop should choose one small item per run. Add new findings here 
 - 2026-06-07: Removed the unused legacy status-bar text-value matcher after verifying the safe matcher is the only caller.
 - 2026-06-07: Removed unused legacy auth validation helpers after verifying zod route validation is the only path.
 - 2026-06-07: Coalesced CharacterFormView AI panel resize layout work into animation frames.
+- 2026-06-08: Removed the unused regex-rule validation schema export after verifying no code imports it.
+- 2026-06-08: Coalesced HomeView character-list width measurements into animation frames.
+- 2026-06-08: Removed legacy NPC text-pattern helper code after verifying NPC scanning remains disabled.
+- 2026-06-08: Avoided redundant Settings mod drag-over state writes during repeated drag events.
+- 2026-06-08: Added a source hygiene guard against unused private top-level production JS helpers.
+- 2026-06-08: Avoided redundant CharacterImagePanel drag-over state writes during image reordering.
+- 2026-06-08: Extended source hygiene to catch unused private top-level function-like const helpers.
+- 2026-06-08: Coalesced useViewport fallback resize checks into animation frames.
+- 2026-06-08: Refactored duplicate unused-private source hygiene scanner traversal into a shared helper.
+- 2026-06-08: Shared the source hygiene top-level declaration depth scanner between function and const helper rules.
+- 2026-06-08: Guarded ChatModelSwitcher close actions while model saving is pending.
+- 2026-06-08: Guarded SaveLoadPanel close actions while save mutations are pending.
+- 2026-06-08: Shared duplicate-line aggregation helpers across source hygiene duplicate diagnostics.
+- 2026-06-08: Shared safe diagnostic file-read helpers between Vue component and accessibility scanners.
+- 2026-06-08: Guarded ChatSettingsDrawer close actions while drawer saves are pending.
+- 2026-06-08: Guarded TalentRollDialog close actions while roll or talent mutations are pending; a later review gate passed after the dirty CharacterFormView source-test mismatch was resolved.
+- 2026-06-08: Split App ripple and Mod editor layout source tests so unrelated assertions no longer share one test file.
+- 2026-06-08: Coalesced chat scroll state updates into animation frames during passive scroll events.
+- 2026-06-08: Shared frontend style source-test reads through a focused helper and realigned CharacterFormView AI panel coverage with the current floating-panel stability contract.
+- 2026-06-08: Skipped redundant provider model cache sync assignments when cached model lists are unchanged.
+- 2026-06-08: Shared direct readRepoText source-test diagnostics across Vue SFC and stylesheet hygiene guards.
+- 2026-06-08: Ignored comment-only references in the unreferenced Vue component diagnostic so dead components are not hidden by notes.
+- 2026-06-08: Kept Settings model options synced to API-key availability without replacing unchanged cached lists.
+- 2026-06-08: Archived 431 flat daily Markdown reports into three dated archive files to keep automation reports readable.
+- 2026-06-08: Added a reusable Markdown report archiver so future flat automation reports can be folded into dated archives safely.
+- 2026-06-08: Ignored Vue script/style markup noise in the accessibility diagnostic so only template controls are scanned.
+- 2026-06-08: Avoided redundant Settings manual model-refresh option assignments when refreshed models are unchanged.
+- 2026-06-08: Corrected accessibility diagnostic masking order so script comment strings cannot hide real template controls.
+- 2026-06-08: Avoided redundant MessageToasts pending-action Set replacements when active toast IDs are unchanged.
+- 2026-06-08: Tightened unreferenced Vue component reference tokens so bare name-only text cannot hide dormant components.
+- 2026-06-08: Avoided redundant ChatSidebar selection Set and conversation array replacements during no-op pruning.
+- 2026-06-08: Limited unreferenced Vue component path references to import/export/glob contexts so path-only notes cannot hide dormant components.
+- 2026-06-08: Masked string-only component tag noise in the unreferenced Vue diagnostic so examples cannot hide dormant components.
+- 2026-06-08: Avoided redundant ChatSidebar bulk-selection Set replacements when no conversations are visible.
+- 2026-06-08: Optimized ChatSidebar bulk-delete visible selection filtering with one Set lookup pass.
+- 2026-06-08: Recognized string-literal dynamic Vue `is` bindings in the unreferenced component diagnostic to avoid false cleanup candidates.
+- 2026-06-08: Realigned the NPC prompt route test with accessory-agent provider calls after review gate exposed a stale single-call assumption.
+- 2026-06-08: Avoided redundant App notification array replacements when dismissing missing notifications or clearing an empty toast list.
+- 2026-06-08: Tightened the Vue accessibility diagnostic so empty static accessible-name attributes no longer hide unlabeled controls.
+- 2026-06-08: Avoided redundant App route object replacements when hash sync resolves to the current route.
+- 2026-06-08: Avoided redundant Chat message UI collection replacements during empty route/reset cleanup.
+- 2026-06-08: Avoided redundant Chat branch-list array replacements when branch refresh results are unchanged.
+- 2026-06-08: Parallelized Chat message swipe initialization for assistant messages in long conversations.
+- 2026-06-08: Preserved Chat sidebar resource array references when refreshed conversations, characters, or presets are unchanged.
+- 2026-06-08: Preserved SaveLoadPanel save-list references when refresh, reset, delete, or same-name rename results are unchanged.
+- 2026-06-08: Preserved EconomyPanel account and transaction list references when refreshed data is unchanged.
+- 2026-06-08: Preserved NpcPanel NPC, memory, and behavior list references when refreshed data is unchanged.
+- 2026-06-08: Removed unreachable legacy NPC behavior prompt assembly after the shared prompt builder return.
+- 2026-06-08: Preserved HomeView character and tag list references when refreshed data is unchanged.
+- 2026-06-08: Preserved CharacterImagePanel image-list references when refreshed or reordered data is unchanged.
+- 2026-06-08: Preserved TalentRollDialog pool and talent list references when refreshed data is unchanged.
+- 2026-06-08: Preserved Settings extension list references when refreshed tags, presets, mods, mod characters, or regex rules are unchanged.
+- 2026-06-08: Preserved PresetView preset list references when refreshed data is unchanged.
+- 2026-06-08: Preserved WorldBookView book, detail, and entry references when refreshed data is unchanged.
+- 2026-06-08: Preserved chat accessory economy account references when refreshed data is unchanged.
+- 2026-06-08: Preserved chat accessory status-bar references and editor drafts when refreshed data is unchanged.
+- 2026-06-08: Preserved chat accessory skill config references when synchronized data is unchanged.
+- 2026-06-08: Routed chat submit status-bar updates through the reference-preserving accessory helper.

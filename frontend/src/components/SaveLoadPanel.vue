@@ -76,7 +76,7 @@ onBeforeUnmount(() => {
 function resetSavePanelState() {
   savesLoadToken += 1;
   savesMutationToken += 1;
-  saves.value = [];
+  setSavesIfChanged([]);
   saveName.value = '';
   loadError.value = '';
   renamingId.value = '';
@@ -100,17 +100,45 @@ async function loadSaves() {
   try {
     const nextSaves = await fetchSaves(conversationId);
     if (!isCurrentSaveLoad(requestToken, conversationId)) return;
-    saves.value = nextSaves;
+    setSavesIfChanged(nextSaves);
   } catch (err) {
     if (!isCurrentSaveLoad(requestToken, conversationId)) return;
     loadError.value = err.message || '加载存档列表失败';
-    saves.value = [];
+    setSavesIfChanged([]);
     notify.error(loadError.value);
   } finally {
     if (isCurrentSaveLoad(requestToken, conversationId)) {
       loading.value = false;
     }
   }
+}
+
+function setSavesIfChanged(nextSaves) {
+  const normalizedSaves = Array.isArray(nextSaves) ? nextSaves : [];
+  const currentSaves = Array.isArray(saves.value) ? saves.value : [];
+  if (sameSaveList(currentSaves, normalizedSaves)) {
+    return false;
+  }
+  saves.value = normalizedSaves;
+  return true;
+}
+
+function sameSaveList(currentSaves, nextSaves) {
+  if (currentSaves === nextSaves) {
+    return true;
+  }
+  if (currentSaves.length !== nextSaves.length) {
+    return false;
+  }
+  return currentSaves.every((save, index) => sameSaveSummary(save, nextSaves[index]));
+}
+
+function sameSaveSummary(current = {}, next = {}) {
+  return current?.id === next?.id
+    && current?.conversationId === next?.conversationId
+    && current?.name === next?.name
+    && current?.preview === next?.preview
+    && current?.createdAt === next?.createdAt;
 }
 
 function isCurrentSaveLoad(requestToken, conversationId) {
@@ -130,7 +158,7 @@ async function doCreateSave() {
   try {
     const created = await createSave(conversationId, { name: saveName.value.trim() });
     if (!isCurrentSaveMutation(mutationToken, conversationId)) return;
-    saves.value = [created, ...saves.value];
+    setSavesIfChanged([created, ...saves.value]);
     saveName.value = '';
     notify.success('存档已创建');
   } catch (err) {
@@ -175,7 +203,7 @@ async function doDeleteSave(item) {
   try {
     await deleteSave(item.id);
     if (!isCurrentSaveMutation(mutationToken, conversationId)) return;
-    saves.value = saves.value.filter((s) => s.id !== item.id);
+    setSavesIfChanged(saves.value.filter((s) => s.id !== item.id));
     notify.success('存档已删除');
   } catch (err) {
     if (!isCurrentSaveMutation(mutationToken, conversationId)) return;
@@ -210,7 +238,10 @@ async function doRename(item) {
     if (!isCurrentSaveMutation(mutationToken, conversationId)) return;
     const index = saves.value.findIndex((s) => s.id === item.id);
     if (index !== -1) {
-      saves.value[index] = { ...saves.value[index], name: updated.name };
+      const nextSave = { ...saves.value[index], name: updated.name };
+      if (!sameSaveSummary(saves.value[index], nextSave)) {
+        saves.value[index] = nextSave;
+      }
     }
     cancelRename();
     notify.success('存档名已更新');
@@ -246,12 +277,17 @@ function isSaveItemBusy(item) {
 function isSaveActionDisabled() {
   return savePanelBusy.value;
 }
+
+function requestClose() {
+  if (saveActionBusy.value) return;
+  emit('close');
+}
 </script>
 
 <template>
   <Teleport to="body">
     <Transition name="save-panel">
-      <div v-if="open" class="save-panel-backdrop" @click.self="emit('close')">
+      <div v-if="open" class="save-panel-backdrop" @click.self="requestClose">
         <div class="save-panel" role="dialog" aria-label="存档管理">
           <header class="save-panel-header">
             <div>
@@ -263,7 +299,9 @@ function isSaveActionDisabled() {
               type="button"
               title="关闭"
               aria-label="关闭存档管理"
-              @click="emit('close')"
+              :disabled="saveActionBusy"
+              :aria-busy="saveActionBusy"
+              @click="requestClose"
             >
               <X :size="18" />
             </button>

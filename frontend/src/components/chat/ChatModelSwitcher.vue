@@ -92,18 +92,23 @@ function saveDraft() {
   if (!canSave.value) return;
   emit('save', draftModel.value);
 }
+
+function closeSwitcher() {
+  if (props.saving) return;
+  emit('close');
+}
 </script>
 
 <template>
   <Teleport to="body">
-    <div v-if="open" class="chat-model-switcher-overlay" @click.self="emit('close')">
+    <div v-if="open" class="chat-model-switcher-overlay" @click.self="closeSwitcher">
       <section class="chat-model-switcher" role="dialog" aria-modal="true" aria-label="切换模型" :aria-busy="saving || refreshing">
         <header class="chat-model-switcher-head">
           <div>
             <span>{{ gatewayLabel }}</span>
             <h2>切换模型</h2>
           </div>
-          <button class="deep-icon-button" type="button" aria-label="关闭模型切换器" title="关闭" @click="emit('close')">
+          <button class="deep-icon-button" type="button" aria-label="关闭模型切换器" title="关闭" :disabled="saving" :aria-busy="saving" @click="closeSwitcher">
             <X :size="18" />
           </button>
         </header>
@@ -111,7 +116,7 @@ function saveDraft() {
         <div class="chat-model-switcher-tools">
           <label class="chat-model-search" :class="{ 'is-disabled': modelSelectionLocked }">
             <Search :size="17" />
-            <input v-model.trim="search" type="search" placeholder="搜索当前网关模型" :disabled="modelSelectionLocked" />
+            <input v-model.trim="search" type="search" placeholder="搜索当前网关模型" aria-label="搜索当前网关模型" :disabled="modelSelectionLocked" />
           </label>
           <button class="ghost-button compact-button" type="button" :disabled="!canRefresh" :aria-busy="refreshing" @click="emit('refresh')">
             <RefreshCw :size="17" :class="{ spinning: refreshing }" />

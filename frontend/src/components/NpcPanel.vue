@@ -4,6 +4,7 @@ import {
   Brain,
   Plus,
   RefreshCw,
+  SlidersHorizontal,
   Trash2,
   Users,
   X,
@@ -19,6 +20,7 @@ import {
   fetchNpcMemories,
   hideConversationNpc,
   hideEmptyConversationNpcs,
+  updateConversationNpc,
   updateNpcBehavior
 } from '../api';
 import { useNotify } from '../composables/useNotify';
@@ -56,6 +58,12 @@ const behaviorForm = reactive({
   priority: 0,
   enabled: true
 });
+const npcMetaForm = reactive({
+  status: 'active',
+  customStatus: '',
+  aliasesText: '',
+  memorySealed: false
+});
 const UPDATE_STATUS_META = {
   updating: { key: 'updating', label: '更新中' },
   updated: { key: 'updated', label: '已更新' },
@@ -72,8 +80,10 @@ const npcPanelStats = computed(() => ({
 
 const selectedNpcStats = computed(() => ({
   memoryCount: memories.value.length,
-  behaviorCount: behaviors.value.length
+  behaviorCount: behaviors.value.length,
+  aliasCount: selectedNpcData.value?.aliases?.length || 0
 }));
+const selectedNpcMemorySealActive = computed(() => Boolean(selectedNpcData.value?.memorySealActive));
 const emptyNpcNames = computed(() => npcs.value
   .filter((npc) => Number(npc.memoryCount || 0) === 0 && Number(npc.behaviorCount || 0) === 0)
   .map((npc) => npc.name));
@@ -95,6 +105,16 @@ const behaviorTypeOptions = [
   { value: 'movement', label: '移动' }
 ];
 
+const npcStatusOptions = [
+  { value: 'active', label: '活跃' },
+  { value: 'left', label: '离开' },
+  { value: 'permanently_left', label: '永久离开' },
+  { value: 'dead', label: '死亡' },
+  { value: 'on_mission', label: '执行任务' },
+  { value: 'following', label: '跟随' },
+  { value: 'custom', label: '自定义' }
+];
+
 watch(() => props.open, (isOpen) => {
   if (isOpen) {
     loadNpcs();
@@ -114,6 +134,10 @@ watch(() => props.conversationId, () => {
   }
 });
 
+watch(selectedNpcData, (npc) => {
+  syncNpcMetaForm(npc);
+}, { immediate: true });
+
 onBeforeUnmount(() => {
   npcPanelDisposed = true;
   resetNpcState();
@@ -128,10 +152,10 @@ function resetNpcState() {
   npcLoadToken += 1;
   npcDetailToken += 1;
   npcMutationToken += 1;
-  npcs.value = [];
+  setNpcsIfChanged([]);
   setSelectedNpc('');
-  memories.value = [];
-  behaviors.value = [];
+  setMemoriesIfChanged([]);
+  setBehaviorsIfChanged([]);
   loadError.value = '';
   detailError.value = '';
   addMemoryOpen.value = false;
@@ -158,6 +182,39 @@ function resetNpcForms() {
   behaviorForm.action = '';
   behaviorForm.priority = 0;
   behaviorForm.enabled = true;
+  resetNpcMetaForm();
+}
+
+function resetNpcMetaForm() {
+  npcMetaForm.status = 'active';
+  npcMetaForm.customStatus = '';
+  npcMetaForm.aliasesText = '';
+  npcMetaForm.memorySealed = false;
+}
+
+function syncNpcMetaForm(npc) {
+  if (!npc) {
+    resetNpcMetaForm();
+    return;
+  }
+  npcMetaForm.status = npc.status || 'active';
+  npcMetaForm.customStatus = npc.customStatus || '';
+  npcMetaForm.aliasesText = Array.isArray(npc.aliases) ? npc.aliases.join('\n') : '';
+  npcMetaForm.memorySealed = Boolean(npc.memorySealed);
+}
+
+function parseNpcAliasesText(value) {
+  const aliases = [];
+  const seen = new Set();
+  for (const raw of String(value || '').split(/[\n,;|]+/)) {
+    const alias = raw.trim();
+    const key = alias.toLowerCase();
+    if (!alias || seen.has(key)) continue;
+    aliases.push(alias.slice(0, 80));
+    seen.add(key);
+    if (aliases.length >= 20) break;
+  }
+  return aliases;
 }
 
 function isCurrentNpcMutation(mutationToken, conversationId, npcName = null) {
@@ -195,6 +252,85 @@ function behaviorDeleteActionId(behaviorId) {
   return `behavior-delete:${behaviorId}`;
 }
 
+function setNpcsIfChanged(nextNpcs) {
+  const normalizedNpcs = Array.isArray(nextNpcs) ? nextNpcs : [];
+  const currentNpcs = Array.isArray(npcs.value) ? npcs.value : [];
+  if (sameListItems(currentNpcs, normalizedNpcs, sameNpcSummary)) {
+    return false;
+  }
+  npcs.value = normalizedNpcs;
+  return true;
+}
+
+function setMemoriesIfChanged(nextMemories) {
+  const normalizedMemories = Array.isArray(nextMemories) ? nextMemories : [];
+  const currentMemories = Array.isArray(memories.value) ? memories.value : [];
+  if (sameListItems(currentMemories, normalizedMemories, sameMemorySummary)) {
+    return false;
+  }
+  memories.value = normalizedMemories;
+  return true;
+}
+
+function setBehaviorsIfChanged(nextBehaviors) {
+  const normalizedBehaviors = Array.isArray(nextBehaviors) ? nextBehaviors : [];
+  const currentBehaviors = Array.isArray(behaviors.value) ? behaviors.value : [];
+  if (sameListItems(currentBehaviors, normalizedBehaviors, sameBehaviorSummary)) {
+    return false;
+  }
+  behaviors.value = normalizedBehaviors;
+  return true;
+}
+
+function sameListItems(currentItems, nextItems, sameItem) {
+  if (currentItems === nextItems) {
+    return true;
+  }
+  if (currentItems.length !== nextItems.length) {
+    return false;
+  }
+  return currentItems.every((item, index) => sameItem(item, nextItems[index]));
+}
+
+function sameNpcSummary(current = {}, next = {}) {
+  return current?.name === next?.name
+    && Number(current?.memoryCount || 0) === Number(next?.memoryCount || 0)
+    && Number(current?.behaviorCount || 0) === Number(next?.behaviorCount || 0)
+    && String(current?.source || '') === String(next?.source || '')
+    && Number(current?.confidence || 0) === Number(next?.confidence || 0)
+    && String(current?.evidence || '') === String(next?.evidence || '')
+    && String(current?.status || '') === String(next?.status || '')
+    && String(current?.customStatus || '') === String(next?.customStatus || '')
+    && Boolean(current?.memorySealed) === Boolean(next?.memorySealed)
+    && Boolean(current?.memorySealActive) === Boolean(next?.memorySealActive)
+    && sameListItems(normalizeStringList(current?.aliases), normalizeStringList(next?.aliases), Object.is);
+}
+
+function sameMemorySummary(current = {}, next = {}) {
+  return current?.id === next?.id
+    && current?.conversationId === next?.conversationId
+    && current?.npcName === next?.npcName
+    && current?.memoryType === next?.memoryType
+    && current?.content === next?.content
+    && current?.createdAt === next?.createdAt;
+}
+
+function sameBehaviorSummary(current = {}, next = {}) {
+  return current?.id === next?.id
+    && current?.conversationId === next?.conversationId
+    && current?.npcName === next?.npcName
+    && current?.behaviorType === next?.behaviorType
+    && current?.triggerCondition === next?.triggerCondition
+    && current?.action === next?.action
+    && Number(current?.priority || 0) === Number(next?.priority || 0)
+    && Boolean(current?.enabled) === Boolean(next?.enabled)
+    && current?.createdAt === next?.createdAt;
+}
+
+function normalizeStringList(value) {
+  return Array.isArray(value) ? value.map((item) => String(item)) : [];
+}
+
 async function loadNpcs(options = {}) {
   if (npcPanelDisposed) return;
   const allowWhileBusy = Boolean(options.allowWhileBusy);
@@ -211,7 +347,7 @@ async function loadNpcs(options = {}) {
     const nextNpcs = await fetchConversationNpcs(conversationId);
     if (npcPanelDisposed || requestToken !== npcLoadToken || conversationId !== props.conversationId) return;
     loadError.value = '';
-    npcs.value = nextNpcs;
+    setNpcsIfChanged(nextNpcs);
     emit('npcs-loaded', nextNpcs);
     if (selectedNpc.value && !npcs.value.find((n) => n.name === selectedNpc.value)) {
       setSelectedNpc('');
@@ -222,8 +358,8 @@ async function loadNpcs(options = {}) {
     if (selectedNpc.value) {
       await loadNpcDetail({ allowWhileBusy });
     } else {
-      memories.value = [];
-      behaviors.value = [];
+      setMemoriesIfChanged([]);
+      setBehaviorsIfChanged([]);
     }
   } catch (err) {
     if (npcPanelDisposed || requestToken !== npcLoadToken || conversationId !== props.conversationId) return;
@@ -231,8 +367,8 @@ async function loadNpcs(options = {}) {
     notify.error(loadError.value);
     if (!npcs.value.length) {
       setSelectedNpc('');
-      memories.value = [];
-      behaviors.value = [];
+      setMemoriesIfChanged([]);
+      setBehaviorsIfChanged([]);
       detailError.value = '';
     }
   } finally {
@@ -249,8 +385,8 @@ async function selectNpc(name) {
     npcActionBusyId.value = '';
   }
   setSelectedNpc(name);
-  memories.value = [];
-  behaviors.value = [];
+  setMemoriesIfChanged([]);
+  setBehaviorsIfChanged([]);
   detailError.value = '';
   addMemoryOpen.value = false;
   addBehaviorOpen.value = false;
@@ -264,16 +400,14 @@ async function loadNpcDetail(options = {}) {
   const npcName = selectedNpc.value;
   if (!conversationId || !npcName) {
     detailError.value = '';
-    memories.value = [];
-    behaviors.value = [];
+    setMemoriesIfChanged([]);
+    setBehaviorsIfChanged([]);
     return;
   }
   if (!allowWhileBusy && npcActionBusy.value) return;
   const requestToken = ++npcDetailToken;
   detailLoading.value = true;
   detailError.value = '';
-  memories.value = [];
-  behaviors.value = [];
   try {
     const [mem, beh] = await Promise.all([
       fetchNpcMemories(conversationId, npcName),
@@ -281,8 +415,8 @@ async function loadNpcDetail(options = {}) {
     ]);
     if (npcPanelDisposed || requestToken !== npcDetailToken || conversationId !== props.conversationId || npcName !== selectedNpc.value) return;
     detailError.value = '';
-    memories.value = mem;
-    behaviors.value = beh;
+    setMemoriesIfChanged(mem);
+    setBehaviorsIfChanged(beh);
   } catch (err) {
     if (npcPanelDisposed || requestToken !== npcDetailToken || conversationId !== props.conversationId || npcName !== selectedNpc.value) return;
     detailError.value = err.message || '加载 NPC 详情失败';
@@ -291,6 +425,35 @@ async function loadNpcDetail(options = {}) {
     if (!npcPanelDisposed && requestToken === npcDetailToken && conversationId === props.conversationId && npcName === selectedNpc.value) {
       detailLoading.value = false;
     }
+  }
+}
+
+async function submitNpcMeta() {
+  if (npcPanelDisposed) return;
+  const conversationId = props.conversationId;
+  const npcName = selectedNpc.value;
+  if (!conversationId || !npcName) return;
+  const actionId = 'npc-meta-save';
+  if (!startNpcAction(actionId)) return;
+  const mutationToken = npcMutationToken;
+  try {
+    const updated = await updateConversationNpc(conversationId, npcName, {
+      status: npcMetaForm.status,
+      customStatus: npcMetaForm.customStatus.trim(),
+      aliases: parseNpcAliasesText(npcMetaForm.aliasesText),
+      memorySealed: npcMetaForm.memorySealed
+    });
+    if (!isCurrentNpcMutation(mutationToken, conversationId, npcName)) return;
+    setNpcsIfChanged(npcs.value.map((npc) => (npc.name === npcName ? { ...npc, ...updated } : npc)));
+    syncNpcMetaForm(updated);
+    await loadNpcs({ allowWhileBusy: true });
+    if (!isCurrentNpcMutation(mutationToken, conversationId, npcName)) return;
+    notify.success('NPC 资料已保存');
+  } catch (err) {
+    if (!isCurrentNpcMutation(mutationToken, conversationId, npcName)) return;
+    notify.error(err.message || '保存 NPC 资料失败');
+  } finally {
+    finishNpcAction(actionId, mutationToken, conversationId, npcName);
   }
 }
 
@@ -337,7 +500,7 @@ async function removeMemory(memoryId) {
   try {
     await deleteNpcMemory(conversationId, npcName, memoryId);
     if (!isCurrentNpcMutation(mutationToken, conversationId, npcName)) return;
-    memories.value = memories.value.filter((m) => m.id !== memoryId);
+    setMemoriesIfChanged(memories.value.filter((m) => m.id !== memoryId));
     await loadNpcs({ allowWhileBusy: true });
     if (!isCurrentNpcMutation(mutationToken, conversationId, npcName)) return;
     notify.success('记忆已删除');
@@ -419,7 +582,7 @@ async function removeBehavior(behaviorId) {
   try {
     await deleteNpcBehavior(conversationId, npcName, behaviorId);
     if (!isCurrentNpcMutation(mutationToken, conversationId, npcName)) return;
-    behaviors.value = behaviors.value.filter((b) => b.id !== behaviorId);
+    setBehaviorsIfChanged(behaviors.value.filter((b) => b.id !== behaviorId));
     await loadNpcs({ allowWhileBusy: true });
     if (!isCurrentNpcMutation(mutationToken, conversationId, npcName)) return;
     notify.success('行为规则已删除');
@@ -447,8 +610,8 @@ async function removeSelectedNpc() {
     await hideConversationNpc(conversationId, npcName);
     if (!isCurrentNpcMutation(mutationToken, conversationId, npcName)) return;
     setSelectedNpc('');
-    memories.value = [];
-    behaviors.value = [];
+    setMemoriesIfChanged([]);
+    setBehaviorsIfChanged([]);
     await loadNpcs({ allowWhileBusy: true });
     if (!isCurrentNpcMutation(mutationToken, conversationId)) return;
     notify.success('NPC 已从列表移除');
@@ -478,8 +641,8 @@ async function removeEmptyNpcs() {
     if (!isCurrentNpcMutation(mutationToken, conversationId)) return;
     if (names.includes(selectedNpc.value)) {
       setSelectedNpc('');
-      memories.value = [];
-      behaviors.value = [];
+      setMemoriesIfChanged([]);
+      setBehaviorsIfChanged([]);
     }
     await loadNpcs({ allowWhileBusy: true });
     if (!isCurrentNpcMutation(mutationToken, conversationId)) return;
@@ -498,6 +661,18 @@ function memoryTypeLabel(type) {
 
 function behaviorTypeLabel(type) {
   return behaviorTypeOptions.find((o) => o.value === type)?.label || type;
+}
+
+function npcStatusLabel(npc) {
+  const status = npc?.status || 'active';
+  if (status === 'custom') {
+    return npc?.customStatus || '自定义';
+  }
+  return npcStatusOptions.find((o) => o.value === status)?.label || status;
+}
+
+function shouldShowNpcStatus(npc) {
+  return Boolean(npc && npcStatusLabel(npc) && (npc.status || 'active') !== 'active');
 }
 
 function formatTime(iso) {
@@ -613,10 +788,14 @@ function formatTime(iso) {
                     :disabled="npcActionBusy"
                     @click="selectNpc(npc.name)"
                   >
-                    <span class="npc-item-name">{{ npc.name }}</span>
+                    <span class="npc-item-main">
+                      <span class="npc-item-name">{{ npc.name }}</span>
+                      <span v-if="shouldShowNpcStatus(npc)" class="npc-status-pill">{{ npcStatusLabel(npc) }}</span>
+                    </span>
                     <span class="npc-item-counts">
                       <span title="记忆数" class="npc-badge">🧠 {{ npc.memoryCount }}</span>
                       <span title="行为规则数" class="npc-badge">⚡ {{ npc.behaviorCount }}</span>
+                      <span v-if="npc.memorySealActive" title="记忆已封存" class="npc-badge">封存</span>
                     </span>
                   </button>
                 </div>
@@ -628,6 +807,9 @@ function formatTime(iso) {
               <div class="npc-detail-header">
                 <h3>{{ selectedNpc }}</h3>
                 <div class="npc-detail-metrics">
+                  <span v-if="selectedNpcData">{{ npcStatusLabel(selectedNpcData) }}</span>
+                  <span v-if="selectedNpcStats.aliasCount">{{ selectedNpcStats.aliasCount }} 个别名</span>
+                  <span v-if="selectedNpcMemorySealActive">记忆封存</span>
                   <span>{{ selectedNpcStats.memoryCount }} 记忆</span>
                   <span>{{ selectedNpcStats.behaviorCount }} 行为</span>
                   <button
@@ -645,6 +827,15 @@ function formatTime(iso) {
               </div>
 
               <div class="npc-tabs">
+                <button
+                  class="npc-tab"
+                  :class="{ active: detailTab === 'profile' }"
+                  type="button"
+                  @click="detailTab = 'profile'"
+                >
+                  <SlidersHorizontal :size="15" />
+                  <span>资料</span>
+                </button>
                 <button
                   class="npc-tab"
                   :class="{ active: detailTab === 'memories' }"
@@ -673,6 +864,70 @@ function formatTime(iso) {
                   <span>重试</span>
                 </button>
               </div>
+
+              <!-- Profile Tab -->
+              <template v-else-if="detailTab === 'profile'">
+                <div class="npc-form npc-meta-form">
+                  <label class="npc-field-label">
+                    <span>状态</span>
+                    <select v-model="npcMetaForm.status" class="npc-select" aria-label="NPC 状态" :disabled="npcActionBusy">
+                      <option v-for="opt in npcStatusOptions" :key="opt.value" :value="opt.value">
+                        {{ opt.label }}
+                      </option>
+                    </select>
+                  </label>
+                  <label v-if="npcMetaForm.status === 'custom'" class="npc-field-label">
+                    <span>自定义状态</span>
+                    <input
+                      v-model="npcMetaForm.customStatus"
+                      class="npc-input"
+                      maxlength="80"
+                      placeholder="例如：潜伏、被囚禁、养伤"
+                      aria-label="NPC 自定义状态"
+                      :disabled="npcActionBusy"
+                    />
+                  </label>
+                  <label class="npc-field-label">
+                    <span>别名</span>
+                    <textarea
+                      v-model="npcMetaForm.aliasesText"
+                      class="npc-textarea"
+                      rows="3"
+                      placeholder="每行一个精确别名"
+                      aria-label="NPC 别名"
+                      :disabled="npcActionBusy"
+                    />
+                  </label>
+                  <label class="npc-seal-toggle">
+                    <input
+                      v-model="npcMetaForm.memorySealed"
+                      class="npc-seal-input"
+                      type="checkbox"
+                      aria-label="记忆封存"
+                      :disabled="npcActionBusy"
+                    />
+                    <span class="npc-seal-control" aria-hidden="true"></span>
+                    <span class="npc-seal-copy">
+                      <strong>记忆封存</strong>
+                      <small>状态为死亡或永久离开时，主回复不读取该 NPC 记忆</small>
+                    </span>
+                  </label>
+                  <p v-if="selectedNpcMemorySealActive" class="npc-meta-note">
+                    已封存的记忆不会删除；状态恢复后会再次参与主回复上下文。
+                  </p>
+                  <div class="npc-form-actions">
+                    <button
+                      class="npc-save"
+                      type="button"
+                      :disabled="npcActionBusy"
+                      :aria-busy="isNpcActionBusy('npc-meta-save')"
+                      @click="submitNpcMeta"
+                    >
+                      保存
+                    </button>
+                  </div>
+                </div>
+              </template>
 
               <!-- Memories Tab -->
               <template v-else-if="detailTab === 'memories'">
@@ -717,7 +972,7 @@ function formatTime(iso) {
                   暂无记忆
                 </div>
                 <div v-else class="npc-list">
-                  <div v-for="mem in memories" :key="mem.id" class="npc-card">
+                  <div v-for="mem in memories" :key="mem.id" class="npc-card npc-memory-card">
                     <div class="npc-card-header">
                       <span class="npc-card-type">{{ memoryTypeLabel(mem.memoryType) }}</span>
                       <span class="npc-card-time">{{ formatTime(mem.createdAt) }}</span>
@@ -1112,8 +1367,32 @@ function formatTime(iso) {
   font-weight: 500;
 }
 
+.npc-item-main {
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.npc-status-pill {
+  max-width: 150px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 1px 6px;
+  border: 1px solid color-mix(in srgb, var(--green, #2f6d5a) 34%, transparent);
+  border-radius: 999px;
+  color: var(--green, #2f6d5a);
+  background: color-mix(in srgb, var(--green, #2f6d5a) 10%, transparent);
+  font-size: 10px;
+  font-weight: 800;
+}
+
 .npc-item-counts {
   display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
   gap: 8px;
 }
 
@@ -1231,10 +1510,13 @@ function formatTime(iso) {
   gap: 8px;
   margin: 12px 20px;
   padding: 14px;
-  background: color-mix(in srgb, var(--surface-raised, #22223a) 90%, transparent);
-  border-radius: 12px;
-  border: 1px solid color-mix(in srgb, var(--line, #2a2a3e) 70%, transparent);
-  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.12);
+  background:
+    linear-gradient(180deg,
+      color-mix(in srgb, var(--surface, #fbfaf6) 94%, var(--surface-strong, #edf5ef)),
+      color-mix(in srgb, var(--surface, #fbfaf6) 82%, transparent));
+  border-radius: 8px;
+  border: 1px solid color-mix(in srgb, var(--line, rgba(44, 57, 48, 0.14)) 78%, transparent);
+  box-shadow: 0 10px 24px color-mix(in srgb, var(--text, #20241f) 10%, transparent);
 }
 
 .npc-select,
@@ -1242,13 +1524,17 @@ function formatTime(iso) {
 .npc-textarea {
   width: 100%;
   padding: 8px 12px;
-  background: var(--surface, #1a1a2e);
-  border: 1px solid var(--border, #2a2a3e);
+  background: color-mix(in srgb, var(--surface, #fbfaf6) 92%, transparent);
+  border: 1px solid color-mix(in srgb, var(--line, rgba(44, 57, 48, 0.14)) 92%, transparent);
   border-radius: 6px;
-  color: var(--text, #e8e6e3);
+  color: var(--text, #20241f);
   font-size: 13px;
   font-family: inherit;
   box-sizing: border-box;
+}
+.npc-input::placeholder,
+.npc-textarea::placeholder {
+  color: color-mix(in srgb, var(--muted, #657064) 72%, transparent);
 }
 .npc-textarea {
   resize: vertical;
@@ -1258,7 +1544,8 @@ function formatTime(iso) {
 .npc-textarea:focus,
 .npc-select:focus {
   outline: none;
-  border-color: var(--accent, #818cf8);
+  border-color: color-mix(in srgb, var(--primary, #8d4a43) 55%, var(--line, rgba(44, 57, 48, 0.14)));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary, #8d4a43) 14%, transparent);
 }
 
 .npc-priority-label {
@@ -1283,6 +1570,126 @@ function formatTime(iso) {
 }
 .npc-checkbox-label input {
   accent-color: var(--accent, #818cf8);
+}
+
+.npc-field-label {
+  display: grid;
+  gap: 6px;
+  color: var(--muted, #657064);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.npc-meta-form {
+  gap: 12px;
+}
+
+.npc-meta-note {
+  margin: 0;
+  padding: 8px 10px;
+  border: 1px solid color-mix(in srgb, var(--green, #2f6d5a) 24%, var(--line, rgba(44, 57, 48, 0.14)));
+  border-radius: 8px;
+  color: var(--muted, #657064);
+  background: color-mix(in srgb, var(--green, #2f6d5a) 8%, var(--surface, #fbfaf6));
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.npc-seal-toggle {
+  position: relative;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 12px;
+  min-height: 48px;
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, var(--line, rgba(44, 57, 48, 0.14)) 82%, transparent);
+  border-radius: 8px;
+  color: var(--text, #20241f);
+  background: color-mix(in srgb, var(--surface, #fbfaf6) 72%, var(--surface-strong, #edf5ef));
+  cursor: pointer;
+  line-height: 1.35;
+  transition:
+    border-color 0.16s ease,
+    background 0.16s ease,
+    box-shadow 0.16s ease;
+}
+
+.npc-seal-toggle:hover {
+  border-color: color-mix(in srgb, var(--primary, #8d4a43) 34%, var(--line, rgba(44, 57, 48, 0.14)));
+}
+
+.npc-seal-input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.npc-seal-control {
+  position: relative;
+  width: 44px;
+  height: 24px;
+  border: 1px solid color-mix(in srgb, var(--line, rgba(44, 57, 48, 0.14)) 92%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--muted, #657064) 18%, var(--surface, #fbfaf6));
+  box-shadow: inset 0 1px 2px color-mix(in srgb, var(--text, #20241f) 10%, transparent);
+  transition:
+    border-color 0.16s ease,
+    background 0.16s ease;
+}
+
+.npc-seal-control::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--surface, #fbfaf6);
+  box-shadow: 0 2px 6px color-mix(in srgb, var(--text, #20241f) 22%, transparent);
+  transition:
+    background 0.16s ease,
+    transform 0.16s ease;
+}
+
+.npc-seal-input:checked + .npc-seal-control {
+  border-color: color-mix(in srgb, var(--primary, #8d4a43) 70%, var(--line, rgba(44, 57, 48, 0.14)));
+  background: color-mix(in srgb, var(--primary, #8d4a43) 78%, var(--green, #2f6d5a));
+}
+
+.npc-seal-input:checked + .npc-seal-control::after {
+  transform: translateX(20px);
+  background: #fffaf2;
+}
+
+.npc-seal-input:focus-visible + .npc-seal-control {
+  outline: 2px solid color-mix(in srgb, var(--primary, #8d4a43) 40%, transparent);
+  outline-offset: 2px;
+}
+
+.npc-seal-input:disabled + .npc-seal-control,
+.npc-seal-input:disabled ~ .npc-seal-copy {
+  opacity: 0.62;
+}
+
+.npc-seal-copy {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.npc-seal-copy strong {
+  color: var(--text, #20241f);
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.npc-seal-copy small {
+  color: var(--muted, #657064);
+  font-size: 12px;
 }
 
 .npc-form-actions {
@@ -1380,14 +1787,27 @@ function formatTime(iso) {
 }
 
 .npc-card {
+  position: relative;
+  overflow: hidden;
   padding: 12px 14px;
   background:
     linear-gradient(180deg,
-      color-mix(in srgb, var(--surface-raised, #22223a) 92%, transparent),
-      color-mix(in srgb, var(--surface, #1a1a2e) 70%, transparent));
-  border-radius: 12px;
-  border: 1px solid color-mix(in srgb, var(--line, #2a2a3e) 70%, transparent);
-  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.10);
+      color-mix(in srgb, var(--surface, #fbfaf6) 96%, rgba(255, 255, 255, 0.72)),
+      color-mix(in srgb, var(--surface, #fbfaf6) 86%, var(--surface-strong, #edf5ef))),
+    var(--surface, #fbfaf6);
+  border: 1px solid color-mix(in srgb, var(--line, rgba(44, 57, 48, 0.14)) 82%, transparent);
+  border-radius: 8px;
+  box-shadow:
+    0 10px 24px color-mix(in srgb, var(--text, #20241f) 9%, transparent),
+    inset 0 1px 0 color-mix(in srgb, #ffffff 56%, transparent);
+}
+
+.npc-memory-card {
+  background:
+    linear-gradient(180deg,
+      color-mix(in srgb, var(--surface, #fbfaf6) 98%, rgba(255, 255, 255, 0.78)),
+      color-mix(in srgb, var(--surface, #fbfaf6) 92%, var(--surface-strong, #edf5ef))),
+    var(--surface, #fbfaf6);
 }
 .npc-card.disabled {
   opacity: 0.5;
@@ -1403,21 +1823,22 @@ function formatTime(iso) {
 .npc-card-type {
   font-size: 11px;
   padding: 2px 8px;
-  border-radius: 4px;
-  background: var(--accent-bg, rgba(99, 102, 241, 0.12));
-  color: var(--accent, #818cf8);
-  font-weight: 500;
+  border: 1px solid color-mix(in srgb, var(--primary, #8d4a43) 24%, var(--line, rgba(44, 57, 48, 0.14)));
+  border-radius: 999px;
+  color: var(--primary-strong, #713932);
+  background: color-mix(in srgb, var(--primary-soft, #efe1dc) 74%, var(--surface, #fbfaf6));
+  font-weight: 800;
 }
 
 .npc-card-time {
   font-size: 11px;
-  color: var(--text-muted, #666);
+  color: var(--muted, #657064);
   margin-left: auto;
 }
 
 .npc-card-priority {
   font-size: 11px;
-  color: var(--text-muted, #888);
+  color: var(--muted, #657064);
   margin-left: auto;
 }
 
@@ -1425,7 +1846,7 @@ function formatTime(iso) {
 .npc-card-delete {
   background: none;
   border: none;
-  color: var(--text-muted, #666);
+  color: color-mix(in srgb, var(--muted, #657064) 72%, transparent);
   cursor: pointer;
   padding: 2px;
   border-radius: 4px;
@@ -1454,15 +1875,35 @@ function formatTime(iso) {
 .npc-card-trigger {
   margin: 0 0 4px;
   font-size: 12px;
-  color: var(--text-muted, #888);
+  color: var(--muted, #657064);
 }
 
 .npc-card-content {
   margin: 0;
+  color: var(--text, #20241f);
   font-size: 13px;
   line-height: 1.5;
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+:root[data-theme="dark"] .npc-card {
+  background:
+    linear-gradient(180deg,
+      color-mix(in srgb, var(--surface-strong, #222c27) 84%, transparent),
+      color-mix(in srgb, var(--surface, #1a211e) 92%, transparent)),
+    var(--surface, #1a211e);
+  box-shadow:
+    0 12px 26px rgba(0, 0, 0, 0.26),
+    inset 0 1px 0 color-mix(in srgb, #ffffff 8%, transparent);
+}
+
+:root[data-theme="dark"] .npc-memory-card {
+  background:
+    linear-gradient(180deg,
+      color-mix(in srgb, var(--surface-strong, #222c27) 72%, var(--surface, #1a211e)),
+      color-mix(in srgb, var(--surface, #1a211e) 96%, transparent)),
+    var(--surface, #1a211e);
 }
 
 /* Transition */

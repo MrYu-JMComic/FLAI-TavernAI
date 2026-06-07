@@ -6486,6 +6486,123 @@ test('chat prompt does not inject status bar context into main model', async () 
   }
 });
 
+test('chat prompt injects NPC memories and behaviors when NPC agent is active', async () => {
+  const database = createAppDatabase(':memory:');
+  const { userId, conversationId } = createTestSetup(database);
+  database
+    .prepare('UPDATE conversations SET user_advanced_settings = ? WHERE id = ?')
+    .run(
+      JSON.stringify({
+        accessorySkills: { npcAgent: { enabled: true, modelOverride: '' } }
+      }),
+      conversationId
+    );
+  database
+    .prepare(
+      `INSERT INTO npc_memories (id, conversation_id, npc_name, memory_type, content, created_at)
+       VALUES (?, ?, ?, ?, ?, ?)`
+    )
+    .run('npc-route-memory-1', conversationId, 'PromptNpc', 'event', 'NPC_MEMORY_SENTINEL', '2026-01-01T00:00:00.000Z');
+  database
+    .prepare(
+      `INSERT INTO npc_memories (id, conversation_id, npc_name, memory_type, content, created_at)
+       VALUES (?, ?, ?, ?, ?, ?)`
+    )
+    .run('npc-route-memory-only-1', conversationId, 'MemoryOnlyNpc', 'knowledge', 'NPC_MEMORY_ONLY_SENTINEL', '2026-01-01T00:00:01.000Z');
+  database
+    .prepare(
+      `INSERT INTO npc_behaviors (id, conversation_id, npc_name, behavior_type, trigger_condition, action, priority, enabled, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    )
+    .run(
+      'npc-route-behavior-1',
+      conversationId,
+      'PromptNpc',
+      'reaction',
+      'NPC_TRIGGER_SENTINEL',
+      'NPC_ACTION_SENTINEL',
+      10,
+      1,
+      '2026-01-01T00:00:00.000Z'
+    );
+
+  const providerBodies = [];
+  const app = express();
+  app.use(express.json());
+  app.use('/api/conversations', createConversationsRouter({
+    db: database,
+    requireAuth: (request, _response, next) => {
+      request.auth = { user: { id: userId, username: 'npc-prompt-user' } };
+      next();
+    },
+    asyncRoute: (handler) => (request, response, next) => Promise.resolve(handler(request, response, next)).catch(next),
+    newId: (() => {
+      let counter = 0;
+      return () => `npc-prompt-${++counter}`;
+    })(),
+    nowIso: () => '2026-01-01T00:00:02.000Z',
+    withEtag: (_request, response, data) => response.json(data),
+    withListCache: (_request, response, data) => response.json(data),
+    providerWithSecret: (row) => row,
+    getProviderRow: () => ({
+      providerType: 'deepseek',
+      gatewayName: 'Test Gateway',
+      baseUrl: 'https://provider.test',
+      model: 'test-model',
+      apiKey: 'sk-test',
+      supportsReasoning: false,
+      extraBody: {}
+    }),
+    hasUsableProvider
+  }));
+  app.use((error, _request, response, _next) => {
+    response.status(500).json({ error: error.message });
+  });
+
+  const server = await new Promise((resolve) => {
+    const listener = app.listen(0, () => resolve(listener));
+  });
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url, options = {}) => {
+    const href = String(url);
+    if (href.startsWith('http://127.0.0.1:')) {
+      return originalFetch(url, options);
+    }
+    providerBodies.push(JSON.parse(options.body));
+    return jsonResponse({
+      choices: [{ message: { content: 'assistant answer' } }],
+      usage: { total_tokens: 1 }
+    });
+  };
+
+  try {
+    const baseUrl = `http://127.0.0.1:${server.address().port}`;
+    const response = await fetch(`${baseUrl}/api/conversations/${conversationId}/messages`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ content: 'new prompt', stream: false })
+    });
+
+    assert.equal(response.status, 200);
+    const providerBody = providerBodies.find((body) => (
+      Array.isArray(body.messages) && body.messages.at(-1)?.content === 'new prompt'
+    ));
+    assert.ok(providerBody);
+    const promptText = JSON.stringify(providerBody.messages);
+    assert.match(promptText, /NPC_MEMORY_SENTINEL/);
+    assert.match(promptText, /NPC_ACTION_SENTINEL/);
+    assert.match(promptText, /NPC_TRIGGER_SENTINEL/);
+    assert.match(promptText, /NPC_MEMORY_ONLY_SENTINEL/);
+    assert.equal(providerBody.messages.at(-1).content, 'new prompt');
+    for (let attempt = 0; attempt < 20 && providerBodies.length < 2; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+  } finally {
+    globalThis.fetch = originalFetch;
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
 test('branchConversation works inside an existing transaction', () => {
   const database = createAppDatabase(':memory:');
   const { userId, conversationId } = createTestSetup(database);
