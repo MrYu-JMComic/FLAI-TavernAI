@@ -74,26 +74,3 @@ export function createAuthRouter(ctx) {
 
   return router;
 }
-
-function validateCredentials(body = {}) {
-  const username = String(body.username || '').trim();
-  const password = String(body.password || '');
-  if (!/^[\w\u4e00-\u9fa5.-]{3,32}$/.test(username)) {
-    throw new Error('用户名需为 3-32 位，可包含中文、字母、数字、下划线、点和横线');
-  }
-  if (password.length < 6 || password.length > 128) {
-    throw new Error('密码长度需为 6-128 位');
-  }
-  return { username, password };
-}
-
-function normalizeDisplayName(value) {
-  const displayName = String(value || '').trim();
-  if (!displayName) {
-    return '';
-  }
-  if (!/^[\p{L}\p{N}_-]{1,8}$/u.test(displayName)) {
-    throw new Error('对话用户名仅支持中文、字母、数字、下划线和短横线，最多 8 位');
-  }
-  return displayName;
-}

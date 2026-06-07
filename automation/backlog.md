@@ -267,3 +267,5 @@ The autonomous loop should choose one small item per run. Add new findings here 
 - 2026-06-07: Added a source hygiene guard against duplicate JS-like top-level function declarations.
 - 2026-06-07: Removed the unused backend tag lookup export after verifying no references remain.
 - 2026-06-07: Removed the unused legacy status-bar text-value matcher after verifying the safe matcher is the only caller.
+- 2026-06-07: Removed unused legacy auth validation helpers after verifying zod route validation is the only path.
+- 2026-06-07: Coalesced CharacterFormView AI panel resize layout work into animation frames.
