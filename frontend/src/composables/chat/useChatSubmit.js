@@ -1,5 +1,5 @@
 import { computed, nextTick, ref, triggerRef } from 'vue';
-import { fetchConversationMessages, sendMessage, streamMessage } from '../../api';
+import { fetchConversationMessages, sendMessage, streamMessage } from '../../api.js';
 
 export function useChatSubmit({
   route,
@@ -66,16 +66,26 @@ export function useChatSubmit({
   }
 
   function toggleUseStream() {
+    if (sending.value) {
+      return;
+    }
     useStream.value = !useStream.value;
     writeLocalBoolean('flai-chat-use-stream', useStream.value);
   }
 
   function toggleThinking() {
-    if (!canToggleThinking.value) {
+    if (sending.value || !canToggleThinking.value) {
       return;
     }
     thinkingEnabled.value = !thinkingEnabled.value;
     writeLocalBoolean('flai-chat-thinking-enabled', thinkingEnabled.value);
+  }
+
+  function setSelectedPresetId(value) {
+    if (sending.value || submitDisposed) {
+      return;
+    }
+    selectedPresetId.value = value || '';
   }
 
   async function submit() {
@@ -586,6 +596,7 @@ export function useChatSubmit({
     canToggleThinking,
     submit,
     stop,
+    setSelectedPresetId,
     toggleUseStream,
     toggleThinking,
     finishAssistantDraft,

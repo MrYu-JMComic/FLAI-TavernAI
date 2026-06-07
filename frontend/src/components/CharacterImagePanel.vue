@@ -1,5 +1,5 @@
 <script setup>
-import { onBeforeUnmount, ref, watch } from 'vue';
+import { computed, onBeforeUnmount, ref, watch } from 'vue';
 import { GripVertical, ImagePlus, Star, Tag, Trash2 } from '@lucide/vue';
 import {
   createCharacterImage,
@@ -30,10 +30,14 @@ const editingImageId = ref('');
 const editForm = ref({ sceneTag: '', emotionTag: '' });
 const dragIndex = ref(-1);
 const dragOverIndex = ref(-1);
+const imageActionBusyId = ref('');
 let imageLoadToken = 0;
 let imageUploadToken = 0;
 let imageMutationToken = 0;
 let imagePanelDisposed = false;
+
+const imageActionBusy = computed(() => Boolean(imageActionBusyId.value));
+const imagePanelBusy = computed(() => uploading.value || imageActionBusy.value);
 
 const sceneOptions = ['日常', '学校', '街道', '家里', '餐厅', '战斗', '夜晚', '雨天', '雪天', '海边', '森林', '节日'];
 const emotionOptions = ['开心', '悲伤', '愤怒', '惊讶', '害羞', '害怕', '温柔', '严肃', '困倦', '得意'];
@@ -45,6 +49,7 @@ watch(
     imageUploadToken += 1;
     imageMutationToken += 1;
     uploading.value = false;
+    imageActionBusyId.value = '';
     loadImages();
   },
   { immediate: true }
@@ -57,6 +62,7 @@ onBeforeUnmount(() => {
   imageMutationToken += 1;
   loading.value = false;
   uploading.value = false;
+  imageActionBusyId.value = '';
   dragIndex.value = -1;
   dragOverIndex.value = -1;
 });
@@ -100,11 +106,10 @@ async function handleUpload(event) {
     input.value = '';
   }
   const characterId = props.characterId;
-  const uploadToken = ++imageUploadToken;
-  if (props.disabled || !characterId || !files.length) {
-    uploading.value = false;
+  if (props.disabled || imagePanelBusy.value || !characterId || !files.length) {
     return;
   }
+  const uploadToken = ++imageUploadToken;
 
   uploading.value = true;
   for (const file of files) {
@@ -147,7 +152,30 @@ function isCurrentImageMutation(mutationToken, characterId) {
   return !imagePanelDisposed && mutationToken === imageMutationToken && props.characterId === characterId;
 }
 
+function startImageAction(actionId) {
+  if (props.disabled || imageActionBusy.value) {
+    return false;
+  }
+  imageActionBusyId.value = String(actionId || 'image-action');
+  return true;
+}
+
+function finishImageAction(mutationToken, characterId) {
+  if (isCurrentImageMutation(mutationToken, characterId)) {
+    imageActionBusyId.value = '';
+  }
+}
+
+function isImageActionBusy(imageId) {
+  return Boolean(imageId && imageActionBusyId.value === imageId);
+}
+
+function isImageActionDisabled() {
+  return props.disabled || imagePanelBusy.value;
+}
+
 function startEdit(image) {
+  if (isImageActionDisabled()) return;
   editingImageId.value = image.id;
   editForm.value = {
     sceneTag: image.sceneTag || '',
@@ -162,8 +190,8 @@ function cancelEdit() {
 
 async function saveEdit(imageId) {
   const characterId = props.characterId;
+  if (!characterId || !startImageAction(imageId)) return;
   const mutationToken = ++imageMutationToken;
-  if (props.disabled || !characterId) return;
 
   try {
     await updateCharacterImage(characterId, imageId, {
@@ -178,13 +206,15 @@ async function saveEdit(imageId) {
   } catch (err) {
     if (!isCurrentImageMutation(mutationToken, characterId)) return;
     notify.error(err?.message || '标签更新失败');
+  } finally {
+    finishImageAction(mutationToken, characterId);
   }
 }
 
 async function setDefault(imageId) {
   const characterId = props.characterId;
+  if (!characterId || !startImageAction(imageId)) return;
   const mutationToken = ++imageMutationToken;
-  if (props.disabled || !characterId) return;
 
   try {
     // Clear old default
@@ -200,13 +230,16 @@ async function setDefault(imageId) {
   } catch (err) {
     if (!isCurrentImageMutation(mutationToken, characterId)) return;
     notify.error(err?.message || '默认立绘设置失败');
+  } finally {
+    finishImageAction(mutationToken, characterId);
   }
 }
 
 async function removeImage(imageId) {
-  if (props.disabled || !props.characterId) return;
+  if (isImageActionDisabled() || !props.characterId) return;
   if (!window.confirm('确定删除这张立绘？')) return;
   const characterId = props.characterId;
+  if (!startImageAction(imageId)) return;
   const mutationToken = ++imageMutationToken;
   try {
     await deleteCharacterImage(characterId, imageId);
@@ -217,20 +250,28 @@ async function removeImage(imageId) {
   } catch (err) {
     if (!isCurrentImageMutation(mutationToken, characterId)) return;
     notify.error(err?.message || '立绘删除失败');
+  } finally {
+    finishImageAction(mutationToken, characterId);
   }
 }
 
 function onDragStart(index) {
-  if (props.disabled) return;
+  if (isImageActionDisabled()) return;
   dragIndex.value = index;
 }
 
 function onDragOver(index) {
-  if (props.disabled) return;
+  if (isImageActionDisabled()) return;
   dragOverIndex.value = index;
 }
 
 function onDragEnd() {
+  if (isImageActionDisabled()) {
+    dragIndex.value = -1;
+    dragOverIndex.value = -1;
+    return;
+  }
+
   if (dragIndex.value < 0 || dragOverIndex.value < 0 || dragIndex.value === dragOverIndex.value) {
     dragIndex.value = -1;
     dragOverIndex.value = -1;
@@ -243,21 +284,23 @@ function onDragEnd() {
   images.value = reordered;
   const orderedIds = reordered.map((img) => img.id);
   const characterId = props.characterId;
-  const mutationToken = ++imageMutationToken;
   dragIndex.value = -1;
   dragOverIndex.value = -1;
+  if (!characterId || !startImageAction('image-order')) return;
+  const mutationToken = ++imageMutationToken;
 
   saveOrder(orderedIds, characterId, mutationToken);
 }
 
 async function saveOrder(orderedIds, characterId, mutationToken) {
-  if (props.disabled || !characterId) return;
   try {
     await reorderCharacterImages(characterId, orderedIds);
   } catch (err) {
     if (!isCurrentImageMutation(mutationToken, characterId)) return;
     notify.error('排序保存失败');
     await loadImages();
+  } finally {
+    finishImageAction(mutationToken, characterId);
   }
 }
 
@@ -286,14 +329,14 @@ function emotionLabel(tag) {
         <h2>CG 立绘</h2>
         <p>管理角色的场景立绘，AI 回复时会根据场景/情绪自动切换。</p>
       </div>
-      <label v-if="!disabled" class="file-button cg-upload-btn" :class="{ disabled: uploading }">
+      <label v-if="!disabled" class="file-button cg-upload-btn" :class="{ disabled: imagePanelBusy }">
         <ImagePlus :size="18" />
         <span>{{ uploading ? '上传中...' : '添加立绘' }}</span>
         <input
           type="file"
           accept="image/png,image/jpeg,image/webp"
           multiple
-          :disabled="uploading"
+          :disabled="imagePanelBusy"
           @change="handleUpload"
         />
       </label>
@@ -314,7 +357,7 @@ function emotionLabel(tag) {
         :key="image.id"
         class="cg-card"
         :class="{ 'is-default': image.isDefault, dragging: dragIndex === index, 'drag-over': dragOverIndex === index }"
-        :draggable="!disabled"
+        :draggable="!isImageActionDisabled()"
         @dragstart="onDragStart(index)"
         @dragover.prevent="onDragOver(index)"
         @dragend="onDragEnd"
@@ -331,21 +374,36 @@ function emotionLabel(tag) {
           <div v-if="editingImageId === image.id" class="cg-edit-form">
             <label>
               <span>场景</span>
-              <select v-model="editForm.sceneTag">
+              <select v-model="editForm.sceneTag" :disabled="isImageActionDisabled()">
                 <option value="">未设置</option>
                 <option v-for="s in sceneOptions" :key="s" :value="s">{{ s }}</option>
               </select>
             </label>
             <label>
               <span>情绪</span>
-              <select v-model="editForm.emotionTag">
+              <select v-model="editForm.emotionTag" :disabled="isImageActionDisabled()">
                 <option value="">未设置</option>
                 <option v-for="e in emotionOptions" :key="e" :value="e">{{ e }}</option>
               </select>
             </label>
             <div class="cg-edit-actions">
-              <button class="ghost-button small" type="button" @click="saveEdit(image.id)">保存</button>
-              <button class="ghost-button small" type="button" @click="cancelEdit">取消</button>
+              <button
+                class="ghost-button small"
+                type="button"
+                :disabled="isImageActionDisabled()"
+                :aria-busy="isImageActionBusy(image.id)"
+                @click="saveEdit(image.id)"
+              >
+                保存
+              </button>
+              <button
+                class="ghost-button small"
+                type="button"
+                :disabled="isImageActionDisabled()"
+                @click="cancelEdit"
+              >
+                取消
+              </button>
             </div>
           </div>
 
@@ -362,10 +420,19 @@ function emotionLabel(tag) {
         </div>
 
         <div v-if="!disabled" class="cg-actions">
-          <button class="icon-button" type="button" aria-label="拖拽排序" title="拖拽排序" draggable="false" @mousedown.stop>
+          <button
+            class="icon-button"
+            type="button"
+            aria-label="拖拽排序"
+            title="拖拽排序"
+            draggable="false"
+            :disabled="isImageActionDisabled()"
+            :aria-busy="imageActionBusyId === 'image-order'"
+            @mousedown.stop
+          >
             <GripVertical :size="16" />
           </button>
-          <button class="icon-button" type="button" aria-label="编辑立绘标签" title="编辑标签" @click="startEdit(image)">
+          <button class="icon-button" type="button" aria-label="编辑立绘标签" title="编辑标签" :disabled="isImageActionDisabled()" @click="startEdit(image)">
             <Tag :size="16" />
           </button>
           <button
@@ -374,11 +441,21 @@ function emotionLabel(tag) {
             aria-label="设为默认立绘"
             :class="{ active: image.isDefault }"
             title="设为默认"
+            :disabled="isImageActionDisabled()"
+            :aria-busy="isImageActionBusy(image.id)"
             @click="setDefault(image.id)"
           >
             <Star :size="16" />
           </button>
-          <button class="icon-button danger" type="button" aria-label="删除立绘" title="删除" @click="removeImage(image.id)">
+          <button
+            class="icon-button danger"
+            type="button"
+            aria-label="删除立绘"
+            title="删除"
+            :disabled="isImageActionDisabled()"
+            :aria-busy="isImageActionBusy(image.id)"
+            @click="removeImage(image.id)"
+          >
             <Trash2 :size="16" />
           </button>
         </div>

@@ -60,10 +60,14 @@ function readBreakpointMatch(query, mediaQuery = null) {
     return window.matchMedia(query).matches;
   }
   const maxWidthMatch = String(query || '').trim().match(/^\(max-width:\s*(\d+(?:\.\d+)?)px\)$/);
-  if (!maxWidthMatch) {
-    return false;
+  if (maxWidthMatch) {
+    return window.innerWidth <= Number(maxWidthMatch[1]);
   }
-  return window.innerWidth <= Number(maxWidthMatch[1]);
+  const minWidthMatch = String(query || '').trim().match(/^\(min-width:\s*(\d+(?:\.\d+)?)px\)$/);
+  if (minWidthMatch) {
+    return window.innerWidth >= Number(minWidthMatch[1]);
+  }
+  return false;
 }
 
 /**
@@ -71,4 +75,8 @@ function readBreakpointMatch(query, mediaQuery = null) {
  */
 export function isPhoneViewport() {
   return readBreakpointMatch('(max-width: 760px)');
+}
+
+export function isViewportMatch(query) {
+  return readBreakpointMatch(query);
 }

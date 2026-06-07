@@ -261,7 +261,7 @@ function applyPreset() {
 }
 
 async function loadModels() {
-  if (!isPersonalPage.value) {
+  if (!isPersonalPage.value || modelLoading.value || !canFetchModels.value) {
     return;
   }
   const requestToken = ++modelLoadToken;

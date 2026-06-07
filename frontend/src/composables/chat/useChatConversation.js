@@ -1,4 +1,5 @@
 import { computed, nextTick, ref } from 'vue';
+import { isViewportMatch } from '../useViewport.js';
 import {
   createConversation,
   deleteConversation,
@@ -18,7 +19,7 @@ export function useChatConversation({ route, emit, showError }) {
   const sidebarLoadError = ref('');
   const sidebarLoading = ref(false);
   const historySearch = ref('');
-  const sidebarOpen = ref(typeof window !== 'undefined' && window.matchMedia('(min-width: 981px)').matches);
+  const sidebarOpen = ref(isViewportMatch('(min-width: 981px)'));
   const settingsDrawerOpen = ref(false);
   const selectedConversationIds = ref(new Set());
   const conversationActionBusy = ref(false);
@@ -51,6 +52,7 @@ export function useChatConversation({ route, emit, showError }) {
     return visibleConversationIds.value.length > 0
       && visibleConversationIds.value.every((id) => selectedConversationIds.value.has(id));
   });
+  const conversationReady = computed(() => Boolean(conversation.value?.id) && !loading.value);
 
   async function loadSidebarData() {
     if (conversationDisposed) {
@@ -174,6 +176,9 @@ export function useChatConversation({ route, emit, showError }) {
   }
 
   function openSavePanel() {
+    if (!conversationReady.value) {
+      return;
+    }
     savePanelOpen.value = true;
   }
 
@@ -182,7 +187,7 @@ export function useChatConversation({ route, emit, showError }) {
   }
 
   async function openNpcPanel() {
-    if (conversationDisposed) {
+    if (conversationDisposed || !conversationReady.value) {
       return;
     }
     if (npcPanelOpen.value) {
@@ -200,6 +205,9 @@ export function useChatConversation({ route, emit, showError }) {
   }
 
   function openEconomyPanel() {
+    if (!conversationReady.value) {
+      return;
+    }
     economyPanelOpen.value = true;
   }
 
@@ -395,6 +403,7 @@ export function useChatConversation({ route, emit, showError }) {
     visibleConversationIds,
     selectedConversationCount,
     allVisibleConversationsSelected,
+    conversationReady,
     loadSidebarData,
     startNewConversation,
     openConversation,

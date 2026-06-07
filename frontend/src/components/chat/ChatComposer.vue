@@ -47,7 +47,7 @@ defineExpose({ wrapRef, textareaRef });
     >
       <ChevronDown :size="18" />
     </button>
-    <form class="deep-composer" @submit.prevent="emit('submit', { isEnter: false })">
+    <form class="deep-composer" :aria-busy="sending" @submit.prevent="emit('submit', { isEnter: false })">
       <textarea
         ref="textareaRef"
         :value="input"
@@ -64,6 +64,7 @@ defineExpose({ wrapRef, textareaRef });
           class="preset-select"
           aria-label="选择对话预设"
           title="选择对话预设"
+          :disabled="sending"
           @change="emit('update:selectedPresetId', $event.target.value)"
         >
           <option value="">无预设</option>
@@ -75,6 +76,8 @@ defineExpose({ wrapRef, textareaRef });
           class="mode-pill model-switch-pill"
           type="button"
           :title="currentModel ? `当前模型：${currentModel}` : '切换模型'"
+          :disabled="sending"
+          :aria-busy="sending"
           @click="emit('open-model-switcher')"
         >
           <Bot :size="16" />
@@ -85,6 +88,8 @@ defineExpose({ wrapRef, textareaRef });
           :class="{ active: useStream }"
           type="button"
           :aria-pressed="String(useStream)"
+          :disabled="sending"
+          :aria-busy="sending"
           @click="emit('toggle-stream')"
         >
           <Sparkles :size="16" />
@@ -95,7 +100,8 @@ defineExpose({ wrapRef, textareaRef });
           :class="{ active: canToggleThinking && thinkingEnabled }"
           type="button"
           :aria-pressed="String(canToggleThinking && thinkingEnabled)"
-          :disabled="!canToggleThinking"
+          :disabled="sending || !canToggleThinking"
+          :aria-busy="sending"
           title="Model thinking mode"
           @click="emit('toggle-thinking')"
         >

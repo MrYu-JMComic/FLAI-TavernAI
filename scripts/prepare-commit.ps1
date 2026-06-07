@@ -40,11 +40,9 @@ function Get-UniquePaths {
 
     $seen = [ordered]@{}
     foreach ($rawPath in $Paths) {
-        foreach ($path in (([string]$rawPath) -split ",")) {
-            $normalized = Normalize-GitPath $path
-            if (-not [string]::IsNullOrWhiteSpace($normalized)) {
-                $seen[$normalized] = $true
-            }
+        $normalized = Normalize-GitPath ([string]$rawPath)
+        if (-not [string]::IsNullOrWhiteSpace($normalized)) {
+            $seen[$normalized] = $true
         }
     }
 

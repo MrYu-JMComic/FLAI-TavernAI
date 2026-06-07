@@ -4,6 +4,7 @@ import { Coins, Home, Menu, Moon, Save, Sun, Users } from '@lucide/vue';
 defineProps({
   showEconomyFeature: { type: Boolean, default: false },
   showNpcFeature: { type: Boolean, default: false },
+  conversationReady: { type: Boolean, default: false },
   theme: { type: String, default: 'light' }
 });
 
@@ -32,13 +33,13 @@ const emit = defineEmits(['navigate', 'toggle-theme', 'open-sidebar', 'open-econ
         <Moon v-if="theme === 'light'" :size="18" aria-hidden="true" />
         <Sun v-else :size="18" aria-hidden="true" />
       </button>
-      <button v-if="showEconomyFeature" class="deep-icon-button" type="button" aria-label="经济系统" title="经济系统" @click="emit('open-economy')">
+      <button v-if="showEconomyFeature" class="deep-icon-button" type="button" aria-label="经济系统" title="经济系统" :disabled="!conversationReady" :aria-busy="!conversationReady" @click="emit('open-economy')">
         <Coins :size="18" />
       </button>
-      <button v-if="showNpcFeature" class="deep-icon-button" type="button" aria-label="NPC 管理" title="NPC 管理" @click="emit('open-npc')">
+      <button v-if="showNpcFeature" class="deep-icon-button" type="button" aria-label="NPC 管理" title="NPC 管理" :disabled="!conversationReady" :aria-busy="!conversationReady" @click="emit('open-npc')">
         <Users :size="18" />
       </button>
-      <button class="deep-icon-button" type="button" aria-label="存档管理" title="存档管理" @click="emit('open-saves')">
+      <button class="deep-icon-button" type="button" aria-label="存档管理" title="存档管理" :disabled="!conversationReady" :aria-busy="!conversationReady" @click="emit('open-saves')">
         <Save :size="18" />
       </button>
     </div>

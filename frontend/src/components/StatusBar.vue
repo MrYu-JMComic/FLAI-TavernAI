@@ -2,6 +2,13 @@
 import { computed, onBeforeUnmount, ref, watch } from 'vue';
 import { ChevronDown } from '@lucide/vue';
 import { buildScopedChatCss } from '../utils/chatAppearance';
+import {
+  STATUS_BAR_TEMPLATE_ALLOWED_TAGS,
+  escapeStatusBarTemplateHtml as escapeHtml,
+  isSafeStatusBarCssValue as isSafeCssValue,
+  sanitizeStatusBarStyleBlock as sanitizeStyleBlock,
+  sanitizeStatusBarStyleText as sanitizeStyleText
+} from '../utils/statusBarTemplateSecurity';
 
 const VALID_VARIANTS = ['default', 'compact', 'minimal', 'neon'];
 const VALID_DENSITIES = ['default', 'cozy', 'compact'];
@@ -178,10 +185,6 @@ function parseSafeStyle(css) {
     }
   }
   return style;
-}
-
-function isSafeCssValue(value) {
-  return !/@import|expression\s*\(|javascript:|url\s*\(|behavior\s*:/i.test(String(value || ''));
 }
 
 const wrapperStyle = computed(() => {
@@ -402,7 +405,6 @@ function sanitizeTemplateHtml(html, styleBlocks = []) {
   }
   const parser = new window.DOMParser();
   const doc = parser.parseFromString(String(html || ''), 'text/html');
-  const allowedTags = new Set(['article', 'b', 'br', 'button', 'div', 'em', 'footer', 'header', 'hr', 'i', 'li', 'ol', 'p', 'section', 'small', 'span', 'strong', 'ul']);
   const allowedAttrs = new Set(['aria-label', 'class', 'data-sb-action', 'data-sb-copy', 'data-sb-reply', 'data-sb-text', 'role', 'style', 'title', 'type']);
   for (const node of [...doc.body.querySelectorAll('*')]) {
     const tag = node.tagName.toLowerCase();
@@ -414,7 +416,7 @@ function sanitizeTemplateHtml(html, styleBlocks = []) {
       node.remove();
       continue;
     }
-    if (!allowedTags.has(tag)) {
+    if (!STATUS_BAR_TEMPLATE_ALLOWED_TAGS.has(tag)) {
       node.replaceWith(...node.childNodes);
       continue;
     }
@@ -603,32 +605,6 @@ function templateLabelText(value) {
     .trim();
 }
 
-function sanitizeStyleText(value) {
-  return String(value || '')
-    .split(';')
-    .map((part) => part.trim())
-    .filter((part) => part && isSafeCssValue(part))
-    .join('; ');
-}
-
-function sanitizeStyleBlock(value) {
-  return String(value || '')
-    .replace(/@import[^;]+;?/gi, '')
-    .replace(/url\s*\([^)]*\)/gi, '')
-    .replace(/expression\s*\([^)]*\)/gi, '')
-    .replace(/javascript:/gi, '')
-    .replace(/behavior\s*:/gi, '');
-}
-
-function escapeHtml(value) {
-  return String(value ?? '').replace(/[&<>"']/g, (char) => ({
-    '&': '&amp;',
-    '<': '&lt;',
-    '>': '&gt;',
-    '"': '&quot;',
-    "'": '&#39;'
-  }[char]));
-}
 </script>
 
 <template>

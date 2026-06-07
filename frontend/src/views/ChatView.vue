@@ -84,7 +84,7 @@ const {
   savePanelOpen, npcPanelOpen, economyPanelOpen,
   presetList, selectedPresetId,
   filteredConversations, visibleConversationIds,
-  selectedConversationCount, allVisibleConversationsSelected,
+  selectedConversationCount, allVisibleConversationsSelected, conversationReady,
   loadSidebarData, startNewConversation, openConversation,
   openSidebar, closeSidebar, openSettings, closeSettings,
   openSavePanel, closeSavePanel, openNpcPanel, closeNpcPanel,
@@ -118,8 +118,8 @@ const {
   chatLorebookId, worldBooks, worldBooksLoading,
   effectiveChatAppearance, activeChatBackgroundUrl, chatMainStyle, chatScopeSelector,
   activeCharacter, activeRenderPlugins,
-  syncConversationAppearance, saveConversationAppearanceChanges,
-  applyConversationAppearance, disposeConversationAppearance,
+  syncConversationAppearance, resetConversationAppearance, saveConversationAppearanceChanges,
+  setChatLorebookId, applyConversationAppearance, disposeConversationAppearance,
   handleAppearanceBackgroundUpload, clearAppearanceField, handleSettingsBackgroundUpload,
   loadWorldBooks
 } = useChatAppearance({
@@ -138,7 +138,7 @@ const {
   messageAuthorName, messageAuthorInitial, messageAvatarUrl,
   canEditMessage, canDeleteMessage,
   beginEditMessage, cancelEditMessage,
-  saveMessageEdit, removeMessage, copyMessage,
+  setEditingMessageContent, saveMessageEdit, removeMessage, copyMessage,
   messageSwipeState, swipeLoading, initMessageSwipes, swipeMessagePrev, swipeMessageNext, getSwipeDisplay,
   branchBusy, loadConversationBranches, handleBranchMessage,
   resetMessageUiState, cleanup: cleanupMessageActions
@@ -165,7 +165,7 @@ const {
   input, useStream, thinkingEnabled,
   sending, usage,
   canSend, canToggleThinking,
-  submit, stop, toggleUseStream, toggleThinking,
+  submit, stop, setSelectedPresetId, toggleUseStream, toggleThinking,
   cleanup: cleanupSubmit
 } = useChatSubmit({
   route: props.route, messages, provider: computed(() => props.provider),
@@ -180,6 +180,9 @@ const {
 const { providerModels, syncProviderModels } = useProviderModels(computed(() => props.provider));
 
 function openModelSwitcher() {
+  if (sending.value) {
+    return;
+  }
   syncProviderModels();
   modelSwitcherOpen.value = true;
 }
@@ -202,6 +205,9 @@ function providerPayloadWithModel(model) {
 }
 
 async function refreshQuickModels() {
+  if (modelSwitcherRefreshing.value || modelSwitcherSaving.value) {
+    return;
+  }
   const requestToken = ++modelRefreshToken;
   const providerSnapshot = { ...(props.provider || {}) };
   const refreshKey = providerRefreshKey(providerSnapshot);
@@ -251,6 +257,9 @@ function providerRefreshKey(provider = {}) {
 }
 
 async function saveQuickModel(model) {
+  if (modelSwitcherSaving.value) {
+    return;
+  }
   const nextModel = String(model || '').trim();
   if (!nextModel) return;
   if (!props.provider?.baseUrl) {
@@ -944,8 +953,8 @@ watch(showNpcFeature, (active) => {
       :status-bar-template-cfg="statusBarTemplateCfg"
       @close="closeSettings"
       @save-appearance="saveConversationAppearanceChanges"
-      @update:chat-lorebook-id="(val) => chatLorebookId = val"
-      @reset-appearance="syncConversationAppearance(conversation?.settings)"
+      @update:chat-lorebook-id="setChatLorebookId"
+      @reset-appearance="resetConversationAppearance(conversation?.settings)"
       @background-upload="handleSettingsBackgroundUpload"
       @clear-field="clearAppearanceField"
       @update:accessory-settings-open="(val) => accessorySettingsOpen = val"
@@ -969,6 +978,7 @@ watch(showNpcFeature, (active) => {
       <ChatHeader
         :show-economy-feature="showEconomyFeature"
         :show-npc-feature="showNpcFeature"
+        :conversation-ready="conversationReady"
         :theme="theme"
         @navigate="(page) => emit('navigate', page)"
         @toggle-theme="emit('toggle-theme')"
@@ -1023,6 +1033,7 @@ watch(showNpcFeature, (active) => {
             :avatar-url="messageAvatarUrl(message)"
             :can-edit="canEditMessage(message)"
             :can-delete="canDeleteMessage(message)"
+            :message-action-busy="messageActionBusy === message.id"
             :render-plugins="activeRenderPlugins()"
             :swipe-display="getSwipeDisplay(message)"
             :swipe-can-prev="canSwipePrev(message)"
@@ -1035,7 +1046,7 @@ watch(showNpcFeature, (active) => {
             @save-edit="saveMessageEdit"
             @delete="removeMessage"
             @copy="copyMessage"
-            @update:editing-message-content="(val) => editingMessageContent = val"
+            @update:editing-message-content="setEditingMessageContent"
             @swipe-prev="swipeMessagePrev"
             @swipe-next="(item) => swipeMessageNext(item, route.params.id)"
             @branch="createBranchFromMessage"
@@ -1072,7 +1083,7 @@ watch(showNpcFeature, (active) => {
         @toggle-thinking="toggleThinking"
         @open-model-switcher="openModelSwitcher"
         @scroll-to-bottom="scrollToBottom()"
-        @update:selected-preset-id="(val) => selectedPresetId = val"
+        @update:selected-preset-id="setSelectedPresetId"
       />
       <ChatModelSwitcher
         :open="modelSwitcherOpen"

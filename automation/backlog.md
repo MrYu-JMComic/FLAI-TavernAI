@@ -181,3 +181,45 @@ The autonomous loop should choose one small item per run. Add new findings here 
 - 2026-06-07: Exposed ChatSidebar loading state so retry actions show pending feedback and cannot be spammed while loading.
 - 2026-06-07: Fixed prepare-commit single-path staging so tracked and untracked paths remain separate arrays.
 - 2026-06-07: Disabled ChatSidebar selection controls while conversation actions are busy.
+- 2026-06-07: Added prepare-commit fixture coverage for single tracked plus untracked staging.
+- 2026-06-07: Hardened ChatSidebar initial desktop-open state when `matchMedia` is unavailable.
+- 2026-06-07: Preserved comma-containing paths in prepare-commit staging by removing stale comma splitting.
+- 2026-06-07: Guarded Home character chat-open buttons against duplicate same-character conversation opens.
+- 2026-06-07: Reused the shared viewport matcher for ChatSidebar desktop breakpoint fallback.
+- 2026-06-07: Deduped prepare-commit validation fixtures into shared test helpers.
+- 2026-06-07: Refactored Home keyed pending guards into a shared composable with focused coverage.
+- 2026-06-07: Locked the Home character import preview while import is pending to prevent duplicate submits or stale modal cancellation.
+- 2026-06-07: Aligned SaveLoadPanel item busy state with globally disabled save-item actions.
+- 2026-06-07: Shared StatusBar custom-template security rules between validation and rendering with focused coverage.
+- 2026-06-07: Tightened SaveLoadPanel busy-state coverage without changing the existing component behavior.
+- 2026-06-07: Completed CharacterImagePanel image-action busy locking for edit, default, delete, reorder, and upload controls.
+- 2026-06-07: Deduped frontend SFC source-test helpers for panel busy-state coverage.
+- 2026-06-07: Reused the shared viewport fallback for chat appearance custom-script mobile context detection.
+- 2026-06-07: Locked TalentRollDialog roll, clear, and remove actions behind one visible busy state.
+- 2026-06-07: Unified SaveLoadPanel create and item mutation busy guards so save actions cannot overlap.
+- 2026-06-07: Guarded SaveLoadPanel list refreshes behind the same panel busy state as save mutations.
+- 2026-06-07: Completed NpcPanel action busy guards with visible disabled states and refresh/retry disabled coverage.
+- 2026-06-07: Allowed NpcPanel post-mutation refreshes to bypass the external action-busy guard explicitly.
+- 2026-06-07: Locked EconomyPanel history filters, retries, and pagination while economy/history loads are pending.
+- 2026-06-07: Guarded CharacterImagePanel duplicate upload events without invalidating the active upload token.
+- 2026-06-07: Locked ChatSettingsDrawer appearance fields and upload controls while appearance saving is pending.
+- 2026-06-07: Blocked TalentRollDialog actions while the current character talent context is still loading.
+- 2026-06-07: Locked ChatModelSwitcher search, refresh, and model selection while model saving is pending.
+- 2026-06-07: Froze ChatSettingsDrawer status-bar editor controls while status-bar saving is pending.
+- 2026-06-07: Locked ChatSettingsDrawer status-bar action buttons while status-bar saving is pending.
+- 2026-06-07: Guarded ChatModelSwitcher parent refresh and save handlers against duplicate pending events.
+- 2026-06-07: Froze ChatSettingsDrawer accessory skill controls while accessory saving is pending.
+- 2026-06-07: Guarded chat appearance background upload and clear entry points while appearance saving is pending.
+- 2026-06-07: Guarded chat status-bar editor entry points while status-bar saving is pending.
+- 2026-06-07: Froze ChatMessageItem edit controls while a message edit save is pending.
+- 2026-06-07: Guarded chat message edit draft entry points while a message action is pending.
+- 2026-06-07: Locked ChatMessageItem swipe navigation while a new swipe is loading.
+- 2026-06-07: Locked ChatComposer configuration controls while a message is sending.
+- 2026-06-07: Guarded chat lorebook selection updates while appearance saving is pending.
+- 2026-06-07: Locked ChatHeader conversation panel actions until the active conversation is ready.
+- 2026-06-07: Guarded chat composer preset selection updates while a message is sending.
+- 2026-06-07: Guarded chat model switcher opening while a message is sending.
+- 2026-06-07: Locked WorldBookView book and entry mutation actions while saving is active.
+- 2026-06-07: Guarded chat appearance reset events while appearance saving is pending.
+- 2026-06-07: Guarded WorldBookView AI creation actions while AI generation is already running.
+- 2026-06-07: Guarded SettingsView model refresh events while model refresh is unavailable or already loading.

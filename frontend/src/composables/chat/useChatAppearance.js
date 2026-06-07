@@ -1,6 +1,6 @@
 import { computed, reactive, ref } from 'vue';
-import { fetchWorldBooks, saveConversationSettings } from '../../api';
-import { isPhoneViewport } from '../useViewport';
+import { fetchWorldBooks, saveConversationSettings } from '../../api.js';
+import { isPhoneViewport } from '../useViewport.js';
 import {
   buildScopedChatCss,
   createDefaultChatAppearance,
@@ -8,7 +8,7 @@ import {
   normalizeChatAppearance,
   resolveChatBackgroundUrl,
   runChatCustomScript
-} from '../../utils/chatAppearance';
+} from '../../utils/chatAppearance.js';
 
 export function useChatAppearance({
   conversation,
@@ -77,6 +77,20 @@ export function useChatAppearance({
     Object.assign(chatAppearanceForm, createDefaultChatAppearance(), userSettings);
     customAppearanceState.value = {};
     chatLorebookId.value = settings?.chatLorebookId ?? conversation.value?.chatLorebookId ?? null;
+  }
+
+  function resetConversationAppearance(settings = conversation.value?.settings) {
+    if (appearanceDisposed || appearanceSaving.value) {
+      return;
+    }
+    syncConversationAppearance(settings);
+  }
+
+  function setChatLorebookId(value) {
+    if (appearanceDisposed || appearanceSaving.value) {
+      return;
+    }
+    chatLorebookId.value = value || null;
   }
 
   async function saveConversationAppearanceChanges() {
@@ -275,10 +289,10 @@ export function useChatAppearance({
     if (input) {
       input.value = '';
     }
-    const uploadToken = nextBackgroundUploadToken(field);
-    if (appearanceDisposed || !file) {
+    if (appearanceDisposed || appearanceSaving.value || !file) {
       return;
     }
+    const uploadToken = nextBackgroundUploadToken(field);
 
     if (!['image/png', 'image/jpeg', 'image/webp', 'image/gif'].includes(file.type)) {
       notify.warning('背景图片仅支持 PNG、JPG、WebP、GIF');
@@ -305,7 +319,7 @@ export function useChatAppearance({
   }
 
   function clearAppearanceField(field) {
-    if (appearanceDisposed) {
+    if (appearanceDisposed || appearanceSaving.value) {
       return;
     }
     nextBackgroundUploadToken(field);
@@ -405,6 +419,8 @@ export function useChatAppearance({
     activeCharacter,
     activeRenderPlugins,
     syncConversationAppearance,
+    resetConversationAppearance,
+    setChatLorebookId,
     saveConversationAppearanceChanges,
     applyConversationAppearance,
     cleanupConversationAppearance,

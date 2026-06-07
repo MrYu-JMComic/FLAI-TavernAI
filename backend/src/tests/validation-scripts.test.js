@@ -31,10 +31,76 @@ function spawnNodeScript(relativePath, args = []) {
   });
 }
 
+function findAvailableCommand(candidates, args) {
+  for (const command of candidates) {
+    const result = spawnSync(command, args, { encoding: 'utf8' });
+    if (result.status === 0) {
+      return command;
+    }
+  }
+  return '';
+}
+
+const gitCommand = findAvailableCommand(['git'], ['--version']);
+const powershellCommand = findAvailableCommand(
+  process.platform === 'win32' ? ['powershell', 'pwsh'] : ['pwsh', 'powershell'],
+  ['-NoProfile', '-Command', '$PSVersionTable.PSVersion.ToString()']
+);
+
 function writeFixtureFile(root, relativePath, text) {
   const filePath = path.join(root, relativePath);
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
   fs.writeFileSync(filePath, text, 'utf8');
+}
+
+function createPrepareCommitFixture(prefix, trackedPath) {
+  const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  writeFixtureFile(fixtureRoot, 'scripts/prepare-commit.ps1', readText('scripts/prepare-commit.ps1'));
+  writeFixtureFile(fixtureRoot, trackedPath, 'before\n');
+
+  execFileSync(gitCommand, ['init'], { cwd: fixtureRoot, encoding: 'utf8' });
+  execFileSync(gitCommand, ['add', 'scripts/prepare-commit.ps1', trackedPath], {
+    cwd: fixtureRoot,
+    encoding: 'utf8'
+  });
+  execFileSync(gitCommand, [
+    '-c',
+    'user.name=FLAI Test',
+    '-c',
+    'user.email=flai-test@example.invalid',
+    'commit',
+    '-m',
+    'initial'
+  ], { cwd: fixtureRoot, encoding: 'utf8' });
+
+  return fixtureRoot;
+}
+
+function runPrepareCommitAll(fixtureRoot) {
+  return spawnSync(powershellCommand, [
+    '-ExecutionPolicy',
+    'Bypass',
+    '-File',
+    path.join(fixtureRoot, 'scripts', 'prepare-commit.ps1'),
+    '-Stage',
+    '-AllAllowed',
+    '-IncludeUntracked',
+    '-SkipEncodingCheck'
+  ], {
+    cwd: fixtureRoot,
+    encoding: 'utf8'
+  });
+}
+
+function getStagedPaths(fixtureRoot) {
+  return execFileSync(gitCommand, ['diff', '--cached', '--name-only'], {
+    cwd: fixtureRoot,
+    encoding: 'utf8'
+  })
+    .trim()
+    .split(/\r?\n/)
+    .filter(Boolean)
+    .sort();
 }
 
 test('package scripts keep encoding checks wired into backend tests and frontend builds', () => {
@@ -70,6 +136,40 @@ test('encoding checker keeps reports in scope and reports scan coverage', () => 
   assert.doesNotMatch(encodingCheck, /path\.normalize\(['"]automation\/reports['"]\)/);
   assert.match(encodingCheck, /scannedFileCount\s*\+=\s*1/);
   assert.match(encodingCheck, /scanned\s+\$\{scannedFileCount\}\s+files/);
+});
+
+test('prepare commit stages single tracked and untracked paths as separate targets', {
+  skip: !gitCommand || !powershellCommand
+}, () => {
+  const fixtureRoot = createPrepareCommitFixture('flai-prepare-commit-', 'tracked.txt');
+
+  try {
+    writeFixtureFile(fixtureRoot, 'tracked.txt', 'after\n');
+    writeFixtureFile(fixtureRoot, 'untracked.txt', 'new\n');
+
+    const result = runPrepareCommitAll(fixtureRoot);
+    assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+    assert.deepEqual(getStagedPaths(fixtureRoot), ['tracked.txt', 'untracked.txt']);
+  } finally {
+    fs.rmSync(fixtureRoot, { recursive: true, force: true });
+  }
+});
+
+test('prepare commit preserves comma-containing path names', {
+  skip: !gitCommand || !powershellCommand
+}, () => {
+  const fixtureRoot = createPrepareCommitFixture('flai-prepare-commit-comma-', 'tracked,comma.txt');
+
+  try {
+    writeFixtureFile(fixtureRoot, 'tracked,comma.txt', 'after\n');
+    writeFixtureFile(fixtureRoot, 'untracked,comma.txt', 'new\n');
+
+    const result = runPrepareCommitAll(fixtureRoot);
+    assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+    assert.deepEqual(getStagedPaths(fixtureRoot), ['tracked,comma.txt', 'untracked,comma.txt']);
+  } finally {
+    fs.rmSync(fixtureRoot, { recursive: true, force: true });
+  }
 });
 
 test('frontend API module stays importable by Node-based diagnostics', () => {

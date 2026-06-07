@@ -14,4 +14,3 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\start-dev.
 
 echo.
 echo Launcher finished. Keep the Backend and Frontend windows open to keep the app running.
-pause

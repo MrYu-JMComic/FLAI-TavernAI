@@ -64,6 +64,7 @@ const totalPages = computed(() => Math.max(1, Math.ceil(historyTotal.value / his
 const currentPage = computed(() => Math.floor(historyOffset.value / historyLimit) + 1);
 const hasPrevPage = computed(() => historyOffset.value > 0);
 const hasNextPage = computed(() => historyOffset.value + historyLimit < historyTotal.value);
+const historyActionDisabled = computed(() => loading.value || historyLoading.value);
 
 watch(() => props.open, async (isOpen) => {
   if (isOpen) await loadEconomy();
@@ -164,25 +165,28 @@ async function loadHistory(offset = 0, expectedConversationId = '') {
 }
 
 function handleCurrencyFilterChange() {
+  if (historyActionDisabled.value) return;
   loadHistory(0);
 }
 
 function retryEconomyLoad() {
+  if (loading.value) return;
   loadEconomy();
 }
 
 function retryHistoryLoad() {
+  if (historyActionDisabled.value) return;
   loadHistory(historyOffset.value);
 }
 
 function goToPrevPage() {
-  if (hasPrevPage.value) {
+  if (hasPrevPage.value && !historyActionDisabled.value) {
     loadHistory(historyOffset.value - historyLimit);
   }
 }
 
 function goToNextPage() {
-  if (hasNextPage.value) {
+  if (hasNextPage.value && !historyActionDisabled.value) {
     loadHistory(historyOffset.value + historyLimit);
   }
 }
@@ -282,7 +286,13 @@ function getTransactionAmountClass(tx) {
           <div v-else-if="loadError" class="economy-empty economy-error-state">
             <Coins :size="36" />
             <p>{{ loadError }}</p>
-            <button class="economy-retry-button" type="button" @click="retryEconomyLoad">
+            <button
+              class="economy-retry-button"
+              type="button"
+              :disabled="loading"
+              :aria-busy="loading"
+              @click="retryEconomyLoad"
+            >
               <RefreshCw :size="14" />
               <span>重试</span>
             </button>
@@ -324,6 +334,8 @@ function getTransactionAmountClass(tx) {
                 v-model="historyCurrencyFilter"
                 class="history-currency-select"
                 aria-label="筛选交易货币"
+                :disabled="historyActionDisabled"
+                :aria-busy="historyLoading"
                 @change="handleCurrencyFilterChange"
               >
                 <option
@@ -344,7 +356,13 @@ function getTransactionAmountClass(tx) {
             <div v-else-if="historyError" class="economy-empty economy-error-state">
               <History :size="36" />
               <p>{{ historyError }}</p>
-              <button class="economy-retry-button" type="button" @click="retryHistoryLoad">
+              <button
+                class="economy-retry-button"
+                type="button"
+                :disabled="historyActionDisabled"
+                :aria-busy="historyLoading"
+                @click="retryHistoryLoad"
+              >
                 <RefreshCw :size="14" />
                 <span>重试</span>
               </button>
@@ -397,7 +415,8 @@ function getTransactionAmountClass(tx) {
                 class="pagination-btn"
                 type="button"
                 aria-label="上一页交易记录"
-                :disabled="!hasPrevPage"
+                :disabled="!hasPrevPage || historyActionDisabled"
+                :aria-busy="historyLoading"
                 @click="goToPrevPage"
               >
                 <ChevronLeft :size="16" />
@@ -409,7 +428,8 @@ function getTransactionAmountClass(tx) {
                 class="pagination-btn"
                 type="button"
                 aria-label="下一页交易记录"
-                :disabled="!hasNextPage"
+                :disabled="!hasNextPage || historyActionDisabled"
+                :aria-busy="historyLoading"
                 @click="goToNextPage"
               >
                 <ChevronRight :size="16" />
@@ -592,9 +612,14 @@ function getTransactionAmountClass(tx) {
   cursor: pointer;
 }
 
-.economy-retry-button:hover {
+.economy-retry-button:hover:not(:disabled) {
   border-color: color-mix(in srgb, var(--primary) 46%, var(--line));
   background: color-mix(in srgb, var(--primary) 13%, var(--surface));
+}
+
+.economy-retry-button:disabled {
+  opacity: 0.48;
+  cursor: not-allowed;
 }
 
 /* Balance grid */
@@ -672,6 +697,11 @@ function getTransactionAmountClass(tx) {
 .history-currency-select:focus {
   border-color: var(--primary);
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--primary) 14%, transparent);
+}
+
+.history-currency-select:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
 }
 
 /* History list */

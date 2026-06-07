@@ -22,11 +22,14 @@ const showResult = ref(false);
 const loading = ref(true);
 const loadError = ref('');
 const clearingAll = ref(false);
+const removingTalentId = ref('');
 let loadRequestId = 0;
 let dialogContextVersion = 0;
 let dialogDisposed = false;
 
 const selectedPool = computed(() => pools.value.find((p) => p.id === selectedPoolId.value));
+const talentMutationBusy = computed(() => clearingAll.value || Boolean(removingTalentId.value));
+const talentActionBusy = computed(() => loading.value || rolling.value || talentMutationBusy.value);
 
 watch(
   () => [props.characterId, props.canEdit],
@@ -40,6 +43,9 @@ watch(
 onBeforeUnmount(() => {
   dialogDisposed = true;
   dialogContextVersion += 1;
+  rolling.value = false;
+  clearingAll.value = false;
+  removingTalentId.value = '';
 });
 
 async function loadDialogData() {
@@ -81,8 +87,12 @@ async function loadDialogData() {
 
 function resetDialogContext() {
   dialogContextVersion += 1;
+  pools.value = [];
+  talents.value = [];
+  selectedPoolId.value = '';
   rolling.value = false;
   clearingAll.value = false;
+  removingTalentId.value = '';
   rollResult.value = null;
   showResult.value = false;
 }
@@ -112,6 +122,9 @@ function rarityLabel(rarity) {
 }
 
 async function doRoll() {
+  if (talentActionBusy.value) {
+    return;
+  }
   if (!props.canEdit) {
     notify.warning('只有角色拥有者可以 Roll 天赋');
     return;
@@ -154,10 +167,11 @@ async function doRoll() {
 }
 
 async function removeTalent(talentId) {
-  if (!props.canEdit) {
+  if (!props.canEdit || talentActionBusy.value) {
     return;
   }
   const context = getDialogContext();
+  removingTalentId.value = talentId;
   try {
     await deleteCharacterTalent(context.characterId, talentId);
     if (!isCurrentDialogContext(context)) {
@@ -170,11 +184,15 @@ async function removeTalent(talentId) {
     if (isCurrentDialogContext(context)) {
       notify.error(err.message);
     }
+  } finally {
+    if (isCurrentDialogContext(context) && removingTalentId.value === talentId) {
+      removingTalentId.value = '';
+    }
   }
 }
 
 async function clearAll() {
-  if (!props.canEdit) return;
+  if (!props.canEdit || talentActionBusy.value) return;
   if (!talents.value.length) return;
   if (!window.confirm('确定清空这个角色的全部天赋吗？')) return;
   const context = getDialogContext();
@@ -230,7 +248,7 @@ function closeResult() {
             <div class="talent-pool-selector">
               <label class="field">
                 <span>选择天赋池</span>
-                <select v-model="selectedPoolId" :disabled="rolling || !pools.length">
+                <select v-model="selectedPoolId" :disabled="talentActionBusy || !pools.length">
                   <option v-if="!pools.length" value="" disabled>暂无天赋池</option>
                   <option v-for="pool in pools" :key="pool.id" :value="pool.id">
                     {{ pool.name }}（{{ pool.talents?.length || 0 }} 个天赋）
@@ -243,7 +261,8 @@ function closeResult() {
             <button
               class="primary-button roll-button"
               type="button"
-              :disabled="rolling || !pools.length || !selectedPoolId"
+              :disabled="talentActionBusy || !pools.length || !selectedPoolId"
+              :aria-busy="rolling"
               @click="doRoll"
             >
               <div class="roll-dice-wrap" :class="{ spinning: rolling }">
@@ -281,7 +300,8 @@ function closeResult() {
                 v-if="talents.length && canEdit"
                 class="ghost-button clear-all-btn"
                 type="button"
-                :disabled="clearingAll"
+                :disabled="talentActionBusy"
+                :aria-busy="clearingAll"
                 @click="clearAll"
               >
                 <Trash2 :size="14" />
@@ -314,6 +334,8 @@ function closeResult() {
                     type="button"
                     title="移除天赋"
                     :aria-label="`移除天赋：${talent.talentName}`"
+                    :disabled="talentActionBusy"
+                    :aria-busy="removingTalentId === talent.id"
                     @click="removeTalent(talent.id)"
                   >
                     <Trash2 :size="14" />

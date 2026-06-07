@@ -1,3 +1,5 @@
+import { isPhoneViewport } from '../composables/useViewport.js';
+
 const defaultAppearance = () => ({
   desktopBackgroundUrl: '',
   mobileBackgroundUrl: '',
@@ -109,9 +111,7 @@ export function buildChatScriptContext({
     setCssVar,
     requestPaint,
     wait,
-    isMobile: typeof window !== 'undefined'
-      ? window.matchMedia('(max-width: 760px)').matches
-      : false
+    isMobile: isPhoneViewport()
   };
 }
 

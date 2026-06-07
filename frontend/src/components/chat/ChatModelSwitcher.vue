@@ -29,7 +29,8 @@ const providerContextKey = computed(() => {
 const gatewayLabel = computed(() => {
   return String(props.provider?.gatewayName || props.provider?.providerType || '当前网关').trim();
 });
-const canRefresh = computed(() => Boolean(props.provider?.baseUrl) && !props.refreshing);
+const modelSelectionLocked = computed(() => props.saving);
+const canRefresh = computed(() => Boolean(props.provider?.baseUrl) && !props.refreshing && !modelSelectionLocked.value);
 const modelOptions = computed(() => {
   const byId = new Map();
   const current = currentModel.value;
@@ -83,6 +84,7 @@ watch(currentModel, (value, previousValue) => {
 });
 
 function chooseModel(modelId) {
+  if (modelSelectionLocked.value) return;
   draftModel.value = modelId;
 }
 
@@ -95,7 +97,7 @@ function saveDraft() {
 <template>
   <Teleport to="body">
     <div v-if="open" class="chat-model-switcher-overlay" @click.self="emit('close')">
-      <section class="chat-model-switcher" role="dialog" aria-modal="true" aria-label="切换模型">
+      <section class="chat-model-switcher" role="dialog" aria-modal="true" aria-label="切换模型" :aria-busy="saving || refreshing">
         <header class="chat-model-switcher-head">
           <div>
             <span>{{ gatewayLabel }}</span>
@@ -107,11 +109,11 @@ function saveDraft() {
         </header>
 
         <div class="chat-model-switcher-tools">
-          <label class="chat-model-search">
+          <label class="chat-model-search" :class="{ 'is-disabled': modelSelectionLocked }">
             <Search :size="17" />
-            <input v-model.trim="search" type="search" placeholder="搜索当前网关模型" />
+            <input v-model.trim="search" type="search" placeholder="搜索当前网关模型" :disabled="modelSelectionLocked" />
           </label>
-          <button class="ghost-button compact-button" type="button" :disabled="!canRefresh" @click="emit('refresh')">
+          <button class="ghost-button compact-button" type="button" :disabled="!canRefresh" :aria-busy="refreshing" @click="emit('refresh')">
             <RefreshCw :size="17" :class="{ spinning: refreshing }" />
             <span>{{ refreshing ? '刷新中' : '刷新' }}</span>
           </button>
@@ -124,6 +126,8 @@ function saveDraft() {
             class="chat-model-option"
             :class="{ active: draftModel === model.id, current: currentModel === model.id }"
             type="button"
+            :disabled="modelSelectionLocked"
+            :aria-busy="saving && draftModel === model.id"
             @click="chooseModel(model.id)"
             @dblclick="saveDraft"
           >
@@ -139,7 +143,7 @@ function saveDraft() {
 
         <div v-else class="chat-model-empty">
           <p>{{ modelOptions.length ? '没有匹配的模型' : '当前网关暂无模型列表' }}</p>
-          <button class="ghost-button compact-button" type="button" :disabled="!canRefresh" @click="emit('refresh')">
+          <button class="ghost-button compact-button" type="button" :disabled="!canRefresh" :aria-busy="refreshing" @click="emit('refresh')">
             <RefreshCw :size="17" />
             <span>刷新模型</span>
           </button>
@@ -147,7 +151,7 @@ function saveDraft() {
 
         <footer class="chat-model-switcher-footer">
           <p>当前：<strong>{{ currentModel || '未配置' }}</strong></p>
-          <button class="chat-model-save" type="button" :disabled="!canSave" @click="saveDraft">
+          <button class="chat-model-save" type="button" :disabled="!canSave" :aria-busy="saving" @click="saveDraft">
             <Check :size="17" />
             <span>{{ saving ? '切换中' : '切换模型' }}</span>
           </button>

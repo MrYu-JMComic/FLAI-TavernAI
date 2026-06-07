@@ -43,6 +43,7 @@ const detailLoading = ref(false);
 const detailError = ref('');
 const addMemoryOpen = ref(false);
 const addBehaviorOpen = ref(false);
+const npcActionBusyId = ref('');
 let npcLoadToken = 0;
 let npcDetailToken = 0;
 let npcMutationToken = 0;
@@ -76,6 +77,7 @@ const selectedNpcStats = computed(() => ({
 const emptyNpcNames = computed(() => npcs.value
   .filter((npc) => Number(npc.memoryCount || 0) === 0 && Number(npc.behaviorCount || 0) === 0)
   .map((npc) => npc.name));
+const npcActionBusy = computed(() => Boolean(npcActionBusyId.value));
 
 const memoryTypeOptions = [
   { value: 'event', label: '事件' },
@@ -134,6 +136,7 @@ function resetNpcState() {
   detailError.value = '';
   addMemoryOpen.value = false;
   addBehaviorOpen.value = false;
+  npcActionBusyId.value = '';
   resetNpcForms();
   loading.value = false;
   detailLoading.value = false;
@@ -164,13 +167,43 @@ function isCurrentNpcMutation(mutationToken, conversationId, npcName = null) {
     && (npcName === null || npcName === selectedNpc.value);
 }
 
-async function loadNpcs() {
+function startNpcAction(actionId) {
+  if (npcActionBusy.value) return false;
+  npcActionBusyId.value = actionId;
+  return true;
+}
+
+function finishNpcAction(actionId, mutationToken, conversationId, npcName = null) {
+  if (npcActionBusyId.value !== actionId) return;
+  if (!isCurrentNpcMutation(mutationToken, conversationId, npcName)) return;
+  npcActionBusyId.value = '';
+}
+
+function isNpcActionBusy(actionId) {
+  return npcActionBusyId.value === actionId;
+}
+
+function memoryActionId(memoryId) {
+  return `memory-delete:${memoryId}`;
+}
+
+function behaviorToggleActionId(behaviorId) {
+  return `behavior-toggle:${behaviorId}`;
+}
+
+function behaviorDeleteActionId(behaviorId) {
+  return `behavior-delete:${behaviorId}`;
+}
+
+async function loadNpcs(options = {}) {
   if (npcPanelDisposed) return;
+  const allowWhileBusy = Boolean(options.allowWhileBusy);
   const conversationId = props.conversationId;
   if (!conversationId) {
     resetNpcState();
     return;
   }
+  if (!allowWhileBusy && npcActionBusy.value) return;
   const requestToken = ++npcLoadToken;
   loading.value = true;
   loadError.value = '';
@@ -187,7 +220,7 @@ async function loadNpcs() {
       setSelectedNpc(npcs.value[0].name);
     }
     if (selectedNpc.value) {
-      await loadNpcDetail();
+      await loadNpcDetail({ allowWhileBusy });
     } else {
       memories.value = [];
       behaviors.value = [];
@@ -210,9 +243,10 @@ async function loadNpcs() {
 }
 
 async function selectNpc(name) {
-  if (npcPanelDisposed) return;
+  if (npcPanelDisposed || npcActionBusy.value) return;
   if (name !== selectedNpc.value) {
     npcMutationToken += 1;
+    npcActionBusyId.value = '';
   }
   setSelectedNpc(name);
   memories.value = [];
@@ -223,8 +257,9 @@ async function selectNpc(name) {
   await loadNpcDetail();
 }
 
-async function loadNpcDetail() {
+async function loadNpcDetail(options = {}) {
   if (npcPanelDisposed) return;
+  const allowWhileBusy = Boolean(options.allowWhileBusy);
   const conversationId = props.conversationId;
   const npcName = selectedNpc.value;
   if (!conversationId || !npcName) {
@@ -233,6 +268,7 @@ async function loadNpcDetail() {
     behaviors.value = [];
     return;
   }
+  if (!allowWhileBusy && npcActionBusy.value) return;
   const requestToken = ++npcDetailToken;
   detailLoading.value = true;
   detailError.value = '';
@@ -267,6 +303,8 @@ async function submitMemory() {
   const conversationId = props.conversationId;
   const npcName = selectedNpc.value;
   if (!conversationId || !npcName) return;
+  const actionId = 'memory-create';
+  if (!startNpcAction(actionId)) return;
   const mutationToken = npcMutationToken;
   try {
     const mem = await addNpcMemory(conversationId, npcName, {
@@ -277,12 +315,14 @@ async function submitMemory() {
     memories.value.unshift(mem);
     memoryForm.content = '';
     addMemoryOpen.value = false;
-    await loadNpcs();
+    await loadNpcs({ allowWhileBusy: true });
     if (!isCurrentNpcMutation(mutationToken, conversationId, npcName)) return;
     notify.success('记忆已添加');
   } catch (err) {
     if (!isCurrentNpcMutation(mutationToken, conversationId, npcName)) return;
     notify.error(err.message || '添加记忆失败');
+  } finally {
+    finishNpcAction(actionId, mutationToken, conversationId, npcName);
   }
 }
 
@@ -291,17 +331,21 @@ async function removeMemory(memoryId) {
   const conversationId = props.conversationId;
   const npcName = selectedNpc.value;
   if (!conversationId || !npcName) return;
+  const actionId = memoryActionId(memoryId);
+  if (!startNpcAction(actionId)) return;
   const mutationToken = npcMutationToken;
   try {
     await deleteNpcMemory(conversationId, npcName, memoryId);
     if (!isCurrentNpcMutation(mutationToken, conversationId, npcName)) return;
     memories.value = memories.value.filter((m) => m.id !== memoryId);
-    await loadNpcs();
+    await loadNpcs({ allowWhileBusy: true });
     if (!isCurrentNpcMutation(mutationToken, conversationId, npcName)) return;
     notify.success('记忆已删除');
   } catch (err) {
     if (!isCurrentNpcMutation(mutationToken, conversationId, npcName)) return;
     notify.error(err.message || '删除记忆失败');
+  } finally {
+    finishNpcAction(actionId, mutationToken, conversationId, npcName);
   }
 }
 
@@ -314,6 +358,8 @@ async function submitBehavior() {
   const conversationId = props.conversationId;
   const npcName = selectedNpc.value;
   if (!conversationId || !npcName) return;
+  const actionId = 'behavior-create';
+  if (!startNpcAction(actionId)) return;
   const mutationToken = npcMutationToken;
   try {
     const beh = await addNpcBehavior(conversationId, npcName, {
@@ -329,12 +375,14 @@ async function submitBehavior() {
     behaviorForm.action = '';
     behaviorForm.priority = 0;
     addBehaviorOpen.value = false;
-    await loadNpcs();
+    await loadNpcs({ allowWhileBusy: true });
     if (!isCurrentNpcMutation(mutationToken, conversationId, npcName)) return;
     notify.success('行为规则已添加');
   } catch (err) {
     if (!isCurrentNpcMutation(mutationToken, conversationId, npcName)) return;
     notify.error(err.message || '添加行为规则失败');
+  } finally {
+    finishNpcAction(actionId, mutationToken, conversationId, npcName);
   }
 }
 
@@ -343,6 +391,8 @@ async function toggleBehavior(behavior) {
   const conversationId = props.conversationId;
   const npcName = selectedNpc.value;
   if (!conversationId || !npcName) return;
+  const actionId = behaviorToggleActionId(behavior.id);
+  if (!startNpcAction(actionId)) return;
   const mutationToken = npcMutationToken;
   try {
     const updated = await updateNpcBehavior(conversationId, npcName, behavior.id, {
@@ -353,6 +403,8 @@ async function toggleBehavior(behavior) {
   } catch (err) {
     if (!isCurrentNpcMutation(mutationToken, conversationId, npcName)) return;
     notify.error(err.message || '更新失败');
+  } finally {
+    finishNpcAction(actionId, mutationToken, conversationId, npcName);
   }
 }
 
@@ -361,17 +413,21 @@ async function removeBehavior(behaviorId) {
   const conversationId = props.conversationId;
   const npcName = selectedNpc.value;
   if (!conversationId || !npcName) return;
+  const actionId = behaviorDeleteActionId(behaviorId);
+  if (!startNpcAction(actionId)) return;
   const mutationToken = npcMutationToken;
   try {
     await deleteNpcBehavior(conversationId, npcName, behaviorId);
     if (!isCurrentNpcMutation(mutationToken, conversationId, npcName)) return;
     behaviors.value = behaviors.value.filter((b) => b.id !== behaviorId);
-    await loadNpcs();
+    await loadNpcs({ allowWhileBusy: true });
     if (!isCurrentNpcMutation(mutationToken, conversationId, npcName)) return;
     notify.success('行为规则已删除');
   } catch (err) {
     if (!isCurrentNpcMutation(mutationToken, conversationId, npcName)) return;
     notify.error(err.message || '删除行为规则失败');
+  } finally {
+    finishNpcAction(actionId, mutationToken, conversationId, npcName);
   }
 }
 
@@ -384,6 +440,8 @@ async function removeSelectedNpc() {
   if (!window.confirm(`从 NPC 列表移除“${npcName}”？已有记忆和行为不会被删除。`)) {
     return;
   }
+  const actionId = 'npc-remove-selected';
+  if (!startNpcAction(actionId)) return;
   const mutationToken = npcMutationToken;
   try {
     await hideConversationNpc(conversationId, npcName);
@@ -391,12 +449,14 @@ async function removeSelectedNpc() {
     setSelectedNpc('');
     memories.value = [];
     behaviors.value = [];
-    await loadNpcs();
+    await loadNpcs({ allowWhileBusy: true });
     if (!isCurrentNpcMutation(mutationToken, conversationId)) return;
     notify.success('NPC 已从列表移除');
   } catch (err) {
     if (!isCurrentNpcMutation(mutationToken, conversationId, npcName)) return;
     notify.error(err.message || '移除 NPC 失败');
+  } finally {
+    finishNpcAction(actionId, mutationToken, conversationId);
   }
 }
 
@@ -410,6 +470,8 @@ async function removeEmptyNpcs() {
   if (!window.confirm(`从 NPC 列表移除 ${suffix}没有记忆和行为的 NPC？\n${preview}\n已有记忆和行为不会被删除。`)) {
     return;
   }
+  const actionId = 'npc-remove-empty';
+  if (!startNpcAction(actionId)) return;
   const mutationToken = npcMutationToken;
   try {
     const result = await hideEmptyConversationNpcs(conversationId);
@@ -419,12 +481,14 @@ async function removeEmptyNpcs() {
       memories.value = [];
       behaviors.value = [];
     }
-    await loadNpcs();
+    await loadNpcs({ allowWhileBusy: true });
     if (!isCurrentNpcMutation(mutationToken, conversationId)) return;
     notify.success(`已移除 ${result?.count ?? names.length} 个空 NPC`);
   } catch (err) {
     if (!isCurrentNpcMutation(mutationToken, conversationId)) return;
     notify.error(err.message || '批量移除空 NPC 失败');
+  } finally {
+    finishNpcAction(actionId, mutationToken, conversationId);
   }
 }
 
@@ -500,7 +564,8 @@ function formatTime(iso) {
                   <button
                     class="npc-empty-remove"
                     type="button"
-                    :disabled="!emptyNpcNames.length"
+                    :disabled="!emptyNpcNames.length || loading || npcActionBusy"
+                    :aria-busy="isNpcActionBusy('npc-remove-empty')"
                     title="移除没有记忆和行为的 NPC"
                     @click="removeEmptyNpcs"
                   >
@@ -511,6 +576,8 @@ function formatTime(iso) {
                     type="button"
                     title="刷新"
                     aria-label="刷新 NPC 列表"
+                    :disabled="loading || npcActionBusy"
+                    :aria-busy="loading"
                     @click="loadNpcs"
                   >
                     <RefreshCw :size="15" />
@@ -520,7 +587,7 @@ function formatTime(iso) {
               <div v-if="loading" class="npc-empty">加载中...</div>
               <div v-else-if="loadError && !npcs.length" class="npc-empty npc-error-state">
                 <p>{{ loadError }}</p>
-                <button class="npc-retry-button" type="button" @click="loadNpcs">
+                <button class="npc-retry-button" type="button" :disabled="loading || npcActionBusy" @click="loadNpcs">
                   <RefreshCw :size="14" />
                   <span>重试</span>
                 </button>
@@ -528,7 +595,7 @@ function formatTime(iso) {
               <template v-else>
                 <div v-if="loadError" class="npc-inline-error">
                   <span>{{ loadError }}</span>
-                  <button class="npc-retry-button" type="button" @click="loadNpcs">
+                  <button class="npc-retry-button" type="button" :disabled="loading || npcActionBusy" @click="loadNpcs">
                     <RefreshCw :size="14" />
                     <span>重试</span>
                   </button>
@@ -543,6 +610,7 @@ function formatTime(iso) {
                     class="npc-item"
                     :class="{ active: npc.name === selectedNpc }"
                     type="button"
+                    :disabled="npcActionBusy"
                     @click="selectNpc(npc.name)"
                   >
                     <span class="npc-item-name">{{ npc.name }}</span>
@@ -566,6 +634,8 @@ function formatTime(iso) {
                     class="npc-detail-remove"
                     type="button"
                     title="从列表移除"
+                    :disabled="npcActionBusy"
+                    :aria-busy="isNpcActionBusy('npc-remove-selected')"
                     @click="removeSelectedNpc"
                   >
                     <Trash2 :size="13" />
@@ -598,7 +668,7 @@ function formatTime(iso) {
               <div v-if="detailLoading" class="npc-empty">加载中...</div>
               <div v-else-if="detailError" class="npc-empty npc-error-state">
                 <p>{{ detailError }}</p>
-                <button class="npc-retry-button" type="button" @click="loadNpcDetail">
+                <button class="npc-retry-button" type="button" :disabled="detailLoading || npcActionBusy" @click="loadNpcDetail">
                   <RefreshCw :size="14" />
                   <span>重试</span>
                 </button>
@@ -610,13 +680,14 @@ function formatTime(iso) {
                   v-if="!addMemoryOpen"
                   class="npc-add-button"
                   type="button"
+                  :disabled="npcActionBusy"
                   @click="addMemoryOpen = true"
                 >
                   <Plus :size="15" />
                   <span>添加记忆</span>
                 </button>
                 <div v-if="addMemoryOpen" class="npc-form">
-                  <select v-model="memoryForm.memoryType" class="npc-select" aria-label="记忆类型">
+                  <select v-model="memoryForm.memoryType" class="npc-select" aria-label="记忆类型" :disabled="npcActionBusy">
                     <option v-for="opt in memoryTypeOptions" :key="opt.value" :value="opt.value">
                       {{ opt.label }}
                     </option>
@@ -627,10 +698,19 @@ function formatTime(iso) {
                     rows="3"
                     placeholder="输入 NPC 记忆内容..."
                     aria-label="NPC 记忆内容"
+                    :disabled="npcActionBusy"
                   />
                   <div class="npc-form-actions">
-                    <button class="npc-save" type="button" @click="submitMemory">保存</button>
-                    <button class="npc-cancel" type="button" @click="addMemoryOpen = false">取消</button>
+                    <button
+                      class="npc-save"
+                      type="button"
+                      :disabled="npcActionBusy"
+                      :aria-busy="isNpcActionBusy('memory-create')"
+                      @click="submitMemory"
+                    >
+                      保存
+                    </button>
+                    <button class="npc-cancel" type="button" :disabled="npcActionBusy" @click="addMemoryOpen = false">取消</button>
                   </div>
                 </div>
                 <div v-if="!memories.length && !addMemoryOpen" class="npc-empty">
@@ -646,6 +726,8 @@ function formatTime(iso) {
                         type="button"
                         title="删除"
                         aria-label="删除记忆"
+                        :disabled="npcActionBusy"
+                        :aria-busy="isNpcActionBusy(memoryActionId(mem.id))"
                         @click="removeMemory(mem.id)"
                       >
                         <Trash2 :size="14" />
@@ -662,13 +744,14 @@ function formatTime(iso) {
                   v-if="!addBehaviorOpen"
                   class="npc-add-button"
                   type="button"
+                  :disabled="npcActionBusy"
                   @click="addBehaviorOpen = true"
                 >
                   <Plus :size="15" />
                   <span>添加行为规则</span>
                 </button>
                 <div v-if="addBehaviorOpen" class="npc-form">
-                  <select v-model="behaviorForm.behaviorType" class="npc-select" aria-label="行为类型">
+                  <select v-model="behaviorForm.behaviorType" class="npc-select" aria-label="行为类型" :disabled="npcActionBusy">
                     <option v-for="opt in behaviorTypeOptions" :key="opt.value" :value="opt.value">
                       {{ opt.label }}
                     </option>
@@ -678,6 +761,7 @@ function formatTime(iso) {
                     class="npc-input"
                     placeholder="触发条件（可选）"
                     aria-label="行为触发条件"
+                    :disabled="npcActionBusy"
                   />
                   <textarea
                     v-model="behaviorForm.action"
@@ -685,6 +769,7 @@ function formatTime(iso) {
                     rows="3"
                     placeholder="行为动作描述..."
                     aria-label="行为动作描述"
+                    :disabled="npcActionBusy"
                   />
                   <label class="npc-priority-label">
                     优先级
@@ -694,16 +779,25 @@ function formatTime(iso) {
                       min="0"
                       max="100"
                       class="npc-range"
+                      :disabled="npcActionBusy"
                     />
                     <span>{{ behaviorForm.priority }}</span>
                   </label>
                   <label class="npc-checkbox-label">
-                    <input v-model="behaviorForm.enabled" type="checkbox" />
+                    <input v-model="behaviorForm.enabled" type="checkbox" :disabled="npcActionBusy" />
                     <span>启用</span>
                   </label>
                   <div class="npc-form-actions">
-                    <button class="npc-save" type="button" @click="submitBehavior">保存</button>
-                    <button class="npc-cancel" type="button" @click="addBehaviorOpen = false">取消</button>
+                    <button
+                      class="npc-save"
+                      type="button"
+                      :disabled="npcActionBusy"
+                      :aria-busy="isNpcActionBusy('behavior-create')"
+                      @click="submitBehavior"
+                    >
+                      保存
+                    </button>
+                    <button class="npc-cancel" type="button" :disabled="npcActionBusy" @click="addBehaviorOpen = false">取消</button>
                   </div>
                 </div>
                 <div v-if="!behaviors.length && !addBehaviorOpen" class="npc-empty">
@@ -724,6 +818,8 @@ function formatTime(iso) {
                         type="button"
                         :title="beh.enabled ? '点击禁用' : '点击启用'"
                         :aria-label="beh.enabled ? '禁用行为规则' : '启用行为规则'"
+                        :disabled="npcActionBusy"
+                        :aria-busy="isNpcActionBusy(behaviorToggleActionId(beh.id))"
                         @click="toggleBehavior(beh)"
                       >
                         {{ beh.enabled ? '✓' : '✗' }}
@@ -733,6 +829,8 @@ function formatTime(iso) {
                         type="button"
                         title="删除"
                         aria-label="删除行为规则"
+                        :disabled="npcActionBusy"
+                        :aria-busy="isNpcActionBusy(behaviorDeleteActionId(beh.id))"
                         @click="removeBehavior(beh.id)"
                       >
                         <Trash2 :size="14" />
@@ -974,7 +1072,7 @@ function formatTime(iso) {
   color: var(--text-muted, #888);
   cursor: pointer;
 }
-.npc-refresh:hover {
+.npc-refresh:hover:not(:disabled) {
   background: var(--hover, rgba(255,255,255,0.08));
   color: var(--accent, #818cf8);
 }
@@ -1000,7 +1098,7 @@ function formatTime(iso) {
   font-size: 14px;
   transition: background 0.15s;
 }
-.npc-item:hover {
+.npc-item:hover:not(:disabled) {
   border-color: color-mix(in srgb, var(--accent, #818cf8) 26%, transparent);
   background: var(--hover, rgba(255,255,255,0.06));
 }
@@ -1077,7 +1175,7 @@ function formatTime(iso) {
   cursor: pointer;
 }
 
-.npc-detail-remove:hover {
+.npc-detail-remove:hover:not(:disabled) {
   background: color-mix(in srgb, #ef4444 14%, transparent);
 }
 
@@ -1123,7 +1221,7 @@ function formatTime(iso) {
   font-size: 13px;
   transition: background 0.15s;
 }
-.npc-add-button:hover {
+.npc-add-button:hover:not(:disabled) {
   background: var(--accent-bg-hover, rgba(99, 102, 241, 0.2));
 }
 
@@ -1205,14 +1303,14 @@ function formatTime(iso) {
   background: var(--accent, #818cf8);
   color: #fff;
 }
-.npc-save:hover {
+.npc-save:hover:not(:disabled) {
   opacity: 0.9;
 }
 .npc-cancel {
   background: var(--hover, rgba(255,255,255,0.08));
   color: var(--text-muted, #888);
 }
-.npc-cancel:hover {
+.npc-cancel:hover:not(:disabled) {
   background: var(--hover-strong, rgba(255,255,255,0.12));
 }
 
@@ -1273,7 +1371,7 @@ function formatTime(iso) {
   white-space: nowrap;
 }
 
-.npc-retry-button:hover {
+.npc-retry-button:hover:not(:disabled) {
   background: color-mix(in srgb, var(--accent, #818cf8) 18%, transparent);
 }
 
@@ -1334,10 +1432,22 @@ function formatTime(iso) {
   display: flex;
   align-items: center;
 }
-.npc-card-toggle:hover {
+.npc-refresh:disabled,
+.npc-retry-button:disabled,
+.npc-item:disabled,
+.npc-detail-remove:disabled,
+.npc-add-button:disabled,
+.npc-save:disabled,
+.npc-cancel:disabled,
+.npc-card-toggle:disabled,
+.npc-card-delete:disabled {
+  opacity: 0.48;
+  cursor: not-allowed;
+}
+.npc-card-toggle:hover:not(:disabled) {
   color: var(--accent, #818cf8);
 }
-.npc-card-delete:hover {
+.npc-card-delete:hover:not(:disabled) {
   color: #ef4444;
 }
 

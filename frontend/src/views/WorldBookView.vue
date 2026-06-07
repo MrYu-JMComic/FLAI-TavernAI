@@ -205,12 +205,14 @@ function isCurrentWorldBookRouteMutation(mutationToken, routeKey) {
 }
 
 function openCreateBook() {
+  if (saving.value) return;
   Object.assign(editingBook, createEmptyBook());
   editingBookId.value = null;
   showBookForm.value = true;
 }
 
 function openEditBook(book) {
+  if (saving.value) return;
   Object.assign(editingBook, {
     name: book.name || '',
     description: book.description || '',
@@ -228,6 +230,7 @@ function closeBookForm() {
 }
 
 async function saveBook() {
+  if (saving.value) return;
   if (!editingBook.name.trim()) {
     notify.warning('请输入世界书名称');
     return;
@@ -273,9 +276,11 @@ async function saveBook() {
 }
 
 async function removeBook(id) {
+  if (saving.value) return;
   if (!window.confirm('确定删除这个世界书及其所有条目吗？')) return;
   const routeKey = currentWorldBookRouteKey();
   const mutationToken = worldBookMutationToken;
+  saving.value = true;
   try {
     await deleteWorldBook(id);
     if (!isCurrentWorldBookRouteMutation(mutationToken, routeKey)) return;
@@ -292,16 +297,22 @@ async function removeBook(id) {
   } catch (err) {
     if (!isCurrentWorldBookRouteMutation(mutationToken, routeKey)) return;
     notify.error(err.message);
+  } finally {
+    if (isCurrentWorldBookRouteMutation(mutationToken, routeKey)) {
+      saving.value = false;
+    }
   }
 }
 
 function openCreateEntry() {
+  if (saving.value) return;
   Object.assign(editingEntry, createEmptyEntry());
   editingEntryId.value = null;
   showEntryForm.value = true;
 }
 
 function openEditEntry(entry) {
+  if (saving.value) return;
   Object.assign(editingEntry, {
     ...createEmptyEntry(),
     name: entry.name || '',
@@ -334,6 +345,7 @@ function closeEntryForm() {
 }
 
 async function saveEntry() {
+  if (saving.value) return;
   const targetBookId = bookId.value;
   if (!targetBookId) return;
   const targetEntryId = editingEntryId.value;
@@ -382,10 +394,12 @@ async function saveEntry() {
 }
 
 async function removeEntry(entryId) {
+  if (saving.value) return;
   if (!window.confirm('确定删除这个条目吗？')) return;
   const targetBookId = bookId.value;
   if (!targetBookId) return;
   const mutationToken = worldBookMutationToken;
+  saving.value = true;
   try {
     await deleteWorldBookEntry(targetBookId, entryId);
     if (!isCurrentWorldBookMutation(mutationToken, targetBookId)) return;
@@ -395,13 +409,19 @@ async function removeEntry(entryId) {
   } catch (err) {
     if (!isCurrentWorldBookMutation(mutationToken, targetBookId)) return;
     notify.error(err.message);
+  } finally {
+    if (isCurrentWorldBookMutation(mutationToken, targetBookId)) {
+      saving.value = false;
+    }
   }
 }
 
 async function toggleEntry(entry) {
+  if (saving.value) return;
   const targetBookId = bookId.value;
   if (!targetBookId) return;
   const mutationToken = worldBookMutationToken;
+  saving.value = true;
   try {
     await updateWorldBookEntry(targetBookId, entry.id, { enabled: !entry.enabled });
     if (!isCurrentWorldBookMutation(mutationToken, targetBookId)) return;
@@ -409,10 +429,15 @@ async function toggleEntry(entry) {
   } catch (err) {
     if (!isCurrentWorldBookMutation(mutationToken, targetBookId)) return;
     notify.error(err.message);
+  } finally {
+    if (isCurrentWorldBookMutation(mutationToken, targetBookId)) {
+      saving.value = false;
+    }
   }
 }
 
 async function moveEntry(index, direction) {
+  if (saving.value) return;
   const entries = currentBook.value?.entries;
   if (!entries) return;
   const targetBookId = bookId.value;
@@ -423,6 +448,7 @@ async function moveEntry(index, direction) {
   const current = entries[index];
   const target = entries[targetIndex];
   const mutationToken = worldBookMutationToken;
+  saving.value = true;
   try {
     await Promise.all([
       updateWorldBookEntry(targetBookId, current.id, { orderIndex: target.orderIndex }),
@@ -433,6 +459,10 @@ async function moveEntry(index, direction) {
   } catch (err) {
     if (!isCurrentWorldBookMutation(mutationToken, targetBookId)) return;
     notify.error(err.message);
+  } finally {
+    if (isCurrentWorldBookMutation(mutationToken, targetBookId)) {
+      saving.value = false;
+    }
   }
 }
 
@@ -452,6 +482,7 @@ function currentWorldBookDraft() {
 }
 
 async function completeWorldBookWithAi() {
+  if (aiLoading.value || saving.value) return;
   const requirement = aiRequirement.value.trim();
   if (!requirement && !currentWorldBookDraft().name && !currentWorldBookDraft().description) {
     notify.warning('请先输入世界书主题，或保留已有世界书内容作为参考。');
@@ -510,6 +541,7 @@ function stopWorldBookAi() {
 }
 
 async function createBookFromAiDraft() {
+  if (aiLoading.value || saving.value) return;
   if (!aiDraft.value?.name) {
     notify.warning('请先生成世界书草稿');
     return;
@@ -699,7 +731,7 @@ function toolResultLabel(result = {}) {
           <p>管理触发词、注入位置、扫描深度和上下文预算，让角色对话能按场景自动补全世界观。</p>
         </div>
         <div class="worldbook-overview-actions">
-          <button class="primary-button" @click="openCreateBook">
+          <button class="primary-button" :disabled="saving" :aria-busy="saving" @click="openCreateBook">
             <Plus :size="18" />
             <span>新建世界书</span>
           </button>
@@ -758,14 +790,14 @@ function toolResultLabel(result = {}) {
           </select>
         </label>
         <div class="form-actions">
-          <button class="primary-button" type="button" :disabled="aiLoading" @click="completeWorldBookWithAi">
+          <button class="primary-button" type="button" :disabled="aiLoading || saving" :aria-busy="aiLoading || saving" @click="completeWorldBookWithAi">
             <WandSparkles :size="18" />
             <span>{{ aiLoading ? 'AI 正在生成...' : '生成世界书草稿' }}</span>
           </button>
           <button v-if="aiLoading" class="ghost-button" type="button" @click="stopWorldBookAi">
             <span>暂停</span>
           </button>
-          <button class="ghost-button" type="button" :disabled="!aiDraft || !aiDraftEntryCount || saving" @click="createBookFromAiDraft">
+          <button class="ghost-button" type="button" :disabled="!aiDraft || !aiDraftEntryCount || aiLoading || saving" :aria-busy="saving" @click="createBookFromAiDraft">
             <Save :size="18" />
             <span>{{ saving ? '创建中...' : '创建书和条目' }}</span>
           </button>
@@ -845,7 +877,7 @@ function toolResultLabel(result = {}) {
         <BookOpen :size="48" />
         <h2>还没有世界书</h2>
         <p>世界书用于在对话中自动注入背景设定。</p>
-        <button class="primary-button" @click="openCreateBook">
+        <button class="primary-button" :disabled="saving" :aria-busy="saving" @click="openCreateBook">
           <Plus :size="18" />
           <span>创建第一个世界书</span>
         </button>
@@ -870,10 +902,10 @@ function toolResultLabel(result = {}) {
           <div class="book-card-footer">
             <span class="entry-count">{{ book.entryCount }} 个条目</span>
             <div class="book-card-actions" @click.stop>
-              <button class="icon-button" title="编辑" :aria-label="`编辑世界书：${book.name}`" @click="openEditBook(book)">
+              <button class="icon-button" title="编辑" :aria-label="`编辑世界书：${book.name}`" :disabled="saving" :aria-busy="saving" @click="openEditBook(book)">
                 <Save :size="16" />
               </button>
-              <button class="icon-button danger" title="删除" :aria-label="`删除世界书：${book.name}`" @click="removeBook(book.id)">
+              <button class="icon-button danger" title="删除" :aria-label="`删除世界书：${book.name}`" :disabled="saving" :aria-busy="saving" @click="removeBook(book.id)">
                 <Trash2 :size="16" />
               </button>
             </div>
@@ -925,8 +957,8 @@ function toolResultLabel(result = {}) {
               <p>{{ currentBook.description || '暂无描述' }}</p>
             </div>
             <div class="inline-actions">
-              <button class="ghost-button" @click="openEditBook(currentBook)">编辑信息</button>
-              <button class="danger-button" @click="removeBook(currentBook.id)">
+              <button class="ghost-button" :disabled="saving" :aria-busy="saving" @click="openEditBook(currentBook)">编辑信息</button>
+              <button class="danger-button" :disabled="saving" :aria-busy="saving" @click="removeBook(currentBook.id)">
                 <Trash2 :size="16" />
                 <span>删除世界书</span>
               </button>
@@ -967,7 +999,7 @@ function toolResultLabel(result = {}) {
               <h2>条目列表</h2>
               <p>触发词匹配时自动注入对应内容到上下文。</p>
             </div>
-            <button class="primary-button" @click="openCreateEntry">
+            <button class="primary-button" :disabled="saving" :aria-busy="saving" @click="openCreateEntry">
               <Plus :size="17" />
               <span>添加条目</span>
             </button>
@@ -985,7 +1017,8 @@ function toolResultLabel(result = {}) {
                 <div class="entry-order-buttons">
                   <button
                     class="icon-button ghost"
-                    :disabled="index === 0"
+                    :disabled="saving || index === 0"
+                    :aria-busy="saving"
                     title="上移"
                     :aria-label="`上移条目：${entry.name || `第 ${index + 1} 个条目`}`"
                     @click="moveEntry(index, -1)"
@@ -994,7 +1027,8 @@ function toolResultLabel(result = {}) {
                   </button>
                   <button
                     class="icon-button ghost"
-                    :disabled="index === currentBook.entries.length - 1"
+                    :disabled="saving || index === currentBook.entries.length - 1"
+                    :aria-busy="saving"
                     title="下移"
                     :aria-label="`下移条目：${entry.name || `第 ${index + 1} 个条目`}`"
                     @click="moveEntry(index, 1)"
@@ -1004,6 +1038,8 @@ function toolResultLabel(result = {}) {
                 </div>
                 <button
                   class="icon-button toggle"
+                  :disabled="saving"
+                  :aria-busy="saving"
                   :title="entry.enabled ? '点击禁用' : '点击启用'"
                   :aria-label="entry.enabled ? `禁用条目：${entry.name || `第 ${index + 1} 个条目`}` : `启用条目：${entry.name || `第 ${index + 1} 个条目`}`"
                   @click="toggleEntry(entry)"
@@ -1032,10 +1068,10 @@ function toolResultLabel(result = {}) {
                 <p class="entry-content-preview">{{ entry.content || '空内容' }}</p>
               </div>
               <div class="entry-actions">
-                <button class="icon-button" title="编辑" :aria-label="`编辑条目：${entry.name || `第 ${index + 1} 个条目`}`" @click="openEditEntry(entry)">
+                <button class="icon-button" title="编辑" :aria-label="`编辑条目：${entry.name || `第 ${index + 1} 个条目`}`" :disabled="saving" :aria-busy="saving" @click="openEditEntry(entry)">
                   <Save :size="16" />
                 </button>
-                <button class="icon-button danger" title="删除" :aria-label="`删除条目：${entry.name || `第 ${index + 1} 个条目`}`" @click="removeEntry(entry.id)">
+                <button class="icon-button danger" title="删除" :aria-label="`删除条目：${entry.name || `第 ${index + 1} 个条目`}`" :disabled="saving" :aria-busy="saving" @click="removeEntry(entry.id)">
                   <Trash2 :size="16" />
                 </button>
               </div>

@@ -44,6 +44,9 @@ let savesMutationToken = 0;
 let savePanelDisposed = false;
 
 const sortedSaves = computed(() => [...saves.value]);
+const hasSaveItemActionBusy = computed(() => Boolean(busyId.value));
+const saveActionBusy = computed(() => saving.value || hasSaveItemActionBusy.value);
+const savePanelBusy = computed(() => loading.value || saveActionBusy.value);
 
 watch(() => props.open, (isOpen) => {
   if (isOpen) {
@@ -90,6 +93,7 @@ async function loadSaves() {
     resetSavePanelState();
     return;
   }
+  if (savePanelBusy.value) return;
   const requestToken = ++savesLoadToken;
   loading.value = true;
   loadError.value = '';
@@ -118,7 +122,7 @@ function isCurrentSaveMutation(mutationToken, conversationId) {
 }
 
 async function doCreateSave() {
-  if (saving.value) return;
+  if (savePanelBusy.value) return;
   const conversationId = props.conversationId;
   if (!conversationId) return;
   const mutationToken = savesMutationToken;
@@ -140,7 +144,7 @@ async function doCreateSave() {
 }
 
 async function doLoadSave(item) {
-  if (busyId.value) return;
+  if (savePanelBusy.value) return;
   if (!window.confirm(`读取存档「${item.name}」？当前会话消息将被替换。`)) return;
   const conversationId = props.conversationId;
   if (!conversationId) return;
@@ -162,7 +166,7 @@ async function doLoadSave(item) {
 }
 
 async function doDeleteSave(item) {
-  if (busyId.value) return;
+  if (savePanelBusy.value) return;
   if (!window.confirm(`删除存档「${item.name}」？此操作不可撤销。`)) return;
   const conversationId = props.conversationId;
   if (!conversationId) return;
@@ -184,6 +188,7 @@ async function doDeleteSave(item) {
 }
 
 function beginRename(item) {
+  if (savePanelBusy.value) return;
   renamingId.value = item.id;
   renameValue.value = item.name;
 }
@@ -195,7 +200,7 @@ function cancelRename() {
 
 async function doRename(item) {
   const name = renameValue.value.trim();
-  if (!name || busyId.value) return;
+  if (!name || savePanelBusy.value) return;
   const conversationId = props.conversationId;
   if (!conversationId) return;
   const mutationToken = savesMutationToken;
@@ -233,6 +238,14 @@ function formatTime(iso) {
     return iso;
   }
 }
+
+function isSaveItemBusy(item) {
+  return Boolean(item?.id && busyId.value === item.id);
+}
+
+function isSaveActionDisabled() {
+  return savePanelBusy.value;
+}
 </script>
 
 <template>
@@ -269,7 +282,8 @@ function formatTime(iso) {
             <button
               class="save-create-button"
               type="button"
-              :disabled="saving"
+              :disabled="savePanelBusy"
+              :aria-busy="saving"
               @click="doCreateSave"
             >
               <Save :size="15" />
@@ -281,7 +295,7 @@ function formatTime(iso) {
             <p v-if="loading" class="save-empty">正在加载存档...</p>
             <div v-else-if="loadError" class="save-empty save-error-state">
               <p>{{ loadError }}</p>
-              <button class="save-retry-button" type="button" @click="loadSaves">
+              <button class="save-retry-button" type="button" :disabled="savePanelBusy" @click="loadSaves">
                 <RefreshCw :size="14" />
                 <span>重试</span>
               </button>
@@ -291,7 +305,8 @@ function formatTime(iso) {
               v-for="item in sortedSaves"
               :key="item.id"
               class="save-item"
-              :class="{ busy: busyId === item.id }"
+              :class="{ busy: isSaveItemBusy(item) }"
+              :aria-busy="isSaveItemBusy(item)"
             >
               <div class="save-item-body">
                 <div v-if="renamingId === item.id" class="save-rename-row">
@@ -308,6 +323,8 @@ function formatTime(iso) {
                     class="save-mini-button"
                     type="button"
                     aria-label="保存存档名称"
+                    :disabled="isSaveActionDisabled()"
+                    :aria-busy="isSaveItemBusy(item)"
                     @click="doRename(item)"
                   >
                     <Save :size="13" />
@@ -333,7 +350,8 @@ function formatTime(iso) {
                   type="button"
                   title="读档"
                   aria-label="读取存档"
-                  :disabled="busyId === item.id"
+                  :disabled="isSaveActionDisabled()"
+                  :aria-busy="isSaveItemBusy(item)"
                   @click="doLoadSave(item)"
                 >
                   <FolderOpen :size="14" />
@@ -343,7 +361,8 @@ function formatTime(iso) {
                   type="button"
                   title="重命名"
                   aria-label="重命名存档"
-                  :disabled="busyId === item.id"
+                  :disabled="isSaveActionDisabled()"
+                  :aria-busy="isSaveItemBusy(item)"
                   @click="beginRename(item)"
                 >
                   <Pencil :size="14" />
@@ -353,7 +372,8 @@ function formatTime(iso) {
                   type="button"
                   title="删除"
                   aria-label="删除存档"
-                  :disabled="busyId === item.id"
+                  :disabled="isSaveActionDisabled()"
+                  :aria-busy="isSaveItemBusy(item)"
                   @click="doDeleteSave(item)"
                 >
                   <Trash2 :size="14" />

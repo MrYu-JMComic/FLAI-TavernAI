@@ -26,6 +26,7 @@ const props = defineProps({
   avatarUrl: { type: String, default: '' },
   canEdit: { type: Boolean, default: false },
   canDelete: { type: Boolean, default: false },
+  messageActionBusy: { type: Boolean, default: false },
   renderPlugins: { type: Array, default: () => [] },
   swipeDisplay: { type: String, default: '' },
   swipeCanPrev: { type: Boolean, default: false },
@@ -88,20 +89,21 @@ const emit = defineEmits([
           'is-editing': editingMessageId === message.id
         }"
       >
-        <div v-if="editingMessageId === message.id" class="message-edit-box">
+        <div v-if="editingMessageId === message.id" class="message-edit-box" :aria-busy="messageActionBusy">
           <textarea
             :value="editingMessageContent"
             aria-label="编辑消息内容"
             rows="4"
+            :disabled="messageActionBusy"
             @input="emit('update:editingMessageContent', $event.target.value)"
             @keydown.esc.prevent="emit('cancel-edit', message)"
           />
           <div class="message-edit-actions">
-            <button type="button" class="message-action-button primary" @click="emit('save-edit', message)">
+            <button type="button" class="message-action-button primary" :disabled="messageActionBusy" :aria-busy="messageActionBusy" @click="emit('save-edit', message)">
               <Check :size="15" />
               <span>保存</span>
             </button>
-            <button type="button" class="message-action-button" @click="emit('cancel-edit', message)">
+            <button type="button" class="message-action-button" :disabled="messageActionBusy" @click="emit('cancel-edit', message)">
               <X :size="15" />
               <span>取消</span>
             </button>
@@ -149,7 +151,8 @@ const emit = defineEmits([
           class="message-action-button swipe-nav"
           type="button"
           aria-label="上一条候选回复"
-          :disabled="!swipeCanPrev"
+          :disabled="!swipeCanPrev || swipeLoading"
+          :aria-busy="swipeLoading"
           title="上一条候选"
           @click.stop="emit('swipe-prev', message)"
         >
@@ -162,6 +165,7 @@ const emit = defineEmits([
           type="button"
           aria-label="下一条候选或生成新候选"
           :disabled="swipeLoading"
+          :aria-busy="swipeLoading"
           title="下一条候选 / 生成新候选"
           @click.stop="emit('swipe-next', message)"
         >

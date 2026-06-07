@@ -294,15 +294,21 @@ function modelOverrideOptions(value = '') {
             v-model="chatAppearanceForm.desktopBackgroundUrl"
             type="text"
             placeholder="图片链接、短链或 data URL"
+            :disabled="appearanceSaving"
           />
         </label>
         <div class="chat-setting-actions">
-          <label class="chat-setting-upload">
+          <label class="chat-setting-upload" :class="{ 'is-disabled': appearanceSaving }">
             <Upload :size="15" />
             <span>上传图片</span>
-            <input type="file" accept="image/*" @change="emit('background-upload', { event: $event, field: 'desktopBackgroundUrl' })" />
+            <input
+              type="file"
+              accept="image/*"
+              :disabled="appearanceSaving"
+              @change="emit('background-upload', { event: $event, field: 'desktopBackgroundUrl' })"
+            />
           </label>
-          <button class="chat-setting-inline-button" type="button" @click="emit('clear-field', 'desktopBackgroundUrl')">
+          <button class="chat-setting-inline-button" type="button" :disabled="appearanceSaving" @click="emit('clear-field', 'desktopBackgroundUrl')">
             清空
           </button>
         </div>
@@ -313,15 +319,21 @@ function modelOverrideOptions(value = '') {
             v-model="chatAppearanceForm.mobileBackgroundUrl"
             type="text"
             placeholder="图片链接、短链或 data URL"
+            :disabled="appearanceSaving"
           />
         </label>
         <div class="chat-setting-actions">
-          <label class="chat-setting-upload">
+          <label class="chat-setting-upload" :class="{ 'is-disabled': appearanceSaving }">
             <Upload :size="15" />
             <span>上传图片</span>
-            <input type="file" accept="image/*" @change="emit('background-upload', { event: $event, field: 'mobileBackgroundUrl' })" />
+            <input
+              type="file"
+              accept="image/*"
+              :disabled="appearanceSaving"
+              @change="emit('background-upload', { event: $event, field: 'mobileBackgroundUrl' })"
+            />
           </label>
-          <button class="chat-setting-inline-button" type="button" @click="emit('clear-field', 'mobileBackgroundUrl')">
+          <button class="chat-setting-inline-button" type="button" :disabled="appearanceSaving" @click="emit('clear-field', 'mobileBackgroundUrl')">
             清空
           </button>
         </div>
@@ -338,6 +350,7 @@ function modelOverrideOptions(value = '') {
           aria-label="当前会话内置 CSS"
           rows="10"
           placeholder=".deep-bubble { border-radius: 22px; }\n@keyframes floatIn { ... }"
+          :disabled="appearanceSaving"
         />
       </section>
 
@@ -352,6 +365,7 @@ function modelOverrideOptions(value = '') {
           aria-label="当前会话内置 JS"
           rows="12"
           placeholder="const bubble = query('.deep-bubble');\nif (bubble) bubble.classList.add('pulse');\nreturn () => bubble?.classList.remove('pulse');"
+          :disabled="appearanceSaving"
         />
       </section>
 
@@ -366,6 +380,7 @@ function modelOverrideOptions(value = '') {
           aria-label="状态栏提示词"
           rows="6"
           placeholder="例如：HP 降低、好感变化、获得金币时更新对应变量。"
+          :disabled="appearanceSaving"
         />
       </section>
 
@@ -378,7 +393,7 @@ function modelOverrideOptions(value = '') {
           <span>绑定世界书</span>
           <select
             :value="chatLorebookId || ''"
-            :disabled="worldBooksLoading"
+            :disabled="worldBooksLoading || appearanceSaving"
             @change="emit('update:chatLorebookId', $event.target.value || null)"
           >
             <option value="">无（不绑定）</option>
@@ -406,7 +421,7 @@ function modelOverrideOptions(value = '') {
           <ChevronDown :size="17" :class="{ rotated: accessorySettingsOpen }" />
         </button>
 
-        <div v-if="accessorySettingsOpen" class="accessory-skills-grid">
+        <fieldset v-if="accessorySettingsOpen" class="accessory-skills-grid" :disabled="accessorySaving" :aria-busy="accessorySaving">
           <div v-for="item in accessorySkillItems" :key="item.key" class="accessory-skill-row">
             <label class="chat-setting-field compact">
               <span>{{ item.label }}</span>
@@ -437,7 +452,7 @@ function modelOverrideOptions(value = '') {
             <Save :size="15" />
             <span>{{ accessorySaving ? '保存中...' : '保存附属技能' }}</span>
           </button>
-        </div>
+        </fieldset>
       </section>
 
       <section class="chat-settings-section">
@@ -446,20 +461,21 @@ function modelOverrideOptions(value = '') {
           <p>在聊天顶部显示自定义状态栏；变量更新由状态栏 Agent 或手动编辑完成。</p>
         </div>
         <div class="status-bar-editor-actions">
-          <button v-if="!statusBar" class="chat-setting-inline-button" type="button" @click="emit('open-status-bar-editor')">
+          <button v-if="!statusBar" class="chat-setting-inline-button" type="button" :disabled="statusBarSaving" :aria-busy="statusBarSaving" @click="emit('open-status-bar-editor')">
             创建状态栏
           </button>
           <template v-else>
-            <button class="chat-setting-inline-button" type="button" @click="emit('open-status-bar-editor')">
+            <button class="chat-setting-inline-button" type="button" :disabled="statusBarSaving" :aria-busy="statusBarSaving" @click="emit('open-status-bar-editor')">
               编辑状态栏
             </button>
-            <button class="chat-setting-inline-button danger" type="button" @click="emit('delete-status-bar')">
+            <button class="chat-setting-inline-button danger" type="button" :disabled="statusBarSaving" :aria-busy="statusBarSaving" @click="emit('delete-status-bar')">
               删除状态栏
             </button>
           </template>
         </div>
 
-        <div v-if="statusBarEditorOpen" class="status-bar-editor">
+        <div v-if="statusBarEditorOpen" class="status-bar-editor" :aria-busy="statusBarSaving">
+          <fieldset class="status-bar-editor-fields" :disabled="statusBarSaving">
           <label class="chat-setting-field">
             <span>状态栏名称</span>
             <input
@@ -745,12 +761,14 @@ function modelOverrideOptions(value = '') {
             </div>
           </div>
 
+          </fieldset>
+
           <div class="status-bar-editor-footer">
-            <button class="chat-settings-save" type="button" :disabled="statusBarSaving || statusBarTemplateIssues.length > 0" @click="emit('save-status-bar')">
+            <button class="chat-settings-save" type="button" :disabled="statusBarSaving || statusBarTemplateIssues.length > 0" :aria-busy="statusBarSaving" @click="emit('save-status-bar')">
               <Save :size="15" />
               <span>{{ statusBarSaving ? '保存中...' : '保存状态栏' }}</span>
             </button>
-            <button class="chat-setting-inline-button" type="button" @click="emit('close-status-bar-editor')">
+            <button class="chat-setting-inline-button" type="button" :disabled="statusBarSaving" @click="emit('close-status-bar-editor')">
               取消
             </button>
           </div>
@@ -759,10 +777,10 @@ function modelOverrideOptions(value = '') {
     </div>
 
     <footer class="chat-settings-footer">
-      <button class="chat-setting-inline-button" type="button" @click="emit('reset-appearance')">
+      <button class="chat-setting-inline-button" type="button" :disabled="appearanceSaving" @click="emit('reset-appearance')">
         恢复当前会话
       </button>
-      <button class="chat-settings-save" type="button" :disabled="appearanceSaving" @click="emit('save-appearance')">
+      <button class="chat-settings-save" type="button" :disabled="appearanceSaving" :aria-busy="appearanceSaving" @click="emit('save-appearance')">
         <Save :size="15" />
         <span>{{ appearanceSaving ? '保存中...' : '保存并应用' }}</span>
       </button>

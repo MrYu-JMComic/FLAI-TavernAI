@@ -32,6 +32,7 @@ import {
   setCharacterLike
 } from '../api';
 import { useNotify } from '../composables/useNotify';
+import { usePendingKeys } from '../composables/usePendingKeys';
 
 const props = defineProps({
   provider: {
@@ -55,7 +56,8 @@ const tags = ref([]);
 const tagLoadError = ref('');
 const loading = ref(false);
 const loadError = ref('');
-const reactionPending = ref({});
+const reactionPending = usePendingKeys();
+const chatOpenPending = usePendingKeys();
 const importPreview = ref(null);
 const importLoading = ref(false);
 const scrollContainerRef = ref(null);
@@ -317,6 +319,9 @@ function resetHomeAsyncScope() {
   characterLoadToken += 1;
   tagLoadToken += 1;
   loading.value = false;
+  reactionPending.reset();
+  chatOpenPending.reset();
+  importLoading.value = false;
 }
 
 function isHomeActive() {
@@ -381,6 +386,11 @@ function isCurrentCharacterLoad(requestToken) {
 }
 
 async function openChat(character) {
+  const key = character?.id;
+  if (!chatOpenPending.start(key)) {
+    return;
+  }
+
   try {
     const existing = await fetchConversations({ characterId: character.id });
     if (!isHomeActive()) return;
@@ -390,7 +400,14 @@ async function openChat(character) {
   } catch (err) {
     if (!isHomeActive()) return;
     notify.error(err.message);
+  } finally {
+    if (!isHomeActive()) return;
+    chatOpenPending.finish(key);
   }
+}
+
+function isChatOpenPending(character) {
+  return chatOpenPending.isPending(character?.id);
 }
 
 async function toggleFavorite(character) {
@@ -413,11 +430,10 @@ async function toggleLike(character) {
 
 async function toggleReaction({ character, type, nextActive, save }) {
   const key = `${type}:${character.id}`;
-  if (reactionPending.value[key]) {
+  if (!reactionPending.start(key)) {
     return;
   }
 
-  reactionPending.value = { ...reactionPending.value, [key]: true };
   try {
     const nextCharacter = await save(character.id, nextActive);
     if (!isHomeActive()) return;
@@ -427,13 +443,12 @@ async function toggleReaction({ character, type, nextActive, save }) {
     notify.error(err.message);
   } finally {
     if (!isHomeActive()) return;
-    const { [key]: _done, ...rest } = reactionPending.value;
-    reactionPending.value = rest;
+    reactionPending.finish(key);
   }
 }
 
 function isReactionPending(character, type) {
-  return Boolean(reactionPending.value[`${type}:${character.id}`]);
+  return reactionPending.isPending(`${type}:${character.id}`);
 }
 
 function mergeCharacter(nextCharacter) {
@@ -443,6 +458,9 @@ function mergeCharacter(nextCharacter) {
 }
 
 async function handleImportFile(event) {
+  if (importLoading.value) {
+    return;
+  }
   const file = event.target.files?.[0];
   if (!file) return;
   event.target.value = '';
@@ -463,7 +481,7 @@ async function handleImportFile(event) {
 }
 
 async function confirmImport() {
-  if (!importPreview.value || !isHomeActive()) return;
+  if (!importPreview.value || importLoading.value || !isHomeActive()) return;
   const nextImport = importPreview.value;
   importLoading.value = true;
   try {
@@ -482,6 +500,9 @@ async function confirmImport() {
 }
 
 function cancelImport() {
+  if (importLoading.value) {
+    return;
+  }
   importPreview.value = null;
 }
 
@@ -735,9 +756,15 @@ function formatCount(value) {
             <Eye v-else :size="16" />
             <span>{{ character.canEdit ? '编辑' : '查看' }}</span>
           </button>
-          <button class="home-primary-action compact" type="button" @click="openChat(character)">
+          <button
+            class="home-primary-action compact"
+            type="button"
+            :disabled="isChatOpenPending(character)"
+            :aria-busy="isChatOpenPending(character)"
+            @click="openChat(character)"
+          >
             <MessageSquareText :size="16" />
-            <span>对话</span>
+            <span>{{ isChatOpenPending(character) ? '打开中' : '对话' }}</span>
           </button>
         </div>
       </article>
@@ -824,9 +851,15 @@ function formatCount(value) {
                 <Eye v-else :size="16" />
                 <span>{{ character.canEdit ? '编辑' : '查看' }}</span>
               </button>
-              <button class="home-primary-action compact" type="button" @click="openChat(character)">
+              <button
+                class="home-primary-action compact"
+                type="button"
+                :disabled="isChatOpenPending(character)"
+                :aria-busy="isChatOpenPending(character)"
+                @click="openChat(character)"
+              >
                 <MessageSquareText :size="16" />
-                <span>对话</span>
+                <span>{{ isChatOpenPending(character) ? '打开中' : '对话' }}</span>
               </button>
             </div>
           </article>
@@ -886,8 +919,14 @@ function formatCount(value) {
             </div>
           </div>
           <div class="import-actions">
-            <button class="ghost-button" type="button" @click="cancelImport">取消</button>
-            <button class="primary-button" type="button" :disabled="importLoading" @click="confirmImport">
+            <button class="ghost-button" type="button" :disabled="importLoading" @click="cancelImport">取消</button>
+            <button
+              class="primary-button"
+              type="button"
+              :disabled="importLoading"
+              :aria-busy="importLoading"
+              @click="confirmImport"
+            >
               <Download :size="18" />
               <span>{{ importLoading ? '导入中...' : '确认导入' }}</span>
             </button>

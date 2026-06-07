@@ -1,5 +1,6 @@
 import { newId, nowIso } from '../security.js';
 import { normalizeBoolean } from '../utils/boolean.js';
+import { clampInteger } from '../utils/number.js';
 
 // ── NPC Memories ──
 
@@ -69,7 +70,7 @@ export function addNpcBehavior(database, userId, conversationId, npcName, payloa
   const behaviorType = normalizeBehaviorType(payload.behaviorType);
   const triggerCondition = normalizeContent(payload.triggerCondition);
   const action = normalizeContent(payload.action);
-  const priority = clampNumber(payload.priority, 0, 100, 0);
+  const priority = clampInteger(payload.priority, 0, 100, 0);
   const enabled = normalizeBoolean(payload.enabled, true) ? 1 : 0;
 
   database
@@ -99,7 +100,7 @@ export function updateNpcBehavior(database, userId, conversationId, behaviorId, 
   const behaviorType = payload.behaviorType !== undefined ? normalizeBehaviorType(payload.behaviorType) : existing.behavior_type;
   const triggerCondition = payload.triggerCondition !== undefined ? normalizeContent(payload.triggerCondition) : existing.trigger_condition;
   const action = payload.action !== undefined ? normalizeContent(payload.action) : existing.action;
-  const priority = payload.priority !== undefined ? clampNumber(payload.priority, 0, 100, existing.priority) : existing.priority;
+  const priority = payload.priority !== undefined ? clampInteger(payload.priority, 0, 100, existing.priority) : existing.priority;
   const enabled = payload.enabled !== undefined ? (normalizeBoolean(payload.enabled, existing.enabled) ? 1 : 0) : existing.enabled;
 
   database
@@ -137,7 +138,7 @@ export function upsertConversationNpc(database, userId, conversationId, payload 
   const timestamp = nowIso();
   const source = normalizeNpcSource(payload.source);
   const evidence = normalizeEvidence(payload.evidence);
-  const confidence = clampNumber(payload.confidence, 0, 100, 0);
+  const confidence = clampInteger(payload.confidence, 0, 100, 0);
   const hidden = normalizeBoolean(payload.hidden) ? 1 : 0;
   const shouldUnhide = normalizeBoolean(payload.unhide);
   const existing = database
@@ -523,10 +524,4 @@ function normalizeBehaviorType(value) {
 function normalizeContent(value) {
   const str = String(value || '').trim();
   return str.length > 2000 ? str.slice(0, 2000) : str;
-}
-
-function clampNumber(value, min, max, fallback) {
-  const num = Number(value);
-  if (!Number.isFinite(num)) return fallback;
-  return Math.max(min, Math.min(max, Math.round(num)));
 }

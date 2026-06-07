@@ -6,7 +6,12 @@ import {
   fetchStatusBar,
   saveConversationAccessorySkills,
   saveStatusBar
-} from '../../api';
+} from '../../api.js';
+import {
+  STATUS_BAR_TEMPLATE_VALIDATOR_ALLOWED_TAGS,
+  STATUS_BAR_TEMPLATE_VOID_TAGS,
+  hasDangerousStatusBarCss
+} from '../../utils/statusBarTemplateSecurity.js';
 
 const VALID_VARIANTS = ['default', 'compact', 'minimal', 'neon'];
 const VALID_DENSITIES = ['default', 'cozy', 'compact'];
@@ -83,30 +88,6 @@ function parseTemplateConfig(raw) {
   }
 }
 
-const CUSTOM_TEMPLATE_ALLOWED_TAGS = new Set([
-  'article',
-  'b',
-  'br',
-  'button',
-  'div',
-  'em',
-  'footer',
-  'header',
-  'hr',
-  'i',
-  'li',
-  'ol',
-  'p',
-  'section',
-  'small',
-  'span',
-  'strong',
-  'style',
-  'ul'
-]);
-const CUSTOM_TEMPLATE_VOID_TAGS = new Set(['br', 'hr']);
-const CUSTOM_TEMPLATE_DANGEROUS_CSS = /@import|expression\s*\(|javascript:|url\s*\(|behavior\s*:/i;
-
 function validateStatusBarCustomTemplate(template) {
   const raw = String(template || '').trim();
   const issues = [];
@@ -135,7 +116,7 @@ function validateStatusBarCustomTemplate(template) {
   const styleBlocks = raw.match(/<style\b[^>]*>[\s\S]*?<\/style>/gi) || [];
   for (const block of styleBlocks) {
     const css = block.replace(/^<style\b[^>]*>/i, '').replace(/<\/style>$/i, '');
-    if (CUSTOM_TEMPLATE_DANGEROUS_CSS.test(css)) {
+    if (hasDangerousStatusBarCss(css)) {
       issues.push('CSS 不支持 @import、url()、expression()、behavior 或 javascript:。');
       break;
     }
@@ -152,7 +133,7 @@ function validateStatusBarCustomTemplate(template) {
     const tag = match[2].toLowerCase();
     const isClosing = match[1] === '/';
     const tagText = match[0];
-    if (!CUSTOM_TEMPLATE_ALLOWED_TAGS.has(tag)) {
+    if (!STATUS_BAR_TEMPLATE_VALIDATOR_ALLOWED_TAGS.has(tag)) {
       issues.push(`不支持 <${tag}> 标签；请改用 div/span/p/ul/li 等展示标签。`);
       continue;
     }
@@ -164,7 +145,7 @@ function validateStatusBarCustomTemplate(template) {
       }
       continue;
     }
-    if (!CUSTOM_TEMPLATE_VOID_TAGS.has(tag) && !/\/\s*>$/.test(tagText)) {
+    if (!STATUS_BAR_TEMPLATE_VOID_TAGS.has(tag) && !/\/\s*>$/.test(tagText)) {
       stack.push(tag);
     }
   }
@@ -457,7 +438,12 @@ export function useChatAccessory({ conversation, showActionNotice, showError }) 
     syncTemplateCfgFromForm();
   }
 
+  function isStatusBarEditorLocked() {
+    return accessoryDisposed || statusBarSaving.value;
+  }
+
   function addStatusBarVariable() {
+    if (isStatusBarEditorLocked()) return;
     statusBarForm.variables.push({
       name: '新变量',
       value: 100,
@@ -467,6 +453,7 @@ export function useChatAccessory({ conversation, showActionNotice, showError }) 
   }
 
   function removeStatusBarVariable(index) {
+    if (isStatusBarEditorLocked()) return;
     statusBarForm.variables.splice(index, 1);
   }
 
@@ -542,6 +529,7 @@ export function useChatAccessory({ conversation, showActionNotice, showError }) 
   }
 
   function openStatusBarEditor() {
+    if (isStatusBarEditorLocked()) return;
     if (statusBar.value) {
       syncStatusBarForm(statusBar.value);
     } else {
@@ -687,6 +675,7 @@ export function useChatAccessory({ conversation, showActionNotice, showError }) 
   }
 
   function setStatusBarTemplateMode(mode) {
+    if (isStatusBarEditorLocked()) return;
     const nextMode = mode === 'custom' ? 'custom' : 'builtin';
     if (statusBarTemplateMode.value === nextMode) {
       return;
@@ -727,6 +716,7 @@ export function useChatAccessory({ conversation, showActionNotice, showError }) 
   }
 
   function closeStatusBarEditor() {
+    if (isStatusBarEditorLocked()) return;
     statusBarEditorOpen.value = false;
   }
 
@@ -747,6 +737,7 @@ export function useChatAccessory({ conversation, showActionNotice, showError }) 
   }
 
   function addStatusCharacter() {
+    if (isStatusBarEditorLocked()) return;
     statusBarTemplateCfg.characters.push({
       id: 'char_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6),
       name: '新角色',
@@ -760,10 +751,12 @@ export function useChatAccessory({ conversation, showActionNotice, showError }) 
   }
 
   function removeStatusCharacter(index) {
+    if (isStatusBarEditorLocked()) return;
     statusBarTemplateCfg.characters.splice(index, 1);
   }
 
   function addCharacterVariable(charIndex) {
+    if (isStatusBarEditorLocked()) return;
     const ch = statusBarTemplateCfg.characters[charIndex];
     if (!ch) return;
     if (!ch.variables) ch.variables = [];
@@ -771,16 +764,19 @@ export function useChatAccessory({ conversation, showActionNotice, showError }) 
   }
 
   function removeCharacterVariable(charIndex, varIndex) {
+    if (isStatusBarEditorLocked()) return;
     const ch = statusBarTemplateCfg.characters[charIndex];
     if (!ch || !ch.variables) return;
     ch.variables.splice(varIndex, 1);
   }
 
   function addQuickReply() {
+    if (isStatusBarEditorLocked()) return;
     statusBarTemplateCfg.quickReplies.push({ label: '新选项', text: '' });
   }
 
   function removeQuickReply(index) {
+    if (isStatusBarEditorLocked()) return;
     statusBarTemplateCfg.quickReplies.splice(index, 1);
   }
 

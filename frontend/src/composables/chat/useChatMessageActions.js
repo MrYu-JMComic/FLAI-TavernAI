@@ -1,5 +1,5 @@
 import { nextTick, reactive, ref, triggerRef } from 'vue';
-import { deleteMessage, updateMessage, fetchMessageSwipes, createMessageSwipe, branchConversation, fetchConversationBranches } from '../../api';
+import { deleteMessage, updateMessage, fetchMessageSwipes, createMessageSwipe, branchConversation, fetchConversationBranches } from '../../api.js';
 
 export function useChatMessageActions({
   messages,
@@ -106,10 +106,20 @@ export function useChatMessageActions({
   }
 
   async function cancelEditMessage(message = null) {
+    if (messageActionBusy.value) {
+      return;
+    }
     const messageId = message?.id || editingMessageId.value;
     await withMessageScrollAnchor(messageId, async () => {
       clearMessageEdit();
     });
+  }
+
+  function setEditingMessageContent(value) {
+    if (messageActionBusy.value) {
+      return;
+    }
+    editingMessageContent.value = value;
   }
 
   function clearMessageEdit() {
@@ -395,6 +405,7 @@ export function useChatMessageActions({
 
   async function swipeMessagePrev(message) {
     if (disposed) return;
+    if (swipeLoading.value.has(message.id)) return;
     const state = messageSwipeState[message.id];
     if (!state || state.activeIndex <= 0) return;
     state.activeIndex--;
@@ -552,6 +563,7 @@ export function useChatMessageActions({
     canDeleteMessage,
     beginEditMessage,
     cancelEditMessage,
+    setEditingMessageContent,
     clearMessageEdit,
     saveMessageEdit,
     removeMessage,

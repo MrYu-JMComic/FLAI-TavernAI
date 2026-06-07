@@ -20,6 +20,34 @@ function createDeferred() {
   return { promise, resolve, reject };
 }
 
+test('chat sidebar initial open state falls back to window width without matchMedia', () => {
+  const originalWindow = globalThis.window;
+
+  try {
+    globalThis.window = { innerWidth: 1180 };
+    const desktopChat = useChatConversation({
+      route: { params: {} },
+      emit() {},
+      showError() {}
+    });
+    assert.equal(desktopChat.sidebarOpen.value, true);
+
+    globalThis.window = { innerWidth: 760 };
+    const phoneChat = useChatConversation({
+      route: { params: {} },
+      emit() {},
+      showError() {}
+    });
+    assert.equal(phoneChat.sidebarOpen.value, false);
+  } finally {
+    if (typeof originalWindow === 'undefined') {
+      delete globalThis.window;
+    } else {
+      globalThis.window = originalWindow;
+    }
+  }
+});
+
 test('chat sidebar data load reports partial failures without discarding successful resources', async () => {
   const originalFetch = globalThis.fetch;
   const requests = [];

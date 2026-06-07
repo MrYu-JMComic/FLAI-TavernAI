@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 const { normalizeBoolean } = await import('../utils/boolean.js');
-const { normalizeFiniteNumber } = await import('../utils/number.js');
+const { clampInteger, clampNumber, normalizeFiniteNumber } = await import('../utils/number.js');
 
 test('normalizeBoolean preserves booleans and parses string flags', () => {
   assert.equal(normalizeBoolean(true), true);
@@ -36,4 +36,22 @@ test('normalizeFiniteNumber uses fallback for missing or non-finite values', () 
   assert.equal(normalizeFiniteNumber('-Infinity', 7), 7);
   assert.equal(normalizeFiniteNumber('not-a-number', 7), 7);
   assert.equal(normalizeFiniteNumber('not-a-number', 'bad-fallback'), 0);
+});
+
+test('clampNumber bounds finite numeric values', () => {
+  assert.equal(clampNumber(1.5, 0, 2), 1.5);
+  assert.equal(clampNumber('4', 0, 2), 2);
+  assert.equal(clampNumber('-4', -2, 2), -2);
+  assert.equal(clampNumber('', -2, 2), 0);
+  assert.equal(clampNumber('bad', -2, 2), -2);
+  assert.equal(clampNumber('bad', 0, 10, 7), 7);
+});
+
+test('clampInteger rounds and bounds finite numeric values', () => {
+  assert.equal(clampInteger(1.5, 0, 10), 2);
+  assert.equal(clampInteger('12', 0, 10), 10);
+  assert.equal(clampInteger('-4', -2, 10), -2);
+  assert.equal(clampInteger('', -2, 10), 0);
+  assert.equal(clampInteger('bad', 0, 10), 0);
+  assert.equal(clampInteger('bad', 0, 10, 7), 7);
 });
