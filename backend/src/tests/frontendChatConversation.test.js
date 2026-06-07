@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { readVueBlocks } from './frontendSfcTestUtils.js';
 
 const { useChatConversation } = await import('../../../frontend/src/composables/chat/useChatConversation.js');
+const { script: chatViewScript } = readVueBlocks('frontend/src/views/ChatView.vue');
 
 function jsonResponse(data, status = 200) {
   return new Response(JSON.stringify(data), {
@@ -19,6 +21,142 @@ function createDeferred() {
   });
   return { promise, resolve, reject };
 }
+
+function unwrapVueProxy(value) {
+  return value && typeof value === 'object' && value.__v_raw ? value.__v_raw : value;
+}
+
+function createActiveConversation(overrides = {}) {
+  return {
+    id: 'conv-active',
+    characterId: 'char-1',
+    title: 'Active story',
+    chatLorebookId: 'book-1',
+    createdAt: '2026-06-08T00:00:00.000Z',
+    updatedAt: '2026-06-08T00:00:00.000Z',
+    character: {
+      name: 'Alice',
+      avatarUrl: '/avatars/alice.png'
+    },
+    settings: {
+      chatLorebookId: 'book-1',
+      customCss: '.user {}',
+      accessorySkills: {
+        statusBarAgent: {
+          enabled: true,
+          modelOverride: 'model-a'
+        }
+      }
+    },
+    authorSettings: {
+      customCss: '.author {}',
+      statusBarPrompt: 'Author prompt'
+    },
+    userSettings: {
+      customCss: '.user {}',
+      accessorySkills: {
+        statusBarAgent: {
+          enabled: true,
+          modelOverride: 'model-a'
+        }
+      }
+    },
+    usage: {
+      totalTokens: 10,
+      totalCostCny: 0.01
+    },
+    ...overrides
+  };
+}
+
+function createEquivalentActiveConversation() {
+  return {
+    usage: {
+      totalCostCny: 0.01,
+      totalTokens: 10
+    },
+    userSettings: {
+      accessorySkills: {
+        statusBarAgent: {
+          modelOverride: 'model-a',
+          enabled: true
+        }
+      },
+      customCss: '.user {}'
+    },
+    authorSettings: {
+      statusBarPrompt: 'Author prompt',
+      customCss: '.author {}'
+    },
+    settings: {
+      accessorySkills: {
+        statusBarAgent: {
+          modelOverride: 'model-a',
+          enabled: true
+        }
+      },
+      customCss: '.user {}',
+      chatLorebookId: 'book-1'
+    },
+    character: {
+      avatarUrl: '/avatars/alice.png',
+      name: 'Alice'
+    },
+    updatedAt: '2026-06-08T00:00:00.000Z',
+    createdAt: '2026-06-08T00:00:00.000Z',
+    chatLorebookId: 'book-1',
+    title: 'Active story',
+    characterId: 'char-1',
+    id: 'conv-active'
+  };
+}
+
+test('active chat conversation setter preserves unchanged object references', () => {
+  const chat = useChatConversation({
+    route: { params: { id: 'conv-active' } },
+    emit() {},
+    showError() {}
+  });
+
+  const activeConversation = createActiveConversation();
+
+  assert.equal(chat.setActiveConversationIfChanged(activeConversation), true);
+
+  const activeReference = unwrapVueProxy(chat.conversation.value);
+  assert.equal(chat.conversation.value.id, activeConversation.id);
+  assert.equal(chat.setActiveConversationIfChanged(createEquivalentActiveConversation()), false);
+  assert.equal(unwrapVueProxy(chat.conversation.value), activeReference);
+
+  const changedSettings = createEquivalentActiveConversation();
+  changedSettings.userSettings = {
+    ...changedSettings.userSettings,
+    customCss: '.changed {}'
+  };
+  assert.equal(chat.setActiveConversationIfChanged(changedSettings), true);
+  assert.equal(chat.conversation.value.userSettings.customCss, '.changed {}');
+
+  const settingsReference = unwrapVueProxy(chat.conversation.value);
+  const changedUsage = createEquivalentActiveConversation();
+  changedUsage.usage = {
+    totalTokens: 11,
+    totalCostCny: 0.01
+  };
+  assert.equal(chat.setActiveConversationIfChanged(changedUsage), true);
+  assert.notEqual(unwrapVueProxy(chat.conversation.value), settingsReference);
+  assert.equal(chat.conversation.value.usage.totalTokens, 11);
+
+  assert.equal(chat.setActiveConversationIfChanged(null), true);
+  assert.equal(chat.conversation.value, null);
+  assert.equal(chat.setActiveConversationIfChanged(null), false);
+});
+
+test('ChatView routes active conversation refreshes through the stable setter', () => {
+  assert.match(chatViewScript, /setActiveConversationIfChanged,/);
+  assert.match(chatViewScript, /setActiveConversationIfChanged\(null\);/);
+  assert.match(chatViewScript, /setActiveConversationIfChanged\(result\.conversation\);/);
+  assert.doesNotMatch(chatViewScript, /conversation\.value\s*=\s*result\.conversation/);
+  assert.doesNotMatch(chatViewScript, /conversation\.value\s*=\s*null/);
+});
 
 test('chat sidebar initial open state falls back to window width without matchMedia', () => {
   const originalWindow = globalThis.window;

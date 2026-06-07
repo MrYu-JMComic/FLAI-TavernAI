@@ -92,6 +92,7 @@ const {
   openEconomyPanel, closeEconomyPanel,
   toggleConversationSelection, toggleAllVisibleConversations,
   deleteOneConversation, deleteSelectedConversations,
+  setActiveConversationIfChanged,
   formatConversationUsage,
   cleanup: cleanupConversationState
 } = useChatConversation({ route: props.route, emit, showError });
@@ -313,7 +314,7 @@ async function loadConversation() {
   if (!conversationId) return;
   const requestToken = ++conversationLoadToken;
   if (conversation.value?.id && conversation.value.id !== conversationId) {
-    conversation.value = null;
+    setActiveConversationIfChanged(null);
     messages.value = [];
     statusBar.value = null;
     syncAccessorySkills();
@@ -324,7 +325,7 @@ async function loadConversation() {
   try {
     const result = await fetchConversationMessages(conversationId);
     if (requestToken !== conversationLoadToken || props.route.params.id !== conversationId) return;
-    conversation.value = result.conversation;
+    setActiveConversationIfChanged(result.conversation);
     messages.value = result.messages;
     await nextTick();
     syncConversationAppearance(result.conversation?.settings);

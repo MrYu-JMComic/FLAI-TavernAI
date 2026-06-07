@@ -226,10 +226,13 @@ test('unreferenced Vue component scanner reports candidates without failing by d
   assert.match(scanner, /function\s+componentTagPatterns/);
   assert.match(scanner, /<\\\\s\*\$\{escapedName\}/);
   assert.match(scanner, /function\s+componentIsAttributePatterns/);
+  assert.match(scanner, /<\\\\s\*component/);
   assert.match(scanner, /v-bind:is/);
   assert.match(scanner, /function\s+maskComponentTokenSearchText/);
+  assert.match(scanner, /function\s+maskComponentIsAttributeSearchText/);
   assert.match(scanner, /function\s+maskVueScriptAndStyleBlocks/);
   assert.match(scanner, /function\s+maskVueAttributeValueNoise/);
+  assert.match(scanner, /preserveComponentIsAttributes/);
   assert.match(scanner, /function\s+collectComponentReferenceLiterals/);
   assert.match(scanner, /import\\\.meta\\\.glob/);
   assert.doesNotMatch(scanner, /frontendRelativeWithoutExtension/);
@@ -271,11 +274,14 @@ test('unreferenced Vue component scanner resolves path aliases and globbed refer
     writeFixtureFile(fixtureRoot, 'frontend/src/components/BoundStringWidget.vue', '<template><div /></template>');
     writeFixtureFile(fixtureRoot, 'frontend/src/components/DirectWidget.vue', '<template><div /></template>');
     writeFixtureFile(fixtureRoot, 'frontend/src/components/DynamicExpressionOnlyWidget.vue', '<template><div /></template>');
+    writeFixtureFile(fixtureRoot, 'frontend/src/components/IsAttributeMarkupOnlyWidget.vue', '<template><div /></template>');
     writeFixtureFile(fixtureRoot, 'frontend/src/components/SrcWidget.vue', '<template><div /></template>');
     writeFixtureFile(fixtureRoot, 'frontend/src/components/globbed/GlobbedWidget.vue', '<template><div /></template>');
     writeFixtureFile(fixtureRoot, 'frontend/src/components/CommentOnlyWidget.vue', '<template><div /></template>');
     writeFixtureFile(fixtureRoot, 'frontend/src/components/JsStringOnlyWidget.vue', '<template><div /></template>');
     writeFixtureFile(fixtureRoot, 'frontend/src/components/NameOnlyWidget.vue', '<template><div /></template>');
+    writeFixtureFile(fixtureRoot, 'frontend/src/components/NonComponentBoundIsOnlyWidget.vue', '<template><div /></template>');
+    writeFixtureFile(fixtureRoot, 'frontend/src/components/NonComponentStaticIsOnlyWidget.vue', '<template><div /></template>');
     writeFixtureFile(fixtureRoot, 'frontend/src/components/PascalWidget.vue', '<template><div /></template>');
     writeFixtureFile(fixtureRoot, 'frontend/src/components/PathOnlyWidget.vue', '<template><div /></template>');
     writeFixtureFile(fixtureRoot, 'frontend/src/components/PrefixOnlyWidget.vue', '<template><div /></template>');
@@ -350,6 +356,9 @@ const htmlSnippet = '<StringOnlyWidget />';
 <template>
   <p>NameOnlyWidget is mentioned as text, not rendered.</p>
   <p>@/components/PathOnlyWidget.vue is mentioned as text, not rendered.</p>
+  <div is="NonComponentStaticIsOnlyWidget"></div>
+  <section :is="'NonComponentBoundIsOnlyWidget'"></section>
+  <component :is="'<IsAttributeMarkupOnlyWidget />'" />
   <div data-example="<TemplateAttributeStringOnlyWidget />"></div>
 </template>
 <style>
@@ -396,8 +405,11 @@ const regexStaticImportSnippet = /import RegexStaticImportOnlyWidget from '..\\/
       [
         'frontend/src/components/CommentOnlyWidget.vue',
         'frontend/src/components/DynamicExpressionOnlyWidget.vue',
+        'frontend/src/components/IsAttributeMarkupOnlyWidget.vue',
         'frontend/src/components/JsStringOnlyWidget.vue',
         'frontend/src/components/NameOnlyWidget.vue',
+        'frontend/src/components/NonComponentBoundIsOnlyWidget.vue',
+        'frontend/src/components/NonComponentStaticIsOnlyWidget.vue',
         'frontend/src/components/PathOnlyWidget.vue',
         'frontend/src/components/PrefixOnlyWidget.vue',
         'frontend/src/components/RegexStaticImportOnlyWidget.vue',

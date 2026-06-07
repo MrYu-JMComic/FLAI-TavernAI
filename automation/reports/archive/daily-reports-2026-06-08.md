@@ -2634,3 +2634,47 @@ Manually verify in the browser that scrolling upward during a long AI stream lea
 ## Next Recommended Task
 
 - Continue reviewing route-level conversation object replacements after submit/sidebar refreshes, especially cases where unchanged conversation settings still replace parent refs.
+
+
+---
+
+### `2026-06-08-chat-active-conversation-reference-stability.md`
+
+# 2026-06-08 Chat Active Conversation Reference Stability
+
+## Scope
+
+- Continue the UI/state freshness and performance audit.
+- Reduce avoidable ChatView child-prop churn when route reloads return the same active conversation payload.
+
+## Changed Files
+
+- `frontend/src/composables/chat/useChatConversation.js`
+- `frontend/src/views/ChatView.vue`
+- `backend/src/tests/frontendChatConversation.test.js`
+- `automation/backlog.md`
+- `automation/reports/archive/daily-reports-2026-06-08.md`
+
+## What Changed
+
+- Added `setActiveConversationIfChanged` to preserve the active conversation ref when the refreshed payload is structurally unchanged.
+- Used stable key-sorted serialization so equivalent nested settings, character, lorebook, and usage payloads do not replace refs just because object identity or key order changed.
+- Routed ChatView route-switch clears and loaded conversation payloads through the new helper instead of direct active-conversation assignment.
+- Added focused behavior coverage for unchanged active payloads, changed settings, changed usage, null resets, and ChatView helper wiring.
+
+## Validation
+
+- PASS: `node --test backend\src\tests\frontendChatConversation.test.js` (15 tests)
+- PASS: `node --test backend\src\tests\source-hygiene.test.js` (31 tests)
+- PASS: `npm run build` in `frontend`
+- PASS: `node scripts\check-encoding.mjs`
+- PASS: `powershell -ExecutionPolicy Bypass -File scripts\review-gate.ps1`
+
+## Notes
+
+- No secrets were written.
+- Existing unrelated dirty worktree and parallel validation-diagnostic/report changes were preserved.
+
+## Next Recommended Task
+
+- Continue folding local active-conversation mutations from chat appearance and accessory-skill saves through the same reference-preserving helper.

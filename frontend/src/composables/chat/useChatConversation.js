@@ -114,6 +114,15 @@ export function useChatConversation({ route, emit, showError }) {
     return true;
   }
 
+  function setActiveConversationIfChanged(nextConversation) {
+    const normalizedConversation = nextConversation || null;
+    if (sameStableValue(conversation.value, normalizedConversation)) {
+      return false;
+    }
+    conversation.value = normalizedConversation;
+    return true;
+  }
+
   function sameListItems(currentItems, nextItems, sameItem) {
     if (currentItems === nextItems) {
       return true;
@@ -160,6 +169,29 @@ export function useChatConversation({ route, emit, showError }) {
       && (current?.pattern || '') === (next?.pattern || '')
       && (current?.flags || '') === (next?.flags || '')
       && (current?.titleTemplate || current?.label || '') === (next?.titleTemplate || next?.label || '');
+  }
+
+  function sameStableValue(current, next) {
+    if (current === next) {
+      return true;
+    }
+    return stableSerialize(current) === stableSerialize(next);
+  }
+
+  function stableSerialize(value) {
+    if (typeof value === 'undefined') {
+      return 'undefined';
+    }
+    if (value === null || typeof value !== 'object') {
+      return JSON.stringify(value);
+    }
+    if (Array.isArray(value)) {
+      return `[${value.map((item) => stableSerialize(item)).join(',')}]`;
+    }
+    return `{${Object.keys(value)
+      .sort()
+      .map((key) => `${JSON.stringify(key)}:${stableSerialize(value[key])}`)
+      .join(',')}}`;
   }
 
   function formatSidebarLoadError(failures) {
@@ -489,6 +521,7 @@ export function useChatConversation({ route, emit, showError }) {
     selectedConversationCount,
     allVisibleConversationsSelected,
     conversationReady,
+    setActiveConversationIfChanged,
     loadSidebarData,
     startNewConversation,
     openConversation,

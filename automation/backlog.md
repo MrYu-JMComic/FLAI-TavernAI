@@ -40,6 +40,9 @@ The autonomous loop should choose one small item per run. Add new findings here 
 
 ## Done
 
+- 2026-06-08: Preserved active Chat route conversation references when refreshed payloads are unchanged.
+- 2026-06-08: Migrated Chat conversation source coverage to the shared Vue block reader after review gate exposed a direct SFC read.
+- 2026-06-08: Limited Vue dynamic `is` component reference matching to `<component>` tags in the unreferenced component diagnostic.
 - 2026-06-08: Tuned API rate limits with a larger authenticated request budget and strict separate auth attempt limits.
 - 2026-06-08: Required Vue component tag-name boundaries in the unreferenced component diagnostic so prefix-only tags cannot hide dormant components.
 - 2026-06-08: Routed chat submit status-bar payloads through the reference-preserving accessory update helper.

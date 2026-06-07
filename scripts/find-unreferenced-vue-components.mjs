@@ -389,9 +389,9 @@ function isComponentIsAttributeName(name) {
   return ['is', ':is', 'v-bind:is'].includes(name.toLowerCase());
 }
 
-function maskVueAttributeValueNoise(text) {
+function maskVueAttributeValueNoise(text, { preserveComponentIsAttributes = false } = {}) {
   return text.replace(/([:@\w-]+)\s*=\s*(['"])((?:\\.|(?!\2)[\s\S])*?)\2/g, (match, name, quote, value) => {
-    if (isComponentIsAttributeName(name)) {
+    if (preserveComponentIsAttributes && isComponentIsAttributeName(name)) {
       return match;
     }
 
@@ -403,6 +403,15 @@ function maskVueAttributeValueNoise(text) {
 function maskComponentTokenSearchText(filePath, text) {
   if (path.extname(filePath).toLowerCase() === '.vue') {
     return maskVueAttributeValueNoise(maskVueScriptAndStyleBlocks(text));
+  }
+  return maskRegexLiterals(maskStringLiterals(text));
+}
+
+function maskComponentIsAttributeSearchText(filePath, text) {
+  if (path.extname(filePath).toLowerCase() === '.vue') {
+    return maskVueAttributeValueNoise(maskVueScriptAndStyleBlocks(text), {
+      preserveComponentIsAttributes: true
+    });
   }
   return maskRegexLiterals(maskStringLiterals(text));
 }
@@ -549,6 +558,7 @@ function buildSourceIndex() {
         relativePath: toPosixPath(path.relative(projectRoot, filePath)),
         searchText,
         tokenSearchText,
+        isAttributeSearchText: maskComponentIsAttributeSearchText(filePath, searchText),
         ...collectComponentReferences(filePath, searchText)
       };
     });
@@ -575,9 +585,10 @@ function componentIsAttributePatterns(componentPath) {
     const quotedName = `["']${escapedName}["']`;
     const staticValuePattern = `(?:${escapedName}|${quotedName}|"${quotedName}"|'${quotedName}')`;
     const boundStringValuePattern = `(?:"${quotedName}"|'${quotedName}')`;
+    const componentTagPrefix = '<\\s*component(?=$|[\\s>/])[^>]*';
     return [
-      new RegExp(`(?:^|[\\s<])is\\s*=\\s*${staticValuePattern}(?=$|[\\s>/])`),
-      new RegExp(`(?:^|[\\s<])(?::is|v-bind:is)\\s*=\\s*${boundStringValuePattern}(?=$|[\\s>/])`)
+      new RegExp(`${componentTagPrefix}\\sis\\s*=\\s*${staticValuePattern}(?=$|[\\s>/])`),
+      new RegExp(`${componentTagPrefix}\\s(?::is|v-bind:is)\\s*=\\s*${boundStringValuePattern}(?=$|[\\s>/])`)
     ];
   });
 }
@@ -593,7 +604,7 @@ function findComponentReferences(componentPath, sourceIndex) {
       source.referencedComponentPaths.has(ownPath) ||
       source.referencedComponentGlobs.some((glob) => glob.test(ownPosixPath)) ||
       tagPatterns.some((pattern) => pattern.test(source.tokenSearchText)) ||
-      isAttributePatterns.some((pattern) => pattern.test(source.tokenSearchText))
+      isAttributePatterns.some((pattern) => pattern.test(source.isAttributeSearchText))
     ))
     .map((source) => source.relativePath);
 }
