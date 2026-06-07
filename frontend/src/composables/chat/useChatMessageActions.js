@@ -503,6 +503,22 @@ export function useChatMessageActions({
     return !disposed && requestToken === branchLoadToken && route.params.id === conversationId;
   }
 
+  function resetMessageUiState() {
+    messageActionToken += 1;
+    branchLoadToken += 1;
+    branchActionToken += 1;
+    clearMessageEdit();
+    expandedReasoning.value = new Set();
+    messageActionBusy.value = '';
+    branchBusy.value = false;
+    conversationBranches.value = [];
+    resetMessageSwipeState();
+    if (focusEditorRafId) {
+      window.cancelAnimationFrame(focusEditorRafId);
+      focusEditorRafId = null;
+    }
+  }
+
   function cleanup() {
     disposed = true;
     messageActionToken += 1;
@@ -550,6 +566,7 @@ export function useChatMessageActions({
     branchBusy,
     loadConversationBranches,
     handleBranchMessage,
+    resetMessageUiState,
     cleanup
   };
 }

@@ -27,6 +27,9 @@ export function useChatConversation({ route, emit, showError }) {
   const presetList = ref([]);
   const selectedPresetId = ref('');
   let sidebarLoadToken = 0;
+  let startConversationToken = 0;
+  let conversationActionToken = 0;
+  let conversationDisposed = false;
 
   const filteredConversations = computed(() => {
     const query = historySearch.value.trim().toLowerCase();
@@ -46,6 +49,9 @@ export function useChatConversation({ route, emit, showError }) {
   });
 
   async function loadSidebarData() {
+    if (conversationDisposed) {
+      return;
+    }
     const requestToken = ++sidebarLoadToken;
     const currentCharacterId = conversation.value?.characterId;
     const [historyResult, characterResult, presetResult] = await Promise.allSettled([
@@ -53,7 +59,7 @@ export function useChatConversation({ route, emit, showError }) {
       fetchCharacters(),
       fetchPresets()
     ]);
-    if (requestToken !== sidebarLoadToken || currentCharacterId !== conversation.value?.characterId) {
+    if (!isCurrentSidebarLoad(requestToken, currentCharacterId)) {
       return;
     }
 
@@ -99,6 +105,9 @@ export function useChatConversation({ route, emit, showError }) {
   }
 
   async function startNewConversation() {
+    if (conversationDisposed) {
+      return;
+    }
     error.value = '';
     const characterId = conversation.value?.characterId || characters.value[0]?.id;
     if (!characterId) {
@@ -106,13 +115,22 @@ export function useChatConversation({ route, emit, showError }) {
       return;
     }
 
+    const requestToken = ++startConversationToken;
     try {
       const created = await createConversation(characterId);
+      if (!isCurrentStartConversation(requestToken)) {
+        return;
+      }
       await loadSidebarData();
+      if (!isCurrentStartConversation(requestToken)) {
+        return;
+      }
       closeSidebar();
       emit('navigate', 'chat', { id: created.id });
     } catch (err) {
-      showError(err.message);
+      if (isCurrentStartConversation(requestToken)) {
+        showError(err.message);
+      }
     }
   }
 
@@ -152,9 +170,15 @@ export function useChatConversation({ route, emit, showError }) {
   }
 
   async function openNpcPanel() {
+    if (conversationDisposed) {
+      return;
+    }
     if (npcPanelOpen.value) {
       npcPanelOpen.value = false;
       await nextTick();
+    }
+    if (conversationDisposed) {
+      return;
     }
     npcPanelOpen.value = true;
   }
@@ -192,45 +216,64 @@ export function useChatConversation({ route, emit, showError }) {
   }
 
   async function deleteOneConversation(item) {
-    if (conversationActionBusy.value || !item?.id) {
+    if (conversationDisposed || conversationActionBusy.value || !item?.id) {
       return;
     }
     if (!window.confirm(`删除会话「${item.title}」？不会删除其他会话。`)) {
       return;
     }
 
+    const actionToken = ++conversationActionToken;
     conversationActionBusy.value = true;
     try {
       await deleteConversation(item.id);
+      if (!isCurrentConversationAction(actionToken)) {
+        return;
+      }
       removeDeletedConversations([item.id]);
     } catch (err) {
-      showError(err.message);
+      if (isCurrentConversationAction(actionToken)) {
+        showError(err.message);
+      }
     } finally {
-      conversationActionBusy.value = false;
+      if (isCurrentConversationAction(actionToken)) {
+        conversationActionBusy.value = false;
+      }
     }
   }
 
   async function deleteSelectedConversations() {
     const ids = [...selectedConversationIds.value].filter((id) => visibleConversationIds.value.includes(id));
-    if (!ids.length || conversationActionBusy.value) {
+    if (conversationDisposed || !ids.length || conversationActionBusy.value) {
       return;
     }
     if (!window.confirm(`删除选中的 ${ids.length} 个会话？不会影响未选中的会话。`)) {
       return;
     }
 
+    const actionToken = ++conversationActionToken;
     conversationActionBusy.value = true;
     try {
       const result = await deleteConversations(ids);
+      if (!isCurrentConversationAction(actionToken)) {
+        return;
+      }
       removeDeletedConversations(result.deletedIds || ids);
     } catch (err) {
-      showError(err.message);
+      if (isCurrentConversationAction(actionToken)) {
+        showError(err.message);
+      }
     } finally {
-      conversationActionBusy.value = false;
+      if (isCurrentConversationAction(actionToken)) {
+        conversationActionBusy.value = false;
+      }
     }
   }
 
   function removeDeletedConversations(ids) {
+    if (conversationDisposed) {
+      return;
+    }
     const deleted = new Set(ids);
     conversations.value = conversations.value.filter((item) => !deleted.has(item.id));
     selectedConversationIds.value = new Set([...selectedConversationIds.value].filter((id) => !deleted.has(id)));
@@ -268,6 +311,50 @@ export function useChatConversation({ route, emit, showError }) {
 
     const digits = cost > 0 && cost < 0.01 ? 6 : 4;
     return `¥${cost.toFixed(digits)}`;
+  }
+
+  function isCurrentSidebarLoad(requestToken, characterId) {
+    return !conversationDisposed
+      && requestToken === sidebarLoadToken
+      && characterId === conversation.value?.characterId;
+  }
+
+  function isCurrentStartConversation(requestToken) {
+    return !conversationDisposed && requestToken === startConversationToken;
+  }
+
+  function isCurrentConversationAction(actionToken) {
+    return !conversationDisposed && actionToken === conversationActionToken;
+  }
+
+  function cleanupConversation() {
+    conversationDisposed = true;
+    sidebarLoadToken += 1;
+    startConversationToken += 1;
+    conversationActionToken += 1;
+    conversationActionBusy.value = false;
+  }
+
+  function isCurrentSidebarLoad(requestToken, characterId) {
+    return !conversationDisposed
+      && requestToken === sidebarLoadToken
+      && conversation.value?.characterId === characterId;
+  }
+
+  function isCurrentStartConversation(requestToken) {
+    return !conversationDisposed && requestToken === startConversationToken;
+  }
+
+  function isCurrentConversationAction(actionToken) {
+    return !conversationDisposed && actionToken === conversationActionToken;
+  }
+
+  function cleanup() {
+    conversationDisposed = true;
+    sidebarLoadToken += 1;
+    startConversationToken += 1;
+    conversationActionToken += 1;
+    conversationActionBusy.value = false;
   }
 
   return {
@@ -313,6 +400,7 @@ export function useChatConversation({ route, emit, showError }) {
     pruneSelectedConversations,
     formatConversationUsage,
     formatTokens,
-    formatCost
+    formatCost,
+    cleanup
   };
 }

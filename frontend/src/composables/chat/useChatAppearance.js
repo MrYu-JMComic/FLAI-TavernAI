@@ -270,10 +270,13 @@ export function useChatAppearance({
   }
 
   async function handleAppearanceBackgroundUpload(event, field) {
-    const file = event.target.files?.[0];
-    event.target.value = '';
+    const input = event?.target;
+    const file = input?.files?.[0];
+    if (input) {
+      input.value = '';
+    }
     const uploadToken = nextBackgroundUploadToken(field);
-    if (!file) {
+    if (appearanceDisposed || !file) {
       return;
     }
 
@@ -302,26 +305,39 @@ export function useChatAppearance({
   }
 
   function clearAppearanceField(field) {
+    if (appearanceDisposed) {
+      return;
+    }
     nextBackgroundUploadToken(field);
     chatAppearanceForm[field] = '';
   }
 
-  function handleSettingsBackgroundUpload({ event, field }) {
+  function handleSettingsBackgroundUpload({ event, field } = {}) {
     handleAppearanceBackgroundUpload(event, field);
   }
 
   async function loadWorldBooks() {
-    if (worldBooksLoading.value) {
+    if (appearanceDisposed || worldBooksLoading.value) {
       return;
     }
 
+    const requestToken = ++worldBooksLoadToken;
     worldBooksLoading.value = true;
     try {
-      worldBooks.value = await fetchWorldBooks();
+      const books = await fetchWorldBooks();
+      if (!isCurrentWorldBooksLoad(requestToken)) {
+        return;
+      }
+      worldBooks.value = books;
     } catch (err) {
+      if (!isCurrentWorldBooksLoad(requestToken)) {
+        return;
+      }
       showError(err.message || '加载世界书失败');
     } finally {
-      worldBooksLoading.value = false;
+      if (isCurrentWorldBooksLoad(requestToken)) {
+        worldBooksLoading.value = false;
+      }
     }
   }
 
@@ -342,7 +358,17 @@ export function useChatAppearance({
   }
 
   function isCurrentBackgroundUpload(field, uploadToken) {
-    return backgroundUploadTokens[String(field || '')] === uploadToken;
+    return !appearanceDisposed && backgroundUploadTokens[String(field || '')] === uploadToken;
+  }
+
+  function isCurrentWorldBooksLoad(requestToken) {
+    return !appearanceDisposed && requestToken === worldBooksLoadToken;
+  }
+
+  function invalidateBackgroundUploads() {
+    Object.keys(backgroundUploadTokens).forEach((key) => {
+      backgroundUploadTokens[key] += 1;
+    });
   }
 
   async function waitForFrame() {
@@ -382,6 +408,7 @@ export function useChatAppearance({
     saveConversationAppearanceChanges,
     applyConversationAppearance,
     cleanupConversationAppearance,
+    disposeConversationAppearance,
     handleAppearanceBackgroundUpload,
     clearAppearanceField,
     handleSettingsBackgroundUpload,

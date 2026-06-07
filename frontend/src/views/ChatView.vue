@@ -43,6 +43,7 @@ const statusBarUpdateStatus = ref('not-updated');
 const npcUpdateStatus = ref('not-updated');
 let conversationLoadToken = 0;
 let modelRefreshToken = 0;
+let modelSaveToken = 0;
 let chatViewDisposed = false;
 let latestNpcFingerprint = '';
 let accessoryRefreshSnapshot = {
@@ -90,7 +91,8 @@ const {
   openEconomyPanel, closeEconomyPanel,
   toggleConversationSelection, toggleAllVisibleConversations,
   deleteOneConversation, deleteSelectedConversations,
-  formatConversationUsage
+  formatConversationUsage,
+  cleanup: cleanupConversationState
 } = useChatConversation({ route: props.route, emit, showError });
 
 const {
@@ -117,7 +119,7 @@ const {
   effectiveChatAppearance, activeChatBackgroundUrl, chatMainStyle, chatScopeSelector,
   activeCharacter, activeRenderPlugins,
   syncConversationAppearance, saveConversationAppearanceChanges,
-  applyConversationAppearance, cleanupConversationAppearance,
+  applyConversationAppearance, disposeConversationAppearance,
   handleAppearanceBackgroundUpload, clearAppearanceField, handleSettingsBackgroundUpload,
   loadWorldBooks
 } = useChatAppearance({
@@ -139,7 +141,7 @@ const {
   saveMessageEdit, removeMessage, copyMessage,
   messageSwipeState, swipeLoading, initMessageSwipes, swipeMessagePrev, swipeMessageNext, getSwipeDisplay,
   branchBusy, loadConversationBranches, handleBranchMessage,
-  cleanup: cleanupMessageActions
+  resetMessageUiState, cleanup: cleanupMessageActions
 } = useChatMessageActions({
   messages, messageScroller, route: props.route,
   user: computed(() => props.user), activeCharacter,
@@ -232,6 +234,12 @@ function isCurrentModelRefresh(requestToken, refreshKey) {
   return requestToken === modelRefreshToken && refreshKey === providerRefreshKey(props.provider || {});
 }
 
+function isCurrentModelSave(requestToken, saveKey) {
+  return !chatViewDisposed
+    && requestToken === modelSaveToken
+    && saveKey === providerRefreshKey(props.provider || {});
+}
+
 function providerRefreshKey(provider = {}) {
   return [
     provider.providerType || '',
@@ -253,22 +261,23 @@ async function saveQuickModel(model) {
     modelSwitcherOpen.value = false;
     return;
   }
+  const requestToken = ++modelSaveToken;
   const saveKey = providerRefreshKey(props.provider || {});
   modelSwitcherSaving.value = true;
   try {
     const saved = await saveProviderSettings(providerPayloadWithModel(nextModel));
-    if (chatViewDisposed || saveKey !== providerRefreshKey(props.provider || {})) {
+    if (!isCurrentModelSave(requestToken, saveKey)) {
       return;
     }
     notify.success(`已切换模型：${saved.model || nextModel}`);
     modelSwitcherOpen.value = false;
     emit('provider-saved');
   } catch (err) {
-    if (!chatViewDisposed && saveKey === providerRefreshKey(props.provider || {})) {
+    if (isCurrentModelSave(requestToken, saveKey)) {
       showError(err.message);
     }
   } finally {
-    if (!chatViewDisposed && saveKey === providerRefreshKey(props.provider || {})) {
+    if (!chatViewDisposed && requestToken === modelSaveToken) {
       modelSwitcherSaving.value = false;
     }
   }
@@ -804,11 +813,13 @@ onBeforeUnmount(() => {
   chatViewDisposed = true;
   conversationLoadToken += 1;
   modelRefreshToken += 1;
+  modelSaveToken += 1;
   saveMessageScrollPosition();
   cleanupSubmit();
+  cleanupConversationState();
   cleanupMessageActions();
   cleanupAccessory();
-  cleanupConversationAppearance();
+  disposeConversationAppearance();
   cleanupScroll();
   window.removeEventListener('resize', scheduleViewportLayoutUpdate);
   window.removeEventListener('keydown', handleGlobalKeydown);
@@ -846,10 +857,21 @@ watch(settingsDrawerOpen, (isOpen) => {
   }
 });
 
+watch(() => providerRefreshKey(props.provider || {}), (providerKey, previousProviderKey) => {
+  if (chatViewDisposed || !previousProviderKey || providerKey === previousProviderKey) {
+    return;
+  }
+  modelRefreshToken += 1;
+  modelSaveToken += 1;
+  modelSwitcherRefreshing.value = false;
+  modelSwitcherSaving.value = false;
+});
+
 watch(() => conversation.value?.id || '', (conversationId, previousConversationId) => {
   if (chatViewDisposed || !previousConversationId || conversationId === previousConversationId) {
     return;
   }
+  resetMessageUiState();
   closeAccessoryPanels();
 });
 

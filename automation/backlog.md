@@ -165,3 +165,7 @@ The autonomous loop should choose one small item per run. Add new findings here 
 - 2026-06-07: Guarded chat accessory async completions against ChatView unmounts.
 - 2026-06-07: Reset NPC panel add-memory/add-behavior drafts when the selected NPC context changes.
 - 2026-06-07: Bound ChatSidebar history search to parent state so programmatic resets update the input UI.
+- 2026-06-07: Guarded chat appearance async completions against ChatView unmounts.
+- 2026-06-07: Closed ChatSettingsDrawer subpanels when the drawer closes or conversation context changes.
+- 2026-06-07: Reset ChatView message editing, reasoning, swipe, and branch UI state when the conversation context changes.
+- 2026-06-07: Completed chat conversation async stale guards and unmount cleanup.
