@@ -1,5 +1,6 @@
 import { newId, nowIso } from '../security.js';
 import { normalizeBoolean } from '../utils/boolean.js';
+import { normalizeFiniteNumber } from '../utils/number.js';
 
 // ── World Book CRUD ──
 
@@ -31,8 +32,14 @@ export function getWorldBook(database, userId, bookId) {
 
   // Collect linked character IDs from junction table
   const linkedCharacters = database
-    .prepare('SELECT character_id FROM character_world_books WHERE world_book_id = ? ORDER BY created_at ASC, rowid ASC')
-    .all(bookId)
+    .prepare(
+      `SELECT cwb.character_id
+       FROM character_world_books cwb
+       JOIN characters c ON c.id = cwb.character_id
+       WHERE cwb.world_book_id = ? AND c.user_id = ?
+       ORDER BY cwb.created_at ASC, cwb.rowid ASC`
+    )
+    .all(bookId, row.user_id)
     .map((r) => r.character_id);
 
   return {
@@ -47,9 +54,9 @@ export function createWorldBook(database, userId, payload) {
   const timestamp = nowIso();
   const name = normalizeName(payload.name);
   const description = String(payload.description || '').trim().slice(0, 2000);
-  const characterId = String(payload.characterId || '').trim() || null;
-  const scanDepth = Number.isFinite(Number(payload.scanDepth)) ? Math.max(1, Math.min(50, Number(payload.scanDepth))) : 1;
-  const lorebookContextPercent = Math.max(1, Math.min(100, Number(payload.lorebookContextPercent) || 25));
+  const characterId = normalizeOwnedCharacterId(database, userId, payload.characterId);
+  const scanDepth = normalizeScanDepth(payload.scanDepth);
+  const lorebookContextPercent = normalizeLorebookContextPercent(payload.lorebookContextPercent);
 
   database
     .prepare(
@@ -70,14 +77,14 @@ export function updateWorldBook(database, userId, bookId, payload) {
   const name = normalizeName(payload.name ?? existing.name);
   const description = String(payload.description ?? existing.description).trim().slice(0, 2000);
   const characterId = payload.characterId !== undefined
-    ? (String(payload.characterId || '').trim() || null)
+    ? normalizeOwnedCharacterId(database, userId, payload.characterId)
     : (existing.character_id ?? null);
   const scanDepth = payload.scanDepth !== undefined
-    ? Math.max(1, Math.min(50, Number(payload.scanDepth) || 1))
-    : Math.max(1, Number(existing.scan_depth) || 1);
+    ? normalizeScanDepth(payload.scanDepth)
+    : normalizeScanDepth(existing.scan_depth);
   const lorebookContextPercent = payload.lorebookContextPercent !== undefined
-    ? Math.max(1, Math.min(100, Number(payload.lorebookContextPercent) || 25))
-    : Math.max(1, Math.min(100, Number(existing.lorebook_context_percent) || 25));
+    ? normalizeLorebookContextPercent(payload.lorebookContextPercent)
+    : normalizeLorebookContextPercent(existing.lorebook_context_percent);
 
   database
     .prepare(
@@ -100,8 +107,13 @@ export function deleteWorldBook(database, userId, bookId) {
 // ── Character ↔ World Book Linking ──
 
 export function linkWorldBookToCharacter(database, bookId, characterId, orderIndex = 0, userId = null) {
-  if (userId && !getOwnedWorldBook(database, userId, bookId)) {
-    return false;
+  if (userId) {
+    if (!getOwnedWorldBook(database, userId, bookId)) {
+      return false;
+    }
+    if (!getOwnedCharacter(database, userId, characterId)) {
+      return false;
+    }
   }
 
   const timestamp = nowIso();
@@ -118,11 +130,49 @@ export function linkWorldBookToCharacter(database, bookId, characterId, orderInd
   }
 }
 
-export function unlinkWorldBookFromCharacter(database, bookId, characterId) {
+export function unlinkWorldBookFromCharacter(database, bookId, characterId, userId = null) {
+  if (userId) {
+    if (!getOwnedWorldBook(database, userId, bookId)) {
+      return false;
+    }
+    if (!getOwnedCharacter(database, userId, characterId)) {
+      return false;
+    }
+  }
+
   const result = database
     .prepare('DELETE FROM character_world_books WHERE world_book_id = ? AND character_id = ?')
     .run(bookId, characterId);
   return result.changes > 0;
+}
+
+export function getCharacterWorldBookId(database, characterId) {
+  const linked = database
+    .prepare(
+      `SELECT cwb.world_book_id AS id
+       FROM character_world_books cwb
+       JOIN world_books wb ON wb.id = cwb.world_book_id
+       JOIN characters c ON c.id = cwb.character_id
+         AND c.user_id = wb.user_id
+       WHERE cwb.character_id = ?
+       ORDER BY cwb.order_index ASC, cwb.created_at ASC, cwb.rowid ASC`
+    )
+    .get(characterId);
+  if (linked?.id) {
+    return linked.id;
+  }
+
+  const direct = database
+    .prepare(
+      `SELECT world_books.id
+       FROM world_books
+       JOIN characters ON characters.id = world_books.character_id
+         AND characters.user_id = world_books.user_id
+       WHERE world_books.character_id = ?
+       ORDER BY world_books.updated_at DESC, world_books.rowid DESC`
+    )
+    .get(characterId);
+  return direct?.id || null;
 }
 
 export function listCharacterWorldBooks(database, characterId) {
@@ -133,6 +183,7 @@ export function listCharacterWorldBooks(database, characterId) {
         cwb.order_index AS link_order
        FROM character_world_books cwb
        JOIN world_books wb ON wb.id = cwb.world_book_id
+       JOIN characters c ON c.id = cwb.character_id AND c.user_id = wb.user_id
        WHERE cwb.character_id = ?
        ORDER BY cwb.order_index ASC, cwb.created_at ASC, cwb.rowid ASC`
     )
@@ -177,7 +228,7 @@ export function updateEntry(database, userId, bookId, entryId, payload) {
     return null;
   }
 
-  const data = normalizeEntryPayload({ ...existing, ...payload });
+  const data = normalizeEntryPayload({ ...existing, ...payload }, existing);
 
   database
     .prepare(
@@ -215,26 +266,36 @@ export function matchWorldBookEntries(database, characterId, texts, options = {}
     return [];
   }
 
-  const textArray = Array.isArray(texts) ? texts : [texts];
-  const filteredTexts = textArray.filter(Boolean);
+  const filteredTexts = normalizeScanTexts(texts);
   if (!filteredTexts.length) {
     // Still collect always_active entries
   }
 
   // Message count for sticky/cooldown/delay tracking
-  const messageCount = options.messageCount ?? getNextMessageCount(database);
+  const messageCount = resolveMessageCount(database, options.messageCount);
 
   // Collect book IDs from both character_id column and character_world_books junction table
   const bookIdSet = new Set();
 
   if (characterId) {
     const directBooks = database
-      .prepare('SELECT id FROM world_books WHERE character_id = ?')
+      .prepare(
+        `SELECT wb.id
+         FROM world_books wb
+         JOIN characters c ON c.id = wb.character_id AND c.user_id = wb.user_id
+         WHERE wb.character_id = ?`
+      )
       .all(characterId);
     for (const b of directBooks) bookIdSet.add(b.id);
 
     const linkedBooks = database
-      .prepare('SELECT wb.id FROM character_world_books cwb JOIN world_books wb ON wb.id = cwb.world_book_id WHERE cwb.character_id = ?')
+      .prepare(
+        `SELECT wb.id
+         FROM character_world_books cwb
+         JOIN world_books wb ON wb.id = cwb.world_book_id
+         JOIN characters c ON c.id = cwb.character_id AND c.user_id = wb.user_id
+         WHERE cwb.character_id = ?`
+      )
       .all(characterId);
     for (const b of linkedBooks) bookIdSet.add(b.id);
   }
@@ -258,7 +319,10 @@ export function matchWorldBookEntries(database, characterId, texts, options = {}
   const scanDepthRow = database
     .prepare(`SELECT MAX(scan_depth) AS max_depth FROM world_books WHERE id IN (${allBookIds.map(() => '?').join(',')})`)
     .get(...allBookIds);
-  const scanDepth = options.scanDepth || Math.max(Number(scanDepthRow?.max_depth) || 1, 1);
+  const defaultScanDepth = normalizeScanDepth(scanDepthRow?.max_depth);
+  const scanDepth = options.scanDepth != null
+    ? normalizeScanDepth(options.scanDepth, defaultScanDepth)
+    : defaultScanDepth;
 
   // Build scan text from recent N messages
   const scanTexts = filteredTexts.slice(-scanDepth);
@@ -300,15 +364,7 @@ export function matchWorldBookEntries(database, characterId, texts, options = {}
   for (const entry of entries) {
     const state = entryStates.get(entry.id);
     if (state.sticky_remaining > 0) {
-      matched.push({
-        id: entry.id,
-        name: entry.name,
-        content: entry.content,
-        position: entry.position,
-        depth: entry.depth || 0,
-        role: entry.role || 0,
-        orderIndex: entry.order_index
-      });
+      matched.push(toMatchedEntry(entry));
       matchedIds.add(entry.id);
     }
   }
@@ -319,24 +375,17 @@ export function matchWorldBookEntries(database, characterId, texts, options = {}
     if (entry.always_active) {
       // Check delay
       const state = entryStates.get(entry.id);
-      if (entry.delay != null && entry.delay > 0) {
+      const delay = normalizeOptionalEntryNumber(entry.delay);
+      if (delay != null && delay > 0) {
         if (state.first_seen_message === 0) {
           database.prepare('UPDATE world_book_entry_state SET first_seen_message = ? WHERE entry_id = ?').run(messageCount, entry.id);
           state.first_seen_message = messageCount;
         }
-        if (messageCount - state.first_seen_message < entry.delay) {
+        if (messageCount - state.first_seen_message < delay) {
           continue;
         }
       }
-      matched.push({
-        id: entry.id,
-        name: entry.name,
-        content: entry.content,
-        position: entry.position,
-        depth: entry.depth || 0,
-        role: entry.role || 0,
-        orderIndex: entry.order_index
-      });
+      matched.push(toMatchedEntry(entry));
       matchedIds.add(entry.id);
     }
   }
@@ -344,47 +393,9 @@ export function matchWorldBookEntries(database, characterId, texts, options = {}
   // Phase 2: Match by trigger keys (string or regex), with cooldown/delay filtering
   matchPassWithState(entries, lowerCombined, combinedScanText, matchedIds, matched, entryStates, messageCount);
 
-  // Phase 2.5: Group inclusion — keep only one entry per group via weighted random
   const entryById = new Map(entries.map((e) => [e.id, e]));
-  const groups = new Map();
-  for (const m of matched) {
-    const src = entryById.get(m.id);
-    if (src && src.inclusion_group) {
-      if (!groups.has(src.inclusion_group)) {
-        groups.set(src.inclusion_group, []);
-      }
-      groups.get(src.inclusion_group).push(m);
-    }
-  }
-  for (const [groupName, groupMatches] of groups) {
-    if (groupMatches.length <= 1) {
-      continue;
-    }
-    const weights = groupMatches.map((m) => {
-      const src = entryById.get(m.id);
-      return Math.max(Number(src?.group_weight) || 0, 1);
-    });
-    const totalWeight = weights.reduce((a, b) => a + b, 0);
-    let roll = Math.random() * totalWeight;
-    let winnerIdx = 0;
-    for (let i = 0; i < weights.length; i++) {
-      roll -= weights[i];
-      if (roll <= 0) {
-        winnerIdx = i;
-        break;
-      }
-    }
-    for (let i = 0; i < groupMatches.length; i++) {
-      if (i !== winnerIdx) {
-        const loser = groupMatches[i];
-        const loserIdx = matched.indexOf(loser);
-        if (loserIdx !== -1) {
-          matched.splice(loserIdx, 1);
-        }
-        matchedIds.delete(loser.id);
-      }
-    }
-  }
+  // Phase 2.5: Group inclusion - keep only one entry per group via weighted random
+  applyGroupInclusion(entryById, matched, matchedIds);
 
   // Phase 3: Recursive activation
   let depth = 0;
@@ -403,10 +414,10 @@ export function matchWorldBookEntries(database, characterId, texts, options = {}
     }
 
     const newLower = newContent.toLowerCase();
-    const before = matched.length;
     matchPassWithState(entries, newLower, newContent, matchedIds, matched, entryStates, messageCount);
+    applyGroupInclusion(entryById, matched, matchedIds);
 
-    if (matched.length === before) {
+    if (matched.every((m) => m._recursiveScanned)) {
       break;
     }
 
@@ -418,22 +429,19 @@ export function matchWorldBookEntries(database, characterId, texts, options = {}
     delete m._recursiveScanned;
   }
 
-  // Phase 4: Update entry states based on match results
-  updateEntryStates(database, entries, matchedIds, entryStates, messageCount);
-
-  // Phase 5: Token budget truncation
-  const contextSize = options.contextSize;
-  if (contextSize && contextSize > 0 && matched.length > 0) {
+  // Phase 4: Token budget truncation
+  const contextSize = normalizeContextSize(options.contextSize);
+  if (contextSize != null && matched.length > 0) {
     // Determine percent: use options override, else max across bound books
     let percent = 25;
     if (options.lorebookContextPercent != null) {
-      percent = Math.max(1, Math.min(100, Number(options.lorebookContextPercent)));
+      percent = normalizeLorebookContextPercent(options.lorebookContextPercent);
     } else if (allBookIds.length > 0) {
       const placeholders2 = allBookIds.map(() => '?').join(',');
       const row = database
         .prepare(`SELECT MAX(lorebook_context_percent) AS max_pct FROM world_books WHERE id IN (${placeholders2})`)
         .get(...allBookIds);
-      percent = Math.max(1, Math.min(100, Number(row?.max_pct) || 25));
+      percent = normalizeLorebookContextPercent(row?.max_pct);
     }
     const budget = Math.floor(contextSize * percent / 100);
 
@@ -450,6 +458,9 @@ export function matchWorldBookEntries(database, characterId, texts, options = {}
     }
   }
 
+  // Phase 5: Update entry states based on entries that survived final pruning
+  updateEntryStates(database, entries, toMatchedIdSet(matched), entryStates, messageCount);
+
   return matched;
 }
 
@@ -462,21 +473,23 @@ function matchPassWithState(entries, lowerText, rawText, matchedIds, matched, en
     const state = entryStates.get(entry.id);
 
     // Check delay: entry must wait N messages after first seen before it can activate
-    if (entry.delay != null && entry.delay > 0) {
+    const delay = normalizeOptionalEntryNumber(entry.delay);
+    if (delay != null && delay > 0) {
       if (state.first_seen_message === 0) {
         // First time seeing this entry — record the message count
         // (handled inline, but we need a DB write)
         state.first_seen_message = messageCount;
         // Note: the DB update happens in updateEntryStates
       }
-      if (messageCount - state.first_seen_message < entry.delay) {
+      if (messageCount - state.first_seen_message < delay) {
         continue;
       }
     }
 
     // Check cooldown: entry cannot re-activate until cooldown period passes
-    if (entry.cooldown != null && entry.cooldown > 0 && state.last_deactivated_message > 0) {
-      if (messageCount - state.last_deactivated_message < entry.cooldown) {
+    const cooldown = normalizeOptionalEntryNumber(entry.cooldown);
+    if (cooldown != null && cooldown > 0 && state.last_deactivated_message > 0) {
+      if (messageCount - state.last_deactivated_message < cooldown) {
         continue;
       }
     }
@@ -529,7 +542,7 @@ function matchPassWithState(entries, lowerText, rawText, matchedIds, matched, en
       if (secondaryKeys.length > 0) {
         const secondaryHit = secondaryKeys.some((key) => lowerText.includes(key.toLowerCase()));
         const allSecondaryHit = secondaryKeys.every((key) => lowerText.includes(key.toLowerCase()));
-        const logic = Number(entry.selective_logic) || 0;
+        const logic = normalizeEntryEnumNumber(entry.selective_logic);
 
         if (logic === 0) {
           hit = secondaryHit;
@@ -543,23 +556,81 @@ function matchPassWithState(entries, lowerText, rawText, matchedIds, matched, en
 
     // Probability-based activation
     if (hit && entry.use_probability) {
-      const prob = Number(entry.probability) || 0;
+      const prob = normalizeEntryProbability(entry.probability);
       hit = Math.random() * 100 < prob;
     }
 
     if (hit) {
-      matched.push({
-        id: entry.id,
-        name: entry.name,
-        content: entry.content,
-        position: entry.position,
-        depth: entry.depth || 0,
-        role: entry.role || 0,
-        orderIndex: entry.order_index
-      });
+      matched.push(toMatchedEntry(entry));
       matchedIds.add(entry.id);
     }
   }
+}
+
+function normalizeScanTexts(texts) {
+  const textArray = Array.isArray(texts) ? texts : [texts];
+  return textArray.filter((text) => typeof text === 'string' && text.length > 0);
+}
+
+function applyGroupInclusion(entryById, matched, matchedIds) {
+  const groups = new Map();
+  for (const m of matched) {
+    const src = entryById.get(m.id);
+    if (src && src.inclusion_group) {
+      if (!groups.has(src.inclusion_group)) {
+        groups.set(src.inclusion_group, []);
+      }
+      groups.get(src.inclusion_group).push(m);
+    }
+  }
+
+  for (const groupMatches of groups.values()) {
+    if (groupMatches.length <= 1) {
+      continue;
+    }
+
+    const weights = groupMatches.map((m) => {
+      const src = entryById.get(m.id);
+      return Math.max(normalizeEntryGroupWeight(src?.group_weight), 1);
+    });
+    const totalWeight = weights.reduce((a, b) => a + b, 0);
+    let roll = Math.random() * totalWeight;
+    let winnerIdx = 0;
+    for (let i = 0; i < weights.length; i++) {
+      roll -= weights[i];
+      if (roll <= 0) {
+        winnerIdx = i;
+        break;
+      }
+    }
+
+    for (let i = 0; i < groupMatches.length; i++) {
+      if (i !== winnerIdx) {
+        const loser = groupMatches[i];
+        const loserIdx = matched.indexOf(loser);
+        if (loserIdx !== -1) {
+          matched.splice(loserIdx, 1);
+        }
+        matchedIds.delete(loser.id);
+      }
+    }
+  }
+}
+
+function toMatchedIdSet(matched) {
+  return new Set(matched.map((entry) => entry.id));
+}
+
+function toMatchedEntry(entry) {
+  return {
+    id: entry.id,
+    name: entry.name,
+    content: entry.content,
+    position: entry.position,
+    depth: normalizeEntryDepth(entry.depth),
+    role: normalizeEntryEnumNumber(entry.role),
+    orderIndex: normalizeEntryOrderIndex(entry.order_index)
+  };
 }
 
 
@@ -579,7 +650,11 @@ function getNextMessageCount(database) {
                   MAX(first_seen_message) AS f FROM world_book_entry_state`
         )
         .get();
-      const maxSeen = Math.max(row?.a || 0, row?.d || 0, row?.f || 0);
+      const maxSeen = Math.max(
+        normalizeMessageCount(row?.a, 0),
+        normalizeMessageCount(row?.d, 0),
+        normalizeMessageCount(row?.f, 0)
+      );
       if (maxSeen > _messageCounter) {
         _messageCounter = maxSeen;
       }
@@ -587,6 +662,7 @@ function getNextMessageCount(database) {
       // Table may not exist yet; ignore
     }
   }
+  _messageCounter = normalizeMessageCount(_messageCounter, 0);
   return ++_messageCounter;
 }
 
@@ -601,10 +677,10 @@ function getEntryStates(database, entryIds) {
 
   for (const row of rows) {
     states.set(row.entry_id, {
-      last_activated_message: row.last_activated_message || 0,
-      last_deactivated_message: row.last_deactivated_message || 0,
-      first_seen_message: row.first_seen_message || 0,
-      sticky_remaining: row.sticky_remaining || 0,
+      last_activated_message: normalizeMessageCount(row.last_activated_message, 0),
+      last_deactivated_message: normalizeMessageCount(row.last_deactivated_message, 0),
+      first_seen_message: normalizeMessageCount(row.first_seen_message, 0),
+      sticky_remaining: normalizeMessageCount(row.sticky_remaining, 0),
       was_active: row.was_active ? 1 : 0
     });
   }
@@ -622,9 +698,10 @@ function updateEntryStates(database, entries, matchedIds, entryStates, messageCo
     if (isNowActive) {
       // Entry is active in this round
       if (!wasActive) {
-        // Newly activated — set sticky counter
-        if (entry.sticky != null && entry.sticky > 0) {
-          state.sticky_remaining = entry.sticky;
+        // Newly activated - set sticky counter
+        const sticky = normalizeOptionalEntryNumber(entry.sticky);
+        if (sticky != null && sticky > 0) {
+          state.sticky_remaining = sticky;
         }
         state.last_activated_message = messageCount;
       }
@@ -674,9 +751,23 @@ export function buildWorldBookContext(entries = []) {
   }
 
   // at_depth entries are injected as separate messages, not in the system prompt
-  const atStart = entries.filter((e) => e.position === 'at_start').sort((a, b) => (a.depth || 0) - (b.depth || 0));
-  const beforeChar = entries.filter((e) => e.position === 'before_char').sort((a, b) => (a.depth || 0) - (b.depth || 0));
-  const afterChar = entries.filter((e) => e.position === 'after_char').sort((a, b) => (a.depth || 0) - (b.depth || 0));
+  const atStart = [];
+  const beforeChar = [];
+  const afterChar = [];
+  for (const entry of entries) {
+    if (entry.position === 'at_start') {
+      atStart.push(entry);
+    } else if (entry.position === 'before_char') {
+      beforeChar.push(entry);
+    } else if (entry.position === 'after_char') {
+      afterChar.push(entry);
+    }
+  }
+
+  const byDepth = (a, b) => (a.depth || 0) - (b.depth || 0);
+  if (atStart.length > 1) atStart.sort(byDepth);
+  if (beforeChar.length > 1) beforeChar.sort(byDepth);
+  if (afterChar.length > 1) afterChar.sort(byDepth);
 
   return [...atStart, ...beforeChar, ...afterChar].map((e) => e.content).join('\n\n');
 }
@@ -738,6 +829,28 @@ function getOwnedWorldBook(database, userId, bookId) {
   return row || null;
 }
 
+function getOwnedCharacter(database, userId, characterId) {
+  const id = String(characterId || '').trim();
+  if (!id) {
+    return null;
+  }
+  const row = database
+    .prepare('SELECT id FROM characters WHERE id = ? AND user_id = ?')
+    .get(id, userId);
+  return row || null;
+}
+
+function normalizeOwnedCharacterId(database, userId, value) {
+  const characterId = String(value || '').trim();
+  if (!characterId) {
+    return null;
+  }
+  if (!getOwnedCharacter(database, userId, characterId)) {
+    throw new Error('Character does not exist');
+  }
+  return characterId;
+}
+
 function touchWorldBook(database, bookId) {
   database
     .prepare('UPDATE world_books SET updated_at = ? WHERE id = ?')
@@ -752,8 +865,55 @@ function normalizeName(name) {
   return value;
 }
 
-function normalizeEntryPayload(payload = {}) {
+function normalizeLorebookContextPercent(value) {
+  const normalized = normalizeFiniteNumber(value, 25);
+  return Math.max(1, Math.min(100, normalized));
+}
+
+function normalizeScanDepth(value, fallback = 1) {
+  const normalized = Math.trunc(normalizeFiniteNumber(value, fallback));
+  return Math.max(1, Math.min(50, normalized));
+}
+
+function normalizeContextSize(value) {
+  if (typeof value !== 'number' && typeof value !== 'string') {
+    return null;
+  }
+  if (typeof value === 'string' && value.trim() === '') {
+    return null;
+  }
+  const normalized = Math.trunc(normalizeFiniteNumber(value, 0));
+  return normalized > 0 ? normalized : null;
+}
+
+function resolveMessageCount(database, value) {
+  if (value == null) {
+    return getNextMessageCount(database);
+  }
+  return normalizeMessageCount(value, null) ?? getNextMessageCount(database);
+}
+
+function normalizeMessageCount(value, fallback = 0) {
+  if (typeof value === 'boolean') {
+    return fallback;
+  }
+  if (typeof value === 'string' && value.trim() === '') {
+    return fallback;
+  }
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) {
+    return fallback;
+  }
+  const normalized = Math.trunc(numeric);
+  if (!Number.isSafeInteger(normalized)) {
+    return fallback;
+  }
+  return normalized > 0 ? normalized : fallback;
+}
+
+function normalizeEntryPayload(payload = {}, fallback = {}) {
   payload = payload ?? {};
+  fallback = fallback ?? {};
   const name = String(payload.name || '').trim().slice(0, 120);
   const triggerKeys = String(payload.triggerKeys || '').trim().slice(0, 2000);
   const content = String(payload.content || '').slice(0, 10000);
@@ -761,25 +921,68 @@ function normalizeEntryPayload(payload = {}) {
     ? payload.position
     : 'before_char';
   const enabled = normalizeBoolean(payload.enabled, true);
-  const orderIndex = Number.isFinite(Number(payload.orderIndex)) ? Number(payload.orderIndex) : 0;
+  const orderIndex = normalizeEntryOrderIndex(payload.orderIndex, fallback.orderIndex);
   const regexMode = normalizeBoolean(payload.regexMode) ? 1 : 0;
   const alwaysActive = normalizeBoolean(payload.alwaysActive) ? 1 : 0;
-  const depth = Number.isFinite(Number(payload.depth)) ? Math.max(0, Math.min(10, Number(payload.depth))) : 0;
+  const depth = normalizeEntryDepth(payload.depth);
   const selective = normalizeBoolean(payload.selective) ? 1 : 0;
-  const selectiveLogic = [0, 1, 2].includes(Number(payload.selectiveLogic)) ? Number(payload.selectiveLogic) : 0;
+  const selectiveLogic = normalizeEntryEnumNumber(payload.selectiveLogic, fallback.selectiveLogic);
   const keysSecondary = String(payload.keysSecondary || '').trim().slice(0, 2000);
 
-  const probability = Number.isFinite(Number(payload.probability)) ? Math.max(0, Math.min(100, Number(payload.probability))) : 100;
+  const probability = normalizeEntryProbability(payload.probability);
   const useProbability = normalizeBoolean(payload.useProbability) ? 1 : 0;
   const group = String(payload.group || '').trim().slice(0, 100);
-  const groupWeight = Number.isFinite(Number(payload.groupWeight)) ? Math.max(0, Number(payload.groupWeight)) : 0;
-  const role = [0, 1, 2].includes(Number(payload.role)) ? Number(payload.role) : 0;
+  const groupWeight = normalizeEntryGroupWeight(payload.groupWeight);
+  const role = normalizeEntryEnumNumber(payload.role, fallback.role);
 
-  const sticky = payload.sticky != null && Number.isFinite(Number(payload.sticky)) ? Math.max(0, Math.min(9999, Number(payload.sticky))) : null;
-  const cooldown = payload.cooldown != null && Number.isFinite(Number(payload.cooldown)) ? Math.max(0, Math.min(9999, Number(payload.cooldown))) : null;
-  const delay = payload.delay != null && Number.isFinite(Number(payload.delay)) ? Math.max(0, Math.min(9999, Number(payload.delay))) : null;
+  const sticky = normalizeOptionalEntryNumber(payload.sticky);
+  const cooldown = normalizeOptionalEntryNumber(payload.cooldown);
+  const delay = normalizeOptionalEntryNumber(payload.delay);
 
   return { name, triggerKeys, content, position, enabled, orderIndex, regexMode, alwaysActive, depth, selective, selectiveLogic, keysSecondary, probability, useProbability, group, groupWeight, role, sticky, cooldown, delay };
+}
+
+function normalizeClampedEntryNumber(value, fallback, min, max) {
+  const normalized = normalizeFiniteNumber(value, fallback);
+  return Math.max(min, Math.min(max, normalized));
+}
+
+function normalizeEntryDepth(value) {
+  return normalizeClampedEntryNumber(value, 0, 0, 10);
+}
+
+function normalizeEntryProbability(value) {
+  return normalizeClampedEntryNumber(value, 100, 0, 100);
+}
+
+function normalizeEntryGroupWeight(value) {
+  return normalizeClampedEntryNumber(value, 0, 0, Number.POSITIVE_INFINITY);
+}
+
+function normalizeEntryOrderIndex(value, fallback = 0) {
+  const normalized = Math.trunc(normalizeFiniteNumber(value, fallback));
+  return Math.max(0, normalized);
+}
+
+function normalizeEntryEnumNumber(value, fallback = 0, allowed = [0, 1, 2]) {
+  const fallbackNumber = typeof fallback === 'boolean' ? 0 : normalizeFiniteNumber(fallback, 0);
+  const normalizedFallback = Number.isInteger(fallbackNumber) && allowed.includes(fallbackNumber) ? fallbackNumber : 0;
+  if (typeof value === 'boolean') {
+    return normalizedFallback;
+  }
+  const normalized = normalizeFiniteNumber(value, normalizedFallback);
+  return Number.isInteger(normalized) && allowed.includes(normalized) ? normalized : normalizedFallback;
+}
+
+function normalizeOptionalEntryNumber(value) {
+  if (value == null) {
+    return null;
+  }
+  if (typeof value === 'string' && value.trim() === '') {
+    return null;
+  }
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? Math.max(0, Math.min(9999, numeric)) : null;
 }
 
 function toWorldBook(row) {
@@ -788,8 +991,8 @@ function toWorldBook(row) {
     name: row.name,
     description: row.description || '',
     characterId: row.character_id || null,
-    scanDepth: Number(row.scan_depth || 1),
-    lorebookContextPercent: Number(row.lorebook_context_percent || 25),
+    scanDepth: normalizeScanDepth(row.scan_depth),
+    lorebookContextPercent: normalizeLorebookContextPercent(row.lorebook_context_percent),
     entryCount: Number(row.entry_count ?? 0),
     createdAt: row.created_at,
     updatedAt: row.updated_at
@@ -805,21 +1008,21 @@ function toEntry(row) {
     content: row.content || '',
     position: row.position || 'before_char',
     enabled: Boolean(row.enabled),
-    orderIndex: row.order_index,
+    orderIndex: normalizeEntryOrderIndex(row.order_index),
     regexMode: Boolean(row.regex_mode),
     alwaysActive: Boolean(row.always_active),
-    depth: Number(row.depth || 0),
+    depth: normalizeEntryDepth(row.depth),
     selective: Boolean(row.selective),
-    selectiveLogic: Number(row.selective_logic ?? 0),
+    selectiveLogic: normalizeEntryEnumNumber(row.selective_logic),
     keysSecondary: row.keys_secondary || '',
-    probability: Number(row.probability ?? 100),
+    probability: normalizeEntryProbability(row.probability),
     useProbability: Boolean(row.use_probability),
     group: row.inclusion_group || '',
-    groupWeight: Number(row.group_weight ?? 0),
-    role: Number(row.role ?? 0),
-    sticky: row.sticky != null ? Number(row.sticky) : null,
-    cooldown: row.cooldown != null ? Number(row.cooldown) : null,
-    delay: row.delay != null ? Number(row.delay) : null,
+    groupWeight: normalizeEntryGroupWeight(row.group_weight),
+    role: normalizeEntryEnumNumber(row.role),
+    sticky: normalizeOptionalEntryNumber(row.sticky),
+    cooldown: normalizeOptionalEntryNumber(row.cooldown),
+    delay: normalizeOptionalEntryNumber(row.delay),
     createdAt: row.created_at
   };
 }

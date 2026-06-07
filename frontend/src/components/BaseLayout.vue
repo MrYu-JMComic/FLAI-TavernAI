@@ -1,6 +1,7 @@
 <script setup>
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { BookOpen, ChevronDown, Home, KeyRound, LogOut, Menu, Moon, Plus, Puzzle, SlidersHorizontal, Sun, UserRound, X } from '@lucide/vue';
+import { useViewport } from '../composables/useViewport';
 
 const props = defineProps({
   user: {
@@ -30,6 +31,21 @@ const isPresetsRoute = computed(() => props.currentRoute === 'presets');
 const userMenuOpen = ref(false);
 const userMenuRef = ref(null);
 const mobileNavOpen = ref(false);
+const { isPhone: isMobileNavViewport } = useViewport({ breakpoint: '(max-width: 620px)' });
+
+watch(
+  () => props.currentRoute,
+  () => {
+    userMenuOpen.value = false;
+    mobileNavOpen.value = false;
+  }
+);
+
+watch(isMobileNavViewport, (isMobile) => {
+  if (!isMobile) {
+    mobileNavOpen.value = false;
+  }
+});
 
 onMounted(() => {
   document.addEventListener('click', handleDocumentClick);
@@ -49,6 +65,12 @@ function openUserSettings() {
   userMenuOpen.value = false;
   mobileNavOpen.value = false;
   emit('navigate', 'settings');
+}
+
+function logoutFromMenu() {
+  userMenuOpen.value = false;
+  mobileNavOpen.value = false;
+  emit('logout');
 }
 
 function toggleMobileNav() {
@@ -162,17 +184,12 @@ function navigateAndClose(name) {
               <KeyRound :size="17" aria-hidden="true" />
               <span>个人中心</span>
             </button>
+            <button class="user-menu-item danger" type="button" role="menuitem" @click="logoutFromMenu">
+              <LogOut :size="17" aria-hidden="true" />
+              <span>退出登录</span>
+            </button>
           </div>
         </div>
-        <button
-          class="icon-button"
-          type="button"
-          aria-label="退出登录"
-          title="退出登录"
-          @click="$emit('logout')"
-        >
-          <LogOut :size="19" aria-hidden="true" />
-        </button>
       </div>
     </header>
 

@@ -187,21 +187,7 @@ export function createCharactersRouter({
       )
       .all(character.id, character.ownerId);
 
-    const worldBookRow = db.prepare('SELECT id, name, description FROM world_books WHERE character_id = ?').get(character.id);
-    let worldBook = null;
-    if (worldBookRow) {
-      const entries = db
-        .prepare(
-          `SELECT name, trigger_keys, content, position, enabled, order_index
-           FROM world_book_entries WHERE world_book_id = ? ORDER BY order_index ASC, rowid ASC`
-        )
-        .all(worldBookRow.id);
-      worldBook = {
-        name: worldBookRow.name,
-        description: worldBookRow.description || '',
-        entries
-      };
-    }
+    const worldBook = getCharacterExportWorldBook(db, character);
 
     const exportData = {
       _flai_export_version: 1,
@@ -592,7 +578,7 @@ export function createCharactersRouter({
       response.status(403).json({ error: '只有角色拥有者可以编辑此角色' });
       return;
     }
-    if (!unlinkWorldBookFromCharacter(db, request.params.bookId, request.params.id)) {
+    if (!unlinkWorldBookFromCharacter(db, request.params.bookId, request.params.id, request.auth.user.id)) {
       response.status(404).json({ error: '关联不存在' });
       return;
     }
@@ -600,6 +586,43 @@ export function createCharactersRouter({
   });
 
   return router;
+}
+
+function getCharacterExportWorldBook(db, character) {
+  const linkedWorldBookRow = db
+    .prepare(
+      `SELECT wb.id, wb.name, wb.description
+       FROM character_world_books cwb
+       JOIN world_books wb ON wb.id = cwb.world_book_id
+       WHERE cwb.character_id = ? AND wb.user_id = ?
+       ORDER BY cwb.order_index ASC, cwb.created_at ASC, cwb.rowid ASC`
+    )
+    .get(character.id, character.ownerId);
+  let worldBookRow = linkedWorldBookRow;
+  if (!worldBookRow) {
+    worldBookRow = db
+      .prepare(
+        `SELECT id, name, description FROM world_books
+         WHERE character_id = ? AND user_id = ?
+         ORDER BY updated_at DESC, rowid DESC`
+      )
+      .get(character.id, character.ownerId);
+  }
+  if (!worldBookRow) {
+    return null;
+  }
+
+  const entries = db
+    .prepare(
+      `SELECT name, trigger_keys, content, position, enabled, order_index
+       FROM world_book_entries WHERE world_book_id = ? ORDER BY order_index ASC, rowid ASC`
+    )
+    .all(worldBookRow.id);
+  return {
+    name: worldBookRow.name,
+    description: worldBookRow.description || '',
+    entries
+  };
 }
 
 function prepareCharacterPayload(userId, body = {}) {

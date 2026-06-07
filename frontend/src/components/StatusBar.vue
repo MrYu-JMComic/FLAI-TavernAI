@@ -8,6 +8,7 @@ const VALID_DENSITIES = ['default', 'cozy', 'compact'];
 const VALID_EFFECTS = ['glow', 'striped', 'pulse'];
 const VALID_DISPLAY_MODES = ['immersive', 'compact'];
 const VALID_CHAR_STATUSES = ['active', 'dead', 'forgotten', 'left', 'hidden'];
+const MAX_TEMPLATE_RESOLVE_DEPTH = 4;
 
 const STATUS_LABELS = {
   active: '在线',
@@ -332,12 +333,22 @@ function writeCollapsedState(key, value) {
 }
 
 function interpolateTemplate(template) {
-  return String(template || '').replace(/\{\{\s*([^{}]+?)\s*\}\}|\{([\w\u4e00-\u9fa5 .-]+)\}/g, (_, doubleToken, singleToken) => {
-    return escapeHtml(resolveTemplateToken(doubleToken || singleToken));
+  return resolveTemplateText(template, { escape: true });
+}
+
+function resolveTemplateText(value, options = {}) {
+  const depth = Number.isFinite(Number(options.depth)) ? Number(options.depth) : 0;
+  const text = String(value ?? '');
+  if (!text || depth > MAX_TEMPLATE_RESOLVE_DEPTH) {
+    return text;
+  }
+  return text.replace(/\{\{\s*([^{}]+?)\s*\}\}|\{([\w\u4e00-\u9fa5 .-]+)\}/g, (_, doubleToken, singleToken) => {
+    const resolved = resolveTemplateToken(doubleToken || singleToken, depth + 1);
+    return options.escape ? escapeHtml(resolved) : String(resolved ?? '');
   });
 }
 
-function resolveTemplateToken(token) {
+function resolveTemplateToken(token, depth = 0) {
   const [rawName, rawProp = 'value'] = String(token || '').split('.').map((part) => part.trim());
   if (!rawName) return '';
   const variable = findDisplayVariable(rawName);
@@ -345,9 +356,11 @@ function resolveTemplateToken(token) {
   if (rawProp === 'max') return variable.isMeter ? variable.max : '';
   if (rawProp === 'percent') return variable.isMeter ? `${Math.round(variable.percentage)}%` : '';
   if (rawProp === 'percentage') return variable.isMeter ? Math.round(variable.percentage) : '';
-  if (rawProp === 'display' || rawProp === 'displayValue') return variable.displayValue;
+  if (rawProp === 'display' || rawProp === 'displayValue') {
+    return cleanResolvedTemplateText(resolveTemplateText(variable.displayValue, { depth }));
+  }
   if (rawProp === 'color') return variable.color;
-  return variable.value;
+  return cleanResolvedTemplateText(resolveTemplateText(variable.value, { depth }));
 }
 
 function extractTemplateStyleBlocks(template) {
@@ -433,6 +446,7 @@ function sanitizeTemplateHtml(html, styleBlocks = []) {
     }
   }
   applyTemplateRowVariables(doc.body);
+  normalizeTemplateValueText(doc.body);
   return doc.body.innerHTML;
 }
 
@@ -487,9 +501,39 @@ function applyTemplateRowVariables(root) {
   for (const { label, value } of pairs) {
     const variable = findDisplayVariable(label);
     if (variable && value) {
-      value.textContent = variable.displayValue;
+      value.textContent = templateDisplayValue(variable);
     }
   }
+}
+
+function normalizeTemplateValueText(root) {
+  if (!root?.querySelectorAll) {
+    return;
+  }
+  for (const value of [...root.querySelectorAll('.sb-val')]) {
+    value.textContent = cleanResolvedTemplateText(value.textContent);
+  }
+}
+
+function templateDisplayValue(variable) {
+  const value = String(variable?.displayValue ?? '');
+  if (!hasTemplateToken(value)) {
+    return value;
+  }
+  return cleanResolvedTemplateText(resolveTemplateText(value));
+}
+
+function hasTemplateToken(value) {
+  return /\{\{\s*[^{}]+?\s*\}\}|\{[\w\u4e00-\u9fa5 .-]+\}/.test(String(value ?? ''));
+}
+
+function cleanResolvedTemplateText(value) {
+  const text = String(value ?? '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/^[\s>›|,，:：;；/]+|[\s>›|,，:：;；/]+$/g, '')
+    .trim();
+  return /[A-Za-z0-9\u4e00-\u9fff]/.test(text) ? text : '';
 }
 
 function findTemplateValuePairs(root) {
@@ -623,7 +667,7 @@ function escapeHtml(value) {
     </button>
 
     <template v-else>
-      <div v-if="!hasCustomTemplate" class="flai-statusbar-header">
+      <div class="flai-statusbar-header">
         <button
           class="flai-statusbar-summary"
           type="button"
@@ -656,28 +700,6 @@ function escapeHtml(value) {
           <span>收起</span>
         </button>
       </div>
-
-      <button
-        v-else
-        class="flai-statusbar-floating-toggle"
-        type="button"
-        title="收起状态栏"
-        aria-label="收起状态栏"
-        @click="toggleCollapsed"
-      >
-        <ChevronDown :size="16" class="flai-statusbar-toggle-icon expanded" />
-        <span>收起</span>
-      </button>
-      <span
-        v-if="hasCustomTemplate"
-        class="flai-statusbar-floating-status flai-statusbar-update-badge"
-        :class="`is-${updateStatusMeta.key}`"
-        role="status"
-        aria-live="polite"
-      >
-        <span class="flai-statusbar-update-dot" aria-hidden="true"></span>
-        <span>{{ updateStatusMeta.label }}</span>
-      </span>
 
       <div class="status-bar-collapse-body" :class="{ 'status-bar-collapse-body-custom': hasCustomTemplate }">
         <div v-if="hasCustomTemplate" class="status-bar-custom" @click="onCustomTemplateClick" v-html="customTemplateHtml"></div>
@@ -787,14 +809,7 @@ function escapeHtml(value) {
 }
 
 .status-bar-container.sb-custom-mode:not(.sb-collapsed) {
-  display: block;
   min-width: 0;
-  padding: 0;
-  border: 0;
-  border-radius: 0;
-  background: transparent;
-  box-shadow: none;
-  backdrop-filter: none;
 }
 
 .flai-statusbar-collapsed-card {
@@ -829,37 +844,6 @@ function escapeHtml(value) {
   font-size: 0.72rem;
   font-weight: 800;
   white-space: nowrap;
-}
-
-.flai-statusbar-floating-toggle {
-  position: absolute;
-  top: 6px;
-  right: 6px;
-  z-index: 12;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 4px;
-  min-height: 28px;
-  padding: 0 9px;
-  border: 1px solid color-mix(in srgb, var(--line, rgba(62,48,38,0.14)) 76%, transparent);
-  border-radius: 999px;
-  color: var(--sb-accent, var(--primary, #8f3f2f));
-  background: color-mix(in srgb, var(--surface, #fffaf2) 88%, transparent);
-  box-shadow: 0 8px 18px rgba(67, 45, 30, 0.12);
-  font-family: inherit;
-  font-size: 0.68rem;
-  font-weight: 800;
-  cursor: pointer;
-  opacity: 0.86;
-  backdrop-filter: blur(8px);
-  transition: transform 0.15s ease, opacity 0.15s ease, border-color 0.15s ease;
-}
-
-.flai-statusbar-floating-toggle:hover {
-  transform: translateY(-1px);
-  opacity: 1;
-  border-color: color-mix(in srgb, var(--sb-accent, var(--primary, #8f3f2f)) 42%, var(--line, rgba(62,48,38,0.14)));
 }
 
 .flai-statusbar-header {
@@ -963,17 +947,6 @@ function escapeHtml(value) {
 
 .flai-statusbar-update-badge.is-updating .flai-statusbar-update-dot {
   animation: statusBarUpdatePulse 1s ease-in-out infinite;
-}
-
-.flai-statusbar-floating-status {
-  position: absolute;
-  top: 6px;
-  right: 78px;
-  z-index: 12;
-  min-height: 28px;
-  background: color-mix(in srgb, var(--surface, #fffaf2) 88%, transparent);
-  box-shadow: 0 8px 18px rgba(67, 45, 30, 0.10);
-  backdrop-filter: blur(8px);
 }
 
 .flai-statusbar-toggle {

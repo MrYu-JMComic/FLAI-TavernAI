@@ -20,7 +20,10 @@ test('character regex rules skip null items during normalization', () => {
       {
         label: 'Valid rule',
         pattern: 'cat',
-        replacement: 'dog'
+        replacement: 'dog',
+        enabled: 'false',
+        scriptMode: 'false',
+        priority: 'Infinity'
       }
     ]
   });
@@ -28,6 +31,9 @@ test('character regex rules skip null items during normalization', () => {
   assert.equal(character.regexRules.length, 1);
   assert.equal(character.regexRules[0].label, 'Valid rule');
   assert.equal(character.regexRules[0].pattern, 'cat');
+  assert.equal(character.regexRules[0].enabled, false);
+  assert.equal(character.regexRules[0].scriptMode, false);
+  assert.equal(character.regexRules[0].priority, 0);
 });
 
 test('character render plugins skip null items during normalization', () => {
@@ -46,7 +52,8 @@ test('character render plugins skip null items during normalization', () => {
       {
         label: 'Valid plugin',
         pattern: 'cat',
-        titleTemplate: 'Animal'
+        titleTemplate: 'Animal',
+        enabled: 'false'
       }
     ]
   });
@@ -54,4 +61,5 @@ test('character render plugins skip null items during normalization', () => {
   assert.equal(character.renderPlugins.length, 1);
   assert.equal(character.renderPlugins[0].label, 'Valid plugin');
   assert.equal(character.renderPlugins[0].pattern, 'cat');
+  assert.equal(character.renderPlugins[0].enabled, false);
 });

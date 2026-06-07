@@ -189,6 +189,102 @@ test('status bar agent updates text variables and inferred template rows', async
   }
 });
 
+test('status bar templates infer composite placeholder child variables', () => {
+  const template = '<div class="row"><span class="sb-label">\u5730\u70b9</span><span class="sb-val">{{\u5927\u5730\u70b9}} &gt; {{\u5177\u4f53\u4f4d\u7f6e}}</span></div>';
+  const env = setupConversation({ statusBarAgent: skill('auto') });
+  const statusBar = upsertStatusBar(env.db, env.userId, env.conversation.id, {
+    name: 'Location',
+    variables: [],
+    template
+  });
+
+  assert.deepEqual(statusBar.variables.map((item) => item.name), ['\u5927\u5730\u70b9', '\u5177\u4f53\u4f4d\u7f6e']);
+
+  const settings = normalizeAdvancedSettings({
+    statusBarBlueprint: { template }
+  });
+  assert.deepEqual(settings.statusBarBlueprint.variables.map((item) => item.name), [
+    '\u5927\u5730\u70b9',
+    '\u5177\u4f53\u4f4d\u7f6e'
+  ]);
+});
+
+test('status bar agent updates composite placeholder variables', async () => {
+  const template = '<div class="row"><span class="sb-label">\u5730\u70b9</span><span class="sb-val">{{\u5927\u5730\u70b9}} &gt; {{\u5177\u4f53\u4f4d\u7f6e}}</span></div>';
+  const env = setupConversation({ statusBarAgent: skill('auto') });
+  const statusBar = upsertStatusBar(env.db, env.userId, env.conversation.id, {
+    name: 'Location',
+    variables: [],
+    template
+  });
+
+  const originalFetch = globalThis.fetch;
+  let requestBody = null;
+  let calls = 0;
+  globalThis.fetch = async (_url, request) => {
+    calls += 1;
+    if (!requestBody) {
+      requestBody = JSON.parse(request.body);
+    }
+    if (calls > 1) {
+      return jsonResponse({ choices: [{ message: { role: 'assistant', content: 'done' } }] });
+    }
+    return jsonResponse({
+      choices: [
+        {
+          message: {
+            role: 'assistant',
+            content: null,
+            tool_calls: [
+              {
+                id: 'status-location-1',
+                type: 'function',
+                function: {
+                  name: 'update_status_bar',
+                  arguments: JSON.stringify({
+                    variables: [
+                      { name: '\u5927\u5730\u70b9', value: '\u4e5d\u5929\u7384\u5973\u5883' },
+                      { name: '\u5177\u4f53\u4f4d\u7f6e', value: '\u7389\u9f0e\u5b97\u79c1\u4ea7' }
+                    ]
+                  })
+                }
+              }
+            ]
+          }
+        }
+      ]
+    });
+  };
+
+  try {
+    await runAccessoryAgents({
+      db: env.db,
+      userId: env.userId,
+      conversation: env.conversation,
+      character: env.character,
+      assistantMessage: { content: '\u8fd9\u91cc\u662f\u4e5d\u5929\u7384\u5973\u5883\uff0c\u6211\u7389\u9f0e\u5b97\u540d\u4e0b\u7684\u79c1\u4ea7\u3002' },
+      settings: providerSettings(),
+      statusBar
+    });
+
+    const userMessage = requestBody.messages.find((message) => message.role === 'user');
+    const systemMessage = requestBody.messages.find((message) => message.role === 'system');
+    const payload = JSON.parse(userMessage.content);
+    assert.match(systemMessage.content, /composite rows/i);
+    assert.equal(payload.template, template);
+    assert.deepEqual(payload.templateHints.compositeRows, [
+      { label: '\u5730\u70b9', variables: ['\u5927\u5730\u70b9', '\u5177\u4f53\u4f4d\u7f6e'] }
+    ]);
+    assert.deepEqual(payload.variables.map((item) => item.name), ['\u5927\u5730\u70b9', '\u5177\u4f53\u4f4d\u7f6e']);
+
+    const variables = getStatusBar(env.db, env.userId, env.conversation.id).variables;
+    assert.equal(variables.find((item) => item.name === '\u5927\u5730\u70b9')?.value, '\u4e5d\u5929\u7384\u5973\u5883');
+    assert.equal(variables.find((item) => item.name === '\u5177\u4f53\u4f4d\u7f6e')?.value, '\u7389\u9f0e\u5b97\u79c1\u4ea7');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test('status bar agent updates inferred inline wardrobe variables', async () => {
   const env = setupConversation({ statusBarAgent: skill('auto') });
   const template = [

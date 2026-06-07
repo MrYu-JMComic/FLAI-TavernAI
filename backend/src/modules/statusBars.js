@@ -183,7 +183,7 @@ export function applyVariableUpdates(variables, updates) {
     return {
       ...variable,
       value: update.value,
-      ...(Number.isFinite(Number(update.max)) ? { max: Number(update.max) } : {})
+      ...(hasExplicitMax(update) ? { max: Number(update.max) } : {})
     };
   });
 }
@@ -329,6 +329,9 @@ function extractTemplateRowVariables(template) {
     if (!name || !key || seen.has(key)) {
       return;
     }
+    if (hasTemplatePlaceholder(rawValue)) {
+      return;
+    }
     const value = normalizeVariableValue(normalizeHtmlText(rawValue), { emptyText: true });
     rows.push({ name, value, color: '' });
     seen.add(key);
@@ -345,6 +348,10 @@ function extractTemplateRowVariables(template) {
     addRow(match[1], match[3]);
   }
   return rows;
+}
+
+function hasTemplatePlaceholder(value) {
+  return /\{\{\s*[^{}]+?\s*\}\}|\{[\w\u4e00-\u9fa5 ._-]+\}/.test(String(value || ''));
 }
 
 function normalizeHtmlText(value) {

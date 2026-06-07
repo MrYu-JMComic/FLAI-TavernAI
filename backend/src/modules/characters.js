@@ -1,5 +1,7 @@
 import { newId, nowIso } from '../security.js';
 import { parseJson } from '../utils/json.js';
+import { normalizeBoolean } from '../utils/boolean.js';
+import { normalizeFiniteNumber } from '../utils/number.js';
 import {
   avatarShortUrl,
   characterBackgroundOwnerTypes,
@@ -493,10 +495,10 @@ function normalizeRegexRules(rules = []) {
       replacement: String(rule.replacement || '').slice(0, 1000),
       flags,
       scope: ['input', 'output', 'both'].includes(rule.scope) ? rule.scope : 'input',
-      enabled: rule.enabled !== false,
+      enabled: normalizeBoolean(rule.enabled, true),
       groupName: String(rule.groupName || '全局').trim().slice(0, 60) || '全局',
-      priority: Math.max(0, Math.round(Number(rule.priority) || 0)),
-      scriptMode: Boolean(rule.scriptMode),
+      priority: Math.max(0, Math.round(normalizeFiniteNumber(rule.priority))),
+      scriptMode: normalizeBoolean(rule.scriptMode),
       jsScript: String(rule.jsScript || '').slice(0, 10000)
     };
   });
@@ -521,7 +523,7 @@ function normalizeRenderPlugins(plugins = []) {
       pattern,
       flags,
       titleTemplate: String(plugin.titleTemplate || '$1').trim().slice(0, 120) || '$1',
-      enabled: plugin.enabled !== false
+      enabled: normalizeBoolean(plugin.enabled, true)
     };
   }).filter((plugin) => plugin.pattern);
 }

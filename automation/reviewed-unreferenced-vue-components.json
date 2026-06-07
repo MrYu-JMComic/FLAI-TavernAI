@@ -1,0 +1,16 @@
+{
+  "reviewed": [
+    {
+      "file": "frontend/src/components/ExtensionManager.vue",
+      "status": "legacy-dormant",
+      "reason": "Legacy in-memory frontend extension manager; current extensions page is backend-backed tags, presets, Mods, and regex rules. Do not wire without a clear runtime use case.",
+      "report": "automation/reports/2026-06-07-talent-components-rewire.md"
+    },
+    {
+      "file": "frontend/src/components/VirtualMessageList.vue",
+      "status": "performance-dormant",
+      "reason": "Hardened long-chat virtualization component; ChatView needs a component-backed scroller adapter before safe wiring.",
+      "report": "automation/reports/2026-06-07-virtual-message-list-audit.md"
+    }
+  ]
+}

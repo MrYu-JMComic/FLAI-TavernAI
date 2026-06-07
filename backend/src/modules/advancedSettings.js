@@ -194,6 +194,9 @@ function extractTemplateRowVariables(template) {
     if (!name || !key || seen.has(key)) {
       return;
     }
+    if (hasTemplatePlaceholder(rawValue)) {
+      return;
+    }
     const value = normalizeStatusVariableValue(normalizeHtmlText(rawValue), { emptyText: true });
     rows.push({ name, value, color: '' });
     seen.add(key);
@@ -210,6 +213,10 @@ function extractTemplateRowVariables(template) {
     addRow(match[1], match[3]);
   }
   return rows;
+}
+
+function hasTemplatePlaceholder(value) {
+  return /\{\{\s*[^{}]+?\s*\}\}|\{[\w\u4e00-\u9fa5 ._-]+\}/.test(String(value || ''));
 }
 
 function normalizeHtmlText(value) {

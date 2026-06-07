@@ -1,5 +1,5 @@
 import { computed, nextTick, ref, triggerRef } from 'vue';
-import { sendMessage, streamMessage } from '../../api';
+import { fetchConversationMessages, sendMessage, streamMessage } from '../../api';
 
 export function useChatSubmit({
   route,
@@ -28,6 +28,8 @@ export function useChatSubmit({
 
   let stoppingByUser = false;
   let accessoryRefreshRun = 0;
+  let submitRunId = 0;
+  let submitDisposed = false;
   const accessoryRefreshTimers = [];
 
   const streamIdleTimeoutMs = 60000;
@@ -78,12 +80,16 @@ export function useChatSubmit({
 
   async function submit() {
     const content = input.value.trim();
-    if (!content || sending.value) {
+    if (!content || sending.value || submitDisposed) {
       return;
     }
+    const submitId = ++submitRunId;
 
     input.value = '';
     await nextTick();
+    if (!isCurrentSubmit(submitId)) {
+      return;
+    }
 
     const localUserDraft = {
       id: `local-user-${Date.now()}`,
@@ -107,6 +113,11 @@ export function useChatSubmit({
     const assistant = messages.value[messages.value.length - 1];
     sending.value = true;
     await nextTick();
+    if (!isCurrentSubmit(submitId)) {
+      messages.value = messages.value.filter((message) => message !== localUser && message !== assistant);
+      sending.value = false;
+      return;
+    }
     stickToBottomIfNeeded(true);
 
     const requestPayload = {
@@ -144,34 +155,49 @@ export function useChatSubmit({
           requestPayload,
           {
             meta(data) {
+              if (!isCurrentSubmit(submitId)) return;
               providerMeta.value = data;
               refreshStreamTimer();
             },
+            user_message(data) {
+              if (!isCurrentSubmit(submitId)) return;
+              finalizeUserDraft(localUser, data.userMessage);
+            },
             async reasoning(data) {
+              if (!isCurrentSubmit(submitId)) return;
               if (!assistant.reasoning) {
                 expandReasoning(assistant.id);
               }
               assistant.reasoningStreaming = true;
               refreshStreamTimer();
               await appendStreamText(assistant, 'reasoning', data.text);
+              if (!isCurrentSubmit(submitId)) return;
               await nextTick();
-              stickToBottomIfNeeded();
+              if (isCurrentSubmit(submitId)) {
+                stickToBottomIfNeeded();
+              }
             },
             async content(data) {
+              if (!isCurrentSubmit(submitId)) return;
               assistant.reasoningStreaming = false;
               assistant.contentStreaming = true;
               refreshStreamTimer();
               await appendStreamText(assistant, 'content', data.text);
+              if (!isCurrentSubmit(submitId)) return;
               await nextTick();
-              stickToBottomIfNeeded();
+              if (isCurrentSubmit(submitId)) {
+                stickToBottomIfNeeded();
+              }
             },
             tool(data) {
+              if (!isCurrentSubmit(submitId)) return;
               if (data?.result?.statusBar) {
                 statusBar.value = data.result.statusBar;
                 syncStatusBarForm(data.result.statusBar);
               }
             },
             skill_result(data) {
+              if (!isCurrentSubmit(submitId)) return;
               handleSkillResult(data);
             },
             skills_done(data) {
@@ -180,6 +206,7 @@ export function useChatSubmit({
               }
             },
             async done(data) {
+              if (!isCurrentSubmit(submitId)) return;
               streamFinished = true;
               clearStreamTimer();
               if (stoppingByUser || !assistant.streaming) {
@@ -190,7 +217,9 @@ export function useChatSubmit({
                 showError('模型没有返回正文，请重试或检查当前模型/网关是否支持该对话格式。');
                 return;
               }
+              finalizeUserDraft(localUser, data.userMessage);
               finalizeStreamedAssistant(assistant, data.assistantMessage);
+              await reconcilePersistedStreamDrafts(route.params.id, localUser, assistant);
               usage.value = data.usage || data.assistantMessage?.usage || null;
               providerMeta.value = {
                 ...(providerMeta.value || {}),
@@ -205,6 +234,7 @@ export function useChatSubmit({
               }
             },
             error(data) {
+              if (!isCurrentSubmit(submitId)) return;
               streamFinished = true;
               clearStreamTimer();
               finishAssistantDraft(assistant);
@@ -216,6 +246,9 @@ export function useChatSubmit({
           controller.value.signal
         );
         clearStreamTimer();
+        if (!isCurrentSubmit(submitId)) {
+          return;
+        }
         if (streamResult?.aborted || !streamFinished) {
           finishAssistantDraft(assistant);
           if (streamTimedOut && !stoppingByUser) {
@@ -224,8 +257,14 @@ export function useChatSubmit({
             showError('连接已结束，但没有收到模型回复。请检查 API Key、余额或网关状态后重试。');
           }
         }
+        if (!streamResult?.aborted && !stoppingByUser) {
+          await reconcilePersistedStreamDrafts(route.params.id, localUser, assistant);
+        }
       } else {
         const result = await sendMessage(route.params.id, requestPayload);
+        if (!isCurrentSubmit(submitId)) {
+          return;
+        }
         Object.assign(localUser, result.userMessage);
         Object.assign(assistant, result.assistantMessage, { streaming: false });
         usage.value = result.usage || null;
@@ -241,9 +280,14 @@ export function useChatSubmit({
           scheduleAccessoryRefresh();
         }
       }
-      refreshConversationChrome();
+      if (isCurrentSubmit(submitId)) {
+        refreshConversationChrome();
+      }
     } catch (err) {
       clearStreamTimer();
+      if (!isCurrentSubmit(submitId)) {
+        return;
+      }
       if (streamTimedOut && !stoppingByUser) {
         showError('模型响应超时，请检查网络、余额或模型状态后重试。');
       } else if (err.name !== 'AbortError' && !stoppingByUser) {
@@ -255,9 +299,11 @@ export function useChatSubmit({
       finishAssistantDraft(assistant);
     } finally {
       clearStreamTimer();
-      sending.value = false;
-      controller.value = null;
-      stoppingByUser = false;
+      if (isCurrentSubmit(submitId)) {
+        sending.value = false;
+        controller.value = null;
+        stoppingByUser = false;
+      }
     }
   }
 
@@ -276,7 +322,14 @@ export function useChatSubmit({
     clearAccessoryRefreshTimers();
   }
 
+  function isCurrentSubmit(submitId) {
+    return !submitDisposed && submitId === submitRunId;
+  }
+
   function refreshConversationChrome() {
+    if (submitDisposed) {
+      return;
+    }
     const tasks = [
       createRefreshTask(loadSidebarData),
       createRefreshTask(loadEconomyBalance)
@@ -298,7 +351,7 @@ export function useChatSubmit({
   }
 
   function scheduleAccessoryRefresh() {
-    if (typeof window === 'undefined') {
+    if (submitDisposed || typeof window === 'undefined') {
       return;
     }
     const runId = ++accessoryRefreshRun;
@@ -309,14 +362,14 @@ export function useChatSubmit({
     for (const delay of accessoryRefreshDelays) {
       const isFinal = delay === accessoryRefreshDelays[accessoryRefreshDelays.length - 1];
       const timer = window.setTimeout(async () => {
-        if (runId !== accessoryRefreshRun) {
+        if (submitDisposed || runId !== accessoryRefreshRun) {
           return;
         }
         const results = await Promise.allSettled([
           createRefreshTask(loadStatusBar),
           createRefreshTask(loadEconomyBalance)
         ]);
-        if (runId !== accessoryRefreshRun) {
+        if (submitDisposed || runId !== accessoryRefreshRun) {
           return;
         }
         if (typeof onAccessoryRefresh === 'function') {
@@ -339,10 +392,17 @@ export function useChatSubmit({
   }
 
   function cleanup() {
+    submitDisposed = true;
+    submitRunId += 1;
+    stoppingByUser = true;
+    controller.value?.abort();
+    controller.value = null;
+    sending.value = false;
     cancelAccessoryRefresh();
   }
 
   function finishAssistantDraft(message) {
+    if (submitDisposed) return;
     message.streaming = false;
     message.reasoningStreaming = false;
     message.contentStreaming = false;
@@ -352,7 +412,134 @@ export function useChatSubmit({
     triggerRef(messages);
   }
 
+  async function reconcilePersistedStreamDrafts(conversationId, localUser, assistant) {
+    if (submitDisposed) {
+      return;
+    }
+    if (!needsPersistedDraftReconcile(localUser, assistant)) {
+      return;
+    }
+
+    try {
+      const result = await fetchConversationMessages(conversationId);
+      if (submitDisposed || route.params.id !== conversationId || !Array.isArray(result?.messages)) {
+        return;
+      }
+
+      const persistedMessages = result.messages;
+      const userReplacement = isLocalDraft(localUser)
+        ? findPersistedUserMessage(persistedMessages, localUser)
+        : localUser;
+      const assistantReplacement = isLocalDraft(assistant)
+        ? findPersistedAssistantMessage(persistedMessages, assistant, userReplacement)
+        : null;
+
+      if (userReplacement && isLocalDraft(localUser)) {
+        const localContent = localUser.content;
+        Object.assign(localUser, userReplacement, {
+          content: userReplacement.content || localContent || ''
+        });
+      }
+      if (assistantReplacement) {
+        const streamedContent = assistant.content;
+        const streamedReasoning = assistant.reasoning;
+        Object.assign(assistant, assistantReplacement, {
+          content: streamedContent || assistantReplacement.content || '',
+          reasoning: streamedReasoning || assistantReplacement.reasoning || '',
+          streaming: false,
+          reasoningStreaming: false,
+          contentStreaming: false
+        });
+      }
+      triggerRef(messages);
+    } catch {
+      // Keep the visible streamed draft if the follow-up refresh is unavailable.
+    }
+  }
+
+  function needsPersistedDraftReconcile(...items) {
+    return items.some((item) => isLocalDraft(item) && !item.streaming);
+  }
+
+  function isLocalDraft(message) {
+    return Boolean(message?.id) && String(message.id).startsWith('local-');
+  }
+
+  function findPersistedUserMessage(messages, draft) {
+    const draftContent = normalizeMessageText(draft?.content);
+    return [...messages].reverse().find((message) => (
+      message.role === 'user' &&
+      !isLocalDraft(message) &&
+      (!draftContent || normalizeMessageText(message.content) === draftContent)
+    )) || null;
+  }
+
+  function findPersistedAssistantMessage(messages, draft, userMessage = null) {
+    const candidates = messages.filter((message) => message.role === 'assistant' && !isLocalDraft(message));
+    if (!candidates.length) {
+      return null;
+    }
+
+    const userIndex = userMessage?.id
+      ? messages.findIndex((message) => message.id === userMessage.id)
+      : -1;
+    if (userIndex >= 0) {
+      const afterUser = messages
+        .slice(userIndex + 1)
+        .filter((message) => message.role === 'assistant' && !isLocalDraft(message));
+      return afterUser.length ? afterUser[afterUser.length - 1] : null;
+    }
+
+    const userTime = messageTimeValue(userMessage);
+    if (userTime) {
+      const afterUser = candidates.filter((message) => {
+        const messageTime = messageTimeValue(message);
+        return !messageTime || messageTime >= userTime;
+      });
+      if (afterUser.length) {
+        return afterUser[afterUser.length - 1];
+      }
+      return null;
+    }
+
+    const draftContent = normalizeMessageText(draft?.content);
+    const draftReasoning = normalizeMessageText(draft?.reasoning);
+    if (draftContent || draftReasoning) {
+      const exact = [...candidates].reverse().find((message) => (
+        (!draftContent || normalizeMessageText(message.content) === draftContent) &&
+        (!draftReasoning || normalizeMessageText(message.reasoning) === draftReasoning)
+      ));
+      if (exact) {
+        return exact;
+      }
+    }
+
+    return candidates[candidates.length - 1];
+  }
+
+  function normalizeMessageText(value) {
+    return String(value || '').trim();
+  }
+
+  function messageTimeValue(message = {}) {
+    const time = Date.parse(message?.createdAt || '');
+    return Number.isFinite(time) ? time : 0;
+  }
+
+  function finalizeUserDraft(message, serverMessage = {}) {
+    if (submitDisposed) return;
+    if (!message || !serverMessage?.id) {
+      return;
+    }
+    const localContent = message.content;
+    Object.assign(message, serverMessage, {
+      content: serverMessage.content || localContent || ''
+    });
+    triggerRef(messages);
+  }
+
   function finalizeStreamedAssistant(message, serverMessage = {}) {
+    if (submitDisposed) return;
     const finalServerMessage = serverMessage && typeof serverMessage === 'object' ? serverMessage : {};
     const streamedContent = message.content;
     const streamedReasoning = message.reasoning;
@@ -375,6 +562,7 @@ export function useChatSubmit({
   }
 
   async function appendStreamText(message, field, text) {
+    if (submitDisposed) return;
     const value = String(text || '');
     if (!value || !message.streaming) {
       return;

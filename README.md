@@ -40,6 +40,7 @@ Vite is configured with `strictPort` so port 5173 is the only frontend dev port.
 - SQLite database: `backend/data/flai.sqlite`
 - Uploaded avatars: `backend/uploads/avatars`
 - Both are ignored by git.
+- Production startup, backup, and restore steps are documented in `docs/production-runbook.md`.
 
 ## Tests
 

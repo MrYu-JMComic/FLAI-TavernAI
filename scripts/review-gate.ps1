@@ -11,7 +11,7 @@ $failures = @()
 Write-Host "=== 门下省审核 ===" -ForegroundColor Cyan
 
 # 1. 编码检查
-Write-Host "`n[1/4] 编码检查..." -ForegroundColor Yellow
+Write-Host "`n[1/6] 编码检查..." -ForegroundColor Yellow
 try {
     node scripts/check-encoding.mjs 2>&1 | Write-Host
     if ($LASTEXITCODE -ne 0) { $failures += "编码检查失败" }
@@ -19,8 +19,30 @@ try {
     $failures += "编码检查脚本执行异常: $_"
 }
 
-# 2. 后端测试
-Write-Host "`n[2/4] 后端测试..." -ForegroundColor Yellow
+# 2. 未引用组件诊断（非阻断）
+Write-Host "`n[2/6] 未引用 Vue 组件诊断..." -ForegroundColor Yellow
+try {
+    node scripts/find-unreferenced-vue-components.mjs 2>&1 | Write-Host
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "未引用组件诊断脚本返回非零状态，已作为非阻断提示处理。" -ForegroundColor DarkYellow
+    }
+} catch {
+    Write-Host "未引用组件诊断脚本执行异常，已作为非阻断提示处理: $_" -ForegroundColor DarkYellow
+}
+
+# 3. Vue 控件可访问性诊断（非阻断）
+Write-Host "`n[3/6] Vue 控件可访问性诊断..." -ForegroundColor Yellow
+try {
+    node scripts/find-inaccessible-vue-controls.mjs 2>&1 | Write-Host
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "Vue 控件可访问性诊断脚本返回非零状态，已作为非阻断提示处理。" -ForegroundColor DarkYellow
+    }
+} catch {
+    Write-Host "Vue 控件可访问性诊断脚本执行异常，已作为非阻断提示处理: $_" -ForegroundColor DarkYellow
+}
+
+# 4. 后端测试
+Write-Host "`n[4/6] 后端测试..." -ForegroundColor Yellow
 Push-Location backend
 try {
     $prevEAP = $ErrorActionPreference
@@ -35,8 +57,8 @@ try {
 }
 Pop-Location
 
-# 3. 前端构建
-Write-Host "`n[3/4] 前端构建..." -ForegroundColor Yellow
+# 5. 前端构建
+Write-Host "`n[5/6] 前端构建..." -ForegroundColor Yellow
 Push-Location frontend
 try {
     $prevEAP = $ErrorActionPreference
@@ -51,8 +73,8 @@ try {
 }
 Pop-Location
 
-# 4. Git 状态检查
-Write-Host "`n[4/4] Git 状态检查..." -ForegroundColor Yellow
+# 6. Git 状态检查
+Write-Host "`n[6/6] Git 状态检查..." -ForegroundColor Yellow
 $gitStatus = git status --short 2>&1
 if ($gitStatus) {
     Write-Host "变更文件:" -ForegroundColor Gray

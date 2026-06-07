@@ -52,6 +52,20 @@ function setupTestEnv() {
   return { database, userId, characterId, conversationId };
 }
 
+function captureConsoleWarn(callback) {
+  const originalWarn = console.warn;
+  const warnings = [];
+  console.warn = (...args) => {
+    warnings.push(args);
+  };
+  try {
+    const result = callback();
+    return { result, warnings };
+  } finally {
+    console.warn = originalWarn;
+  }
+}
+
 // ── Currency Types ──
 
 test('CURRENCY_TYPES contains expected currencies', () => {
@@ -417,6 +431,23 @@ test('getTransactionHistory supports pagination', () => {
   assert.notEqual(page1.transactions[0].id, page2.transactions[0].id);
 });
 
+test('getTransactionHistory clamps string numeric pagination options', () => {
+  const { database, userId, conversationId } = setupTestEnv();
+
+  for (let i = 0; i < 3; i++) {
+    createConversationTransaction(database, userId, conversationId, { amount: i + 1, type: 'income', description: `string option ${i}` });
+  }
+
+  const clamped = getTransactionHistory(database, userId, conversationId, { limit: '0', offset: '-10' });
+  assert.equal(clamped.transactions.length, 1);
+  assert.equal(clamped.limit, 1);
+  assert.equal(clamped.offset, 0);
+
+  const fallback = getTransactionHistory(database, userId, conversationId, { limit: 'not-a-number', offset: 'not-a-number' });
+  assert.equal(fallback.limit, 50);
+  assert.equal(fallback.offset, 0);
+});
+
 test('getTransactionHistory supports currency type filter', () => {
   const { database, userId, conversationId } = setupTestEnv();
 
@@ -585,8 +616,11 @@ test('processTransactionIntents skips transactions that would cause negative bal
   // Account starts with 100 gold (default), trying to spend 500 should be skipped.
   // The account may be created as a side effect of createConversationTransaction,
   // but the transaction itself is rejected atomically inside the BEGIN/COMMIT block.
-  const results = processTransactionIntents(database, userId, conversationId, '你花费了500金币。');
+  const { result: results, warnings } = captureConsoleWarn(() => processTransactionIntents(database, userId, conversationId, '你花费了500金币。'));
   assert.equal(results.length, 0);
+  assert.equal(warnings.length, 1);
+  assert.equal(warnings[0][0], '[economy] Transaction intent skipped:');
+  assert.match(String(warnings[0][1]), /余额不足/);
 
   // Balance should remain at the default initial balance (100) since the expense was rejected
   const accounts = getConversationAccounts(database, userId, conversationId);
@@ -625,6 +659,15 @@ test('getConversationEconomyState can inspect without creating accounts', () => 
   const { database, userId, conversationId } = setupTestEnv();
 
   const state = getConversationEconomyState(database, userId, conversationId, { ensureDefaultAccount: false });
+  assert.ok(state);
+  assert.equal(state.accounts.length, 0);
+  assert.equal(state.totalAccounts, 0);
+});
+
+test('getConversationEconomyState treats string false as no default account', () => {
+  const { database, userId, conversationId } = setupTestEnv();
+
+  const state = getConversationEconomyState(database, userId, conversationId, { ensureDefaultAccount: 'false' });
   assert.ok(state);
   assert.equal(state.accounts.length, 0);
   assert.equal(state.totalAccounts, 0);

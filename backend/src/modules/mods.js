@@ -1,13 +1,16 @@
 import { newId, nowIso } from '../security.js';
 import { normalizeBoolean } from '../utils/boolean.js';
+import { parseJson } from '../utils/json.js';
 import { normalizeFiniteNumber } from '../utils/number.js';
 
 const VALID_TYPES = ['prompt_inject', 'style_enhance', 'custom'];
+const VALID_SCOPES = ['global', 'all_characters', 'characters'];
+const MAX_CHARACTER_BINDINGS = 100;
 
 export function listMods(database, userId) {
   return database
     .prepare(
-      `SELECT id, user_id, name, description, type, content, enabled, order_index, created_at
+      `SELECT id, user_id, name, description, type, content, enabled, scope, character_ids, order_index, created_at
        FROM mods
        WHERE user_id = ?
        ORDER BY order_index ASC, created_at DESC, rowid DESC`
@@ -35,8 +38,8 @@ export function createMod(database, userId, payload) {
 
   database
     .prepare(
-      `INSERT INTO mods (id, user_id, name, description, type, content, enabled, order_index, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO mods (id, user_id, name, description, type, content, enabled, scope, character_ids, order_index, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     )
     .run(
       id,
@@ -46,6 +49,8 @@ export function createMod(database, userId, payload) {
       normalized.type,
       normalized.content,
       normalized.enabled ? 1 : 0,
+      normalized.scope,
+      JSON.stringify(normalized.characterIds),
       orderIndex,
       timestamp
     );
@@ -66,7 +71,7 @@ export function updateMod(database, userId, modId, payload) {
   database
     .prepare(
       `UPDATE mods SET
-        name = ?, description = ?, type = ?, content = ?, enabled = ?, order_index = ?
+        name = ?, description = ?, type = ?, content = ?, enabled = ?, scope = ?, character_ids = ?, order_index = ?
        WHERE id = ? AND user_id = ?`
     )
     .run(
@@ -75,6 +80,8 @@ export function updateMod(database, userId, modId, payload) {
       normalized.type,
       normalized.content,
       normalized.enabled ? 1 : 0,
+      normalized.scope,
+      JSON.stringify(normalized.characterIds),
       normalized.orderIndex,
       modId,
       userId
@@ -127,16 +134,20 @@ export function reorderMods(database, userId, orderedIds) {
   return listMods(database, userId);
 }
 
-export function getEnabledModsForUser(database, userId) {
+export function getEnabledModsForUser(database, userId, options = {}) {
+  const characterId = typeof options === 'string'
+    ? options
+    : String(options?.characterId || '').trim();
   return database
     .prepare(
-      `SELECT id, name, type, content
+      `SELECT id, user_id, name, description, type, content, enabled, scope, character_ids, order_index, created_at
        FROM mods
        WHERE user_id = ? AND enabled = 1
        ORDER BY order_index ASC, created_at DESC, rowid DESC`
     )
     .all(userId)
-    .map(toMod);
+    .map(toMod)
+    .filter((mod) => modAppliesToCharacter(mod, characterId));
 }
 
 export function buildModSystemPrompt(mods) {
@@ -157,15 +168,36 @@ export function buildModSystemPrompt(mods) {
 }
 
 function normalizeModPayload(payload = {}, existing = null) {
-  const name = normalizeName(payload.name ?? existing?.name ?? '');
-  const description = String(payload.description ?? existing?.description ?? '').trim();
-  const type = normalizeType(payload.type ?? existing?.type ?? 'prompt_inject');
-  const content = String(payload.content ?? existing?.content ?? '').trim();
-  const enabled = normalizeBoolean(payload.enabled, normalizeBoolean(existing?.enabled, true));
+  const input = payload && typeof payload === 'object' ? payload : {};
+  const hasScopeInput = Object.prototype.hasOwnProperty.call(input, 'scope');
+  const hasCharacterIdsInput =
+    Object.prototype.hasOwnProperty.call(input, 'characterIds') ||
+    Object.prototype.hasOwnProperty.call(input, 'character_ids');
+  const name = normalizeName(input.name ?? existing?.name ?? '');
+  const description = String(input.description ?? existing?.description ?? '').trim();
+  const type = normalizeType(input.type ?? existing?.type ?? 'prompt_inject');
+  const content = String(input.content ?? existing?.content ?? '').trim();
+  const enabled = normalizeBoolean(input.enabled, normalizeBoolean(existing?.enabled, true));
+  const rawCharacterIds = input.characterIds ?? input.character_ids ?? existing?.character_ids ?? existing?.characterIds ?? [];
+  const characterIds = normalizeCharacterIds(rawCharacterIds);
+  const scope = normalizeScope(input.scope ?? existing?.scope ?? 'global', characterIds);
+  const isEditingScope = !existing || hasScopeInput || hasCharacterIdsInput;
+  if (scope === 'characters' && !characterIds.length && (isEditingScope || enabled)) {
+    throw new Error('指定角色加载至少需要绑定一个角色');
+  }
   const currentOrderIndex = normalizeFiniteNumber(existing?.order_index ?? existing?.orderIndex ?? 0);
-  const orderIndex = normalizeFiniteNumber(payload.orderIndex ?? payload.order_index, currentOrderIndex);
+  const orderIndex = normalizeFiniteNumber(input.orderIndex ?? input.order_index, currentOrderIndex);
 
-  return { name, description, type, content, enabled, orderIndex };
+  return {
+    name,
+    description,
+    type,
+    content,
+    enabled,
+    scope,
+    characterIds: scope === 'characters' ? characterIds : [],
+    orderIndex
+  };
 }
 
 function normalizeName(name) {
@@ -183,7 +215,59 @@ function normalizeType(type) {
   return VALID_TYPES.includes(type) ? type : 'prompt_inject';
 }
 
+function normalizeScope(scope, characterIds = []) {
+  const value = String(scope || '').trim();
+  const normalizedCharacterIds = Array.isArray(characterIds) ? characterIds : normalizeCharacterIds(characterIds);
+  if (VALID_SCOPES.includes(value)) {
+    return value;
+  }
+  if (['all', 'all_cards', 'all_characters'].includes(value)) {
+    return 'all_characters';
+  }
+  if (['character', 'character_bound', 'bound'].includes(value)) {
+    return 'characters';
+  }
+  return normalizedCharacterIds.length ? 'characters' : 'global';
+}
+
+function normalizeCharacterIds(value) {
+  const source = Array.isArray(value) ? value : parseJson(value, []);
+  const ids = [];
+  const seen = new Set();
+
+  for (const rawId of Array.isArray(source) ? source : []) {
+    const id = String(rawId || '').trim();
+    if (!id || seen.has(id)) {
+      continue;
+    }
+    seen.add(id);
+    ids.push(id.slice(0, 120));
+    if (ids.length >= MAX_CHARACTER_BINDINGS) {
+      break;
+    }
+  }
+
+  return ids;
+}
+
+export function modAppliesToCharacter(mod, characterId = '') {
+  const characterIds = normalizeCharacterIds(mod?.characterIds || mod?.character_ids || []);
+  const scope = normalizeScope(mod?.scope, characterIds);
+  if (scope === 'global') {
+    return true;
+  }
+  if (!characterId) {
+    return false;
+  }
+  if (scope === 'all_characters') {
+    return true;
+  }
+  return characterIds.includes(characterId);
+}
+
 function toMod(row) {
+  const characterIds = normalizeCharacterIds(row.character_ids ?? row.characterIds);
+  const scope = normalizeScope(row.scope, characterIds);
   return {
     id: row.id,
     userId: row.user_id,
@@ -192,6 +276,8 @@ function toMod(row) {
     type: row.type,
     content: row.content || '',
     enabled: Boolean(row.enabled),
+    scope,
+    characterIds: scope === 'characters' ? characterIds : [],
     orderIndex: Number(row.order_index),
     createdAt: row.created_at
   };

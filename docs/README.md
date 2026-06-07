@@ -6,8 +6,10 @@ This directory contains active project documentation. Keep operational run artif
 
 - `api-reference.md` - backend API reference.
 - `ai-dev-workflow.md` - AI collaboration and review flow.
+- `dependency-review.md` - dependency upgrade candidates and audit snapshot.
 - `development-standards.md` - development conventions.
 - `markdown-organization.md` - Markdown storage rules and cleanup policy.
+- `production-runbook.md` - local production startup, SQLite backup, and restore steps.
 - `project-pipeline.md` - project delivery pipeline.
 - `project-structure.md` - repository structure.
 

@@ -11,22 +11,43 @@ import { ref, onMounted, onBeforeUnmount } from 'vue';
 export function useViewport(options = {}) {
   const breakpoint = options.breakpoint || '(max-width: 760px)';
   const isPhone = ref(false);
+  let mediaQuery = null;
+  let unsubscribe = null;
 
   function check() {
     if (typeof window === 'undefined') {
       isPhone.value = false;
       return;
     }
-    isPhone.value = window.matchMedia(breakpoint).matches;
+    isPhone.value = (mediaQuery || window.matchMedia(breakpoint)).matches;
+  }
+
+  function handleMediaChange(event) {
+    isPhone.value = event.matches;
   }
 
   onMounted(() => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+    mediaQuery = window.matchMedia(breakpoint);
     check();
-    window.addEventListener('resize', check);
+    if (typeof mediaQuery.addEventListener === 'function') {
+      mediaQuery.addEventListener('change', handleMediaChange);
+      unsubscribe = () => mediaQuery?.removeEventListener('change', handleMediaChange);
+    } else if (typeof mediaQuery.addListener === 'function') {
+      mediaQuery.addListener(handleMediaChange);
+      unsubscribe = () => mediaQuery?.removeListener(handleMediaChange);
+    } else {
+      window.addEventListener('resize', check);
+      unsubscribe = () => window.removeEventListener('resize', check);
+    }
   });
 
   onBeforeUnmount(() => {
-    window.removeEventListener('resize', check);
+    unsubscribe?.();
+    unsubscribe = null;
+    mediaQuery = null;
   });
 
   return { isPhone, check };

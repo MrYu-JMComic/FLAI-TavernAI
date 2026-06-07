@@ -39,7 +39,11 @@ export function useChatAppearance({
   const chatLorebookId = ref(null);
   const worldBooks = ref([]);
   const worldBooksLoading = ref(false);
+  const backgroundUploadTokens = {};
+  let appearanceSaveToken = 0;
   let appearanceApplyToken = 0;
+  let worldBooksLoadToken = 0;
+  let appearanceDisposed = false;
 
   const effectiveChatAppearance = computed(() => mergeChatAppearance(authorChatAppearance.value, chatAppearanceForm));
 
@@ -77,11 +81,12 @@ export function useChatAppearance({
 
   async function saveConversationAppearanceChanges() {
     const conversationId = conversation.value?.id;
-    if (!conversationId || appearanceSaving.value) {
+    if (appearanceDisposed || !conversationId || appearanceSaving.value) {
       return;
     }
 
     appearanceSaving.value = true;
+    const requestToken = ++appearanceSaveToken;
     try {
       const saved = await saveConversationSettings(conversationId, {
         desktopBackgroundUrl: chatAppearanceForm.desktopBackgroundUrl,
@@ -91,7 +96,7 @@ export function useChatAppearance({
         statusBarPrompt: chatAppearanceForm.statusBarPrompt,
         chatLorebookId: chatLorebookId.value
       });
-      if (conversation.value?.id !== conversationId) {
+      if (!isCurrentAppearanceSave(requestToken, conversationId)) {
         return;
       }
       syncConversationAppearance(saved);
@@ -107,20 +112,26 @@ export function useChatAppearance({
         userSettings: saved.userSettings || normalizeChatAppearance(chatAppearanceForm)
       };
       await applyConversationAppearance();
+      if (!isCurrentAppearanceSave(requestToken, conversationId)) {
+        return;
+      }
       showActionNotice('会话自定义已保存');
     } catch (err) {
-      if (conversation.value?.id !== conversationId) {
+      if (!isCurrentAppearanceSave(requestToken, conversationId)) {
         return;
       }
       showError(err.message);
     } finally {
-      if (conversation.value?.id === conversationId) {
+      if (isActiveAppearanceSave(requestToken)) {
         appearanceSaving.value = false;
       }
     }
   }
 
   async function applyConversationAppearance() {
+    if (appearanceDisposed) {
+      return;
+    }
     cleanupConversationAppearance();
     const applyToken = ++appearanceApplyToken;
 
@@ -161,7 +172,7 @@ export function useChatAppearance({
         requestPaint: waitForFrame,
         wait: waitMs
       });
-      if (applyToken !== appearanceApplyToken || conversation.value?.id !== conversationId) {
+      if (!isCurrentAppearanceApply(applyToken, conversationId)) {
         if (typeof cleanup === 'function') {
           cleanup();
         }
@@ -169,12 +180,33 @@ export function useChatAppearance({
       }
       customAppearanceCleanup.value = cleanup;
     } catch (err) {
-      if (applyToken !== appearanceApplyToken || conversation.value?.id !== conversationId) {
+      if (!isCurrentAppearanceApply(applyToken, conversationId)) {
         return;
       }
-      console.error(err);
-      notify.warning('自定义 JS 执行失败，已保留设置');
+      notify.warning(formatCustomScriptErrorMessage(err));
     }
+  }
+
+  function isCurrentAppearanceSave(requestToken, conversationId) {
+    return !appearanceDisposed && requestToken === appearanceSaveToken && conversation.value?.id === conversationId;
+  }
+
+  function isActiveAppearanceSave(requestToken) {
+    return !appearanceDisposed && requestToken === appearanceSaveToken;
+  }
+
+  function isCurrentAppearanceApply(applyToken, conversationId) {
+    return !appearanceDisposed && applyToken === appearanceApplyToken && conversation.value?.id === conversationId;
+  }
+
+  function formatCustomScriptErrorMessage(err) {
+    const detail = String(err?.message || '').replace(/\s+/g, ' ').trim();
+    if (!detail) {
+      return '自定义 JS 执行失败，已保留设置';
+    }
+
+    const shortDetail = detail.length > 160 ? `${detail.slice(0, 160)}...` : detail;
+    return `自定义 JS 执行失败：${shortDetail}`;
   }
 
   function cleanupConversationAppearance() {
@@ -192,6 +224,16 @@ export function useChatAppearance({
       customAppearanceStyleEl.value.remove();
       customAppearanceStyleEl.value = null;
     }
+  }
+
+  function disposeConversationAppearance() {
+    appearanceDisposed = true;
+    appearanceSaveToken += 1;
+    worldBooksLoadToken += 1;
+    invalidateBackgroundUploads();
+    appearanceSaving.value = false;
+    worldBooksLoading.value = false;
+    cleanupConversationAppearance();
   }
 
   function syncCustomAppearanceStyle(cssText) {
@@ -230,6 +272,7 @@ export function useChatAppearance({
   async function handleAppearanceBackgroundUpload(event, field) {
     const file = event.target.files?.[0];
     event.target.value = '';
+    const uploadToken = nextBackgroundUploadToken(field);
     if (!file) {
       return;
     }
@@ -245,13 +288,21 @@ export function useChatAppearance({
     }
 
     try {
-      chatAppearanceForm[field] = await readFileAsDataUrl(file);
+      const result = await readFileAsDataUrl(file);
+      if (!isCurrentBackgroundUpload(field, uploadToken)) {
+        return;
+      }
+      chatAppearanceForm[field] = result;
     } catch (err) {
+      if (!isCurrentBackgroundUpload(field, uploadToken)) {
+        return;
+      }
       notify.warning(err.message || '背景图片读取失败');
     }
   }
 
   function clearAppearanceField(field) {
+    nextBackgroundUploadToken(field);
     chatAppearanceForm[field] = '';
   }
 
@@ -281,6 +332,17 @@ export function useChatAppearance({
       reader.onload = () => resolve(String(reader.result || ''));
       reader.readAsDataURL(file);
     });
+  }
+
+  function nextBackgroundUploadToken(field) {
+    const key = String(field || '');
+    const nextToken = (backgroundUploadTokens[key] || 0) + 1;
+    backgroundUploadTokens[key] = nextToken;
+    return nextToken;
+  }
+
+  function isCurrentBackgroundUpload(field, uploadToken) {
+    return backgroundUploadTokens[String(field || '')] === uploadToken;
   }
 
   async function waitForFrame() {

@@ -8,7 +8,7 @@ export function createTagsRouter(ctx) {
   const router = Router();
 
   router.get('/', requireAuth, (request, response) => {
-    withListCache(request, response, listTags(db, request.auth.user.id));
+    withListCache(request, response, listTags(db, request.auth.user.id, { limit: request.query.limit }));
   });
 
   router.post('/', requireAuth, validate(createTagSchema), (request, response) => {

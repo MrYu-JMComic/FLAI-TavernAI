@@ -242,7 +242,7 @@ export function createConversationsRouter(ctx) {
     const recentTexts = recentForWI.map((m) => m.content);
     recentTexts.push(processedUserText);
     const worldBookEntries = matchWorldBookEntries(db, character.id, recentTexts, { conversationId: conversation.id });
-    const userMods = getEnabledModsForUser(db, request.auth.user.id);
+    const userMods = getEnabledModsForUser(db, request.auth.user.id, { characterId: character.id });
     const accessoryState = getAccessorySkillsPayload(conversation, statusBar);
     const npcPrompt = accessoryState.active.npcAgent ? buildNpcBehaviorPrompt(db, conversation.id) : '';
     const talentPrompt = accessoryState.active.talentPrompt ? buildTalentSystemPrompt(db, character.id) : '';
@@ -885,6 +885,7 @@ export function createConversationsRouter(ctx) {
     rules,
     modelMessages,
     settings,
+    userMessage,
     statusBar = null,
     thinkingEnabled = true,
     completionOptions = {}
@@ -913,6 +914,7 @@ export function createConversationsRouter(ctx) {
     }, 300_000);
 
     const emit = (event, data) => writeSse(response, event, data);
+    emit('user_message', { userMessage });
     emit('meta', {
       provider: settings.gatewayName,
       model: settings.model,
@@ -944,6 +946,7 @@ export function createConversationsRouter(ctx) {
         return;
       }
       emit('done', {
+        userMessage,
         assistantMessage,
         usage: assistantMessage.usage,
         provider: result.provider,

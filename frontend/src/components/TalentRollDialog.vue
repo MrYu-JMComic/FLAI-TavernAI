@@ -1,7 +1,8 @@
 <script setup>
-import { computed, onMounted, ref, watch } from 'vue';
+import { computed, onBeforeUnmount, ref, watch } from 'vue';
 import { Dice6, Sparkles, Trash2, X } from '@lucide/vue';
 import { deleteAllCharacterTalents, deleteCharacterTalent, fetchCharacterTalents, fetchTalentPools, rollCharacterTalent } from '../api';
+import TalentBadge from './TalentBadge.vue';
 import { useNotify } from '../composables/useNotify';
 
 const props = defineProps({
@@ -19,24 +20,87 @@ const rolling = ref(false);
 const rollResult = ref(null);
 const showResult = ref(false);
 const loading = ref(true);
+const loadError = ref('');
 const clearingAll = ref(false);
+let loadRequestId = 0;
+let dialogContextVersion = 0;
+let dialogDisposed = false;
 
 const selectedPool = computed(() => pools.value.find((p) => p.id === selectedPoolId.value));
 
-onMounted(async () => {
+watch(
+  () => [props.characterId, props.canEdit],
+  () => {
+    resetDialogContext();
+    loadDialogData();
+  },
+  { immediate: true }
+);
+
+onBeforeUnmount(() => {
+  dialogDisposed = true;
+  dialogContextVersion += 1;
+});
+
+async function loadDialogData() {
+  const requestId = ++loadRequestId;
+  const context = getDialogContext();
+  loading.value = true;
+  loadError.value = '';
+  rollResult.value = null;
+  showResult.value = false;
   try {
-    const [poolData, talentData] = await Promise.all([fetchTalentPools(), fetchCharacterTalents(props.characterId)]);
+    const [poolData, talentData] = await Promise.all([
+      context.canEdit ? fetchTalentPools() : Promise.resolve([]),
+      fetchCharacterTalents(context.characterId)
+    ]);
+    if (requestId !== loadRequestId || !isCurrentDialogContext(context)) {
+      return;
+    }
     pools.value = poolData;
     talents.value = talentData;
-    if (pools.value.length) {
+    if (!pools.value.some((pool) => pool.id === selectedPoolId.value)) {
+      selectedPoolId.value = '';
+    }
+    if (!selectedPoolId.value && pools.value.length) {
       selectedPoolId.value = pools.value[0].id;
     }
   } catch (err) {
-    notify.error(err.message);
+    if (requestId !== loadRequestId || !isCurrentDialogContext(context)) {
+      return;
+    }
+    pools.value = [];
+    talents.value = [];
+    loadError.value = err?.message || '天赋加载失败';
   } finally {
-    loading.value = false;
+    if (requestId === loadRequestId && isCurrentDialogContext(context)) {
+      loading.value = false;
+    }
   }
-});
+}
+
+function resetDialogContext() {
+  dialogContextVersion += 1;
+  rolling.value = false;
+  clearingAll.value = false;
+  rollResult.value = null;
+  showResult.value = false;
+}
+
+function getDialogContext() {
+  return {
+    version: dialogContextVersion,
+    characterId: props.characterId,
+    canEdit: props.canEdit
+  };
+}
+
+function isCurrentDialogContext(context) {
+  return !dialogDisposed
+    && context.version === dialogContextVersion
+    && context.characterId === props.characterId
+    && context.canEdit === props.canEdit;
+}
 
 function rarityClass(rarity) {
   return `rarity-${rarity || 'common'}`;
@@ -48,54 +112,89 @@ function rarityLabel(rarity) {
 }
 
 async function doRoll() {
+  if (!props.canEdit) {
+    notify.warning('只有角色拥有者可以 Roll 天赋');
+    return;
+  }
   if (!selectedPoolId.value) {
     notify.warning('请先选择一个天赋池');
     return;
   }
 
+  const context = getDialogContext();
+  const poolId = selectedPoolId.value;
   rolling.value = true;
   rollResult.value = null;
   showResult.value = false;
 
   // Artificial delay for animation
   await new Promise((r) => setTimeout(r, 1200));
+  if (!isCurrentDialogContext(context)) {
+    return;
+  }
 
   try {
-    const result = await rollCharacterTalent(props.characterId, selectedPoolId.value);
+    const result = await rollCharacterTalent(context.characterId, poolId);
+    if (!isCurrentDialogContext(context)) {
+      return;
+    }
     rollResult.value = result;
     showResult.value = true;
     talents.value = [result, ...talents.value];
     emit('updated');
   } catch (err) {
-    notify.error(err.message);
+    if (isCurrentDialogContext(context)) {
+      notify.error(err.message);
+    }
   } finally {
-    rolling.value = false;
+    if (isCurrentDialogContext(context)) {
+      rolling.value = false;
+    }
   }
 }
 
 async function removeTalent(talentId) {
+  if (!props.canEdit) {
+    return;
+  }
+  const context = getDialogContext();
   try {
-    await deleteCharacterTalent(props.characterId, talentId);
+    await deleteCharacterTalent(context.characterId, talentId);
+    if (!isCurrentDialogContext(context)) {
+      return;
+    }
     talents.value = talents.value.filter((t) => t.id !== talentId);
     emit('updated');
     notify.success('天赋已移除');
   } catch (err) {
-    notify.error(err.message);
+    if (isCurrentDialogContext(context)) {
+      notify.error(err.message);
+    }
   }
 }
 
 async function clearAll() {
+  if (!props.canEdit) return;
   if (!talents.value.length) return;
+  if (!window.confirm('确定清空这个角色的全部天赋吗？')) return;
+  const context = getDialogContext();
   clearingAll.value = true;
   try {
-    await deleteAllCharacterTalents(props.characterId);
+    await deleteAllCharacterTalents(context.characterId);
+    if (!isCurrentDialogContext(context)) {
+      return;
+    }
     talents.value = [];
     emit('updated');
     notify.success('已清空所有天赋');
   } catch (err) {
-    notify.error(err.message);
+    if (isCurrentDialogContext(context)) {
+      notify.error(err.message);
+    }
   } finally {
-    clearingAll.value = false;
+    if (isCurrentDialogContext(context)) {
+      clearingAll.value = false;
+    }
   }
 }
 
@@ -108,20 +207,26 @@ function closeResult() {
 <template>
   <Teleport to="body">
     <div class="talent-overlay" @click.self="emit('close')">
-      <div class="talent-dialog">
+      <div class="talent-dialog" role="dialog" aria-modal="true" @keydown.esc.prevent="emit('close')">
         <div class="talent-dialog-header">
           <div>
             <p>天赋 Roll</p>
             <h2>{{ characterName || '角色' }}的天赋</h2>
           </div>
-          <button class="icon-button" type="button" @click="emit('close')">
+          <button
+            class="icon-button"
+            type="button"
+            title="关闭"
+            aria-label="关闭天赋 Roll 面板"
+            @click="emit('close')"
+          >
             <X :size="18" />
           </button>
         </div>
 
         <div class="talent-dialog-body">
           <!-- Roll Section -->
-          <section class="talent-roll-section">
+          <section v-if="canEdit" class="talent-roll-section">
             <div class="talent-pool-selector">
               <label class="field">
                 <span>选择天赋池</span>
@@ -147,19 +252,18 @@ function closeResult() {
               <span>{{ rolling ? 'Roll 中...' : '🎲 Roll 天赋' }}</span>
             </button>
           </section>
+          <p v-else class="muted-text">只读模式下可查看天赋，不能 Roll 或移除。</p>
 
           <!-- Roll Animation Overlay -->
           <Transition name="roll-result">
             <div v-if="showResult && rollResult" class="roll-result-card" :class="rarityClass(rollResult.talentRarity)">
-              <button class="roll-result-close" type="button" @click="closeResult">
+              <button class="roll-result-close" type="button" aria-label="关闭天赋 Roll 结果" @click="closeResult">
                 <X :size="16" />
               </button>
               <div class="roll-result-sparkle">
                 <Sparkles :size="28" />
               </div>
-              <div class="roll-result-badge" :class="rarityClass(rollResult.talentRarity)">
-                {{ rarityLabel(rollResult.talentRarity) }}
-              </div>
+              <TalentBadge :name="rarityLabel(rollResult.talentRarity)" :rarity="rollResult.talentRarity" compact />
               <h3 class="roll-result-name">{{ rollResult.talentName }}</h3>
               <p v-if="rollResult.talentDescription" class="roll-result-desc">{{ rollResult.talentDescription }}</p>
               <p v-if="rollResult.talentEffect" class="roll-result-effect">
@@ -185,7 +289,15 @@ function closeResult() {
               </button>
             </div>
 
-            <div v-if="loading" class="muted-text talent-loading">加载中...</div>
+            <div v-if="loadError" class="empty-state talent-empty" role="alert">
+              <Dice6 :size="32" />
+              <p>{{ loadError }}</p>
+              <button class="ghost-button" type="button" :disabled="loading" @click="loadDialogData">
+                {{ loading ? '重试中...' : '重试' }}
+              </button>
+            </div>
+
+            <div v-else-if="loading" class="muted-text talent-loading">加载中...</div>
 
             <div v-else-if="talents.length" class="talent-list">
               <div
@@ -195,16 +307,13 @@ function closeResult() {
                 :class="rarityClass(talent.talentRarity)"
               >
                 <div class="talent-item-header">
-                  <span class="talent-rarity-dot" :class="rarityClass(talent.talentRarity)" />
-                  <span class="talent-item-name">{{ talent.talentName }}</span>
-                  <span class="talent-rarity-label" :class="rarityClass(talent.talentRarity)">
-                    {{ rarityLabel(talent.talentRarity) }}
-                  </span>
+                  <TalentBadge :name="talent.talentName" :rarity="talent.talentRarity" compact />
                   <button
                     v-if="canEdit"
                     class="icon-button danger talent-remove-btn"
                     type="button"
                     title="移除天赋"
+                    :aria-label="`移除天赋：${talent.talentName}`"
                     @click="removeTalent(talent.id)"
                   >
                     <Trash2 :size="14" />

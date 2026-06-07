@@ -1,11 +1,11 @@
 <script setup>
-import { computed, ref, watch } from 'vue';
+import { computed, onBeforeUnmount, ref, watch } from 'vue';
 import {
   ChevronLeft,
   ChevronRight,
   Coins,
-  Gem,
   History,
+  RefreshCw,
   X
 } from '@lucide/vue';
 import { fetchConversationEconomy, fetchEconomyHistory } from '../api';
@@ -19,6 +19,7 @@ const emit = defineEmits(['close']);
 
 const notify = useNotify();
 const loading = ref(false);
+const loadError = ref('');
 const accounts = ref([]);
 const transactions = ref([]);
 const historyTotal = ref(0);
@@ -26,9 +27,11 @@ const historyOffset = ref(0);
 const historyLimit = 20;
 const historyCurrencyFilter = ref('');
 const historyLoading = ref(false);
+const historyError = ref('');
 const detailTab = ref('balance');
 let economyLoadToken = 0;
 let historyLoadToken = 0;
+let economyPanelDisposed = false;
 
 const currencyMeta = {
   gold:   { icon: '💰', label: '金币', color: '#d4a017' },
@@ -73,6 +76,11 @@ watch(() => props.conversationId, () => {
   }
 });
 
+onBeforeUnmount(() => {
+  economyPanelDisposed = true;
+  resetEconomyState();
+});
+
 function resetEconomyState() {
   economyLoadToken += 1;
   historyLoadToken += 1;
@@ -81,11 +89,14 @@ function resetEconomyState() {
   historyTotal.value = 0;
   historyOffset.value = 0;
   historyCurrencyFilter.value = '';
+  loadError.value = '';
+  historyError.value = '';
   loading.value = false;
   historyLoading.value = false;
 }
 
 async function loadEconomy() {
+  if (economyPanelDisposed) return;
   const conversationId = props.conversationId;
   if (!conversationId) {
     resetEconomyState();
@@ -93,28 +104,37 @@ async function loadEconomy() {
   }
   const requestToken = ++economyLoadToken;
   loading.value = true;
+  loadError.value = '';
+  historyError.value = '';
   try {
     const result = await fetchConversationEconomy(conversationId);
-    if (requestToken !== economyLoadToken || conversationId !== props.conversationId) return;
+    if (economyPanelDisposed || requestToken !== economyLoadToken || conversationId !== props.conversationId) return;
+    loadError.value = '';
     accounts.value = result.accounts || [];
     await loadHistory(0, conversationId);
   } catch (err) {
-    if (requestToken !== economyLoadToken || conversationId !== props.conversationId) return;
-    notify.error(err.message || '加载经济数据失败');
+    if (economyPanelDisposed || requestToken !== economyLoadToken || conversationId !== props.conversationId) return;
+    loadError.value = err.message || '加载经济数据失败';
+    notify.error(loadError.value);
     accounts.value = [];
     transactions.value = [];
+    historyTotal.value = 0;
+    historyOffset.value = 0;
+    historyError.value = '';
   } finally {
-    if (requestToken === economyLoadToken && conversationId === props.conversationId) {
+    if (!economyPanelDisposed && requestToken === economyLoadToken && conversationId === props.conversationId) {
       loading.value = false;
     }
   }
 }
 
 async function loadHistory(offset = 0, expectedConversationId = '') {
+  if (economyPanelDisposed) return;
   const conversationId = expectedConversationId || props.conversationId;
   if (!conversationId) return;
   const requestToken = ++historyLoadToken;
   historyLoading.value = true;
+  historyError.value = '';
   try {
     const params = {
       limit: historyLimit,
@@ -124,16 +144,20 @@ async function loadHistory(offset = 0, expectedConversationId = '') {
       params.currencyType = historyCurrencyFilter.value;
     }
     const result = await fetchEconomyHistory(conversationId, params);
-    if (requestToken !== historyLoadToken || conversationId !== props.conversationId) return;
+    if (economyPanelDisposed || requestToken !== historyLoadToken || conversationId !== props.conversationId) return;
+    historyError.value = '';
     transactions.value = result.transactions || [];
     historyTotal.value = result.total || 0;
     historyOffset.value = offset;
   } catch (err) {
-    if (requestToken !== historyLoadToken || conversationId !== props.conversationId) return;
-    notify.error(err.message || '加载交易历史失败');
+    if (economyPanelDisposed || requestToken !== historyLoadToken || conversationId !== props.conversationId) return;
+    historyError.value = err.message || '加载交易历史失败';
+    notify.error(historyError.value);
     transactions.value = [];
+    historyTotal.value = 0;
+    historyOffset.value = offset;
   } finally {
-    if (requestToken === historyLoadToken && conversationId === props.conversationId) {
+    if (!economyPanelDisposed && requestToken === historyLoadToken && conversationId === props.conversationId) {
       historyLoading.value = false;
     }
   }
@@ -141,6 +165,14 @@ async function loadHistory(offset = 0, expectedConversationId = '') {
 
 function handleCurrencyFilterChange() {
   loadHistory(0);
+}
+
+function retryEconomyLoad() {
+  loadEconomy();
+}
+
+function retryHistoryLoad() {
+  loadHistory(historyOffset.value);
 }
 
 function goToPrevPage() {
@@ -214,7 +246,7 @@ function getTransactionAmountClass(tx) {
             <Coins :size="20" />
             <h2>经济系统</h2>
           </div>
-          <button class="economy-close-btn" type="button" title="关闭" @click="emit('close')">
+          <button class="economy-close-btn" type="button" aria-label="关闭经济系统" title="关闭" @click="emit('close')">
             <X :size="18" />
           </button>
         </header>
@@ -245,6 +277,15 @@ function getTransactionAmountClass(tx) {
           <div v-if="loading" class="economy-loading">
             <div class="economy-loading-spinner"></div>
             <span>加载中...</span>
+          </div>
+
+          <div v-else-if="loadError" class="economy-empty economy-error-state">
+            <Coins :size="36" />
+            <p>{{ loadError }}</p>
+            <button class="economy-retry-button" type="button" @click="retryEconomyLoad">
+              <RefreshCw :size="14" />
+              <span>重试</span>
+            </button>
           </div>
 
           <!-- Balance Tab -->
@@ -282,6 +323,7 @@ function getTransactionAmountClass(tx) {
               <select
                 v-model="historyCurrencyFilter"
                 class="history-currency-select"
+                aria-label="筛选交易货币"
                 @change="handleCurrencyFilterChange"
               >
                 <option
@@ -297,6 +339,15 @@ function getTransactionAmountClass(tx) {
             <div v-if="historyLoading" class="economy-loading">
               <div class="economy-loading-spinner"></div>
               <span>加载中...</span>
+            </div>
+
+            <div v-else-if="historyError" class="economy-empty economy-error-state">
+              <History :size="36" />
+              <p>{{ historyError }}</p>
+              <button class="economy-retry-button" type="button" @click="retryHistoryLoad">
+                <RefreshCw :size="14" />
+                <span>重试</span>
+              </button>
             </div>
 
             <div v-else-if="transactions.length === 0" class="economy-empty">
@@ -345,6 +396,7 @@ function getTransactionAmountClass(tx) {
               <button
                 class="pagination-btn"
                 type="button"
+                aria-label="上一页交易记录"
                 :disabled="!hasPrevPage"
                 @click="goToPrevPage"
               >
@@ -356,6 +408,7 @@ function getTransactionAmountClass(tx) {
               <button
                 class="pagination-btn"
                 type="button"
+                aria-label="下一页交易记录"
                 :disabled="!hasNextPage"
                 @click="goToNextPage"
               >
@@ -514,6 +567,34 @@ function getTransactionAmountClass(tx) {
 .economy-empty small {
   font-size: 0.78rem;
   line-height: 1.5;
+}
+
+.economy-error-state {
+  color: #ef4444;
+}
+
+.economy-error-state p {
+  color: var(--text);
+}
+
+.economy-retry-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 32px;
+  padding: 0 12px;
+  border: 1px solid color-mix(in srgb, var(--primary) 28%, var(--line));
+  border-radius: 8px;
+  color: var(--primary);
+  background: var(--primary-soft);
+  font-size: 0.78rem;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.economy-retry-button:hover {
+  border-color: color-mix(in srgb, var(--primary) 46%, var(--line));
+  background: color-mix(in srgb, var(--primary) 13%, var(--surface));
 }
 
 /* Balance grid */

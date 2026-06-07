@@ -268,7 +268,7 @@ export async function completeCharacterDraft(settings, request = {}) {
     ],
     characterTools,
     (name, args) => executeCharacterTool(name, filterToolArgs(name, args, enabledSections), draft),
-    { maxRounds: 6, thinkingEnabled: false, signal }
+    { maxRounds: 100, thinkingEnabled: false, signal }
   );
 
   if (!result.toolCalls.length && result.content) {
@@ -340,7 +340,7 @@ export async function streamCharacterDraft(settings, request = {}) {
     (name, args) => executeCharacterTool(name, filterToolArgs(name, args, enabledSections), draft),
     emit,
     signal,
-    { maxRounds: 6, thinkingEnabled: false }
+    { maxRounds: 100, thinkingEnabled: false }
   );
 
   if (!result.toolCalls.length && result.content) {

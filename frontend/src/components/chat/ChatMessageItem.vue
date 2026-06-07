@@ -91,6 +91,7 @@ const emit = defineEmits([
         <div v-if="editingMessageId === message.id" class="message-edit-box">
           <textarea
             :value="editingMessageContent"
+            aria-label="编辑消息内容"
             rows="4"
             @input="emit('update:editingMessageContent', $event.target.value)"
             @keydown.esc.prevent="emit('cancel-edit', message)"
@@ -147,6 +148,7 @@ const emit = defineEmits([
           v-if="swipeDisplay"
           class="message-action-button swipe-nav"
           type="button"
+          aria-label="上一条候选回复"
           :disabled="!swipeCanPrev"
           title="上一条候选"
           @click.stop="emit('swipe-prev', message)"
@@ -158,6 +160,7 @@ const emit = defineEmits([
           v-if="swipeDisplay || swipeCanNext"
           class="message-action-button swipe-nav"
           type="button"
+          aria-label="下一条候选或生成新候选"
           :disabled="swipeLoading"
           title="下一条候选 / 生成新候选"
           @click.stop="emit('swipe-next', message)"
@@ -167,6 +170,7 @@ const emit = defineEmits([
         <button
           class="message-action-button"
           type="button"
+          aria-label="从此消息创建分支对话"
           :disabled="branchBusy"
           title="从此消息创建分支对话"
           @click.stop="emit('branch', message)"

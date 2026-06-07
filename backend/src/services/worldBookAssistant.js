@@ -100,7 +100,7 @@ export async function completeWorldBookDraft(settings, request = {}) {
     ],
     worldBookTools,
     (name, args) => executeWorldBookTool(name, args, draft),
-    { maxRounds: 6, thinkingEnabled: false, signal, onNoToolCall: () => worldBookNoToolNudge(draft) }
+    { maxRounds: 100, thinkingEnabled: false, signal, onNoToolCall: ({ content } = {}) => worldBookNoToolNudge(draft, content) }
   );
 
   if (!result.toolCalls.length && result.content) {
@@ -166,7 +166,7 @@ export async function streamWorldBookDraft(settings, request = {}) {
     (name, args) => executeWorldBookTool(name, args, draft),
     emit,
     signal,
-    { maxRounds: 6, thinkingEnabled: false, onNoToolCall: () => worldBookNoToolNudge(draft) }
+    { maxRounds: 100, thinkingEnabled: false, onNoToolCall: ({ content } = {}) => worldBookNoToolNudge(draft, content) }
   );
 
   if (!result.toolCalls.length && result.content) {
@@ -209,9 +209,13 @@ function executeWorldBookTool(name, args, draft) {
   return { ok: false, error: `Unknown tool: ${name}` };
 }
 
-function worldBookNoToolNudge(draft) {
+function worldBookNoToolNudge(draft, content = '') {
   const hasEntries = Array.isArray(draft.entries) && draft.entries.some((entry) => entry.name && entry.content);
   if (hasEntries) {
+    return '';
+  }
+  const fallbackDraft = normalizeDraft(parseLooseJsonObject(content));
+  if (fallbackDraft.entries.some((entry) => entry.name && entry.content)) {
     return '';
   }
 

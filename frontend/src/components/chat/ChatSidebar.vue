@@ -4,6 +4,7 @@ import {
   CheckSquare,
   MessageSquarePlus,
   PanelLeftClose,
+  RefreshCw,
   Search,
   Settings,
   Trash2,
@@ -14,11 +15,13 @@ const props = defineProps({
   open: { type: Boolean, default: false },
   user: { type: Object, default: null },
   conversation: { type: Object, default: null },
+  historySearch: { type: String, default: '' },
   filteredConversations: { type: Array, default: () => [] },
   selectedConversationIds: { type: Object, default: () => new Set() },
   allVisibleConversationsSelected: { type: Boolean, default: false },
   selectedConversationCount: { type: Number, default: 0 },
   conversationActionBusy: { type: Boolean, default: false },
+  sidebarLoadError: { type: String, default: '' },
   route: { type: Object, default: () => ({ params: {} }) },
   formatConversationUsage: { type: Function, default: () => '' }
 });
@@ -33,6 +36,7 @@ const emit = defineEmits([
   'toggle-selection',
   'delete-one',
   'delete-selected',
+  'reload-sidebar',
   'open-settings'
 ]);
 
@@ -77,7 +81,7 @@ function releaseSidebarFocus() {
         <span class="deep-logo">F</span>
         <strong>FLAI Tavern</strong>
       </button>
-      <button class="deep-icon-button" type="button" title="收起侧边栏" @click="emit('close')">
+      <button class="deep-icon-button" type="button" aria-label="收起侧边栏" title="收起侧边栏" @click="emit('close')">
         <PanelLeftClose :size="18" />
       </button>
     </div>
@@ -90,10 +94,19 @@ function releaseSidebarFocus() {
     <label class="history-search">
       <Search :size="17" />
       <input
+        :value="historySearch"
         placeholder="搜索当前角色的对话"
         @input="emit('update:historySearch', $event.target.value)"
       />
     </label>
+
+    <div v-if="sidebarLoadError" class="sidebar-load-status" role="alert">
+      <span>{{ sidebarLoadError }}</span>
+      <button class="history-tool-button" type="button" @click="emit('reload-sidebar')">
+        <RefreshCw :size="15" />
+        <span>重试</span>
+      </button>
+    </div>
 
     <div v-if="filteredConversations.length" class="history-tools">
       <button class="history-tool-button" type="button" @click="emit('toggle-all')">
@@ -138,6 +151,7 @@ function releaseSidebarFocus() {
         <button
           class="history-delete-button"
           type="button"
+          aria-label="删除会话"
           title="删除会话"
           :disabled="conversationActionBusy"
           @click.stop="emit('delete-one', item)"
@@ -156,7 +170,7 @@ function releaseSidebarFocus() {
         <UserRound v-else :size="18" />
         <span>{{ user?.displayName || user?.accountName || user?.username || '用户' }}</span>
       </button>
-      <button class="deep-icon-button" type="button" title="高阶设置" @click="emit('open-settings')">
+      <button class="deep-icon-button" type="button" aria-label="打开高阶设置" title="高阶设置" @click="emit('open-settings')">
         <Settings :size="18" />
       </button>
     </div>

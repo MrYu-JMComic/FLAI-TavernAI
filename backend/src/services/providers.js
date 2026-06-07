@@ -17,6 +17,8 @@ const deepSeekPricingCnyPerMillion = {
 
 const providerModelCache = new Map();
 const PROVIDER_MODEL_CACHE_TTL_MS = 30 * 60 * 1000;
+const DEFAULT_TOOL_COMPLETION_ROUNDS = 6;
+const MAX_TOOL_COMPLETION_ROUNDS = 100;
 
 export const providerPresets = {
   openai: {
@@ -154,28 +156,18 @@ export function buildProviderBody(settings, messages, stream, options = {}) {
   options = options ?? {};
   const extraBody = normalizeProviderExtraBody(settings.extraBody);
   const body = {
+    ...extraBody,
     model: resolveProviderModel(settings, options),
     messages,
-    stream,
-    ...extraBody
+    stream
   };
 
   // Apply preset / override parameters
-  if (options.temperature != null) {
-    body.temperature = Number(options.temperature);
-  }
-  if (options.maxTokens != null) {
-    body.max_tokens = Number(options.maxTokens);
-  }
-  if (options.topP != null) {
-    body.top_p = Number(options.topP);
-  }
-  if (options.frequencyPenalty != null) {
-    body.frequency_penalty = Number(options.frequencyPenalty);
-  }
-  if (options.presencePenalty != null) {
-    body.presence_penalty = Number(options.presencePenalty);
-  }
+  assignFiniteProviderNumber(body, 'temperature', options.temperature);
+  assignFiniteProviderNumber(body, 'max_tokens', options.maxTokens);
+  assignFiniteProviderNumber(body, 'top_p', options.topP);
+  assignFiniteProviderNumber(body, 'frequency_penalty', options.frequencyPenalty);
+  assignFiniteProviderNumber(body, 'presence_penalty', options.presencePenalty);
 
   if (options.tools?.length) {
     body.tools = options.tools;
@@ -505,6 +497,56 @@ function sortObject(value) {
     }, {});
 }
 
+function normalizeProviderNumber(value) {
+  if (value == null || typeof value === 'boolean') {
+    return null;
+  }
+  if (typeof value === 'string' && value.trim() === '') {
+    return null;
+  }
+
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : null;
+}
+
+function assignFiniteProviderNumber(target, key, value) {
+  const numeric = normalizeProviderNumber(value);
+  if (numeric != null) {
+    target[key] = numeric;
+  }
+}
+
+function firstPositiveProviderNumber(values, fallback) {
+  for (const value of values) {
+    const numeric = normalizeProviderNumber(value);
+    if (numeric != null) {
+      return Math.max(1, numeric);
+    }
+  }
+  return fallback;
+}
+
+function normalizeToolCompletionRounds(value) {
+  if (value == null || typeof value === 'boolean') {
+    return DEFAULT_TOOL_COMPLETION_ROUNDS;
+  }
+  if (typeof value === 'string' && value.trim() === '') {
+    return DEFAULT_TOOL_COMPLETION_ROUNDS;
+  }
+
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) {
+    return DEFAULT_TOOL_COMPLETION_ROUNDS;
+  }
+
+  const normalized = Math.trunc(numeric);
+  if (!Number.isSafeInteger(normalized)) {
+    return DEFAULT_TOOL_COMPLETION_ROUNDS;
+  }
+
+  return Math.min(Math.max(normalized, 1), MAX_TOOL_COMPLETION_ROUNDS);
+}
+
 export async function runToolCompletion(settings, messages, tools, executeTool, options = {}) {
   options = options ?? {};
   if (!hasUsableProvider(settings)) {
@@ -515,7 +557,7 @@ export async function runToolCompletion(settings, messages, tools, executeTool, 
     return runAnthropicToolCompletion(settings, messages, tools, executeTool, options);
   }
 
-  const maxRounds = Math.min(Math.max(Number(options.maxRounds || 6), 1), 10);
+  const maxRounds = normalizeToolCompletionRounds(options.maxRounds);
   const nextMessages = messages.map((message) => ({ ...message }));
   const toolCalls = [];
   const process = [];
@@ -618,7 +660,7 @@ export async function streamToolCompletion(settings, messages, tools, executeToo
     return streamAnthropicToolCompletion(settings, messages, tools, executeTool, emit, signal, options);
   }
 
-  const maxRounds = Math.min(Math.max(Number(options.maxRounds || 6), 1), 10);
+  const maxRounds = normalizeToolCompletionRounds(options.maxRounds);
   const nextMessages = messages.map((message) => ({ ...message }));
   const toolCalls = [];
   const process = [];
@@ -1006,25 +1048,25 @@ function buildAnthropicBody(settings, messages, stream, options = {}) {
 }
 
 function buildAnthropicRequestBody(settings, system, messages, stream, options = {}) {
+  options = options ?? {};
   const extraBody = normalizeProviderExtraBody(settings.extraBody);
-  const maxTokens = Math.max(1, Number(options.maxTokens ?? extraBody.max_tokens ?? extraBody.maxTokens ?? 4096));
+  const maxTokens = firstPositiveProviderNumber(
+    [options.maxTokens, extraBody.max_tokens, extraBody.maxTokens],
+    4096
+  );
   const body = {
+    ...extraBody,
     model: normalizeProviderModel(settings.providerType, settings.model),
-    max_tokens: maxTokens,
     messages,
     stream,
-    ...extraBody
+    max_tokens: maxTokens
   };
 
   if (system) {
     body.system = system;
   }
-  if (options.temperature != null) {
-    body.temperature = Number(options.temperature);
-  }
-  if (options.topP != null) {
-    body.top_p = Number(options.topP);
-  }
+  assignFiniteProviderNumber(body, 'temperature', options.temperature);
+  assignFiniteProviderNumber(body, 'top_p', options.topP);
   if (options.tools?.length) {
     body.tools = convertToolsForAnthropic(options.tools);
     body.tool_choice = convertToolChoiceForAnthropic(options.toolChoice);
@@ -1035,7 +1077,7 @@ function buildAnthropicRequestBody(settings, system, messages, stream, options =
 }
 
 async function runAnthropicToolCompletion(settings, messages, tools, executeTool, options = {}) {
-  const maxRounds = Math.min(Math.max(Number(options.maxRounds || 6), 1), 10);
+  const maxRounds = normalizeToolCompletionRounds(options.maxRounds);
   const converted = convertMessagesForAnthropic(messages);
   const nextMessages = converted.messages.map((message) => ({ ...message }));
   const toolCalls = [];
@@ -1288,10 +1330,11 @@ async function generateOpenAiResponse(settings, messages, options = {}) {
   const response = await providerFetch(settings, '/responses', {
     method: 'POST',
     body: JSON.stringify({
+      ...normalizeProviderExtraBody(settings.extraBody),
       model: resolveProviderModel(settings, options),
       input: messages,
       reasoning: buildOpenAiReasoning(settings, options),
-      ...normalizeProviderExtraBody(settings.extraBody)
+      stream: false
     })
   });
 
@@ -1312,11 +1355,11 @@ async function streamOpenAiResponse(settings, messages, emit, signal, options = 
   const response = await providerFetch(settings, '/responses', {
     method: 'POST',
     body: JSON.stringify({
+      ...normalizeProviderExtraBody(settings.extraBody),
       model: resolveProviderModel(settings, options),
       input: messages,
       reasoning: buildOpenAiReasoning(settings, options),
-      stream: true,
-      ...normalizeProviderExtraBody(settings.extraBody)
+      stream: true
     }),
     signal
   });

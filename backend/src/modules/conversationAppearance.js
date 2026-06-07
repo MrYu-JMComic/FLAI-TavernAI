@@ -1,4 +1,5 @@
 import { nowIso } from '../security.js';
+import { conversationBackgroundOwnerTypes, saveBackgroundImageInput } from '../services/avatars.js';
 import { parseJson } from '../utils/json.js';
 import { normalizeAdvancedSettings } from './advancedSettings.js';
 
@@ -51,6 +52,19 @@ export function saveConversationAppearance(database, userId, conversationId, pay
   }
 
   const appearance = normalizeConversationAppearance(payload);
+  appearance.desktopBackgroundUrl = saveBackgroundImageInput(database, {
+    userId,
+    ownerType: conversationBackgroundOwnerTypes.desktop,
+    ownerId: conversationId,
+    value: appearance.desktopBackgroundUrl
+  });
+  appearance.mobileBackgroundUrl = saveBackgroundImageInput(database, {
+    userId,
+    ownerType: conversationBackgroundOwnerTypes.mobile,
+    ownerId: conversationId,
+    value: appearance.mobileBackgroundUrl
+  });
+
   const existingAdvancedSettings = parseJson(current.user_advanced_settings, {});
   database.prepare(
     `UPDATE conversations

@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onMounted, reactive, ref, watch } from 'vue';
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
 import {
   AlertCircle,
   ArrowLeft,
@@ -57,10 +57,23 @@ const showBookForm = ref(false);
 const editingBookId = ref(null);
 const showEntryForm = ref(false);
 const editingEntryId = ref(null);
+let worldBookLoadToken = 0;
+let worldBookMutationToken = 0;
 
 const isDetailView = computed(() => Boolean(props.route.params.id));
 const bookId = computed(() => props.route.params.id);
 const aiDraftEntryCount = computed(() => aiDraft.value?.entries?.length || 0);
+const totalEntryCount = computed(() => books.value.reduce((sum, book) => sum + Number(book.entryCount || 0), 0));
+const booksWithEntriesCount = computed(() => books.value.filter((book) => Number(book.entryCount || 0) > 0).length);
+const averageEntryCount = computed(() => {
+  if (!books.value.length) return 0;
+  return Math.round(totalEntryCount.value / books.value.length);
+});
+const currentEntries = computed(() => currentBook.value?.entries || []);
+const enabledEntryCount = computed(() => currentEntries.value.filter((entry) => entry.enabled !== false).length);
+const disabledEntryCount = computed(() => Math.max(0, currentEntries.value.length - enabledEntryCount.value));
+const alwaysActiveEntryCount = computed(() => currentEntries.value.filter((entry) => entry.alwaysActive).length);
+const probabilityEntryCount = computed(() => currentEntries.value.filter((entry) => entry.useProbability).length);
 
 const positionOptions = [
   { value: 'at_start', label: '最前面 (at_start)' },
@@ -102,10 +115,12 @@ onMounted(async () => {
     await loadBooks();
   }
 });
+onBeforeUnmount(resetWorldBookAsyncScope);
 
 watch(
   () => props.route.params.id,
   async (id) => {
+    resetWorldBookAsyncScope();
     if (id) {
       await loadBook(id);
     } else {
@@ -115,31 +130,78 @@ watch(
   }
 );
 
+function resetWorldBookAsyncScope() {
+  worldBookLoadToken += 1;
+  loading.value = false;
+  resetWorldBookInteractionState();
+}
+
+function resetWorldBookInteractionState() {
+  worldBookMutationToken += 1;
+  saving.value = false;
+  aiAbortController.value?.abort();
+  aiLoading.value = false;
+  aiAbortController.value = null;
+  closeBookForm();
+  closeEntryForm();
+}
+
 async function loadBooks() {
+  const requestToken = ++worldBookLoadToken;
   loading.value = true;
   error.value = null;
   try {
-    books.value = await fetchWorldBooks();
+    const nextBooks = await fetchWorldBooks();
+    if (!isCurrentBooksLoad(requestToken)) return;
+    books.value = nextBooks;
   } catch (err) {
+    if (!isCurrentBooksLoad(requestToken)) return;
     error.value = err.message;
     notify.error(err.message);
   } finally {
-    loading.value = false;
+    if (isCurrentBooksLoad(requestToken)) {
+      loading.value = false;
+    }
   }
 }
 
 async function loadBook(id) {
+  const requestToken = ++worldBookLoadToken;
   loading.value = true;
   error.value = null;
   try {
-    currentBook.value = await fetchWorldBook(id);
+    const nextBook = await fetchWorldBook(id);
+    if (!isCurrentBookLoad(requestToken, id)) return;
+    currentBook.value = nextBook;
   } catch (err) {
+    if (!isCurrentBookLoad(requestToken, id)) return;
     error.value = err.message;
     notify.error(err.message);
-    emit('navigate', 'worldBooks');
   } finally {
-    loading.value = false;
+    if (isCurrentBookLoad(requestToken, id)) {
+      loading.value = false;
+    }
   }
+}
+
+function isCurrentBooksLoad(requestToken) {
+  return requestToken === worldBookLoadToken && !isDetailView.value;
+}
+
+function isCurrentBookLoad(requestToken, id) {
+  return requestToken === worldBookLoadToken && isDetailView.value && String(bookId.value) === String(id);
+}
+
+function isCurrentWorldBookMutation(mutationToken, id) {
+  return mutationToken === worldBookMutationToken && isDetailView.value && String(bookId.value) === String(id);
+}
+
+function currentWorldBookRouteKey() {
+  return isDetailView.value ? `detail:${String(bookId.value)}` : 'list';
+}
+
+function isCurrentWorldBookRouteMutation(mutationToken, routeKey) {
+  return mutationToken === worldBookMutationToken && currentWorldBookRouteKey() === routeKey;
 }
 
 function openCreateBook() {
@@ -170,6 +232,10 @@ async function saveBook() {
     notify.warning('请输入世界书名称');
     return;
   }
+  const routeKey = currentWorldBookRouteKey();
+  const routeBookId = bookId.value;
+  const targetBookId = editingBookId.value;
+  const mutationToken = worldBookMutationToken;
   saving.value = true;
   try {
     const payload = {
@@ -179,31 +245,44 @@ async function saveBook() {
       scanDepth: clampNumber(editingBook.scanDepth, 1, 50, 4),
       lorebookContextPercent: clampNumber(editingBook.lorebookContextPercent, 1, 100, 25)
     };
-    if (editingBookId.value) {
-      await updateWorldBook(editingBookId.value, payload);
-      notify.success('世界书已更新');
-      if (isDetailView.value) {
-        await loadBook(bookId.value);
+    if (targetBookId) {
+      await updateWorldBook(targetBookId, payload);
+      if (!isCurrentWorldBookRouteMutation(mutationToken, routeKey)) return;
+      if (routeBookId) {
+        await loadBook(routeBookId);
       } else {
         await loadBooks();
       }
+      if (!isCurrentWorldBookRouteMutation(mutationToken, routeKey)) return;
+      notify.success('世界书已更新');
     } else {
       const book = await createWorldBook(payload);
-      notify.success('世界书已创建');
+      if (!isCurrentWorldBookRouteMutation(mutationToken, routeKey)) return;
       closeBookForm();
+      notify.success('世界书已创建');
       emit('navigate', 'worldBookDetail', { id: book.id });
     }
   } catch (err) {
+    if (!isCurrentWorldBookRouteMutation(mutationToken, routeKey)) return;
     notify.error(err.message);
   } finally {
-    saving.value = false;
+    if (isCurrentWorldBookRouteMutation(mutationToken, routeKey)) {
+      saving.value = false;
+    }
   }
 }
 
 async function removeBook(id) {
   if (!window.confirm('确定删除这个世界书及其所有条目吗？')) return;
+  const routeKey = currentWorldBookRouteKey();
+  const mutationToken = worldBookMutationToken;
   try {
     await deleteWorldBook(id);
+    if (!isCurrentWorldBookRouteMutation(mutationToken, routeKey)) return;
+    books.value = books.value.filter((book) => book.id !== id);
+    if (currentBook.value?.id === id) {
+      currentBook.value = null;
+    }
     notify.success('世界书已删除');
     if (isDetailView.value) {
       emit('navigate', 'worldBooks');
@@ -211,6 +290,7 @@ async function removeBook(id) {
       await loadBooks();
     }
   } catch (err) {
+    if (!isCurrentWorldBookRouteMutation(mutationToken, routeKey)) return;
     notify.error(err.message);
   }
 }
@@ -254,6 +334,10 @@ function closeEntryForm() {
 }
 
 async function saveEntry() {
+  const targetBookId = bookId.value;
+  if (!targetBookId) return;
+  const targetEntryId = editingEntryId.value;
+  const mutationToken = worldBookMutationToken;
   saving.value = true;
   try {
     const payload = {
@@ -277,38 +361,53 @@ async function saveEntry() {
       group: editingEntry.group.trim(),
       groupWeight: Math.max(0, Number(editingEntry.groupWeight) || 0)
     };
-    if (editingEntryId.value) {
-      await updateWorldBookEntry(bookId.value, editingEntryId.value, payload);
-      notify.success('条目已更新');
+    if (targetEntryId) {
+      await updateWorldBookEntry(targetBookId, targetEntryId, payload);
     } else {
-      await createWorldBookEntry(bookId.value, payload);
-      notify.success('条目已添加');
+      await createWorldBookEntry(targetBookId, payload);
     }
+    if (!isCurrentWorldBookMutation(mutationToken, targetBookId)) return;
     closeEntryForm();
-    await loadBook(bookId.value);
+    await loadBook(targetBookId);
+    if (!isCurrentWorldBookMutation(mutationToken, targetBookId)) return;
+    notify.success(targetEntryId ? '条目已更新' : '条目已添加');
   } catch (err) {
+    if (!isCurrentWorldBookMutation(mutationToken, targetBookId)) return;
     notify.error(err.message);
   } finally {
-    saving.value = false;
+    if (isCurrentWorldBookMutation(mutationToken, targetBookId)) {
+      saving.value = false;
+    }
   }
 }
 
 async function removeEntry(entryId) {
   if (!window.confirm('确定删除这个条目吗？')) return;
+  const targetBookId = bookId.value;
+  if (!targetBookId) return;
+  const mutationToken = worldBookMutationToken;
   try {
-    await deleteWorldBookEntry(bookId.value, entryId);
+    await deleteWorldBookEntry(targetBookId, entryId);
+    if (!isCurrentWorldBookMutation(mutationToken, targetBookId)) return;
+    await loadBook(targetBookId);
+    if (!isCurrentWorldBookMutation(mutationToken, targetBookId)) return;
     notify.success('条目已删除');
-    await loadBook(bookId.value);
   } catch (err) {
+    if (!isCurrentWorldBookMutation(mutationToken, targetBookId)) return;
     notify.error(err.message);
   }
 }
 
 async function toggleEntry(entry) {
+  const targetBookId = bookId.value;
+  if (!targetBookId) return;
+  const mutationToken = worldBookMutationToken;
   try {
-    await updateWorldBookEntry(bookId.value, entry.id, { enabled: !entry.enabled });
-    await loadBook(bookId.value);
+    await updateWorldBookEntry(targetBookId, entry.id, { enabled: !entry.enabled });
+    if (!isCurrentWorldBookMutation(mutationToken, targetBookId)) return;
+    await loadBook(targetBookId);
   } catch (err) {
+    if (!isCurrentWorldBookMutation(mutationToken, targetBookId)) return;
     notify.error(err.message);
   }
 }
@@ -316,18 +415,23 @@ async function toggleEntry(entry) {
 async function moveEntry(index, direction) {
   const entries = currentBook.value?.entries;
   if (!entries) return;
+  const targetBookId = bookId.value;
+  if (!targetBookId) return;
   const targetIndex = index + direction;
   if (targetIndex < 0 || targetIndex >= entries.length) return;
 
   const current = entries[index];
   const target = entries[targetIndex];
+  const mutationToken = worldBookMutationToken;
   try {
     await Promise.all([
-      updateWorldBookEntry(bookId.value, current.id, { orderIndex: target.orderIndex }),
-      updateWorldBookEntry(bookId.value, target.id, { orderIndex: current.orderIndex })
+      updateWorldBookEntry(targetBookId, current.id, { orderIndex: target.orderIndex }),
+      updateWorldBookEntry(targetBookId, target.id, { orderIndex: current.orderIndex })
     ]);
-    await loadBook(bookId.value);
+    if (!isCurrentWorldBookMutation(mutationToken, targetBookId)) return;
+    await loadBook(targetBookId);
   } catch (err) {
+    if (!isCurrentWorldBookMutation(mutationToken, targetBookId)) return;
     notify.error(err.message);
   }
 }
@@ -354,17 +458,21 @@ async function completeWorldBookWithAi() {
     return;
   }
 
+  const routeKey = currentWorldBookRouteKey();
+  const mutationToken = worldBookMutationToken;
+  const abortController = new AbortController();
   aiLoading.value = true;
   aiToolCalls.value = [];
   aiProcess.value = [{ round: 1, reasoning: '等待模型响应...', content: '', tools: [] }];
   aiReasoning.value = '';
-  aiAbortController.value = new AbortController();
+  aiAbortController.value = abortController;
   try {
     const result = await streamWorldBookDraft({
       requirement,
       worldBook: currentWorldBookDraft(),
       modelOverride: assistantModel.value.trim()
-    }, aiStreamHandlers(), aiAbortController.value.signal);
+    }, aiStreamHandlers(mutationToken, routeKey), abortController.signal);
+    if (!isCurrentWorldBookRouteMutation(mutationToken, routeKey)) return;
     if (result?.aborted) {
       notify.info('AI 世界书生成已暂停');
       return;
@@ -380,15 +488,20 @@ async function completeWorldBookWithAi() {
     }
     notify.success(`AI 已生成 ${aiDraftEntryCount.value} 个世界书条目`);
   } catch (err) {
-    if (aiAbortController.value?.signal.aborted || err.name === 'AbortError') {
+    if (!isCurrentWorldBookRouteMutation(mutationToken, routeKey)) return;
+    if (abortController.signal.aborted || err.name === 'AbortError') {
       notify.info('AI 世界书生成已暂停');
       return;
     }
     aiProcess.value = [{ round: 1, reasoning: err.message, content: '', tools: [] }];
     notify.error(err.message);
   } finally {
-    aiLoading.value = false;
-    aiAbortController.value = null;
+    if (isCurrentWorldBookRouteMutation(mutationToken, routeKey)) {
+      aiLoading.value = false;
+      if (aiAbortController.value === abortController) {
+        aiAbortController.value = null;
+      }
+    }
   }
 }
 
@@ -406,6 +519,8 @@ async function createBookFromAiDraft() {
     return;
   }
 
+  const routeKey = currentWorldBookRouteKey();
+  const mutationToken = worldBookMutationToken;
   saving.value = true;
   let createdBook = null;
   try {
@@ -419,6 +534,7 @@ async function createBookFromAiDraft() {
     for (const entry of aiDraft.value.entries || []) {
       await createWorldBookEntry(createdBook.id, normalizeAiEntryForCreate(entry));
     }
+    if (!isCurrentWorldBookRouteMutation(mutationToken, routeKey)) return;
     notify.success(`世界书已创建，并写入 ${aiDraftEntryCount.value} 个条目`);
     aiDraft.value = null;
     emit('navigate', 'worldBookDetail', { id: createdBook.id });
@@ -426,9 +542,12 @@ async function createBookFromAiDraft() {
     if (createdBook?.id) {
       await deleteWorldBook(createdBook.id).catch(() => null);
     }
+    if (!isCurrentWorldBookRouteMutation(mutationToken, routeKey)) return;
     notify.error(err.message);
   } finally {
-    saving.value = false;
+    if (isCurrentWorldBookRouteMutation(mutationToken, routeKey)) {
+      saving.value = false;
+    }
   }
 }
 
@@ -499,9 +618,10 @@ function normalizeAiEntryForCreate(entry = {}) {
   };
 }
 
-function aiStreamHandlers() {
+function aiStreamHandlers(mutationToken, routeKey) {
   return {
     step: (step) => {
+      if (!isCurrentWorldBookRouteMutation(mutationToken, routeKey)) return;
       const target = ensureAiProcessStep(step.round || 1);
       Object.assign(target, {
         ...step,
@@ -511,20 +631,24 @@ function aiStreamHandlers() {
       });
     },
     reasoning: ({ round = 1, text = '' } = {}) => {
+      if (!isCurrentWorldBookRouteMutation(mutationToken, routeKey)) return;
       const target = ensureAiProcessStep(round);
       if (target.reasoning === '等待模型响应...') target.reasoning = '';
       target.reasoning += text;
       aiReasoning.value += text;
     },
     content: ({ round = 1, text = '' } = {}) => {
+      if (!isCurrentWorldBookRouteMutation(mutationToken, routeKey)) return;
       const target = ensureAiProcessStep(round);
       target.content += text;
     },
     nudge: ({ round = 1, text = '' } = {}) => {
+      if (!isCurrentWorldBookRouteMutation(mutationToken, routeKey)) return;
       const target = ensureAiProcessStep(round);
       target.content += `${target.content ? '\n\n' : ''}系统提醒：${text}`;
     },
     tool: (call = {}) => {
+      if (!isCurrentWorldBookRouteMutation(mutationToken, routeKey)) return;
       const target = ensureAiProcessStep(call.round || 1);
       const log = {
         name: call.name,
@@ -566,14 +690,15 @@ function toolResultLabel(result = {}) {
 </script>
 
 <template>
-  <section class="page-stack">
+  <section class="page-stack worldbook-page">
     <template v-if="!isDetailView">
-      <div class="section-heading">
-        <div>
-          <p>世界书管理</p>
+      <section class="worldbook-overview">
+        <div class="worldbook-overview-copy">
+          <p class="worldbook-eyebrow">Lorebook Studio</p>
           <h1>世界书</h1>
+          <p>管理触发词、注入位置、扫描深度和上下文预算，让角色对话能按场景自动补全世界观。</p>
         </div>
-        <div class="heading-actions">
+        <div class="worldbook-overview-actions">
           <button class="primary-button" @click="openCreateBook">
             <Plus :size="18" />
             <span>新建世界书</span>
@@ -583,8 +708,27 @@ function toolResultLabel(result = {}) {
             <span>返回</span>
           </button>
         </div>
-      </div>
+        <div class="worldbook-stat-strip" aria-label="世界书概览">
+          <div>
+            <strong>{{ books.length }}</strong>
+            <span>世界书</span>
+          </div>
+          <div>
+            <strong>{{ totalEntryCount }}</strong>
+            <span>条目</span>
+          </div>
+          <div>
+            <strong>{{ booksWithEntriesCount }}</strong>
+            <span>已配置</span>
+          </div>
+          <div>
+            <strong>{{ averageEntryCount }}</strong>
+            <span>平均条目</span>
+          </div>
+        </div>
+      </section>
 
+      <div class="worldbook-workbench">
       <section class="form-panel worldbook-ai-panel">
         <div class="inline-heading">
           <div>
@@ -674,6 +818,15 @@ function toolResultLabel(result = {}) {
         </div>
       </section>
 
+      <section class="worldbook-library-panel" aria-label="世界书列表">
+        <div class="worldbook-panel-head">
+          <div>
+            <p class="worldbook-eyebrow">Library</p>
+            <h2>我的世界书</h2>
+          </div>
+          <span>{{ books.length }} 本 · {{ totalEntryCount }} 条目</span>
+        </div>
+
       <div v-if="loading" class="loading-state">
         <div class="loading-spinner"></div>
         <p>正在加载世界书...</p>
@@ -709,19 +862,25 @@ function toolResultLabel(result = {}) {
             <h3>{{ book.name }}</h3>
             <p v-if="book.description" class="book-desc">{{ book.description }}</p>
             <p v-else class="muted-text">暂无描述</p>
+            <div class="book-card-meta">
+              <span>scan {{ book.scanDepth || 4 }}</span>
+              <span>budget {{ book.lorebookContextPercent || 25 }}%</span>
+            </div>
           </div>
           <div class="book-card-footer">
             <span class="entry-count">{{ book.entryCount }} 个条目</span>
             <div class="book-card-actions" @click.stop>
-              <button class="icon-button" title="编辑" @click="openEditBook(book)">
+              <button class="icon-button" title="编辑" :aria-label="`编辑世界书：${book.name}`" @click="openEditBook(book)">
                 <Save :size="16" />
               </button>
-              <button class="icon-button danger" title="删除" @click="removeBook(book.id)">
+              <button class="icon-button danger" title="删除" :aria-label="`删除世界书：${book.name}`" @click="removeBook(book.id)">
                 <Trash2 :size="16" />
               </button>
             </div>
           </div>
         </div>
+      </div>
+      </section>
       </div>
     </template>
 
@@ -778,6 +937,28 @@ function toolResultLabel(result = {}) {
             <span>上下文预算 {{ currentBook.lorebookContextPercent }}%</span>
             <span v-if="currentBook.characterId">关联角色 ID: {{ currentBook.characterId }}</span>
           </div>
+          <div class="worldbook-detail-stats" aria-label="当前世界书条目概览">
+            <div>
+              <strong>{{ currentEntries.length }}</strong>
+              <span>总条目</span>
+            </div>
+            <div>
+              <strong>{{ enabledEntryCount }}</strong>
+              <span>启用</span>
+            </div>
+            <div>
+              <strong>{{ disabledEntryCount }}</strong>
+              <span>禁用</span>
+            </div>
+            <div>
+              <strong>{{ alwaysActiveEntryCount }}</strong>
+              <span>常驻</span>
+            </div>
+            <div>
+              <strong>{{ probabilityEntryCount }}</strong>
+              <span>概率</span>
+            </div>
+          </div>
         </div>
 
         <div class="form-panel entries-panel">
@@ -802,14 +983,31 @@ function toolResultLabel(result = {}) {
             <div v-for="(entry, index) in currentBook.entries" :key="entry.id" class="entry-row" :class="{ disabled: !entry.enabled }">
               <div class="entry-controls">
                 <div class="entry-order-buttons">
-                  <button class="icon-button ghost" :disabled="index === 0" title="上移" @click="moveEntry(index, -1)">
+                  <button
+                    class="icon-button ghost"
+                    :disabled="index === 0"
+                    title="上移"
+                    :aria-label="`上移条目：${entry.name || `第 ${index + 1} 个条目`}`"
+                    @click="moveEntry(index, -1)"
+                  >
                     <ChevronUp :size="14" />
                   </button>
-                  <button class="icon-button ghost" :disabled="index === currentBook.entries.length - 1" title="下移" @click="moveEntry(index, 1)">
+                  <button
+                    class="icon-button ghost"
+                    :disabled="index === currentBook.entries.length - 1"
+                    title="下移"
+                    :aria-label="`下移条目：${entry.name || `第 ${index + 1} 个条目`}`"
+                    @click="moveEntry(index, 1)"
+                  >
                     <ChevronDown :size="14" />
                   </button>
                 </div>
-                <button class="icon-button toggle" :title="entry.enabled ? '点击禁用' : '点击启用'" @click="toggleEntry(entry)">
+                <button
+                  class="icon-button toggle"
+                  :title="entry.enabled ? '点击禁用' : '点击启用'"
+                  :aria-label="entry.enabled ? `禁用条目：${entry.name || `第 ${index + 1} 个条目`}` : `启用条目：${entry.name || `第 ${index + 1} 个条目`}`"
+                  @click="toggleEntry(entry)"
+                >
                   <ToggleRight v-if="entry.enabled" :size="20" />
                   <ToggleLeft v-else :size="20" />
                 </button>
@@ -834,10 +1032,10 @@ function toolResultLabel(result = {}) {
                 <p class="entry-content-preview">{{ entry.content || '空内容' }}</p>
               </div>
               <div class="entry-actions">
-                <button class="icon-button" title="编辑" @click="openEditEntry(entry)">
+                <button class="icon-button" title="编辑" :aria-label="`编辑条目：${entry.name || `第 ${index + 1} 个条目`}`" @click="openEditEntry(entry)">
                   <Save :size="16" />
                 </button>
-                <button class="icon-button danger" title="删除" @click="removeEntry(entry.id)">
+                <button class="icon-button danger" title="删除" :aria-label="`删除条目：${entry.name || `第 ${index + 1} 个条目`}`" @click="removeEntry(entry.id)">
                   <Trash2 :size="16" />
                 </button>
               </div>
@@ -988,6 +1186,137 @@ function toolResultLabel(result = {}) {
 </template>
 
 <style scoped>
+.worldbook-page {
+  gap: 18px;
+}
+
+.worldbook-overview {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 16px;
+  align-items: end;
+  padding: clamp(16px, 3vw, 24px);
+  border: 1px solid color-mix(in srgb, var(--line) 72%, transparent);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--surface) 94%, transparent);
+  box-shadow: 0 12px 34px rgba(67, 45, 30, 0.08);
+}
+
+.worldbook-overview-copy {
+  min-width: 0;
+}
+
+.worldbook-eyebrow {
+  margin: 0 0 6px;
+  color: color-mix(in srgb, var(--primary) 72%, var(--muted));
+  font-size: 0.76rem;
+  font-weight: 900;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.worldbook-overview h1 {
+  margin: 0;
+  font-size: 2.1rem;
+  line-height: 1.08;
+}
+
+.worldbook-overview-copy > p:last-child {
+  max-width: 680px;
+  margin: 10px 0 0;
+  color: var(--muted);
+  line-height: 1.6;
+}
+
+.worldbook-overview-actions,
+.worldbook-panel-head,
+.book-card-meta,
+.worldbook-detail-stats {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.worldbook-overview-actions {
+  justify-content: flex-end;
+  flex-wrap: wrap;
+}
+
+.worldbook-stat-strip {
+  display: grid;
+  grid-column: 1 / -1;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.worldbook-stat-strip > div,
+.worldbook-detail-stats > div {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  border: 1px solid color-mix(in srgb, var(--line) 62%, transparent);
+  border-radius: 10px;
+  padding: 10px 12px;
+  background: color-mix(in srgb, var(--surface) 76%, transparent);
+}
+
+.worldbook-stat-strip strong,
+.worldbook-detail-stats strong {
+  color: var(--text);
+  font-size: 1.1rem;
+  line-height: 1;
+}
+
+.worldbook-stat-strip span,
+.worldbook-detail-stats span,
+.book-card-meta span,
+.worldbook-panel-head > span {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.worldbook-workbench {
+  display: grid;
+  grid-template-columns: minmax(280px, 0.9fr) minmax(0, 1.1fr);
+  gap: 16px;
+  align-items: start;
+}
+
+.worldbook-library-panel {
+  display: grid;
+  min-width: 0;
+  gap: 12px;
+}
+
+.worldbook-panel-head {
+  justify-content: space-between;
+  min-height: 42px;
+}
+
+.worldbook-panel-head h2 {
+  margin: 0;
+  font-size: 1.12rem;
+}
+
+.book-card-meta {
+  flex-wrap: wrap;
+  margin-top: 12px;
+}
+
+.book-card-meta span {
+  border: 1px solid color-mix(in srgb, var(--line) 62%, transparent);
+  border-radius: 999px;
+  padding: 3px 8px;
+  background: color-mix(in srgb, var(--surface) 68%, transparent);
+}
+
+.worldbook-detail-stats {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  margin-top: 14px;
+}
+
 .worldbook-ai-panel {
   display: grid;
   gap: 14px;
@@ -1458,19 +1787,8 @@ function toolResultLabel(result = {}) {
 .worldbook-ai-panel {
   position: relative;
   overflow: hidden;
-  border-color: color-mix(in srgb, var(--primary) 20%, var(--line));
-  background:
-    linear-gradient(135deg,
-      color-mix(in srgb, var(--surface) 92%, transparent),
-      color-mix(in srgb, var(--green-soft, #dfeee6) 34%, transparent));
-}
-
-.worldbook-ai-panel::before {
-  position: absolute;
-  inset: 0 0 auto;
-  height: 4px;
-  background: linear-gradient(90deg, var(--primary), var(--green, #2e6654), #6f74d8);
-  content: '';
+  border-color: color-mix(in srgb, var(--line) 78%, transparent);
+  background: color-mix(in srgb, var(--surface) 94%, transparent);
 }
 
 .worldbook-ai-preview,
@@ -1490,20 +1808,8 @@ function toolResultLabel(result = {}) {
   overflow: hidden;
   min-height: 188px;
   border-color: color-mix(in srgb, var(--line) 74%, transparent);
-  background:
-    linear-gradient(180deg,
-      color-mix(in srgb, var(--surface) 96%, transparent),
-      color-mix(in srgb, var(--surface-strong) 74%, transparent));
+  background: var(--surface);
   box-shadow: 0 8px 22px rgba(67, 45, 30, 0.06);
-}
-
-.book-card::before {
-  position: absolute;
-  inset: 0 auto 0 0;
-  width: 4px;
-  background: linear-gradient(180deg, var(--primary), var(--green, #2e6654));
-  content: '';
-  opacity: 0.84;
 }
 
 .book-card:hover {
@@ -1513,7 +1819,7 @@ function toolResultLabel(result = {}) {
 }
 
 .book-card-body {
-  padding: 18px 18px 16px 20px;
+  padding: 18px;
 }
 
 .book-card-footer {
@@ -1522,10 +1828,7 @@ function toolResultLabel(result = {}) {
 
 .entry-row {
   border-radius: 12px;
-  background:
-    linear-gradient(180deg,
-      color-mix(in srgb, var(--surface) 92%, transparent),
-      color-mix(in srgb, var(--surface-strong) 62%, transparent));
+  background: color-mix(in srgb, var(--surface) 90%, transparent);
   box-shadow: 0 8px 20px rgba(67, 45, 30, 0.05);
 }
 
@@ -1551,5 +1854,113 @@ function toolResultLabel(result = {}) {
 .modal-content {
   border: 1px solid color-mix(in srgb, var(--line) 78%, transparent);
   box-shadow: 0 24px 70px rgba(0, 0, 0, 0.28);
+}
+
+/* World book workspace refinement */
+@media (min-width: 981px) {
+  .worldbook-ai-panel {
+    position: sticky;
+    top: 18px;
+  }
+}
+
+.worldbook-library-panel .loading-state,
+.worldbook-library-panel .empty-state {
+  min-height: 280px;
+  border: 1px dashed color-mix(in srgb, var(--line) 72%, transparent);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--surface) 64%, transparent);
+}
+
+.book-card {
+  min-height: 158px;
+}
+
+.book-card-body {
+  display: grid;
+  align-content: start;
+}
+
+.book-card-body h3 {
+  display: -webkit-box;
+  overflow: hidden;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+.book-card-footer {
+  min-height: 58px;
+}
+
+@media (max-width: 980px) {
+  .worldbook-workbench {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 768px) {
+  .worldbook-page {
+    gap: 14px;
+  }
+
+  .worldbook-overview {
+    grid-template-columns: 1fr;
+    gap: 14px;
+    padding: 16px;
+    border-radius: 12px;
+  }
+
+  .worldbook-overview h1 {
+    font-size: 1.65rem;
+  }
+
+  .worldbook-overview-actions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .worldbook-overview-actions > button {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .worldbook-stat-strip {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .worldbook-panel-head {
+    align-items: flex-start;
+  }
+
+  .worldbook-detail-stats {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .book-card {
+    min-height: 142px;
+  }
+}
+
+@media (max-width: 460px) {
+  .worldbook-overview-actions {
+    grid-template-columns: 1fr;
+  }
+
+  .worldbook-stat-strip > div,
+  .worldbook-detail-stats > div {
+    padding: 9px 10px;
+  }
+
+  .worldbook-ai-panel .form-actions {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+
+  .worldbook-panel-head {
+    display: grid;
+    gap: 4px;
+  }
 }
 </style>

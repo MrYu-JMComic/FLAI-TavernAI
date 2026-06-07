@@ -1,4 +1,5 @@
 import { getUserAvatarUrl } from '../services/avatars.js';
+import { normalizeBoolean } from '../utils/boolean.js';
 
 /**
  * Format a user row into a public-facing user object.
@@ -10,7 +11,7 @@ export function publicUser(database, row) {
   const accountName = row.accountName || row.username;
   const displayName = row.displayName ?? row.display_name ?? '';
   const permissionGroup = normalizePermissionGroup(row.permissionGroup ?? row.permission_group);
-  const isRootAdmin = Boolean(row.isRootAdmin ?? row.is_root_admin);
+  const isRootAdmin = normalizeBoolean(row.isRootAdmin ?? row.is_root_admin);
   const avatarUrl = row.avatarUrl || row.avatar_url || getUserAvatarUrl(database, row.id);
   return {
     id: row.id,

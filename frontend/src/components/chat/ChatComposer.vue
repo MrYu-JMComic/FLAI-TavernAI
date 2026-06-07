@@ -1,6 +1,6 @@
 <script setup>
 import { ref } from 'vue';
-import { Brain, ChevronDown, Send, Sparkles, Square } from '@lucide/vue';
+import { Bot, Brain, ChevronDown, Send, Sparkles, Square } from '@lucide/vue';
 
 defineProps({
   input: { type: String, default: '' },
@@ -13,7 +13,8 @@ defineProps({
   showScrollBottomButton: { type: Boolean, default: false },
   usage: { type: Object, default: null },
   presetList: { type: Array, default: () => [] },
-  selectedPresetId: { type: String, default: '' }
+  selectedPresetId: { type: String, default: '' },
+  currentModel: { type: String, default: '' }
 });
 
 const emit = defineEmits([
@@ -22,6 +23,7 @@ const emit = defineEmits([
   'stop',
   'toggle-stream',
   'toggle-thinking',
+  'open-model-switcher',
   'scroll-to-bottom',
   'update:selectedPresetId',
   'composer-input'
@@ -39,6 +41,7 @@ defineExpose({ wrapRef, textareaRef });
       v-if="showScrollBottomButton"
       class="scroll-bottom-button"
       type="button"
+      aria-label="滚动到底部"
       title="滚动到底部"
       @click="emit('scroll-to-bottom')"
     >
@@ -48,16 +51,18 @@ defineExpose({ wrapRef, textareaRef });
       <textarea
         ref="textareaRef"
         :value="input"
+        aria-label="聊天消息输入"
         placeholder="给 AI 发送消息"
         :rows="chatViewportIsPhone ? 1 : 2"
         @input="emit('update:input', $event.target.value); emit('composer-input', $event)"
         @keydown.enter.exact="emit('submit', { isEnter: true, event: $event })"
       />
-      <div class="composer-actions">
+      <div class="composer-actions" :class="{ 'has-preset': presetList.length }">
         <select
           v-if="presetList.length"
           :value="selectedPresetId"
           class="preset-select"
+          aria-label="选择对话预设"
           title="选择对话预设"
           @change="emit('update:selectedPresetId', $event.target.value)"
         >
@@ -66,6 +71,15 @@ defineExpose({ wrapRef, textareaRef });
             {{ p.name }}{{ p.isDefault ? ' 默认' : '' }}
           </option>
         </select>
+        <button
+          class="mode-pill model-switch-pill"
+          type="button"
+          :title="currentModel ? `当前模型：${currentModel}` : '切换模型'"
+          @click="emit('open-model-switcher')"
+        >
+          <Bot :size="16" />
+          <span>{{ currentModel || '切换模型' }}</span>
+        </button>
         <button
           class="mode-pill"
           :class="{ active: useStream }"
@@ -89,10 +103,10 @@ defineExpose({ wrapRef, textareaRef });
           <span>{{ thinkingEnabled ? '深度思考' : '普通回复' }}</span>
         </button>
         <span v-if="usage" class="token-chip">tokens {{ usage.total_tokens || usage.totalTokens || '-' }}</span>
-        <button v-if="sending" class="round-send stop" type="button" title="停止生成" @click="emit('stop')">
+        <button v-if="sending" class="round-send stop" type="button" aria-label="停止生成" title="停止生成" @click="emit('stop')">
           <Square :size="18" />
         </button>
-        <button v-else class="round-send" type="submit" title="发送" :disabled="!canSend">
+        <button v-else class="round-send" type="submit" aria-label="发送消息" title="发送" :disabled="!canSend">
           <Send :size="19" />
         </button>
       </div>

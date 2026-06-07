@@ -29,7 +29,6 @@ const skippedNames = new Set([
 ]);
 
 const skippedRelativeDirs = new Set([
-  path.normalize('automation/reports'),
   path.normalize('backend/data'),
   path.normalize('backend/uploads')
 ]);
@@ -93,6 +92,7 @@ function findSuspiciousLines(filePath) {
 }
 
 const failures = [];
+let scannedFileCount = 0;
 
 for (const filePath of walk(projectRoot)) {
   const stats = statSync(filePath);
@@ -100,6 +100,7 @@ for (const filePath of walk(projectRoot)) {
     continue;
   }
 
+  scannedFileCount += 1;
   const hits = findSuspiciousLines(filePath);
   if (hits.length) {
     failures.push({
@@ -123,4 +124,4 @@ if (failures.length) {
   process.exit(1);
 }
 
-console.log('Encoding check passed: no common Chinese mojibake markers found.');
+console.log(`Encoding check passed: scanned ${scannedFileCount} files; no common Chinese mojibake markers found.`);

@@ -6,6 +6,22 @@
 import { z } from 'zod';
 
 const STATUS_BLUEPRINT_VARIABLE_LIMIT = 60;
+const BACKGROUND_IMAGE_INPUT_MAX_LENGTH = 6_000_000;
+const BOOLEAN_STRING_VALUES = new Set(['true', 'false', '1', '0']);
+const MOD_CHARACTER_BINDING_LIMIT = 100;
+
+const booleanLikeSchema = z.preprocess((value) => {
+  if (typeof value !== 'string') {
+    return value;
+  }
+
+  const normalized = value.trim().toLowerCase();
+  if (!BOOLEAN_STRING_VALUES.has(normalized)) {
+    return value;
+  }
+
+  return normalized === 'true' || normalized === '1';
+}, z.boolean());
 
 const accessorySkillConfigSchema = z.object({
   enabled: z.union([z.boolean(), z.literal('auto')]).optional(),
@@ -34,8 +50,8 @@ const statusBarBlueprintSchema = z.object({
 }).partial().optional().default({});
 
 const advancedSettingsSchema = z.object({
-  desktopBackgroundUrl: z.string().max(5000).trim().optional().default(''),
-  mobileBackgroundUrl: z.string().max(5000).trim().optional().default(''),
+  desktopBackgroundUrl: z.string().max(BACKGROUND_IMAGE_INPUT_MAX_LENGTH).trim().optional().default(''),
+  mobileBackgroundUrl: z.string().max(BACKGROUND_IMAGE_INPUT_MAX_LENGTH).trim().optional().default(''),
   customCss: z.string().max(50000).trim().optional().default(''),
   customJs: z.string().max(50000).trim().optional().default(''),
   statusBarPrompt: z.string().max(50000).trim().optional().default(''),
@@ -121,9 +137,9 @@ export const importCharacterSchema = z.object({
 export const sendMessageSchema = z.object({
   content: z.string().min(1, '消息不能为空').max(32000, '消息最多 32000 字').trim(),
   message: z.string().max(32000).trim().optional(),
-  stream: z.boolean().optional(),
+  stream: booleanLikeSchema.optional(),
   presetId: z.string().optional(),
-  thinkingEnabled: z.boolean().optional()
+  thinkingEnabled: booleanLikeSchema.optional()
 });
 
 export const updateMessageSchema = z.object({
@@ -189,10 +205,22 @@ export const createModSchema = z.object({
   description: z.string().max(1000).trim().optional().default(''),
   type: z.enum(['prompt_inject', 'style_enhance', 'custom']).optional().default('prompt_inject'),
   content: z.string().max(50000).trim().optional().default(''),
-  enabled: z.boolean().optional().default(true)
+  enabled: z.boolean().optional().default(true),
+  scope: z.enum(['global', 'all_characters', 'characters']).optional(),
+  characterIds: z.array(z.string().max(120).trim()).max(MOD_CHARACTER_BINDING_LIMIT).optional(),
+  character_ids: z.array(z.string().max(120).trim()).max(MOD_CHARACTER_BINDING_LIMIT).optional()
 });
 
-export const updateModSchema = createModSchema.partial();
+export const updateModSchema = z.object({
+  name: z.string().min(1, '名称不能为空').max(100).trim().optional(),
+  description: z.string().max(1000).trim().optional(),
+  type: z.enum(['prompt_inject', 'style_enhance', 'custom']).optional(),
+  content: z.string().max(50000).trim().optional(),
+  enabled: z.boolean().optional(),
+  scope: z.enum(['global', 'all_characters', 'characters']).optional(),
+  characterIds: z.array(z.string().max(120).trim()).max(MOD_CHARACTER_BINDING_LIMIT).optional(),
+  character_ids: z.array(z.string().max(120).trim()).max(MOD_CHARACTER_BINDING_LIMIT).optional()
+});
 
 // ── 标签相关 ──
 
@@ -230,8 +258,8 @@ export const saveStatusBarSchema = z.object({
 // ── 对话设置 ──
 
 export const saveConversationSettingsSchema = z.object({
-  desktopBackgroundUrl: z.string().max(5000).trim().optional().default(''),
-  mobileBackgroundUrl: z.string().max(5000).trim().optional().default(''),
+  desktopBackgroundUrl: z.string().max(BACKGROUND_IMAGE_INPUT_MAX_LENGTH).trim().optional().default(''),
+  mobileBackgroundUrl: z.string().max(BACKGROUND_IMAGE_INPUT_MAX_LENGTH).trim().optional().default(''),
   customCss: z.string().max(50000).trim().optional().default(''),
   customJs: z.string().max(50000).trim().optional().default(''),
   statusBarPrompt: z.string().max(50000).trim().optional().default(''),

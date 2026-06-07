@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
+import { normalizeBoolean } from './utils/boolean.js';
 
 const sessionCookieName = 'flai_session';
 const scryptAsync = promisify(crypto.scrypt);
@@ -267,6 +268,8 @@ export function resolveSession(database, request) {
     return null;
   }
 
+  const isRootAdmin = normalizeBoolean(row.is_root_admin);
+
   return {
     sessionId: row.session_id,
     user: {
@@ -275,8 +278,8 @@ export function resolveSession(database, request) {
       accountName: row.username,
       displayName: row.display_name || '',
       permissionGroup: row.permission_group || 'user',
-      isRootAdmin: Boolean(row.is_root_admin),
-      permissionLabel: permissionLabel(row.permission_group, Boolean(row.is_root_admin)),
+      isRootAdmin,
+      permissionLabel: permissionLabel(row.permission_group, isRootAdmin),
       avatarUrl: row.avatar_asset_id ? `/api/avatars/${row.avatar_asset_id}` : '',
       createdAt: row.created_at
     }

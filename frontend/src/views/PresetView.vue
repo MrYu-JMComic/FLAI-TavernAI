@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, onMounted } from 'vue';
+import { ref, computed, onMounted, onBeforeUnmount } from 'vue';
 import {
   fetchPresets,
   createPreset,
@@ -25,7 +25,14 @@ const notify = useNotify();
 const presets = ref([]);
 const loading = ref(true);
 const saving = ref(false);
+const deletingPresetId = ref('');
+const defaultingPresetId = ref('');
 const error = ref(null);
+let presetViewDisposed = false;
+let presetLoadToken = 0;
+let presetSaveToken = 0;
+let presetDeleteToken = 0;
+let presetDefaultToken = 0;
 
 // editing: null = list mode, {} = create mode, {id,...} = edit mode
 const editing = ref(null);
@@ -50,17 +57,36 @@ function createEmptyForm() {
 
 onMounted(loadPresets);
 
+onBeforeUnmount(() => {
+  presetViewDisposed = true;
+  presetLoadToken += 1;
+  presetSaveToken += 1;
+  presetDeleteToken += 1;
+  presetDefaultToken += 1;
+});
+
 async function loadPresets() {
+  if (presetViewDisposed) return;
+  const requestToken = ++presetLoadToken;
   loading.value = true;
   error.value = null;
   try {
-    presets.value = await fetchPresets();
+    const nextPresets = await fetchPresets();
+    if (!isCurrentPresetLoad(requestToken)) return;
+    presets.value = nextPresets;
   } catch (err) {
+    if (!isCurrentPresetLoad(requestToken)) return;
     error.value = err.message;
     notify.error(err.message);
   } finally {
-    loading.value = false;
+    if (isCurrentPresetLoad(requestToken)) {
+      loading.value = false;
+    }
   }
+}
+
+function isCurrentPresetLoad(requestToken) {
+  return !presetViewDisposed && requestToken === presetLoadToken;
 }
 
 function startCreate() {
@@ -88,6 +114,15 @@ function cancelEdit() {
 }
 
 async function handleSave() {
+  if (presetViewDisposed || saving.value) {
+    return;
+  }
+  const saveContext = getPresetSaveContext();
+  if (saveContext.mode === 'none') {
+    return;
+  }
+
+  const saveToken = ++presetSaveToken;
   if (!form.value.name.trim()) {
     form.value.name = '未命名预设';
   }
@@ -105,45 +140,115 @@ async function handleSave() {
 
   saving.value = true;
   try {
-    if (isEdit.value) {
-      await updatePreset(editing.value.id, payload);
+    if (saveContext.mode === 'edit') {
+      await updatePreset(saveContext.id, payload);
+      if (!isCurrentPresetSave(saveToken, saveContext)) return;
       notify.success('预设已更新');
     } else {
       await createPreset(payload);
+      if (!isCurrentPresetSave(saveToken, saveContext)) return;
       notify.success('预设已创建');
     }
     cancelEdit();
     await loadPresets();
   } catch (err) {
+    if (!isCurrentPresetSave(saveToken, saveContext)) return;
     notify.error(err.message);
   } finally {
-    saving.value = false;
+    if (isActivePresetSave(saveToken)) {
+      saving.value = false;
+    }
   }
 }
 
+function getPresetSaveContext() {
+  const mode = isEdit.value ? 'edit' : isCreate.value ? 'create' : 'none';
+  return {
+    mode,
+    id: editing.value?.id || '',
+    editingRef: editing.value
+  };
+}
+
+function isCurrentPresetSave(saveToken, context = {}) {
+  return isActivePresetSave(saveToken)
+    && context.editingRef === editing.value
+    && context.mode === getPresetSaveContext().mode
+    && (context.mode !== 'edit' || context.id === editing.value?.id);
+}
+
+function isActivePresetSave(saveToken) {
+  return !presetViewDisposed && saveToken === presetSaveToken;
+}
+
 async function handleDelete(preset) {
+  if (presetViewDisposed || deletingPresetId.value || !preset?.id) {
+    return;
+  }
   if (presets.value.length <= 1) {
     notify.warning('至少需要保留一个预设');
     return;
   }
   if (!window.confirm(`确定删除预设「${preset.name}」吗？`)) return;
+  const deleteToken = ++presetDeleteToken;
+  const presetId = preset.id;
+  deletingPresetId.value = presetId;
   try {
-    await deletePreset(preset.id);
+    await deletePreset(presetId);
+    if (!isCurrentPresetDelete(deleteToken, presetId)) return;
     notify.success('预设已删除');
+    if (editing.value?.id === presetId) {
+      cancelEdit();
+    }
     await loadPresets();
   } catch (err) {
+    if (!isCurrentPresetDelete(deleteToken, presetId)) return;
     notify.error(err.message);
+  } finally {
+    if (isActivePresetDelete(deleteToken)) {
+      deletingPresetId.value = '';
+    }
   }
 }
 
+function isCurrentPresetDelete(deleteToken, presetId) {
+  return isActivePresetDelete(deleteToken) && deletingPresetId.value === presetId;
+}
+
+function isActivePresetDelete(deleteToken) {
+  return !presetViewDisposed && deleteToken === presetDeleteToken;
+}
+
 async function handleSetDefault(preset) {
+  if (presetViewDisposed || defaultingPresetId.value || !preset?.id) {
+    return;
+  }
+
+  const defaultToken = ++presetDefaultToken;
+  const presetId = preset.id;
+  defaultingPresetId.value = presetId;
   try {
-    await setDefaultPreset(preset.id);
+    await setDefaultPreset(presetId);
+    if (!isCurrentPresetDefault(defaultToken, presetId)) return;
     await loadPresets();
+    if (!isCurrentPresetDefault(defaultToken, presetId)) return;
     notify.success(`已将「${preset.name}」设为默认预设`);
   } catch (err) {
+    if (!isCurrentPresetDefault(defaultToken, presetId)) return;
     notify.error(err.message);
+  } finally {
+    if (isActivePresetDefault(defaultToken)) {
+      defaultingPresetId.value = '';
+    }
   }
+}
+
+function isCurrentPresetDefault(defaultToken, presetId) {
+  return isActivePresetDefault(defaultToken) && defaultingPresetId.value === presetId;
+}
+
+function isActivePresetDefault(defaultToken) {
+  return !presetViewDisposed && defaultToken === presetDefaultToken;
 }
 
 function promptSummary(text) {
@@ -239,6 +344,8 @@ function clampInt(value, min, max) {
               class="icon-button"
               type="button"
               title="设为默认"
+              :aria-label="`设为默认预设：${preset.name}`"
+              :disabled="Boolean(defaultingPresetId)"
               @click="handleSetDefault(preset)"
             >
               <Star :size="16" />
@@ -246,7 +353,9 @@ function clampInt(value, min, max) {
             <button
               class="icon-button danger"
               type="button"
-              title="删除"
+              :title="deletingPresetId === preset.id ? '删除中...' : '删除'"
+              :aria-label="deletingPresetId === preset.id ? `正在删除预设：${preset.name}` : `删除预设：${preset.name}`"
+              :disabled="Boolean(deletingPresetId)"
               @click="handleDelete(preset)"
             >
               <Trash2 :size="16" />
@@ -264,7 +373,7 @@ function clampInt(value, min, max) {
           <h1>{{ isEdit ? form.name || '编辑预设' : '新建预设' }}</h1>
         </div>
         <div class="heading-actions">
-          <button class="ghost-button" @click="cancelEdit">
+          <button class="ghost-button" :disabled="saving" @click="cancelEdit">
             <ArrowLeft :size="18" />
             <span>返回列表</span>
           </button>
@@ -354,7 +463,7 @@ function clampInt(value, min, max) {
             <Save :size="18" />
             <span>{{ saving ? '保存中...' : '保存' }}</span>
           </button>
-          <button class="ghost-button" type="button" @click="cancelEdit">
+          <button class="ghost-button" type="button" :disabled="saving" @click="cancelEdit">
             <X :size="18" />
             <span>取消</span>
           </button>
@@ -362,11 +471,11 @@ function clampInt(value, min, max) {
             v-if="isEdit"
             class="danger-button"
             type="button"
-            :disabled="saving"
+            :disabled="saving || Boolean(deletingPresetId)"
             @click="handleDelete({ id: editing.id, name: form.name })"
           >
             <Trash2 :size="18" />
-            <span>删除</span>
+            <span>{{ deletingPresetId === editing.id ? '删除中...' : '删除' }}</span>
           </button>
         </div>
       </form>

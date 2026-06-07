@@ -25,9 +25,24 @@ const booting = ref(true);
 const theme = ref(readStoredTheme());
 const notifications = ref([]);
 const notificationTimers = new Map();
+const rippleTimers = new Map();
+let authScopeVersion = 0;
+let providerRequestId = 0;
+const rippleSelector = [
+  'button',
+  'a[href]',
+  'label',
+  '[role="button"]',
+  '[role="tab"]',
+  '[data-ripple]'
+].join(',');
 const isAuthRoute = computed(() => ['login', 'register'].includes(route.value.name));
 const currentView = computed(() => views[route.value.name] || views.home);
 const routeKey = computed(() => `${route.value.name}:${route.value.params.id || ''}`);
+const notificationFallbackMessages = {
+  error: '操作失败，请稍后重试。',
+  warning: '操作未完成，请检查后重试。'
+};
 const notify = {
   show: pushNotification,
   success: (message, options = {}) => pushNotification({ ...options, type: 'success', message }),
@@ -50,13 +65,17 @@ watch(
 
 onMounted(async () => {
   window.addEventListener('hashchange', syncRouteFromHash);
+  window.addEventListener('pointerdown', handleInteractionRipple, { passive: true });
   await refreshSession();
 });
 
 onBeforeUnmount(() => {
+  resetAuthScope();
   window.removeEventListener('hashchange', syncRouteFromHash);
-  notificationTimers.forEach((timer) => window.clearTimeout(timer));
-  notificationTimers.clear();
+  window.removeEventListener('pointerdown', handleInteractionRipple);
+  clearNotifications();
+  rippleTimers.forEach((timer) => window.clearTimeout(timer));
+  rippleTimers.clear();
 });
 
 function syncRouteFromHash() {
@@ -64,51 +83,92 @@ function syncRouteFromHash() {
 }
 
 async function refreshSession() {
+  const authScope = resetAuthScope();
   booting.value = true;
   try {
     const result = await getMe();
+    if (!isCurrentAuthScope(authScope)) {
+      return;
+    }
     user.value = result.user;
     if (user.value) {
-      await refreshProvider();
+      await refreshProvider(authScope);
+      if (!isCurrentAuthScope(authScope)) {
+        return;
+      }
       if (isAuthRoute.value) {
         navigate('home');
       }
     } else if (!isAuthRoute.value) {
+      clearNotifications();
       navigate('login');
     }
   } catch (error) {
+    if (!isCurrentAuthScope(authScope)) {
+      return;
+    }
     user.value = null;
     provider.value = null;
+    clearNotifications();
     if (!isAuthRoute.value) {
       navigate('login');
     }
     notify.warning(error?.message || '会话检查失败，请重新登录。', { duration: 4200 });
   } finally {
-    booting.value = false;
+    if (isCurrentAuthScope(authScope)) {
+      booting.value = false;
+    }
   }
 }
 
-async function refreshProvider() {
-  provider.value = await getProviderSettings().catch(() => null);
+async function refreshProvider(authScope = authScopeVersion) {
+  const requestId = ++providerRequestId;
+  const nextProvider = await getProviderSettings().catch(() => null);
+  if (requestId !== providerRequestId || !isCurrentAuthScope(authScope) || !user.value) {
+    return false;
+  }
+  provider.value = nextProvider;
+  return true;
 }
 
 async function handleAuthenticated(result) {
+  const authScope = resetAuthScope();
+  clearNotifications();
   user.value = result.user;
-  await refreshProvider();
+  provider.value = null;
+  await refreshProvider(authScope);
+  if (!isCurrentAuthScope(authScope)) {
+    return;
+  }
   navigate('home');
 }
 
 function handleProfileSaved(nextUser) {
-  if (nextUser) {
+  if (nextUser?.id && user.value?.id === nextUser.id) {
     user.value = nextUser;
   }
 }
 
 async function handleLogout() {
-  await logoutRequest().catch(() => null);
+  const authScope = resetAuthScope();
+  clearNotifications();
   user.value = null;
   provider.value = null;
   navigate('login');
+  await logoutRequest().catch(() => null);
+  if (!isCurrentAuthScope(authScope)) {
+    return;
+  }
+}
+
+function resetAuthScope() {
+  authScopeVersion += 1;
+  providerRequestId += 1;
+  return authScopeVersion;
+}
+
+function isCurrentAuthScope(authScope) {
+  return authScope === authScopeVersion;
 }
 
 function navigate(name, params = {}) {
@@ -122,6 +182,66 @@ function navigate(name, params = {}) {
 
 function toggleTheme() {
   theme.value = theme.value === 'dark' ? 'light' : 'dark';
+}
+
+function handleInteractionRipple(event) {
+  if (event.button !== undefined && event.button !== 0) {
+    return;
+  }
+
+  pruneStaleRippleTimers();
+  const target = event.target?.closest?.(rippleSelector);
+  if (!isRippleTargetConnected(target)) {
+    return;
+  }
+  if (target.matches?.('input, textarea, select, option')) {
+    return;
+  }
+  if (target.disabled || target.getAttribute?.('aria-disabled') === 'true') {
+    return;
+  }
+
+  const rect = target.getBoundingClientRect();
+  if (!rect.width || !rect.height) {
+    return;
+  }
+
+  const size = Math.ceil(Math.max(rect.width, rect.height) * 2.1);
+  target.style.setProperty('--ripple-x', `${Math.round(event.clientX - rect.left)}px`);
+  target.style.setProperty('--ripple-y', `${Math.round(event.clientY - rect.top)}px`);
+  target.style.setProperty('--ripple-size', `${size}px`);
+  target.removeAttribute('data-ripple-active');
+  void target.offsetWidth;
+  target.setAttribute('data-ripple-active', '');
+
+  clearRippleTimer(target);
+  rippleTimers.set(target, window.setTimeout(() => {
+    if (isRippleTargetConnected(target)) {
+      target.removeAttribute('data-ripple-active');
+    }
+    rippleTimers.delete(target);
+  }, 560));
+}
+
+function isRippleTargetConnected(target) {
+  return Boolean(target?.isConnected && document.documentElement.contains(target));
+}
+
+function clearRippleTimer(target) {
+  const timer = rippleTimers.get(target);
+  if (!timer) {
+    return;
+  }
+  window.clearTimeout(timer);
+  rippleTimers.delete(target);
+}
+
+function pruneStaleRippleTimers() {
+  for (const [target] of rippleTimers.entries()) {
+    if (!isRippleTargetConnected(target)) {
+      clearRippleTimer(target);
+    }
+  }
 }
 
 function normalizeTheme(value) {
@@ -145,13 +265,13 @@ function writeStoredTheme(value) {
 }
 
 function pushNotification(input = {}) {
-  const message = String(input.message || '').trim();
+  const type = ['success', 'error', 'warning', 'info'].includes(input.type) ? input.type : 'info';
+  const message = normalizeNotificationMessage(input.message, type);
   if (!message) {
     return null;
   }
 
   const id = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
-  const type = ['success', 'error', 'warning', 'info'].includes(input.type) ? input.type : 'info';
   const item = {
     id,
     type,
@@ -181,6 +301,22 @@ function pushNotification(input = {}) {
   return id;
 }
 
+function normalizeNotificationMessage(value, type) {
+  if (value instanceof Error) {
+    return value.message.trim() || notificationFallbackMessages[type] || '';
+  }
+  if (value && typeof value === 'object' && typeof value.message === 'string') {
+    return value.message.trim() || notificationFallbackMessages[type] || '';
+  }
+  if (typeof value === 'string') {
+    return value.trim() || notificationFallbackMessages[type] || '';
+  }
+  if (typeof value === 'number' || typeof value === 'boolean') {
+    return String(value);
+  }
+  return notificationFallbackMessages[type] || '';
+}
+
 function dismissNotification(id) {
   const timer = notificationTimers.get(id);
   if (timer) {
@@ -188,6 +324,12 @@ function dismissNotification(id) {
     notificationTimers.delete(id);
   }
   notifications.value = notifications.value.filter((item) => item.id !== id);
+}
+
+function clearNotifications() {
+  notificationTimers.forEach((timer) => window.clearTimeout(timer));
+  notificationTimers.clear();
+  notifications.value = [];
 }
 
 function parseRoute() {
@@ -282,6 +424,7 @@ function routeToHash(name, params = {}) {
         :provider="provider"
         :theme="theme"
         @navigate="navigate"
+        @toggle-theme="toggleTheme"
         @provider-saved="refreshProvider"
         @profile-saved="handleProfileSaved"
       />

@@ -19,6 +19,10 @@ export const characterBackgroundOwnerTypes = {
   desktop: 'character-background-desktop',
   mobile: 'character-background-mobile'
 };
+export const conversationBackgroundOwnerTypes = {
+  desktop: 'conversation-background-desktop',
+  mobile: 'conversation-background-mobile'
+};
 const characterAssetOwnerTypes = new Set([
   'character',
   characterBackgroundOwnerTypes.desktop,

@@ -52,6 +52,7 @@ const sortOptions = [
 ];
 const selectedTag = ref('');
 const tags = ref([]);
+const tagLoadError = ref('');
 const loading = ref(false);
 const loadError = ref('');
 const reactionPending = ref({});
@@ -155,6 +156,9 @@ function measureContainerWidth() {
 
 let resizeObserver = null;
 let mobileLayoutQuery = null;
+let characterLoadToken = 0;
+let tagLoadToken = 0;
+let homeActive = true;
 
 function syncMobileListLayout() {
   isMobileListLayout.value = Boolean(mobileLayoutQuery?.matches);
@@ -201,11 +205,14 @@ function refreshScrollMeasurements() {
 onMounted(async () => {
   addMobileLayoutListener();
   await Promise.all([loadCharacters(), loadTags()]);
+  if (!isHomeActive()) return;
   await nextTick();
   refreshScrollMeasurements();
 });
 
 onUnmounted(() => {
+  homeActive = false;
+  resetHomeAsyncScope();
   if (resizeObserver) {
     resizeObserver.disconnect();
     resizeObserver = null;
@@ -219,12 +226,32 @@ watch(isMobileListLayout, async () => {
   refreshScrollMeasurements();
 });
 
+function resetHomeAsyncScope() {
+  characterLoadToken += 1;
+  tagLoadToken += 1;
+  loading.value = false;
+}
+
+function isHomeActive() {
+  return homeActive;
+}
+
 async function loadTags() {
+  const requestToken = ++tagLoadToken;
+  tagLoadError.value = '';
   try {
-    tags.value = await fetchTags();
-  } catch {
-    // ignore
+    const nextTags = await fetchTags();
+    if (!isCurrentTagLoad(requestToken)) return;
+    tags.value = nextTags;
+  } catch (err) {
+    if (!isCurrentTagLoad(requestToken)) return;
+    tagLoadError.value = err.message || '标签加载失败';
+    tags.value = [];
   }
+}
+
+function isCurrentTagLoad(requestToken) {
+  return isHomeActive() && requestToken === tagLoadToken;
 }
 
 function selectTag(name) {
@@ -243,24 +270,38 @@ function cycleSort() {
 }
 
 async function loadCharacters() {
+  const requestToken = ++characterLoadToken;
+  const filters = { search: search.value, sort: sort.value, tag: selectedTag.value };
   loading.value = true;
   loadError.value = '';
   try {
-    characters.value = await fetchCharacters({ search: search.value, sort: sort.value, tag: selectedTag.value });
+    const nextCharacters = await fetchCharacters(filters);
+    if (!isCurrentCharacterLoad(requestToken)) return;
+    characters.value = nextCharacters;
   } catch (err) {
+    if (!isCurrentCharacterLoad(requestToken)) return;
     loadError.value = err.message || '加载角色失败';
     notify.error(err.message);
   } finally {
-    loading.value = false;
+    if (isCurrentCharacterLoad(requestToken)) {
+      loading.value = false;
+    }
   }
+}
+
+function isCurrentCharacterLoad(requestToken) {
+  return isHomeActive() && requestToken === characterLoadToken;
 }
 
 async function openChat(character) {
   try {
     const existing = await fetchConversations({ characterId: character.id });
+    if (!isHomeActive()) return;
     const conversation = existing[0] || (await createConversation(character.id));
+    if (!isHomeActive()) return;
     emit('navigate', 'chat', { id: conversation.id });
   } catch (err) {
+    if (!isHomeActive()) return;
     notify.error(err.message);
   }
 }
@@ -291,10 +332,14 @@ async function toggleReaction({ character, type, nextActive, save }) {
 
   reactionPending.value = { ...reactionPending.value, [key]: true };
   try {
-    mergeCharacter(await save(character.id, nextActive));
+    const nextCharacter = await save(character.id, nextActive);
+    if (!isHomeActive()) return;
+    mergeCharacter(nextCharacter);
   } catch (err) {
+    if (!isHomeActive()) return;
     notify.error(err.message);
   } finally {
+    if (!isHomeActive()) return;
     const { [key]: _done, ...rest } = reactionPending.value;
     reactionPending.value = rest;
   }
@@ -317,6 +362,7 @@ async function handleImportFile(event) {
 
   try {
     const text = await file.text();
+    if (!isHomeActive()) return;
     const data = JSON.parse(text);
     if (!data.character?.name) {
       notify.error('无效的角色卡文件：缺少角色名');
@@ -324,21 +370,26 @@ async function handleImportFile(event) {
     }
     importPreview.value = data;
   } catch {
+    if (!isHomeActive()) return;
     notify.error('无法解析角色卡文件，请确认是有效的 JSON 文件');
   }
 }
 
 async function confirmImport() {
-  if (!importPreview.value) return;
+  if (!importPreview.value || !isHomeActive()) return;
+  const nextImport = importPreview.value;
   importLoading.value = true;
   try {
-    await importCharacter(importPreview.value);
+    await importCharacter(nextImport);
+    if (!isHomeActive()) return;
     notify.success('角色卡导入成功');
     importPreview.value = null;
     await loadCharacters();
   } catch (err) {
+    if (!isHomeActive()) return;
     notify.error(err.message);
   } finally {
+    if (!isHomeActive()) return;
     importLoading.value = false;
   }
 }
@@ -480,6 +531,13 @@ function formatCount(value) {
       >
         <span>{{ tag.name }}</span>
         <small v-if="tag.usageCount">{{ tag.usageCount }}</small>
+      </button>
+    </section>
+    <section v-else-if="tagLoadError" class="section-load-status error-state" role="alert">
+      <span>{{ tagLoadError }}</span>
+      <button class="ghost-button compact-button" type="button" @click="loadTags">
+        <RefreshCw :size="16" />
+        <span>重试标签</span>
       </button>
     </section>
 

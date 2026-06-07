@@ -1,4 +1,5 @@
 <script setup>
+import { computed } from 'vue';
 import { ChevronDown, Save, Upload, X } from '@lucide/vue';
 import { buildModelSelectOptions } from '../../services/modelCatalog';
 
@@ -51,6 +52,160 @@ const emit = defineEmits([
   'remove-quick-reply'
 ]);
 
+const statusBarEditorRows = computed(() => {
+  const form = props.statusBarForm || {};
+  const variables = Array.isArray(form.variables) ? form.variables : [];
+  const compositeRows = extractStatusTemplateCompositeRows(form.template);
+  const compositeChildKeys = new Set();
+  const compositeLabelKeys = new Set();
+  const rows = compositeRows.map((row, index) => {
+    compositeLabelKeys.add(normalizeStatusVariableKey(row.label));
+    for (const part of row.parts) {
+      compositeChildKeys.add(normalizeStatusVariableKey(part.name));
+    }
+    return {
+      kind: 'composite',
+      key: `composite:${index}:${row.label}:${row.parts.map((part) => part.name).join('|')}`,
+      label: row.label,
+      parts: row.parts
+    };
+  });
+
+  variables.forEach((variable, index) => {
+    const key = normalizeStatusVariableKey(variable?.name);
+    if (
+      !key ||
+      compositeChildKeys.has(key) ||
+      compositeLabelKeys.has(key) ||
+      isCompositeStatusPlaceholderValue(variable?.value, variable?.name)
+    ) {
+      return;
+    }
+    rows.push({
+      kind: 'variable',
+      key: `variable:${index}:${key}`,
+      variable,
+      index
+    });
+  });
+
+  return rows;
+});
+
+function getStatusBarVariableValue(name = '') {
+  const variable = findStatusBarVariable(name);
+  return variable ? String(variable.value ?? '') : '';
+}
+
+function setStatusBarVariableValue(name = '', value = '') {
+  const normalizedName = normalizeTemplateVariableName(name);
+  const form = props.statusBarForm || {};
+  if (!normalizedName || !form || typeof form !== 'object') {
+    return;
+  }
+  if (!Array.isArray(form.variables)) {
+    form.variables = [];
+  }
+  let variable = findStatusBarVariable(normalizedName);
+  if (!variable) {
+    variable = { name: normalizedName, value: '' };
+    form.variables.push(variable);
+  }
+  variable.value = String(value ?? '');
+  delete variable.max;
+  delete variable.color;
+}
+
+function findStatusBarVariable(name = '') {
+  const key = normalizeStatusVariableKey(name);
+  const variables = Array.isArray(props.statusBarForm?.variables) ? props.statusBarForm.variables : [];
+  return variables.find((variable) => normalizeStatusVariableKey(variable?.name) === key) || null;
+}
+
+function extractStatusTemplateCompositeRows(template = '') {
+  const rows = [];
+  const seen = new Set();
+  const addRow = (rawLabel, rawValue) => {
+    const label = normalizeTemplateVariableName(rawLabel);
+    const key = normalizeStatusVariableKey(label);
+    if (!label || !key || seen.has(key)) {
+      return;
+    }
+    const parts = extractCompositePlaceholderParts(rawValue, label);
+    if (parts.length < 2) {
+      return;
+    }
+    rows.push({ label, parts });
+    seen.add(key);
+  };
+
+  const rawTemplate = String(template || '');
+  if (!rawTemplate || rawTemplate.trim()[0] === '{') {
+    return rows;
+  }
+
+  const pairPattern = /<[^>]+\bclass\s*=\s*(['"])[^'"]*\bsb-label\b[^'"]*\1[^>]*>([\s\S]*?)<\/[^>]+>[\s\S]{0,180}?<[^>]+\bclass\s*=\s*(['"])[^'"]*\bsb-val\b[^'"]*\3[^>]*>([\s\S]*?)<\/[^>]+>/gi;
+  let match;
+  while ((match = pairPattern.exec(rawTemplate))) {
+    addRow(match[2], match[4]);
+  }
+
+  const inlineValuePattern = /(?:^|>|\n)([^<>\n]{1,40}?)[\s:\uFF1A]+<[^>]+\bclass\s*=\s*(['"])[^'"]*\bsb-val\b[^'"]*\2[^>]*>([\s\S]*?)<\/[^>]+>/gi;
+  while ((match = inlineValuePattern.exec(rawTemplate))) {
+    addRow(match[1], match[3]);
+  }
+  return rows;
+}
+
+function extractCompositePlaceholderParts(value = '', label = '') {
+  const parts = [];
+  const seen = new Set();
+  const labelKey = normalizeStatusVariableKey(label);
+  const placeholderPattern = /\{\{\s*([^{}]+?)\s*\}\}|\{([\w\u4e00-\u9fa5 ._-]+)\}/g;
+  let match;
+  while ((match = placeholderPattern.exec(normalizeHtmlText(value)))) {
+    const token = String(match[1] || match[2] || '').trim();
+    const [rawName, rawProperty = 'value'] = token.split('.').map((part) => part.trim());
+    const name = normalizeTemplateVariableName(rawName);
+    const key = normalizeStatusVariableKey(name);
+    if (!name || !key || key === labelKey || seen.has(key) || isMeterTemplateProperty(rawProperty)) {
+      continue;
+    }
+    parts.push({ name });
+    seen.add(key);
+  }
+  return parts;
+}
+
+function isCompositeStatusPlaceholderValue(value = '', name = '') {
+  return extractCompositePlaceholderParts(value, name).length >= 2;
+}
+
+function isMeterTemplateProperty(value = '') {
+  return ['max', 'percent', 'percentage'].includes(String(value || '').trim());
+}
+
+function normalizeTemplateVariableName(value = '') {
+  return normalizeHtmlText(value).slice(0, 60);
+}
+
+function normalizeStatusVariableKey(value = '') {
+  return String(value || '').trim().toLowerCase();
+}
+
+function normalizeHtmlText(value = '') {
+  return String(value || '')
+    .replace(/<[^>]*>/g, '')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&amp;/gi, '&')
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;/gi, "'")
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 function toggleEffect(effect) {
   const cfg = props.statusBarTemplateCfg;
   const idx = cfg.effects.indexOf(effect);
@@ -94,7 +249,7 @@ function modelOverrideOptions(value = '') {
         <p>高阶设置</p>
         <h2>{{ conversation?.title || '当前会话' }}</h2>
       </div>
-      <button class="deep-icon-button" type="button" title="关闭设置" @click="emit('close')">
+      <button class="deep-icon-button" type="button" aria-label="关闭设置" title="关闭设置" @click="emit('close')">
         <X :size="18" />
       </button>
     </header>
@@ -119,6 +274,7 @@ function modelOverrideOptions(value = '') {
           <span>状态栏提示词</span>
           <textarea
             class="chat-code-textarea readonly"
+            aria-label="作者状态栏提示词"
             rows="4"
             :value="authorChatAppearance.statusBarPrompt || '未设置'"
             readonly
@@ -179,6 +335,7 @@ function modelOverrideOptions(value = '') {
         <textarea
           v-model="chatAppearanceForm.customCss"
           class="chat-code-textarea"
+          aria-label="当前会话内置 CSS"
           rows="10"
           placeholder=".deep-bubble { border-radius: 22px; }\n@keyframes floatIn { ... }"
         />
@@ -192,6 +349,7 @@ function modelOverrideOptions(value = '') {
         <textarea
           v-model="chatAppearanceForm.customJs"
           class="chat-code-textarea code-js"
+          aria-label="当前会话内置 JS"
           rows="12"
           placeholder="const bubble = query('.deep-bubble');\nif (bubble) bubble.classList.add('pulse');\nreturn () => bubble?.classList.remove('pulse');"
         />
@@ -205,6 +363,7 @@ function modelOverrideOptions(value = '') {
         <textarea
           v-model="chatAppearanceForm.statusBarPrompt"
           class="chat-code-textarea"
+          aria-label="状态栏提示词"
           rows="6"
           placeholder="例如：HP 降低、好感变化、获得金币时更新对应变量。"
         />
@@ -474,10 +633,10 @@ function modelOverrideOptions(value = '') {
                   :key="vi"
                   class="variable-editor-row"
                 >
-                  <input v-model="v.name" class="variable-input name" type="text" placeholder="变量名" maxlength="20" />
-                  <input v-model.number="v.value" class="variable-input num" type="number" placeholder="值" />
+                  <input v-model="v.name" class="variable-input name" type="text" :aria-label="`角色变量 ${vi + 1} 名称`" placeholder="变量名" maxlength="20" />
+                  <input v-model.number="v.value" class="variable-input num" type="number" :aria-label="`角色变量 ${vi + 1} 当前值`" placeholder="值" />
                   <span class="variable-separator">/</span>
-                  <input v-model.number="v.max" class="variable-input num" type="number" placeholder="最大" />
+                  <input v-model.number="v.max" class="variable-input num" type="number" :aria-label="`角色变量 ${vi + 1} 最大值`" placeholder="最大" />
                   <input :value="colorInputValue(v.color)" class="variable-input color" type="color" title="颜色" @input="setColorValue(v, 'color', $event.target.value)" />
                   <button class="variable-remove" type="button" title="删除变量" @click="emit('remove-character-variable', ci, vi)">x</button>
                 </div>
@@ -497,8 +656,8 @@ function modelOverrideOptions(value = '') {
               :key="qi"
               class="variable-editor-row"
             >
-              <input v-model="qr.label" class="variable-input name" type="text" placeholder="按钮文字" maxlength="20" />
-              <input v-model="qr.text" class="variable-input name" type="text" placeholder="发送文本" maxlength="200" />
+              <input v-model="qr.label" class="variable-input name" type="text" :aria-label="`快捷回复 ${qi + 1} 按钮文字`" placeholder="按钮文字" maxlength="20" />
+              <input v-model="qr.text" class="variable-input name" type="text" :aria-label="`快捷回复 ${qi + 1} 发送文本`" placeholder="发送文本" maxlength="200" />
               <button class="variable-remove" type="button" title="删除" @click="emit('remove-quick-reply', qi)">x</button>
             </div>
           </div>
@@ -511,45 +670,78 @@ function modelOverrideOptions(value = '') {
               </button>
             </div>
             <div
-              v-for="(variable, index) in statusBarForm.variables"
-              :key="index"
+              v-for="row in statusBarEditorRows"
+              :key="row.key"
               class="variable-editor-row"
+              :class="{ 'status-variable-row': row.kind === 'composite', 'is-composite': row.kind === 'composite' }"
             >
+              <template v-if="row.kind === 'composite'">
+                <input
+                  :value="row.label"
+                  class="variable-input name"
+                  type="text"
+                  readonly
+                  :aria-label="`状态栏组合行 ${row.label}`"
+                />
+                <span class="variable-input kind status-composite-kind">组合</span>
+                <div class="status-composite-values">
+                  <label
+                    v-for="part in row.parts"
+                    :key="part.name"
+                    class="status-composite-value"
+                  >
+                    <span>{{ part.name }}</span>
+                    <input
+                      class="variable-input value"
+                      type="text"
+                      :value="getStatusBarVariableValue(part.name)"
+                      placeholder="当前值"
+                      :aria-label="`状态栏 ${row.label} 的 ${part.name}`"
+                      @input="setStatusBarVariableValue(part.name, $event.target.value)"
+                    />
+                  </label>
+                </div>
+              </template>
+              <template v-else>
               <input
-                v-model="variable.name"
+                v-model="row.variable.name"
                 class="variable-input name"
                 type="text"
+                :aria-label="`状态栏变量 ${row.index + 1} 名称`"
                 placeholder="变量名"
                 maxlength="20"
               />
               <input
-                v-model="variable.value"
+                v-model="row.variable.value"
                 class="variable-input num"
                 type="text"
+                :aria-label="`状态栏变量 ${row.index + 1} 当前值`"
                 placeholder="当前值"
               />
               <span class="variable-separator">/</span>
               <input
-                v-model.number="variable.max"
+                v-model.number="row.variable.max"
                 class="variable-input num"
                 type="number"
+                :aria-label="`状态栏变量 ${row.index + 1} 最大值`"
                 placeholder="最大值"
               />
               <input
-                :value="colorInputValue(variable.color)"
+                :value="colorInputValue(row.variable.color)"
                 class="variable-input color"
                 type="color"
                 title="颜色"
-                @input="setColorValue(variable, 'color', $event.target.value)"
+                @input="setColorValue(row.variable, 'color', $event.target.value)"
               />
               <button
                 class="variable-remove"
                 type="button"
                 title="删除变量"
-                @click="emit('remove-status-bar-variable', index)"
+                @click="emit('remove-status-bar-variable', row.index)"
               >
                 x
               </button>
+              </template>
             </div>
           </div>
 

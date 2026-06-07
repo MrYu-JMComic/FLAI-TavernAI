@@ -1,5 +1,5 @@
 <script setup>
-import { computed, nextTick, ref, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue';
 
 const props = defineProps({
   modelValue: {
@@ -18,6 +18,10 @@ const props = defineProps({
     type: String,
     default: ''
   },
+  ariaLabel: {
+    type: String,
+    default: '变量编辑内容'
+  },
   disabled: {
     type: Boolean,
     default: false
@@ -27,29 +31,53 @@ const props = defineProps({
 const emit = defineEmits(['update:modelValue']);
 const textarea = ref(null);
 const mirror = ref(null);
+let disposed = false;
+let syncScrollPending = false;
+let syncScrollToken = 0;
 
 const renderedHtml = computed(() => renderWithVariable(props.modelValue || '', props.userValue || ''));
 
 watch(
   () => [props.modelValue, props.userValue],
   () => {
-    nextTick(syncScroll);
+    scheduleSyncScroll();
   }
 );
 
 watch(
   () => props.disabled,
   () => {
-    nextTick(syncScroll);
+    scheduleSyncScroll();
   }
 );
+
+onBeforeUnmount(() => {
+  disposed = true;
+  syncScrollToken += 1;
+  syncScrollPending = false;
+});
 
 function onInput(event) {
   emit('update:modelValue', event.target.value);
 }
 
+function scheduleSyncScroll() {
+  if (disposed || syncScrollPending) {
+    return;
+  }
+  syncScrollPending = true;
+  const token = ++syncScrollToken;
+  nextTick(() => {
+    syncScrollPending = false;
+    if (disposed || token !== syncScrollToken) {
+      return;
+    }
+    syncScroll();
+  });
+}
+
 function syncScroll() {
-  if (!textarea.value || !mirror.value) {
+  if (disposed || !textarea.value || !mirror.value) {
     return;
   }
 
@@ -91,6 +119,7 @@ function escapeHtml(text) {
       class="variable-editor variable-editor-input"
       :value="modelValue"
       :placeholder="placeholder"
+      :aria-label="ariaLabel"
       :disabled="disabled"
       @input="onInput"
       @scroll="syncScroll"

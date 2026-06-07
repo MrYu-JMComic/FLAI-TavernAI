@@ -1,5 +1,5 @@
 <script setup>
-import { computed, nextTick, onMounted, onUpdated, ref, watch } from 'vue';
+import { computed, ref, watch } from 'vue';
 import { useVirtualizer } from '@tanstack/vue-virtual';
 
 const props = defineProps({
@@ -21,6 +21,16 @@ const emit = defineEmits(['scroll', 'wheel', 'touchstart', 'touchmove']);
 
 const scrollContainerRef = ref(null);
 const measurementCache = new Map();
+const messageIds = computed(() => props.messages.map((message) => String(message?.id || '')).filter(Boolean));
+
+watch(messageIds, (ids) => {
+  const activeIds = new Set(ids);
+  for (const messageId of measurementCache.keys()) {
+    if (!activeIds.has(messageId)) {
+      measurementCache.delete(messageId);
+    }
+  }
+});
 
 function estimateSize(index) {
   const message = props.messages[index];
@@ -48,41 +58,47 @@ const virtualizer = useVirtualizer(
 // Measure actual rendered items
 function measureElement(el) {
   if (!el) return;
+  virtualizer.measureElement?.(el);
+
   const messageId = el.dataset?.messageId;
   if (!messageId) return;
   
-  const height = el.getBoundingClientRect().height;
+  const height = Math.ceil(el.getBoundingClientRect().height);
   if (height > 0) {
     measurementCache.set(messageId, height);
   }
 }
 
-// Auto-scroll to bottom
+function getScrollElement() {
+  return scrollContainerRef.value;
+}
+
 function scrollToBottom(smooth = false) {
   const container = scrollContainerRef.value;
   if (!container) return;
+  const top = Math.max(0, container.scrollHeight - container.clientHeight);
   
   if (smooth) {
     container.scrollTo({
-      top: container.scrollHeight,
+      top,
       behavior: 'smooth'
     });
   } else {
-    container.scrollTop = container.scrollHeight;
+    container.scrollTop = top;
   }
 }
 
-// Check if scrolled to bottom
 function isNearBottom(threshold = 120) {
   const container = scrollContainerRef.value;
   if (!container) return true;
-  return container.scrollHeight - container.scrollTop - container.clientHeight < threshold;
+  return container.scrollHeight - container.scrollTop - container.clientHeight <= threshold;
 }
 
 defineExpose({
   scrollToBottom,
   isNearBottom,
   scrollContainerRef,
+  getScrollElement,
   measureElement
 });
 
@@ -119,7 +135,9 @@ function handleTouchmove(event) {
       <div
         v-for="item in virtualizer.getVirtualItems()"
         :key="item.key"
+        :ref="measureElement"
         class="virtual-scroll-item"
+        :data-index="item.index"
         :data-message-id="messages[item.index]?.id"
         :style="{
           position: 'absolute',

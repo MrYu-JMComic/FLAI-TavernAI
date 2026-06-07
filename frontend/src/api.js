@@ -2,6 +2,8 @@ const jsonHeaders = {
   'Content-Type': 'application/json'
 };
 
+const MAX_ERROR_BODY_LENGTH = 1000;
+
 // ── CSRF Token 管理 ──
 let csrfToken = '';
 
@@ -47,7 +49,7 @@ if (typeof window !== 'undefined') {
   ensureCsrfToken();
 }
 
-const configuredApiBase = normalizeBaseUrl(import.meta.env.VITE_API_BASE_URL || '');
+const configuredApiBase = normalizeBaseUrl(import.meta.env?.VITE_API_BASE_URL || '');
 
 export async function apiRequest(path, options = {}) {
   let response;
@@ -60,8 +62,9 @@ export async function apiRequest(path, options = {}) {
     throwApiError(normalizeNetworkError(error), null, { cause: error?.message || String(error) });
   }
 
-  if (shouldRetryApiOnBackend(path, response, data)) {
-    ({ response, data, base } = await guardedRequestJson(path, options, devBackendBase()));
+  const retryBase = getApiBackendRetryBase(path, response);
+  if (retryBase && !shouldBlockApiBackendRetry(data)) {
+    ({ response, data, base } = await guardedRequestJson(path, options, retryBase));
   }
 
   if (shouldRetryAfterCsrf(response, data, options)) {
@@ -70,7 +73,7 @@ export async function apiRequest(path, options = {}) {
   }
 
   if (!response.ok) {
-    throwApiError(data.error || normalizeHttpError(response), response, data);
+    throwApiError(getResponseErrorMessage(response, data), response, data);
   }
   return data;
 }
@@ -117,7 +120,7 @@ export function saveUserProfile(payload) {
 
 export function fetchCharacters({ search = '', sort = 'created', tag = '' } = {}) {
   const params = new URLSearchParams({ search, sort, tag });
-  return apiRequest(`/api/characters?${params.toString()}`);
+  return apiRequest(`/api/characters?${params.toString()}`, { cache: 'no-store' });
 }
 
 export function fetchCharacter(id) {
@@ -233,7 +236,7 @@ export function reorderCharacterImages(characterId, orderedIds) {
 // ── World Books ──
 
 export function fetchWorldBooks() {
-  return apiRequest('/api/world-books');
+  return apiRequest('/api/world-books', { cache: 'no-store' });
 }
 
 export function completeWorldBookDraft(payload) {
@@ -293,8 +296,13 @@ export function deleteWorldBookEntry(bookId, entryId) {
 
 // ── Tags ──
 
-export function fetchTags() {
-  return apiRequest('/api/tags');
+export function fetchTags({ limit } = {}) {
+  const params = new URLSearchParams();
+  if (Number.isFinite(Number(limit)) && Number(limit) > 0) {
+    params.set('limit', Math.floor(Number(limit)));
+  }
+  const suffix = params.toString() ? `?${params.toString()}` : '';
+  return apiRequest(`/api/tags${suffix}`);
 }
 
 export function createTag(payload) {
@@ -748,6 +756,7 @@ async function streamSSE(path, payload, handlers = {}, signal, options = {}) {
     credentials: 'include',
     headers: {
       ...jsonHeaders,
+      Accept: 'text/event-stream',
       'X-CSRF-Token': getCsrfToken() || ''
     },
     body,
@@ -758,33 +767,62 @@ async function streamSSE(path, payload, handlers = {}, signal, options = {}) {
   let result = await fetchSseResponse(path, streamBase, buildRequest, signal);
   if (result.aborted) return { aborted: true };
   let response = result.response;
+  let responseErrorDetail = null;
 
-  if (shouldRetryApiOnBackend(path, response)) {
-    streamBase = devBackendBase();
-    result = await fetchSseResponse(path, streamBase, buildRequest, signal);
-    if (result.aborted) return { aborted: true };
-    response = result.response;
+  const retryBase = getApiBackendRetryBase(path, response);
+  if (retryBase) {
+    const retryDetail = await readResponseBodyOrHttpError(response);
+    if (!shouldBlockApiBackendRetry(retryDetail)) {
+      streamBase = retryBase;
+      result = await fetchSseResponse(path, streamBase, buildRequest, signal);
+      if (result.aborted) return { aborted: true };
+      response = result.response;
+    } else {
+      responseErrorDetail = retryDetail;
+    }
   }
 
   if (response.status === 403 || response.status === 419) {
-    const detail = await response.clone().json().catch(() => ({}));
+    const detail = await readResponseBody(response).catch(() => ({}));
     if (isCsrfFailure(response, detail)) {
       await refreshCsrfToken();
       result = await fetchSseResponse(path, streamBase, buildRequest, signal);
       if (result.aborted) return { aborted: true };
       response = result.response;
+    } else {
+      responseErrorDetail = detail;
     }
   }
 
   if (!response.ok) {
-    const detail = await response.json().catch(() => ({}));
-    throwApiError(detail.error || normalizeHttpError(response), response, detail);
+    const detail = responseErrorDetail || (await readResponseBody(response).catch(() => ({})));
+    throwApiError(getResponseErrorMessage(response, detail), response, detail);
   }
 
   const reader = getSseReader(response);
   const decoder = new TextDecoder();
   let buffer = '';
   let doneData = null;
+
+  const handleSseEvent = async (event) => {
+    if (returnDoneData && event.name === 'done') {
+      doneData = event.data;
+    }
+    if (throwOnError && event.name === 'error') {
+      if (handlers.error) {
+        await handlers.error(event.data);
+      }
+      throwApiError(
+        getStructuredErrorMessage(event.data) || normalizeRawErrorText(event.rawText) || 'AI 助手生成失败',
+        null,
+        event.data
+      );
+    } else if (event.name && handlers[event.name]) {
+      await handlers[event.name](event.data);
+    } else if (['content', 'reasoning', 'tool', 'step', 'nudge', 'ping'].includes(event.name)) {
+      await nextPaint();
+    }
+  };
 
   while (true) {
     let chunk;
@@ -812,21 +850,14 @@ async function streamSSE(path, payload, handlers = {}, signal, options = {}) {
       const block = buffer.slice(0, match.index);
       buffer = buffer.slice(match.index + match[0].length);
       const event = parseSseBlock(block);
-      if (returnDoneData && event.name === 'done') {
-        doneData = event.data;
-      }
-      if (throwOnError && event.name === 'error') {
-        if (handlers.error) {
-          await handlers.error(event.data);
-        }
-        throwApiError(event.data?.error || 'AI 助手生成失败', null, event.data);
-      } else if (event.name && handlers[event.name]) {
-        await handlers[event.name](event.data);
-      } else if (['content', 'reasoning', 'tool', 'step', 'nudge', 'ping'].includes(event.name)) {
-        await nextPaint();
-      }
+      await handleSseEvent(event);
       match = buffer.match(/\r?\n\r?\n/);
     }
+  }
+
+  buffer += decoder.decode();
+  if (buffer.trim()) {
+    await handleSseEvent(parseSseBlock(buffer));
   }
 
   return returnDoneData ? doneData : undefined;
@@ -870,9 +901,11 @@ function parseSseBlock(block) {
     }
   }
 
+  const rawText = dataLines.join('\n');
   return {
     name,
-    data: safeJson(dataLines.join('\n'))
+    data: safeJson(rawText),
+    rawText
   };
 }
 
@@ -881,6 +914,32 @@ function safeJson(text) {
     return JSON.parse(text);
   } catch {
     return {};
+  }
+}
+
+async function readResponseBody(response) {
+  const text = await response.text();
+  return parseResponseBody(text, response);
+}
+
+async function readResponseBodyOrHttpError(response) {
+  try {
+    return await readResponseBody(response);
+  } catch (error) {
+    if (response.ok) {
+      throw error;
+    }
+    return { error: normalizeHttpError(response) };
+  }
+}
+
+function parseResponseBody(text, response) {
+  if (!text) return {};
+
+  try {
+    return JSON.parse(text);
+  } catch {
+    return response.ok ? {} : { rawText: truncateResponseText(text) };
   }
 }
 
@@ -900,10 +959,9 @@ async function requestJson(path, options = {}, base = configuredApiBase) {
     }
   });
 
-  const text = await response.text();
   return {
     response,
-    data: text ? safeJson(text) : {},
+    data: await readResponseBodyOrHttpError(response),
     base
   };
 }
@@ -915,14 +973,19 @@ function apiUrl(path, base = configuredApiBase) {
   return base ? `${base}${path}` : path;
 }
 
-function shouldRetryApiOnBackend(path, response, data = {}) {
-  return (
-    response.status === 404 &&
-    path.startsWith('/api/') &&
-    !configuredApiBase &&
-    !data.error &&
-    Boolean(devBackendBase())
-  );
+function getApiBackendRetryBase(path, response) {
+  if (response.status !== 404 || !isApiPath(path) || configuredApiBase) {
+    return '';
+  }
+  return devBackendBase();
+}
+
+function isApiPath(path) {
+  return path === '/api' || path.startsWith('/api/');
+}
+
+function shouldBlockApiBackendRetry(data = {}) {
+  return Boolean(getRetryBlockingErrorMessage(data));
 }
 
 function shouldRetryAfterCsrf(response, data, options = {}) {
@@ -931,7 +994,8 @@ function shouldRetryAfterCsrf(response, data, options = {}) {
 }
 
 function isCsrfFailure(response, data = {}) {
-  return [403, 419].includes(response.status) && /csrf/i.test(String(data.error || data.message || ''));
+  const message = getReadableErrorMessage(data);
+  return [403, 419].includes(response.status) && /csrf/i.test(message);
 }
 
 function devBackendBase() {
@@ -956,6 +1020,53 @@ async function guardedRequestJson(path, options = {}, base = configuredApiBase) 
   } catch (error) {
     throwApiError(normalizeNetworkError(error), null, { cause: error?.message || String(error) });
   }
+}
+
+function getResponseErrorMessage(response, data = {}) {
+  const structuredMessage = getStructuredErrorMessage(data);
+  if (structuredMessage) return structuredMessage;
+  if (response.status === 502) return normalizeHttpError(response);
+  return normalizeRawErrorText(data?.rawText) || normalizeHttpError(response);
+}
+
+function getReadableErrorMessage(data = {}) {
+  return getStructuredErrorMessage(data) || normalizeRawErrorText(data?.rawText);
+}
+
+function getRetryBlockingErrorMessage(data = {}) {
+  const structuredMessage = getStructuredErrorMessage(data);
+  if (structuredMessage) return structuredMessage;
+  const rawMessage = normalizeRawErrorText(data?.rawText);
+  return isGenericDevNotFoundText(rawMessage) ? '' : rawMessage;
+}
+
+function getStructuredErrorMessage(data) {
+  if (typeof data === 'string') return data.trim();
+  if (!data || typeof data !== 'object') return '';
+  return normalizeStructuredMessageValue(data.error) || normalizeStructuredMessageValue(data.message);
+}
+
+function normalizeStructuredMessageValue(value) {
+  if (typeof value === 'string') return value.trim();
+  if (!value || typeof value !== 'object') return '';
+  return normalizeStructuredMessageValue(value.message) || normalizeStructuredMessageValue(value.error);
+}
+
+function normalizeRawErrorText(text) {
+  const value = String(text || '').trim();
+  if (!value || value.startsWith('<')) return '';
+  if (['{}', '[]', 'null'].includes(value)) return '';
+  return value.replace(/\s+/g, ' ');
+}
+
+function isGenericDevNotFoundText(message) {
+  return /^(not found|cannot (get|post|put|patch|delete) \/api(?:\/\S*)?)$/i.test(message);
+}
+
+function truncateResponseText(text) {
+  const value = String(text || '').trim();
+  if (value.length <= MAX_ERROR_BODY_LENGTH) return value;
+  return `${value.slice(0, MAX_ERROR_BODY_LENGTH)}...`;
 }
 
 function normalizeHttpError(response) {

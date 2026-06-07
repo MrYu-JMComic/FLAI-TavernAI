@@ -14,6 +14,8 @@ import { sanitizeText } from '../services/sanitize.js';
 import { completeWorldBookDraft, streamWorldBookDraft } from '../services/worldBookAssistant.js';
 import { withModelOverride, writeSse } from './helpers.js';
 
+const WORLD_BOOK_ASSISTANT_TIMEOUT_MS = 10 * 60 * 1000;
+
 export function createWorldBooksRouter(ctx) {
   const { db, requireAuth, asyncRoute, withListCache, getChatProviderSettings } = ctx;
   const router = Router();
@@ -38,13 +40,17 @@ export function createWorldBooksRouter(ctx) {
     const effectiveSettings = withModelOverride(settings.value, request.body?.modelOverride);
 
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(new Error('AI 世界书创建请求超时，请稍后重试。')), 300000);
+    const timeout = setTimeout(() => controller.abort(new Error('AI 世界书创建请求超时，请稍后重试。')), WORLD_BOOK_ASSISTANT_TIMEOUT_MS);
     request.on('aborted', () => controller.abort(new Error('客户端已取消世界书创建请求。')));
 
     try {
       if (request.body?.stream === true) {
+        request.socket?.setTimeout?.(0);
+        response.socket?.setTimeout?.(0);
+        response.setTimeout?.(0);
         response.writeHead(200, {
           'Content-Type': 'text/event-stream; charset=utf-8',
+          'Content-Encoding': 'identity',
           'Cache-Control': 'no-cache, no-transform',
           Connection: 'keep-alive',
           'X-Accel-Buffering': 'no'

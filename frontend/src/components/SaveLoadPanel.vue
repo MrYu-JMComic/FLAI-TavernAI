@@ -1,10 +1,9 @@
 <script setup>
-import { computed, onMounted, ref, watch } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import {
-  Download,
   FolderOpen,
   Pencil,
-  Plus,
+  RefreshCw,
   Save,
   Trash2,
   X
@@ -34,12 +33,15 @@ const emit = defineEmits(['close', 'loaded']);
 const notify = useNotify();
 const saves = ref([]);
 const loading = ref(false);
+const loadError = ref('');
 const saving = ref(false);
 const saveName = ref('');
 const renamingId = ref('');
 const renameValue = ref('');
 const busyId = ref('');
 let savesLoadToken = 0;
+let savesMutationToken = 0;
+let savePanelDisposed = false;
 
 const sortedSaves = computed(() => [...saves.value]);
 
@@ -62,10 +64,18 @@ onMounted(() => {
   }
 });
 
+onBeforeUnmount(() => {
+  savePanelDisposed = true;
+  savesLoadToken += 1;
+  savesMutationToken += 1;
+});
+
 function resetSavePanelState() {
   savesLoadToken += 1;
+  savesMutationToken += 1;
   saves.value = [];
   saveName.value = '';
+  loadError.value = '';
   renamingId.value = '';
   renameValue.value = '';
   busyId.value = '';
@@ -74,6 +84,7 @@ function resetSavePanelState() {
 }
 
 async function loadSaves() {
+  if (savePanelDisposed) return;
   const conversationId = props.conversationId;
   if (!conversationId) {
     resetSavePanelState();
@@ -81,36 +92,48 @@ async function loadSaves() {
   }
   const requestToken = ++savesLoadToken;
   loading.value = true;
+  loadError.value = '';
   try {
     const nextSaves = await fetchSaves(conversationId);
-    if (requestToken !== savesLoadToken || conversationId !== props.conversationId) return;
+    if (!isCurrentSaveLoad(requestToken, conversationId)) return;
     saves.value = nextSaves;
   } catch (err) {
-    if (requestToken !== savesLoadToken || conversationId !== props.conversationId) return;
-    notify.error(err.message || '加载存档列表失败');
+    if (!isCurrentSaveLoad(requestToken, conversationId)) return;
+    loadError.value = err.message || '加载存档列表失败';
+    saves.value = [];
+    notify.error(loadError.value);
   } finally {
-    if (requestToken === savesLoadToken && conversationId === props.conversationId) {
+    if (isCurrentSaveLoad(requestToken, conversationId)) {
       loading.value = false;
     }
   }
+}
+
+function isCurrentSaveLoad(requestToken, conversationId) {
+  return !savePanelDisposed && requestToken === savesLoadToken && conversationId === props.conversationId;
+}
+
+function isCurrentSaveMutation(mutationToken, conversationId) {
+  return !savePanelDisposed && mutationToken === savesMutationToken && conversationId === props.conversationId;
 }
 
 async function doCreateSave() {
   if (saving.value) return;
   const conversationId = props.conversationId;
   if (!conversationId) return;
+  const mutationToken = savesMutationToken;
   saving.value = true;
   try {
     const created = await createSave(conversationId, { name: saveName.value.trim() });
-    if (conversationId !== props.conversationId) return;
+    if (!isCurrentSaveMutation(mutationToken, conversationId)) return;
     saves.value = [created, ...saves.value];
     saveName.value = '';
     notify.success('存档已创建');
   } catch (err) {
-    if (conversationId !== props.conversationId) return;
+    if (!isCurrentSaveMutation(mutationToken, conversationId)) return;
     notify.error(err.message || '存档失败');
   } finally {
-    if (conversationId === props.conversationId) {
+    if (isCurrentSaveMutation(mutationToken, conversationId)) {
       saving.value = false;
     }
   }
@@ -121,17 +144,18 @@ async function doLoadSave(item) {
   if (!window.confirm(`读取存档「${item.name}」？当前会话消息将被替换。`)) return;
   const conversationId = props.conversationId;
   if (!conversationId) return;
+  const mutationToken = savesMutationToken;
   busyId.value = item.id;
   try {
     const result = await loadSave(item.id);
-    if (conversationId !== props.conversationId) return;
+    if (!isCurrentSaveMutation(mutationToken, conversationId)) return;
     notify.success(`已恢复 ${result.messageCount} 条消息`);
     emit('loaded', result);
   } catch (err) {
-    if (conversationId !== props.conversationId) return;
+    if (!isCurrentSaveMutation(mutationToken, conversationId)) return;
     notify.error(err.message || '读档失败');
   } finally {
-    if (conversationId === props.conversationId) {
+    if (isCurrentSaveMutation(mutationToken, conversationId)) {
       busyId.value = '';
     }
   }
@@ -142,17 +166,18 @@ async function doDeleteSave(item) {
   if (!window.confirm(`删除存档「${item.name}」？此操作不可撤销。`)) return;
   const conversationId = props.conversationId;
   if (!conversationId) return;
+  const mutationToken = savesMutationToken;
   busyId.value = item.id;
   try {
     await deleteSave(item.id);
-    if (conversationId !== props.conversationId) return;
+    if (!isCurrentSaveMutation(mutationToken, conversationId)) return;
     saves.value = saves.value.filter((s) => s.id !== item.id);
     notify.success('存档已删除');
   } catch (err) {
-    if (conversationId !== props.conversationId) return;
+    if (!isCurrentSaveMutation(mutationToken, conversationId)) return;
     notify.error(err.message || '删除失败');
   } finally {
-    if (conversationId === props.conversationId) {
+    if (isCurrentSaveMutation(mutationToken, conversationId)) {
       busyId.value = '';
     }
   }
@@ -173,10 +198,11 @@ async function doRename(item) {
   if (!name || busyId.value) return;
   const conversationId = props.conversationId;
   if (!conversationId) return;
+  const mutationToken = savesMutationToken;
   busyId.value = item.id;
   try {
     const updated = await renameSave(item.id, name);
-    if (conversationId !== props.conversationId) return;
+    if (!isCurrentSaveMutation(mutationToken, conversationId)) return;
     const index = saves.value.findIndex((s) => s.id === item.id);
     if (index !== -1) {
       saves.value[index] = { ...saves.value[index], name: updated.name };
@@ -184,10 +210,10 @@ async function doRename(item) {
     cancelRename();
     notify.success('存档名已更新');
   } catch (err) {
-    if (conversationId !== props.conversationId) return;
+    if (!isCurrentSaveMutation(mutationToken, conversationId)) return;
     notify.error(err.message || '重命名失败');
   } finally {
-    if (conversationId === props.conversationId) {
+    if (isCurrentSaveMutation(mutationToken, conversationId)) {
       busyId.value = '';
     }
   }
@@ -219,7 +245,13 @@ function formatTime(iso) {
               <h2>存档管理</h2>
               <p>保存和恢复会话状态</p>
             </div>
-            <button class="save-panel-close" type="button" title="关闭" @click="emit('close')">
+            <button
+              class="save-panel-close"
+              type="button"
+              title="关闭"
+              aria-label="关闭存档管理"
+              @click="emit('close')"
+            >
               <X :size="18" />
             </button>
           </header>
@@ -231,6 +263,7 @@ function formatTime(iso) {
               type="text"
               placeholder="存档名称（可留空自动生成）"
               maxlength="80"
+              aria-label="新存档名称"
               @keydown.enter.prevent="doCreateSave"
             />
             <button
@@ -246,6 +279,13 @@ function formatTime(iso) {
 
           <div class="save-panel-list">
             <p v-if="loading" class="save-empty">正在加载存档...</p>
+            <div v-else-if="loadError" class="save-empty save-error-state">
+              <p>{{ loadError }}</p>
+              <button class="save-retry-button" type="button" @click="loadSaves">
+                <RefreshCw :size="14" />
+                <span>重试</span>
+              </button>
+            </div>
             <p v-else-if="!sortedSaves.length" class="save-empty">暂无存档，点击上方按钮创建第一个存档</p>
             <div
               v-for="item in sortedSaves"
@@ -260,13 +300,24 @@ function formatTime(iso) {
                     class="save-rename-input"
                     type="text"
                     maxlength="80"
+                    aria-label="存档新名称"
                     @keydown.enter.prevent="doRename(item)"
                     @keydown.esc.prevent="cancelRename"
                   />
-                  <button class="save-mini-button" type="button" @click="doRename(item)">
+                  <button
+                    class="save-mini-button"
+                    type="button"
+                    aria-label="保存存档名称"
+                    @click="doRename(item)"
+                  >
                     <Save :size="13" />
                   </button>
-                  <button class="save-mini-button" type="button" @click="cancelRename">
+                  <button
+                    class="save-mini-button"
+                    type="button"
+                    aria-label="取消重命名"
+                    @click="cancelRename"
+                  >
                     <X :size="13" />
                   </button>
                 </div>
@@ -281,6 +332,7 @@ function formatTime(iso) {
                   class="save-action-button"
                   type="button"
                   title="读档"
+                  aria-label="读取存档"
                   :disabled="busyId === item.id"
                   @click="doLoadSave(item)"
                 >
@@ -290,6 +342,7 @@ function formatTime(iso) {
                   class="save-action-button"
                   type="button"
                   title="重命名"
+                  aria-label="重命名存档"
                   :disabled="busyId === item.id"
                   @click="beginRename(item)"
                 >
@@ -299,6 +352,7 @@ function formatTime(iso) {
                   class="save-action-button danger"
                   type="button"
                   title="删除"
+                  aria-label="删除存档"
                   :disabled="busyId === item.id"
                   @click="doDeleteSave(item)"
                 >
@@ -423,6 +477,36 @@ function formatTime(iso) {
   padding: 32px 0;
   color: var(--muted, #75685e);
   font-size: 0.88rem;
+}
+
+.save-empty p {
+  margin: 0;
+}
+
+.save-error-state {
+  display: grid;
+  justify-items: center;
+  gap: 10px;
+}
+
+.save-retry-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 32px;
+  padding: 0 12px;
+  border: 1px solid var(--line, rgba(62, 48, 38, 0.14));
+  border-radius: 8px;
+  background: var(--surface, #fffaf2);
+  color: var(--text, #241f1b);
+  font-size: 0.82rem;
+  font-weight: 700;
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.save-retry-button:hover {
+  border-color: color-mix(in srgb, var(--primary, #8f3f2f) 35%, var(--line, rgba(62, 48, 38, 0.14)));
+  background: var(--surface-strong, #fff4e3);
 }
 
 .save-item {

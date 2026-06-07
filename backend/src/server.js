@@ -12,6 +12,7 @@ import {
 } from './security.js';
 import { migrateLegacyAvatarUploads, getAvatarAssetForViewer } from './services/avatars.js';
 import { providerWithSecret, hasUsableProvider, defaultProviderSettings, normalizeProviderRow } from './services/providers.js';
+import { getCharacterWorldBookId } from './modules/worldBooks.js';
 
 // ── Route modules ──
 import { createAuthRouter } from './routes/auth.js';
@@ -56,6 +57,15 @@ function isAuthAttemptPath(request) {
     || originalUrl.startsWith('/api/auth/register');
 }
 
+function shouldCompressResponse(request, response) {
+  const accept = String(request.headers?.accept || '').toLowerCase();
+  const contentType = String(response.getHeader('Content-Type') || '').toLowerCase();
+  if (accept.includes('text/event-stream') || contentType.includes('text/event-stream')) {
+    return false;
+  }
+  return compression.filter(request, response);
+}
+
 // ── Middleware ──
 
 app.use(
@@ -74,13 +84,14 @@ app.use(
 // ── Compression (gzip/deflate) ──
 app.use(compression({
   threshold: 256,
-  level: 6
+  level: 6,
+  filter: shouldCompressResponse
 }));
 
 // ── Cookie Parser (用于 CSRF 校验) ──
 app.use(cookieParser());
 
-app.use(express.json({ limit: '5mb' }));
+app.use(express.json({ limit: '8mb' }));
 migrateLegacyAvatarUploads(db);
 app.use(attachAuth);
 
@@ -187,8 +198,7 @@ function asyncRoute(handler) {
 
 function withWorldBookId(character) {
   if (!character) return character;
-  const row = db.prepare('SELECT id FROM world_books WHERE character_id = ?').get(character.id);
-  return { ...character, worldBookId: row?.id || null };
+  return { ...character, worldBookId: getCharacterWorldBookId(db, character.id) };
 }
 
 function withCharacterTags(character) {

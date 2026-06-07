@@ -6,7 +6,7 @@ import {
   fetchCharacters,
   fetchConversations,
   fetchPresets
-} from '../../api';
+} from '../../api.js';
 
 export function useChatConversation({ route, emit, showError }) {
   const conversation = ref(null);
@@ -15,6 +15,7 @@ export function useChatConversation({ route, emit, showError }) {
   const messages = ref([]);
   const loading = ref(false);
   const error = ref('');
+  const sidebarLoadError = ref('');
   const historySearch = ref('');
   const sidebarOpen = ref(typeof window !== 'undefined' && window.matchMedia('(min-width: 981px)').matches);
   const settingsDrawerOpen = ref(false);
@@ -25,6 +26,7 @@ export function useChatConversation({ route, emit, showError }) {
   const economyPanelOpen = ref(false);
   const presetList = ref([]);
   const selectedPresetId = ref('');
+  let sidebarLoadToken = 0;
 
   const filteredConversations = computed(() => {
     const query = historySearch.value.trim().toLowerCase();
@@ -44,20 +46,56 @@ export function useChatConversation({ route, emit, showError }) {
   });
 
   async function loadSidebarData() {
+    const requestToken = ++sidebarLoadToken;
     const currentCharacterId = conversation.value?.characterId;
-    const [history, characterList, presets] = await Promise.all([
-      fetchConversations({ characterId: currentCharacterId }).catch(() => []),
-      fetchCharacters().catch(() => []),
-      fetchPresets().catch(() => [])
+    const [historyResult, characterResult, presetResult] = await Promise.allSettled([
+      fetchConversations({ characterId: currentCharacterId }),
+      fetchCharacters(),
+      fetchPresets()
     ]);
-    conversations.value = history;
-    characters.value = characterList;
-    presetList.value = presets;
-    if (!selectedPresetId.value && presets.length) {
+    if (requestToken !== sidebarLoadToken || currentCharacterId !== conversation.value?.characterId) {
+      return;
+    }
+
+    const failures = [];
+    if (historyResult.status === 'fulfilled') {
+      conversations.value = historyResult.value;
+    } else {
+      conversations.value = [];
+      failures.push(['会话历史', historyResult.reason]);
+    }
+
+    if (characterResult.status === 'fulfilled') {
+      characters.value = characterResult.value;
+    } else {
+      characters.value = [];
+      failures.push(['角色列表', characterResult.reason]);
+    }
+
+    if (presetResult.status === 'fulfilled') {
+      presetList.value = presetResult.value;
+    } else {
+      presetList.value = [];
+      selectedPresetId.value = '';
+      failures.push(['预设列表', presetResult.reason]);
+    }
+
+    if (!selectedPresetId.value && presetList.value.length) {
+      const presets = presetList.value;
       const defaultPreset = presets.find((p) => p.isDefault);
       selectedPresetId.value = defaultPreset?.id || '';
     }
+    sidebarLoadError.value = formatSidebarLoadError(failures);
     pruneSelectedConversations();
+  }
+
+  function formatSidebarLoadError(failures) {
+    if (!failures.length) {
+      return '';
+    }
+    const labels = failures.map(([label]) => label).join('、');
+    const firstMessage = failures.map(([, reason]) => reason?.message).find(Boolean);
+    return firstMessage ? `${labels}加载失败：${firstMessage}` : `${labels}加载失败`;
   }
 
   async function startNewConversation() {
@@ -239,6 +277,7 @@ export function useChatConversation({ route, emit, showError }) {
     messages,
     loading,
     error,
+    sidebarLoadError,
     historySearch,
     sidebarOpen,
     settingsDrawerOpen,

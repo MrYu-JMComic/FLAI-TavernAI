@@ -1,5 +1,5 @@
 <script setup>
-import { computed, reactive, ref, watch } from 'vue';
+import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue';
 import {
   Brain,
   Plus,
@@ -33,16 +33,20 @@ const emit = defineEmits(['close', 'update:open', 'npcs-loaded']);
 
 const notify = useNotify();
 const loading = ref(false);
+const loadError = ref('');
 const npcs = ref([]);
 const selectedNpc = ref('');
 const memories = ref([]);
 const behaviors = ref([]);
 const detailTab = ref('memories');
 const detailLoading = ref(false);
+const detailError = ref('');
 const addMemoryOpen = ref(false);
 const addBehaviorOpen = ref(false);
 let npcLoadToken = 0;
 let npcDetailToken = 0;
+let npcMutationToken = 0;
+let npcPanelDisposed = false;
 const memoryForm = reactive({ memoryType: 'event', content: '' });
 const behaviorForm = reactive({
   behaviorType: 'reaction',
@@ -108,6 +112,11 @@ watch(() => props.conversationId, () => {
   }
 });
 
+onBeforeUnmount(() => {
+  npcPanelDisposed = true;
+  resetNpcState();
+});
+
 function requestClose() {
   emit('update:open', false);
   emit('close');
@@ -116,17 +125,47 @@ function requestClose() {
 function resetNpcState() {
   npcLoadToken += 1;
   npcDetailToken += 1;
+  npcMutationToken += 1;
   npcs.value = [];
-  selectedNpc.value = '';
+  setSelectedNpc('');
   memories.value = [];
   behaviors.value = [];
+  loadError.value = '';
+  detailError.value = '';
   addMemoryOpen.value = false;
   addBehaviorOpen.value = false;
+  resetNpcForms();
   loading.value = false;
   detailLoading.value = false;
 }
 
+function setSelectedNpc(name) {
+  const nextName = String(name || '');
+  if (nextName !== selectedNpc.value) {
+    resetNpcForms();
+  }
+  selectedNpc.value = nextName;
+}
+
+function resetNpcForms() {
+  memoryForm.memoryType = 'event';
+  memoryForm.content = '';
+  behaviorForm.behaviorType = 'reaction';
+  behaviorForm.triggerCondition = '';
+  behaviorForm.action = '';
+  behaviorForm.priority = 0;
+  behaviorForm.enabled = true;
+}
+
+function isCurrentNpcMutation(mutationToken, conversationId, npcName = null) {
+  return !npcPanelDisposed
+    && mutationToken === npcMutationToken
+    && conversationId === props.conversationId
+    && (npcName === null || npcName === selectedNpc.value);
+}
+
 async function loadNpcs() {
+  if (npcPanelDisposed) return;
   const conversationId = props.conversationId;
   if (!conversationId) {
     resetNpcState();
@@ -134,16 +173,18 @@ async function loadNpcs() {
   }
   const requestToken = ++npcLoadToken;
   loading.value = true;
+  loadError.value = '';
   try {
     const nextNpcs = await fetchConversationNpcs(conversationId);
-    if (requestToken !== npcLoadToken || conversationId !== props.conversationId) return;
+    if (npcPanelDisposed || requestToken !== npcLoadToken || conversationId !== props.conversationId) return;
+    loadError.value = '';
     npcs.value = nextNpcs;
     emit('npcs-loaded', nextNpcs);
     if (selectedNpc.value && !npcs.value.find((n) => n.name === selectedNpc.value)) {
-      selectedNpc.value = '';
+      setSelectedNpc('');
     }
     if (!selectedNpc.value && npcs.value.length > 0) {
-      selectedNpc.value = npcs.value[0].name;
+      setSelectedNpc(npcs.value[0].name);
     }
     if (selectedNpc.value) {
       await loadNpcDetail();
@@ -152,47 +193,73 @@ async function loadNpcs() {
       behaviors.value = [];
     }
   } catch (err) {
-    if (requestToken !== npcLoadToken || conversationId !== props.conversationId) return;
-    notify.error(err.message || '加载 NPC 列表失败');
+    if (npcPanelDisposed || requestToken !== npcLoadToken || conversationId !== props.conversationId) return;
+    loadError.value = err.message || '加载 NPC 列表失败';
+    notify.error(loadError.value);
+    if (!npcs.value.length) {
+      setSelectedNpc('');
+      memories.value = [];
+      behaviors.value = [];
+      detailError.value = '';
+    }
   } finally {
-    if (requestToken === npcLoadToken && conversationId === props.conversationId) {
+    if (!npcPanelDisposed && requestToken === npcLoadToken && conversationId === props.conversationId) {
       loading.value = false;
     }
   }
 }
 
 async function selectNpc(name) {
-  selectedNpc.value = name;
+  if (npcPanelDisposed) return;
+  if (name !== selectedNpc.value) {
+    npcMutationToken += 1;
+  }
+  setSelectedNpc(name);
+  memories.value = [];
+  behaviors.value = [];
+  detailError.value = '';
   addMemoryOpen.value = false;
   addBehaviorOpen.value = false;
   await loadNpcDetail();
 }
 
 async function loadNpcDetail() {
+  if (npcPanelDisposed) return;
   const conversationId = props.conversationId;
   const npcName = selectedNpc.value;
-  if (!conversationId || !npcName) return;
+  if (!conversationId || !npcName) {
+    detailError.value = '';
+    memories.value = [];
+    behaviors.value = [];
+    return;
+  }
   const requestToken = ++npcDetailToken;
   detailLoading.value = true;
+  detailError.value = '';
+  memories.value = [];
+  behaviors.value = [];
   try {
     const [mem, beh] = await Promise.all([
       fetchNpcMemories(conversationId, npcName),
       fetchNpcBehaviors(conversationId, npcName)
     ]);
-    if (requestToken !== npcDetailToken || conversationId !== props.conversationId || npcName !== selectedNpc.value) return;
+    if (npcPanelDisposed || requestToken !== npcDetailToken || conversationId !== props.conversationId || npcName !== selectedNpc.value) return;
+    detailError.value = '';
     memories.value = mem;
     behaviors.value = beh;
   } catch (err) {
-    if (requestToken !== npcDetailToken || conversationId !== props.conversationId || npcName !== selectedNpc.value) return;
-    notify.error(err.message || '加载 NPC 详情失败');
+    if (npcPanelDisposed || requestToken !== npcDetailToken || conversationId !== props.conversationId || npcName !== selectedNpc.value) return;
+    detailError.value = err.message || '加载 NPC 详情失败';
+    notify.error(detailError.value);
   } finally {
-    if (requestToken === npcDetailToken && conversationId === props.conversationId && npcName === selectedNpc.value) {
+    if (!npcPanelDisposed && requestToken === npcDetailToken && conversationId === props.conversationId && npcName === selectedNpc.value) {
       detailLoading.value = false;
     }
   }
 }
 
 async function submitMemory() {
+  if (npcPanelDisposed) return;
   if (!memoryForm.content.trim()) {
     notify.warning('请输入记忆内容');
     return;
@@ -200,38 +267,46 @@ async function submitMemory() {
   const conversationId = props.conversationId;
   const npcName = selectedNpc.value;
   if (!conversationId || !npcName) return;
+  const mutationToken = npcMutationToken;
   try {
     const mem = await addNpcMemory(conversationId, npcName, {
       memoryType: memoryForm.memoryType,
       content: memoryForm.content.trim()
     });
-    if (conversationId !== props.conversationId || npcName !== selectedNpc.value) return;
+    if (!isCurrentNpcMutation(mutationToken, conversationId, npcName)) return;
     memories.value.unshift(mem);
     memoryForm.content = '';
     addMemoryOpen.value = false;
     await loadNpcs();
+    if (!isCurrentNpcMutation(mutationToken, conversationId, npcName)) return;
     notify.success('记忆已添加');
   } catch (err) {
+    if (!isCurrentNpcMutation(mutationToken, conversationId, npcName)) return;
     notify.error(err.message || '添加记忆失败');
   }
 }
 
 async function removeMemory(memoryId) {
+  if (npcPanelDisposed) return;
   const conversationId = props.conversationId;
   const npcName = selectedNpc.value;
   if (!conversationId || !npcName) return;
+  const mutationToken = npcMutationToken;
   try {
     await deleteNpcMemory(conversationId, npcName, memoryId);
-    if (conversationId !== props.conversationId || npcName !== selectedNpc.value) return;
+    if (!isCurrentNpcMutation(mutationToken, conversationId, npcName)) return;
     memories.value = memories.value.filter((m) => m.id !== memoryId);
     await loadNpcs();
+    if (!isCurrentNpcMutation(mutationToken, conversationId, npcName)) return;
     notify.success('记忆已删除');
   } catch (err) {
+    if (!isCurrentNpcMutation(mutationToken, conversationId, npcName)) return;
     notify.error(err.message || '删除记忆失败');
   }
 }
 
 async function submitBehavior() {
+  if (npcPanelDisposed) return;
   if (!behaviorForm.action.trim()) {
     notify.warning('请输入行为动作');
     return;
@@ -239,6 +314,7 @@ async function submitBehavior() {
   const conversationId = props.conversationId;
   const npcName = selectedNpc.value;
   if (!conversationId || !npcName) return;
+  const mutationToken = npcMutationToken;
   try {
     const beh = await addNpcBehavior(conversationId, npcName, {
       behaviorType: behaviorForm.behaviorType,
@@ -247,50 +323,60 @@ async function submitBehavior() {
       priority: behaviorForm.priority,
       enabled: behaviorForm.enabled
     });
-    if (conversationId !== props.conversationId || npcName !== selectedNpc.value) return;
+    if (!isCurrentNpcMutation(mutationToken, conversationId, npcName)) return;
     behaviors.value.push(beh);
     behaviorForm.triggerCondition = '';
     behaviorForm.action = '';
     behaviorForm.priority = 0;
     addBehaviorOpen.value = false;
     await loadNpcs();
+    if (!isCurrentNpcMutation(mutationToken, conversationId, npcName)) return;
     notify.success('行为规则已添加');
   } catch (err) {
+    if (!isCurrentNpcMutation(mutationToken, conversationId, npcName)) return;
     notify.error(err.message || '添加行为规则失败');
   }
 }
 
 async function toggleBehavior(behavior) {
+  if (npcPanelDisposed) return;
   const conversationId = props.conversationId;
   const npcName = selectedNpc.value;
   if (!conversationId || !npcName) return;
+  const mutationToken = npcMutationToken;
   try {
     const updated = await updateNpcBehavior(conversationId, npcName, behavior.id, {
       enabled: !behavior.enabled
     });
-    if (conversationId !== props.conversationId || npcName !== selectedNpc.value) return;
+    if (!isCurrentNpcMutation(mutationToken, conversationId, npcName)) return;
     Object.assign(behavior, updated);
   } catch (err) {
+    if (!isCurrentNpcMutation(mutationToken, conversationId, npcName)) return;
     notify.error(err.message || '更新失败');
   }
 }
 
 async function removeBehavior(behaviorId) {
+  if (npcPanelDisposed) return;
   const conversationId = props.conversationId;
   const npcName = selectedNpc.value;
   if (!conversationId || !npcName) return;
+  const mutationToken = npcMutationToken;
   try {
     await deleteNpcBehavior(conversationId, npcName, behaviorId);
-    if (conversationId !== props.conversationId || npcName !== selectedNpc.value) return;
+    if (!isCurrentNpcMutation(mutationToken, conversationId, npcName)) return;
     behaviors.value = behaviors.value.filter((b) => b.id !== behaviorId);
     await loadNpcs();
+    if (!isCurrentNpcMutation(mutationToken, conversationId, npcName)) return;
     notify.success('行为规则已删除');
   } catch (err) {
+    if (!isCurrentNpcMutation(mutationToken, conversationId, npcName)) return;
     notify.error(err.message || '删除行为规则失败');
   }
 }
 
 async function removeSelectedNpc() {
+  if (npcPanelDisposed) return;
   if (!selectedNpc.value) return;
   const conversationId = props.conversationId;
   const npcName = selectedNpc.value;
@@ -298,20 +384,24 @@ async function removeSelectedNpc() {
   if (!window.confirm(`从 NPC 列表移除“${npcName}”？已有记忆和行为不会被删除。`)) {
     return;
   }
+  const mutationToken = npcMutationToken;
   try {
     await hideConversationNpc(conversationId, npcName);
-    if (conversationId !== props.conversationId || npcName !== selectedNpc.value) return;
-    selectedNpc.value = '';
+    if (!isCurrentNpcMutation(mutationToken, conversationId, npcName)) return;
+    setSelectedNpc('');
     memories.value = [];
     behaviors.value = [];
     await loadNpcs();
+    if (!isCurrentNpcMutation(mutationToken, conversationId)) return;
     notify.success('NPC 已从列表移除');
   } catch (err) {
+    if (!isCurrentNpcMutation(mutationToken, conversationId, npcName)) return;
     notify.error(err.message || '移除 NPC 失败');
   }
 }
 
 async function removeEmptyNpcs() {
+  if (npcPanelDisposed) return;
   const conversationId = props.conversationId;
   const names = emptyNpcNames.value;
   if (!conversationId || !names.length) return;
@@ -320,17 +410,20 @@ async function removeEmptyNpcs() {
   if (!window.confirm(`从 NPC 列表移除 ${suffix}没有记忆和行为的 NPC？\n${preview}\n已有记忆和行为不会被删除。`)) {
     return;
   }
+  const mutationToken = npcMutationToken;
   try {
     const result = await hideEmptyConversationNpcs(conversationId);
-    if (conversationId !== props.conversationId) return;
+    if (!isCurrentNpcMutation(mutationToken, conversationId)) return;
     if (names.includes(selectedNpc.value)) {
-      selectedNpc.value = '';
+      setSelectedNpc('');
       memories.value = [];
       behaviors.value = [];
     }
     await loadNpcs();
+    if (!isCurrentNpcMutation(mutationToken, conversationId)) return;
     notify.success(`已移除 ${result?.count ?? names.length} 个空 NPC`);
   } catch (err) {
+    if (!isCurrentNpcMutation(mutationToken, conversationId)) return;
     notify.error(err.message || '批量移除空 NPC 失败');
   }
 }
@@ -372,7 +465,13 @@ function formatTime(iso) {
                 <span>{{ updateStatusMeta.label }}</span>
               </span>
             </div>
-            <button class="npc-close" type="button" @pointerdown.stop @click.stop="requestClose">
+            <button
+              class="npc-close"
+              type="button"
+              aria-label="关闭 NPC 管理面板"
+              @pointerdown.stop
+              @click.stop="requestClose"
+            >
               <X :size="18" />
             </button>
           </header>
@@ -407,31 +506,53 @@ function formatTime(iso) {
                   >
                     清理空项
                   </button>
-                  <button class="npc-refresh" type="button" title="刷新" @click="loadNpcs">
+                  <button
+                    class="npc-refresh"
+                    type="button"
+                    title="刷新"
+                    aria-label="刷新 NPC 列表"
+                    @click="loadNpcs"
+                  >
                     <RefreshCw :size="15" />
                   </button>
                 </div>
               </div>
               <div v-if="loading" class="npc-empty">加载中...</div>
-              <div v-else-if="!npcs.length" class="npc-empty">
-                暂无 NPC。AI 回复中出现的角色会自动识别。
-              </div>
-              <div v-else class="npc-list">
-                <button
-                  v-for="npc in npcs"
-                  :key="npc.name"
-                  class="npc-item"
-                  :class="{ active: npc.name === selectedNpc }"
-                  type="button"
-                  @click="selectNpc(npc.name)"
-                >
-                  <span class="npc-item-name">{{ npc.name }}</span>
-                  <span class="npc-item-counts">
-                    <span title="记忆数" class="npc-badge">🧠 {{ npc.memoryCount }}</span>
-                    <span title="行为规则数" class="npc-badge">⚡ {{ npc.behaviorCount }}</span>
-                  </span>
+              <div v-else-if="loadError && !npcs.length" class="npc-empty npc-error-state">
+                <p>{{ loadError }}</p>
+                <button class="npc-retry-button" type="button" @click="loadNpcs">
+                  <RefreshCw :size="14" />
+                  <span>重试</span>
                 </button>
               </div>
+              <template v-else>
+                <div v-if="loadError" class="npc-inline-error">
+                  <span>{{ loadError }}</span>
+                  <button class="npc-retry-button" type="button" @click="loadNpcs">
+                    <RefreshCw :size="14" />
+                    <span>重试</span>
+                  </button>
+                </div>
+                <div v-if="!npcs.length" class="npc-empty">
+                  暂无 NPC。AI 回复中出现的角色会自动识别。
+                </div>
+                <div v-else class="npc-list">
+                  <button
+                    v-for="npc in npcs"
+                    :key="npc.name"
+                    class="npc-item"
+                    :class="{ active: npc.name === selectedNpc }"
+                    type="button"
+                    @click="selectNpc(npc.name)"
+                  >
+                    <span class="npc-item-name">{{ npc.name }}</span>
+                    <span class="npc-item-counts">
+                      <span title="记忆数" class="npc-badge">🧠 {{ npc.memoryCount }}</span>
+                      <span title="行为规则数" class="npc-badge">⚡ {{ npc.behaviorCount }}</span>
+                    </span>
+                  </button>
+                </div>
+              </template>
             </div>
 
             <!-- NPC Detail -->
@@ -475,6 +596,13 @@ function formatTime(iso) {
               </div>
 
               <div v-if="detailLoading" class="npc-empty">加载中...</div>
+              <div v-else-if="detailError" class="npc-empty npc-error-state">
+                <p>{{ detailError }}</p>
+                <button class="npc-retry-button" type="button" @click="loadNpcDetail">
+                  <RefreshCw :size="14" />
+                  <span>重试</span>
+                </button>
+              </div>
 
               <!-- Memories Tab -->
               <template v-else-if="detailTab === 'memories'">
@@ -488,7 +616,7 @@ function formatTime(iso) {
                   <span>添加记忆</span>
                 </button>
                 <div v-if="addMemoryOpen" class="npc-form">
-                  <select v-model="memoryForm.memoryType" class="npc-select">
+                  <select v-model="memoryForm.memoryType" class="npc-select" aria-label="记忆类型">
                     <option v-for="opt in memoryTypeOptions" :key="opt.value" :value="opt.value">
                       {{ opt.label }}
                     </option>
@@ -498,6 +626,7 @@ function formatTime(iso) {
                     class="npc-textarea"
                     rows="3"
                     placeholder="输入 NPC 记忆内容..."
+                    aria-label="NPC 记忆内容"
                   />
                   <div class="npc-form-actions">
                     <button class="npc-save" type="button" @click="submitMemory">保存</button>
@@ -516,6 +645,7 @@ function formatTime(iso) {
                         class="npc-card-delete"
                         type="button"
                         title="删除"
+                        aria-label="删除记忆"
                         @click="removeMemory(mem.id)"
                       >
                         <Trash2 :size="14" />
@@ -538,7 +668,7 @@ function formatTime(iso) {
                   <span>添加行为规则</span>
                 </button>
                 <div v-if="addBehaviorOpen" class="npc-form">
-                  <select v-model="behaviorForm.behaviorType" class="npc-select">
+                  <select v-model="behaviorForm.behaviorType" class="npc-select" aria-label="行为类型">
                     <option v-for="opt in behaviorTypeOptions" :key="opt.value" :value="opt.value">
                       {{ opt.label }}
                     </option>
@@ -547,12 +677,14 @@ function formatTime(iso) {
                     v-model="behaviorForm.triggerCondition"
                     class="npc-input"
                     placeholder="触发条件（可选）"
+                    aria-label="行为触发条件"
                   />
                   <textarea
                     v-model="behaviorForm.action"
                     class="npc-textarea"
                     rows="3"
                     placeholder="行为动作描述..."
+                    aria-label="行为动作描述"
                   />
                   <label class="npc-priority-label">
                     优先级
@@ -591,6 +723,7 @@ function formatTime(iso) {
                         class="npc-card-toggle"
                         type="button"
                         :title="beh.enabled ? '点击禁用' : '点击启用'"
+                        :aria-label="beh.enabled ? '禁用行为规则' : '启用行为规则'"
                         @click="toggleBehavior(beh)"
                       >
                         {{ beh.enabled ? '✓' : '✗' }}
@@ -599,6 +732,7 @@ function formatTime(iso) {
                         class="npc-card-delete"
                         type="button"
                         title="删除"
+                        aria-label="删除行为规则"
                         @click="removeBehavior(beh.id)"
                       >
                         <Trash2 :size="14" />
@@ -1087,6 +1221,60 @@ function formatTime(iso) {
   text-align: center;
   color: var(--text-muted, #666);
   font-size: 13px;
+}
+
+.npc-error-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 9px;
+  color: #ef4444;
+}
+
+.npc-error-state p {
+  margin: 0;
+  color: var(--text, #e8e6e3);
+}
+
+.npc-inline-error {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin: 0 12px 10px;
+  padding: 9px 10px;
+  border: 1px solid color-mix(in srgb, #ef4444 26%, var(--line, #2a2a3e));
+  border-radius: 9px;
+  color: var(--text, #e8e6e3);
+  background: color-mix(in srgb, #ef4444 9%, transparent);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.npc-inline-error span {
+  min-width: 0;
+}
+
+.npc-retry-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  min-height: 30px;
+  padding: 0 10px;
+  border: 1px solid color-mix(in srgb, var(--accent, #818cf8) 34%, var(--line, #2a2a3e));
+  border-radius: 8px;
+  color: var(--accent, #818cf8);
+  background: color-mix(in srgb, var(--accent, #818cf8) 12%, transparent);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 800;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.npc-retry-button:hover {
+  background: color-mix(in srgb, var(--accent, #818cf8) 18%, transparent);
 }
 
 .npc-select-hint {

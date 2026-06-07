@@ -3,19 +3,26 @@ import { withSavepoint } from './savepoint.js';
 
 // ── Tag CRUD ──
 
-export function listTags(database, userId) {
-  return database
-    .prepare(
-      `SELECT tags.*,
+const MAX_TAG_LIST_LIMIT = 500;
+
+export function listTags(database, userId, options = {}) {
+  const limit = normalizeTagListLimit(options.limit);
+  const params = [userId];
+  let query = `SELECT tags.*,
         (SELECT COUNT(*)
          FROM character_tags
          JOIN characters ON characters.id = character_tags.character_id
          WHERE character_tags.tag_id = tags.id AND characters.user_id = tags.user_id) AS usage_count
        FROM tags
        WHERE tags.user_id = ?
-       ORDER BY usage_count DESC, tags.name COLLATE NOCASE ASC, tags.name ASC, tags.rowid ASC`
-    )
-    .all(userId)
+       ORDER BY usage_count DESC, tags.name COLLATE NOCASE ASC, tags.name ASC, tags.rowid ASC`;
+  if (limit) {
+    query += ' LIMIT ?';
+    params.push(limit);
+  }
+  return database
+    .prepare(query)
+    .all(...params)
     .map(toTag);
 }
 
@@ -125,6 +132,17 @@ function normalizeColor(color) {
     return '';
   }
   return value;
+}
+
+function normalizeTagListLimit(value) {
+  if (value === undefined || value === null || value === '') {
+    return 0;
+  }
+  const limit = Number(value);
+  if (!Number.isFinite(limit) || limit <= 0) {
+    return 0;
+  }
+  return Math.min(Math.floor(limit), MAX_TAG_LIST_LIMIT);
 }
 
 function toTag(row) {

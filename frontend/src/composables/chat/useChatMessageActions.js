@@ -15,6 +15,9 @@ export function useChatMessageActions({
   const editingMessageId = ref('');
   const editingMessageContent = ref('');
   const messageActionBusy = ref('');
+  let disposed = false;
+  let messageActionToken = 0;
+  let focusEditorRafId = null;
 
   function toggleReasoning(messageId) {
     const next = new Set(expandedReasoning.value);
@@ -88,7 +91,7 @@ export function useChatMessageActions({
   }
 
   function canPersistMessage(message) {
-    return Boolean(message?.id) && !message.streaming && !String(message.id).startsWith('local-');
+    return !disposed && Boolean(message?.id) && !message.streaming && !String(message.id).startsWith('local-');
   }
 
   async function beginEditMessage(message) {
@@ -124,20 +127,34 @@ export function useChatMessageActions({
       return;
     }
 
+    const conversationId = route.params.id;
+    const actionToken = ++messageActionToken;
     messageActionBusy.value = message.id;
     try {
-      const updated = await updateMessage(route.params.id, message.id, { content });
+      const updated = await updateMessage(conversationId, message.id, { content });
+      if (!isCurrentMessageAction(actionToken, conversationId)) {
+        return;
+      }
       await withMessageScrollAnchor(message.id, async () => {
         Object.assign(message, updated);
         clearMessageEdit();
         triggerRef(messages);
       });
+      if (!isCurrentMessageAction(actionToken, conversationId)) {
+        return;
+      }
       showActionNotice('消息已更新');
-      await loadSidebarData();
+      if (isCurrentMessageAction(actionToken, conversationId)) {
+        await loadSidebarData();
+      }
     } catch (err) {
-      showError(err.message);
+      if (isCurrentMessageAction(actionToken, conversationId)) {
+        showError(err.message);
+      }
     } finally {
-      messageActionBusy.value = '';
+      if (isLatestMessageAction(actionToken)) {
+        messageActionBusy.value = '';
+      }
     }
   }
 
@@ -149,21 +166,35 @@ export function useChatMessageActions({
       return;
     }
 
+    const conversationId = route.params.id;
+    const actionToken = ++messageActionToken;
     messageActionBusy.value = message.id;
     try {
-      const deletion = await deleteMessage(route.params.id, message.id);
+      const deletion = await deleteMessage(conversationId, message.id);
+      if (!isCurrentMessageAction(actionToken, conversationId)) {
+        return;
+      }
       await withMessageScrollAnchor(message.id, async () => {
         messages.value = messages.value.filter((item) => item.id !== message.id);
         if (editingMessageId.value === message.id) {
           clearMessageEdit();
         }
       });
+      if (!isCurrentMessageAction(actionToken, conversationId)) {
+        return;
+      }
       showActionNotice(deletion?.deletedReasoning ? '消息和思考已删除' : '消息已删除');
-      await loadSidebarData();
+      if (isCurrentMessageAction(actionToken, conversationId)) {
+        await loadSidebarData();
+      }
     } catch (err) {
-      showError(err.message);
+      if (isCurrentMessageAction(actionToken, conversationId)) {
+        showError(err.message);
+      }
     } finally {
-      messageActionBusy.value = '';
+      if (isLatestMessageAction(actionToken)) {
+        messageActionBusy.value = '';
+      }
     }
   }
 
@@ -177,9 +208,14 @@ export function useChatMessageActions({
     try {
       await requestClipboardPermission();
       await writeClipboardText(text);
+      if (disposed) {
+        return;
+      }
       showActionNotice('已复制到剪贴板');
     } catch (err) {
-      showActionNotice(err.message || '复制失败，请检查浏览器权限', 'warning');
+      if (!disposed) {
+        showActionNotice(err.message || '复制失败，请检查浏览器权限', 'warning');
+      }
     }
   }
 
@@ -226,10 +262,22 @@ export function useChatMessageActions({
   }
 
   async function withMessageScrollAnchor(messageId, callback) {
+    if (disposed) {
+      return undefined;
+    }
     const anchor = captureMessageScrollAnchor(messageId);
     const result = await callback();
+    if (disposed) {
+      return result;
+    }
     await nextTick();
+    if (disposed) {
+      return result;
+    }
     await waitForFrame();
+    if (disposed) {
+      return result;
+    }
     restoreMessageScrollAnchor(anchor);
     return result;
   }
@@ -250,7 +298,7 @@ export function useChatMessageActions({
 
   function restoreMessageScrollAnchor(anchor) {
     const scroller = messageScroller.value;
-    if (!scroller || !anchor) {
+    if (disposed || !scroller || !anchor) {
       return;
     }
 
@@ -265,7 +313,7 @@ export function useChatMessageActions({
   }
 
   function findMessageElement(messageId) {
-    if (!messageId || !messageScroller.value) {
+    if (disposed || !messageId || !messageScroller.value) {
       return null;
     }
     return [...messageScroller.value.querySelectorAll('.deep-message')]
@@ -273,24 +321,46 @@ export function useChatMessageActions({
   }
 
   async function waitForFrame() {
-    if (typeof window === 'undefined') {
+    if (disposed || typeof window === 'undefined') {
       return;
     }
     await new Promise((resolve) => window.requestAnimationFrame(resolve));
   }
 
   function focusMessageEditor(messageId) {
-    requestAnimationFrame(() => {
+    if (disposed || typeof window === 'undefined') {
+      return;
+    }
+    if (focusEditorRafId) {
+      window.cancelAnimationFrame(focusEditorRafId);
+    }
+    focusEditorRafId = window.requestAnimationFrame(() => {
+      focusEditorRafId = null;
+      if (disposed) {
+        return;
+      }
       const textarea = findMessageElement(messageId)?.querySelector('.message-edit-box textarea');
       textarea?.focus?.({ preventScroll: true });
     });
   }
 
+  function isCurrentMessageAction(actionToken, conversationId) {
+    return !disposed && actionToken === messageActionToken && route.params.id === conversationId;
+  }
+
+  function isLatestMessageAction(actionToken) {
+    return !disposed && actionToken === messageActionToken;
+  }
+
   // ── Swipe ──
   const messageSwipeState = reactive({});
   const swipeLoading = ref(new Set());
+  let swipeInitToken = 0;
 
-  function resetMessageSwipeState() {
+  function resetMessageSwipeState({ invalidate = true } = {}) {
+    if (invalidate) {
+      swipeInitToken += 1;
+    }
     for (const key of Object.keys(messageSwipeState)) {
       delete messageSwipeState[key];
     }
@@ -298,12 +368,14 @@ export function useChatMessageActions({
   }
 
   async function initMessageSwipes(conversationId) {
-    resetMessageSwipeState();
+    if (disposed) return;
+    const requestToken = ++swipeInitToken;
+    resetMessageSwipeState({ invalidate: false });
     for (const msg of messages.value) {
       if (msg.role === 'assistant') {
         try {
           const swipes = await fetchMessageSwipes(conversationId, msg.id);
-          if (route.params.id !== conversationId || !messages.value.some((item) => item.id === msg.id)) {
+          if (!isCurrentSwipeInit(requestToken, conversationId, msg.id)) {
             return;
           }
           messageSwipeState[msg.id] = {
@@ -312,7 +384,7 @@ export function useChatMessageActions({
             swipeCount: (swipes?.length || 0) + 1
           };
         } catch {
-          if (route.params.id !== conversationId || !messages.value.some((item) => item.id === msg.id)) {
+          if (!isCurrentSwipeInit(requestToken, conversationId, msg.id)) {
             return;
           }
           messageSwipeState[msg.id] = { swipes: [], activeIndex: 0, swipeCount: 1 };
@@ -322,6 +394,7 @@ export function useChatMessageActions({
   }
 
   async function swipeMessagePrev(message) {
+    if (disposed) return;
     const state = messageSwipeState[message.id];
     if (!state || state.activeIndex <= 0) return;
     state.activeIndex--;
@@ -333,8 +406,10 @@ export function useChatMessageActions({
   }
 
   async function swipeMessageNext(message, conversationId) {
+    if (disposed) return;
     const state = messageSwipeState[message.id];
     if (!state) return;
+    if (swipeLoading.value.has(message.id)) return;
     if (state.activeIndex < state.swipeCount - 1) {
       state.activeIndex++;
       const swipe = state.swipes[state.activeIndex - 1];
@@ -348,7 +423,7 @@ export function useChatMessageActions({
           reasoning: message.reasoning || '',
           usage: message.usage || null
         });
-        if (route.params.id !== conversationId || !messages.value.some((item) => item.id === message.id)) {
+        if (!isCurrentConversationMessage(conversationId, message.id)) {
           return;
         }
         if (result) {
@@ -359,11 +434,19 @@ export function useChatMessageActions({
           message.reasoning = result.reasoning || '';
         }
       } finally {
-        if (route.params.id === conversationId) {
+        if (!disposed && route.params.id === conversationId) {
           swipeLoading.value.delete(message.id);
         }
       }
     }
+  }
+
+  function isCurrentSwipeInit(requestToken, conversationId, messageId) {
+    return requestToken === swipeInitToken && isCurrentConversationMessage(conversationId, messageId);
+  }
+
+  function isCurrentConversationMessage(conversationId, messageId) {
+    return !disposed && route.params.id === conversationId && messages.value.some((item) => item.id === messageId);
   }
 
   function getSwipeDisplay(message) {
@@ -375,17 +458,20 @@ export function useChatMessageActions({
   // ── Branch ──
   const conversationBranches = ref([]);
   const branchBusy = ref(false);
+  let branchLoadToken = 0;
+  let branchActionToken = 0;
 
   async function loadConversationBranches(conversationId) {
-    if (!conversationId) return;
+    if (disposed || !conversationId) return;
+    const requestToken = ++branchLoadToken;
     try {
       const branches = await fetchConversationBranches(conversationId);
-      if (route.params.id !== conversationId) {
+      if (!isCurrentBranchLoad(requestToken, conversationId)) {
         return;
       }
       conversationBranches.value = branches;
     } catch {
-      if (route.params.id !== conversationId) {
+      if (!isCurrentBranchLoad(requestToken, conversationId)) {
         return;
       }
       conversationBranches.value = [];
@@ -393,20 +479,43 @@ export function useChatMessageActions({
   }
 
   async function handleBranchMessage(message, conversationId, onBranched) {
+    if (disposed || branchBusy.value) {
+      return;
+    }
+    const requestToken = ++branchActionToken;
     branchBusy.value = true;
     try {
       const result = await branchConversation(conversationId, message.id);
-      if (route.params.id !== conversationId) {
+      if (disposed || route.params.id !== conversationId) {
         return;
       }
       if (result?.id && onBranched) {
         await onBranched(result.id);
       }
     } finally {
-      if (route.params.id === conversationId) {
+      if (!disposed && requestToken === branchActionToken) {
         branchBusy.value = false;
       }
     }
+  }
+
+  function isCurrentBranchLoad(requestToken, conversationId) {
+    return !disposed && requestToken === branchLoadToken && route.params.id === conversationId;
+  }
+
+  function cleanup() {
+    disposed = true;
+    messageActionToken += 1;
+    swipeInitToken += 1;
+    branchLoadToken += 1;
+    branchActionToken += 1;
+    if (focusEditorRafId) {
+      window.cancelAnimationFrame(focusEditorRafId);
+      focusEditorRafId = null;
+    }
+    messageActionBusy.value = '';
+    branchBusy.value = false;
+    swipeLoading.value = new Set();
   }
 
   return {
@@ -440,6 +549,7 @@ export function useChatMessageActions({
     conversationBranches,
     branchBusy,
     loadConversationBranches,
-    handleBranchMessage
+    handleBranchMessage,
+    cleanup
   };
 }

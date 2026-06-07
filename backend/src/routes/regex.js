@@ -8,6 +8,7 @@ import {
 import { withSavepoint } from '../modules/savepoint.js';
 import { validate } from '../validations/schemas.js';
 import { normalizeBoolean } from '../utils/boolean.js';
+import { normalizeFiniteNumber } from '../utils/number.js';
 import { z } from 'zod';
 
 const reorderRegexSchema = z.object({
@@ -146,12 +147,16 @@ function normalizeImportedRule(item = {}, index = 0) {
     flags,
     scope: ['input', 'output', 'both'].includes(item.scope) ? item.scope : 'input',
     enabled: normalizeBoolean(item.enabled, true),
-    order: Number.isFinite(Number(item.order ?? item.orderIndex)) ? Math.round(Number(item.order ?? item.orderIndex)) : index,
+    order: normalizeNonNegativeInteger(item.order ?? item.orderIndex, index),
     groupName: String(item.groupName || item.group_name || '全局').trim().slice(0, 50) || '全局',
-    priority: Number.isFinite(Number(item.priority)) ? Math.round(Number(item.priority)) : index,
+    priority: normalizeNonNegativeInteger(item.priority, index),
     scriptMode: normalizeBoolean(item.scriptMode ?? item.script_mode),
     jsScript: String(item.jsScript || item.js_script || '').slice(0, 10000)
   };
+}
+
+function normalizeNonNegativeInteger(value, fallback = 0) {
+  return Math.max(0, Math.round(normalizeFiniteNumber(value, fallback)));
 }
 
 function normalizeFlags(flags) {

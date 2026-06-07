@@ -234,6 +234,13 @@ function buildStatusBarMessages(statusBar, content, statusBarPrompt = '') {
         'Call update_status_bar only when the assistant reply clearly changes one or more variables.',
         'The variable value can be a number for meters or a short string for profile/status text.',
         'Pay close attention to short text fields for outfit, clothing, equipment, carried items, location, mood, and memory.',
+        'Template rows may combine multiple child variables, for example "Location = {{Region}} > {{Place}}".',
+        'Use templateHints.compositeRows as the map from visible row labels to child variable names.',
+        'For composite rows, update the child variables separately and never update the wrapper label as a value.',
+        'Example: for "Location = {{Region}} > {{Place}}", update Region and Place separately when the reply names both.',
+        'For each changed text field, return only the new field value, not surrounding prose, separators, or template markup.',
+        'Never return raw placeholder text like "{{Variable}}" as a variable value.',
+        'If the reply only gives one clear part of a composite row, update only that child variable and preserve the rest.',
         'You may create a new variable when the guidance asks for it and the reply contains a clear value.',
         'Do not invent changes.',
         statusBarPrompt ? `Additional author/session guidance:\n${statusBarPrompt}` : ''
@@ -243,10 +250,90 @@ function buildStatusBarMessages(statusBar, content, statusBarPrompt = '') {
       role: 'user',
       content: JSON.stringify({
         variables: statusBar.variables,
+        template: statusBar.template || '',
+        templateHints: buildStatusBarTemplateHints(statusBar.template || ''),
         reply: content
       })
     }
   ];
+}
+
+function buildStatusBarTemplateHints(template = '') {
+  const raw = String(template || '').trim();
+  if (!raw || raw[0] === '{') {
+    return { compositeRows: [], placeholders: [] };
+  }
+  return {
+    compositeRows: extractStatusTemplateCompositeRows(raw).slice(0, 20),
+    placeholders: extractStatusTemplatePlaceholderNames(raw).slice(0, STATUS_BAR_VARIABLE_LIMIT)
+  };
+}
+
+function extractStatusTemplateCompositeRows(template = '') {
+  const rows = [];
+  const seen = new Set();
+  const addRow = (rawLabel, rawValue) => {
+    const label = normalizeStatusTemplateText(rawLabel).slice(0, 60);
+    const key = statusVariableKey(label);
+    if (!label || !key || seen.has(key)) {
+      return;
+    }
+    const variables = extractStatusTemplatePlaceholderNames(rawValue, label).slice(0, 8);
+    if (variables.length < 2) {
+      return;
+    }
+    rows.push({ label, variables });
+    seen.add(key);
+  };
+
+  const pairPattern = /<[^>]+\bclass\s*=\s*(['"])[^'"]*\bsb-label\b[^'"]*\1[^>]*>([\s\S]*?)<\/[^>]+>[\s\S]{0,180}?<[^>]+\bclass\s*=\s*(['"])[^'"]*\bsb-val\b[^'"]*\3[^>]*>([\s\S]*?)<\/[^>]+>/gi;
+  let match;
+  while ((match = pairPattern.exec(String(template || '')))) {
+    addRow(match[2], match[4]);
+  }
+
+  const inlineValuePattern = /(?:^|>|\n)([^<>\n]{1,40}?)[\s:\uFF1A]+<[^>]+\bclass\s*=\s*(['"])[^'"]*\bsb-val\b[^'"]*\2[^>]*>([\s\S]*?)<\/[^>]+>/gi;
+  while ((match = inlineValuePattern.exec(String(template || '')))) {
+    addRow(match[1], match[3]);
+  }
+  return rows;
+}
+
+function extractStatusTemplatePlaceholderNames(value = '', label = '') {
+  const names = [];
+  const seen = new Set();
+  const labelKey = statusVariableKey(label);
+  const placeholderPattern = /\{\{\s*([^{}]+?)\s*\}\}|\{([\w\u4e00-\u9fa5 ._-]+)\}/g;
+  let match;
+  while ((match = placeholderPattern.exec(normalizeStatusTemplateText(value)))) {
+    const token = String(match[1] || match[2] || '').trim();
+    const [rawName, rawProperty = 'value'] = token.split('.').map((part) => part.trim());
+    const name = normalizeStatusTemplateText(rawName).slice(0, 60);
+    const key = statusVariableKey(name);
+    if (!name || !key || key === labelKey || seen.has(key) || isMeterTemplateProperty(rawProperty)) {
+      continue;
+    }
+    names.push(name);
+    seen.add(key);
+  }
+  return names;
+}
+
+function isMeterTemplateProperty(value = '') {
+  return ['max', 'percent', 'percentage'].includes(String(value || '').trim());
+}
+
+function normalizeStatusTemplateText(value = '') {
+  return String(value || '')
+    .replace(/<[^>]*>/g, '')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&amp;/gi, '&')
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;/gi, "'")
+    .replace(/\s+/g, ' ')
+    .trim();
 }
 
 function buildNpcMessages(character, content) {

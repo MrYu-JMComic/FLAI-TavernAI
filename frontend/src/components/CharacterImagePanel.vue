@@ -1,6 +1,6 @@
 <script setup>
-import { onMounted, ref } from 'vue';
-import { GripVertical, ImagePlus, Star, Tag, Trash2, X } from '@lucide/vue';
+import { onBeforeUnmount, ref, watch } from 'vue';
+import { GripVertical, ImagePlus, Star, Tag, Trash2 } from '@lucide/vue';
 import {
   createCharacterImage,
   deleteCharacterImage,
@@ -24,35 +24,91 @@ const props = defineProps({
 const notify = useNotify();
 const images = ref([]);
 const loading = ref(false);
+const loadError = ref('');
 const uploading = ref(false);
 const editingImageId = ref('');
 const editForm = ref({ sceneTag: '', emotionTag: '' });
 const dragIndex = ref(-1);
 const dragOverIndex = ref(-1);
+let imageLoadToken = 0;
+let imageUploadToken = 0;
+let imageMutationToken = 0;
+let imagePanelDisposed = false;
 
 const sceneOptions = ['日常', '学校', '街道', '家里', '餐厅', '战斗', '夜晚', '雨天', '雪天', '海边', '森林', '节日'];
 const emotionOptions = ['开心', '悲伤', '愤怒', '惊讶', '害羞', '害怕', '温柔', '严肃', '困倦', '得意'];
 
-onMounted(async () => {
-  await loadImages();
+watch(
+  () => props.characterId,
+  () => {
+    imageLoadToken += 1;
+    imageUploadToken += 1;
+    imageMutationToken += 1;
+    uploading.value = false;
+    loadImages();
+  },
+  { immediate: true }
+);
+
+onBeforeUnmount(() => {
+  imagePanelDisposed = true;
+  imageLoadToken += 1;
+  imageUploadToken += 1;
+  imageMutationToken += 1;
+  loading.value = false;
+  uploading.value = false;
+  dragIndex.value = -1;
+  dragOverIndex.value = -1;
 });
 
 async function loadImages() {
-  loading.value = true;
-  try {
-    images.value = await fetchCharacterImages(props.characterId);
-  } catch {
+  if (imagePanelDisposed) return;
+  const characterId = props.characterId;
+  const requestToken = ++imageLoadToken;
+  if (!characterId) {
     images.value = [];
-  } finally {
+    loadError.value = '';
     loading.value = false;
+    return;
+  }
+  loading.value = true;
+  loadError.value = '';
+  try {
+    const nextImages = await fetchCharacterImages(characterId);
+    if (!isCurrentImageLoad(requestToken, characterId)) return;
+    images.value = nextImages;
+  } catch (err) {
+    if (!isCurrentImageLoad(requestToken, characterId)) return;
+    images.value = [];
+    loadError.value = err?.message || '立绘加载失败';
+  } finally {
+    if (isCurrentImageLoad(requestToken, characterId)) {
+      loading.value = false;
+    }
   }
 }
 
-async function handleUpload(event) {
-  const files = event.target.files;
-  if (!files || !files.length) return;
+function isCurrentImageLoad(requestToken, characterId) {
+  return !imagePanelDisposed && requestToken === imageLoadToken && props.characterId === characterId;
+}
 
+async function handleUpload(event) {
+  if (imagePanelDisposed) return;
+  const input = event?.target;
+  const files = Array.from(input?.files || []);
+  if (input) {
+    input.value = '';
+  }
+  const characterId = props.characterId;
+  const uploadToken = ++imageUploadToken;
+  if (props.disabled || !characterId || !files.length) {
+    uploading.value = false;
+    return;
+  }
+
+  uploading.value = true;
   for (const file of files) {
+    if (!isCurrentImageUpload(uploadToken, characterId)) return;
     if (!['image/png', 'image/jpeg', 'image/webp'].includes(file.type)) {
       notify.warning(`${file.name} 不是支持的图片格式`);
       continue;
@@ -62,23 +118,33 @@ async function handleUpload(event) {
       continue;
     }
 
-    uploading.value = true;
     try {
       const dataUrl = await readAsDataUrl(file);
-      await createCharacterImage(props.characterId, {
+      if (!isCurrentImageUpload(uploadToken, characterId)) return;
+      await createCharacterImage(characterId, {
         imageUrl: dataUrl,
         sceneTag: '',
         emotionTag: '',
         isDefault: images.value.length === 0
       });
+      if (!isCurrentImageUpload(uploadToken, characterId)) return;
       await loadImages();
     } catch (err) {
-      notify.error(err.message || '上传失败');
-    } finally {
-      uploading.value = false;
+      if (!isCurrentImageUpload(uploadToken, characterId)) return;
+      notify.error(err?.message || '上传失败');
     }
   }
-  event.target.value = '';
+  if (isCurrentImageUpload(uploadToken, characterId)) {
+    uploading.value = false;
+  }
+}
+
+function isCurrentImageUpload(uploadToken, characterId) {
+  return !imagePanelDisposed && uploadToken === imageUploadToken && props.characterId === characterId;
+}
+
+function isCurrentImageMutation(mutationToken, characterId) {
+  return !imagePanelDisposed && mutationToken === imageMutationToken && props.characterId === characterId;
 }
 
 function startEdit(image) {
@@ -95,42 +161,62 @@ function cancelEdit() {
 }
 
 async function saveEdit(imageId) {
+  const characterId = props.characterId;
+  const mutationToken = ++imageMutationToken;
+  if (props.disabled || !characterId) return;
+
   try {
-    await updateCharacterImage(props.characterId, imageId, {
+    await updateCharacterImage(characterId, imageId, {
       sceneTag: editForm.value.sceneTag,
       emotionTag: editForm.value.emotionTag
     });
+    if (!isCurrentImageMutation(mutationToken, characterId)) return;
     await loadImages();
+    if (!isCurrentImageMutation(mutationToken, characterId)) return;
     cancelEdit();
     notify.success('标签已更新');
   } catch (err) {
-    notify.error(err.message);
+    if (!isCurrentImageMutation(mutationToken, characterId)) return;
+    notify.error(err?.message || '标签更新失败');
   }
 }
 
 async function setDefault(imageId) {
+  const characterId = props.characterId;
+  const mutationToken = ++imageMutationToken;
+  if (props.disabled || !characterId) return;
+
   try {
     // Clear old default
     const currentDefault = images.value.find((img) => img.isDefault);
     if (currentDefault && currentDefault.id !== imageId) {
-      await updateCharacterImage(props.characterId, currentDefault.id, { isDefault: false });
+      await updateCharacterImage(characterId, currentDefault.id, { isDefault: false });
     }
-    await updateCharacterImage(props.characterId, imageId, { isDefault: true });
+    await updateCharacterImage(characterId, imageId, { isDefault: true });
+    if (!isCurrentImageMutation(mutationToken, characterId)) return;
     await loadImages();
+    if (!isCurrentImageMutation(mutationToken, characterId)) return;
     notify.success('已设为默认立绘');
   } catch (err) {
-    notify.error(err.message);
+    if (!isCurrentImageMutation(mutationToken, characterId)) return;
+    notify.error(err?.message || '默认立绘设置失败');
   }
 }
 
 async function removeImage(imageId) {
+  if (props.disabled || !props.characterId) return;
   if (!window.confirm('确定删除这张立绘？')) return;
+  const characterId = props.characterId;
+  const mutationToken = ++imageMutationToken;
   try {
-    await deleteCharacterImage(props.characterId, imageId);
+    await deleteCharacterImage(characterId, imageId);
+    if (!isCurrentImageMutation(mutationToken, characterId)) return;
     await loadImages();
+    if (!isCurrentImageMutation(mutationToken, characterId)) return;
     notify.success('立绘已删除');
   } catch (err) {
-    notify.error(err.message);
+    if (!isCurrentImageMutation(mutationToken, characterId)) return;
+    notify.error(err?.message || '立绘删除失败');
   }
 }
 
@@ -155,17 +241,21 @@ function onDragEnd() {
   const [moved] = reordered.splice(dragIndex.value, 1);
   reordered.splice(dragOverIndex.value, 0, moved);
   images.value = reordered;
+  const orderedIds = reordered.map((img) => img.id);
+  const characterId = props.characterId;
+  const mutationToken = ++imageMutationToken;
   dragIndex.value = -1;
   dragOverIndex.value = -1;
 
-  saveOrder();
+  saveOrder(orderedIds, characterId, mutationToken);
 }
 
-async function saveOrder() {
+async function saveOrder(orderedIds, characterId, mutationToken) {
+  if (props.disabled || !characterId) return;
   try {
-    const orderedIds = images.value.map((img) => img.id);
-    await reorderCharacterImages(props.characterId, orderedIds);
+    await reorderCharacterImages(characterId, orderedIds);
   } catch (err) {
+    if (!isCurrentImageMutation(mutationToken, characterId)) return;
     notify.error('排序保存失败');
     await loadImages();
   }
@@ -209,7 +299,13 @@ function emotionLabel(tag) {
       </label>
     </div>
 
-    <p v-if="loading" class="muted-text">正在加载立绘...</p>
+    <div v-if="loadError" class="cg-error" role="alert">
+      <p>{{ loadError }}</p>
+      <button class="ghost-button small" type="button" :disabled="loading" @click="loadImages">
+        {{ loading ? '重试中...' : '重试' }}
+      </button>
+    </div>
+    <p v-else-if="loading" class="muted-text">正在加载立绘...</p>
     <p v-else-if="!images.length" class="muted-text cg-empty">还没有立绘，点击「添加立绘」上传第一张。</p>
 
     <div v-else class="cg-grid">
@@ -218,7 +314,7 @@ function emotionLabel(tag) {
         :key="image.id"
         class="cg-card"
         :class="{ 'is-default': image.isDefault, dragging: dragIndex === index, 'drag-over': dragOverIndex === index }"
-        draggable="true"
+        :draggable="!disabled"
         @dragstart="onDragStart(index)"
         @dragover.prevent="onDragOver(index)"
         @dragend="onDragEnd"
@@ -266,21 +362,23 @@ function emotionLabel(tag) {
         </div>
 
         <div v-if="!disabled" class="cg-actions">
-          <button class="icon-button" title="拖拽排序" draggable="false" @mousedown.stop>
+          <button class="icon-button" type="button" aria-label="拖拽排序" title="拖拽排序" draggable="false" @mousedown.stop>
             <GripVertical :size="16" />
           </button>
-          <button class="icon-button" title="编辑标签" @click="startEdit(image)">
+          <button class="icon-button" type="button" aria-label="编辑立绘标签" title="编辑标签" @click="startEdit(image)">
             <Tag :size="16" />
           </button>
           <button
             class="icon-button"
+            type="button"
+            aria-label="设为默认立绘"
             :class="{ active: image.isDefault }"
             title="设为默认"
             @click="setDefault(image.id)"
           >
             <Star :size="16" />
           </button>
-          <button class="icon-button danger" title="删除" @click="removeImage(image.id)">
+          <button class="icon-button danger" type="button" aria-label="删除立绘" title="删除" @click="removeImage(image.id)">
             <Trash2 :size="16" />
           </button>
         </div>
@@ -291,7 +389,7 @@ function emotionLabel(tag) {
 
 <style scoped>
 .cg-panel {
-  margin-top: 1.5rem;
+  margin-top: 0;
 }
 
 .cg-header {
@@ -341,6 +439,24 @@ function emotionLabel(tag) {
   border: 2px dashed var(--border, #ddd);
   border-radius: 12px;
   color: var(--muted, #888);
+}
+
+.cg-error {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.85rem 1rem;
+  border: 1px solid rgba(231, 76, 60, 0.28);
+  border-radius: 8px;
+  background: rgba(231, 76, 60, 0.08);
+  color: #c0392b;
+}
+
+.cg-error p {
+  margin: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .cg-grid {

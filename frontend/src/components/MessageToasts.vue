@@ -33,8 +33,8 @@ function titleFor(item) {
 }
 
 function runAction(item) {
-  item.action?.();
   emit('dismiss', item.id);
+  item.action?.();
 }
 </script>
 
@@ -69,7 +69,7 @@ function runAction(item) {
         >
           {{ item.actionLabel }}
         </button>
-        <button class="message-toast-close" type="button" title="关闭通知" @click="emit('dismiss', item.id)">
+        <button class="message-toast-close" type="button" aria-label="关闭通知" title="关闭通知" @click="emit('dismiss', item.id)">
           <X :size="16" />
         </button>
       </article>

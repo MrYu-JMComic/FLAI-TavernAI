@@ -13,6 +13,10 @@ export function useChatScroll({ messageScroller, conversationId }) {
   let touchStartY = 0;
   let lastTouchY = 0;
   let userPausedAutoScroll = false;
+  let disposed = false;
+  let scrollToBottomRafId = null;
+  let restoreScrollRafId = null;
+  let smoothScrollStateTimer = null;
 
   const showScrollBottomButton = computed(() => {
     return !isScrollPinned.value && distanceToBottom.value > scrollButtonDistanceThreshold;
@@ -60,6 +64,9 @@ export function useChatScroll({ messageScroller, conversationId }) {
   }
 
   function updateScrollState() {
+    if (disposed) {
+      return;
+    }
     const el = messageScroller.value;
     if (!el) {
       return;
@@ -82,6 +89,9 @@ export function useChatScroll({ messageScroller, conversationId }) {
   }
 
   function stickToBottomIfNeeded(smooth = false) {
+    if (disposed) {
+      return;
+    }
     if (hasRecentManualScrollIntent()) {
       updateScrollState();
       scheduleSaveMessageScrollPosition();
@@ -96,12 +106,22 @@ export function useChatScroll({ messageScroller, conversationId }) {
   }
 
   function scrollToBottom(smooth = true, keepPinned = true) {
+    if (disposed) {
+      return;
+    }
     if (keepPinned) {
       lastManualScrollIntentAt = 0;
       userPausedAutoScroll = false;
       isScrollPinned.value = true;
     }
-    requestAnimationFrame(() => {
+    if (scrollToBottomRafId) {
+      cancelAnimationFrame(scrollToBottomRafId);
+    }
+    scrollToBottomRafId = requestAnimationFrame(() => {
+      scrollToBottomRafId = null;
+      if (disposed) {
+        return;
+      }
       const el = messageScroller.value;
       if (!el) {
         return;
@@ -113,14 +133,24 @@ export function useChatScroll({ messageScroller, conversationId }) {
       if (!smooth) {
         updateScrollState();
       } else if (typeof window !== 'undefined') {
-        window.setTimeout(() => updateScrollState(), 360);
+        scheduleSmoothScrollStateUpdate();
       }
       scheduleSaveMessageScrollPosition();
     });
   }
 
   function restoreMessageScrollPosition(messages) {
-    requestAnimationFrame(() => {
+    if (disposed) {
+      return;
+    }
+    if (restoreScrollRafId) {
+      cancelAnimationFrame(restoreScrollRafId);
+    }
+    restoreScrollRafId = requestAnimationFrame(() => {
+      restoreScrollRafId = null;
+      if (disposed) {
+        return;
+      }
       const el = messageScroller.value;
       if (!el) {
         return;
@@ -161,19 +191,23 @@ export function useChatScroll({ messageScroller, conversationId }) {
   }
 
   function scheduleSaveMessageScrollPosition() {
-    if (typeof window === 'undefined') {
+    if (disposed || typeof window === 'undefined') {
       return;
     }
     if (scrollSaveTimer) {
       window.clearTimeout(scrollSaveTimer);
     }
     scrollSaveTimer = window.setTimeout(() => {
+      scrollSaveTimer = null;
+      if (disposed) {
+        return;
+      }
       saveMessageScrollPosition();
     }, 120);
   }
 
   function saveMessageScrollPosition() {
-    if (typeof window === 'undefined') {
+    if (disposed || typeof window === 'undefined') {
       return;
     }
     const el = messageScroller.value;
@@ -192,9 +226,36 @@ export function useChatScroll({ messageScroller, conversationId }) {
     return `flai-chat-scroll:${conversationId.value || 'active'}`;
   }
 
+  function scheduleSmoothScrollStateUpdate() {
+    if (disposed || typeof window === 'undefined') {
+      return;
+    }
+    if (smoothScrollStateTimer) {
+      window.clearTimeout(smoothScrollStateTimer);
+    }
+    smoothScrollStateTimer = window.setTimeout(() => {
+      smoothScrollStateTimer = null;
+      updateScrollState();
+    }, 360);
+  }
+
   function cleanup() {
+    disposed = true;
     if (scrollSaveTimer) {
       window.clearTimeout(scrollSaveTimer);
+      scrollSaveTimer = null;
+    }
+    if (smoothScrollStateTimer) {
+      window.clearTimeout(smoothScrollStateTimer);
+      smoothScrollStateTimer = null;
+    }
+    if (scrollToBottomRafId) {
+      cancelAnimationFrame(scrollToBottomRafId);
+      scrollToBottomRafId = null;
+    }
+    if (restoreScrollRafId) {
+      cancelAnimationFrame(restoreScrollRafId);
+      restoreScrollRafId = null;
     }
   }
 

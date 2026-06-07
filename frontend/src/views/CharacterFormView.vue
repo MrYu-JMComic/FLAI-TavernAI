@@ -1,9 +1,11 @@
 ﻿<script setup>
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
-import { ArrowLeft, Download, ListChecks, Plus, RotateCcw, Save, Settings, Sparkles, Trash2, Upload, WandSparkles } from '@lucide/vue';
+import { ArrowLeft, Dice6, Download, ListChecks, Plus, RotateCcw, Save, Settings, Sparkles, Trash2, Upload, WandSparkles } from '@lucide/vue';
 import { createCharacter, createMod, createTag, deleteCharacter, exportCharacter, fetchCharacter, fetchCharacterWorldBooks, fetchTags, fetchWorldBooks, linkCharacterWorldBook, streamCharacterDraft, unlinkCharacterWorldBook, updateCharacter } from '../api';
+import CharacterImagePanel from '../components/CharacterImagePanel.vue';
 import MarkdownContent from '../components/MarkdownContent.vue';
 import StatusBar from '../components/StatusBar.vue';
+import TalentRollDialog from '../components/TalentRollDialog.vue';
 import VariableEditor from '../components/VariableEditor.vue';
 import { useNotify } from '../composables/useNotify';
 import { useProviderModels } from '../composables/useProviderModels';
@@ -26,18 +28,32 @@ const emit = defineEmits(['navigate']);
 const notify = useNotify();
 
 const isEditing = computed(() => props.route.name === 'characterEdit');
+const editingCharacterId = computed(() => props.route.params.id || '');
 const loading = ref(false);
+const loadError = ref('');
 const saving = ref(false);
+const deleting = ref(false);
+const exporting = ref(false);
+const showTalentDialog = ref(false);
 const aiLoading = ref(false);
 const aiRequirement = ref('');
 const aiToolCalls = ref([]);
 const aiProcess = ref([]);
 const aiReasoning = ref('');
 const aiModSuggestions = ref([]);
+const suggestedModsCreating = ref(false);
 const advancedAiLoading = ref(false);
 const advancedAiRequirement = ref('');
 const aiAbortController = ref(null);
 const advancedAiAbortController = ref(null);
+let characterFormDisposed = false;
+let formOptionsLoadToken = 0;
+let editingCharacterLoadToken = 0;
+let formSubmitToken = 0;
+let characterDeleteToken = 0;
+let characterExportToken = 0;
+let tagCreateToken = 0;
+let suggestedModCreateToken = 0;
 const ASSISTANT_MODEL_STORAGE_KEY = 'flai-assistant-model';
 const ASSISTANT_USE_CURRENT_STORAGE_KEY = 'flai-assistant-use-current-draft';
 const assistantModel = ref(loadAssistantModel());
@@ -81,10 +97,12 @@ const aiOptions = reactive({
   advancedSettings: true,
   modSuggestions: true
 });
-const previewInput = ref('猫在雨里说你好');
+const previewInput = ref('');
 const worldBooks = ref([]);
 const selectedWorldBookIds = ref([]);
 const availableTags = ref([]);
+const optionsLoading = ref(false);
+const optionsLoadError = ref('');
 const tagSearch = ref('');
 const activeSection = ref('basic');
 const form = reactive(emptyCharacter());
@@ -92,6 +110,8 @@ const backgroundUploading = reactive({
   desktopBackgroundUrl: false,
   mobileBackgroundUrl: false
 });
+const backgroundUploadTokens = {};
+let avatarUploadToken = 0;
 
 const statusBarBlueprintPreview = computed(() => {
   const blueprint = normalizeStatusBarBlueprintForPayload(form.authorAdvancedSettings.statusBarBlueprint || {});
@@ -131,6 +151,47 @@ const statusBarBlueprintTemplateStats = computed(() => {
   };
 });
 
+const statusBlueprintEditorRows = computed(() => {
+  const blueprint = form.authorAdvancedSettings.statusBarBlueprint || {};
+  const template = String(blueprint.template || '');
+  const variables = Array.isArray(blueprint.variables) ? blueprint.variables : [];
+  const compositeRows = extractStatusTemplateCompositeRows(template);
+  const compositeChildKeys = new Set();
+  const compositeLabelKeys = new Set();
+  const rows = compositeRows.map((row, index) => {
+    compositeLabelKeys.add(normalizeStatusVariableKey(row.label));
+    for (const part of row.parts) {
+      compositeChildKeys.add(normalizeStatusVariableKey(part.name));
+    }
+    return {
+      kind: 'composite',
+      key: `composite:${index}:${row.label}:${row.parts.map((part) => part.name).join('|')}`,
+      label: row.label,
+      parts: row.parts
+    };
+  });
+
+  variables.forEach((variable, index) => {
+    const key = normalizeStatusVariableKey(variable?.name);
+    if (
+      !key ||
+      compositeChildKeys.has(key) ||
+      compositeLabelKeys.has(key) ||
+      isCompositeStatusPlaceholderValue(variable?.value, variable?.name)
+    ) {
+      return;
+    }
+    rows.push({
+      kind: 'variable',
+      key: `variable:${index}:${key}`,
+      variable,
+      index
+    });
+  });
+
+  return rows;
+});
+
 watch(
   () => form.authorAdvancedSettings.statusBarBlueprint.template,
   () => {
@@ -140,6 +201,7 @@ watch(
 
 // ---- AI draft panel drag / resize state ----
 const AI_PANEL_STORAGE_KEY = 'cf-ai-panel-pos';
+const AI_PANEL_VIEWPORT_GAP = 0;
 const AI_PANEL_DEFAULT = (() => {
   try {
     return { x: Math.max(16, window.innerWidth - 460), y: 96, w: 420, h: 0 };
@@ -217,14 +279,37 @@ function saveAiPanelState() {
   } catch {}
 }
 
-function clampAiPanelPos(x, y) {
+function getAiPanelSafeTop() {
+  if (window.innerWidth <= 760) {
+    return 0;
+  }
+  const topbarBottom = document.querySelector('.topbar')?.getBoundingClientRect().bottom;
+  return Math.max(
+    AI_PANEL_VIEWPORT_GAP,
+    Math.ceil(Number.isFinite(topbarBottom) ? topbarBottom : 0)
+  );
+}
+
+function getAiPanelMeasuredSize(fallback = aiPanelSize.value) {
+  const rect = aiPanelRef.value?.getBoundingClientRect();
+  return {
+    w: rect?.width > 0 ? rect.width : fallback.w,
+    h: rect?.height > 0 ? rect.height : fallback.h || 200
+  };
+}
+
+function clampAiPanelPos(x, y, size = getAiPanelMeasuredSize()) {
   const vw = window.innerWidth;
   const vh = window.innerHeight;
-  const w = aiPanelSize.value.w;
-  const h = aiPanelSize.value.h || 200;
+  const w = size.w;
+  const h = size.h || 200;
+  const minX = AI_PANEL_VIEWPORT_GAP;
+  const minY = getAiPanelSafeTop();
+  const maxX = Math.max(minX, vw - w - AI_PANEL_VIEWPORT_GAP);
+  const maxY = Math.max(minY, vh - h - AI_PANEL_VIEWPORT_GAP);
   return {
-    x: Math.max(0, Math.min(x, vw - w)),
-    y: Math.max(0, Math.min(y, vh - h))
+    x: Math.max(minX, Math.min(x, maxX)),
+    y: Math.max(minY, Math.min(y, maxY))
   };
 }
 
@@ -263,8 +348,8 @@ function onAiPanelDragEnd() {
 }
 
 function resetAiPanel() {
-  aiPanelPos.value = { x: AI_PANEL_DEFAULT.x, y: AI_PANEL_DEFAULT.y };
   aiPanelSize.value = { w: AI_PANEL_DEFAULT.w, h: AI_PANEL_DEFAULT.h };
+  aiPanelPos.value = clampAiPanelPos(AI_PANEL_DEFAULT.x, AI_PANEL_DEFAULT.y, aiPanelSize.value);
   saveAiPanelState();
 }
 
@@ -278,7 +363,12 @@ function onAiPanelResize() {
   if (!el) return;
   const rect = el.getBoundingClientRect();
   if (rect.width > 0 && rect.height > 0) {
-    aiPanelSize.value = { w: Math.round(rect.width), h: Math.round(rect.height) };
+    const nextSize = { w: Math.round(rect.width), h: Math.round(rect.height) };
+    aiPanelSize.value = nextSize;
+    const clamped = clampAiPanelPos(aiPanelPos.value.x, aiPanelPos.value.y, nextSize);
+    if (clamped.x !== aiPanelPos.value.x || clamped.y !== aiPanelPos.value.y) {
+      aiPanelPos.value = clamped;
+    }
     saveAiPanelState();
   }
 }
@@ -305,9 +395,25 @@ watch(aiPanelRef, (el) => {
 
 onMounted(() => {
   window.addEventListener('resize', onWindowResize);
+  onWindowResize();
 });
 
 onBeforeUnmount(() => {
+  characterFormDisposed = true;
+  formOptionsLoadToken += 1;
+  editingCharacterLoadToken += 1;
+  formSubmitToken += 1;
+  characterDeleteToken += 1;
+  characterExportToken += 1;
+  tagCreateToken += 1;
+  suggestedModCreateToken += 1;
+  avatarUploadToken += 1;
+  for (const field of ADVANCED_BACKGROUND_FIELDS) {
+    nextBackgroundUploadToken(field);
+    backgroundUploading[field] = false;
+  }
+  aiAbortController.value?.abort();
+  advancedAiAbortController.value?.abort();
   document.removeEventListener('mousemove', onAiPanelDragMove);
   document.removeEventListener('mouseup', onAiPanelDragEnd);
   document.removeEventListener('touchmove', onAiPanelDragMove);
@@ -348,6 +454,9 @@ const permissionText = computed(() => {
 });
 
 const regexPreview = computed(() => {
+  if (!previewInput.value.trim()) {
+    return '';
+  }
   return applyLocalRules(previewInput.value, form.regexRules, 'input');
 });
 const enabledRenderPlugins = computed(() => form.renderPlugins.filter((plugin) => plugin.enabled !== false && plugin.pattern));
@@ -371,61 +480,117 @@ function modelOverrideOptions(value = '') {
 }
 
 onMounted(async () => {
-  try {
-    [worldBooks.value, availableTags.value] = await Promise.all([fetchWorldBooks(), fetchTags()]);
-  } catch {
-    // ignore
-  }
-
-  if (!isEditing.value) {
+  const optionsLoad = loadFormOptions();
+  if (isEditing.value) {
+    await Promise.all([optionsLoad, loadEditingCharacter()]);
     return;
   }
-
-  loading.value = true;
-  try {
-    const character = await fetchCharacter(props.route.params.id);
-    Object.assign(form, normalizeForForm(character));
-    const linkedBooks = await fetchCharacterWorldBooks(props.route.params.id);
-    selectedWorldBookIds.value = linkedBooks.map((book) => book.id);
-  } catch (err) {
-    notify.error(err.message);
-  } finally {
-    loading.value = false;
-  }
+  await optionsLoad;
 });
 
-async function submit() {
-  if (!canEdit.value) {
-    return;
-  }
-
-  saving.value = true;
+async function loadFormOptions() {
+  if (characterFormDisposed) return;
+  const loadToken = ++formOptionsLoadToken;
+  optionsLoading.value = true;
+  optionsLoadError.value = '';
   try {
-    const payload = toPayload();
-    const saved = isEditing.value
-      ? await updateCharacter(props.route.params.id, payload)
-      : await createCharacter(payload);
-    await syncCharacterWorldBooks(saved.id);
-    notify.success(isEditing.value ? '角色已保存' : '角色已创建');
-    emit('navigate', 'characterEdit', { id: saved.id });
+    const [nextWorldBooks, nextTags] = await Promise.all([fetchWorldBooks(), fetchTags()]);
+    if (!isCurrentFormOptionsLoad(loadToken)) return;
+    worldBooks.value = nextWorldBooks;
+    availableTags.value = nextTags;
   } catch (err) {
-    notify.error(err.message);
+    if (!isCurrentFormOptionsLoad(loadToken)) return;
+    optionsLoadError.value = err?.message || '标签和世界书选项加载失败';
+    notify.error(optionsLoadError.value);
   } finally {
-    saving.value = false;
+    if (isCurrentFormOptionsLoad(loadToken)) {
+      optionsLoading.value = false;
+    }
   }
 }
 
-async function syncCharacterWorldBooks(characterId) {
+async function loadEditingCharacter() {
+  if (characterFormDisposed || !isEditing.value) {
+    return;
+  }
+
+  const characterId = editingCharacterId.value;
+  const loadToken = ++editingCharacterLoadToken;
+  loading.value = true;
+  loadError.value = '';
+  try {
+    const [character, linkedBooks] = await Promise.all([
+      fetchCharacter(characterId),
+      fetchCharacterWorldBooks(characterId)
+    ]);
+    if (!isCurrentEditingCharacterLoad(loadToken, characterId)) return;
+    Object.assign(form, normalizeForForm(character));
+    selectedWorldBookIds.value = linkedBooks.map((book) => book.id);
+  } catch (err) {
+    if (!isCurrentEditingCharacterLoad(loadToken, characterId)) return;
+    const message = err?.message || '加载角色失败';
+    loadError.value = message;
+    notify.error(message);
+  } finally {
+    if (isCurrentEditingCharacterLoad(loadToken, characterId)) {
+      loading.value = false;
+    }
+  }
+}
+
+function isCurrentFormOptionsLoad(loadToken) {
+  return !characterFormDisposed && loadToken === formOptionsLoadToken;
+}
+
+function isCurrentEditingCharacterLoad(loadToken, characterId) {
+  return !characterFormDisposed
+    && loadToken === editingCharacterLoadToken
+    && characterId === editingCharacterId.value;
+}
+
+async function submit() {
+  if (characterFormDisposed || saving.value || !canEdit.value) {
+    return;
+  }
+
+  const submitToken = ++formSubmitToken;
+  const editing = isEditing.value;
+  const characterId = editingCharacterId.value;
+  const worldBookIds = [...selectedWorldBookIds.value];
+  saving.value = true;
+  try {
+    const payload = toPayload();
+    const saved = editing
+      ? await updateCharacter(characterId, payload)
+      : await createCharacter(payload);
+    await syncCharacterWorldBooks(saved.id, { editing, selectedIds: worldBookIds });
+    if (!isCurrentFormSubmit(submitToken, { editing, characterId })) return;
+    notify.success(editing ? '角色已保存' : '角色已创建');
+    emit('navigate', 'characterEdit', { id: saved.id });
+  } catch (err) {
+    if (!isCurrentFormSubmit(submitToken, { editing, characterId })) return;
+    notify.error(err.message);
+  } finally {
+    if (isActiveFormSubmit(submitToken)) {
+      saving.value = false;
+    }
+  }
+}
+
+async function syncCharacterWorldBooks(characterId, { editing = isEditing.value, selectedIds = selectedWorldBookIds.value } = {}) {
   if (!characterId) {
     return;
   }
 
-  const currentLinked = isEditing.value
+  const targetIds = Array.isArray(selectedIds) ? selectedIds : [];
+  const currentLinked = editing
     ? await fetchCharacterWorldBooks(characterId)
     : [];
   const currentIds = currentLinked.map((book) => book.id);
-  const toAdd = selectedWorldBookIds.value.filter((id) => !currentIds.includes(id));
-  const toRemove = currentIds.filter((id) => !selectedWorldBookIds.value.includes(id));
+  const currentIdSet = new Set(currentIds);
+  const targetIdSet = new Set(targetIds);
+  const toAdd = targetIds.filter((id) => !currentIdSet.has(id));
+  const toRemove = currentIds.filter((id) => !targetIdSet.has(id));
 
   for (const bookId of toAdd) {
     await linkCharacterWorldBook(characterId, bookId);
@@ -433,6 +598,16 @@ async function syncCharacterWorldBooks(characterId) {
   for (const bookId of toRemove) {
     await unlinkCharacterWorldBook(characterId, bookId);
   }
+}
+
+function isCurrentFormSubmit(submitToken, { editing, characterId } = {}) {
+  return isActiveFormSubmit(submitToken)
+    && editing === isEditing.value
+    && (!editing || characterId === editingCharacterId.value);
+}
+
+function isActiveFormSubmit(submitToken) {
+  return !characterFormDisposed && submitToken === formSubmitToken;
 }
 
 async function completeWithAi() {
@@ -446,14 +621,16 @@ async function completeWithAi() {
   aiProcess.value = [{ round: 1, reasoning: '等待模型响应...', content: '', tools: [] }];
   aiReasoning.value = '';
   aiModSuggestions.value = [];
-  aiAbortController.value = new AbortController();
+  const abortController = new AbortController();
+  aiAbortController.value = abortController;
   try {
     const result = await streamCharacterDraft({
       requirement,
       character: getAiCurrentCharacter(),
       modelOverride: assistantModel.value.trim(),
       options: { ...aiOptions, optimizeExisting: aiUseCurrentDraft.value }
-    }, aiStreamHandlers(), aiAbortController.value.signal);
+    }, aiStreamHandlers(() => isCurrentCharacterAiRun(abortController)), abortController.signal);
+    if (!isCurrentCharacterAiRun(abortController)) return;
     if (result?.aborted) {
       notify.info('AI 生成已暂停');
       return;
@@ -468,15 +645,18 @@ async function completeWithAi() {
     aiReasoning.value = result.reasoning || '';
     notify.success(`AI 已完善设定，调用 ${aiToolCalls.value.length} 次工具`);
   } catch (err) {
-    if (aiAbortController.value?.signal.aborted || err.name === 'AbortError') {
+    if (!isCurrentCharacterAiRun(abortController)) return;
+    if (abortController.signal.aborted || err.name === 'AbortError') {
       notify.info('AI 生成已暂停');
       return;
     }
     aiProcess.value = [{ round: 1, reasoning: err.message, content: '', tools: [] }];
     notify.error(err.message);
   } finally {
-    aiLoading.value = false;
-    aiAbortController.value = null;
+    if (isCurrentCharacterAiRun(abortController)) {
+      aiLoading.value = false;
+      aiAbortController.value = null;
+    }
   }
 }
 
@@ -484,18 +664,44 @@ function stopCharacterAi() {
   aiAbortController.value?.abort();
 }
 
+function isCurrentCharacterAiRun(abortController) {
+  return !characterFormDisposed && aiAbortController.value === abortController;
+}
+
 async function removeCharacter() {
-  if (!isEditing.value || !canEdit.value || !window.confirm('确定删除这个角色和相关对话吗？')) {
+  if (characterFormDisposed || deleting.value || !isEditing.value || !canEdit.value) {
+    return;
+  }
+  const characterId = editingCharacterId.value;
+  if (!window.confirm('确定删除这个角色和相关对话吗？')) {
     return;
   }
 
+  const deleteToken = ++characterDeleteToken;
+  deleting.value = true;
   try {
-    await deleteCharacter(props.route.params.id);
+    await deleteCharacter(characterId);
+    if (!isCurrentCharacterDelete(deleteToken, characterId)) return;
     notify.success('角色已删除');
     emit('navigate', 'home');
   } catch (err) {
+    if (!isCurrentCharacterDelete(deleteToken, characterId)) return;
     notify.error(err.message);
+  } finally {
+    if (isActiveCharacterDelete(deleteToken)) {
+      deleting.value = false;
+    }
   }
+}
+
+function isCurrentCharacterDelete(deleteToken, characterId) {
+  return isActiveCharacterDelete(deleteToken)
+    && isEditing.value
+    && characterId === editingCharacterId.value;
+}
+
+function isActiveCharacterDelete(deleteToken) {
+  return !characterFormDisposed && deleteToken === characterDeleteToken;
 }
 
 function addRule() {
@@ -551,11 +757,16 @@ function insertUserVariable(field) {
 }
 
 async function handleAvatar(event) {
-  if (!canEdit.value) {
+  if (characterFormDisposed || !canEdit.value) {
     return;
   }
 
-  const file = event.target.files?.[0];
+  const input = event?.target;
+  const file = input?.files?.[0];
+  if (input) {
+    input.value = '';
+  }
+  const uploadToken = ++avatarUploadToken;
   if (!file) {
     return;
   }
@@ -570,38 +781,69 @@ async function handleAvatar(event) {
     return;
   }
 
-  form.avatarUrl = await readAsDataUrl(file);
+  try {
+    const result = await readAsDataUrl(file);
+    if (!isCurrentAvatarUpload(uploadToken)) {
+      return;
+    }
+    form.avatarUrl = result;
+  } catch (err) {
+    if (!isCurrentAvatarUpload(uploadToken)) {
+      return;
+    }
+    notify.warning(err.message || '头像读取失败');
+  }
+}
+
+function isCurrentAvatarUpload(uploadToken) {
+  return !characterFormDisposed && uploadToken === avatarUploadToken;
 }
 
 async function handleAdvancedBackground(event, field) {
-  if (!canEdit.value || !ADVANCED_BACKGROUND_FIELDS.has(field)) {
+  if (characterFormDisposed || !canEdit.value || !ADVANCED_BACKGROUND_FIELDS.has(field)) {
     return;
   }
 
-  const file = event.target.files?.[0];
-  event.target.value = '';
+  const input = event?.target;
+  const file = input?.files?.[0];
+  if (input) {
+    input.value = '';
+  }
+  const uploadToken = nextBackgroundUploadToken(field);
   if (!file) {
+    backgroundUploading[field] = false;
     return;
   }
 
   if (!['image/png', 'image/jpeg', 'image/webp', 'image/gif'].includes(file.type)) {
+    backgroundUploading[field] = false;
     notify.warning('背景图片仅支持 PNG、JPG、WebP 或 GIF');
     return;
   }
 
   if (file.size > 4 * 1024 * 1024) {
+    backgroundUploading[field] = false;
     notify.warning('背景图片不能超过 4MB');
     return;
   }
 
   backgroundUploading[field] = true;
   try {
-    form.authorAdvancedSettings[field] = await readAsDataUrl(file, '背景图片读取失败');
+    const result = await readAsDataUrl(file, '背景图片读取失败');
+    if (!isCurrentBackgroundUpload(field, uploadToken)) {
+      return;
+    }
+    form.authorAdvancedSettings[field] = result;
     notify.success('背景图片已读取，保存角色后会生成短链');
   } catch (err) {
+    if (!isCurrentBackgroundUpload(field, uploadToken)) {
+      return;
+    }
     notify.warning(err.message || '背景图片读取失败');
   } finally {
-    backgroundUploading[field] = false;
+    if (isCurrentBackgroundUpload(field, uploadToken)) {
+      backgroundUploading[field] = false;
+    }
   }
 }
 
@@ -609,7 +851,20 @@ function clearAdvancedBackground(field) {
   if (!canEdit.value || !ADVANCED_BACKGROUND_FIELDS.has(field)) {
     return;
   }
+  nextBackgroundUploadToken(field);
+  backgroundUploading[field] = false;
   form.authorAdvancedSettings[field] = '';
+}
+
+function nextBackgroundUploadToken(field) {
+  const key = String(field || '');
+  const nextToken = (backgroundUploadTokens[key] || 0) + 1;
+  backgroundUploadTokens[key] = nextToken;
+  return nextToken;
+}
+
+function isCurrentBackgroundUpload(field, uploadToken) {
+  return !characterFormDisposed && backgroundUploadTokens[String(field || '')] === uploadToken;
 }
 
 function toPayload() {
@@ -658,12 +913,18 @@ function toggleWorldBook(bookId) {
 }
 
 async function createSuggestedMods() {
+  if (characterFormDisposed || suggestedModsCreating.value) return;
+  const sourceSuggestions = aiModSuggestions.value;
   if (!aiModSuggestions.value.length) {
     notify.warning('没有可创建的 AI Mod 建议');
     return;
   }
+  const createToken = ++suggestedModCreateToken;
+  const suggestions = [...sourceSuggestions];
+  suggestedModsCreating.value = true;
   try {
-    for (const mod of aiModSuggestions.value) {
+    for (const mod of suggestions) {
+      if (!isCurrentSuggestedModCreate(createToken, sourceSuggestions)) return;
       await createMod({
         name: mod.name,
         description: mod.description || '',
@@ -671,12 +932,27 @@ async function createSuggestedMods() {
         content: mod.content,
         enabled: mod.enabled !== false
       });
+      if (!isCurrentSuggestedModCreate(createToken, sourceSuggestions)) return;
     }
-    notify.success(`已创建 ${aiModSuggestions.value.length} 个 Mod`);
+    notify.success(`已创建 ${suggestions.length} 个 Mod`);
     aiModSuggestions.value = [];
   } catch (err) {
+    if (!isCurrentSuggestedModCreate(createToken, sourceSuggestions)) return;
     notify.error(err.message);
+  } finally {
+    if (isActiveSuggestedModCreate(createToken)) {
+      suggestedModsCreating.value = false;
+    }
   }
+}
+
+function isActiveSuggestedModCreate(createToken) {
+  return !characterFormDisposed && createToken === suggestedModCreateToken;
+}
+
+function isCurrentSuggestedModCreate(createToken, sourceSuggestions) {
+  return isActiveSuggestedModCreate(createToken)
+    && aiModSuggestions.value === sourceSuggestions;
 }
 
 function normalizeModType(type) {
@@ -685,9 +961,10 @@ function normalizeModType(type) {
   return 'prompt_inject';
 }
 
-function aiStreamHandlers() {
+function aiStreamHandlers(isCurrent = () => !characterFormDisposed) {
   return {
     step: (step) => {
+      if (!isCurrent()) return;
       const target = ensureAiProcessStep(step.round || 1);
       Object.assign(target, {
         ...step,
@@ -697,20 +974,24 @@ function aiStreamHandlers() {
       });
     },
     reasoning: ({ round = 1, text = '' } = {}) => {
+      if (!isCurrent()) return;
       const target = ensureAiProcessStep(round);
       if (target.reasoning === '等待模型响应...') target.reasoning = '';
       target.reasoning += text;
       aiReasoning.value += text;
     },
     content: ({ round = 1, text = '' } = {}) => {
+      if (!isCurrent()) return;
       const target = ensureAiProcessStep(round);
       target.content += text;
     },
     nudge: ({ round = 1, text = '' } = {}) => {
+      if (!isCurrent()) return;
       const target = ensureAiProcessStep(round);
       target.content += `${target.content ? '\n\n' : ''}系统提醒：${text}`;
     },
     tool: (call = {}) => {
+      if (!isCurrent()) return;
       const target = ensureAiProcessStep(call.round || 1);
       const log = {
         name: call.name,
@@ -760,7 +1041,8 @@ async function completeAdvancedSettingsWithAi() {
   aiProcess.value = [{ round: 1, reasoning: '等待模型响应...', content: '', tools: [] }];
   aiReasoning.value = '';
   aiToolCalls.value = [];
-  advancedAiAbortController.value = new AbortController();
+  const abortController = new AbortController();
+  advancedAiAbortController.value = abortController;
   try {
     const result = await streamCharacterDraft({
       requirement,
@@ -780,7 +1062,8 @@ async function completeAdvancedSettingsWithAi() {
         modSuggestions: false,
         optimizeExisting: aiUseCurrentDraft.value
       }
-    }, aiStreamHandlers(), advancedAiAbortController.value.signal);
+    }, aiStreamHandlers(() => isCurrentAdvancedAiRun(abortController)), abortController.signal);
+    if (!isCurrentAdvancedAiRun(abortController)) return;
     if (result?.aborted) {
       notify.info('AI 高阶设置生成已暂停');
       return;
@@ -806,15 +1089,18 @@ async function completeAdvancedSettingsWithAi() {
     aiReasoning.value = result.reasoning || '';
     notify.success('AI 已完善高阶设置');
   } catch (err) {
-    if (advancedAiAbortController.value?.signal.aborted || err.name === 'AbortError') {
+    if (!isCurrentAdvancedAiRun(abortController)) return;
+    if (abortController.signal.aborted || err.name === 'AbortError') {
       notify.info('AI 高阶设置生成已暂停');
       return;
     }
     aiProcess.value = [{ round: 1, reasoning: err.message, content: '', tools: [] }];
     notify.error(err.message);
   } finally {
-    advancedAiLoading.value = false;
-    advancedAiAbortController.value = null;
+    if (isCurrentAdvancedAiRun(abortController)) {
+      advancedAiLoading.value = false;
+      advancedAiAbortController.value = null;
+    }
   }
 }
 
@@ -822,18 +1108,36 @@ function stopAdvancedAi() {
   advancedAiAbortController.value?.abort();
 }
 
+function isCurrentAdvancedAiRun(abortController) {
+  return !characterFormDisposed && advancedAiAbortController.value === abortController;
+}
+
 async function createAndSelectTag() {
+  if (characterFormDisposed) return;
   const name = tagSearch.value.trim();
   if (!name) return;
   if (form.selectedTags.includes(name)) return;
+  const createToken = ++tagCreateToken;
   try {
     const tag = await createTag({ name });
-    availableTags.value = [...availableTags.value, tag];
-    form.selectedTags.push(name);
+    if (!isCurrentTagCreate(createToken, name)) return;
+    if (!availableTags.value.some((item) => item.name === tag.name)) {
+      availableTags.value = [...availableTags.value, tag];
+    }
+    if (!form.selectedTags.includes(name)) {
+      form.selectedTags.push(name);
+    }
     tagSearch.value = '';
   } catch (err) {
+    if (!isCurrentTagCreate(createToken, name)) return;
     notify.error(err.message);
   }
+}
+
+function isCurrentTagCreate(createToken, name) {
+  return !characterFormDisposed
+    && createToken === tagCreateToken
+    && tagSearch.value.trim() === name;
 }
 
 function getAiCurrentCharacter() {
@@ -1051,7 +1355,7 @@ function normalizeStatusBarBlueprintForPayload(input = {}) {
   const variables = Array.isArray(source.variables)
     ? source.variables
         .map((variable) => normalizeStatusVariableForPayload(variable, template))
-        .filter((variable) => variable.name)
+        .filter((variable) => variable.name && !isCompositeStatusPlaceholderValue(variable.value, variable.name))
     : [];
   return {
     name: String(source.name || '').trim(),
@@ -1081,6 +1385,37 @@ function normalizeStatusVariableForPayload(variable = {}, template = '') {
 
 function isStatusBlueprintMeterVariable(variable = {}) {
   return shouldTreatStatusVariableAsMeter(variable, form.authorAdvancedSettings.statusBarBlueprint.template);
+}
+
+function getStatusBlueprintVariableValue(name = '') {
+  const variable = findStatusBlueprintVariable(name);
+  return variable ? String(variable.value ?? '') : '';
+}
+
+function setStatusBlueprintVariableValue(name = '', value = '') {
+  if (!canEdit.value) {
+    return;
+  }
+  const normalizedName = normalizeTemplateVariableName(name);
+  if (!normalizedName) {
+    return;
+  }
+  const blueprint = ensureStatusBlueprint();
+  let variable = findStatusBlueprintVariable(normalizedName);
+  if (!variable) {
+    variable = { name: normalizedName, value: '' };
+    blueprint.variables.push(variable);
+  }
+  variable.value = normalizeStatusTextVariableValue(value);
+  delete variable.max;
+  delete variable.color;
+}
+
+function findStatusBlueprintVariable(name = '') {
+  const key = normalizeStatusVariableKey(name);
+  const blueprint = form.authorAdvancedSettings.statusBarBlueprint || {};
+  const variables = Array.isArray(blueprint.variables) ? blueprint.variables : [];
+  return variables.find((variable) => normalizeStatusVariableKey(variable?.name) === key) || null;
 }
 
 function setStatusBlueprintVariableMode(variable, mode) {
@@ -1221,6 +1556,9 @@ function extractTemplateRowVariables(template) {
     if (!name || !key || seen.has(key)) {
       return;
     }
+    if (isCompositeStatusPlaceholderValue(rawValue, name)) {
+      return;
+    }
     const rawValueText = normalizeHtmlText(rawValue);
     const value = isSelfStatusPlaceholder(rawValueText, name)
       ? defaultStatusTextValueForName(name)
@@ -1240,6 +1578,68 @@ function extractTemplateRowVariables(template) {
     addRow(match[1], match[3]);
   }
   return rows;
+}
+
+function extractStatusTemplateCompositeRows(template) {
+  const rows = [];
+  const seen = new Set();
+  const addRow = (rawLabel, rawValue) => {
+    const label = normalizeTemplateVariableName(rawLabel);
+    const key = normalizeStatusVariableKey(label);
+    if (!label || !key || seen.has(key)) {
+      return;
+    }
+    const parts = extractCompositePlaceholderParts(rawValue, label);
+    if (parts.length < 2) {
+      return;
+    }
+    rows.push({ label, parts });
+    seen.add(key);
+  };
+
+  const rawTemplate = String(template || '');
+  const pairPattern = /<[^>]+\bclass\s*=\s*(['"])[^'"]*\bsb-label\b[^'"]*\1[^>]*>([\s\S]*?)<\/[^>]+>[\s\S]{0,180}?<[^>]+\bclass\s*=\s*(['"])[^'"]*\bsb-val\b[^'"]*\3[^>]*>([\s\S]*?)<\/[^>]+>/gi;
+  let match;
+  while ((match = pairPattern.exec(rawTemplate))) {
+    addRow(match[2], match[4]);
+  }
+
+  const inlineValuePattern = /(?:^|>|\n)([^<>\n]{1,40}?)[\s:\uFF1A]+<[^>]+\bclass\s*=\s*(['"])[^'"]*\bsb-val\b[^'"]*\2[^>]*>([\s\S]*?)<\/[^>]+>/gi;
+  while ((match = inlineValuePattern.exec(rawTemplate))) {
+    addRow(match[1], match[3]);
+  }
+  return rows;
+}
+
+function extractCompositePlaceholderParts(value = '', label = '') {
+  const parts = [];
+  const seen = new Set();
+  const labelKey = normalizeStatusVariableKey(label);
+  const placeholderPattern = /\{\{\s*([^{}]+?)\s*\}\}|\{([\w\u4e00-\u9fa5 ._-]+)\}/g;
+  let match;
+  while ((match = placeholderPattern.exec(normalizeHtmlText(value)))) {
+    const token = String(match[1] || match[2] || '').trim();
+    const [rawName, rawProperty = 'value'] = token.split('.').map((part) => part.trim());
+    const name = normalizeTemplateVariableName(rawName);
+    const key = normalizeStatusVariableKey(name);
+    if (!name || !key || key === labelKey || seen.has(key)) {
+      continue;
+    }
+    if (isMeterTemplateProperty(rawProperty)) {
+      continue;
+    }
+    parts.push({ name });
+    seen.add(key);
+  }
+  return parts;
+}
+
+function isMeterTemplateProperty(value = '') {
+  return ['max', 'percent', 'percentage'].includes(String(value || '').trim());
+}
+
+function isCompositeStatusPlaceholderValue(value = '', name = '') {
+  return extractCompositePlaceholderParts(value, name).length >= 2;
 }
 
 function isSelfStatusPlaceholder(value = '', name = '') {
@@ -1472,19 +1872,45 @@ function readAsDataUrl(file, errorMessage = '头像读取失败') {
 }
 
 async function handleExport() {
+  if (characterFormDisposed || exporting.value || !isEditing.value) {
+    return;
+  }
+
+  const exportToken = ++characterExportToken;
+  const characterId = editingCharacterId.value;
+  exporting.value = true;
+  let objectUrl = '';
   try {
-    const data = await exportCharacter(props.route.params.id);
+    const data = await exportCharacter(characterId);
+    if (!isCurrentCharacterExport(exportToken, characterId)) return;
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
+    objectUrl = URL.createObjectURL(blob);
     const a = document.createElement('a');
-    a.href = url;
+    a.href = objectUrl;
     a.download = `${data.character?.name || 'character'}.flai-char.json`;
     a.click();
-    URL.revokeObjectURL(url);
     notify.success('角色卡已导出');
   } catch (err) {
+    if (!isCurrentCharacterExport(exportToken, characterId)) return;
     notify.error(err.message);
+  } finally {
+    if (objectUrl) {
+      URL.revokeObjectURL(objectUrl);
+    }
+    if (isActiveCharacterExport(exportToken)) {
+      exporting.value = false;
+    }
   }
+}
+
+function isCurrentCharacterExport(exportToken, characterId) {
+  return isActiveCharacterExport(exportToken)
+    && isEditing.value
+    && characterId === editingCharacterId.value;
+}
+
+function isActiveCharacterExport(exportToken) {
+  return !characterFormDisposed && exportToken === characterExportToken;
 }
 
 function applyLocalRules(text, rules, phase) {
@@ -1515,10 +1941,24 @@ function applyLocalRules(text, rules, phase) {
       </button>
     </div>
 
-    <p v-if="loading" class="muted-text">正在加载角色...</p>
-    <p v-if="!loading" class="permission-note" :class="{ readonly: !canEdit }">{{ permissionText }}</p>
+    <p v-if="loading" class="muted-text" aria-live="polite">正在加载角色...</p>
+    <section v-else-if="loadError" class="form-panel empty-state error-state" role="alert">
+      <h2>角色加载失败</h2>
+      <p>{{ loadError }}</p>
+      <div class="empty-state-actions">
+        <button class="ghost-button" type="button" :disabled="loading" @click="loadEditingCharacter">
+          <RotateCcw :size="18" />
+          <span>{{ loading ? '重试中...' : '重试' }}</span>
+        </button>
+        <button class="ghost-button" type="button" @click="emit('navigate', 'home')">
+          <ArrowLeft :size="18" />
+          <span>返回首页</span>
+        </button>
+      </div>
+    </section>
+    <p v-if="!loading && !loadError" class="permission-note" :class="{ readonly: !canEdit }">{{ permissionText }}</p>
 
-    <nav v-if="!loading" class="form-section-nav">
+    <nav v-if="!loading && !loadError" class="form-section-nav">
       <button
         v-for="section in formSections"
         :key="section.id"
@@ -1531,7 +1971,7 @@ function applyLocalRules(text, rules, phase) {
       </button>
     </nav>
 
-    <form v-if="!loading" class="editor-layout" @submit.prevent="submit">
+    <form v-if="!loading && !loadError" class="editor-layout" @submit.prevent="submit">
       <section class="form-panel">
         <div id="section-basic" class="form-section-group">
           <div class="inline-heading">
@@ -1581,6 +2021,16 @@ function applyLocalRules(text, rules, phase) {
               <span>角色名</span>
               <input v-model.trim="form.name" required maxlength="40" :disabled="!canEdit" />
             </label>
+            <div v-if="optionsLoading || optionsLoadError" class="field full-span">
+              <p v-if="optionsLoading" class="muted-text" aria-live="polite">正在加载标签和世界书选项...</p>
+              <div v-else class="section-load-status error-state" role="alert">
+                <span>{{ optionsLoadError }}</span>
+                <button class="ghost-button compact-button" type="button" :disabled="optionsLoading" @click="loadFormOptions">
+                  <RotateCcw :size="17" />
+                  <span>{{ optionsLoading ? '重试中...' : '重试' }}</span>
+                </button>
+              </div>
+            </div>
             <div class="field">
               <span>标签</span>
               <div class="tag-selector" :class="{ disabled: !canEdit }">
@@ -1596,7 +2046,7 @@ function applyLocalRules(text, rules, phase) {
                   </span>
                 </div>
                 <div v-if="canEdit" class="tag-input-row">
-                  <input v-model="tagSearch" placeholder="搜索或创建标签..." class="tag-search-input" />
+                  <input v-model="tagSearch" placeholder="搜索或创建标签..." class="tag-search-input" aria-label="搜索或创建角色标签" />
                   <button
                     v-if="tagSearch.trim() && !availableTags.some((t) => t.name === tagSearch.trim())"
                     class="ghost-button tag-create-btn"
@@ -1622,7 +2072,8 @@ function applyLocalRules(text, rules, phase) {
                   <p v-if="!filteredTags.length" class="muted-text tag-empty">无匹配标签</p>
                 </div>
               </div>
-              <small class="muted-text">选择已有标签或输入新标签名创建</small>
+              <small v-if="!optionsLoadError" class="muted-text">选择已有标签或输入新标签名创建</small>
+              <small v-else class="muted-text">选项加载失败时仍可输入新标签，重试后可查看已有标签和世界书。</small>
             </div>
             <label class="field full-span">
               <span>关联世界书</span>
@@ -1640,7 +2091,7 @@ function applyLocalRules(text, rules, phase) {
               </div>
               <small v-if="selectedWorldBookIds.length" class="muted-text">已关联 {{ selectedWorldBookIds.length }} 本世界书</small>
               <small v-else-if="worldBooks.length" class="muted-text">选择世界书后，对话中触发词匹配时会自动注入设定</small>
-              <small v-else class="muted-text">还没有世界书，去 <a href="#/world-books">世界书管理</a> 创建</small>
+              <small v-else-if="!optionsLoading && !optionsLoadError" class="muted-text">还没有世界书，去 <a href="#/world-books">世界书管理</a> 创建</small>
             </label>
             <label class="field">
               <span>性别</span>
@@ -1669,6 +2120,7 @@ function applyLocalRules(text, rules, phase) {
               :rows="4"
               :disabled="!canEdit"
               :user-value="userVariableValue"
+              aria-label="角色背景内容"
               placeholder=""
             />
           </div>
@@ -1684,6 +2136,7 @@ function applyLocalRules(text, rules, phase) {
               :rows="4"
               :disabled="!canEdit"
               :user-value="userVariableValue"
+              aria-label="角色世界观内容"
               placeholder=""
             />
           </div>
@@ -1699,6 +2152,7 @@ function applyLocalRules(text, rules, phase) {
               :rows="5"
               :disabled="!canEdit"
               :user-value="userVariableValue"
+              aria-label="角色人设内容"
               placeholder=""
             />
           </div>
@@ -1714,6 +2168,7 @@ function applyLocalRules(text, rules, phase) {
               :rows="4"
               :disabled="!canEdit"
               :user-value="userVariableValue"
+              aria-label="角色开场白内容"
               placeholder=""
             />
           </div>
@@ -1735,7 +2190,14 @@ function applyLocalRules(text, rules, phase) {
               <p>按你的要求自动补全角色字段和正则规则。</p>
             </div>
             <div class="ai-panel-heading-actions">
-              <button class="ai-panel-reset" type="button" title="重置位置" @mousedown.stop @click.stop="resetAiPanel">
+              <button
+                class="ai-panel-reset"
+                type="button"
+                title="重置位置"
+                aria-label="重置 AI 完善面板位置"
+                @mousedown.stop
+                @click.stop="resetAiPanel"
+              >
                 <RotateCcw :size="14" />
               </button>
               <Sparkles :size="20" />
@@ -1805,9 +2267,14 @@ function applyLocalRules(text, rules, phase) {
               <small>{{ mod.type || 'system' }}</small>
               <p>{{ mod.description || mod.content }}</p>
             </article>
-            <button class="ghost-button" type="button" @click="createSuggestedMods">
+            <button
+              class="ghost-button"
+              type="button"
+              :disabled="suggestedModsCreating"
+              @click="createSuggestedMods"
+            >
               <Plus :size="16" />
-              <span>创建这些 Mod</span>
+              <span>{{ suggestedModsCreating ? '创建中...' : '创建这些 Mod' }}</span>
             </button>
           </div>
           <div v-if="aiProcess.length || aiToolCalls.length" class="ai-process-panel">
@@ -1844,6 +2311,31 @@ function applyLocalRules(text, rules, phase) {
             </div>
           </div>
         </section>
+
+        <section v-if="isEditing && editingCharacterId" class="form-panel">
+          <CharacterImagePanel :character-id="editingCharacterId" :disabled="!canEdit" />
+        </section>
+
+        <section v-if="isEditing && editingCharacterId" class="form-panel talent-panel">
+          <div class="inline-heading">
+            <div>
+              <h2>角色天赋</h2>
+              <p>管理 Roll 得到的角色天赋；开启“天赋提示”后会进入聊天提示词。</p>
+            </div>
+            <button class="ghost-button" type="button" @click="showTalentDialog = true">
+              <Dice6 :size="17" />
+              <span>管理天赋</span>
+            </button>
+          </div>
+        </section>
+
+        <TalentRollDialog
+          v-if="showTalentDialog && editingCharacterId"
+          :character-id="editingCharacterId"
+          :character-name="form.name"
+          :can-edit="canEdit"
+          @close="showTalentDialog = false"
+        />
 
         <section class="form-panel advanced-settings-panel">
           <div class="inline-heading">
@@ -1889,6 +2381,7 @@ function applyLocalRules(text, rules, phase) {
                 v-model="form.authorAdvancedSettings.desktopBackgroundUrl"
                 type="text"
                 placeholder="图片链接、短链或 data URL，可留空"
+                aria-label="电脑端背景图片链接"
                 :disabled="!canEdit"
               />
               <div v-if="canEdit" class="background-upload-actions">
@@ -1913,6 +2406,7 @@ function applyLocalRules(text, rules, phase) {
                 v-model="form.authorAdvancedSettings.mobileBackgroundUrl"
                 type="text"
                 placeholder="手机端专用背景，可留空"
+                aria-label="手机端背景图片链接"
                 :disabled="!canEdit"
               />
               <div v-if="canEdit" class="background-upload-actions">
@@ -1989,44 +2483,97 @@ function applyLocalRules(text, rules, phase) {
             </label>
             <div class="status-blueprint-vars">
               <div
-                v-for="(variable, index) in form.authorAdvancedSettings.statusBarBlueprint.variables"
-                :key="index"
+                v-for="row in statusBlueprintEditorRows"
+                :key="row.key"
                 class="variable-editor-row status-variable-row"
-                :class="{ 'is-meter': isStatusBlueprintMeterVariable(variable), 'is-text': !isStatusBlueprintMeterVariable(variable) }"
+                :class="{
+                  'is-composite': row.kind === 'composite',
+                  'is-meter': row.kind === 'variable' && isStatusBlueprintMeterVariable(row.variable),
+                  'is-text': row.kind === 'variable' && !isStatusBlueprintMeterVariable(row.variable)
+                }"
               >
-                <input v-model="variable.name" class="variable-input name" type="text" placeholder="变量名" maxlength="40" :disabled="!canEdit" />
-                <select
-                  class="variable-input kind"
-                  :value="isStatusBlueprintMeterVariable(variable) ? 'meter' : 'text'"
-                  :disabled="!canEdit"
-                  @change="setStatusBlueprintVariableMode(variable, $event.target.value)"
-                >
-                  <option value="text">文本</option>
-                  <option value="meter">数值</option>
-                </select>
-                <input
-                  v-model="variable.value"
-                  class="variable-input value"
-                  type="text"
-                  :placeholder="isStatusBlueprintMeterVariable(variable) ? '数值' : '文本内容'"
-                  :disabled="!canEdit"
-                />
-                <template v-if="isStatusBlueprintMeterVariable(variable)">
-                  <span class="variable-separator">/</span>
-                  <input v-model.number="variable.max" class="variable-input num" type="number" placeholder="最大" :disabled="!canEdit" />
-                  <input :value="normalizeHexColor(variable.color)" class="variable-input color" type="color" title="颜色" :disabled="!canEdit" @input="setColorValue(variable, 'color', $event.target.value)" />
+                <template v-if="row.kind === 'composite'">
+                  <input
+                    :value="row.label"
+                    class="variable-input name"
+                    type="text"
+                    readonly
+                    :disabled="!canEdit"
+                    :aria-label="`初始状态栏组合行 ${row.label}`"
+                  />
+                  <span class="variable-input kind status-composite-kind">组合</span>
+                  <div class="status-composite-values">
+                    <label
+                      v-for="part in row.parts"
+                      :key="part.name"
+                      class="status-composite-value"
+                    >
+                      <span>{{ part.name }}</span>
+                      <input
+                        class="variable-input value"
+                        type="text"
+                        :value="getStatusBlueprintVariableValue(part.name)"
+                        placeholder="文本内容"
+                        :disabled="!canEdit"
+                        :aria-label="`初始状态栏 ${row.label} 的 ${part.name}`"
+                        @input="setStatusBlueprintVariableValue(part.name, $event.target.value)"
+                      />
+                    </label>
+                  </div>
                 </template>
-                <button
-                  v-if="canEdit"
-                  class="variable-remove"
-                  type="button"
-                  title="删除变量"
-                  @click="removeStatusBlueprintVariable(index)"
-                >
-                  x
-                </button>
+                <template v-else>
+                  <input
+                    v-model="row.variable.name"
+                    class="variable-input name"
+                    type="text"
+                    placeholder="变量名"
+                    maxlength="40"
+                    :disabled="!canEdit"
+                    :aria-label="`初始状态栏变量 ${row.index + 1} 名称`"
+                  />
+                  <select
+                    class="variable-input kind"
+                    :value="isStatusBlueprintMeterVariable(row.variable) ? 'meter' : 'text'"
+                    :disabled="!canEdit"
+                    :aria-label="`初始状态栏变量 ${row.index + 1} 类型`"
+                    @change="setStatusBlueprintVariableMode(row.variable, $event.target.value)"
+                  >
+                    <option value="text">文本</option>
+                    <option value="meter">数值</option>
+                  </select>
+                  <input
+                    v-model="row.variable.value"
+                    class="variable-input value"
+                    type="text"
+                    :placeholder="isStatusBlueprintMeterVariable(row.variable) ? '数值' : '文本内容'"
+                    :disabled="!canEdit"
+                    :aria-label="`初始状态栏变量 ${row.index + 1} 内容`"
+                  />
+                  <template v-if="isStatusBlueprintMeterVariable(row.variable)">
+                    <span class="variable-separator">/</span>
+                    <input
+                      v-model.number="row.variable.max"
+                      class="variable-input num"
+                      type="number"
+                      placeholder="最大"
+                      :disabled="!canEdit"
+                      :aria-label="`初始状态栏变量 ${row.index + 1} 最大值`"
+                    />
+                    <input :value="normalizeHexColor(row.variable.color)" class="variable-input color" type="color" title="颜色" :disabled="!canEdit" @input="setColorValue(row.variable, 'color', $event.target.value)" />
+                  </template>
+                  <button
+                    v-if="canEdit"
+                    class="variable-remove"
+                    type="button"
+                    title="删除变量"
+                    :aria-label="`删除初始状态栏变量 ${row.index + 1}`"
+                    @click="removeStatusBlueprintVariable(row.index)"
+                  >
+                    x
+                  </button>
+                </template>
               </div>
-              <p v-if="!form.authorAdvancedSettings.statusBarBlueprint.variables.length" class="status-blueprint-vars-empty">
+              <p v-if="!statusBlueprintEditorRows.length" class="status-blueprint-vars-empty">
                 粘贴模板会自动识别变量，也可以点击右上角“变量”手动添加。
               </p>
             </div>
@@ -2042,6 +2589,7 @@ function applyLocalRules(text, rules, phase) {
                 rows="6"
                 placeholder="<div class=&quot;my-status&quot;><span class=&quot;sb-label&quot;>HP</span><span class=&quot;sb-val&quot;>{{HP}}</span><button data-sb-action=&quot;quick-reply&quot; data-sb-text=&quot;查看状态&quot;>查看</button></div>"
                 :disabled="!canEdit"
+                aria-label="完全自定义状态栏模板"
               />
               <div class="status-blueprint-hints">
                 <span>标签 + 值：<code v-pre>&lt;span class="sb-label"&gt;姓名&lt;/span&gt;&lt;span class="sb-val"&gt;{{ 姓名 }}&lt;/span&gt;</code></span>
@@ -2138,15 +2686,40 @@ function applyLocalRules(text, rules, phase) {
               <input v-model="plugin.enabled" type="checkbox" :disabled="!canEdit" />
               <span>启用</span>
             </label>
-            <input v-model="plugin.label" class="plugin-label" placeholder="插件名称" :disabled="!canEdit" />
-            <input v-model="plugin.pattern" class="plugin-pattern" placeholder="标题行正则，例如 ^【(.+档案.*)】$" :disabled="!canEdit" />
-            <input v-model="plugin.titleTemplate" class="plugin-template" placeholder="标题模板，例如 $1" :disabled="!canEdit" />
-            <input v-model="plugin.flags" class="flags-input plugin-flags" placeholder="u" :disabled="!canEdit" />
+            <input
+              v-model="plugin.label"
+              class="plugin-label"
+              placeholder="插件名称"
+              :disabled="!canEdit"
+              :aria-label="`消息渲染插件 ${index + 1} 名称`"
+            />
+            <input
+              v-model="plugin.pattern"
+              class="plugin-pattern"
+              placeholder="标题行正则，例如 ^【(.+档案.*)】$"
+              :disabled="!canEdit"
+              :aria-label="`消息渲染插件 ${index + 1} 标题行正则`"
+            />
+            <input
+              v-model="plugin.titleTemplate"
+              class="plugin-template"
+              placeholder="标题模板，例如 $1"
+              :disabled="!canEdit"
+              :aria-label="`消息渲染插件 ${index + 1} 标题模板`"
+            />
+            <input
+              v-model="plugin.flags"
+              class="flags-input plugin-flags"
+              placeholder="u"
+              :disabled="!canEdit"
+              :aria-label="`消息渲染插件 ${index + 1} 正则标志`"
+            />
             <button
               v-if="canEdit"
               class="icon-button danger plugin-delete"
               type="button"
               title="删除插件"
+              :aria-label="`删除消息渲染插件 ${index + 1}`"
               @click="removeRenderPlugin(index)"
             >
               <Trash2 :size="17" />
@@ -2165,6 +2738,7 @@ function applyLocalRules(text, rules, phase) {
                 :value="renderPluginPreviewText || '当前角色还没有可预览的背景、世界观、人设或开场白。'"
                 rows="6"
                 readonly
+                aria-label="角色内容渲染预览文本"
               />
             </label>
             <div class="render-preview-card">
@@ -2195,22 +2769,68 @@ function applyLocalRules(text, rules, phase) {
             <input v-model="rule.enabled" type="checkbox" :disabled="!canEdit" />
             <span>启用</span>
           </label>
-          <input v-model="rule.label" class="rule-name" placeholder="名称" :disabled="!canEdit" />
-          <input v-model="rule.pattern" class="rule-pattern" placeholder="正则 pattern" :disabled="!canEdit" />
-          <input v-model="rule.replacement" class="rule-replacement" placeholder="替换为" :disabled="!canEdit" />
-          <input v-model="rule.flags" class="flags-input rule-flags" placeholder="gim" :disabled="!canEdit" />
-          <select v-model="rule.scope" class="rule-scope" :disabled="!canEdit">
+          <input
+            v-model="rule.label"
+            class="rule-name"
+            placeholder="名称"
+            :disabled="!canEdit"
+            :aria-label="`正则规则 ${index + 1} 名称`"
+          />
+          <input
+            v-model="rule.pattern"
+            class="rule-pattern"
+            placeholder="正则 pattern"
+            :disabled="!canEdit"
+            :aria-label="`正则规则 ${index + 1} 匹配模式`"
+          />
+          <input
+            v-model="rule.replacement"
+            class="rule-replacement"
+            placeholder="替换为"
+            :disabled="!canEdit"
+            :aria-label="`正则规则 ${index + 1} 替换内容`"
+          />
+          <input
+            v-model="rule.flags"
+            class="flags-input rule-flags"
+            placeholder="gim"
+            :disabled="!canEdit"
+            :aria-label="`正则规则 ${index + 1} 正则标志`"
+          />
+          <select
+            v-model="rule.scope"
+            class="rule-scope"
+            :disabled="!canEdit"
+            :aria-label="`正则规则 ${index + 1} 作用域`"
+          >
             <option value="input">输入</option>
             <option value="output">输出</option>
             <option value="both">双向</option>
           </select>
-          <input v-model="rule.groupName" class="rule-group" placeholder="分组名" :disabled="!canEdit" maxlength="60" />
-          <input v-model.number="rule.priority" class="rule-priority" type="number" min="0" placeholder="0" :disabled="!canEdit" title="优先级，数字越小越先执行" />
+          <input
+            v-model="rule.groupName"
+            class="rule-group"
+            placeholder="分组名"
+            :disabled="!canEdit"
+            maxlength="60"
+            :aria-label="`正则规则 ${index + 1} 分组名`"
+          />
+          <input
+            v-model.number="rule.priority"
+            class="rule-priority"
+            type="number"
+            min="0"
+            placeholder="0"
+            :disabled="!canEdit"
+            title="优先级，数字越小越先执行"
+            :aria-label="`正则规则 ${index + 1} 优先级`"
+          />
           <button
             v-if="canEdit"
             class="icon-button danger rule-delete"
             type="button"
             title="删除规则"
+            :aria-label="`删除正则规则 ${index + 1}`"
             @click="removeRule(index)"
           >
             <Trash2 :size="17" />
@@ -2220,19 +2840,20 @@ function applyLocalRules(text, rules, phase) {
         <div class="preview-box">
           <label class="field">
             <span>预览输入</span>
-            <input v-model="previewInput" />
+            <input v-model="previewInput" placeholder="输入一段文本测试正则替换效果" />
           </label>
-          <p>{{ regexPreview }}</p>
+          <p v-if="previewInput.trim()">{{ regexPreview }}</p>
+          <p v-else class="muted-text">输入测试文本后会显示替换结果。</p>
         </div>
 
         <div class="form-actions">
-          <button v-if="isEditing && canEdit" class="danger-button" type="button" @click="removeCharacter">
+          <button v-if="isEditing && canEdit" class="danger-button" type="button" :disabled="deleting" @click="removeCharacter">
             <Trash2 :size="18" />
-            <span>删除</span>
+            <span>{{ deleting ? '删除中...' : '删除' }}</span>
           </button>
-          <button v-if="isEditing" class="ghost-button" type="button" @click="handleExport">
+          <button v-if="isEditing" class="ghost-button" type="button" :disabled="exporting" @click="handleExport">
             <Download :size="18" />
-            <span>导出</span>
+            <span>{{ exporting ? '导出中...' : '导出' }}</span>
           </button>
           <button v-if="canEdit" class="primary-button" type="submit" :disabled="saving">
             <Save :size="18" />

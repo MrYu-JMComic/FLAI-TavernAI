@@ -1,4 +1,6 @@
 import { newId, nowIso } from '../security.js';
+import { normalizeBoolean } from '../utils/boolean.js';
+import { normalizeFiniteNumber } from '../utils/number.js';
 import { withSavepoint } from './savepoint.js';
 
 // ── Default currency types ──
@@ -180,8 +182,8 @@ export function getTransactionHistory(database, userId, conversationId, options 
     return null;
   }
 
-  const limit = Math.min(Math.max(Number(options.limit) || 50, 1), 200);
-  const offset = Math.max(Number(options.offset) || 0, 0);
+  const limit = normalizeQueryLimit(options.limit);
+  const offset = normalizeQueryOffset(options.offset);
   const currencyType = options.currencyType || options.currency_type || null;
 
   let whereClause = 'WHERE economy_accounts.conversation_id = ?';
@@ -345,7 +347,7 @@ export function getConversationEconomyState(database, userId, conversationId, op
     return null;
   }
 
-  const ensureDefaultAccount = options.ensureDefaultAccount !== false;
+  const ensureDefaultAccount = normalizeBoolean(options.ensureDefaultAccount, true);
   if (ensureDefaultAccount && accounts.length === 0) {
     const goldAccount = getOrCreateAccount(database, userId, conversationId, 'gold');
     if (goldAccount) {
@@ -391,6 +393,16 @@ function normalizeDescription(value) {
 function normalizeRelatedNpc(value) {
   const str = String(value || '').trim();
   return str.length > 100 ? str.slice(0, 100) : str;
+}
+
+function normalizeQueryLimit(value) {
+  const normalized = Math.trunc(normalizeFiniteNumber(value, 50));
+  return Math.min(Math.max(normalized, 1), 200);
+}
+
+function normalizeQueryOffset(value) {
+  const normalized = Math.trunc(normalizeFiniteNumber(value, 0));
+  return Math.max(normalized, 0);
 }
 
 function normalizeOptions(value) {

@@ -460,6 +460,8 @@ export function initializeDatabase(database) {
       type TEXT NOT NULL DEFAULT 'prompt_inject',
       content TEXT NOT NULL DEFAULT '',
       enabled INTEGER NOT NULL DEFAULT 1,
+      scope TEXT NOT NULL DEFAULT 'global',
+      character_ids TEXT NOT NULL DEFAULT '[]',
       order_index INTEGER NOT NULL DEFAULT 0,
       created_at TEXT NOT NULL,
       FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
@@ -573,6 +575,8 @@ export function initializeDatabase(database) {
     CREATE INDEX IF NOT EXISTS idx_character_talents_character ON character_talents(character_id);
     CREATE INDEX IF NOT EXISTS idx_character_talents_pool ON character_talents(pool_id);
   `);
+  ensureColumn(database, 'mods', 'scope', "TEXT NOT NULL DEFAULT 'global'");
+  ensureColumn(database, 'mods', 'character_ids', "TEXT NOT NULL DEFAULT '[]'");
 
   migrateTagsToUserScoped(database);
 }
