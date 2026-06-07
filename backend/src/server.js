@@ -41,8 +41,12 @@ const clientOrigins = (process.env.CLIENT_ORIGIN || 'http://127.0.0.1:5173,http:
   .map((origin) => origin.trim())
   .filter(Boolean);
 const allowPrivateNetworkOrigins = process.env.ALLOW_PRIVATE_NETWORK_ORIGINS !== 'false';
-const apiRateLimitWindowMs = readPositiveInteger(process.env.API_RATE_LIMIT_WINDOW_MS, 15 * 60 * 1000);
-const apiRateLimitMax = readPositiveInteger(process.env.API_RATE_LIMIT_MAX, 600);
+const apiRateLimitWindowMs = readPositiveInteger(process.env.API_RATE_LIMIT_WINDOW_MS, 60 * 1000);
+const apiRateLimitMax = readPositiveInteger(process.env.API_RATE_LIMIT_MAX, 240);
+const authenticatedApiRateLimitMax = readPositiveInteger(
+  process.env.AUTHENTICATED_API_RATE_LIMIT_MAX ?? process.env.API_AUTHENTICATED_RATE_LIMIT_MAX,
+  Math.max(apiRateLimitMax, 900)
+);
 const authRateLimitWindowMs = readPositiveInteger(process.env.AUTH_RATE_LIMIT_WINDOW_MS, 60 * 1000);
 const authRateLimitMax = readPositiveInteger(process.env.AUTH_RATE_LIMIT_MAX, 20);
 
@@ -58,6 +62,18 @@ function isAuthAttemptPath(request) {
     || pathName === '/auth/register'
     || originalUrl.startsWith('/api/auth/login')
     || originalUrl.startsWith('/api/auth/register');
+}
+
+function shouldSkipApiRateLimit(request) {
+  return request.method === 'OPTIONS' || isAuthAttemptPath(request);
+}
+
+function getApiRateLimitForRequest(request) {
+  return request.auth?.user ? authenticatedApiRateLimitMax : apiRateLimitMax;
+}
+
+function getApiRateLimitKey(request) {
+  return request.auth?.user?.id || ipKeyGenerator(request.ip);
 }
 
 function shouldCompressResponse(request, response) {
@@ -101,14 +117,12 @@ app.use(attachAuth);
 // ── API 速率限制 ──
 const apiLimiter = rateLimit({
   windowMs: apiRateLimitWindowMs,
-  max: apiRateLimitMax,
+  limit: getApiRateLimitForRequest,
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: '请求过于频繁，请稍后再试' },
-  skip: (request) => isAuthAttemptPath(request),
-  keyGenerator: (request) => {
-    return request.auth?.user?.id || ipKeyGenerator(request.ip);
-  }
+  skip: shouldSkipApiRateLimit,
+  keyGenerator: getApiRateLimitKey
 });
 
 const authLimiter = rateLimit({

@@ -40,6 +40,8 @@ The autonomous loop should choose one small item per run. Add new findings here 
 
 ## Done
 
+- 2026-06-08: Tuned API rate limits with a larger authenticated request budget and strict separate auth attempt limits.
+- 2026-06-08: Required Vue component tag-name boundaries in the unreferenced component diagnostic so prefix-only tags cannot hide dormant components.
 - 2026-06-08: Routed chat submit status-bar payloads through the reference-preserving accessory update helper.
 - 2026-06-08: Limited bound Vue dynamic `is` component references to string-literal expressions in the unreferenced component diagnostic.
 - 2026-06-08: Recognized Vue dynamic `is` component references with whitespace around `=` in the unreferenced component diagnostic.
