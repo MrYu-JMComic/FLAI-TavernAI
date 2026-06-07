@@ -4,6 +4,20 @@ import { countMatches, readRepoText, readVueBlock } from './frontendSfcTestUtils
 
 const talentRollDialogSource = readRepoText('frontend/src/components/TalentRollDialog.vue');
 
+test('TalentRollDialog retry action ignores events while dialog data is loading', () => {
+  const scriptSetup = readVueBlock(talentRollDialogSource, 'script');
+  const template = readVueBlock(talentRollDialogSource, 'template');
+
+  assert.match(
+    scriptSetup,
+    /function retryLoadDialogData\(\)\s*{\s*if \(loading\.value\) return;\s*loadDialogData\(\);/
+  );
+  assert.match(
+    template,
+    /<button class="ghost-button" type="button" :disabled="loading" :aria-busy="loading" @click="retryLoadDialogData">/
+  );
+});
+
 test('TalentRollDialog disables roll and talent mutations while one action is busy', () => {
   const scriptSetup = readVueBlock(talentRollDialogSource, 'script');
   const template = readVueBlock(talentRollDialogSource, 'template');
@@ -20,6 +34,6 @@ test('TalentRollDialog disables roll and talent mutations while one action is bu
   assert.match(template, /<select v-model="selectedPoolId" :disabled="talentActionBusy \|\| !pools\.length">/);
   assert.match(template, /:disabled="talentActionBusy \|\| !pools\.length \|\| !selectedPoolId"/);
   assert.equal(countMatches(template, /:disabled="talentActionBusy"/g), 2);
-  assert.equal(countMatches(template, /:aria-busy=/g), 3);
+  assert.equal(countMatches(template, /:aria-busy=/g), 4);
   assert.match(template, /:aria-busy="removingTalentId === talent\.id"/);
 });

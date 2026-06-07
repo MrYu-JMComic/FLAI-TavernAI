@@ -584,6 +584,7 @@ async function createBookFromAiDraft() {
 }
 
 function retryLoad() {
+  if (loading.value) return;
   if (isDetailView.value) {
     loadBook(bookId.value);
   } else {
@@ -868,7 +869,7 @@ function toolResultLabel(result = {}) {
         <AlertCircle :size="48" />
         <h2>加载失败</h2>
         <p>{{ error }}</p>
-        <button class="ghost-button" @click="retryLoad">
+        <button class="ghost-button" :disabled="loading" :aria-busy="loading" @click="retryLoad">
           <span>重试</span>
         </button>
       </div>
@@ -940,7 +941,7 @@ function toolResultLabel(result = {}) {
         <h2>加载失败</h2>
         <p>{{ error }}</p>
         <div class="empty-state-actions">
-          <button class="ghost-button" @click="retryLoad">
+          <button class="ghost-button" :disabled="loading" :aria-busy="loading" @click="retryLoad">
             <span>重试</span>
           </button>
           <button class="ghost-button" @click="emit('navigate', 'worldBooks')">

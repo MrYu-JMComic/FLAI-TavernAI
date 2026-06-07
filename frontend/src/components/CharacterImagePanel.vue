@@ -94,6 +94,11 @@ async function loadImages() {
   }
 }
 
+function retryLoadImages() {
+  if (loading.value) return;
+  loadImages();
+}
+
 function isCurrentImageLoad(requestToken, characterId) {
   return !imagePanelDisposed && requestToken === imageLoadToken && props.characterId === characterId;
 }
@@ -344,7 +349,7 @@ function emotionLabel(tag) {
 
     <div v-if="loadError" class="cg-error" role="alert">
       <p>{{ loadError }}</p>
-      <button class="ghost-button small" type="button" :disabled="loading" @click="loadImages">
+      <button class="ghost-button small" type="button" :disabled="loading" :aria-busy="loading" @click="retryLoadImages">
         {{ loading ? '重试中...' : '重试' }}
       </button>
     </div>

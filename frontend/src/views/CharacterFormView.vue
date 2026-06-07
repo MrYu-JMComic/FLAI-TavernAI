@@ -446,6 +446,13 @@ const accessorySkillItems = [
   { key: 'cgScene', label: 'CG 场景', auto: false }
 ];
 const canEdit = computed(() => !isEditing.value || form.canEdit !== false);
+const characterFooterActionBusy = computed(() => saving.value || deleting.value || exporting.value);
+const characterAiActionBusy = computed(() => (
+  aiLoading.value
+  || advancedAiLoading.value
+  || saving.value
+  || !canEdit.value
+));
 const permissionText = computed(() => {
   if (!isEditing.value) {
     return '你将成为这个角色的拥有者';
@@ -549,7 +556,7 @@ function isCurrentEditingCharacterLoad(loadToken, characterId) {
 }
 
 async function submit() {
-  if (characterFormDisposed || saving.value || !canEdit.value) {
+  if (characterFormDisposed || characterFooterActionBusy.value || !canEdit.value) {
     return;
   }
 
@@ -611,6 +618,7 @@ function isActiveFormSubmit(submitToken) {
 }
 
 async function completeWithAi() {
+  if (characterAiActionBusy.value) return;
   const requirement = aiRequirement.value.trim();
   if (!canRunAiWithContext(requirement, '请先写一点角色要求，或开启“结合当前已填写内容”。')) {
     return;
@@ -669,7 +677,7 @@ function isCurrentCharacterAiRun(abortController) {
 }
 
 async function removeCharacter() {
-  if (characterFormDisposed || deleting.value || !isEditing.value || !canEdit.value) {
+  if (characterFormDisposed || characterFooterActionBusy.value || !isEditing.value || !canEdit.value) {
     return;
   }
   const characterId = editingCharacterId.value;
@@ -1032,6 +1040,7 @@ function toolResultLabel(result = {}) {
 }
 
 async function completeAdvancedSettingsWithAi() {
+  if (characterAiActionBusy.value) return;
   const requirement = advancedAiRequirement.value.trim() || aiRequirement.value.trim();
   if (!canRunAiWithContext(requirement, '请先写一点高阶设置目标，或开启“结合当前已填写内容”。')) {
     return;
@@ -1872,7 +1881,7 @@ function readAsDataUrl(file, errorMessage = '头像读取失败') {
 }
 
 async function handleExport() {
-  if (characterFormDisposed || exporting.value || !isEditing.value) {
+  if (characterFormDisposed || characterFooterActionBusy.value || !isEditing.value) {
     return;
   }
 
@@ -2209,14 +2218,14 @@ function applyLocalRules(text, rules, phase) {
               v-model="aiRequirement"
               rows="5"
               placeholder="例如：赛博茶馆老板娘，温柔但有边界，会把用户称作{user}；需要把用户输入里的'老板'替换成'掌柜'。"
-              :disabled="aiLoading"
+              :disabled="characterAiActionBusy"
             />
           </label>
           <label class="field">
             <span>助手模型</span>
             <select
               v-model="assistantModel"
-              :disabled="aiLoading || advancedAiLoading"
+              :disabled="characterAiActionBusy"
             >
               <option v-for="model in assistantModelOptions" :key="model.id || '__global'" :value="model.id">
                 {{ model.label || model.id }}
@@ -2224,7 +2233,7 @@ function applyLocalRules(text, rules, phase) {
             </select>
           </label>
           <label class="checkbox-line ai-context-toggle">
-            <input v-model="aiUseCurrentDraft" type="checkbox" :disabled="aiLoading || advancedAiLoading" />
+            <input v-model="aiUseCurrentDraft" type="checkbox" :disabled="characterAiActionBusy" />
             <span>结合当前已填写内容 + 完善要求进行优化</span>
           </label>
           <p class="ai-context-hint">
@@ -2232,7 +2241,7 @@ function applyLocalRules(text, rules, phase) {
           </p>
           <div class="ai-scope-grid">
             <label v-for="(enabled, key) in aiOptions" :key="key" class="checkbox-line">
-              <input v-model="aiOptions[key]" type="checkbox" :disabled="aiLoading" />
+              <input v-model="aiOptions[key]" type="checkbox" :disabled="characterAiActionBusy" />
               <span>{{ {
                 profile: '基础资料',
                 background: '背景',
@@ -2249,7 +2258,7 @@ function applyLocalRules(text, rules, phase) {
             </label>
           </div>
           <div class="ai-action-row">
-            <button class="primary-button ai-draft-button" type="button" :disabled="aiLoading" @click="completeWithAi">
+            <button class="primary-button ai-draft-button" type="button" :disabled="characterAiActionBusy" :aria-busy="aiLoading" @click="completeWithAi">
               <WandSparkles :size="18" />
               <span>{{ aiLoading ? 'AI 正在调用工具...' : 'AI 完善角色设定' }}</span>
             </button>
@@ -2352,18 +2361,19 @@ function applyLocalRules(text, rules, phase) {
               v-model="advancedAiRequirement"
               rows="3"
               placeholder="例如：生成适合豪门恋爱角色的状态栏提示词、附属技能默认值和一点聊天气泡 CSS。"
-              :disabled="advancedAiLoading || !canEdit"
+              :disabled="characterAiActionBusy"
             />
           </label>
           <label v-if="canEdit" class="checkbox-line ai-context-toggle compact">
-            <input v-model="aiUseCurrentDraft" type="checkbox" :disabled="aiLoading || advancedAiLoading" />
+            <input v-model="aiUseCurrentDraft" type="checkbox" :disabled="characterAiActionBusy" />
             <span>结合当前已填写内容优化</span>
           </label>
           <div v-if="canEdit" class="ai-action-row">
             <button
               class="ghost-button"
               type="button"
-              :disabled="advancedAiLoading"
+              :disabled="characterAiActionBusy"
+              :aria-busy="advancedAiLoading"
               @click="completeAdvancedSettingsWithAi"
             >
               <WandSparkles :size="17" />
@@ -2847,15 +2857,15 @@ function applyLocalRules(text, rules, phase) {
         </div>
 
         <div class="form-actions">
-          <button v-if="isEditing && canEdit" class="danger-button" type="button" :disabled="deleting" @click="removeCharacter">
+          <button v-if="isEditing && canEdit" class="danger-button" type="button" :disabled="characterFooterActionBusy" :aria-busy="deleting" @click="removeCharacter">
             <Trash2 :size="18" />
             <span>{{ deleting ? '删除中...' : '删除' }}</span>
           </button>
-          <button v-if="isEditing" class="ghost-button" type="button" :disabled="exporting" @click="handleExport">
+          <button v-if="isEditing" class="ghost-button" type="button" :disabled="characterFooterActionBusy" :aria-busy="exporting" @click="handleExport">
             <Download :size="18" />
             <span>{{ exporting ? '导出中...' : '导出' }}</span>
           </button>
-          <button v-if="canEdit" class="primary-button" type="submit" :disabled="saving">
+          <button v-if="canEdit" class="primary-button" type="submit" :disabled="characterFooterActionBusy" :aria-busy="saving">
             <Save :size="18" />
             <span>{{ saving ? '保存中...' : '保存角色' }}</span>
           </button>

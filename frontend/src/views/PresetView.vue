@@ -29,6 +29,7 @@ const deletingPresetId = ref('');
 const defaultingPresetId = ref('');
 const error = ref(null);
 let presetViewDisposed = false;
+let presetLoadInFlight = false;
 let presetLoadToken = 0;
 let presetSaveToken = 0;
 let presetDeleteToken = 0;
@@ -41,6 +42,12 @@ const form = ref(createEmptyForm());
 const isCreate = computed(() => editing.value !== null && !editing.value.id);
 const isEdit = computed(() => editing.value !== null && Boolean(editing.value.id));
 const formTitle = computed(() => isCreate.value ? '新建预设' : '编辑预设');
+const presetListActionBusy = computed(() => (
+  loading.value
+  || saving.value
+  || Boolean(deletingPresetId.value)
+  || Boolean(defaultingPresetId.value)
+));
 
 function createEmptyForm() {
   return {
@@ -66,8 +73,9 @@ onBeforeUnmount(() => {
 });
 
 async function loadPresets() {
-  if (presetViewDisposed) return;
+  if (presetViewDisposed || presetLoadInFlight) return;
   const requestToken = ++presetLoadToken;
+  presetLoadInFlight = true;
   loading.value = true;
   error.value = null;
   try {
@@ -81,6 +89,7 @@ async function loadPresets() {
   } finally {
     if (isCurrentPresetLoad(requestToken)) {
       loading.value = false;
+      presetLoadInFlight = false;
     }
   }
 }
@@ -90,11 +99,13 @@ function isCurrentPresetLoad(requestToken) {
 }
 
 function startCreate() {
+  if (presetListActionBusy.value) return;
   editing.value = {};
   form.value = createEmptyForm();
 }
 
 function startEdit(preset) {
+  if (presetListActionBusy.value) return;
   editing.value = { id: preset.id };
   form.value = {
     name: preset.name || '',
@@ -182,7 +193,7 @@ function isActivePresetSave(saveToken) {
 }
 
 async function handleDelete(preset) {
-  if (presetViewDisposed || deletingPresetId.value || !preset?.id) {
+  if (presetViewDisposed || presetListActionBusy.value || !preset?.id) {
     return;
   }
   if (presets.value.length <= 1) {
@@ -220,7 +231,7 @@ function isActivePresetDelete(deleteToken) {
 }
 
 async function handleSetDefault(preset) {
-  if (presetViewDisposed || defaultingPresetId.value || !preset?.id) {
+  if (presetViewDisposed || presetListActionBusy.value || !preset?.id) {
     return;
   }
 
@@ -279,7 +290,7 @@ function clampInt(value, min, max) {
           <h1>预设</h1>
         </div>
         <div class="heading-actions">
-          <button class="primary-button" @click="startCreate">
+          <button class="primary-button" :disabled="presetListActionBusy" :aria-busy="presetListActionBusy" @click="startCreate">
             <Plus :size="18" />
             <span>新建预设</span>
           </button>
@@ -299,7 +310,7 @@ function clampInt(value, min, max) {
         <AlertCircle :size="48" />
         <h2>加载失败</h2>
         <p>{{ error }}</p>
-        <button class="ghost-button" @click="loadPresets">
+        <button class="ghost-button" :disabled="loading" :aria-busy="loading" @click="loadPresets">
           <span>重试</span>
         </button>
       </div>
@@ -308,7 +319,7 @@ function clampInt(value, min, max) {
         <SlidersHorizontal :size="48" />
         <h2>还没有预设</h2>
         <p>预设可以保存系统提示词和生成参数组合，快速切换对话风格。</p>
-        <button class="primary-button" @click="startCreate">
+        <button class="primary-button" :disabled="presetListActionBusy" :aria-busy="presetListActionBusy" @click="startCreate">
           <Plus :size="18" />
           <span>创建第一个预设</span>
         </button>
@@ -319,7 +330,8 @@ function clampInt(value, min, max) {
           v-for="preset in presets"
           :key="preset.id"
           class="preset-card"
-          :class="{ 'is-default': preset.isDefault }"
+          :class="{ 'is-default': preset.isDefault, 'is-busy': presetListActionBusy }"
+          :aria-disabled="presetListActionBusy"
           @click="startEdit(preset)"
         >
           <div class="preset-card-header">
@@ -345,7 +357,8 @@ function clampInt(value, min, max) {
               type="button"
               title="设为默认"
               :aria-label="`设为默认预设：${preset.name}`"
-              :disabled="Boolean(defaultingPresetId)"
+              :disabled="presetListActionBusy"
+              :aria-busy="defaultingPresetId === preset.id"
               @click="handleSetDefault(preset)"
             >
               <Star :size="16" />
@@ -355,7 +368,8 @@ function clampInt(value, min, max) {
               type="button"
               :title="deletingPresetId === preset.id ? '删除中...' : '删除'"
               :aria-label="deletingPresetId === preset.id ? `正在删除预设：${preset.name}` : `删除预设：${preset.name}`"
-              :disabled="Boolean(deletingPresetId)"
+              :disabled="presetListActionBusy"
+              :aria-busy="deletingPresetId === preset.id"
               @click="handleDelete(preset)"
             >
               <Trash2 :size="16" />
@@ -505,6 +519,16 @@ function clampInt(value, min, max) {
 .preset-card:hover {
   border-color: var(--primary);
   box-shadow: var(--shadow);
+}
+
+.preset-card.is-busy {
+  cursor: wait;
+  opacity: 0.72;
+}
+
+.preset-card.is-busy:hover {
+  border-color: var(--line);
+  box-shadow: none;
 }
 
 .preset-card.is-default {

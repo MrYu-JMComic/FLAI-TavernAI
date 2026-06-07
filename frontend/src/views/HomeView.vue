@@ -53,6 +53,7 @@ const sortOptions = [
 ];
 const selectedTag = ref('');
 const tags = ref([]);
+const tagLoading = ref(false);
 const tagLoadError = ref('');
 const loading = ref(false);
 const loadError = ref('');
@@ -319,6 +320,7 @@ function resetHomeAsyncScope() {
   characterLoadToken += 1;
   tagLoadToken += 1;
   loading.value = false;
+  tagLoading.value = false;
   reactionPending.reset();
   chatOpenPending.reset();
   importLoading.value = false;
@@ -330,6 +332,7 @@ function isHomeActive() {
 
 async function loadTags() {
   const requestToken = ++tagLoadToken;
+  tagLoading.value = true;
   tagLoadError.value = '';
   try {
     const nextTags = await fetchTags();
@@ -339,11 +342,20 @@ async function loadTags() {
     if (!isCurrentTagLoad(requestToken)) return;
     tagLoadError.value = err.message || '标签加载失败';
     tags.value = [];
+  } finally {
+    if (isCurrentTagLoad(requestToken)) {
+      tagLoading.value = false;
+    }
   }
 }
 
 function isCurrentTagLoad(requestToken) {
   return isHomeActive() && requestToken === tagLoadToken;
+}
+
+function retryLoadTags() {
+  if (tagLoading.value) return;
+  loadTags();
 }
 
 function selectTag(name) {
@@ -379,6 +391,11 @@ async function loadCharacters() {
       loading.value = false;
     }
   }
+}
+
+function retryLoadCharacters() {
+  if (loading.value) return;
+  loadCharacters();
 }
 
 function isCurrentCharacterLoad(requestToken) {
@@ -618,7 +635,7 @@ function formatCount(value) {
         <SlidersHorizontal :size="17" />
         <span>{{ currentSortOption.label.replace(/^按/, '') }}</span>
       </button>
-      <button class="home-icon-button" type="button" title="重新加载" aria-label="重新加载" @click="loadCharacters">
+      <button class="home-icon-button" type="button" title="重新加载" aria-label="重新加载" :disabled="loading" :aria-busy="loading" @click="retryLoadCharacters">
         <RefreshCw :size="18" />
       </button>
     </section>
@@ -649,7 +666,7 @@ function formatCount(value) {
     </section>
     <section v-else-if="tagLoadError" class="section-load-status error-state" role="alert">
       <span>{{ tagLoadError }}</span>
-      <button class="ghost-button compact-button" type="button" @click="loadTags">
+      <button class="ghost-button compact-button" type="button" :disabled="tagLoading" :aria-busy="tagLoading" @click="retryLoadTags">
         <RefreshCw :size="16" />
         <span>重试标签</span>
       </button>
@@ -687,7 +704,7 @@ function formatCount(value) {
       <AlertTriangle :size="36" />
       <h2>加载失败</h2>
       <p>{{ loadError }}</p>
-      <button class="home-primary-action" type="button" @click="loadCharacters">
+      <button class="home-primary-action" type="button" :disabled="loading" :aria-busy="loading" @click="retryLoadCharacters">
         <RefreshCw :size="18" />
         <span>重新加载</span>
       </button>

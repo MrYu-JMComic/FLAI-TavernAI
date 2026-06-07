@@ -4,6 +4,20 @@ import { countMatches, readRepoText, readVueBlock } from './frontendSfcTestUtils
 
 const characterImagePanelSource = readRepoText('frontend/src/components/CharacterImagePanel.vue');
 
+test('CharacterImagePanel retry action ignores events while images are loading', () => {
+  const scriptSetup = readVueBlock(characterImagePanelSource, 'script');
+  const template = readVueBlock(characterImagePanelSource, 'template');
+
+  assert.match(
+    scriptSetup,
+    /function retryLoadImages\(\)\s*{\s*if \(loading\.value\) return;\s*loadImages\(\);/
+  );
+  assert.match(
+    template,
+    /<button class="ghost-button small" type="button" :disabled="loading" :aria-busy="loading" @click="retryLoadImages">/
+  );
+});
+
 test('CharacterImagePanel disables image actions while one image mutation is busy', () => {
   const scriptSetup = readVueBlock(characterImagePanelSource, 'script');
   const template = readVueBlock(characterImagePanelSource, 'template');

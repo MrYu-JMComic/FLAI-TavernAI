@@ -85,6 +85,11 @@ async function loadDialogData() {
   }
 }
 
+function retryLoadDialogData() {
+  if (loading.value) return;
+  loadDialogData();
+}
+
 function resetDialogContext() {
   dialogContextVersion += 1;
   pools.value = [];
@@ -312,7 +317,7 @@ function closeResult() {
             <div v-if="loadError" class="empty-state talent-empty" role="alert">
               <Dice6 :size="32" />
               <p>{{ loadError }}</p>
-              <button class="ghost-button" type="button" :disabled="loading" @click="loadDialogData">
+              <button class="ghost-button" type="button" :disabled="loading" :aria-busy="loading" @click="retryLoadDialogData">
                 {{ loading ? '重试中...' : '重试' }}
               </button>
             </div>

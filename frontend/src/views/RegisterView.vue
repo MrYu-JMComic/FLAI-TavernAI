@@ -12,6 +12,7 @@ const confirmPassword = ref('');
 const loading = ref(false);
 
 async function submit() {
+  if (loading.value) return;
   if (password.value !== confirmPassword.value) {
     notify.warning('两次输入的密码不一致');
     return;
@@ -40,7 +41,7 @@ async function submit() {
         </div>
       </div>
 
-      <form class="form-grid" @submit.prevent="submit" novalidate>
+      <form class="form-grid" :aria-busy="loading" @submit.prevent="submit" novalidate>
         <label class="field" for="register-username">
           <span>用户名</span>
           <input
@@ -50,6 +51,7 @@ async function submit() {
             maxlength="32"
             required
             aria-required="true"
+            :disabled="loading"
           />
           <small class="field-hint">最多 32 个字符</small>
         </label>
@@ -64,6 +66,7 @@ async function submit() {
             maxlength="128"
             required
             aria-required="true"
+            :disabled="loading"
           />
           <small class="field-hint">至少 6 个字符</small>
         </label>
@@ -78,6 +81,7 @@ async function submit() {
             maxlength="128"
             required
             aria-required="true"
+            :disabled="loading"
           />
           <small class="field-hint">再次输入密码</small>
         </label>
@@ -87,7 +91,7 @@ async function submit() {
         </button>
       </form>
 
-      <button class="text-button" type="button" aria-label="跳转到登录页面" @click="emit('navigate', 'login')">
+      <button class="text-button" type="button" aria-label="跳转到登录页面" :disabled="loading" @click="emit('navigate', 'login')">
         已有账号？去登录
       </button>
     </section>

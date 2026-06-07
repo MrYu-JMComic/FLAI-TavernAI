@@ -223,3 +223,15 @@ The autonomous loop should choose one small item per run. Add new findings here 
 - 2026-06-07: Guarded chat appearance reset events while appearance saving is pending.
 - 2026-06-07: Guarded WorldBookView AI creation actions while AI generation is already running.
 - 2026-06-07: Guarded SettingsView model refresh events while model refresh is unavailable or already loading.
+- 2026-06-07: Froze PresetView list entry actions while preset work is busy.
+- 2026-06-07: Guarded SettingsView extension retry events while their sections are already loading.
+- 2026-06-07: Guarded SettingsView personal retry and balance events while their actions are unavailable or already loading.
+- 2026-06-07: Guarded PresetView retry refreshes while the preset list is already loading.
+- 2026-06-07: Froze login and registration forms while authentication is submitting.
+- 2026-06-07: Locked CharacterFormView AI actions behind one shared busy state.
+- 2026-06-07: Guarded WorldBookView retry refreshes while list or detail loading is already active.
+- 2026-06-07: Guarded CharacterImagePanel retry refreshes while image loading is already active.
+- 2026-06-07: Locked CharacterFormView footer save, delete, and export actions behind one busy state.
+- 2026-06-07: Guarded TalentRollDialog retry refreshes while dialog data loading is already active.
+- 2026-06-07: Guarded HomeView manual character and tag retry refreshes while matching loads are active.
+- 2026-06-07: Guarded MessageToasts action buttons against duplicate clicks before dismissal renders.

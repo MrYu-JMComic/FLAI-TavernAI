@@ -222,7 +222,7 @@ onMounted(loadSettings);
 onBeforeUnmount(resetSettingsAsyncScopes);
 
 async function loadSettings() {
-  if (!isPersonalPage.value) {
+  if (!isPersonalPage.value || loading.value) {
     return;
   }
   const requestToken = ++settingsLoadToken;
@@ -378,7 +378,7 @@ async function submitProfile() {
 }
 
 async function checkBalance() {
-  if (!canCheckBalance.value) {
+  if (!isPersonalPage.value || balanceLoading.value || !canCheckBalance.value) {
     return;
   }
   const requestToken = ++balanceLoadToken;
@@ -609,7 +609,7 @@ let tagMutationToken = 0;
 onMounted(loadTags);
 
 async function loadTags() {
-  if (!isExtensionsPage.value) {
+  if (!isExtensionsPage.value || tagLoading.value) {
     return;
   }
   const requestToken = ++tagLoadToken;
@@ -741,7 +741,7 @@ const presetImportText = ref('');
 onMounted(loadPresets);
 
 async function loadPresets() {
-  if (!isExtensionsPage.value) {
+  if (!isExtensionsPage.value || presetLoading.value) {
     return;
   }
   const requestToken = ++presetLoadToken;
@@ -974,7 +974,7 @@ onMounted(loadMods);
 onMounted(loadModCharacterOptions);
 
 async function loadMods() {
-  if (!isExtensionsPage.value) {
+  if (!isExtensionsPage.value || modLoading.value) {
     return;
   }
   const requestToken = ++modLoadToken;
@@ -999,7 +999,7 @@ function isCurrentModLoad(requestToken) {
 }
 
 async function loadModCharacterOptions() {
-  if (!isExtensionsPage.value) {
+  if (!isExtensionsPage.value || modCharactersLoading.value) {
     return;
   }
   const requestToken = ++modCharactersLoadToken;
@@ -1308,7 +1308,7 @@ function resetExtensionAsyncScopes() {
 }
 
 async function loadRegexRules() {
-  if (!isExtensionsPage.value) {
+  if (!isExtensionsPage.value || regexLoading.value) {
     return;
   }
   const groupFilter = regexGroupFilter.value;

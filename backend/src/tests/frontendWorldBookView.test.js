@@ -11,6 +11,20 @@ function assertSavingGuard(scriptSetup, functionName) {
   );
 }
 
+test('WorldBookView retry action ignores events while loading is active', () => {
+  const scriptSetup = readVueBlock(worldBookViewSource, 'script');
+  const template = readVueBlock(worldBookViewSource, 'template');
+
+  assert.match(
+    scriptSetup,
+    /function retryLoad\(\)\s*{\s*if \(loading\.value\) return;[\s\S]*?loadBook\(bookId\.value\);[\s\S]*?loadBooks\(\);/
+  );
+  assert.equal(
+    countMatches(template, /<button class="ghost-button" :disabled="loading" :aria-busy="loading" @click="retryLoad">/g),
+    2
+  );
+});
+
 test('WorldBookView locks world book mutations while saving is active', () => {
   const scriptSetup = readVueBlock(worldBookViewSource, 'script');
   const template = readVueBlock(worldBookViewSource, 'template');

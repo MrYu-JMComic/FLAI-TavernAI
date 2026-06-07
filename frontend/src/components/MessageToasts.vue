@@ -1,7 +1,8 @@
 <script setup>
+import { ref, watch } from 'vue';
 import { AlertCircle, CheckCircle2, Info, TriangleAlert, X } from '@lucide/vue';
 
-defineProps({
+const props = defineProps({
   items: {
     type: Array,
     default: () => []
@@ -9,6 +10,7 @@ defineProps({
 });
 
 const emit = defineEmits(['dismiss']);
+const pendingActionIds = ref(new Set());
 
 const icons = {
   success: CheckCircle2,
@@ -32,10 +34,31 @@ function titleFor(item) {
   return item.title || titles[item.type] || titles.info;
 }
 
+function isActionPending(item) {
+  return pendingActionIds.value.has(item?.id);
+}
+
+function markActionPending(id) {
+  pendingActionIds.value = new Set(pendingActionIds.value).add(id);
+}
+
 function runAction(item) {
+  if (!item?.id || isActionPending(item)) return;
+  markActionPending(item.id);
   emit('dismiss', item.id);
   item.action?.();
 }
+
+watch(
+  () => props.items.map((item) => item.id),
+  (ids) => {
+    const activeIds = new Set(ids);
+    const nextPendingIds = new Set([...pendingActionIds.value].filter((id) => activeIds.has(id)));
+    if (nextPendingIds.size !== pendingActionIds.value.size) {
+      pendingActionIds.value = nextPendingIds;
+    }
+  }
+);
 </script>
 
 <template>
@@ -65,6 +88,8 @@ function runAction(item) {
           v-if="item.actionLabel"
           class="message-toast-action"
           type="button"
+          :disabled="isActionPending(item)"
+          :aria-busy="isActionPending(item)"
           @click="runAction(item)"
         >
           {{ item.actionLabel }}

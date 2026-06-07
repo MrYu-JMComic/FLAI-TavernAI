@@ -11,6 +11,7 @@ const password = ref('');
 const loading = ref(false);
 
 async function submit() {
+  if (loading.value) return;
   loading.value = true;
   try {
     emit('authenticated', await login({ username: username.value, password: password.value }));
@@ -34,7 +35,7 @@ async function submit() {
         </div>
       </div>
 
-      <form class="form-grid" @submit.prevent="submit" novalidate>
+      <form class="form-grid" :aria-busy="loading" @submit.prevent="submit" novalidate>
         <label class="field" for="login-username">
           <span>用户名</span>
           <input
@@ -44,6 +45,7 @@ async function submit() {
             maxlength="32"
             required
             aria-required="true"
+            :disabled="loading"
           />
           <small class="field-hint">最多 32 个字符</small>
         </label>
@@ -58,6 +60,7 @@ async function submit() {
             maxlength="128"
             required
             aria-required="true"
+            :disabled="loading"
           />
           <small class="field-hint">至少 6 个字符</small>
         </label>
@@ -67,7 +70,7 @@ async function submit() {
         </button>
       </form>
 
-      <button class="text-button" type="button" aria-label="跳转到注册页面" @click="emit('navigate', 'register')">
+      <button class="text-button" type="button" aria-label="跳转到注册页面" :disabled="loading" @click="emit('navigate', 'register')">
         还没有账号？创建一个
       </button>
     </section>
