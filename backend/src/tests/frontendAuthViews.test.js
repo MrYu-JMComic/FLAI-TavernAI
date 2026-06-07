@@ -1,16 +1,11 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { countMatches, readRepoText, readVueBlock } from './frontendSfcTestUtils.js';
+import { countMatches, readVueBlocks } from './frontendSfcTestUtils.js';
 
-const loginViewSource = readRepoText('frontend/src/views/LoginView.vue');
-const registerViewSource = readRepoText('frontend/src/views/RegisterView.vue');
+const { script: loginScript, template: loginTemplate } = readVueBlocks('frontend/src/views/LoginView.vue');
+const { script: registerScript, template: registerTemplate } = readVueBlocks('frontend/src/views/RegisterView.vue');
 
 test('auth forms freeze inputs and navigation while submitting', () => {
-  const loginScript = readVueBlock(loginViewSource, 'script');
-  const loginTemplate = readVueBlock(loginViewSource, 'template');
-  const registerScript = readVueBlock(registerViewSource, 'script');
-  const registerTemplate = readVueBlock(registerViewSource, 'template');
-
   assert.match(loginScript, /async function submit\(\)\s*{\s*if \(loading\.value\) return;/);
   assert.match(registerScript, /async function submit\(\)\s*{\s*if \(loading\.value\) return;/);
 

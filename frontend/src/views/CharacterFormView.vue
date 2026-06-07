@@ -104,6 +104,7 @@ const availableTags = ref([]);
 const optionsLoading = ref(false);
 const optionsLoadError = ref('');
 const tagSearch = ref('');
+const tagCreating = ref(false);
 const activeSection = ref('basic');
 const form = reactive(emptyCharacter());
 const backgroundUploading = reactive({
@@ -406,6 +407,7 @@ onBeforeUnmount(() => {
   characterDeleteToken += 1;
   characterExportToken += 1;
   tagCreateToken += 1;
+  tagCreating.value = false;
   suggestedModCreateToken += 1;
   avatarUploadToken += 1;
   for (const field of ADVANCED_BACKGROUND_FIELDS) {
@@ -903,6 +905,9 @@ function toPayload() {
 }
 
 function toggleTagSelection(name) {
+  if (!canEdit.value || tagCreating.value) {
+    return;
+  }
   const idx = form.selectedTags.indexOf(name);
   if (idx >= 0) {
     form.selectedTags.splice(idx, 1);
@@ -1122,11 +1127,12 @@ function isCurrentAdvancedAiRun(abortController) {
 }
 
 async function createAndSelectTag() {
-  if (characterFormDisposed) return;
+  if (characterFormDisposed || tagCreating.value || !canEdit.value) return;
   const name = tagSearch.value.trim();
   if (!name) return;
   if (form.selectedTags.includes(name)) return;
   const createToken = ++tagCreateToken;
+  tagCreating.value = true;
   try {
     const tag = await createTag({ name });
     if (!isCurrentTagCreate(createToken, name)) return;
@@ -1140,13 +1146,20 @@ async function createAndSelectTag() {
   } catch (err) {
     if (!isCurrentTagCreate(createToken, name)) return;
     notify.error(err.message);
+  } finally {
+    if (isActiveTagCreate(createToken)) {
+      tagCreating.value = false;
+    }
   }
 }
 
 function isCurrentTagCreate(createToken, name) {
-  return !characterFormDisposed
-    && createToken === tagCreateToken
+  return isActiveTagCreate(createToken)
     && tagSearch.value.trim() === name;
+}
+
+function isActiveTagCreate(createToken) {
+  return !characterFormDisposed && createToken === tagCreateToken;
 }
 
 function getAiCurrentCharacter() {
@@ -2042,28 +2055,30 @@ function applyLocalRules(text, rules, phase) {
             </div>
             <div class="field">
               <span>标签</span>
-              <div class="tag-selector" :class="{ disabled: !canEdit }">
+              <div class="tag-selector" :class="{ disabled: !canEdit || tagCreating }">
                 <div v-if="form.selectedTags.length" class="selected-tags">
                   <span
                     v-for="tagName in form.selectedTags"
                     :key="tagName"
                     class="tag-badge removable"
-                    @click="canEdit && toggleTagSelection(tagName)"
+                    @click="canEdit && !tagCreating && toggleTagSelection(tagName)"
                   >
                     {{ tagName }}
-                    <span v-if="canEdit" class="tag-remove">×</span>
+                    <span v-if="canEdit && !tagCreating" class="tag-remove">×</span>
                   </span>
                 </div>
                 <div v-if="canEdit" class="tag-input-row">
-                  <input v-model="tagSearch" placeholder="搜索或创建标签..." class="tag-search-input" aria-label="搜索或创建角色标签" />
+                  <input v-model="tagSearch" placeholder="搜索或创建标签..." class="tag-search-input" aria-label="搜索或创建角色标签" :disabled="tagCreating" :aria-busy="tagCreating" />
                   <button
                     v-if="tagSearch.trim() && !availableTags.some((t) => t.name === tagSearch.trim())"
                     class="ghost-button tag-create-btn"
                     type="button"
+                    :disabled="tagCreating"
+                    :aria-busy="tagCreating"
                     @click="createAndSelectTag"
                   >
                     <Plus :size="14" />
-                    创建
+                    {{ tagCreating ? '创建中...' : '创建' }}
                   </button>
                 </div>
                 <div v-if="canEdit && tagSearch.trim()" class="tag-dropdown">
@@ -2073,6 +2088,7 @@ function applyLocalRules(text, rules, phase) {
                     class="tag-option"
                     :class="{ selected: form.selectedTags.includes(tag.name) }"
                     type="button"
+                    :disabled="tagCreating"
                     @click="toggleTagSelection(tag.name)"
                   >
                     {{ tag.name }}

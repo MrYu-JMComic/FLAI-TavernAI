@@ -1,8 +1,11 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { countMatches, readRepoText, readVueBlock } from './frontendSfcTestUtils.js';
+import { countMatches, readVueBlocks } from './frontendSfcTestUtils.js';
 
-const worldBookViewSource = readRepoText('frontend/src/views/WorldBookView.vue');
+const {
+  script: worldBookViewScript,
+  template: worldBookViewTemplate
+} = readVueBlocks('frontend/src/views/WorldBookView.vue');
 
 function assertSavingGuard(scriptSetup, functionName) {
   assert.match(
@@ -12,23 +15,17 @@ function assertSavingGuard(scriptSetup, functionName) {
 }
 
 test('WorldBookView retry action ignores events while loading is active', () => {
-  const scriptSetup = readVueBlock(worldBookViewSource, 'script');
-  const template = readVueBlock(worldBookViewSource, 'template');
-
   assert.match(
-    scriptSetup,
+    worldBookViewScript,
     /function retryLoad\(\)\s*{\s*if \(loading\.value\) return;[\s\S]*?loadBook\(bookId\.value\);[\s\S]*?loadBooks\(\);/
   );
   assert.equal(
-    countMatches(template, /<button class="ghost-button" :disabled="loading" :aria-busy="loading" @click="retryLoad">/g),
+    countMatches(worldBookViewTemplate, /<button class="ghost-button" :disabled="loading" :aria-busy="loading" @click="retryLoad">/g),
     2
   );
 });
 
 test('WorldBookView locks world book mutations while saving is active', () => {
-  const scriptSetup = readVueBlock(worldBookViewSource, 'script');
-  const template = readVueBlock(worldBookViewSource, 'template');
-
   [
     'openCreateBook',
     'openEditBook',
@@ -42,29 +39,57 @@ test('WorldBookView locks world book mutations while saving is active', () => {
     'moveEntry',
     'completeWorldBookWithAi',
     'createBookFromAiDraft'
-  ].forEach((functionName) => assertSavingGuard(scriptSetup, functionName));
+  ].forEach((functionName) => assertSavingGuard(worldBookViewScript, functionName));
 
   assert.match(
-    scriptSetup,
+    worldBookViewScript,
     /async function removeBook\(id\)[\s\S]*?saving\.value = true;[\s\S]*?finally\s*{[\s\S]*?isCurrentWorldBookRouteMutation\(mutationToken, routeKey\)[\s\S]*?saving\.value = false;/
   );
   assert.match(
-    scriptSetup,
+    worldBookViewScript,
     /async function removeEntry\(entryId\)[\s\S]*?saving\.value = true;[\s\S]*?finally\s*{[\s\S]*?isCurrentWorldBookMutation\(mutationToken, targetBookId\)[\s\S]*?saving\.value = false;/
   );
   assert.match(
-    scriptSetup,
+    worldBookViewScript,
     /async function toggleEntry\(entry\)[\s\S]*?saving\.value = true;[\s\S]*?finally\s*{[\s\S]*?isCurrentWorldBookMutation\(mutationToken, targetBookId\)[\s\S]*?saving\.value = false;/
   );
   assert.match(
-    scriptSetup,
+    worldBookViewScript,
     /async function moveEntry\(index, direction\)[\s\S]*?saving\.value = true;[\s\S]*?finally\s*{[\s\S]*?isCurrentWorldBookMutation\(mutationToken, targetBookId\)[\s\S]*?saving\.value = false;/
   );
 
-  assert.ok(countMatches(template, /:disabled="saving"/g) >= 10);
-  assert.ok(countMatches(template, /:aria-busy="saving"/g) >= 10);
-  assert.equal(countMatches(template, /:disabled="saving \|\| index === 0"/g), 1);
-  assert.equal(countMatches(template, /:disabled="saving \|\| index === currentBook\.entries\.length - 1"/g), 1);
-  assert.match(template, /:disabled="aiLoading \|\| saving"/);
-  assert.match(template, /:disabled="!aiDraft \|\| !aiDraftEntryCount \|\| aiLoading \|\| saving"/);
+  assert.ok(countMatches(worldBookViewTemplate, /:disabled="saving"/g) >= 10);
+  assert.ok(countMatches(worldBookViewTemplate, /:aria-busy="saving"/g) >= 10);
+  assert.equal(countMatches(worldBookViewTemplate, /:disabled="saving \|\| index === 0"/g), 1);
+  assert.equal(countMatches(worldBookViewTemplate, /:disabled="saving \|\| index === currentBook\.entries\.length - 1"/g), 1);
+  assert.match(worldBookViewTemplate, /:disabled="aiLoading \|\| saving"/);
+  assert.match(worldBookViewTemplate, /:disabled="!aiDraft \|\| !aiDraftEntryCount \|\| aiLoading \|\| saving"/);
+});
+
+test('WorldBookView freezes book and entry forms while saving is active', () => {
+  ['closeBookForm', 'closeEntryForm'].forEach((functionName) => assertSavingGuard(worldBookViewScript, functionName));
+
+  assert.match(worldBookViewTemplate, /<div class="modal-content form-panel" :aria-busy="saving">/);
+  assert.match(worldBookViewTemplate, /<input v-model\.trim="editingBook\.name"[\s\S]*:disabled="saving" \/>/);
+  assert.match(worldBookViewTemplate, /<textarea v-model="editingBook\.description"[\s\S]*:disabled="saving" \/>/);
+  assert.match(worldBookViewTemplate, /<input v-model\.trim="editingBook\.characterId"[\s\S]*:disabled="saving" \/>/);
+  assert.match(worldBookViewTemplate, /<input v-model\.number="editingBook\.scanDepth"[\s\S]*:disabled="saving" \/>/);
+  assert.match(worldBookViewTemplate, /<input v-model\.number="editingBook\.lorebookContextPercent"[\s\S]*:disabled="saving" \/>/);
+  assert.match(worldBookViewTemplate, /<button class="ghost-button" :disabled="saving" @click="closeBookForm">/);
+  assert.match(worldBookViewTemplate, /<button class="primary-button" :disabled="saving" :aria-busy="saving" @click="saveBook">/);
+
+  assert.match(worldBookViewTemplate, /<div class="modal-content form-panel entry-modal" :aria-busy="saving">/);
+  assert.match(worldBookViewTemplate, /<input v-model\.trim="editingEntry\.name"[\s\S]*:disabled="saving" \/>/);
+  assert.match(worldBookViewTemplate, /<input v-model="editingEntry\.triggerKeys"[\s\S]*:disabled="saving" \/>/);
+  assert.match(worldBookViewTemplate, /<select v-model="editingEntry\.position" :disabled="saving">/);
+  assert.match(worldBookViewTemplate, /<textarea v-model="editingEntry\.content"[\s\S]*:disabled="saving" \/>/);
+  assert.match(worldBookViewTemplate, /<input v-model="editingEntry\.enabled" type="checkbox" :disabled="saving" \/>/);
+  assert.match(worldBookViewTemplate, /<input v-model="editingEntry\.regexMode" type="checkbox" :disabled="saving" \/>/);
+  assert.match(worldBookViewTemplate, /<input v-model="editingEntry\.alwaysActive" type="checkbox" :disabled="saving" \/>/);
+  assert.match(worldBookViewTemplate, /<input v-model="editingEntry\.selective" type="checkbox" :disabled="saving" \/>/);
+  assert.match(worldBookViewTemplate, /<input v-model="editingEntry\.useProbability" type="checkbox" :disabled="saving" \/>/);
+  assert.match(worldBookViewTemplate, /<select v-model\.number="editingEntry\.selectiveLogic" :disabled="saving">/);
+  assert.match(worldBookViewTemplate, /<select v-model\.number="editingEntry\.role" :disabled="saving">/);
+  assert.match(worldBookViewTemplate, /<button class="ghost-button" :disabled="saving" @click="closeEntryForm">/);
+  assert.match(worldBookViewTemplate, /<button class="primary-button" :disabled="saving" :aria-busy="saving" @click="saveEntry">/);
 });

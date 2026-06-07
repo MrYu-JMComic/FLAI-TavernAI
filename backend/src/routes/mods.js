@@ -2,7 +2,6 @@ import { Router } from 'express';
 import {
   createMod,
   deleteMod,
-  getMod,
   listMods,
   reorderMods,
   updateMod

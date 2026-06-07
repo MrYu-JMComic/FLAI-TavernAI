@@ -1,5 +1,5 @@
 <script>
-import { computed, defineComponent, h, ref, watch } from 'vue';
+import { computed, defineComponent, h } from 'vue';
 import MarkdownIt from 'markdown-it';
 import hljs from 'highlight.js/lib/common';
 import DOMPurify from 'dompurify';

@@ -2,7 +2,6 @@ import { Router } from 'express';
 import {
   defaultProviderSettings,
   fetchDeepSeekBalance,
-  hasUsableProvider,
   listProviderModels,
   normalizeProviderExtraBody,
   normalizeProviderRow,

@@ -34,6 +34,7 @@ const mirror = ref(null);
 let disposed = false;
 let syncScrollPending = false;
 let syncScrollToken = 0;
+let syncScrollFrame = 0;
 
 const renderedHtml = computed(() => renderWithVariable(props.modelValue || '', props.userValue || ''));
 
@@ -55,6 +56,10 @@ onBeforeUnmount(() => {
   disposed = true;
   syncScrollToken += 1;
   syncScrollPending = false;
+  if (syncScrollFrame && typeof cancelAnimationFrame === 'function') {
+    cancelAnimationFrame(syncScrollFrame);
+  }
+  syncScrollFrame = 0;
 });
 
 function onInput(event) {
@@ -68,11 +73,23 @@ function scheduleSyncScroll() {
   syncScrollPending = true;
   const token = ++syncScrollToken;
   nextTick(() => {
-    syncScrollPending = false;
     if (disposed || token !== syncScrollToken) {
+      syncScrollPending = false;
       return;
     }
-    syncScroll();
+    const run = () => {
+      syncScrollFrame = 0;
+      syncScrollPending = false;
+      if (disposed || token !== syncScrollToken) {
+        return;
+      }
+      syncScroll();
+    };
+    if (typeof requestAnimationFrame === 'function') {
+      syncScrollFrame = requestAnimationFrame(run);
+    } else {
+      run();
+    }
   });
 }
 
@@ -122,8 +139,8 @@ function escapeHtml(text) {
       :aria-label="ariaLabel"
       :disabled="disabled"
       @input="onInput"
-      @scroll="syncScroll"
-      @focus="syncScroll"
+      @scroll="scheduleSyncScroll"
+      @focus="scheduleSyncScroll"
     />
   </div>
 </template>

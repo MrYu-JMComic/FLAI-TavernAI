@@ -1,9 +1,10 @@
 import { Router } from 'express';
 import {
   applyRegexRules,
-  getRegexRules
+  getCharacter,
+  getRegexRules,
+  touchCharacter
 } from '../modules/characters.js';
-import { getCharacter, touchCharacter } from '../modules/characters.js';
 import {
   buildWorldBookContext,
   matchWorldBookEntries,
@@ -26,19 +27,14 @@ import {
   normalizeAccessorySkills
 } from '../modules/advancedSettings.js';
 import {
-  applyVariableUpdates,
   deleteStatusBar,
-  extractVariablesFromText,
   getStatusBar,
   upsertStatusBar
 } from '../modules/statusBars.js';
 import {
-  CURRENCY_TYPES,
   createConversationTransaction,
-  detectTransactionIntents,
   getConversationEconomyState,
   getTransactionHistory,
-  processTransactionIntents
 } from '../modules/economy.js';
 import {
   addNpcBehavior,
@@ -54,21 +50,12 @@ import {
   updateNpcBehavior
 } from '../modules/npcs.js';
 import {
-  createCharacterImage,
-  deleteCharacterImage,
-  detectSceneAndEmotion,
-  findBestMatch,
-  listCharacterImages
-} from '../modules/characterImages.js';
-import {
   buildUsageSnapshot,
   generateCompletion,
-  streamCompletion,
-  summarizeUsageSnapshots
+  streamCompletion
 } from '../services/providers.js';
 import { renderPromptVariables, resolvePromptUserName } from '../services/promptVariables.js';
 import { saveConversationAppearance } from '../modules/conversationAppearance.js';
-import { mergeAdvancedSettings } from '../modules/advancedSettings.js';
 import { withSavepoint } from '../modules/savepoint.js';
 import { getAccessorySkillsPayload, runAccessoryAgents } from '../services/accessoryAgents.js';
 import {
@@ -78,7 +65,6 @@ import {
   withConversationUsage,
   parseJson,
   normalizeIdList,
-  withModelOverride,
   writeSse
 } from './helpers.js';
 import { sendMessageSchema, updateMessageSchema, saveConversationSettingsSchema, saveStatusBarSchema, economyTransactionSchema, addNpcMemorySchema, addNpcBehaviorSchema, updateNpcBehaviorSchema, createSaveSchema, renameSaveSchema, createConversationSchema, bulkDeleteSchema, validate } from '../validations/schemas.js';
@@ -913,7 +899,14 @@ export function createConversationsRouter(ctx) {
       }
     }, 300_000);
 
-    const emit = (event, data) => writeSse(response, event, data);
+    const partialAssistant = {
+      content: '',
+      reasoning: ''
+    };
+    const emit = (event, data) => {
+      captureAssistantStreamText(partialAssistant, event, data);
+      writeSse(response, event, data);
+    };
     emit('user_message', { userMessage });
     emit('meta', {
       provider: settings.gatewayName,
@@ -965,6 +958,17 @@ export function createConversationsRouter(ctx) {
       });
     } catch (error) {
       if (isAbortError(error) || controller.signal.aborted || response.destroyed) {
+        saveInterruptedAssistantResult({
+          userId,
+          conversation,
+          character,
+          rules,
+          partialAssistant,
+          macroContext: {
+            userName: request.auth?.user?.displayName || request.auth?.user?.username || '用户',
+            charName: character.name || ''
+          }
+        });
         if (!response.destroyed) {
           response.end();
         }
@@ -978,6 +982,36 @@ export function createConversationsRouter(ctx) {
     } finally {
       clearTimeout(serverTimeout);
     }
+  }
+
+  function captureAssistantStreamText(target, event, data) {
+    if (!target || !data || typeof data.text !== 'string') {
+      return;
+    }
+    if (event === 'content') {
+      target.content += data.text;
+    } else if (event === 'reasoning') {
+      target.reasoning += data.text;
+    }
+  }
+
+  function saveInterruptedAssistantResult({ userId, conversation, character, rules, partialAssistant, macroContext = {} }) {
+    if (!hasAssistantPayload(partialAssistant)) {
+      return null;
+    }
+    return saveAssistantResult({
+      userId,
+      conversation,
+      character,
+      rules,
+      result: {
+        content: partialAssistant.content,
+        reasoning: partialAssistant.reasoning,
+        usage: null,
+        provider: 'interrupted'
+      },
+      macroContext
+    });
   }
 
   function saveAssistantResult({ userId, conversation, character, rules, result, macroContext = {} }) {

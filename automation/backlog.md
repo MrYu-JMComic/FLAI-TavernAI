@@ -235,3 +235,32 @@ The autonomous loop should choose one small item per run. Add new findings here 
 - 2026-06-07: Guarded TalentRollDialog retry refreshes while dialog data loading is already active.
 - 2026-06-07: Guarded HomeView manual character and tag retry refreshes while matching loads are active.
 - 2026-06-07: Guarded MessageToasts action buttons against duplicate clicks before dismissal renders.
+- 2026-06-07: Locked Settings tag add/delete/load-limit controls behind one visible busy state.
+- 2026-06-07: Removed unused MarkdownContent Vue imports after verifying fold rendering text remains UTF-8.
+- 2026-06-07: Pruned unused backend named imports and added a source hygiene guard for backend import drift.
+- 2026-06-07: Locked Settings preset edit/import/save/default/delete controls behind visible busy states.
+- 2026-06-07: Refactored repeated frontend SFC source-test block loading into a shared helper.
+- 2026-06-07: Locked Settings mod editor/toggle/delete/reorder controls behind visible busy states.
+- 2026-06-07: Migrated ChatHeader, ChatMessageItem, and ChatModelSwitcher source tests to the shared SFC block helper.
+- 2026-06-07: Locked Settings regex filter/import/toggle/reorder controls behind visible busy states.
+- 2026-06-07: Locked Settings personal provider and profile save controls behind visible busy states.
+- 2026-06-07: Migrated EconomyPanel, HomeView, and SaveLoadPanel source tests to the shared SFC block helper.
+- 2026-06-07: Migrated NpcPanel, TalentRollDialog, and WorldBookView source tests to the shared SFC block helper.
+- 2026-06-07: Migrated ChatAppearance, CharacterFormView, ChatSettingsDrawer, and PresetView source tests to the shared SFC block helper.
+- 2026-06-07: Locked CharacterFormView tag creation controls while a tag create request is pending.
+- 2026-06-07: Fixed the source hygiene unused-import scanner to avoid false positives in active code and fixture strings.
+- 2026-06-07: Migrated ChatComposer and SettingsView source tests so direct Vue block reads are centralized in the shared SFC helper.
+- 2026-06-07: Added a source hygiene guard to keep frontend SFC source tests on the shared Vue block reader.
+- 2026-06-07: Hardened source hygiene guards to ignore comment/string named-import noise and catch multiline Vue source reads.
+- 2026-06-07: Deduped source hygiene source-file fixtures through a shared helper.
+- 2026-06-07: Extended the unused named-import hygiene guard to frontend source with Vue kebab-case component usage support.
+- 2026-06-07: Debounced HomeView search reloads while keeping sort and tag filter changes immediate.
+- 2026-06-07: Froze WorldBookView book and entry form fields while save mutations are active.
+- 2026-06-07: Extended import hygiene to catch unused default and namespace bindings across backend and frontend source.
+- 2026-06-07: Merged duplicate import declarations and added a source hygiene guard against duplicate same-module imports.
+- 2026-06-07: Added a source hygiene guard against duplicate backend test names within the same file.
+- 2026-06-07: Deduped source hygiene regex escaping through a shared helper.
+- 2026-06-07: Locked ChatSidebar conversation-open and new-chat actions while conversation actions are busy.
+- 2026-06-07: Coalesced VariableEditor mirror scroll synchronization into animation frames.
+- 2026-06-07: Added a source hygiene guard to keep JS-like import declarations before runtime code.
+- 2026-06-07: Added a source hygiene guard against duplicate JS-like top-level function declarations.

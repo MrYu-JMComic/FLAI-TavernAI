@@ -40,6 +40,7 @@ const modelSwitcherOpen = ref(false);
 const modelSwitcherRefreshing = ref(false);
 const modelSwitcherSaving = ref(false);
 const statusBarUpdateStatus = ref('not-updated');
+const statusBarCollapseRequest = ref(0);
 const npcUpdateStatus = ref('not-updated');
 let conversationLoadToken = 0;
 let modelRefreshToken = 0;
@@ -157,9 +158,18 @@ const {
   showScrollBottomButton,
   handleMessageScroll, handleWheelScrollIntent,
   handleTouchStart, handleTouchMove,
-  stickToBottomIfNeeded, scrollToBottom, restoreMessageScrollPosition,
+  isPinnedToBottom, stickToBottomIfNeeded, scrollToBottom, scrollToMessage, restoreMessageScrollPosition,
   saveMessageScrollPosition, cleanup: cleanupScroll
 } = scroll;
+
+function prepareExpandedStatusBarForSubmit() {
+  const statusBarRoot = messageScroller.value?.querySelector('.status-bar-wrapper .status-bar-root');
+  const statusBarExpanded = statusBarRoot?.getAttribute('aria-expanded') === 'true';
+  if (statusBarExpanded && chatViewportIsPhone.value) {
+    statusBarCollapseRequest.value += 1;
+  }
+  return statusBarExpanded;
+}
 
 const {
   input, useStream, thinkingEnabled,
@@ -175,7 +185,12 @@ const {
   loadSidebarData, loadEconomyBalance,
   onAccessoryRefreshStart: beginAccessoryRefreshStatus,
   onAccessoryRefresh: refreshAccessoryPanels,
-  stickToBottomIfNeeded, expandReasoning, showError
+  isPinnedToBottom,
+  stickToBottomIfNeeded,
+  scrollToMessage,
+  prepareExpandedStatusBarForSubmit,
+  expandReasoning,
+  showError
 });
 const { providerModels, syncProviderModels } = useProviderModels(computed(() => props.provider));
 
@@ -1056,6 +1071,7 @@ watch(showNpcFeature, (active) => {
               :status-bar="statusBar"
               :template-config="statusBarTemplateConfig"
               :update-status="statusBarUpdateStatus"
+              :collapse-request="statusBarCollapseRequest"
               @quick-reply="handleStatusBarQuickReply"
             />
           </div>

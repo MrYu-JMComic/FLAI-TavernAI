@@ -1,17 +1,15 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { readRepoText, readVueBlock } from './frontendSfcTestUtils.js';
+import { readRepoText, readVueBlocks } from './frontendSfcTestUtils.js';
 
-const chatHeaderSource = readRepoText('frontend/src/components/chat/ChatHeader.vue');
-const chatViewSource = readRepoText('frontend/src/views/ChatView.vue');
+const { script: chatHeaderScript, template: chatHeaderTemplate } = readVueBlocks(
+  'frontend/src/components/chat/ChatHeader.vue'
+);
+const { template: chatViewTemplate } = readVueBlocks('frontend/src/views/ChatView.vue', ['template']);
 const chatConversationSource = readRepoText('frontend/src/composables/chat/useChatConversation.js');
 
 test('ChatHeader locks conversation panel actions until the conversation is ready', () => {
-  const scriptSetup = readVueBlock(chatHeaderSource, 'script');
-  const template = readVueBlock(chatHeaderSource, 'template');
-  const chatViewTemplate = readVueBlock(chatViewSource, 'template');
-
-  assert.match(scriptSetup, /conversationReady: \{ type: Boolean, default: false \}/);
+  assert.match(chatHeaderScript, /conversationReady: \{ type: Boolean, default: false \}/);
   assert.match(chatViewTemplate, /:conversation-ready="conversationReady"/);
   assert.match(chatConversationSource, /const conversationReady = computed\(\(\) => Boolean\(conversation\.value\?\.id\) && !loading\.value\)/);
   assert.match(
@@ -26,6 +24,6 @@ test('ChatHeader locks conversation panel actions until the conversation is read
     chatConversationSource,
     /function openEconomyPanel\(\)\s*{\s*if \(!conversationReady\.value\) {\s*return;\s*}/
   );
-  assert.equal((template.match(/:disabled="!conversationReady"/g) || []).length, 3);
-  assert.equal((template.match(/:aria-busy="!conversationReady"/g) || []).length, 3);
+  assert.equal((chatHeaderTemplate.match(/:disabled="!conversationReady"/g) || []).length, 3);
+  assert.equal((chatHeaderTemplate.match(/:aria-busy="!conversationReady"/g) || []).length, 3);
 });

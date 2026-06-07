@@ -43,6 +43,10 @@ const props = defineProps({
   updateStatus: {
     type: String,
     default: 'not-updated'
+  },
+  collapseRequest: {
+    type: Number,
+    default: 0
   }
 });
 
@@ -151,6 +155,13 @@ watch(collapseStorageKey, (key) => {
 watch(customTemplateCss, (css) => {
   syncCustomTemplateStyle(css);
 }, { immediate: true });
+
+watch(() => props.collapseRequest, (request) => {
+  if (!request || collapsed.value) {
+    return;
+  }
+  setCollapsed(true);
+});
 
 onBeforeUnmount(() => {
   removeCustomTemplateStyle();
@@ -309,7 +320,11 @@ async function copyTemplateText(text) {
 }
 
 function toggleCollapsed() {
-  collapsed.value = !collapsed.value;
+  setCollapsed(!collapsed.value);
+}
+
+function setCollapsed(value) {
+  collapsed.value = Boolean(value);
   writeCollapsedState(collapseStorageKey.value, collapsed.value);
 }
 

@@ -168,6 +168,7 @@ const balanceLoading = ref(false);
 const modelOptions = ref([]);
 const balance = ref(null);
 const settingsModelOptions = computed(() => buildModelSelectOptions(modelOptions.value, form.model));
+const providerControlsBusy = computed(() => saving.value || modelLoading.value);
 let settingsLoadToken = 0;
 let modelLoadToken = 0;
 let providerSaveToken = 0;
@@ -261,7 +262,7 @@ function applyPreset() {
 }
 
 async function loadModels() {
-  if (!isPersonalPage.value || modelLoading.value || !canFetchModels.value) {
+  if (!isPersonalPage.value || providerControlsBusy.value || !canFetchModels.value) {
     return;
   }
   const requestToken = ++modelLoadToken;
@@ -290,7 +291,7 @@ async function loadModels() {
 }
 
 async function submit() {
-  if (!isPersonalPage.value) {
+  if (!isPersonalPage.value || providerControlsBusy.value) {
     return;
   }
   const mutationToken = ++providerSaveToken;
@@ -353,7 +354,7 @@ async function handleUserAvatar(event) {
 }
 
 async function submitProfile() {
-  if (!isPersonalPage.value) {
+  if (!isPersonalPage.value || profileSaving.value) {
     return;
   }
   const mutationToken = ++profileSaveToken;
@@ -378,7 +379,7 @@ async function submitProfile() {
 }
 
 async function checkBalance() {
-  if (!isPersonalPage.value || balanceLoading.value || !canCheckBalance.value) {
+  if (!isPersonalPage.value || providerControlsBusy.value || balanceLoading.value || !canCheckBalance.value) {
     return;
   }
   const requestToken = ++balanceLoadToken;
@@ -602,14 +603,17 @@ const TAG_LOAD_LIMIT_STORAGE_KEY = 'flai-tag-load-limit';
 const tagLoadLimit = ref(readStoredTagLoadLimit());
 const tagLoading = ref(false);
 const tagLoadError = ref('');
+const tagActionBusyId = ref('');
 const normalizedTagLoadLimit = computed(() => normalizeTagLoadLimit(tagLoadLimit.value));
+const tagActionBusy = computed(() => Boolean(tagActionBusyId.value));
+const tagControlsBusy = computed(() => tagLoading.value || tagActionBusy.value);
 let tagLoadToken = 0;
 let tagMutationToken = 0;
 
 onMounted(loadTags);
 
 async function loadTags() {
-  if (!isExtensionsPage.value || tagLoading.value) {
+  if (!isExtensionsPage.value || tagControlsBusy.value) {
     return;
   }
   const requestToken = ++tagLoadToken;
@@ -643,12 +647,28 @@ function resetTagMutationScope() {
 function resetTagAsyncScope() {
   tagLoadToken += 1;
   tagLoading.value = false;
+  tagActionBusyId.value = '';
   resetTagMutationScope();
 }
 
-function beginTagMutation() {
+function tagDeleteActionId(id) {
+  return `tag-delete:${id}`;
+}
+
+function isTagDeleteBusy(id) {
+  return tagActionBusyId.value === tagDeleteActionId(id);
+}
+
+function beginTagMutation(actionId) {
   resetTagAsyncScope();
+  tagActionBusyId.value = actionId;
   return tagMutationToken;
+}
+
+function finishTagMutation(mutationToken) {
+  if (mutationToken === tagMutationToken) {
+    tagActionBusyId.value = '';
+  }
 }
 
 function isCurrentTagMutation(mutationToken) {
@@ -656,6 +676,7 @@ function isCurrentTagMutation(mutationToken) {
 }
 
 function updateTagLoadLimit() {
+  if (tagControlsBusy.value) return;
   resetTagAsyncScope();
   tagLoadLimit.value = normalizedTagLoadLimit.value;
   saveStoredTagLoadLimit(tagLoadLimit.value);
@@ -664,8 +685,8 @@ function updateTagLoadLimit() {
 
 async function addTag() {
   const name = newTagName.value.trim();
-  if (!name) return;
-  const mutationToken = beginTagMutation();
+  if (!name || tagControlsBusy.value) return;
+  const mutationToken = beginTagMutation('tag-add');
   try {
     const tag = await createTag({ name });
     if (!isCurrentTagMutation(mutationToken)) return;
@@ -675,6 +696,8 @@ async function addTag() {
   } catch (err) {
     if (!isCurrentTagMutation(mutationToken)) return;
     notify.error(err.message);
+  } finally {
+    finishTagMutation(mutationToken);
   }
 }
 
@@ -701,8 +724,9 @@ function saveStoredTagLoadLimit(limit) {
 }
 
 async function removeTag(id, name) {
+  if (tagControlsBusy.value) return;
   if (!window.confirm(`确定删除标签「${name}」吗？关联的角色卡将失去此标签。`)) return;
-  const mutationToken = beginTagMutation();
+  const mutationToken = beginTagMutation(tagDeleteActionId(id));
   try {
     await deleteTag(id);
     if (!isCurrentTagMutation(mutationToken)) return;
@@ -716,6 +740,8 @@ async function removeTag(id, name) {
       return;
     }
     notify.error(err.message);
+  } finally {
+    finishTagMutation(mutationToken);
   }
 }
 
@@ -723,6 +749,9 @@ async function removeTag(id, name) {
 const presetList = ref([]);
 const presetLoading = ref(false);
 const presetLoadError = ref('');
+const presetActionBusyId = ref('');
+const presetActionBusy = computed(() => Boolean(presetActionBusyId.value));
+const presetControlsBusy = computed(() => presetLoading.value || presetActionBusy.value);
 let presetLoadToken = 0;
 let presetMutationToken = 0;
 const presetEditing = ref(null);
@@ -741,7 +770,7 @@ const presetImportText = ref('');
 onMounted(loadPresets);
 
 async function loadPresets() {
-  if (!isExtensionsPage.value || presetLoading.value) {
+  if (!isExtensionsPage.value || presetControlsBusy.value) {
     return;
   }
   const requestToken = ++presetLoadToken;
@@ -772,12 +801,36 @@ function resetPresetMutationScope() {
 function resetPresetAsyncScope() {
   presetLoadToken += 1;
   presetLoading.value = false;
+  presetActionBusyId.value = '';
   resetPresetMutationScope();
 }
 
-function beginPresetMutation() {
+function presetDefaultActionId(id) {
+  return `preset-default:${id}`;
+}
+
+function presetDeleteActionId(id) {
+  return `preset-delete:${id}`;
+}
+
+function isPresetDefaultBusy(id) {
+  return presetActionBusyId.value === presetDefaultActionId(id);
+}
+
+function isPresetDeleteBusy(id) {
+  return presetActionBusyId.value === presetDeleteActionId(id);
+}
+
+function beginPresetMutation(actionId) {
   resetPresetAsyncScope();
+  presetActionBusyId.value = actionId;
   return presetMutationToken;
+}
+
+function finishPresetMutation(mutationToken) {
+  if (mutationToken === presetMutationToken) {
+    presetActionBusyId.value = '';
+  }
 }
 
 function isCurrentPresetMutation(mutationToken) {
@@ -797,6 +850,7 @@ function resetPresetForm() {
 }
 
 function startNewPreset() {
+  if (presetControlsBusy.value) return;
   resetPresetMutationScope();
   presetEditing.value = null;
   resetPresetForm();
@@ -804,6 +858,7 @@ function startNewPreset() {
 }
 
 function startEditPreset(preset) {
+  if (presetControlsBusy.value) return;
   resetPresetMutationScope();
   presetEditing.value = preset.id;
   Object.assign(presetForm, {
@@ -819,6 +874,7 @@ function startEditPreset(preset) {
 }
 
 function cancelPresetEdit() {
+  if (presetActionBusy.value) return;
   resetPresetMutationScope();
   showPresetEditor.value = false;
   presetEditing.value = null;
@@ -826,8 +882,9 @@ function cancelPresetEdit() {
 }
 
 async function savePreset() {
+  if (presetControlsBusy.value) return;
   const editingId = presetEditing.value;
-  const mutationToken = beginPresetMutation();
+  const mutationToken = beginPresetMutation('preset-save');
   const payload = {
     name: presetForm.name,
     systemPrompt: presetForm.systemPrompt,
@@ -847,46 +904,61 @@ async function savePreset() {
       if (!isCurrentPresetMutation(mutationToken)) return;
       notify.success('预设已创建');
     }
-    cancelPresetEdit();
+    showPresetEditor.value = false;
+    presetEditing.value = null;
+    resetPresetForm();
+    finishPresetMutation(mutationToken);
     await loadPresets();
   } catch (err) {
     if (!isCurrentPresetMutation(mutationToken)) return;
     notify.error(err.message);
+  } finally {
+    finishPresetMutation(mutationToken);
   }
 }
 
 async function removePreset(id, name) {
+  if (presetControlsBusy.value) return;
   if (!window.confirm(`确定删除预设「${name}」吗？`)) return;
-  const mutationToken = beginPresetMutation();
+  const mutationToken = beginPresetMutation(presetDeleteActionId(id));
   try {
     await deletePreset(id);
     if (!isCurrentPresetMutation(mutationToken)) return;
     presetList.value = presetList.value.filter((p) => p.id !== id);
     if (presetEditing.value === id) {
-      cancelPresetEdit();
+      showPresetEditor.value = false;
+      presetEditing.value = null;
+      resetPresetForm();
     }
     notify.success(`预设「${name}」已删除`);
   } catch (err) {
     if (!isCurrentPresetMutation(mutationToken)) return;
     notify.error(err.message);
+  } finally {
+    finishPresetMutation(mutationToken);
   }
 }
 
 async function makeDefaultPreset(id) {
-  const mutationToken = beginPresetMutation();
+  if (presetControlsBusy.value) return;
+  const mutationToken = beginPresetMutation(presetDefaultActionId(id));
   try {
     await setDefaultPreset(id);
     if (!isCurrentPresetMutation(mutationToken)) return;
+    finishPresetMutation(mutationToken);
     await loadPresets();
     if (!isCurrentPresetMutation(mutationToken)) return;
     notify.success('已设为默认预设');
   } catch (err) {
     if (!isCurrentPresetMutation(mutationToken)) return;
     notify.error(err.message);
+  } finally {
+    finishPresetMutation(mutationToken);
   }
 }
 
 function exportPresets() {
+  if (presetControlsBusy.value) return;
   const data = JSON.stringify(presetList.value, null, 2);
   const blob = new Blob([data], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
@@ -898,7 +970,7 @@ function exportPresets() {
   notify.success('预设已导出');
 }
 
-async function importPresets(mutationToken = beginPresetMutation()) {
+async function importPresets(mutationToken = beginPresetMutation('preset-import')) {
   try {
     const parsed = JSON.parse(presetImportText.value);
     const items = Array.isArray(parsed) ? parsed : [parsed];
@@ -919,21 +991,24 @@ async function importPresets(mutationToken = beginPresetMutation()) {
     }
     if (!isCurrentPresetMutation(mutationToken)) return;
     presetImportText.value = '';
+    finishPresetMutation(mutationToken);
     await loadPresets();
     if (!isCurrentPresetMutation(mutationToken)) return;
     notify.success(`已导入 ${imported} 个预设`);
   } catch (err) {
     if (!isCurrentPresetMutation(mutationToken)) return;
     notify.error('导入失败：JSON 格式不正确');
+  } finally {
+    finishPresetMutation(mutationToken);
   }
 }
 
 function handlePresetImportFile(event) {
   const file = event.target.files?.[0];
   event.target.value = '';
-  if (!file) return;
+  if (!file || presetControlsBusy.value) return;
   const reader = new FileReader();
-  const mutationToken = beginPresetMutation();
+  const mutationToken = beginPresetMutation('preset-import');
   reader.onload = async () => {
     if (!isCurrentPresetMutation(mutationToken)) return;
     presetImportText.value = String(reader.result || '');
@@ -942,6 +1017,7 @@ function handlePresetImportFile(event) {
   reader.onerror = () => {
     if (!isCurrentPresetMutation(mutationToken)) return;
     notify.error('导入失败：文件读取失败');
+    finishPresetMutation(mutationToken);
   };
   reader.readAsText(file);
 }
@@ -950,6 +1026,9 @@ function handlePresetImportFile(event) {
 const modList = ref([]);
 const modLoading = ref(false);
 const modLoadError = ref('');
+const modActionBusyId = ref('');
+const modActionBusy = computed(() => Boolean(modActionBusyId.value));
+const modControlsBusy = computed(() => modLoading.value || modActionBusy.value);
 let modLoadToken = 0;
 let modMutationToken = 0;
 const modCharacterOptions = ref([]);
@@ -974,7 +1053,7 @@ onMounted(loadMods);
 onMounted(loadModCharacterOptions);
 
 async function loadMods() {
-  if (!isExtensionsPage.value || modLoading.value) {
+  if (!isExtensionsPage.value || modControlsBusy.value) {
     return;
   }
   const requestToken = ++modLoadToken;
@@ -999,7 +1078,7 @@ function isCurrentModLoad(requestToken) {
 }
 
 async function loadModCharacterOptions() {
-  if (!isExtensionsPage.value || modCharactersLoading.value) {
+  if (!isExtensionsPage.value || modCharactersLoading.value || modActionBusy.value) {
     return;
   }
   const requestToken = ++modCharactersLoadToken;
@@ -1034,6 +1113,7 @@ function resetModMutationScope() {
 function resetModAsyncScope() {
   modLoadToken += 1;
   modLoading.value = false;
+  modActionBusyId.value = '';
   resetModMutationScope();
 }
 
@@ -1042,9 +1122,32 @@ function resetModCharacterLoadScope() {
   modCharactersLoading.value = false;
 }
 
-function beginModMutation() {
+function modToggleActionId(id) {
+  return `mod-toggle:${id}`;
+}
+
+function modDeleteActionId(id) {
+  return `mod-delete:${id}`;
+}
+
+function isModToggleBusy(id) {
+  return modActionBusyId.value === modToggleActionId(id);
+}
+
+function isModDeleteBusy(id) {
+  return modActionBusyId.value === modDeleteActionId(id);
+}
+
+function beginModMutation(actionId) {
   resetModAsyncScope();
+  modActionBusyId.value = actionId;
   return modMutationToken;
+}
+
+function finishModMutation(mutationToken) {
+  if (mutationToken === modMutationToken) {
+    modActionBusyId.value = '';
+  }
 }
 
 function isCurrentModMutation(mutationToken) {
@@ -1070,6 +1173,7 @@ function closeModEditor() {
 }
 
 function startNewMod() {
+  if (modControlsBusy.value) return;
   resetModAsyncScope();
   modEditing.value = null;
   resetModForm();
@@ -1077,6 +1181,7 @@ function startNewMod() {
 }
 
 function startEditMod(mod) {
+  if (modControlsBusy.value) return;
   resetModAsyncScope();
   modEditing.value = mod.id;
   Object.assign(modForm, {
@@ -1092,11 +1197,13 @@ function startEditMod(mod) {
 }
 
 function cancelModEdit() {
+  if (modActionBusy.value) return;
   resetModAsyncScope();
   closeModEditor();
 }
 
 async function saveMod() {
+  if (modControlsBusy.value) return;
   const editingId = modEditing.value;
   const scope = normalizeModScope(modForm.scope, modForm.characterIds);
   const characterIds = scope === 'characters' ? normalizeModCharacterIds(modForm.characterIds) : [];
@@ -1104,7 +1211,7 @@ async function saveMod() {
     notify.warning('请至少绑定一个角色');
     return;
   }
-  const mutationToken = beginModMutation();
+  const mutationToken = beginModMutation('mod-save');
   const payload = {
     name: modForm.name,
     description: modForm.description,
@@ -1119,6 +1226,7 @@ async function saveMod() {
       await updateMod(editingId, payload);
       if (!isCurrentModMutation(mutationToken)) return;
       closeModEditor();
+      finishModMutation(mutationToken);
       await loadMods();
       if (!isCurrentModMutation(mutationToken)) return;
       notify.success('Mod 已更新');
@@ -1126,6 +1234,7 @@ async function saveMod() {
       await createMod(payload);
       if (!isCurrentModMutation(mutationToken)) return;
       closeModEditor();
+      finishModMutation(mutationToken);
       await loadMods();
       if (!isCurrentModMutation(mutationToken)) return;
       notify.success('Mod 已创建');
@@ -1133,12 +1242,15 @@ async function saveMod() {
   } catch (err) {
     if (!isCurrentModMutation(mutationToken)) return;
     notify.error(err.message);
+  } finally {
+    finishModMutation(mutationToken);
   }
 }
 
 async function removeMod(id, name) {
+  if (modControlsBusy.value) return;
   if (!window.confirm(`确定删除 Mod「${name}」吗？`)) return;
-  const mutationToken = beginModMutation();
+  const mutationToken = beginModMutation(modDeleteActionId(id));
   try {
     await deleteMod(id);
     if (!isCurrentModMutation(mutationToken)) return;
@@ -1150,11 +1262,14 @@ async function removeMod(id, name) {
   } catch (err) {
     if (!isCurrentModMutation(mutationToken)) return;
     notify.error(err.message);
+  } finally {
+    finishModMutation(mutationToken);
   }
 }
 
 async function toggleMod(mod) {
-  const mutationToken = beginModMutation();
+  if (modControlsBusy.value) return;
+  const mutationToken = beginModMutation(modToggleActionId(mod.id));
   const nextEnabled = !mod.enabled;
   try {
     await updateMod(mod.id, { enabled: nextEnabled });
@@ -1166,6 +1281,8 @@ async function toggleMod(mod) {
   } catch (err) {
     if (!isCurrentModMutation(mutationToken)) return;
     notify.error(err.message);
+  } finally {
+    finishModMutation(mutationToken);
   }
 }
 
@@ -1190,10 +1307,12 @@ function normalizeModCharacterIds(ids = []) {
 }
 
 function selectAllModCharacters() {
+  if (modActionBusy.value) return;
   modForm.characterIds = modCharacterOptions.value.map((character) => character.id);
 }
 
 function clearModCharacters() {
+  if (modActionBusy.value) return;
   modForm.characterIds = [];
 }
 
@@ -1210,11 +1329,16 @@ function modScopeLabel(mod) {
 }
 
 function onModDragStart(event, mod) {
+  if (modControlsBusy.value) {
+    event.preventDefault();
+    return;
+  }
   draggingMod.value = mod.id;
   event.dataTransfer.effectAllowed = 'move';
 }
 
 function onModDragOver(event, mod) {
+  if (modControlsBusy.value) return;
   event.preventDefault();
   dragOverMod.value = mod.id;
 }
@@ -1226,18 +1350,22 @@ function onModDragEnd() {
 
 async function onModDrop(event, targetMod) {
   event.preventDefault();
+  if (modControlsBusy.value) return;
   const draggedId = draggingMod.value;
   if (!draggedId || draggedId === targetMod.id) {
     dragOverMod.value = null;
     return;
   }
 
-  const mutationToken = beginModMutation();
   const previousList = [...modList.value];
   const fromIndex = modList.value.findIndex((m) => m.id === draggedId);
   const toIndex = modList.value.findIndex((m) => m.id === targetMod.id);
-  if (fromIndex === -1 || toIndex === -1) return;
+  if (fromIndex === -1 || toIndex === -1) {
+    dragOverMod.value = null;
+    return;
+  }
 
+  const mutationToken = beginModMutation('mod-reorder');
   const newList = [...modList.value];
   const [moved] = newList.splice(fromIndex, 1);
   newList.splice(toIndex, 0, moved);
@@ -1251,7 +1379,10 @@ async function onModDrop(event, targetMod) {
     if (!isCurrentModMutation(mutationToken)) return;
     modList.value = previousList;
     notify.error(err.message);
+    finishModMutation(mutationToken);
     await loadMods();
+  } finally {
+    finishModMutation(mutationToken);
   }
 }
 
@@ -1275,6 +1406,9 @@ function modTypeColor(type) {
 const regexRules = ref([]);
 const regexLoading = ref(false);
 const regexLoadError = ref('');
+const regexActionBusyId = ref('');
+const regexActionBusy = computed(() => Boolean(regexActionBusyId.value));
+const regexControlsBusy = computed(() => regexLoading.value || regexActionBusy.value);
 const regexGroupFilter = ref('');
 const regexImportText = ref('');
 const showRegexImport = ref(false);
@@ -1308,7 +1442,7 @@ function resetExtensionAsyncScopes() {
 }
 
 async function loadRegexRules() {
-  if (!isExtensionsPage.value || regexLoading.value) {
+  if (!isExtensionsPage.value || regexControlsBusy.value) {
     return;
   }
   const groupFilter = regexGroupFilter.value;
@@ -1338,12 +1472,33 @@ function isCurrentRegexLoad(requestToken, groupFilter) {
 function resetRegexAsyncScope() {
   regexLoadToken += 1;
   regexLoading.value = false;
+  regexActionBusyId.value = '';
   resetRegexMutationScope();
 }
 
 function resetRegexMutationScope() {
   regexMutationToken += 1;
   dragIndex.value = -1;
+}
+
+function regexToggleActionId(id) {
+  return `regex-toggle:${id}`;
+}
+
+function isRegexToggleBusy(id) {
+  return regexActionBusyId.value === regexToggleActionId(id);
+}
+
+function beginRegexMutation(actionId) {
+  resetRegexAsyncScope();
+  regexActionBusyId.value = actionId;
+  return regexMutationToken;
+}
+
+function finishRegexMutation(mutationToken) {
+  if (mutationToken === regexMutationToken) {
+    regexActionBusyId.value = '';
+  }
 }
 
 function isCurrentRegexMutation(mutationToken, groupFilter) {
@@ -1353,42 +1508,53 @@ function isCurrentRegexMutation(mutationToken, groupFilter) {
 }
 
 function handleRegexGroupFilterChange() {
+  if (regexControlsBusy.value) return;
   resetRegexMutationScope();
   loadRegexRules();
 }
 
 async function handleToggleRegexRule(ruleId) {
+  if (regexControlsBusy.value) return;
   const groupFilter = regexGroupFilter.value;
-  const mutationToken = regexMutationToken;
+  const mutationToken = beginRegexMutation(regexToggleActionId(ruleId));
   try {
     await toggleRegexRule(ruleId);
     if (!isCurrentRegexMutation(mutationToken, groupFilter)) return;
+    finishRegexMutation(mutationToken);
     await loadRegexRules();
     if (!isCurrentRegexMutation(mutationToken, groupFilter)) return;
     notify.success('规则状态已切换');
   } catch (err) {
     if (!isCurrentRegexMutation(mutationToken, groupFilter)) return;
     notify.error(err.message);
+  } finally {
+    finishRegexMutation(mutationToken);
   }
 }
 
-function onRegexDragStart(index) {
+function onRegexDragStart(event, index) {
+  if (regexControlsBusy.value) {
+    event.preventDefault();
+    return;
+  }
   dragIndex.value = index;
 }
 
 function onRegexDragOver(event) {
+  if (regexControlsBusy.value) return;
   event.preventDefault();
 }
 
 async function onRegexDrop(dropIndex) {
+  if (regexControlsBusy.value) return;
   if (dragIndex.value < 0 || dragIndex.value === dropIndex) return;
   const groupFilter = regexGroupFilter.value;
-  const mutationToken = regexMutationToken;
   const items = [...regexRules.value];
   const [moved] = items.splice(dragIndex.value, 1);
   items.splice(dropIndex, 0, moved);
   regexRules.value = items;
   dragIndex.value = -1;
+  const mutationToken = beginRegexMutation('regex-reorder');
   try {
     await reorderRegexRules(items.map((r) => r.id), groupFilter);
     if (!isCurrentRegexMutation(mutationToken, groupFilter)) return;
@@ -1396,7 +1562,10 @@ async function onRegexDrop(dropIndex) {
   } catch (err) {
     if (!isCurrentRegexMutation(mutationToken, groupFilter)) return;
     notify.error(err.message);
+    finishRegexMutation(mutationToken);
     await loadRegexRules();
+  } finally {
+    finishRegexMutation(mutationToken);
   }
 }
 
@@ -1407,6 +1576,7 @@ const regexGroups = computed(() => {
 });
 
 function exportRegexRules() {
+  if (regexControlsBusy.value) return;
   const data = JSON.stringify(regexRules.value, null, 2);
   const blob = new Blob([data], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
@@ -1418,7 +1588,7 @@ function exportRegexRules() {
   notify.success('正则规则已导出');
 }
 
-async function importRegexRules(mutationToken = regexMutationToken, groupFilter = regexGroupFilter.value) {
+async function importRegexRules(mutationToken = beginRegexMutation('regex-import'), groupFilter = regexGroupFilter.value) {
   try {
     const parsed = JSON.parse(regexImportText.value);
     const result = await importRegexRuleSet(Array.isArray(parsed) ? { rules: parsed } : parsed);
@@ -1426,6 +1596,7 @@ async function importRegexRules(mutationToken = regexMutationToken, groupFilter 
     const imported = result.imported || 0;
     regexImportText.value = '';
     showRegexImport.value = false;
+    finishRegexMutation(mutationToken);
     await loadRegexRules();
     if (!isCurrentRegexMutation(mutationToken, groupFilter)) return;
     if (result.skipped?.length) {
@@ -1435,16 +1606,18 @@ async function importRegexRules(mutationToken = regexMutationToken, groupFilter 
   } catch (err) {
     if (!isCurrentRegexMutation(mutationToken, groupFilter)) return;
     notify.error('导入失败：JSON 格式不正确');
+  } finally {
+    finishRegexMutation(mutationToken);
   }
 }
 
 function handleRegexImportFile(event) {
   const file = event.target.files?.[0];
   event.target.value = '';
-  if (!file) return;
+  if (!file || regexControlsBusy.value) return;
   const reader = new FileReader();
   const groupFilter = regexGroupFilter.value;
-  const mutationToken = ++regexMutationToken;
+  const mutationToken = beginRegexMutation('regex-import');
   reader.onload = () => {
     if (!isCurrentRegexMutation(mutationToken, groupFilter)) return;
     regexImportText.value = String(reader.result || '');
@@ -1453,6 +1626,7 @@ function handleRegexImportFile(event) {
   reader.onerror = () => {
     if (!isCurrentRegexMutation(mutationToken, groupFilter)) return;
     notify.error('导入失败：文件读取失败');
+    finishRegexMutation(mutationToken);
   };
   reader.readAsText(file);
 }
@@ -1546,7 +1720,7 @@ function scrollToSection(sectionId) {
           </label>
         </div>
 
-        <form class="profile-form" @submit.prevent="submitProfile">
+        <form class="profile-form" :aria-busy="profileSaving" @submit.prevent="submitProfile">
           <label class="field">
             <span>账户名</span>
             <strong class="readonly-value">{{ profile.accountName }}</strong>
@@ -1556,6 +1730,7 @@ function scrollToSection(sectionId) {
             <input
               v-model.trim="profile.displayName"
               maxlength="8"
+              :disabled="profileSaving"
               placeholder="可选，最多 8 个字符"
             />
           </label>
@@ -1616,7 +1791,7 @@ function scrollToSection(sectionId) {
       </div>
     </section>
 
-    <form v-if="isPersonalPage && !loading && !loadError" class="form-panel" @submit.prevent="submit">
+    <form v-if="isPersonalPage && !loading && !loadError" class="form-panel" :aria-busy="providerControlsBusy" @submit.prevent="submit">
       <div class="inline-heading">
         <div>
           <h2>AI 供应商设置</h2>
@@ -1626,7 +1801,7 @@ function scrollToSection(sectionId) {
       <div class="form-grid two-col">
         <label class="field">
           <span>供应商</span>
-          <select v-model="form.providerType" @change="applyPreset">
+          <select v-model="form.providerType" :disabled="providerControlsBusy" @change="applyPreset">
             <option value="deepseek">DeepSeek</option>
             <option value="openai">OpenAI</option>
             <option value="gemini">Gemini OpenAI-compatible</option>
@@ -1641,16 +1816,16 @@ function scrollToSection(sectionId) {
         </label>
         <label class="field">
           <span>网关名称</span>
-          <input v-model.trim="form.gatewayName" />
+          <input v-model.trim="form.gatewayName" :disabled="providerControlsBusy" />
         </label>
         <label class="field">
           <span>Base URL</span>
-          <input v-model.trim="form.baseUrl" placeholder="https://api.example.com/v1" required />
+          <input v-model.trim="form.baseUrl" placeholder="https://api.example.com/v1" :disabled="providerControlsBusy" required />
         </label>
         <div class="field model-field">
           <span>模型</span>
           <div class="model-picker">
-            <select v-model="form.model" required aria-label="模型">
+            <select v-model="form.model" :disabled="providerControlsBusy" required aria-label="模型">
               <option v-if="!settingsModelOptions.length" value="" disabled>
                 请先获取模型列表
               </option>
@@ -1658,7 +1833,7 @@ function scrollToSection(sectionId) {
                 {{ model.label || model.id }}
               </option>
             </select>
-            <button class="ghost-button compact-button" type="button" :disabled="!canFetchModels || modelLoading" @click="loadModels">
+            <button class="ghost-button compact-button" type="button" :disabled="providerControlsBusy || !canFetchModels" @click="loadModels">
               <RefreshCw :size="17" />
               <span>{{ modelLoading ? '刷新中' : '刷新模型' }}</span>
             </button>
@@ -1671,16 +1846,17 @@ function scrollToSection(sectionId) {
         <input
           v-model.trim="form.apiKey"
           autocomplete="off"
+          :disabled="providerControlsBusy"
           :placeholder="form.apiKeyNeedsReset ? '当前密钥不可用，请重新粘贴 SK' : '留空则保留已保存密钥'"
           type="password"
         />
       </label>
       <label class="checkbox-line">
-        <input v-model="form.clearApiKey" type="checkbox" />
+        <input v-model="form.clearApiKey" type="checkbox" :disabled="providerControlsBusy" />
         <span>清除已保存密钥 {{ form.apiKeyHint ? `（当前：${form.apiKeyHint}）` : '' }}</span>
       </label>
       <div class="form-actions">
-        <button class="primary-button" type="submit" :disabled="saving">
+        <button class="primary-button" type="submit" :disabled="providerControlsBusy">
           <Save :size="18" />
           <span>{{ saving ? '保存中...' : '保存设置' }}</span>
         </button>
@@ -1688,7 +1864,7 @@ function scrollToSection(sectionId) {
           v-if="form.providerType === 'deepseek'"
           class="ghost-button"
           type="button"
-          :disabled="!canCheckBalance || balanceLoading"
+          :disabled="providerControlsBusy || !canCheckBalance || balanceLoading"
           @click="checkBalance"
         >
           <WalletCards :size="18" />
@@ -1708,8 +1884,8 @@ function scrollToSection(sectionId) {
       </div>
       <div class="tag-toolbar-row">
         <div class="tag-add-row">
-        <input v-model="newTagName" placeholder="新标签名称" maxlength="30" aria-label="新标签名称" @keyup.enter="addTag" />
-        <button class="ghost-button" type="button" :disabled="!newTagName.trim()" @click="addTag">
+        <input v-model="newTagName" placeholder="新标签名称" maxlength="30" aria-label="新标签名称" :disabled="tagControlsBusy" @keyup.enter="addTag" />
+        <button class="ghost-button" type="button" :disabled="tagControlsBusy || !newTagName.trim()" :aria-busy="tagActionBusyId === 'tag-add'" @click="addTag">
           <Plus :size="17" />
           <span>添加</span>
         </button>
@@ -1723,6 +1899,7 @@ function scrollToSection(sectionId) {
             max="500"
             step="1"
             aria-label="标签最多加载数量"
+            :disabled="tagControlsBusy"
             @change="updateTagLoadLimit"
             @keyup.enter="updateTagLoadLimit"
           />
@@ -1734,7 +1911,7 @@ function scrollToSection(sectionId) {
       <p v-if="tagLoading" class="muted-text" aria-live="polite">正在加载标签...</p>
       <div v-if="tagLoadError" class="section-load-status error-state" role="alert">
         <span>{{ tagLoadError }}</span>
-        <button class="ghost-button compact-button" type="button" :disabled="tagLoading" @click="loadTags">
+        <button class="ghost-button compact-button" type="button" :disabled="tagControlsBusy" @click="loadTags">
           <RefreshCw :size="17" />
           <span>{{ tagLoading ? '重试中...' : '重试' }}</span>
         </button>
@@ -1748,6 +1925,8 @@ function scrollToSection(sectionId) {
             type="button"
             title="删除标签"
             :aria-label="`删除标签：${tag.name}`"
+            :disabled="tagControlsBusy"
+            :aria-busy="isTagDeleteBusy(tag.id)"
             @click="removeTag(tag.id, tag.name)"
           >
             <Trash2 :size="16" />
@@ -1767,68 +1946,68 @@ function scrollToSection(sectionId) {
         <Sliders :size="20" />
       </div>
       <div class="preset-actions-row">
-        <button class="ghost-button" type="button" @click="startNewPreset">
+        <button class="ghost-button" type="button" :disabled="presetControlsBusy" @click="startNewPreset">
           <Plus :size="17" />
           <span>新建预设</span>
         </button>
-        <button class="ghost-button" type="button" @click="exportPresets" :disabled="!presetList.length">
+        <button class="ghost-button" type="button" @click="exportPresets" :disabled="presetControlsBusy || !presetList.length">
           <Download :size="17" />
           <span>导出</span>
         </button>
-        <label class="ghost-button file-import-button">
+        <label class="ghost-button file-import-button" :class="{ disabled: presetControlsBusy }">
           <Upload :size="17" />
           <span>导入</span>
-          <input type="file" accept=".json" @change="handlePresetImportFile" />
+          <input type="file" accept=".json" :disabled="presetControlsBusy" @change="handlePresetImportFile" />
         </label>
       </div>
       <p v-if="presetLoading" class="muted-text" aria-live="polite">正在加载预设...</p>
       <div v-if="presetLoadError" class="section-load-status error-state" role="alert">
         <span>{{ presetLoadError }}</span>
-        <button class="ghost-button compact-button" type="button" :disabled="presetLoading" @click="loadPresets">
+        <button class="ghost-button compact-button" type="button" :disabled="presetControlsBusy" @click="loadPresets">
           <RefreshCw :size="17" />
           <span>{{ presetLoading ? '重试中...' : '重试' }}</span>
         </button>
       </div>
 
       <!-- Preset Editor -->
-      <form v-if="showPresetEditor" class="preset-editor" @submit.prevent="savePreset">
+      <form v-if="showPresetEditor" class="preset-editor" :aria-busy="presetActionBusy" @submit.prevent="savePreset">
         <h3>{{ presetEditing ? '编辑预设' : '新建预设' }}</h3>
         <label class="field">
           <span>预设名称</span>
-          <input v-model.trim="presetForm.name" placeholder="如：创意写作、精确回答" maxlength="80" required />
+          <input v-model.trim="presetForm.name" placeholder="如：创意写作、精确回答" maxlength="80" :disabled="presetActionBusy" required />
         </label>
         <label class="field">
           <span>系统提示词</span>
-          <textarea v-model="presetForm.systemPrompt" rows="4" placeholder="可选，会作为额外的 system 消息发送给模型" />
+          <textarea v-model="presetForm.systemPrompt" rows="4" placeholder="可选，会作为额外的 system 消息发送给模型" :disabled="presetActionBusy" />
         </label>
         <div class="form-grid two-col">
           <label class="field">
             <span>Temperature ({{ presetForm.temperature }})</span>
-            <input v-model.number="presetForm.temperature" type="range" min="0" max="2" step="0.1" />
+            <input v-model.number="presetForm.temperature" type="range" min="0" max="2" step="0.1" :disabled="presetActionBusy" />
           </label>
           <label class="field">
             <span>Max Tokens</span>
-            <input v-model.number="presetForm.maxTokens" type="number" min="1" max="128000" step="1" />
+            <input v-model.number="presetForm.maxTokens" type="number" min="1" max="128000" step="1" :disabled="presetActionBusy" />
           </label>
           <label class="field">
             <span>Top P ({{ presetForm.topP }})</span>
-            <input v-model.number="presetForm.topP" type="range" min="0" max="1" step="0.05" />
+            <input v-model.number="presetForm.topP" type="range" min="0" max="1" step="0.05" :disabled="presetActionBusy" />
           </label>
           <label class="field">
             <span>Frequency Penalty ({{ presetForm.frequencyPenalty }})</span>
-            <input v-model.number="presetForm.frequencyPenalty" type="range" min="-2" max="2" step="0.1" />
+            <input v-model.number="presetForm.frequencyPenalty" type="range" min="-2" max="2" step="0.1" :disabled="presetActionBusy" />
           </label>
           <label class="field">
             <span>Presence Penalty ({{ presetForm.presencePenalty }})</span>
-            <input v-model.number="presetForm.presencePenalty" type="range" min="-2" max="2" step="0.1" />
+            <input v-model.number="presetForm.presencePenalty" type="range" min="-2" max="2" step="0.1" :disabled="presetActionBusy" />
           </label>
         </div>
         <div class="form-actions">
-          <button class="primary-button" type="submit">
+          <button class="primary-button" type="submit" :disabled="presetActionBusy" :aria-busy="presetActionBusyId === 'preset-save'">
             <Save :size="18" />
-            <span>{{ presetEditing ? '保存修改' : '创建预设' }}</span>
+            <span>{{ presetActionBusyId === 'preset-save' ? '保存中...' : presetEditing ? '保存修改' : '创建预设' }}</span>
           </button>
-          <button class="ghost-button" type="button" @click="cancelPresetEdit">
+          <button class="ghost-button" type="button" :disabled="presetActionBusy" @click="cancelPresetEdit">
             取消
           </button>
         </div>
@@ -1846,7 +2025,7 @@ function scrollToSection(sectionId) {
           </div>
           <p v-if="preset.systemPrompt" class="preset-card-prompt">{{ preset.systemPrompt.slice(0, 100) }}{{ preset.systemPrompt.length > 100 ? '...' : '' }}</p>
           <div class="preset-card-actions">
-            <button class="icon-button" type="button" title="编辑" :aria-label="`编辑预设：${preset.name}`" @click="startEditPreset(preset)">
+            <button class="icon-button" type="button" title="编辑" :aria-label="`编辑预设：${preset.name}`" :disabled="presetControlsBusy" @click="startEditPreset(preset)">
               <Sliders :size="16" />
             </button>
             <button
@@ -1855,6 +2034,8 @@ function scrollToSection(sectionId) {
               type="button"
               title="设为默认"
               :aria-label="`设为默认预设：${preset.name}`"
+              :disabled="presetControlsBusy"
+              :aria-busy="isPresetDefaultBusy(preset.id)"
               @click="makeDefaultPreset(preset.id)"
             >
               <Save :size="16" />
@@ -1864,6 +2045,8 @@ function scrollToSection(sectionId) {
               type="button"
               title="删除"
               :aria-label="`删除预设：${preset.name}`"
+              :disabled="presetControlsBusy"
+              :aria-busy="isPresetDeleteBusy(preset.id)"
               @click="removePreset(preset.id, preset.name)"
             >
               <Trash2 :size="16" />
@@ -1884,7 +2067,7 @@ function scrollToSection(sectionId) {
         <Puzzle :size="20" />
       </div>
       <div class="preset-actions-row">
-        <button class="ghost-button" type="button" @click="startNewMod">
+        <button class="ghost-button" type="button" :disabled="modControlsBusy" @click="startNewMod">
           <Plus :size="17" />
           <span>新建 Mod</span>
         </button>
@@ -1892,7 +2075,7 @@ function scrollToSection(sectionId) {
       <p v-if="modLoading" class="muted-text" aria-live="polite">正在加载 Mod...</p>
       <div v-if="modLoadError" class="section-load-status error-state" role="alert">
         <span>{{ modLoadError }}</span>
-        <button class="ghost-button compact-button" type="button" :disabled="modLoading" @click="loadMods">
+        <button class="ghost-button compact-button" type="button" :disabled="modControlsBusy" @click="loadMods">
           <RefreshCw :size="17" />
           <span>{{ modLoading ? '重试中...' : '重试' }}</span>
         </button>
@@ -1901,13 +2084,13 @@ function scrollToSection(sectionId) {
       <!-- Mod Editor -->
       <Teleport to="body">
         <div v-if="showModEditor" class="mod-editor-overlay" @click.self="cancelModEdit">
-          <form class="preset-editor mod-editor-modal" role="dialog" aria-modal="true" @submit.prevent="saveMod" @keydown.esc.prevent="cancelModEdit">
+          <form class="preset-editor mod-editor-modal" role="dialog" aria-modal="true" :aria-busy="modActionBusy" @submit.prevent="saveMod" @keydown.esc.prevent="cancelModEdit">
             <div class="mod-editor-header">
               <div>
                 <span>Mod</span>
                 <h3>{{ modEditing ? '编辑 Mod' : '新建 Mod' }}</h3>
               </div>
-              <button class="icon-button" type="button" title="关闭" aria-label="关闭 Mod 编辑器" @click="cancelModEdit">
+              <button class="icon-button" type="button" title="关闭" aria-label="关闭 Mod 编辑器" :disabled="modActionBusy" @click="cancelModEdit">
                 <X :size="17" />
               </button>
             </div>
@@ -1915,11 +2098,11 @@ function scrollToSection(sectionId) {
               <div class="form-grid two-col">
                 <label class="field">
                   <span>Mod 名称</span>
-                  <input v-model.trim="modForm.name" placeholder="如：文风增强、世界观注入" maxlength="80" required />
+                  <input v-model.trim="modForm.name" placeholder="如：文风增强、世界观注入" maxlength="80" :disabled="modActionBusy" required />
                 </label>
                 <label class="field">
                   <span>类型</span>
-                  <select v-model="modForm.type">
+                  <select v-model="modForm.type" :disabled="modActionBusy">
                     <option value="prompt_inject">提示词注入</option>
                     <option value="style_enhance">文风增强</option>
                     <option value="custom">自定义</option>
@@ -1928,31 +2111,31 @@ function scrollToSection(sectionId) {
               </div>
               <label class="field">
                 <span>描述</span>
-                <input v-model.trim="modForm.description" placeholder="可选，简要描述此 Mod 的作用" maxlength="200" />
+                <input v-model.trim="modForm.description" placeholder="可选，简要描述此 Mod 的作用" maxlength="200" :disabled="modActionBusy" />
               </label>
               <label class="field">
                 <span>内容</span>
-                <textarea v-model="modForm.content" rows="8" placeholder="输入要注入的提示词或文风要求..." required />
+                <textarea v-model="modForm.content" rows="8" placeholder="输入要注入的提示词或文风要求..." :disabled="modActionBusy" required />
               </label>
               <div class="field mod-scope-field">
                 <span>加载范围</span>
                 <div class="mod-scope-grid" role="radiogroup" aria-label="Mod 加载范围">
                   <label class="mod-scope-option" :class="{ active: modForm.scope === 'global' }">
-                    <input v-model="modForm.scope" type="radio" value="global" aria-describedby="mod-scope-global-desc" />
+                    <input v-model="modForm.scope" type="radio" value="global" aria-describedby="mod-scope-global-desc" :disabled="modActionBusy" />
                     <span class="mod-scope-text">
                       <strong>全局加载</strong>
                       <small id="mod-scope-global-desc">所有聊天都会注入，适合通用规则。</small>
                     </span>
                   </label>
                   <label class="mod-scope-option" :class="{ active: modForm.scope === 'all_characters' }">
-                    <input v-model="modForm.scope" type="radio" value="all_characters" aria-describedby="mod-scope-all-desc" />
+                    <input v-model="modForm.scope" type="radio" value="all_characters" aria-describedby="mod-scope-all-desc" :disabled="modActionBusy" />
                     <span class="mod-scope-text">
                       <strong>全角色加载</strong>
                       <small id="mod-scope-all-desc">所有角色卡聊天生效，不影响无角色场景。</small>
                     </span>
                   </label>
                   <label class="mod-scope-option" :class="{ active: modForm.scope === 'characters' }">
-                    <input v-model="modForm.scope" type="radio" value="characters" aria-describedby="mod-scope-characters-desc" />
+                    <input v-model="modForm.scope" type="radio" value="characters" aria-describedby="mod-scope-characters-desc" :disabled="modActionBusy" />
                     <span class="mod-scope-text">
                       <strong>指定角色</strong>
                       <small id="mod-scope-characters-desc">只对下方绑定的角色生效。</small>
@@ -1964,10 +2147,10 @@ function scrollToSection(sectionId) {
                 <div class="mod-character-tools">
                   <span>绑定角色 · {{ modForm.characterIds.length }}</span>
                   <div class="mod-character-actions">
-                    <button class="ghost-button compact-button" type="button" :disabled="!modCharacterOptions.length" @click="selectAllModCharacters">
+                    <button class="ghost-button compact-button" type="button" :disabled="modActionBusy || !modCharacterOptions.length" @click="selectAllModCharacters">
                       全选
                     </button>
-                    <button class="ghost-button compact-button" type="button" :disabled="!modForm.characterIds.length" @click="clearModCharacters">
+                    <button class="ghost-button compact-button" type="button" :disabled="modActionBusy || !modForm.characterIds.length" @click="clearModCharacters">
                       清空
                     </button>
                   </div>
@@ -1975,14 +2158,14 @@ function scrollToSection(sectionId) {
                 <p v-if="modCharactersLoading" class="muted-text" aria-live="polite">正在加载角色...</p>
                 <div v-if="modCharactersLoadError" class="section-load-status error-state" role="alert">
                   <span>{{ modCharactersLoadError }}</span>
-                  <button class="ghost-button compact-button" type="button" :disabled="modCharactersLoading" @click="loadModCharacterOptions">
+                  <button class="ghost-button compact-button" type="button" :disabled="modCharactersLoading || modActionBusy" @click="loadModCharacterOptions">
                     <RefreshCw :size="17" />
                     <span>{{ modCharactersLoading ? '重试中...' : '重试' }}</span>
                   </button>
                 </div>
                 <div v-if="modCharacterOptions.length" class="mod-character-list">
                   <label v-for="character in modCharacterOptions" :key="character.id" class="mod-character-option">
-                    <input v-model="modForm.characterIds" type="checkbox" :value="character.id" />
+                    <input v-model="modForm.characterIds" type="checkbox" :value="character.id" :disabled="modActionBusy" />
                     <span>{{ character.name }}</span>
                     <small>{{ visibilityText(character.visibility) }}</small>
                   </label>
@@ -1990,17 +2173,17 @@ function scrollToSection(sectionId) {
                 <p v-else-if="!modCharactersLoading && !modCharactersLoadError" class="muted-text">暂无可绑定角色</p>
               </div>
               <label class="checkbox-line">
-                <input v-model="modForm.enabled" type="checkbox" />
+                <input v-model="modForm.enabled" type="checkbox" :disabled="modActionBusy" />
                 <span>启用此 Mod</span>
               </label>
             </div>
             <div class="form-actions mod-editor-actions">
-              <button class="ghost-button" type="button" @click="cancelModEdit">
+              <button class="ghost-button" type="button" :disabled="modActionBusy" @click="cancelModEdit">
                 取消
               </button>
-              <button class="primary-button" type="submit">
+              <button class="primary-button" type="submit" :disabled="modActionBusy" :aria-busy="modActionBusyId === 'mod-save'">
                 <Save :size="18" />
-                <span>{{ modEditing ? '保存修改' : '创建 Mod' }}</span>
+                <span>{{ modActionBusyId === 'mod-save' ? '保存中...' : modEditing ? '保存修改' : '创建 Mod' }}</span>
               </button>
             </div>
           </form>
@@ -2018,7 +2201,8 @@ function scrollToSection(sectionId) {
             'is-dragging': draggingMod === mod.id,
             'is-drag-over': dragOverMod === mod.id
           }"
-          draggable="true"
+          :draggable="!modControlsBusy"
+          :aria-busy="isModToggleBusy(mod.id) || isModDeleteBusy(mod.id) || modActionBusyId === 'mod-reorder'"
           @dragstart="onModDragStart($event, mod)"
           @dragover="onModDragOver($event, mod)"
           @dragend="onModDragEnd"
@@ -2046,14 +2230,16 @@ function scrollToSection(sectionId) {
               type="button"
               :title="mod.enabled ? '禁用' : '启用'"
               :aria-label="mod.enabled ? `禁用 Mod：${mod.name}` : `启用 Mod：${mod.name}`"
+              :disabled="modControlsBusy"
+              :aria-busy="isModToggleBusy(mod.id)"
               @click="toggleMod(mod)"
             >
               <Power :size="16" />
             </button>
-            <button class="icon-button" type="button" title="编辑" :aria-label="`编辑 Mod：${mod.name}`" @click="startEditMod(mod)">
+            <button class="icon-button" type="button" title="编辑" :aria-label="`编辑 Mod：${mod.name}`" :disabled="modControlsBusy" @click="startEditMod(mod)">
               <Sliders :size="16" />
             </button>
-            <button class="icon-button danger" type="button" title="删除" :aria-label="`删除 Mod：${mod.name}`" @click="removeMod(mod.id, mod.name)">
+            <button class="icon-button danger" type="button" title="删除" :aria-label="`删除 Mod：${mod.name}`" :disabled="modControlsBusy" :aria-busy="isModDeleteBusy(mod.id)" @click="removeMod(mod.id, mod.name)">
               <Trash2 :size="16" />
             </button>
           </div>
@@ -2072,24 +2258,24 @@ function scrollToSection(sectionId) {
         <Regex :size="20" />
       </div>
       <div class="regex-actions-row">
-        <select v-model="regexGroupFilter" aria-label="正则规则分组筛选" @change="handleRegexGroupFilterChange">
+        <select v-model="regexGroupFilter" aria-label="正则规则分组筛选" :disabled="regexControlsBusy" @change="handleRegexGroupFilterChange">
           <option value="">全部分组</option>
           <option v-for="g in regexGroups" :key="g" :value="g">{{ g }}</option>
         </select>
-        <button class="ghost-button" type="button" @click="exportRegexRules" :disabled="!regexRules.length">
+        <button class="ghost-button" type="button" @click="exportRegexRules" :disabled="regexControlsBusy || !regexRules.length">
           <Download :size="17" />
           <span>导出</span>
         </button>
-        <label class="ghost-button file-import-button">
+        <label class="ghost-button file-import-button" :class="{ disabled: regexControlsBusy }" :aria-busy="regexActionBusyId === 'regex-import'">
           <Upload :size="17" />
           <span>导入</span>
-          <input type="file" accept=".json" @change="handleRegexImportFile" />
+          <input type="file" accept=".json" :disabled="regexControlsBusy" @change="handleRegexImportFile" />
         </label>
       </div>
       <p v-if="regexLoading" class="muted-text" aria-live="polite">正在加载正则规则...</p>
       <div v-if="regexLoadError" class="section-load-status error-state" role="alert">
         <span>{{ regexLoadError }}</span>
-        <button class="ghost-button compact-button" type="button" :disabled="regexLoading" @click="loadRegexRules">
+        <button class="ghost-button compact-button" type="button" :disabled="regexControlsBusy" @click="loadRegexRules">
           <RefreshCw :size="17" />
           <span>{{ regexLoading ? '重试中...' : '重试' }}</span>
         </button>
@@ -2100,8 +2286,9 @@ function scrollToSection(sectionId) {
           :key="rule.id"
           class="regex-rule-card"
           :class="{ disabled: !rule.enabled }"
-          draggable="true"
-          @dragstart="onRegexDragStart(index)"
+          :draggable="!regexControlsBusy"
+          :aria-busy="isRegexToggleBusy(rule.id) || regexActionBusyId === 'regex-reorder'"
+          @dragstart="onRegexDragStart($event, index)"
           @dragover="onRegexDragOver"
           @drop="onRegexDrop(index)"
         >
@@ -2124,6 +2311,8 @@ function scrollToSection(sectionId) {
             type="button"
             :title="rule.enabled ? '点击禁用' : '点击启用'"
             :aria-label="rule.enabled ? `禁用正则规则：${rule.label}` : `启用正则规则：${rule.label}`"
+            :disabled="regexControlsBusy"
+            :aria-busy="isRegexToggleBusy(rule.id)"
             @click="handleToggleRegexRule(rule.id)"
           >
             <Power :size="16" />

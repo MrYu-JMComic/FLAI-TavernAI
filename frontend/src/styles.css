@@ -4304,6 +4304,15 @@ fieldset.accessory-skills-grid:disabled {
   color: var(--primary);
 }
 
+.history-item:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.history-item:disabled:hover {
+  background: transparent;
+}
+
 :root[data-theme="dark"] .history-item {
   color: #e2e8f0;
 }

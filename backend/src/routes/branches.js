@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { branchConversation, getBranchConversation, getConversationBranches } from '../modules/branches.js';
+import { branchConversation, getConversationBranches } from '../modules/branches.js';
 
 export function createBranchesRouter(ctx) {
   const { db, requireAuth } = ctx;

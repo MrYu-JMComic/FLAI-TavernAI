@@ -91,8 +91,8 @@ function releaseSidebarFocus() {
     <button
       class="new-chat-button"
       type="button"
-      :disabled="startConversationBusy"
-      :aria-busy="startConversationBusy"
+      :disabled="startConversationBusy || conversationActionBusy"
+      :aria-busy="startConversationBusy || conversationActionBusy"
       @click="emit('start-new')"
     >
       <MessageSquarePlus :size="18" />
@@ -161,7 +161,13 @@ function releaseSidebarFocus() {
           />
           <span aria-hidden="true"></span>
         </label>
-        <button class="history-item" type="button" @click="emit('open-conversation', item.id)">
+        <button
+          class="history-item"
+          type="button"
+          :disabled="conversationActionBusy"
+          :aria-busy="conversationActionBusy"
+          @click="emit('open-conversation', item.id)"
+        >
           <strong>{{ item.title }}</strong>
           <span>{{ item.character?.name || 'AI' }}</span>
           <small class="history-usage" :title="formatConversationUsage(item)">

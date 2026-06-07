@@ -22,6 +22,14 @@ export function readVueBlock(source, tag) {
   return match?.[1] || '';
 }
 
+export function readVueBlocks(relativePath, tags = ['script', 'template']) {
+  const source = readRepoText(relativePath);
+  return Object.fromEntries([
+    ['source', source],
+    ...tags.map((tag) => [tag, readVueBlock(source, tag)])
+  ]);
+}
+
 export function countMatches(source, pattern) {
   return [...source.matchAll(pattern)].length;
 }

@@ -1,11 +1,11 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { readRepoText, readVueBlock } from './frontendSfcTestUtils.js';
+import { readRepoText, readVueBlocks } from './frontendSfcTestUtils.js';
 
 const { useChatAppearance } = await import('../../../frontend/src/composables/chat/useChatAppearance.js');
 
 const chatAppearanceSource = readRepoText('frontend/src/composables/chat/useChatAppearance.js');
-const chatViewSource = readRepoText('frontend/src/views/ChatView.vue');
+const { script: chatViewScript, template: chatViewTemplate } = readVueBlocks('frontend/src/views/ChatView.vue');
 
 function sourceBetween(startMarker, endMarker) {
   const start = chatAppearanceSource.indexOf(startMarker);
@@ -111,13 +111,10 @@ test('chat appearance reset ignores saving events through the composable entry p
 });
 
 test('ChatView routes chat appearance reset and lorebook updates through guarded setters', () => {
-  const scriptSetup = readVueBlock(chatViewSource, 'script');
-  const template = readVueBlock(chatViewSource, 'template');
-
-  assert.match(scriptSetup, /syncConversationAppearance, resetConversationAppearance, saveConversationAppearanceChanges/);
-  assert.match(scriptSetup, /setChatLorebookId, applyConversationAppearance/);
-  assert.match(template, /@reset-appearance="resetConversationAppearance\(conversation\?\.settings\)"/);
-  assert.match(template, /@update:chat-lorebook-id="setChatLorebookId"/);
-  assert.doesNotMatch(template, /@reset-appearance="syncConversationAppearance/);
-  assert.doesNotMatch(template, /@update:chat-lorebook-id="\([^"]+\) => chatLorebookId =/);
+  assert.match(chatViewScript, /syncConversationAppearance, resetConversationAppearance, saveConversationAppearanceChanges/);
+  assert.match(chatViewScript, /setChatLorebookId, applyConversationAppearance/);
+  assert.match(chatViewTemplate, /@reset-appearance="resetConversationAppearance\(conversation\?\.settings\)"/);
+  assert.match(chatViewTemplate, /@update:chat-lorebook-id="setChatLorebookId"/);
+  assert.doesNotMatch(chatViewTemplate, /@reset-appearance="syncConversationAppearance/);
+  assert.doesNotMatch(chatViewTemplate, /@update:chat-lorebook-id="\([^"]+\) => chatLorebookId =/);
 });

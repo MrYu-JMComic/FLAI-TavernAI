@@ -69,6 +69,7 @@ const CARD_ESTIMATED_HEIGHT = 372;
 const MOBILE_CARD_ESTIMATED_HEIGHT = 436;
 const GRID_GAP = 18;
 const HOT_TAG_RANDOM_POOL_LIMIT = 24;
+const SEARCH_LOAD_DEBOUNCE_MS = 180;
 const hotTagSeed = ref('');
 
 const columnsPerRow = computed(() => {
@@ -247,6 +248,8 @@ let resizeObserver = null;
 let mobileLayoutQuery = null;
 let characterLoadToken = 0;
 let tagLoadToken = 0;
+let importFileReadToken = 0;
+let searchLoadTimer = null;
 let homeActive = true;
 
 function syncMobileListLayout() {
@@ -310,7 +313,11 @@ onUnmounted(() => {
   removeMobileLayoutListener();
 });
 
-watch([search, sort, selectedTag], loadCharacters);
+watch(search, scheduleSearchLoad);
+watch([sort, selectedTag], () => {
+  clearSearchLoadTimer();
+  loadCharacters();
+});
 watch(isMobileListLayout, async () => {
   await nextTick();
   refreshScrollMeasurements();
@@ -319,6 +326,8 @@ watch(isMobileListLayout, async () => {
 function resetHomeAsyncScope() {
   characterLoadToken += 1;
   tagLoadToken += 1;
+  importFileReadToken += 1;
+  clearSearchLoadTimer();
   loading.value = false;
   tagLoading.value = false;
   reactionPending.reset();
@@ -328,6 +337,22 @@ function resetHomeAsyncScope() {
 
 function isHomeActive() {
   return homeActive;
+}
+
+function clearSearchLoadTimer() {
+  if (searchLoadTimer) {
+    clearTimeout(searchLoadTimer);
+    searchLoadTimer = null;
+  }
+}
+
+function scheduleSearchLoad() {
+  clearSearchLoadTimer();
+  searchLoadTimer = setTimeout(() => {
+    searchLoadTimer = null;
+    if (!isHomeActive()) return;
+    loadCharacters();
+  }, SEARCH_LOAD_DEBOUNCE_MS);
 }
 
 async function loadTags() {
@@ -395,6 +420,7 @@ async function loadCharacters() {
 
 function retryLoadCharacters() {
   if (loading.value) return;
+  clearSearchLoadTimer();
   loadCharacters();
 }
 
@@ -481,10 +507,11 @@ async function handleImportFile(event) {
   const file = event.target.files?.[0];
   if (!file) return;
   event.target.value = '';
+  const readToken = ++importFileReadToken;
 
   try {
     const text = await file.text();
-    if (!isHomeActive()) return;
+    if (!isCurrentImportFileRead(readToken)) return;
     const data = JSON.parse(text);
     if (!data.character?.name) {
       notify.error('无效的角色卡文件：缺少角色名');

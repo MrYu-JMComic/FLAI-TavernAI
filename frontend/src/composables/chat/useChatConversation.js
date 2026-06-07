@@ -114,7 +114,7 @@ export function useChatConversation({ route, emit, showError }) {
   }
 
   async function startNewConversation() {
-    if (conversationDisposed || startConversationBusy.value) {
+    if (conversationDisposed || startConversationBusy.value || conversationActionBusy.value) {
       return;
     }
     error.value = '';
@@ -149,6 +149,9 @@ export function useChatConversation({ route, emit, showError }) {
   }
 
   function openConversation(conversationId) {
+    if (conversationDisposed || conversationActionBusy.value) {
+      return;
+    }
     if (conversationId === route.params.id) {
       closeSidebar();
       return;

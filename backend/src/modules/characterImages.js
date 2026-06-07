@@ -1,5 +1,4 @@
 import { newId, nowIso } from '../security.js';
-import { avatarShortUrl } from '../services/avatars.js';
 
 const maxImagesPerCharacter = 20;
 

@@ -2,7 +2,6 @@ import { Router } from 'express';
 import {
   createPreset,
   deletePreset,
-  getDefaultPreset,
   getPreset,
   listPresets,
   setDefaultPreset,

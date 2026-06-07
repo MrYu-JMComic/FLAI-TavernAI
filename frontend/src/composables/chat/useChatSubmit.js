@@ -14,7 +14,10 @@ export function useChatSubmit({
   loadEconomyBalance,
   onAccessoryRefreshStart,
   onAccessoryRefresh,
+  isPinnedToBottom = () => false,
   stickToBottomIfNeeded,
+  scrollToMessage,
+  prepareExpandedStatusBarForSubmit = () => false,
   expandReasoning,
   showError
 }) {
@@ -94,6 +97,7 @@ export function useChatSubmit({
       return;
     }
     const submitId = ++submitRunId;
+    const anchorAssistantReply = isPinnedToBottom() && prepareExpandedStatusBarForSubmit();
 
     input.value = '';
     await nextTick();
@@ -128,7 +132,10 @@ export function useChatSubmit({
       sending.value = false;
       return;
     }
-    stickToBottomIfNeeded(true);
+    const assistantReplyAnchored = anchorAssistantReply && scrollToAssistantReply(assistant, true);
+    if (!assistantReplyAnchored) {
+      stickToBottomIfNeeded(true);
+    }
 
     const requestPayload = {
       content,
@@ -180,11 +187,11 @@ export function useChatSubmit({
               }
               assistant.reasoningStreaming = true;
               refreshStreamTimer();
-              await appendStreamText(assistant, 'reasoning', data.text);
+              await appendStreamText(assistant, 'reasoning', data.text, anchorAssistantReply);
               if (!isCurrentSubmit(submitId)) return;
               await nextTick();
               if (isCurrentSubmit(submitId)) {
-                stickToBottomIfNeeded();
+                followSubmitScroll(assistant, anchorAssistantReply);
               }
             },
             async content(data) {
@@ -192,11 +199,11 @@ export function useChatSubmit({
               assistant.reasoningStreaming = false;
               assistant.contentStreaming = true;
               refreshStreamTimer();
-              await appendStreamText(assistant, 'content', data.text);
+              await appendStreamText(assistant, 'content', data.text, anchorAssistantReply);
               if (!isCurrentSubmit(submitId)) return;
               await nextTick();
               if (isCurrentSubmit(submitId)) {
-                stickToBottomIfNeeded();
+                followSubmitScroll(assistant, anchorAssistantReply);
               }
             },
             tool(data) {
@@ -242,6 +249,12 @@ export function useChatSubmit({
               if (data.accessoryBackground) {
                 scheduleAccessoryRefresh();
               }
+              if (anchorAssistantReply) {
+                await nextTick();
+                if (isCurrentSubmit(submitId)) {
+                  scrollToAssistantReply(assistant, false);
+                }
+              }
             },
             error(data) {
               if (!isCurrentSubmit(submitId)) return;
@@ -260,15 +273,23 @@ export function useChatSubmit({
           return;
         }
         if (streamResult?.aborted || !streamFinished) {
+          const shouldReconcileInterruptedDraft = stoppingByUser && hasMessagePayload(assistant);
           finishAssistantDraft(assistant);
+          if (shouldReconcileInterruptedDraft) {
+            await reconcileInterruptedStreamDrafts(route.params.id, localUser, assistant);
+          }
           if (streamTimedOut && !stoppingByUser) {
             showError('模型响应超时，请检查网络、余额或模型状态后重试。');
           } else if (!stoppingByUser && !streamFinished && !assistant.content && !assistant.reasoning) {
             showError('连接已结束，但没有收到模型回复。请检查 API Key、余额或网关状态后重试。');
           }
         }
-        if (!streamResult?.aborted && !stoppingByUser) {
-          await reconcilePersistedStreamDrafts(route.params.id, localUser, assistant);
+        if (!streamResult?.aborted) {
+          if (stoppingByUser && hasMessagePayload(assistant)) {
+            await reconcileInterruptedStreamDrafts(route.params.id, localUser, assistant);
+          } else if (!stoppingByUser) {
+            await reconcilePersistedStreamDrafts(route.params.id, localUser, assistant);
+          }
         }
       } else {
         const result = await sendMessage(route.params.id, requestPayload);
@@ -288,6 +309,12 @@ export function useChatSubmit({
         }
         if (result.accessoryBackground) {
           scheduleAccessoryRefresh();
+        }
+        if (anchorAssistantReply) {
+          await nextTick();
+          if (isCurrentSubmit(submitId)) {
+            scrollToAssistantReply(assistant, false);
+          }
         }
       }
       if (isCurrentSubmit(submitId)) {
@@ -360,6 +387,23 @@ export function useChatSubmit({
     }
   }
 
+  function followSubmitScroll(message, anchorAssistantReply, smooth = false) {
+    if (anchorAssistantReply && scrollToAssistantReply(message, smooth)) {
+      return;
+    }
+    stickToBottomIfNeeded(smooth);
+  }
+
+  function scrollToAssistantReply(message, smooth = false) {
+    if (!message?.id || typeof scrollToMessage !== 'function') {
+      return false;
+    }
+    return scrollToMessage(message.id, {
+      smooth,
+      block: 'end'
+    });
+  }
+
   function scheduleAccessoryRefresh() {
     if (submitDisposed || typeof window === 'undefined') {
       return;
@@ -422,7 +466,14 @@ export function useChatSubmit({
     triggerRef(messages);
   }
 
-  async function reconcilePersistedStreamDrafts(conversationId, localUser, assistant) {
+  function reconcileInterruptedStreamDrafts(conversationId, localUser, assistant) {
+    return reconcilePersistedStreamDrafts(conversationId, localUser, assistant, {
+      attempts: 4,
+      delayMs: 120
+    });
+  }
+
+  async function reconcilePersistedStreamDrafts(conversationId, localUser, assistant, options = {}) {
     if (submitDisposed) {
       return;
     }
@@ -430,10 +481,24 @@ export function useChatSubmit({
       return;
     }
 
+    const attempts = Math.max(1, Number(options.attempts) || 1);
+    const delayMs = Math.max(0, Number(options.delayMs) || 0);
+    for (let attempt = 1; attempt <= attempts; attempt += 1) {
+      const reconciled = await tryReconcilePersistedStreamDrafts(conversationId, localUser, assistant);
+      if (reconciled || submitDisposed || !needsPersistedDraftReconcile(localUser, assistant)) {
+        return;
+      }
+      if (attempt < attempts && delayMs) {
+        await sleep(delayMs * attempt);
+      }
+    }
+  }
+
+  async function tryReconcilePersistedStreamDrafts(conversationId, localUser, assistant) {
     try {
       const result = await fetchConversationMessages(conversationId);
       if (submitDisposed || route.params.id !== conversationId || !Array.isArray(result?.messages)) {
-        return;
+        return false;
       }
 
       const persistedMessages = result.messages;
@@ -462,9 +527,21 @@ export function useChatSubmit({
         });
       }
       triggerRef(messages);
+      return Boolean(
+        (!isLocalDraft(localUser) || userReplacement) &&
+        (!isLocalDraft(assistant) || assistantReplacement)
+      );
     } catch {
       // Keep the visible streamed draft if the follow-up refresh is unavailable.
+      return false;
     }
+  }
+
+  async function sleep(delayMs) {
+    if (!delayMs) {
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, delayMs));
   }
 
   function needsPersistedDraftReconcile(...items) {
@@ -571,7 +648,7 @@ export function useChatSubmit({
     return Boolean(String(message.content || '').trim() || String(message.reasoning || '').trim());
   }
 
-  async function appendStreamText(message, field, text) {
+  async function appendStreamText(message, field, text, anchorAssistantReply = false) {
     if (submitDisposed) return;
     const value = String(text || '');
     if (!value || !message.streaming) {
@@ -581,7 +658,7 @@ export function useChatSubmit({
     message[field] += value;
     triggerRef(messages);
     await nextTick();
-    stickToBottomIfNeeded(false);
+    followSubmitScroll(message, anchorAssistantReply, false);
   }
 
   return {

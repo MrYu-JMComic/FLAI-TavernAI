@@ -225,6 +225,7 @@ function openEditBook(book) {
 }
 
 function closeBookForm() {
+  if (saving.value) return;
   showBookForm.value = false;
   editingBookId.value = null;
 }
@@ -340,6 +341,7 @@ function openEditEntry(entry) {
 }
 
 function closeEntryForm() {
+  if (saving.value) return;
   showEntryForm.value = false;
   editingEntryId.value = null;
 }
@@ -1083,33 +1085,33 @@ function toolResultLabel(result = {}) {
     </template>
 
     <div v-if="showBookForm" class="modal-overlay" @click.self="closeBookForm">
-      <div class="modal-content form-panel">
+      <div class="modal-content form-panel" :aria-busy="saving">
         <h2>{{ editingBookId ? '编辑世界书' : '新建世界书' }}</h2>
         <label class="field">
           <span>名称</span>
-          <input v-model.trim="editingBook.name" maxlength="80" placeholder="世界书名称" />
+          <input v-model.trim="editingBook.name" maxlength="80" placeholder="世界书名称" :disabled="saving" />
         </label>
         <label class="field">
           <span>描述</span>
-          <textarea v-model="editingBook.description" rows="3" placeholder="可选描述" />
+          <textarea v-model="editingBook.description" rows="3" placeholder="可选描述" :disabled="saving" />
         </label>
         <label class="field">
           <span>关联角色 ID</span>
-          <input v-model.trim="editingBook.characterId" placeholder="可选，留空则不关联" />
+          <input v-model.trim="editingBook.characterId" placeholder="可选，留空则不关联" :disabled="saving" />
         </label>
         <div class="worldbook-settings-grid">
           <label class="field">
             <span>扫描深度</span>
-            <input v-model.number="editingBook.scanDepth" type="number" min="1" max="50" />
+            <input v-model.number="editingBook.scanDepth" type="number" min="1" max="50" :disabled="saving" />
           </label>
           <label class="field">
             <span>上下文预算 %</span>
-            <input v-model.number="editingBook.lorebookContextPercent" type="number" min="1" max="100" />
+            <input v-model.number="editingBook.lorebookContextPercent" type="number" min="1" max="100" :disabled="saving" />
           </label>
         </div>
         <div class="form-actions">
-          <button class="ghost-button" @click="closeBookForm">取消</button>
-          <button class="primary-button" :disabled="saving" @click="saveBook">
+          <button class="ghost-button" :disabled="saving" @click="closeBookForm">取消</button>
+          <button class="primary-button" :disabled="saving" :aria-busy="saving" @click="saveBook">
             {{ saving ? '保存中...' : '保存' }}
           </button>
         </div>
@@ -1117,56 +1119,56 @@ function toolResultLabel(result = {}) {
     </div>
 
     <div v-if="showEntryForm" class="modal-overlay" @click.self="closeEntryForm">
-      <div class="modal-content form-panel entry-modal">
+      <div class="modal-content form-panel entry-modal" :aria-busy="saving">
         <h2>{{ editingEntryId ? '编辑条目' : '添加条目' }}</h2>
         <label class="field">
           <span>条目名称</span>
-          <input v-model.trim="editingEntry.name" maxlength="120" placeholder="例如：魔法系统" />
+          <input v-model.trim="editingEntry.name" maxlength="120" placeholder="例如：魔法系统" :disabled="saving" />
         </label>
         <label class="field">
           <span>触发词（逗号分隔）</span>
-          <input v-model="editingEntry.triggerKeys" placeholder="例如：魔法,魔力,法术,咒语" />
+          <input v-model="editingEntry.triggerKeys" placeholder="例如：魔法,魔力,法术,咒语" :disabled="saving" />
         </label>
         <label class="field">
           <span>注入位置</span>
-          <select v-model="editingEntry.position">
+          <select v-model="editingEntry.position" :disabled="saving">
             <option v-for="opt in positionOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
           </select>
         </label>
         <label class="field">
           <span>注入内容</span>
-          <textarea v-model="editingEntry.content" rows="8" placeholder="当触发词匹配时，这段内容会被注入到 AI 上下文中。" />
+          <textarea v-model="editingEntry.content" rows="8" placeholder="当触发词匹配时，这段内容会被注入到 AI 上下文中。" :disabled="saving" />
         </label>
         <label class="checkbox-line">
-          <input v-model="editingEntry.enabled" type="checkbox" />
+          <input v-model="editingEntry.enabled" type="checkbox" :disabled="saving" />
           <span>启用</span>
         </label>
         <div class="worldbook-entry-switches">
           <label class="checkbox-line">
-            <input v-model="editingEntry.regexMode" type="checkbox" />
+            <input v-model="editingEntry.regexMode" type="checkbox" :disabled="saving" />
             <span>正则触发</span>
           </label>
           <label class="checkbox-line">
-            <input v-model="editingEntry.alwaysActive" type="checkbox" />
+            <input v-model="editingEntry.alwaysActive" type="checkbox" :disabled="saving" />
             <span>总是激活</span>
           </label>
           <label class="checkbox-line">
-            <input v-model="editingEntry.selective" type="checkbox" />
+            <input v-model="editingEntry.selective" type="checkbox" :disabled="saving" />
             <span>副关键词过滤</span>
           </label>
           <label class="checkbox-line">
-            <input v-model="editingEntry.useProbability" type="checkbox" />
+            <input v-model="editingEntry.useProbability" type="checkbox" :disabled="saving" />
             <span>概率激活</span>
           </label>
         </div>
         <div class="worldbook-settings-grid">
           <label class="field">
             <span>副关键词</span>
-            <input v-model="editingEntry.keysSecondary" placeholder="可选，逗号分隔" />
+            <input v-model="editingEntry.keysSecondary" placeholder="可选，逗号分隔" :disabled="saving" />
           </label>
           <label class="field">
             <span>过滤逻辑</span>
-            <select v-model.number="editingEntry.selectiveLogic">
+            <select v-model.number="editingEntry.selectiveLogic" :disabled="saving">
               <option v-for="opt in selectiveLogicOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
             </select>
           </label>
@@ -1174,21 +1176,21 @@ function toolResultLabel(result = {}) {
         <div class="worldbook-settings-grid">
           <label class="field">
             <span>概率 %</span>
-            <input v-model.number="editingEntry.probability" type="number" min="0" max="100" />
+            <input v-model.number="editingEntry.probability" type="number" min="0" max="100" :disabled="saving" />
           </label>
           <label class="field">
             <span>互斥分组</span>
-            <input v-model.trim="editingEntry.group" placeholder="同组只注入一个" />
+            <input v-model.trim="editingEntry.group" placeholder="同组只注入一个" :disabled="saving" />
           </label>
         </div>
         <div class="worldbook-settings-grid">
           <label class="field">
             <span>分组权重</span>
-            <input v-model.number="editingEntry.groupWeight" type="number" min="0" />
+            <input v-model.number="editingEntry.groupWeight" type="number" min="0" :disabled="saving" />
           </label>
           <label class="field">
             <span>at_depth 角色</span>
-            <select v-model.number="editingEntry.role">
+            <select v-model.number="editingEntry.role" :disabled="saving">
               <option v-for="opt in roleOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
             </select>
           </label>
@@ -1196,24 +1198,24 @@ function toolResultLabel(result = {}) {
         <div class="worldbook-settings-grid compact-numbers">
           <label class="field">
             <span>深度</span>
-            <input v-model.number="editingEntry.depth" type="number" min="0" max="10" />
+            <input v-model.number="editingEntry.depth" type="number" min="0" max="10" :disabled="saving" />
           </label>
           <label class="field">
             <span>Sticky</span>
-            <input v-model.number="editingEntry.sticky" type="number" min="0" placeholder="空" />
+            <input v-model.number="editingEntry.sticky" type="number" min="0" placeholder="空" :disabled="saving" />
           </label>
           <label class="field">
             <span>Cooldown</span>
-            <input v-model.number="editingEntry.cooldown" type="number" min="0" placeholder="空" />
+            <input v-model.number="editingEntry.cooldown" type="number" min="0" placeholder="空" :disabled="saving" />
           </label>
           <label class="field">
             <span>Delay</span>
-            <input v-model.number="editingEntry.delay" type="number" min="0" placeholder="空" />
+            <input v-model.number="editingEntry.delay" type="number" min="0" placeholder="空" :disabled="saving" />
           </label>
         </div>
         <div class="form-actions">
-          <button class="ghost-button" @click="closeEntryForm">取消</button>
-          <button class="primary-button" :disabled="saving" @click="saveEntry">
+          <button class="ghost-button" :disabled="saving" @click="closeEntryForm">取消</button>
+          <button class="primary-button" :disabled="saving" :aria-busy="saving" @click="saveEntry">
             {{ saving ? '保存中...' : '保存' }}
           </button>
         </div>

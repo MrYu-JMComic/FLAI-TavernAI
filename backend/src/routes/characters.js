@@ -1,25 +1,20 @@
 import { Router } from 'express';
 import {
-  applyRegexRules,
   createCharacter,
   deleteCharacter,
   getCharacter,
-  getRegexRules,
+  getRegexRules as getRegexRulesForExport,
   listCharacters,
   setCharacterFavorite,
   setCharacterLike,
-  touchCharacter,
   updateCharacter
 } from '../modules/characters.js';
 import {
   createEntry,
   createWorldBook,
-  deleteWorldBook,
   getWorldBook,
   linkWorldBookToCharacter,
   listCharacterWorldBooks,
-  matchWorldBookEntries,
-  buildWorldBookContext,
   unlinkWorldBookFromCharacter
 } from '../modules/worldBooks.js';
 import { setCharacterTags } from '../modules/tags.js';
@@ -30,12 +25,11 @@ import {
   reorderCharacterImages,
   updateCharacterImage
 } from '../modules/characterImages.js';
-import { getRegexRules as getRegexRulesForExport } from '../modules/characters.js';
 import { normalizeAdvancedSettings, normalizeAccessorySkills } from '../modules/advancedSettings.js';
 import { completeCharacterDraft, streamCharacterDraft } from '../services/characterAssistant.js';
 import { rollTalent, getCharacterTalents, deleteAllCharacterTalents, deleteCharacterTalent } from '../modules/talents.js';
 import { createCharacterSchema, updateCharacterSchema, importCharacterSchema, validate } from '../validations/schemas.js';
-import { sanitizeCharacterPayload, sanitizeText } from '../services/sanitize.js';
+import { sanitizeCharacterPayload } from '../services/sanitize.js';
 import { normalizeBoolean } from '../utils/boolean.js';
 import { normalizeFiniteNumber } from '../utils/number.js';
 import { parseJson, withModelOverride, writeSse } from './helpers.js';

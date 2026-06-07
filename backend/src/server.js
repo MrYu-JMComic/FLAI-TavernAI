@@ -8,11 +8,14 @@ import express from 'express';
 import rateLimit, { ipKeyGenerator } from 'express-rate-limit';
 import { db } from './db.js';
 import {
+  newId,
+  nowIso,
   resolveSession
 } from './security.js';
 import { migrateLegacyAvatarUploads, getAvatarAssetForViewer } from './services/avatars.js';
 import { providerWithSecret, hasUsableProvider, defaultProviderSettings, normalizeProviderRow } from './services/providers.js';
 import { getCharacterWorldBookId } from './modules/worldBooks.js';
+import { publicUser, getUserProfile } from './modules/users.js';
 
 // ── Route modules ──
 import { createAuthRouter } from './routes/auth.js';
@@ -223,9 +226,6 @@ function getChatProviderSettings(userId) {
 }
 
 // ── User helpers ──
-
-import { publicUser, getUserProfile } from './modules/users.js';
-import { newId, nowIso } from './security.js';
 
 // ── Dependency context for route modules ──
 

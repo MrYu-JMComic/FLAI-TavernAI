@@ -1,25 +1,24 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { readRepoText, readVueBlock } from './frontendSfcTestUtils.js';
+import { readVueBlocks } from './frontendSfcTestUtils.js';
 
-const messageToastsSource = readRepoText('frontend/src/components/MessageToasts.vue');
+const { script: messageToastsScript, template: messageToastsTemplate } = readVueBlocks(
+  'frontend/src/components/MessageToasts.vue'
+);
 
 test('MessageToasts prevents duplicate action clicks before dismissal renders', () => {
-  const scriptSetup = readVueBlock(messageToastsSource, 'script');
-  const template = readVueBlock(messageToastsSource, 'template');
-
-  assert.match(scriptSetup, /import \{ ref, watch \} from 'vue';/);
-  assert.match(scriptSetup, /const props = defineProps\(/);
-  assert.match(scriptSetup, /const pendingActionIds = ref\(new Set\(\)\);/);
+  assert.match(messageToastsScript, /import \{ ref, watch \} from 'vue';/);
+  assert.match(messageToastsScript, /const props = defineProps\(/);
+  assert.match(messageToastsScript, /const pendingActionIds = ref\(new Set\(\)\);/);
   assert.match(
-    scriptSetup,
+    messageToastsScript,
     /function runAction\(item\)\s*{\s*if \(!item\?\.id \|\| isActionPending\(item\)\) return;\s*markActionPending\(item\.id\);\s*emit\('dismiss', item\.id\);\s*item\.action\?\.\(\);/
   );
   assert.match(
-    scriptSetup,
+    messageToastsScript,
     /watch\(\s*\(\) => props\.items\.map\(\(item\) => item\.id\),[\s\S]*pendingActionIds\.value = nextPendingIds;[\s\S]*\);/
   );
 
-  assert.match(template, /:disabled="isActionPending\(item\)"/);
-  assert.match(template, /:aria-busy="isActionPending\(item\)"/);
+  assert.match(messageToastsTemplate, /:disabled="isActionPending\(item\)"/);
+  assert.match(messageToastsTemplate, /:aria-busy="isActionPending\(item\)"/);
 });

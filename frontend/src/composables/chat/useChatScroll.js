@@ -88,6 +88,20 @@ export function useChatScroll({ messageScroller, conversationId }) {
     return Math.max(0, el.scrollHeight - el.scrollTop - el.clientHeight);
   }
 
+  function isPinnedToBottom() {
+    if (disposed) {
+      return false;
+    }
+    const el = messageScroller.value;
+    if (!el) {
+      return isScrollPinned.value;
+    }
+    if (userPausedAutoScroll || hasRecentManualScrollIntent()) {
+      return false;
+    }
+    return isScrollPinned.value || getDistanceToBottom(el) <= scrollStickThreshold;
+  }
+
   function stickToBottomIfNeeded(smooth = false) {
     if (disposed) {
       return;
@@ -137,6 +151,100 @@ export function useChatScroll({ messageScroller, conversationId }) {
       }
       scheduleSaveMessageScrollPosition();
     });
+  }
+
+  function scrollToMessage(messageId, options = {}) {
+    if (disposed || !messageId) {
+      return false;
+    }
+
+    const el = messageScroller.value;
+    const target = findMessageElement(messageId);
+    if (!el || !target) {
+      return false;
+    }
+
+    if (scrollToBottomRafId) {
+      cancelAnimationFrame(scrollToBottomRafId);
+      scrollToBottomRafId = null;
+    }
+
+    const {
+      smooth = true,
+      block = 'end',
+      padding = 18,
+      keepPinned = false
+    } = options;
+
+    if (keepPinned) {
+      lastManualScrollIntentAt = 0;
+      userPausedAutoScroll = false;
+      isScrollPinned.value = true;
+    }
+
+    const targetTop = getMessageScrollTop(el, target, { block, padding });
+    if (!Number.isFinite(targetTop)) {
+      return false;
+    }
+
+    if (typeof el.scrollTo === 'function') {
+      el.scrollTo({
+        top: targetTop,
+        behavior: smooth ? 'smooth' : 'auto'
+      });
+    } else {
+      el.scrollTop = targetTop;
+    }
+
+    if (!smooth) {
+      updateScrollState();
+    } else if (typeof window !== 'undefined') {
+      scheduleSmoothScrollStateUpdate();
+    }
+    scheduleSaveMessageScrollPosition();
+    return true;
+  }
+
+  function getMessageScrollTop(el, target, { block, padding }) {
+    const scrollerRect = el.getBoundingClientRect();
+    const targetRect = target.getBoundingClientRect();
+    const insets = getScrollerInsets(el);
+    const visibleTop = scrollerRect.top + insets.top;
+    const visibleBottom = scrollerRect.bottom - insets.bottom;
+    const maxScrollTop = Math.max(0, el.scrollHeight - el.clientHeight);
+    let top;
+
+    if (block === 'start') {
+      top = el.scrollTop + targetRect.top - visibleTop - padding;
+    } else if (block === 'center') {
+      const visibleCenter = visibleTop + Math.max(0, visibleBottom - visibleTop) / 2;
+      const targetCenter = targetRect.top + targetRect.height / 2;
+      top = el.scrollTop + targetCenter - visibleCenter;
+    } else {
+      top = el.scrollTop + targetRect.bottom - visibleBottom + padding;
+    }
+
+    return Math.min(maxScrollTop, Math.max(0, top));
+  }
+
+  function getScrollerInsets(el) {
+    if (typeof window === 'undefined' || typeof window.getComputedStyle !== 'function') {
+      return { top: 0, bottom: 0 };
+    }
+    const style = window.getComputedStyle(el);
+    return {
+      top: Number.parseFloat(style.paddingTop) || 0,
+      bottom: Number.parseFloat(style.paddingBottom) || 0
+    };
+  }
+
+  function findMessageElement(messageId) {
+    const el = messageScroller.value;
+    if (!el) {
+      return null;
+    }
+    return [...el.querySelectorAll('.deep-message')]
+      .find((element) => element.dataset.messageId === String(messageId)) || null;
   }
 
   function restoreMessageScrollPosition(messages) {
@@ -267,8 +375,10 @@ export function useChatScroll({ messageScroller, conversationId }) {
     handleWheelScrollIntent,
     handleTouchStart,
     handleTouchMove,
+    isPinnedToBottom,
     stickToBottomIfNeeded,
     scrollToBottom,
+    scrollToMessage,
     restoreMessageScrollPosition,
     saveMessageScrollPosition,
     updateScrollState,
