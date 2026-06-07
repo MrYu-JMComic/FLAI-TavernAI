@@ -21,7 +21,9 @@ const props = defineProps({
   allVisibleConversationsSelected: { type: Boolean, default: false },
   selectedConversationCount: { type: Number, default: 0 },
   conversationActionBusy: { type: Boolean, default: false },
+  startConversationBusy: { type: Boolean, default: false },
   sidebarLoadError: { type: String, default: '' },
+  sidebarLoading: { type: Boolean, default: false },
   route: { type: Object, default: () => ({ params: {} }) },
   formatConversationUsage: { type: Function, default: () => '' }
 });
@@ -86,7 +88,13 @@ function releaseSidebarFocus() {
       </button>
     </div>
 
-    <button class="new-chat-button" type="button" @click="emit('start-new')">
+    <button
+      class="new-chat-button"
+      type="button"
+      :disabled="startConversationBusy"
+      :aria-busy="startConversationBusy"
+      @click="emit('start-new')"
+    >
       <MessageSquarePlus :size="18" />
       <span>开启新对话</span>
     </button>
@@ -102,14 +110,25 @@ function releaseSidebarFocus() {
 
     <div v-if="sidebarLoadError" class="sidebar-load-status" role="alert">
       <span>{{ sidebarLoadError }}</span>
-      <button class="history-tool-button" type="button" @click="emit('reload-sidebar')">
-        <RefreshCw :size="15" />
-        <span>重试</span>
+      <button
+        class="history-tool-button"
+        type="button"
+        :disabled="sidebarLoading"
+        :aria-busy="sidebarLoading"
+        @click="emit('reload-sidebar')"
+      >
+        <RefreshCw :size="15" :class="{ spinning: sidebarLoading }" />
+        <span>{{ sidebarLoading ? '加载中' : '重试' }}</span>
       </button>
     </div>
 
     <div v-if="filteredConversations.length" class="history-tools">
-      <button class="history-tool-button" type="button" @click="emit('toggle-all')">
+      <button
+        class="history-tool-button"
+        type="button"
+        :disabled="conversationActionBusy"
+        @click="emit('toggle-all')"
+      >
         <CheckSquare :size="15" />
         <span>{{ allVisibleConversationsSelected ? '取消' : '全选' }}</span>
       </button>
@@ -137,6 +156,7 @@ function releaseSidebarFocus() {
           <input
             type="checkbox"
             :checked="selectedConversationIds.has(item.id)"
+            :disabled="conversationActionBusy"
             @change="emit('toggle-selection', item.id)"
           />
           <span aria-hidden="true"></span>

@@ -169,3 +169,15 @@ The autonomous loop should choose one small item per run. Add new findings here 
 - 2026-06-07: Closed ChatSettingsDrawer subpanels when the drawer closes or conversation context changes.
 - 2026-06-07: Reset ChatView message editing, reasoning, swipe, and branch UI state when the conversation context changes.
 - 2026-06-07: Completed chat conversation async stale guards and unmount cleanup.
+- 2026-06-07: Guarded ChatModelSwitcher save state with a token and reset stale saving/refreshing on provider context changes.
+- 2026-06-07: Removed duplicate chat conversation cleanup helpers left by overlapping async guard patches.
+- 2026-06-07: Hardened shared viewport detection when `matchMedia` is unavailable.
+- 2026-06-07: Synced ChatComposer selected preset after preset-list refreshes so deleted or missing preset IDs do not stay selected.
+- 2026-06-07: Kept ChatSidebar bulk-action count scoped to currently visible selected conversations.
+- 2026-06-07: Kept the active Home tag filter visible in the limited hot-tag rail after resize or tag refresh changes.
+- 2026-06-07: Added frontend viewport fallback coverage for runtimes without `matchMedia`.
+- 2026-06-07: Disabled ChatSidebar new-chat creation while a create request is pending to prevent duplicate conversations.
+- 2026-06-07: Added chat conversation cleanup coverage for stale sidebar load completions.
+- 2026-06-07: Exposed ChatSidebar loading state so retry actions show pending feedback and cannot be spammed while loading.
+- 2026-06-07: Fixed prepare-commit single-path staging so tracked and untracked paths remain separate arrays.
+- 2026-06-07: Disabled ChatSidebar selection controls while conversation actions are busy.

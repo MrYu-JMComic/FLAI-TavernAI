@@ -136,10 +136,10 @@ try {
         }
     }
 
-    $unstagedTracked = Get-UniquePaths @(& $Git -C $Root diff --name-only)
-    $stagedTracked = Get-UniquePaths @(& $Git -C $Root diff --cached --name-only)
-    $untracked = Get-UniquePaths @(& $Git -C $Root ls-files --others --exclude-standard)
-    $allCandidatePaths = Get-UniquePaths @($unstagedTracked + $stagedTracked + $untracked)
+    $unstagedTracked = @(Get-UniquePaths @(& $Git -C $Root diff --name-only))
+    $stagedTracked = @(Get-UniquePaths @(& $Git -C $Root diff --cached --name-only))
+    $untracked = @(Get-UniquePaths @(& $Git -C $Root ls-files --others --exclude-standard))
+    $allCandidatePaths = @(Get-UniquePaths @($unstagedTracked + $stagedTracked + $untracked))
     $blockedPaths = @($allCandidatePaths | Where-Object { Test-ProtectedPath $_ })
 
     Write-Host ""
@@ -173,7 +173,7 @@ try {
     }
 
     $stageTargets = @()
-    $requestedPaths = Get-UniquePaths $Path
+    $requestedPaths = @(Get-UniquePaths $Path)
 
     if ($requestedPaths.Count -gt 0) {
         foreach ($requestedPath in $requestedPaths) {
@@ -207,9 +207,9 @@ try {
             Write-Host "No unstaged change found for requested path: $requestedPath" -ForegroundColor Yellow
         }
     } elseif ($AllAllowed) {
-        $stageTargets = Get-UniquePaths $unstagedTracked
+        $stageTargets = @(Get-UniquePaths $unstagedTracked)
         if ($IncludeUntracked) {
-            $stageTargets = Get-UniquePaths @($stageTargets + $untracked)
+            $stageTargets = @(Get-UniquePaths @($stageTargets + $untracked))
         }
     } else {
         Write-Host ""
@@ -222,7 +222,7 @@ try {
         Write-Host "Untracked files were left unstaged. Add -IncludeUntracked to include them." -ForegroundColor Yellow
     }
 
-    $stageTargets = Get-UniquePaths $stageTargets
+    $stageTargets = @(Get-UniquePaths $stageTargets)
     if ($stageTargets.Count -eq 0) {
         Write-Host ""
         Write-Host "No allowed paths to stage." -ForegroundColor Yellow

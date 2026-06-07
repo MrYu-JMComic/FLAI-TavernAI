@@ -16,11 +16,13 @@ export function useChatConversation({ route, emit, showError }) {
   const loading = ref(false);
   const error = ref('');
   const sidebarLoadError = ref('');
+  const sidebarLoading = ref(false);
   const historySearch = ref('');
   const sidebarOpen = ref(typeof window !== 'undefined' && window.matchMedia('(min-width: 981px)').matches);
   const settingsDrawerOpen = ref(false);
   const selectedConversationIds = ref(new Set());
   const conversationActionBusy = ref(false);
+  const startConversationBusy = ref(false);
   const savePanelOpen = ref(false);
   const npcPanelOpen = ref(false);
   const economyPanelOpen = ref(false);
@@ -42,7 +44,9 @@ export function useChatConversation({ route, emit, showError }) {
   });
 
   const visibleConversationIds = computed(() => filteredConversations.value.map((item) => item.id));
-  const selectedConversationCount = computed(() => selectedConversationIds.value.size);
+  const selectedConversationCount = computed(() => {
+    return visibleConversationIds.value.filter((id) => selectedConversationIds.value.has(id)).length;
+  });
   const allVisibleConversationsSelected = computed(() => {
     return visibleConversationIds.value.length > 0
       && visibleConversationIds.value.every((id) => selectedConversationIds.value.has(id));
@@ -54,45 +58,48 @@ export function useChatConversation({ route, emit, showError }) {
     }
     const requestToken = ++sidebarLoadToken;
     const currentCharacterId = conversation.value?.characterId;
-    const [historyResult, characterResult, presetResult] = await Promise.allSettled([
-      fetchConversations({ characterId: currentCharacterId }),
-      fetchCharacters(),
-      fetchPresets()
-    ]);
-    if (!isCurrentSidebarLoad(requestToken, currentCharacterId)) {
-      return;
-    }
+    sidebarLoading.value = true;
+    try {
+      const [historyResult, characterResult, presetResult] = await Promise.allSettled([
+        fetchConversations({ characterId: currentCharacterId }),
+        fetchCharacters(),
+        fetchPresets()
+      ]);
+      if (!isCurrentSidebarLoad(requestToken, currentCharacterId)) {
+        return;
+      }
 
-    const failures = [];
-    if (historyResult.status === 'fulfilled') {
-      conversations.value = historyResult.value;
-    } else {
-      conversations.value = [];
-      failures.push(['会话历史', historyResult.reason]);
-    }
+      const failures = [];
+      if (historyResult.status === 'fulfilled') {
+        conversations.value = historyResult.value;
+      } else {
+        conversations.value = [];
+        failures.push(['会话历史', historyResult.reason]);
+      }
 
-    if (characterResult.status === 'fulfilled') {
-      characters.value = characterResult.value;
-    } else {
-      characters.value = [];
-      failures.push(['角色列表', characterResult.reason]);
-    }
+      if (characterResult.status === 'fulfilled') {
+        characters.value = characterResult.value;
+      } else {
+        characters.value = [];
+        failures.push(['角色列表', characterResult.reason]);
+      }
 
-    if (presetResult.status === 'fulfilled') {
-      presetList.value = presetResult.value;
-    } else {
-      presetList.value = [];
-      selectedPresetId.value = '';
-      failures.push(['预设列表', presetResult.reason]);
-    }
+      if (presetResult.status === 'fulfilled') {
+        presetList.value = presetResult.value;
+      } else {
+        presetList.value = [];
+        selectedPresetId.value = '';
+        failures.push(['预设列表', presetResult.reason]);
+      }
 
-    if (!selectedPresetId.value && presetList.value.length) {
-      const presets = presetList.value;
-      const defaultPreset = presets.find((p) => p.isDefault);
-      selectedPresetId.value = defaultPreset?.id || '';
+      syncSelectedPresetId();
+      sidebarLoadError.value = formatSidebarLoadError(failures);
+      pruneSelectedConversations();
+    } finally {
+      if (isLatestSidebarLoad(requestToken)) {
+        sidebarLoading.value = false;
+      }
     }
-    sidebarLoadError.value = formatSidebarLoadError(failures);
-    pruneSelectedConversations();
   }
 
   function formatSidebarLoadError(failures) {
@@ -105,7 +112,7 @@ export function useChatConversation({ route, emit, showError }) {
   }
 
   async function startNewConversation() {
-    if (conversationDisposed) {
+    if (conversationDisposed || startConversationBusy.value) {
       return;
     }
     error.value = '';
@@ -116,6 +123,7 @@ export function useChatConversation({ route, emit, showError }) {
     }
 
     const requestToken = ++startConversationToken;
+    startConversationBusy.value = true;
     try {
       const created = await createConversation(characterId);
       if (!isCurrentStartConversation(requestToken)) {
@@ -130,6 +138,10 @@ export function useChatConversation({ route, emit, showError }) {
     } catch (err) {
       if (isCurrentStartConversation(requestToken)) {
         showError(err.message);
+      }
+    } finally {
+      if (isCurrentStartConversation(requestToken)) {
+        startConversationBusy.value = false;
       }
     }
   }
@@ -196,6 +208,9 @@ export function useChatConversation({ route, emit, showError }) {
   }
 
   function toggleConversationSelection(conversationId) {
+    if (conversationActionBusy.value) {
+      return;
+    }
     const next = new Set(selectedConversationIds.value);
     if (next.has(conversationId)) {
       next.delete(conversationId);
@@ -206,6 +221,9 @@ export function useChatConversation({ route, emit, showError }) {
   }
 
   function toggleAllVisibleConversations() {
+    if (conversationActionBusy.value) {
+      return;
+    }
     if (allVisibleConversationsSelected.value) {
       selectedConversationIds.value = new Set(
         [...selectedConversationIds.value].filter((id) => !visibleConversationIds.value.includes(id))
@@ -293,6 +311,18 @@ export function useChatConversation({ route, emit, showError }) {
     selectedConversationIds.value = new Set([...selectedConversationIds.value].filter((id) => valid.has(id)));
   }
 
+  function syncSelectedPresetId() {
+    if (!presetList.value.length) {
+      selectedPresetId.value = '';
+      return;
+    }
+    if (presetList.value.some((preset) => preset.id === selectedPresetId.value)) {
+      return;
+    }
+    const defaultPreset = presetList.value.find((preset) => preset.isDefault);
+    selectedPresetId.value = defaultPreset?.id || '';
+  }
+
   function formatConversationUsage(item) {
     const usage = item.usage || {};
     return `总 token ${formatTokens(usage.totalTokens)} · 总费用 ${formatCost(usage)}`;
@@ -316,29 +346,11 @@ export function useChatConversation({ route, emit, showError }) {
   function isCurrentSidebarLoad(requestToken, characterId) {
     return !conversationDisposed
       && requestToken === sidebarLoadToken
-      && characterId === conversation.value?.characterId;
-  }
-
-  function isCurrentStartConversation(requestToken) {
-    return !conversationDisposed && requestToken === startConversationToken;
-  }
-
-  function isCurrentConversationAction(actionToken) {
-    return !conversationDisposed && actionToken === conversationActionToken;
-  }
-
-  function cleanupConversation() {
-    conversationDisposed = true;
-    sidebarLoadToken += 1;
-    startConversationToken += 1;
-    conversationActionToken += 1;
-    conversationActionBusy.value = false;
-  }
-
-  function isCurrentSidebarLoad(requestToken, characterId) {
-    return !conversationDisposed
-      && requestToken === sidebarLoadToken
       && conversation.value?.characterId === characterId;
+  }
+
+  function isLatestSidebarLoad(requestToken) {
+    return !conversationDisposed && requestToken === sidebarLoadToken;
   }
 
   function isCurrentStartConversation(requestToken) {
@@ -354,6 +366,8 @@ export function useChatConversation({ route, emit, showError }) {
     sidebarLoadToken += 1;
     startConversationToken += 1;
     conversationActionToken += 1;
+    sidebarLoading.value = false;
+    startConversationBusy.value = false;
     conversationActionBusy.value = false;
   }
 
@@ -365,11 +379,13 @@ export function useChatConversation({ route, emit, showError }) {
     loading,
     error,
     sidebarLoadError,
+    sidebarLoading,
     historySearch,
     sidebarOpen,
     settingsDrawerOpen,
     selectedConversationIds,
     conversationActionBusy,
+    startConversationBusy,
     savePanelOpen,
     npcPanelOpen,
     economyPanelOpen,

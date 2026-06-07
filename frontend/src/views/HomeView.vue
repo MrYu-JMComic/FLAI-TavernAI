@@ -65,6 +65,8 @@ const CARD_MIN_WIDTH = 320;
 const CARD_ESTIMATED_HEIGHT = 372;
 const MOBILE_CARD_ESTIMATED_HEIGHT = 436;
 const GRID_GAP = 18;
+const HOT_TAG_RANDOM_POOL_LIMIT = 24;
+const hotTagSeed = ref('');
 
 const columnsPerRow = computed(() => {
   const width = containerWidth.value || (typeof window !== 'undefined' ? Math.max(320, window.innerWidth - 28) : 1200);
@@ -124,12 +126,59 @@ const providerLabel = computed(() => {
 
 const providerReady = computed(() => Boolean(props.provider?.model || props.provider?.gatewayName));
 
-const topTags = computed(() => (
+const hotTagDisplayLimit = computed(() => {
+  const width = containerWidth.value || (typeof window !== 'undefined' ? window.innerWidth : 1200);
+  if (width < 420) return 3;
+  if (width < 560) return 4;
+  if (width < 760) return 6;
+  if (width < 1040) return 8;
+  return 12;
+});
+
+const popularTags = computed(() => (
   tags.value
+    .filter((tag) => Number(tag?.usageCount || 0) > 0)
     .slice()
-    .sort((left, right) => (right.usageCount || 0) - (left.usageCount || 0))
-    .slice(0, 18)
+    .sort(compareTagPopularity)
 ));
+
+const selectedHotTag = computed(() => {
+  if (!selectedTag.value) {
+    return null;
+  }
+  return tags.value.find((tag) => tag?.name === selectedTag.value) || null;
+});
+
+const topTags = computed(() => {
+  const limit = hotTagDisplayLimit.value;
+  const source = popularTags.value;
+  if (source.length <= limit) {
+    return pinSelectedHotTag(source, selectedHotTag.value, limit);
+  }
+  const pool = source.slice(0, Math.max(limit, HOT_TAG_RANDOM_POOL_LIMIT));
+  const randomizedTags = pool
+    .map((tag, index) => ({
+      tag,
+      score: hashHotTag(`${hotTagSeed.value}:${tag.id || tag.name}:${index}`)
+    }))
+    .sort((left, right) => left.score - right.score)
+    .slice(0, limit)
+    .map((item) => item.tag)
+    .sort(compareTagPopularity);
+  return pinSelectedHotTag(randomizedTags, selectedHotTag.value, limit);
+});
+
+const hotTagTotalCount = computed(() => {
+  const selected = selectedHotTag.value;
+  const selectedOutsidePopular = selected && !popularTags.value.some((tag) => isSameTag(tag, selected));
+  return popularTags.value.length + (selectedOutsidePopular ? 1 : 0);
+});
+
+const hotTagRailSummary = computed(() => (
+  `显示 ${topTags.value.length}/${hotTagTotalCount.value}，最多 ${hotTagDisplayLimit.value} 个`
+));
+
+const hotTagRailLabel = computed(() => `热门标签，${hotTagRailSummary.value}`);
 
 const quickActions = computed(() => [
   { label: '新角色', icon: Plus, view: 'characterNew', tone: 'primary' },
@@ -146,6 +195,43 @@ const emptyCopy = computed(() => (
 
 function measureVirtualRow(element) {
   rowVirtualizer.value?.measureElement(element);
+}
+
+function refreshHotTagSeed() {
+  hotTagSeed.value = `${Date.now()}:${Math.random()}`;
+}
+
+function compareTagPopularity(left, right) {
+  const usageDelta = Number(right?.usageCount || 0) - Number(left?.usageCount || 0);
+  if (usageDelta) {
+    return usageDelta;
+  }
+  return String(left?.name || '').localeCompare(String(right?.name || ''), 'zh-Hans');
+}
+
+function pinSelectedHotTag(list, selected, limit) {
+  if (!selected || list.some((tag) => isSameTag(tag, selected))) {
+    return list;
+  }
+  const next = list.slice(0, Math.max(0, limit));
+  if (next.length >= limit && next.length > 0) {
+    next.pop();
+  }
+  next.push(selected);
+  return next.sort(compareTagPopularity);
+}
+
+function isSameTag(left, right) {
+  return Boolean(left?.id && right?.id && left.id === right.id) || left?.name === right?.name;
+}
+
+function hashHotTag(value = '') {
+  let hash = 2166136261;
+  for (const char of String(value)) {
+    hash ^= char.charCodeAt(0);
+    hash = Math.imul(hash, 16777619);
+  }
+  return hash >>> 0;
 }
 
 function measureContainerWidth() {
@@ -203,6 +289,7 @@ function refreshScrollMeasurements() {
 }
 
 onMounted(async () => {
+  refreshHotTagSeed();
   addMobileLayoutListener();
   await Promise.all([loadCharacters(), loadTags()]);
   if (!isHomeActive()) return;
@@ -515,23 +602,29 @@ function formatCount(value) {
       </button>
     </section>
 
-    <section v-if="topTags.length" class="home-tag-rail" aria-label="常用标签">
-      <button class="home-tag-chip" :class="{ active: !selectedTag }" type="button" @click="selectedTag = ''">
-        <Compass :size="14" />
-        <span>全部</span>
-      </button>
-      <button
-        v-for="tag in topTags"
-        :key="tag.id"
-        class="home-tag-chip"
-        :class="{ active: selectedTag === tag.name }"
-        :style="tag.color ? { '--tag-color': tag.color } : {}"
-        type="button"
-        @click="selectTag(tag.name)"
-      >
-        <span>{{ tag.name }}</span>
-        <small v-if="tag.usageCount">{{ tag.usageCount }}</small>
-      </button>
+    <section v-if="topTags.length" class="home-tag-rail" :aria-label="hotTagRailLabel">
+      <div class="home-tag-rail-head">
+        <span>热门标签</span>
+        <small>{{ hotTagRailSummary }}</small>
+      </div>
+      <div class="home-tag-chip-row">
+        <button class="home-tag-chip" :class="{ active: !selectedTag }" type="button" @click="selectedTag = ''">
+          <Compass :size="14" />
+          <span>全部</span>
+        </button>
+        <button
+          v-for="tag in topTags"
+          :key="tag.id"
+          class="home-tag-chip"
+          :class="{ active: selectedTag === tag.name }"
+          :style="tag.color ? { '--tag-color': tag.color } : {}"
+          type="button"
+          @click="selectTag(tag.name)"
+        >
+          <span>{{ tag.name }}</span>
+          <small v-if="tag.usageCount">{{ tag.usageCount }}</small>
+        </button>
+      </div>
     </section>
     <section v-else-if="tagLoadError" class="section-load-status error-state" role="alert">
       <span>{{ tagLoadError }}</span>

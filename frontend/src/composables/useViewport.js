@@ -10,32 +10,28 @@ import { ref, onMounted, onBeforeUnmount } from 'vue';
  */
 export function useViewport(options = {}) {
   const breakpoint = options.breakpoint || '(max-width: 760px)';
-  const isPhone = ref(false);
+  const isPhone = ref(readBreakpointMatch(breakpoint));
   let mediaQuery = null;
   let unsubscribe = null;
 
   function check() {
-    if (typeof window === 'undefined') {
-      isPhone.value = false;
-      return;
-    }
-    isPhone.value = (mediaQuery || window.matchMedia(breakpoint)).matches;
+    isPhone.value = readBreakpointMatch(breakpoint, mediaQuery);
   }
 
   function handleMediaChange(event) {
-    isPhone.value = event.matches;
+    isPhone.value = Boolean(event?.matches);
   }
 
   onMounted(() => {
     if (typeof window === 'undefined') {
       return;
     }
-    mediaQuery = window.matchMedia(breakpoint);
+    mediaQuery = typeof window.matchMedia === 'function' ? window.matchMedia(breakpoint) : null;
     check();
-    if (typeof mediaQuery.addEventListener === 'function') {
+    if (typeof mediaQuery?.addEventListener === 'function') {
       mediaQuery.addEventListener('change', handleMediaChange);
       unsubscribe = () => mediaQuery?.removeEventListener('change', handleMediaChange);
-    } else if (typeof mediaQuery.addListener === 'function') {
+    } else if (typeof mediaQuery?.addListener === 'function') {
       mediaQuery.addListener(handleMediaChange);
       unsubscribe = () => mediaQuery?.removeListener(handleMediaChange);
     } else {
@@ -53,12 +49,26 @@ export function useViewport(options = {}) {
   return { isPhone, check };
 }
 
+function readBreakpointMatch(query, mediaQuery = null) {
+  if (typeof window === 'undefined') {
+    return false;
+  }
+  if (mediaQuery) {
+    return mediaQuery.matches;
+  }
+  if (typeof window.matchMedia === 'function') {
+    return window.matchMedia(query).matches;
+  }
+  const maxWidthMatch = String(query || '').trim().match(/^\(max-width:\s*(\d+(?:\.\d+)?)px\)$/);
+  if (!maxWidthMatch) {
+    return false;
+  }
+  return window.innerWidth <= Number(maxWidthMatch[1]);
+}
+
 /**
  * Stateless version for use outside of Vue component setup (e.g. in composables).
  */
 export function isPhoneViewport() {
-  if (typeof window === 'undefined') {
-    return false;
-  }
-  return window.matchMedia('(max-width: 760px)').matches;
+  return readBreakpointMatch('(max-width: 760px)');
 }

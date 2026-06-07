@@ -79,8 +79,8 @@ function showActionNotice(message, type = 'success') {
 
 const {
   conversation, conversations, characters, messages,
-  loading, error, sidebarLoadError, historySearch, sidebarOpen, settingsDrawerOpen,
-  selectedConversationIds, conversationActionBusy,
+  loading, error, sidebarLoadError, sidebarLoading, historySearch, sidebarOpen, settingsDrawerOpen,
+  selectedConversationIds, conversationActionBusy, startConversationBusy,
   savePanelOpen, npcPanelOpen, economyPanelOpen,
   presetList, selectedPresetId,
   filteredConversations, visibleConversationIds,
@@ -903,7 +903,9 @@ watch(showNpcFeature, (active) => {
       :all-visible-conversations-selected="allVisibleConversationsSelected"
       :selected-conversation-count="selectedConversationCount"
       :conversation-action-busy="conversationActionBusy"
+      :start-conversation-busy="startConversationBusy"
       :sidebar-load-error="sidebarLoadError"
+      :sidebar-loading="sidebarLoading"
       :route="route"
       :format-conversation-usage="formatConversationUsage"
       @close="closeSidebar"

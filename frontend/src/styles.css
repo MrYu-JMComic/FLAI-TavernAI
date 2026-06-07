@@ -4072,6 +4072,11 @@ section[id^="extension-section-"] {
   font-weight: 700;
 }
 
+.new-chat-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.62;
+}
+
 :root[data-theme="dark"] .new-chat-button {
   border-color: rgba(148, 163, 184, 0.22);
   color: #eef4ff;
@@ -4166,6 +4171,10 @@ section[id^="extension-section-"] {
   opacity: 0.48;
 }
 
+.history-tool-button .spinning {
+  animation: spin 0.9s linear infinite;
+}
+
 :root[data-theme="dark"] .history-tool-button {
   border-color: rgba(148, 163, 184, 0.2);
   color: #cbd5e1;
@@ -4242,6 +4251,11 @@ section[id^="extension-section-"] {
   border-color: var(--primary);
   background: var(--primary);
   box-shadow: inset 0 0 0 3px #ffffff;
+}
+
+.history-check input:disabled + span {
+  cursor: not-allowed;
+  opacity: 0.52;
 }
 
 :root[data-theme="dark"] .history-check span {
@@ -9224,23 +9238,66 @@ section[id^="extension-section-"] {
 }
 
 .home-tag-rail {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  overflow: hidden;
+  padding: 0 0 4px;
+}
+
+.home-tag-rail-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+  color: var(--muted);
+  font-size: 0.74rem;
+  font-weight: 850;
+}
+
+.home-tag-rail-head > span,
+.home-tag-rail-head > small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.home-tag-rail-head > span {
+  color: var(--green);
+}
+
+.home-tag-rail-head > small {
+  flex: 0 1 auto;
+  font-size: 0.7rem;
+  font-weight: 800;
+}
+
+.home-tag-chip-row {
   display: flex;
   gap: 8px;
   min-width: 0;
-  overflow-x: auto;
-  padding: 2px 0 6px;
-  scrollbar-width: thin;
+  overflow: hidden;
 }
 
 .home-tag-chip {
   flex: 0 0 auto;
   gap: 6px;
+  max-width: 132px;
   min-height: 34px;
   padding: 0 11px;
   color: var(--tag-color, var(--green));
   border-color: color-mix(in srgb, var(--tag-color, var(--green)) 24%, var(--line));
   background: color-mix(in srgb, var(--tag-color, var(--green)) 10%, var(--surface));
   font-size: 0.82rem;
+}
+
+.home-tag-chip > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .home-tag-chip.active {
@@ -9250,6 +9307,7 @@ section[id^="extension-section-"] {
 }
 
 .home-tag-chip small {
+  flex: 0 0 auto;
   opacity: 0.72;
   font-size: 0.72rem;
 }
@@ -9653,6 +9711,23 @@ section[id^="extension-section-"] {
     width: 16px;
     height: 16px;
     flex: 0 0 auto;
+  }
+
+  .home-tag-rail-head {
+    gap: 6px;
+  }
+
+  .home-tag-rail-head > small {
+    font-size: 0.68rem;
+  }
+
+  .home-tag-chip {
+    max-width: 88px;
+    padding: 0 9px;
+  }
+
+  .home-tag-chip-row .home-tag-chip:first-child {
+    max-width: 72px;
   }
 
   .home-control-panel {
