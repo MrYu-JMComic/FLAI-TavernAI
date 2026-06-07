@@ -519,9 +519,13 @@ async function handleImportFile(event) {
     }
     importPreview.value = data;
   } catch {
-    if (!isHomeActive()) return;
+    if (!isCurrentImportFileRead(readToken)) return;
     notify.error('无法解析角色卡文件，请确认是有效的 JSON 文件');
   }
+}
+
+function isCurrentImportFileRead(readToken) {
+  return isHomeActive() && readToken === importFileReadToken;
 }
 
 async function confirmImport() {
@@ -547,6 +551,7 @@ function cancelImport() {
   if (importLoading.value) {
     return;
   }
+  importFileReadToken += 1;
   importPreview.value = null;
 }
 

@@ -65,3 +65,23 @@ test('HomeView debounces search reloads while keeping sort and tag changes immed
     /<input v-model\.trim="search" placeholder="[^"]+" \/>/
   );
 });
+
+test('HomeView ignores stale character import file reads', () => {
+  assert.match(homeViewScript, /let importFileReadToken = 0;/);
+  assert.match(
+    homeViewScript,
+    /function resetHomeAsyncScope\(\)[\s\S]*importFileReadToken \+= 1;[\s\S]*clearSearchLoadTimer\(\);/
+  );
+  assert.match(
+    homeViewScript,
+    /async function handleImportFile\(event\) {[\s\S]*const readToken = \+\+importFileReadToken;[\s\S]*const text = await file\.text\(\);[\s\S]*if \(!isCurrentImportFileRead\(readToken\)\) return;[\s\S]*importPreview\.value = data;[\s\S]*} catch {[\s\S]*if \(!isCurrentImportFileRead\(readToken\)\) return;/
+  );
+  assert.match(
+    homeViewScript,
+    /function isCurrentImportFileRead\(readToken\) {\s*return isHomeActive\(\) && readToken === importFileReadToken;\s*}/
+  );
+  assert.match(
+    homeViewScript,
+    /function cancelImport\(\) {[\s\S]*importFileReadToken \+= 1;[\s\S]*importPreview\.value = null;[\s\S]*}/
+  );
+});

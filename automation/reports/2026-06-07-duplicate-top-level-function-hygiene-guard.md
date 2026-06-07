@@ -21,7 +21,8 @@ Reduce patch-overlap drift by preventing JS-like source files from declaring the
 ## Validation
 
 - Passed: `node --test backend\src\tests\source-hygiene.test.js` (25 tests)
-- Pending: `powershell -ExecutionPolicy Bypass -File scripts\review-gate.ps1`
+- Passed: `node --test src\tests\source-hygiene.test.js` from `backend` (25 tests)
+- Passed: `powershell -ExecutionPolicy Bypass -File scripts\review-gate.ps1` (530 backend/source tests and frontend build)
 
 ## Notes
 
