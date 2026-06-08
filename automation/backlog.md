@@ -40,6 +40,7 @@ The autonomous loop should choose one small item per run. Add new findings here 
 
 ## Done
 
+- 2026-06-08: Shared CharacterFormView and accessory-agent status template token parsing through the root helper.
 - 2026-06-08: Normalized provider model-cache extra body sorting with direct recursive loops.
 - 2026-06-08: Merged chat appearance layered text fields with a direct helper instead of filter/join arrays.
 - 2026-06-08: Shared backend assistant tool-call cloning through one direct helper.

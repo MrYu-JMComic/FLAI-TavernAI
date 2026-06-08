@@ -11,6 +11,7 @@ import { useNotify } from '../composables/useNotify';
 import { useProviderModels } from '../composables/useProviderModels';
 import { appendAiToolList, cloneAiToolList } from '../utils/aiToolLists';
 import { countOwnObjectKeys } from '../utils/objectKeys';
+import { parseStatusTemplateToken } from '../../../shared/statusTemplateTokens.js';
 
 const props = defineProps({
   route: {
@@ -2245,8 +2246,9 @@ function extractCompositePlaceholderParts(value = '', label = '') {
   let match;
   while ((match = placeholderPattern.exec(normalizeHtmlText(value)))) {
     const token = String(match[1] || match[2] || '').trim();
-    const [rawName, rawProperty = 'value'] = token.split('.').map((part) => part.trim());
-    const name = normalizeTemplateVariableName(rawName);
+    const parsed = parseStatusTemplateToken(token);
+    const rawProperty = parsed.rawProperty.trim() || 'value';
+    const name = normalizeTemplateVariableName(parsed.rawName.trim());
     const key = normalizeStatusVariableKey(name);
     if (!name || !key || key === labelKey || seen.has(key)) {
       continue;

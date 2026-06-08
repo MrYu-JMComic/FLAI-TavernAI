@@ -265,6 +265,16 @@ test('status bar templates infer composite placeholder child variables', () => {
     '\u5927\u5730\u70b9',
     '\u5177\u4f53\u4f4d\u7f6e'
   ]);
+
+  assert.match(
+    accessoryAgentsSource,
+    /import \{ parseStatusTemplateToken \} from '\.\.\/\.\.\/\.\.\/shared\/statusTemplateTokens\.js';/
+  );
+  assert.match(
+    accessoryAgentsSource,
+    /function extractStatusTemplatePlaceholderNames\(value = '', label = ''\) \{[\s\S]*const parsed = parseStatusTemplateToken\(token\);[\s\S]*const rawProperty = parsed\.rawProperty\.trim\(\) \|\| 'value';[\s\S]*const name = normalizeStatusTemplateText\(parsed\.rawName\.trim\(\)\)\.slice\(0, 60\);[\s\S]*\}/
+  );
+  assert.doesNotMatch(accessoryAgentsSource, /token\.split\('\.'\)\.map/);
 });
 
 test('status bar agent updates composite placeholder variables', async () => {

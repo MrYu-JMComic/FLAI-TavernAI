@@ -4,6 +4,7 @@ import { addNpcBehavior, addNpcMemory, isConversationNpcHidden, upsertConversati
 import { STATUS_BAR_VARIABLE_LIMIT, applyVariableUpdates, extractVariablesFromText, upsertStatusBar } from '../modules/statusBars.js';
 import { detectSceneAndEmotion, findBestMatch, listCharacterImages } from '../modules/characterImages.js';
 import { hasUsableProvider, runToolCompletion } from './providers.js';
+import { parseStatusTemplateToken } from '../../../shared/statusTemplateTokens.js';
 
 const agentTimeoutMs = 20000;
 
@@ -329,8 +330,9 @@ function extractStatusTemplatePlaceholderNames(value = '', label = '') {
   let match;
   while ((match = placeholderPattern.exec(normalizeStatusTemplateText(value)))) {
     const token = String(match[1] || match[2] || '').trim();
-    const [rawName, rawProperty = 'value'] = token.split('.').map((part) => part.trim());
-    const name = normalizeStatusTemplateText(rawName).slice(0, 60);
+    const parsed = parseStatusTemplateToken(token);
+    const rawProperty = parsed.rawProperty.trim() || 'value';
+    const name = normalizeStatusTemplateText(parsed.rawName.trim()).slice(0, 60);
     const key = statusVariableKey(name);
     if (!name || !key || key === labelKey || seen.has(key) || isMeterTemplateProperty(rawProperty)) {
       continue;

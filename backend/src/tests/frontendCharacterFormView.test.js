@@ -324,6 +324,20 @@ test('CharacterFormView normalizes status blueprint variables with direct loops'
 test('CharacterFormView builds status blueprint editor rows without intermediate mapping arrays', () => {
   assert.match(
     characterFormScript,
+    /import \{ parseStatusTemplateToken \} from '\.\.\/\.\.\/\.\.\/shared\/statusTemplateTokens\.js';/
+  );
+  const extractPartsStart = characterFormScript.indexOf('function extractCompositePlaceholderParts(value = \'\', label = \'\') {');
+  const extractPartsEnd = characterFormScript.indexOf('\nfunction isMeterTemplateProperty', extractPartsStart);
+  assert.notEqual(extractPartsStart, -1);
+  assert.notEqual(extractPartsEnd, -1);
+  const extractPartsSnippet = characterFormScript.slice(extractPartsStart, extractPartsEnd);
+  assert.match(extractPartsSnippet, /const parsed = parseStatusTemplateToken\(token\);/);
+  assert.match(extractPartsSnippet, /const rawProperty = parsed\.rawProperty\.trim\(\) \|\| 'value';/);
+  assert.match(extractPartsSnippet, /const name = normalizeTemplateVariableName\(parsed\.rawName\.trim\(\)\);/);
+  assert.doesNotMatch(extractPartsSnippet, /token\.split\('\.'\)\.map/);
+
+  assert.match(
+    characterFormScript,
     /const statusBlueprintEditorRows = computed\(\(\) => \{[\s\S]*const rows = \[\];\s*for \(let index = 0; index < compositeRows\.length; index \+= 1\) \{[\s\S]*let compositePartKey = '';[\s\S]*for \(let partIndex = 0; partIndex < row\.parts\.length; partIndex \+= 1\) \{[\s\S]*compositePartKey \+= `\$\{partIndex > 0 \? '\|' : ''\}\$\{part\?\.name \?\? ''\}`;[\s\S]*key: `composite:\$\{index\}:\$\{row\.label\}:\$\{compositePartKey\}`,[\s\S]*for \(let index = 0; index < variables\.length; index \+= 1\) \{[\s\S]*const variable = variables\[index\];[\s\S]*continue;[\s\S]*key: `variable:\$\{index\}:\$\{key\}`,/
   );
   assert.doesNotMatch(characterFormScript, /compositeRows\.map\(/);
