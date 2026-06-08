@@ -515,6 +515,7 @@ watch([sort, selectedTag], () => {
 });
 watch(isMobileListLayout, async () => {
   await nextTick();
+  if (!isHomeActive()) return;
   refreshScrollMeasurements();
 });
 

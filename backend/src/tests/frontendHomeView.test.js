@@ -105,6 +105,10 @@ test('HomeView coalesces character-list width measurements into animation frames
     homeViewScript,
     /onUnmounted\(\(\) => \{[\s\S]*cancelContainerWidthMeasurement\(\);[\s\S]*removeMobileLayoutListener\(\);/
   );
+  assert.match(
+    homeViewScript,
+    /watch\(isMobileListLayout, async \(\) => \{\s*await nextTick\(\);\s*if \(!isHomeActive\(\)\) return;\s*refreshScrollMeasurements\(\);\s*}\);/
+  );
 });
 
 test('HomeView virtualizes character rows without prebuilding every row slice', () => {
