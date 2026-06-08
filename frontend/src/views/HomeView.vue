@@ -420,6 +420,7 @@ let tagLoadToken = 0;
 let importFileReadToken = 0;
 let searchLoadTimer = null;
 let homeActive = true;
+let filterClearInProgress = false;
 
 function scheduleContainerWidthMeasurement() {
   if (containerMeasureRafId !== null) return;
@@ -503,8 +504,12 @@ onUnmounted(() => {
   removeMobileLayoutListener();
 });
 
-watch(search, scheduleSearchLoad);
+watch(search, () => {
+  if (filterClearInProgress) return;
+  scheduleSearchLoad();
+});
 watch([sort, selectedTag], () => {
+  if (filterClearInProgress) return;
   clearSearchLoadTimer();
   loadCharacters();
 });
@@ -577,9 +582,15 @@ function selectTag(name) {
   selectedTag.value = selectedTag.value === name ? '' : name;
 }
 
-function clearFilters() {
+async function clearFilters() {
+  if (!hasActiveFilters.value) return;
+  filterClearInProgress = true;
   search.value = '';
   selectedTag.value = '';
+  clearSearchLoadTimer();
+  loadCharacters();
+  await nextTick();
+  filterClearInProgress = false;
 }
 
 function cycleSort() {

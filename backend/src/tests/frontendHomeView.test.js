@@ -38,10 +38,14 @@ test('HomeView retry actions ignore events while their loads are active', () => 
 test('HomeView debounces search reloads while keeping sort and tag changes immediate', () => {
   assert.match(homeViewScript, /const SEARCH_LOAD_DEBOUNCE_MS = 180;/);
   assert.match(homeViewScript, /let searchLoadTimer = null;/);
-  assert.match(homeViewScript, /watch\(search, scheduleSearchLoad\);/);
+  assert.match(homeViewScript, /let filterClearInProgress = false;/);
   assert.match(
     homeViewScript,
-    /watch\(\[sort, selectedTag\], \(\) => {\s*clearSearchLoadTimer\(\);\s*loadCharacters\(\);/
+    /watch\(search, \(\) => \{\s*if \(filterClearInProgress\) return;\s*scheduleSearchLoad\(\);\s*}\);/
+  );
+  assert.match(
+    homeViewScript,
+    /watch\(\[sort, selectedTag\], \(\) => {\s*if \(filterClearInProgress\) return;\s*clearSearchLoadTimer\(\);\s*loadCharacters\(\);/
   );
   assert.match(
     homeViewScript,
@@ -58,6 +62,10 @@ test('HomeView debounces search reloads while keeping sort and tag changes immed
   assert.match(
     homeViewScript,
     /function retryLoadCharacters\(\)\s*{\s*if \(loading\.value\) return;\s*clearSearchLoadTimer\(\);\s*loadCharacters\(\);/
+  );
+  assert.match(
+    homeViewScript,
+    /async function clearFilters\(\) {\s*if \(!hasActiveFilters\.value\) return;\s*filterClearInProgress = true;\s*search\.value = '';\s*selectedTag\.value = '';\s*clearSearchLoadTimer\(\);\s*loadCharacters\(\);\s*await nextTick\(\);\s*filterClearInProgress = false;\s*}/
   );
 
   assert.match(
