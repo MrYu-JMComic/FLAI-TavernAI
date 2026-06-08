@@ -133,7 +133,7 @@ export async function runChatCustomScript(source, ctx = {}) {
       return root?.querySelector?.(selector) || null;
     },
     queryAll(selector, root = ctx.root) {
-      return root ? Array.from(root.querySelectorAll(selector)) : [];
+      return collectCustomScriptQueryAll(selector, root);
     },
     wait(ms) {
       return waitMs(ms);
@@ -194,6 +194,18 @@ export async function runChatCustomScript(source, ctx = {}) {
       }
     }
   };
+}
+
+function collectCustomScriptQueryAll(selector, root) {
+  if (!root || typeof root.querySelectorAll !== 'function') {
+    return [];
+  }
+  const nodes = root.querySelectorAll(selector);
+  const results = [];
+  for (let index = 0; index < nodes.length; index += 1) {
+    results.push(nodes[index]);
+  }
+  return results;
 }
 
 function normalizeOptionalText(value) {

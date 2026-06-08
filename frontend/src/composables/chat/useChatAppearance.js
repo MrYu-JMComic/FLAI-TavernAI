@@ -197,8 +197,6 @@ export function useChatAppearance({
         messageScroller: messageScroller.value,
         composer: composerWrap.value?.textareaRef || composerTextarea.value,
         messages: messages.value,
-        query: (selector, root = chatShellRef.value) => root?.querySelector?.(selector) || null,
-        queryAll: (selector, root = chatShellRef.value) => root ? Array.from(root.querySelectorAll(selector)) : [],
         notify: scopedAppearanceNotify(applyToken, conversationId),
         openSidebar: scopedAppearanceAction(applyToken, conversationId, openSidebar),
         closeSidebar: scopedAppearanceAction(applyToken, conversationId, closeSidebar),
@@ -487,9 +485,11 @@ export function useChatAppearance({
   }
 
   function invalidateBackgroundUploads() {
-    Object.keys(backgroundUploadTokens).forEach((key) => {
-      backgroundUploadTokens[key] += 1;
-    });
+    for (const key in backgroundUploadTokens) {
+      if (Object.prototype.hasOwnProperty.call(backgroundUploadTokens, key)) {
+        backgroundUploadTokens[key] += 1;
+      }
+    }
   }
 
   async function waitForFrame() {

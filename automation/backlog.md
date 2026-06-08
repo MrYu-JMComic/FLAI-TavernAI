@@ -40,6 +40,7 @@ The autonomous loop should choose one small item per run. Add new findings here 
 
 ## Done
 
+- 2026-06-08: Scanned chat appearance custom-script query results and upload tokens with direct helper loops.
 - 2026-06-08: Compared chat appearance world-book refresh lists with direct loops instead of every callbacks.
 - 2026-06-08: Serialized chat conversation stable comparison values with direct loops instead of nested map/join callbacks.
 - 2026-06-08: Summarized chat sidebar load failures with one direct loop instead of map/find pipelines.

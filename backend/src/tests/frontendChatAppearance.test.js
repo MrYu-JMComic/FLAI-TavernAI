@@ -4,8 +4,10 @@ import { readRepoText, readVueBlocks } from './frontendSfcTestUtils.js';
 
 const { useChatAppearance } = await import('../../../frontend/src/composables/chat/useChatAppearance.js');
 const { useChatConversation } = await import('../../../frontend/src/composables/chat/useChatConversation.js');
+const { runChatCustomScript } = await import('../../../frontend/src/utils/chatAppearance.js');
 
 const chatAppearanceSource = readRepoText('frontend/src/composables/chat/useChatAppearance.js');
+const chatAppearanceUtilsSource = readRepoText('frontend/src/utils/chatAppearance.js');
 const { script: chatViewScript, template: chatViewTemplate } = readVueBlocks('frontend/src/views/ChatView.vue');
 
 function sourceBetween(startMarker, endMarker) {
@@ -295,6 +297,47 @@ test('chat custom script UI helpers ignore stale resumes after the active conver
   }
 });
 
+test('chat custom script queryAll scans DOM collections directly', async () => {
+  const requestedSelectors = [];
+  const state = {};
+  const firstNode = { id: 'first-node' };
+  const secondNode = { id: 'second-node' };
+  const root = {
+    querySelectorAll(selector) {
+      requestedSelectors.push(selector);
+      if (selector !== '.item') {
+        return { length: 0 };
+      }
+      return {
+        length: 2,
+        0: firstNode,
+        1: secondNode
+      };
+    }
+  };
+
+  await runChatCustomScript(`
+    const matches = queryAll('.item');
+    state.count = matches.length;
+    state.first = matches[0]?.id || '';
+    state.second = matches[1]?.id || '';
+    state.emptyCount = queryAll('.missing', null).length;
+  `, { root, state });
+
+  assert.deepEqual(requestedSelectors, ['.item']);
+  assert.deepEqual(state, {
+    count: 2,
+    first: 'first-node',
+    second: 'second-node',
+    emptyCount: 0
+  });
+  assert.match(
+    chatAppearanceUtilsSource,
+    /queryAll\(selector, root = ctx\.root\) \{\s*return collectCustomScriptQueryAll\(selector, root\);[\s\S]*function collectCustomScriptQueryAll\(selector, root\) \{[\s\S]*if \(!root \|\| typeof root\.querySelectorAll !== 'function'\) \{[\s\S]*const nodes = root\.querySelectorAll\(selector\);[\s\S]*for \(let index = 0; index < nodes\.length; index \+= 1\) \{[\s\S]*results\.push\(nodes\[index\]\);[\s\S]*return results;/
+  );
+  assert.doesNotMatch(chatAppearanceUtilsSource, /Array\.from\(root\.querySelectorAll\(selector\)\)/);
+});
+
 test('chat appearance world-book refresh preserves unchanged list references', async () => {
   const originalFetch = globalThis.fetch;
   const responses = [
@@ -423,6 +466,14 @@ test('chat custom script helpers are scoped to the active appearance apply', () 
   assert.match(applyBody, /closeSidebar: scopedAppearanceAction\(applyToken, conversationId, closeSidebar\)/);
   assert.match(applyBody, /scrollToBottom: scopedAppearanceAction\(applyToken, conversationId, \(\) => scrollToBottom\(true, true\)\)/);
   assert.match(applyBody, /setCssVar: scopedAppearanceAction\(applyToken, conversationId, \(name, value\) => \{/);
+  assert.match(
+    chatAppearanceSource,
+    /function invalidateBackgroundUploads\(\) \{[\s\S]*for \(const key in backgroundUploadTokens\) \{[\s\S]*Object\.prototype\.hasOwnProperty\.call\(backgroundUploadTokens, key\)[\s\S]*backgroundUploadTokens\[key\] \+= 1;[\s\S]*\}/
+  );
   assert.match(chatAppearanceSource, /function scopedAppearanceAction\(applyToken, conversationId, action\)/);
   assert.match(chatAppearanceSource, /function scopedAppearanceNotify\(applyToken, conversationId\)/);
+  assert.doesNotMatch(chatAppearanceSource, /Array\.from\(root\.querySelectorAll/);
+  assert.doesNotMatch(applyBody, /queryAll:\s*\(/);
+  assert.doesNotMatch(applyBody, /query:\s*\(/);
+  assert.doesNotMatch(chatAppearanceSource, /Object\.keys\(backgroundUploadTokens\)\.forEach/);
 });
