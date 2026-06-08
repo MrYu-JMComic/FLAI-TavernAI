@@ -1,3 +1,5 @@
+import { parseStatusTemplateToken } from '../../../shared/statusTemplateTokens.js';
+
 const STATUS_BLUEPRINT_VARIABLE_LIMIT = 60;
 
 export function normalizeAdvancedSettings(input = {}) {
@@ -167,13 +169,13 @@ function inferStatusVariablesFromTemplate(template, variables = []) {
   let match;
   while ((match = placeholderPattern.exec(raw))) {
     const token = String(match[1] || match[2] || '').trim();
-    const [rawName, ...propertyParts] = token.split('.');
+    const { rawName, rawProperty } = parseStatusTemplateToken(token);
     const name = normalizeTemplateVariableName(rawName);
     const key = normalizeStatusVariableKey(name);
     if (!name || seen.has(key)) {
       continue;
     }
-    inferred.push(isMeterTemplateProperty(propertyParts.join('.'))
+    inferred.push(isMeterTemplateProperty(rawProperty)
       ? { name: name.slice(0, 40), value: 0, max: 100, color: '' }
       : { name: name.slice(0, 40), value: '', color: '' });
     seen.add(key);

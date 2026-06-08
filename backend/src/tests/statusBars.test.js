@@ -45,6 +45,7 @@ test('status bar template placeholders parse property suffixes without split arr
       { name: 'Focus', value: 0, max: 100 }
     ]
   );
-  assert.match(statusBarsSource, /function parseTemplateVariableToken\(token\) \{/);
+  assert.match(statusBarsSource, /from '..\/..\/..\/shared\/statusTemplateTokens\.js'/);
+  assert.doesNotMatch(statusBarsSource, /function parseTemplateVariableToken\(token\) \{/);
   assert.doesNotMatch(statusBarsSource, /token\.split\('\.'\)/);
 });

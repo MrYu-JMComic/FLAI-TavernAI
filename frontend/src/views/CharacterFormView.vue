@@ -1855,8 +1855,8 @@ function syncStatusBlueprintVariablesFromTemplate({ notifyUser = false } = {}) {
   }
   const normalized = normalizeStatusBarBlueprintForPayload(blueprint);
   const changed = !sameStatusVariableList(blueprint.variables, normalized.variables);
-  if (!sameStatusVariableList(blueprint.variables, normalized.variables)) {
-    blueprint.variables = normalized.variables.map((variable) => ({ ...variable }));
+  if (changed) {
+    blueprint.variables = cloneStatusVariableList(normalized.variables);
   }
   if (notifyUser) {
     notify.success(changed ? '已重新同步模板变量' : '变量已是最新');
@@ -1900,16 +1900,23 @@ function clearStatusBlueprintTemplate() {
 function normalizeStatusBarBlueprintForPayload(input = {}) {
   const source = input && typeof input === 'object' ? input : {};
   const template = String(source.template || '').trim();
-  const variables = Array.isArray(source.variables)
-    ? source.variables
-        .map((variable) => normalizeStatusVariableForPayload(variable, template))
-        .filter((variable) => variable.name && !isCompositeStatusPlaceholderValue(variable.value, variable.name))
-    : [];
+  const variables = normalizeStatusVariableListForPayload(source.variables, template);
   return {
     name: String(source.name || '').trim(),
     variables: inferStatusVariablesFromTemplate(template, variables),
     template
   };
+}
+
+function normalizeStatusVariableListForPayload(variables = [], template = '') {
+  const normalizedVariables = [];
+  for (const variable of Array.isArray(variables) ? variables : []) {
+    const normalized = normalizeStatusVariableForPayload(variable, template);
+    if (normalized.name && !isCompositeStatusPlaceholderValue(normalized.value, normalized.name)) {
+      normalizedVariables.push(normalized);
+    }
+  }
+  return normalizedVariables;
 }
 
 function normalizeStatusVariableForPayload(variable = {}, template = '') {
@@ -2280,12 +2287,34 @@ function normalizeStatusVariableKey(value) {
 }
 
 function sameStatusVariableList(left = [], right = []) {
-  const a = Array.isArray(left) ? left.map((item) => normalizeStatusVariableForPayload(item)) : [];
-  const b = Array.isArray(right) ? right.map((item) => normalizeStatusVariableForPayload(item)) : [];
-  if (a.length !== b.length) {
+  const currentList = Array.isArray(left) ? left : [];
+  const nextList = Array.isArray(right) ? right : [];
+  if (currentList.length !== nextList.length) {
     return false;
   }
-  return a.every((item, index) => JSON.stringify(item) === JSON.stringify(b[index]));
+  for (let index = 0; index < currentList.length; index += 1) {
+    if (!sameStatusVariableForPayload(currentList[index], nextList[index])) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function sameStatusVariableForPayload(current, next) {
+  const currentVariable = normalizeStatusVariableForPayload(current);
+  const nextVariable = normalizeStatusVariableForPayload(next);
+  return currentVariable.name === nextVariable.name
+    && Object.is(currentVariable.value, nextVariable.value)
+    && Object.is(currentVariable.max, nextVariable.max)
+    && String(currentVariable.color || '') === String(nextVariable.color || '');
+}
+
+function cloneStatusVariableList(variables = []) {
+  const clonedVariables = [];
+  for (const variable of Array.isArray(variables) ? variables : []) {
+    clonedVariables.push({ ...variable });
+  }
+  return clonedVariables;
 }
 
 function normalizeHtmlText(value) {

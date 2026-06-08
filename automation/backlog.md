@@ -40,6 +40,8 @@ The autonomous loop should choose one small item per run. Add new findings here 
 
 ## Done
 
+- 2026-06-08: Shared backend status template token parsing between status bars and advanced settings.
+- 2026-06-08: Normalized and compared CharacterFormView status blueprint variables with direct loops instead of map/filter/stringify paths.
 - 2026-06-08: Parsed status bar template placeholder suffixes with one token scan instead of split/rest/join arrays.
 - 2026-06-08: Scanned CharacterFormView world-book selection and sync ids with direct loops instead of map/filter/spread intermediates.
 - 2026-06-08: Parsed avatar short URLs with a single-segment scanner so nested paths cannot be reinterpreted as asset ids.

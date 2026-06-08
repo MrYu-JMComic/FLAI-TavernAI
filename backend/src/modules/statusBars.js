@@ -1,5 +1,6 @@
 import { newId, nowIso } from '../security.js';
 import { parseJson } from '../utils/json.js';
+import { parseStatusTemplateToken } from '../../../shared/statusTemplateTokens.js';
 
 export const STATUS_BAR_VARIABLE_LIMIT = 60;
 
@@ -295,7 +296,7 @@ function inferTemplateVariables(template, variables = []) {
   let match;
   while ((match = placeholderPattern.exec(raw))) {
     const token = String(match[1] || match[2] || '').trim();
-    const { rawName, rawProperty } = parseTemplateVariableToken(token);
+    const { rawName, rawProperty } = parseStatusTemplateToken(token);
     const name = normalizeTemplateVariableName(rawName);
     const key = normalizeVariableKey(name);
     if (!name || seen.has(key)) {
@@ -311,17 +312,6 @@ function inferTemplateVariables(template, variables = []) {
   }
 
   return inferred;
-}
-
-function parseTemplateVariableToken(token) {
-  const separatorIndex = String(token || '').indexOf('.');
-  if (separatorIndex < 0) {
-    return { rawName: token, rawProperty: '' };
-  }
-  return {
-    rawName: token.slice(0, separatorIndex),
-    rawProperty: token.slice(separatorIndex + 1)
-  };
 }
 
 function extractTemplateRowVariables(template) {

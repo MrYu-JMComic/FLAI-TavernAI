@@ -263,6 +263,49 @@ test('CharacterFormView counts status blueprint variable stats in one pass', () 
   assert.doesNotMatch(characterFormScript, /normalized\.variables\.filter\(/);
 });
 
+test('CharacterFormView normalizes status blueprint variables with direct loops', () => {
+  const normalizeStart = characterFormScript.indexOf('function normalizeStatusBarBlueprintForPayload(input = {}) {');
+  const normalizeEnd = characterFormScript.indexOf('\nfunction normalizeStatusVariableForPayload', normalizeStart);
+  const sameStart = characterFormScript.indexOf('function sameStatusVariableList(left = [], right = []) {');
+  const sameEnd = characterFormScript.indexOf('\nfunction normalizeHtmlText', sameStart);
+  assert.notEqual(normalizeStart, -1);
+  assert.notEqual(normalizeEnd, -1);
+  assert.notEqual(sameStart, -1);
+  assert.notEqual(sameEnd, -1);
+  const normalizeSnippet = characterFormScript.slice(normalizeStart, normalizeEnd);
+  const sameSnippet = characterFormScript.slice(sameStart, sameEnd);
+
+  assert.match(
+    characterFormScript,
+    /function syncStatusBlueprintVariablesFromTemplate\(\{ notifyUser = false \} = \{\}\) \{[\s\S]*const normalized = normalizeStatusBarBlueprintForPayload\(blueprint\);[\s\S]*const changed = !sameStatusVariableList\(blueprint\.variables, normalized\.variables\);[\s\S]*if \(changed\) \{[\s\S]*blueprint\.variables = cloneStatusVariableList\(normalized\.variables\);[\s\S]*\}/
+  );
+  assert.match(
+    characterFormScript,
+    /function normalizeStatusBarBlueprintForPayload\(input = \{\}\) \{[\s\S]*const variables = normalizeStatusVariableListForPayload\(source\.variables, template\);[\s\S]*variables: inferStatusVariablesFromTemplate\(template, variables\),/
+  );
+  assert.match(
+    characterFormScript,
+    /function normalizeStatusVariableListForPayload\(variables = \[\], template = ''\) \{[\s\S]*const normalizedVariables = \[\];[\s\S]*for \(const variable of Array\.isArray\(variables\) \? variables : \[\]\) \{[\s\S]*const normalized = normalizeStatusVariableForPayload\(variable, template\);[\s\S]*normalizedVariables\.push\(normalized\);[\s\S]*return normalizedVariables;[\s\S]*\}/
+  );
+  assert.match(
+    characterFormScript,
+    /function sameStatusVariableList\(left = \[\], right = \[\]\) \{[\s\S]*const currentList = Array\.isArray\(left\) \? left : \[\];[\s\S]*const nextList = Array\.isArray\(right\) \? right : \[\];[\s\S]*for \(let index = 0; index < currentList\.length; index \+= 1\) \{[\s\S]*!sameStatusVariableForPayload\(currentList\[index\], nextList\[index\]\)[\s\S]*return true;[\s\S]*\}/
+  );
+  assert.match(
+    characterFormScript,
+    /function sameStatusVariableForPayload\(current, next\) \{[\s\S]*const currentVariable = normalizeStatusVariableForPayload\(current\);[\s\S]*const nextVariable = normalizeStatusVariableForPayload\(next\);[\s\S]*Object\.is\(currentVariable\.value, nextVariable\.value\)[\s\S]*String\(currentVariable\.color \|\| ''\) === String\(nextVariable\.color \|\| ''\);[\s\S]*\}/
+  );
+  assert.match(
+    characterFormScript,
+    /function cloneStatusVariableList\(variables = \[\]\) \{[\s\S]*const clonedVariables = \[\];[\s\S]*for \(const variable of Array\.isArray\(variables\) \? variables : \[\]\) \{[\s\S]*clonedVariables\.push\(\{ \.\.\.variable \}\);[\s\S]*return clonedVariables;[\s\S]*\}/
+  );
+  assert.doesNotMatch(normalizeSnippet, /\.map\(\(variable\) => normalizeStatusVariableForPayload/);
+  assert.doesNotMatch(normalizeSnippet, /\.filter\(/);
+  assert.doesNotMatch(sameSnippet, /\.every\(/);
+  assert.doesNotMatch(sameSnippet, /JSON\.stringify/);
+  assert.doesNotMatch(characterFormScript, /normalized\.variables\.map\(\(variable\) => \(\{ \.\.\.variable \}\)\)/);
+});
+
 test('CharacterFormView builds status blueprint editor rows without intermediate mapping arrays', () => {
   assert.match(
     characterFormScript,
