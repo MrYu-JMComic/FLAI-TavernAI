@@ -40,6 +40,7 @@ The autonomous loop should choose one small item per run. Add new findings here 
 
 ## Done
 
+- 2026-06-09: Guarded chat stream append follow-scrolls after stopped or stale submits.
 - 2026-06-09: Guarded SettingsView Mod and regex drag handlers against malformed drag events.
 - 2026-06-09: Guarded HomeView mobile layout measurement refreshes after next tick against unmounted views.
 - 2026-06-09: Guarded ChatView NPC panel global pointer and click handlers against malformed event objects.

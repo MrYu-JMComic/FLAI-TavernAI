@@ -319,6 +319,21 @@ test('chat submit current-message lookup avoids cloned message-list scans', () =
   assert.doesNotMatch(chatSubmitSource, /messages\.value\.find/);
 });
 
+test('chat submit skips stream append follow-scroll after stale or stopped appends', () => {
+  assert.match(
+    chatSubmitSource,
+    /await appendStreamText\(\s*assistant,\s*'reasoning',\s*data\.text,\s*anchorAssistantReply,\s*\(\) => isCurrentSubmit\(submitId, conversationId\)\s*\);/
+  );
+  assert.match(
+    chatSubmitSource,
+    /await appendStreamText\(\s*assistant,\s*'content',\s*data\.text,\s*anchorAssistantReply,\s*\(\) => isCurrentSubmit\(submitId, conversationId\)\s*\);/
+  );
+  assert.match(
+    chatSubmitSource,
+    /async function appendStreamText\(message, field, text, anchorAssistantReply = false, isStillCurrent = \(\) => true\) \{[\s\S]*currentMessage\[field\] \+= value;[\s\S]*triggerRef\(messages\);[\s\S]*await nextTick\(\);\s*if \(submitDisposed \|\| !currentMessage\.streaming \|\| !isStillCurrent\(\)\) {\s*return;\s*}\s*followSubmitScroll\(currentMessage, anchorAssistantReply, false\);/
+  );
+});
+
 test('chat submit persisted draft matching avoids candidate list allocations', () => {
   assert.match(
     chatSubmitSource,

@@ -198,7 +198,13 @@ export function useChatSubmit({
               }
               setMessageStreamingState(assistant, { reasoningStreaming: true });
               refreshStreamTimer();
-              await appendStreamText(assistant, 'reasoning', data.text, anchorAssistantReply);
+              await appendStreamText(
+                assistant,
+                'reasoning',
+                data.text,
+                anchorAssistantReply,
+                () => isCurrentSubmit(submitId, conversationId)
+              );
               if (!isCurrentSubmit(submitId, conversationId)) return;
               await nextTick();
               if (isCurrentSubmit(submitId, conversationId)) {
@@ -212,7 +218,13 @@ export function useChatSubmit({
                 contentStreaming: true
               });
               refreshStreamTimer();
-              await appendStreamText(assistant, 'content', data.text, anchorAssistantReply);
+              await appendStreamText(
+                assistant,
+                'content',
+                data.text,
+                anchorAssistantReply,
+                () => isCurrentSubmit(submitId, conversationId)
+              );
               if (!isCurrentSubmit(submitId, conversationId)) return;
               await nextTick();
               if (isCurrentSubmit(submitId, conversationId)) {
@@ -894,7 +906,7 @@ export function useChatSubmit({
     return hasMessagePayload(getMessageListItemOrDraft(message));
   }
 
-  async function appendStreamText(message, field, text, anchorAssistantReply = false) {
+  async function appendStreamText(message, field, text, anchorAssistantReply = false, isStillCurrent = () => true) {
     if (submitDisposed) return;
     const currentMessage = findMessageListItem(message?.id);
     if (!currentMessage) return;
@@ -906,6 +918,9 @@ export function useChatSubmit({
     currentMessage[field] += value;
     triggerRef(messages);
     await nextTick();
+    if (submitDisposed || !currentMessage.streaming || !isStillCurrent()) {
+      return;
+    }
     followSubmitScroll(currentMessage, anchorAssistantReply, false);
   }
 
