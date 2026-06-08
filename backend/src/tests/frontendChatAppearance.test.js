@@ -405,6 +405,114 @@ test('chat custom script UI helpers ignore stale resumes after the active conver
   }
 });
 
+test('chat custom script waits cancel stale direct DOM writes after the active conversation changes', async () => {
+  const originalWindow = globalThis.window;
+  const timerCallbacks = [];
+  const writes = [];
+  const shell = {
+    style: {
+      setProperty(name, value) {
+        writes.push(['style', name, value]);
+      }
+    },
+    querySelector() {
+      return null;
+    }
+  };
+  const conversation = { value: { id: 'conv-1', chatLorebookId: 'book-original' } };
+
+  globalThis.window = {
+    setTimeout(callback) {
+      timerCallbacks.push(callback);
+      return timerCallbacks.length;
+    }
+  };
+
+  try {
+    const appearance = createAppearance({
+      conversation,
+      chatShellRef: { value: shell }
+    });
+    appearance.chatAppearanceForm.customJs = `
+      onCleanup(() => {
+        state.staleWaitCleanup = true;
+      });
+      await wait(5);
+      root.style.setProperty('--stale-direct-wait', '1');
+      state.staleWait = true;
+    `;
+
+    const apply = appearance.applyConversationAppearance();
+    assert.equal(timerCallbacks.length, 1);
+
+    conversation.value = { id: 'conv-2', chatLorebookId: 'book-next' };
+    timerCallbacks.shift()();
+    await apply;
+
+    assert.deepEqual(writes, []);
+    assert.equal(appearance.customAppearanceState.value.staleWait, undefined);
+    assert.equal(appearance.customAppearanceState.value.staleWaitCleanup, true);
+  } finally {
+    if (originalWindow === undefined) {
+      delete globalThis.window;
+    } else {
+      globalThis.window = originalWindow;
+    }
+  }
+});
+
+test('chat custom script requestPaint cancels stale direct DOM writes after the active conversation changes', async () => {
+  const originalWindow = globalThis.window;
+  const frameCallbacks = [];
+  const writes = [];
+  const shell = {
+    style: {
+      setProperty(name, value) {
+        writes.push(['style', name, value]);
+      }
+    },
+    querySelector() {
+      return null;
+    }
+  };
+  const conversation = { value: { id: 'conv-1', chatLorebookId: 'book-original' } };
+
+  globalThis.window = {
+    requestAnimationFrame(callback) {
+      frameCallbacks.push(callback);
+      return frameCallbacks.length;
+    }
+  };
+
+  try {
+    const appearance = createAppearance({
+      conversation,
+      chatShellRef: { value: shell }
+    });
+    appearance.chatAppearanceForm.customJs = `
+      await requestPaint();
+      root.style.setProperty('--stale-direct-frame', '1');
+      state.staleFrame = true;
+    `;
+
+    const apply = appearance.applyConversationAppearance();
+    assert.equal(frameCallbacks.length, 1);
+
+    conversation.value = { id: 'conv-2', chatLorebookId: 'book-next' };
+    frameCallbacks.shift()();
+    await apply;
+
+    assert.deepEqual(writes, []);
+    assert.equal(appearance.customAppearanceState.value.staleFrame, undefined);
+  } finally {
+    if (originalWindow === undefined) {
+      delete globalThis.window;
+    } else {
+      globalThis.window = originalWindow;
+    }
+  }
+});
+
 test('chat custom script queryAll scans DOM collections directly', async () => {
   const requestedSelectors = [];
   const state = {};

@@ -206,8 +206,8 @@ export function useChatAppearance({
         setCssVar: scopedAppearanceAction(applyToken, conversationId, (name, value) => {
           chatShellRef.value?.style.setProperty(String(name || '').trim(), String(value || ''));
         }),
-        requestPaint: waitForFrame,
-        wait: waitMs
+        requestPaint: () => waitForCurrentAppearanceFrame(applyToken, conversationId),
+        wait: (duration) => waitForCurrentAppearanceMs(duration, applyToken, conversationId)
       });
       if (!isCurrentAppearanceApply(applyToken, conversationId)) {
         if (typeof cleanup === 'function') {
@@ -491,20 +491,40 @@ export function useChatAppearance({
     }
   }
 
-  async function waitForFrame() {
-    if (typeof window === 'undefined') {
+  function assertCurrentAppearanceApply(applyToken, conversationId) {
+    if (!isCurrentAppearanceApply(applyToken, conversationId)) {
+      const error = new Error('Stale chat appearance apply');
+      error.name = 'StaleChatAppearanceApplyError';
+      throw error;
+    }
+  }
+
+  async function waitForCurrentAppearanceFrame(applyToken, conversationId) {
+    assertCurrentAppearanceApply(applyToken, conversationId);
+    if (
+      typeof window === 'undefined'
+      || typeof window.requestAnimationFrame !== 'function'
+    ) {
+      assertCurrentAppearanceApply(applyToken, conversationId);
       return;
     }
     await new Promise((resolve) => window.requestAnimationFrame(resolve));
+    assertCurrentAppearanceApply(applyToken, conversationId);
   }
 
-  function waitMs(duration) {
-    if (typeof window === 'undefined') {
-      return Promise.resolve();
+  async function waitForCurrentAppearanceMs(duration, applyToken, conversationId) {
+    assertCurrentAppearanceApply(applyToken, conversationId);
+    if (
+      typeof window === 'undefined'
+      || typeof window.setTimeout !== 'function'
+    ) {
+      assertCurrentAppearanceApply(applyToken, conversationId);
+      return;
     }
-    return new Promise((resolve) => {
-      window.setTimeout(resolve, duration);
+    await new Promise((resolve) => {
+      window.setTimeout(resolve, Number(duration) || 0);
     });
+    assertCurrentAppearanceApply(applyToken, conversationId);
   }
 
   return {

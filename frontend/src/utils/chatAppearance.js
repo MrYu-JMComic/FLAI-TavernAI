@@ -129,8 +129,9 @@ export async function runChatCustomScript(source, ctx = {}) {
   }
 
   const cleanupFns = [];
+  const scriptContext = buildChatScriptContext(ctx);
   const context = {
-    ...buildChatScriptContext(ctx),
+    ...scriptContext,
     onCleanup(fn) {
       if (typeof fn === 'function') {
         cleanupFns.push(fn);
@@ -143,9 +144,15 @@ export async function runChatCustomScript(source, ctx = {}) {
       return collectCustomScriptQueryAll(selector, root);
     },
     wait(ms) {
+      if (typeof scriptContext.wait === 'function') {
+        return scriptContext.wait(ms);
+      }
       return waitMs(ms);
     },
     requestPaint() {
+      if (typeof scriptContext.requestPaint === 'function') {
+        return scriptContext.requestPaint();
+      }
       return nextFrame();
     }
   };
@@ -183,7 +190,13 @@ export async function runChatCustomScript(source, ctx = {}) {
   `;
 
   const runner = new AsyncFunction('ctx', wrapped);
-  const result = await runner(context);
+  let result;
+  try {
+    result = await runner(context);
+  } catch (err) {
+    runCustomScriptCleanup(cleanupFns);
+    throw err;
+  }
   if (typeof result === 'function') {
     cleanupFns.push(result);
   }
@@ -192,15 +205,17 @@ export async function runChatCustomScript(source, ctx = {}) {
     return null;
   }
 
-  return () => {
-    for (let index = cleanupFns.length - 1; index >= 0; index -= 1) {
-      try {
-        cleanupFns[index]();
-      } catch {
-        // Ignore custom cleanup failures.
-      }
+  return () => runCustomScriptCleanup(cleanupFns);
+}
+
+function runCustomScriptCleanup(cleanupFns) {
+  for (let index = cleanupFns.length - 1; index >= 0; index -= 1) {
+    try {
+      cleanupFns[index]();
+    } catch {
+      // Ignore custom cleanup failures.
     }
-  };
+  }
 }
 
 function collectCustomScriptQueryAll(selector, root) {
