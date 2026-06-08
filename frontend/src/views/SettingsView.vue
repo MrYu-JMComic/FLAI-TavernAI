@@ -1541,23 +1541,26 @@ function modScopeLabel(mod) {
 
 function onModDragStart(event, mod) {
   if (modControlsBusy.value) {
-    event.preventDefault();
+    event?.preventDefault?.();
     return;
   }
   const currentMod = getCurrentMod(mod?.id);
   if (!currentMod) {
-    event.preventDefault();
+    event?.preventDefault?.();
     return;
   }
   draggingMod.value = currentMod.id;
-  event.dataTransfer.effectAllowed = 'move';
+  const dataTransfer = event?.dataTransfer;
+  if (dataTransfer) {
+    dataTransfer.effectAllowed = 'move';
+  }
 }
 
 function onModDragOver(event, mod) {
   if (modControlsBusy.value) return;
   const currentMod = getCurrentMod(mod?.id);
   if (!currentMod) return;
-  event.preventDefault();
+  event?.preventDefault?.();
   if (dragOverMod.value !== currentMod.id) {
     dragOverMod.value = currentMod.id;
   }
@@ -1569,7 +1572,7 @@ function onModDragEnd() {
 }
 
 async function onModDrop(event, targetMod) {
-  event.preventDefault();
+  event?.preventDefault?.();
   if (modControlsBusy.value) return;
   const draggedId = draggingMod.value;
   const currentDraggedMod = getCurrentMod(draggedId);
@@ -1758,12 +1761,12 @@ async function handleToggleRegexRule(ruleId) {
 
 function onRegexDragStart(event, ruleId) {
   if (regexControlsBusy.value) {
-    event.preventDefault();
+    event?.preventDefault?.();
     return;
   }
   const currentRule = getCurrentRegexRule(ruleId);
   if (!currentRule) {
-    event.preventDefault();
+    event?.preventDefault?.();
     return;
   }
   draggingRegexRuleId.value = currentRule.id;
@@ -1772,7 +1775,7 @@ function onRegexDragStart(event, ruleId) {
 function onRegexDragOver(event, ruleId) {
   if (regexControlsBusy.value) return;
   if (!getCurrentRegexRule(ruleId)) return;
-  event.preventDefault();
+  event?.preventDefault?.();
 }
 
 async function onRegexDrop(targetRuleId) {

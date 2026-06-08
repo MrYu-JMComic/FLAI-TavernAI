@@ -373,10 +373,10 @@ test('SettingsView mod mutations expose visible busy guards for editor, toggle, 
   assert.doesNotMatch(settingsViewScript, /modList\.value\.map\(\(item\) => \(item\.id === currentMod\.id \? nextMod : item\)\)/);
   assert.match(settingsViewScript, /function selectAllModCharacters\(\) {\s*if \(modActionBusy\.value\) return;/);
   assert.match(settingsViewScript, /function clearModCharacters\(\) {\s*if \(modActionBusy\.value\) return;/);
-  assert.match(settingsViewScript, /function onModDragStart\(event, mod\) {\s*if \(modControlsBusy\.value\) {[\s\S]*event\.preventDefault\(\);[\s\S]*const currentMod = getCurrentMod\(mod\?\.id\);[\s\S]*if \(!currentMod\) {[\s\S]*event\.preventDefault\(\);[\s\S]*draggingMod\.value = currentMod\.id;/);
+  assert.match(settingsViewScript, /function onModDragStart\(event, mod\) {\s*if \(modControlsBusy\.value\) {[\s\S]*event\?\.preventDefault\?\.\(\);[\s\S]*const currentMod = getCurrentMod\(mod\?\.id\);[\s\S]*if \(!currentMod\) {[\s\S]*event\?\.preventDefault\?\.\(\);[\s\S]*draggingMod\.value = currentMod\.id;[\s\S]*const dataTransfer = event\?\.dataTransfer;[\s\S]*if \(dataTransfer\) {\s*dataTransfer\.effectAllowed = 'move';\s*}/);
   assert.match(
     settingsViewScript,
-    /function onModDragOver\(event, mod\) {\s*if \(modControlsBusy\.value\) return;\s*const currentMod = getCurrentMod\(mod\?\.id\);\s*if \(!currentMod\) return;\s*event\.preventDefault\(\);\s*if \(dragOverMod\.value !== currentMod\.id\) {\s*dragOverMod\.value = currentMod\.id;\s*}/
+    /function onModDragOver\(event, mod\) {\s*if \(modControlsBusy\.value\) return;\s*const currentMod = getCurrentMod\(mod\?\.id\);\s*if \(!currentMod\) return;\s*event\?\.preventDefault\?\.\(\);\s*if \(dragOverMod\.value !== currentMod\.id\) {\s*dragOverMod\.value = currentMod\.id;\s*}/
   );
   assert.match(settingsViewScript, /async function onModDrop\(event, targetMod\) {[\s\S]*if \(modControlsBusy\.value\) return;[\s\S]*const currentDraggedMod = getCurrentMod\(draggedId\);[\s\S]*const currentTargetMod = getCurrentMod\(targetMod\?\.id\);[\s\S]*if \(!currentDraggedMod \|\| !currentTargetMod \|\| currentDraggedMod\.id === currentTargetMod\.id\)[\s\S]*beginModMutation\('mod-reorder'\)[\s\S]*finally {\s*finishModMutation\(mutationToken\);/);
   assert.match(
@@ -385,6 +385,7 @@ test('SettingsView mod mutations expose visible busy guards for editor, toggle, 
   );
   assert.doesNotMatch(settingsViewScript, /modList\.value\.findIndex/);
   assert.doesNotMatch(settingsViewScript, /reorderMods\([^)]*\.map/);
+  assert.doesNotMatch(settingsViewScript, /event\.dataTransfer\.effectAllowed/);
 
   assert.match(settingsViewTemplate, /<button class="ghost-button" type="button" :disabled="modControlsBusy" @click="startNewMod">/);
   assert.match(settingsViewTemplate, /:disabled="modControlsBusy" @click="loadMods"/);
@@ -431,10 +432,10 @@ test('SettingsView regex mutations expose visible busy guards for filter, import
     settingsViewScript,
     /async function handleToggleRegexRule\(ruleId\) {\s*if \(regexControlsBusy\.value\) return;\s*const currentRule = getCurrentRegexRule\(ruleId\);\s*if \(!currentRule\) return;[\s\S]*beginRegexMutation\(regexToggleActionId\(currentRule\.id\)\)[\s\S]*await toggleRegexRule\(currentRule\.id\);[\s\S]*finishRegexMutation\(mutationToken\);\s*await loadRegexRules\(\);[\s\S]*finally {\s*finishRegexMutation\(mutationToken\);/
   );
-  assert.match(settingsViewScript, /function onRegexDragStart\(event, ruleId\) {\s*if \(regexControlsBusy\.value\) {[\s\S]*event\.preventDefault\(\);[\s\S]*const currentRule = getCurrentRegexRule\(ruleId\);[\s\S]*if \(!currentRule\) {[\s\S]*event\.preventDefault\(\);[\s\S]*draggingRegexRuleId\.value = currentRule\.id;/);
+  assert.match(settingsViewScript, /function onRegexDragStart\(event, ruleId\) {\s*if \(regexControlsBusy\.value\) {[\s\S]*event\?\.preventDefault\?\.\(\);[\s\S]*const currentRule = getCurrentRegexRule\(ruleId\);[\s\S]*if \(!currentRule\) {[\s\S]*event\?\.preventDefault\?\.\(\);[\s\S]*draggingRegexRuleId\.value = currentRule\.id;/);
   assert.match(
     settingsViewScript,
-    /function onRegexDragOver\(event, ruleId\) {\s*if \(regexControlsBusy\.value\) return;\s*if \(!getCurrentRegexRule\(ruleId\)\) return;\s*event\.preventDefault\(\);/
+    /function onRegexDragOver\(event, ruleId\) {\s*if \(regexControlsBusy\.value\) return;\s*if \(!getCurrentRegexRule\(ruleId\)\) return;\s*event\?\.preventDefault\?\.\(\);/
   );
   assert.match(
     settingsViewScript,
