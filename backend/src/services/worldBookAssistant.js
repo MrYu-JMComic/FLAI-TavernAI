@@ -201,9 +201,7 @@ function executeWorldBookTool(name, args, draft) {
     return { ok: true, applied: mergeProfile(draft, toolArgs) };
   }
   if (name === 'replace_world_book_entries') {
-    draft.entries = Array.isArray(toolArgs.entries)
-      ? toolArgs.entries.map((entry, index) => normalizeEntry(entry, index)).filter((entry) => entry.name && entry.content)
-      : [];
+    draft.entries = normalizeUsableEntryList(toolArgs.entries);
     return { ok: true, count: draft.entries.length };
   }
   return { ok: false, error: `Unknown tool: ${name}` };
@@ -247,10 +245,38 @@ function mergeProfile(draft, args = {}) {
     applied.lorebookContextPercent = draft.lorebookContextPercent;
   }
   if (Array.isArray(args.entries)) {
-    draft.entries = args.entries.map((entry, index) => normalizeEntry(entry, index)).filter((entry) => entry.name && entry.content);
+    draft.entries = normalizeUsableEntryList(args.entries);
     applied.entries = draft.entries;
   }
   return applied;
+}
+
+function normalizeUsableEntryList(entries = []) {
+  if (!Array.isArray(entries)) {
+    return [];
+  }
+  const normalized = [];
+  for (let index = 0; index < entries.length; index += 1) {
+    const entry = normalizeEntry(entries[index], index);
+    if (entry.name && entry.content) {
+      normalized.push(entry);
+    }
+  }
+  return normalized;
+}
+
+function normalizeDraftEntryList(entries = []) {
+  if (!Array.isArray(entries)) {
+    return [];
+  }
+  const normalized = [];
+  for (let index = 0; index < entries.length; index += 1) {
+    const entry = normalizeEntry(entries[index], index);
+    if (entry.name || entry.content) {
+      normalized.push(entry);
+    }
+  }
+  return normalized;
 }
 
 function normalizeDraft(value = {}) {
@@ -261,9 +287,7 @@ function normalizeDraft(value = {}) {
     characterId: String(draft.characterId || '').trim(),
     scanDepth: clampInt(draft.scanDepth, 1, 50, 4),
     lorebookContextPercent: clampInt(draft.lorebookContextPercent, 1, 100, 25),
-    entries: Array.isArray(draft.entries)
-      ? draft.entries.map((entry, index) => normalizeEntry(entry, index)).filter((entry) => entry.name || entry.content)
-      : []
+    entries: normalizeDraftEntryList(draft.entries)
   };
 }
 

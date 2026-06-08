@@ -1786,6 +1786,23 @@ test('world book assistant skips non-object AI entries', async () => {
   }
 });
 
+test('world book assistant normalizes entry lists without map/filter chains', () => {
+  const assistantSource = fs.readFileSync(new URL('../services/worldBookAssistant.js', import.meta.url), 'utf8');
+
+  assert.match(
+    assistantSource,
+    /function normalizeUsableEntryList\(entries = \[\]\) \{[\s\S]*for \(let index = 0; index < entries\.length; index \+= 1\) \{[\s\S]*if \(entry\.name && entry\.content\) \{[\s\S]*normalized\.push\(entry\);/
+  );
+  assert.match(
+    assistantSource,
+    /function normalizeDraftEntryList\(entries = \[\]\) \{[\s\S]*for \(let index = 0; index < entries\.length; index \+= 1\) \{[\s\S]*if \(entry\.name \|\| entry\.content\) \{[\s\S]*normalized\.push\(entry\);/
+  );
+  assert.doesNotMatch(
+    assistantSource,
+    /entries\.map\(\(entry, index\) => normalizeEntry\(entry, index\)\)\.filter\(\(entry\) => entry\.name (?:&&|\|\|) entry\.content\)/
+  );
+});
+
 test('world book assistant treats null request as defaults', async () => {
   const originalFetch = globalThis.fetch;
   let calls = 0;
