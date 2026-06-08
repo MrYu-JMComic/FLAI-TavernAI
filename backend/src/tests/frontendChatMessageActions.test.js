@@ -203,6 +203,70 @@ test('message copy ignores duplicate clicks while clipboard work is busy', async
   }
 });
 
+test('message copy fallback removes the temporary textarea when copy throws', async () => {
+  const originalWindow = globalThis.window;
+  const originalDocument = globalThis.document;
+  const notices = [];
+  const appended = [];
+  const removed = [];
+  const textarea = {
+    value: '',
+    style: {},
+    setAttribute(name, value) {
+      this[name] = value;
+    },
+    select() {}
+  };
+  const actions = createMessageActions({
+    showActionNotice(messageText, type) {
+      notices.push([messageText, type]);
+    }
+  });
+
+  globalThis.window = {
+    navigator: {}
+  };
+  globalThis.document = {
+    createElement(tagName) {
+      assert.equal(tagName, 'textarea');
+      return textarea;
+    },
+    body: {
+      appendChild(node) {
+        appended.push(node);
+      },
+      removeChild(node) {
+        removed.push(node);
+      }
+    },
+    execCommand(command) {
+      assert.equal(command, 'copy');
+      throw new Error('copy exploded');
+    }
+  };
+
+  try {
+    await actions.copyMessage({ id: 'msg-1', content: 'Copy me' });
+
+    assert.deepEqual(appended, [textarea]);
+    assert.deepEqual(removed, [textarea]);
+    assert.equal(actions.copyBusy.value, false);
+    assert.equal(notices.length, 1);
+    assert.equal(notices[0][1], 'warning');
+  } finally {
+    if (originalWindow === undefined) {
+      delete globalThis.window;
+    } else {
+      globalThis.window = originalWindow;
+    }
+    if (originalDocument === undefined) {
+      delete globalThis.document;
+    } else {
+      globalThis.document = originalDocument;
+    }
+  }
+});
+
 test('reasoning state ignores blank ids without replacing refs', () => {
   const actions = createMessageActions();
   const initialReasoning = actions.expandedReasoning.value;
