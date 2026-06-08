@@ -40,6 +40,11 @@ test('WorldBookView preserves unchanged book and entry references during refresh
   );
   assert.match(
     worldBookViewScript,
+    /function removeBookFromListIfPresent\(id\) \{[\s\S]*const currentBooks = Array\.isArray\(books\.value\) \? books\.value : \[\];[\s\S]*let nextBooks = null;[\s\S]*for \(let index = 0; index < currentBooks\.length; index \+= 1\) \{[\s\S]*const book = currentBooks\[index\];[\s\S]*if \(book\?\.id === id\) \{[\s\S]*for \(let copyIndex = 0; copyIndex < index; copyIndex \+= 1\) \{[\s\S]*nextBooks\.push\(currentBooks\[copyIndex\]\);[\s\S]*continue;[\s\S]*if \(nextBooks\) \{[\s\S]*nextBooks\.push\(book\);[\s\S]*return nextBooks \? setBooksIfChanged\(nextBooks\) : false;[\s\S]*\}/
+  );
+  assert.match(worldBookViewScript, /removeBookFromListIfPresent\(id\);/);
+  assert.match(
+    worldBookViewScript,
     /function sameEntrySummary\(currentEntry, nextEntry\) \{[\s\S]*currentEntry\?\.triggerKeys === nextEntry\?\.triggerKeys[\s\S]*nullableComparable\(currentEntry\?\.sticky\) === nullableComparable\(nextEntry\?\.sticky\)[\s\S]*Number\(currentEntry\?\.orderIndex \|\| 0\) === Number\(nextEntry\?\.orderIndex \|\| 0\);[\s\S]*\}/
   );
   assert.match(
@@ -52,6 +57,8 @@ test('WorldBookView preserves unchanged book and entry references during refresh
   );
   assert.equal(countMatches(worldBookViewScript, /books\.value\s*=/g), 1);
   assert.equal(countMatches(worldBookViewScript, /currentBook\.value\s*=/g), 2);
+  assert.doesNotMatch(worldBookViewScript, /books\.value\.filter\(\(book\) => book\.id !== id\)/);
+  assert.doesNotMatch(worldBookViewScript, /let hasBook = false/);
 });
 
 test('WorldBookView preserves unchanged AI draft and process panel references', () => {

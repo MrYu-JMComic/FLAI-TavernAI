@@ -234,6 +234,27 @@ function setBooksIfChanged(nextBooks) {
   return true;
 }
 
+function removeBookFromListIfPresent(id) {
+  const currentBooks = Array.isArray(books.value) ? books.value : [];
+  let nextBooks = null;
+  for (let index = 0; index < currentBooks.length; index += 1) {
+    const book = currentBooks[index];
+    if (book?.id === id) {
+      if (!nextBooks) {
+        nextBooks = [];
+        for (let copyIndex = 0; copyIndex < index; copyIndex += 1) {
+          nextBooks.push(currentBooks[copyIndex]);
+        }
+      }
+      continue;
+    }
+    if (nextBooks) {
+      nextBooks.push(book);
+    }
+  }
+  return nextBooks ? setBooksIfChanged(nextBooks) : false;
+}
+
 function setCurrentBookIfChanged(nextBook) {
   if (!nextBook) {
     if (!currentBook.value) {
@@ -475,7 +496,7 @@ async function removeBook(id) {
   try {
     await deleteWorldBook(id);
     if (!isCurrentWorldBookRouteMutation(mutationToken, routeKey)) return;
-    setBooksIfChanged(books.value.filter((book) => book.id !== id));
+    removeBookFromListIfPresent(id);
     if (currentBook.value?.id === id) {
       setCurrentBookIfChanged(null);
     }
