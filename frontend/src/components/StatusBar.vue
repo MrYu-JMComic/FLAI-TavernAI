@@ -97,12 +97,11 @@ const customTemplate = computed(() => {
   const extracted = extractTemplateStyleBlocks(interpolateTemplate(raw));
   const styleBlocks = [];
   const html = sanitizeTemplateHtml(extracted.html, styleBlocks);
-  const safeStyleBlocks = [...extracted.styleBlocks, ...styleBlocks]
-    .map((block) => sanitizeStyleBlock(block))
-    .filter(Boolean);
-  const css = safeStyleBlocks.length
-    ? buildScopedChatCss(safeStyleBlocks.join('\n\n'), `[data-status-bar-scope="${templateScopeId.value}"]`)
-    : '';
+  const css = buildCustomTemplateCss(
+    extracted.styleBlocks,
+    styleBlocks,
+    `[data-status-bar-scope="${templateScopeId.value}"]`
+  );
   return { html, css };
 });
 
@@ -187,19 +186,47 @@ function parseSafeStyle(css) {
       return style;
     }
   } catch (_) { /* not JSON, parse as CSS text */ }
-  const segments = css.split(';');
-  for (const seg of segments) {
-    const colonIdx = seg.indexOf(':');
-    if (colonIdx === -1) continue;
-    const rawProp = seg.substring(0, colonIdx).trim();
-    const value = seg.substring(colonIdx + 1).trim();
-    if (!rawProp || !value) continue;
-    const camel = rawProp.replace(/-([a-z])/g, (_, c) => c.toUpperCase());
-    if ((ALLOWED_STYLE_PROPS.has(camel) || rawProp.startsWith('--sb-')) && isSafeCssValue(value)) {
-      style[camel] = value;
-    }
-  }
+  applySafeStyleText(style, css);
   return style;
+}
+
+function applySafeStyleText(style, css) {
+  const text = String(css || '');
+  let segmentStart = 0;
+  for (let index = 0; index <= text.length; index += 1) {
+    if (index < text.length && text[index] !== ';') {
+      continue;
+    }
+    applySafeStyleSegment(style, text.slice(segmentStart, index));
+    segmentStart = index + 1;
+  }
+}
+
+function applySafeStyleSegment(style, segment) {
+  const colonIdx = segment.indexOf(':');
+  if (colonIdx === -1) return;
+  const rawProp = segment.substring(0, colonIdx).trim();
+  const value = segment.substring(colonIdx + 1).trim();
+  if (!rawProp || !value) return;
+  const camel = toCamelStyleProp(rawProp);
+  if ((ALLOWED_STYLE_PROPS.has(camel) || rawProp.startsWith('--sb-')) && isSafeCssValue(value)) {
+    style[camel] = value;
+  }
+}
+
+function toCamelStyleProp(rawProp) {
+  let value = '';
+  let upperNext = false;
+  for (let index = 0; index < rawProp.length; index += 1) {
+    const char = rawProp[index];
+    if (char === '-') {
+      upperNext = true;
+      continue;
+    }
+    value += upperNext ? char.toUpperCase() : char;
+    upperNext = false;
+  }
+  return value;
 }
 
 const wrapperStyle = computed(() => {
@@ -389,6 +416,23 @@ function extractTemplateStyleBlocks(template) {
     return '';
   });
   return { html, styleBlocks };
+}
+
+function buildCustomTemplateCss(extractedStyleBlocks, inlineStyleBlocks, scopeSelector) {
+  let cssText = appendSafeStyleBlocks('', extractedStyleBlocks);
+  cssText = appendSafeStyleBlocks(cssText, inlineStyleBlocks);
+  return cssText ? buildScopedChatCss(cssText, scopeSelector) : '';
+}
+
+function appendSafeStyleBlocks(cssText, blocks) {
+  for (const block of Array.isArray(blocks) ? blocks : []) {
+    const safeBlock = sanitizeStyleBlock(block);
+    if (!safeBlock) {
+      continue;
+    }
+    cssText = cssText ? `${cssText}\n\n${safeBlock}` : safeBlock;
+  }
+  return cssText;
 }
 
 function syncCustomTemplateStyle(css) {

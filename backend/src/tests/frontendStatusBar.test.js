@@ -36,3 +36,29 @@ test('StatusBar normalizes display variables and immersive characters with direc
   assert.doesNotMatch(statusBarScript, /charVariables\(ch\)/);
   assert.doesNotMatch(statusBarScript, /String\(token \|\| ''\)\.split\('\.'\)\.map/);
 });
+
+test('StatusBar builds custom template CSS and style text without array pipelines', () => {
+  assert.match(
+    statusBarScript,
+    /const css = buildCustomTemplateCss\(\s*extracted\.styleBlocks,\s*styleBlocks,\s*`\[data-status-bar-scope="\$\{templateScopeId\.value\}"\]`\s*\);/
+  );
+  assert.match(
+    statusBarScript,
+    /function buildCustomTemplateCss\(extractedStyleBlocks, inlineStyleBlocks, scopeSelector\) \{\s*let cssText = appendSafeStyleBlocks\('', extractedStyleBlocks\);\s*cssText = appendSafeStyleBlocks\(cssText, inlineStyleBlocks\);\s*return cssText \? buildScopedChatCss\(cssText, scopeSelector\) : '';\s*\}/
+  );
+  assert.match(
+    statusBarScript,
+    /function appendSafeStyleBlocks\(cssText, blocks\) \{\s*for \(const block of Array\.isArray\(blocks\) \? blocks : \[\]\) \{[\s\S]*cssText = cssText \? `\$\{cssText\}\\n\\n\$\{safeBlock\}` : safeBlock;[\s\S]*return cssText;\s*\}/
+  );
+  assert.match(
+    statusBarScript,
+    /function applySafeStyleText\(style, css\) \{\s*const text = String\(css \|\| ''\);\s*let segmentStart = 0;\s*for \(let index = 0; index <= text\.length; index \+= 1\) \{/
+  );
+  assert.match(statusBarScript, /function toCamelStyleProp\(rawProp\) \{[\s\S]*upperNext \? char\.toUpperCase\(\) : char;[\s\S]*\}/);
+  assert.doesNotMatch(statusBarScript, /\[\.\.\.extracted\.styleBlocks,\s*\.\.\.styleBlocks\]/);
+  assert.doesNotMatch(statusBarScript, /\.map\(\(block\) => sanitizeStyleBlock\(block\)\)/);
+  assert.doesNotMatch(statusBarScript, /\.filter\(Boolean\)/);
+  assert.doesNotMatch(statusBarScript, /safeStyleBlocks\.join\('\\n\\n'\)/);
+  assert.doesNotMatch(statusBarScript, /const segments = css\.split\(';'\)/);
+  assert.doesNotMatch(statusBarScript, /rawProp\.replace\(/);
+});
