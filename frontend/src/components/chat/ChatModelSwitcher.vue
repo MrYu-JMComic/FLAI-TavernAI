@@ -22,6 +22,7 @@ const providerContextKey = computed(() => {
     provider.providerType || '',
     provider.gatewayName || '',
     provider.baseUrl || '',
+    Boolean(provider.apiKey || provider.apiKeySet),
     Boolean(provider.supportsReasoning),
     provider.extraBody ?? '{}'
   ].join('\n');

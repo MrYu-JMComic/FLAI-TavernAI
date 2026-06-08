@@ -72,3 +72,14 @@ test('ChatView guards model switcher refresh and save handlers while work is pen
     /async function saveQuickModel\(model\)\s*{\s*if \(modelSwitcherSaving\.value\)\s*{\s*return;\s*}/
   );
 });
+
+test('Chat quick model contexts include provider auth availability', () => {
+  assert.match(
+    chatModelSwitcherScript,
+    /const providerContextKey = computed\(\(\) => \{[\s\S]*provider\.baseUrl \|\| '',[\s\S]*Boolean\(provider\.apiKey \|\| provider\.apiKeySet\),[\s\S]*Boolean\(provider\.supportsReasoning\),[\s\S]*provider\.extraBody \?\? '\{\}'[\s\S]*\]\.join\('\\n'\);/
+  );
+  assert.match(
+    chatViewScript,
+    /function providerRefreshKey\(provider = \{\}\) \{[\s\S]*provider\.baseUrl \|\| '',[\s\S]*Boolean\(provider\.apiKey \|\| provider\.apiKeySet\),[\s\S]*Boolean\(provider\.supportsReasoning\),[\s\S]*provider\.extraBody \?\? '\{\}'[\s\S]*\]\.join\('\|'\);/
+  );
+});
