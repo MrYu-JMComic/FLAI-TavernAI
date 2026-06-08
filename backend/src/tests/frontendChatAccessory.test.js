@@ -778,17 +778,32 @@ test('ChatView refreshes the NPC panel only after NPC refresh work changes the f
   );
 });
 
+test('ChatView skips NPC accessory refresh completions after unmount', () => {
+  assert.match(
+    chatViewScript,
+    /async function refreshNpcUpdateStatus\(isFinal = false\) \{\s*if \(chatViewDisposed\) \{\s*return false;\s*\}/
+  );
+  assert.match(
+    chatViewScript,
+    /const npcs = await fetchConversationNpcs\(conversationId\);[\s\S]*if \(\s*chatViewDisposed \|\|[\s\S]*conversation\.value\?\.id !== conversationId \|\|[\s\S]*accessoryRefreshSnapshot\.conversationId !== conversationId\s*\) \{\s*return false;\s*\}/
+  );
+  assert.match(
+    chatViewScript,
+    /async function syncNpcFingerprint\(conversationId = conversation\.value\?\.id\) \{\s*if \(chatViewDisposed\) \{\s*return latestNpcFingerprint;\s*\}/
+  );
+});
+
 test('ChatView keeps final NPC accessory cleanup scoped to the active conversation', () => {
   assert.match(
     chatViewScript,
-    /if \(\s*isFinal &&\s*npcUpdateStatus\.value === ACCESSORY_UPDATING &&\s*conversation\.value\?\.id === conversationId &&\s*accessoryRefreshSnapshot\.conversationId === conversationId\s*\) \{\s*npcUpdateStatus\.value = ACCESSORY_NOT_UPDATED;\s*\}/
+    /if \(\s*isFinal &&\s*!chatViewDisposed &&\s*npcUpdateStatus\.value === ACCESSORY_UPDATING &&\s*conversation\.value\?\.id === conversationId &&\s*accessoryRefreshSnapshot\.conversationId === conversationId\s*\) \{\s*npcUpdateStatus\.value = ACCESSORY_NOT_UPDATED;\s*\}/
   );
 });
 
 test('ChatView keeps failed NPC fingerprint sync scoped to the active conversation', () => {
   assert.match(
     chatViewScript,
-    /async function syncNpcFingerprint\(conversationId = conversation\.value\?\.id\) \{[\s\S]*\} catch \{\s*if \(conversation\.value\?\.id === conversationId\) \{\s*latestNpcFingerprint = '';\s*\}\s*\}[\s\S]*return latestNpcFingerprint;/
+    /async function syncNpcFingerprint\(conversationId = conversation\.value\?\.id\) \{[\s\S]*\} catch \{\s*if \(!chatViewDisposed && conversation\.value\?\.id === conversationId\) \{\s*latestNpcFingerprint = '';\s*\}\s*\}[\s\S]*return latestNpcFingerprint;/
   );
 });
 

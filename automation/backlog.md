@@ -40,6 +40,7 @@ The autonomous loop should choose one small item per run. Add new findings here 
 
 ## Done
 
+- 2026-06-08: Guarded ChatView NPC accessory refresh completions and fingerprint sync against unmounted chat views.
 - 2026-06-08: Guarded ChatView quick-model refresh completions against unmounted chat views.
 - 2026-06-08: Hardened frontend SFC test `countMatches()` so source tests can count non-global regular expressions without throwing.
 - 2026-06-08: Routed NpcPanel close actions through the local load-cancellation helper before emitting close so pending NPC list/detail loads are invalidated immediately.

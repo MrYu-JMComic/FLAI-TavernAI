@@ -475,6 +475,9 @@ function refreshStatusBarUpdateStatus(payload = {}) {
 }
 
 async function refreshNpcUpdateStatus(isFinal = false) {
+  if (chatViewDisposed) {
+    return false;
+  }
   if (!showNpcFeature.value) {
     npcUpdateStatus.value = ACCESSORY_NOT_UPDATED;
     return false;
@@ -488,7 +491,11 @@ async function refreshNpcUpdateStatus(isFinal = false) {
   }
   try {
     const npcs = await fetchConversationNpcs(conversationId);
-    if (conversation.value?.id !== conversationId || accessoryRefreshSnapshot.conversationId !== conversationId) {
+    if (
+      chatViewDisposed ||
+      conversation.value?.id !== conversationId ||
+      accessoryRefreshSnapshot.conversationId !== conversationId
+    ) {
       return false;
     }
     const nextFingerprint = serializeNpcSnapshot(npcs);
@@ -505,6 +512,7 @@ async function refreshNpcUpdateStatus(isFinal = false) {
   } finally {
     if (
       isFinal &&
+      !chatViewDisposed &&
       npcUpdateStatus.value === ACCESSORY_UPDATING &&
       conversation.value?.id === conversationId &&
       accessoryRefreshSnapshot.conversationId === conversationId
@@ -515,18 +523,21 @@ async function refreshNpcUpdateStatus(isFinal = false) {
 }
 
 async function syncNpcFingerprint(conversationId = conversation.value?.id) {
+  if (chatViewDisposed) {
+    return latestNpcFingerprint;
+  }
   if (!conversationId || !showNpcFeature.value) {
     latestNpcFingerprint = '';
     return latestNpcFingerprint;
   }
   try {
     const npcs = await fetchConversationNpcs(conversationId);
-    if (conversation.value?.id !== conversationId) {
+    if (chatViewDisposed || conversation.value?.id !== conversationId) {
       return latestNpcFingerprint;
     }
     latestNpcFingerprint = serializeNpcSnapshot(npcs);
   } catch {
-    if (conversation.value?.id === conversationId) {
+    if (!chatViewDisposed && conversation.value?.id === conversationId) {
       latestNpcFingerprint = '';
     }
   }
