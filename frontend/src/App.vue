@@ -210,16 +210,17 @@ function toggleTheme() {
 }
 
 function handleInteractionRipple(event) {
-  if (event.button !== undefined && event.button !== 0) {
+  if (event?.button !== undefined && event.button !== 0) {
     return;
   }
 
+  const source = event?.target;
   pruneStaleRippleTimers();
-  if (isFormControlRippleSource(event.target)) {
+  if (isFormControlRippleSource(source)) {
     return;
   }
 
-  const target = event.target?.closest?.(rippleSelector);
+  const target = source?.closest?.(rippleSelector);
   if (!isRippleTargetConnected(target)) {
     return;
   }
@@ -232,9 +233,11 @@ function handleInteractionRipple(event) {
     return;
   }
 
+  const clientX = Number.isFinite(event?.clientX) ? event.clientX : rect.left + rect.width / 2;
+  const clientY = Number.isFinite(event?.clientY) ? event.clientY : rect.top + rect.height / 2;
   const size = Math.ceil(Math.max(rect.width, rect.height) * 2.1);
-  target.style.setProperty('--ripple-x', `${Math.round(event.clientX - rect.left)}px`);
-  target.style.setProperty('--ripple-y', `${Math.round(event.clientY - rect.top)}px`);
+  target.style.setProperty('--ripple-x', `${Math.round(clientX - rect.left)}px`);
+  target.style.setProperty('--ripple-y', `${Math.round(clientY - rect.top)}px`);
   target.style.setProperty('--ripple-size', `${size}px`);
   target.removeAttribute('data-ripple-active');
   void target.offsetWidth;
