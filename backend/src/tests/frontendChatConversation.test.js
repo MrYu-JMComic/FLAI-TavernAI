@@ -430,6 +430,58 @@ test('chat sidebar data load reports partial failures without discarding success
   }
 });
 
+test('chat sidebar load error summaries use direct loops', () => {
+  assert.match(
+    chatConversationSource,
+    /function formatSidebarLoadError\(failures\) \{[\s\S]*let labels = '';[\s\S]*let firstMessage = '';[\s\S]*for \(let index = 0; index < failures\.length; index \+= 1\) \{[\s\S]*const \[label, reason\] = failures\[index\];[\s\S]*const labelText = label == null \? '' : String\(label\);[\s\S]*labels = labels \? `\$\{labels\}、\$\{labelText\}` : labelText;[\s\S]*if \(!firstMessage && reason\?\.message\) \{[\s\S]*firstMessage = reason\.message;[\s\S]*\}/
+  );
+  assert.doesNotMatch(chatConversationSource, /failures\.map\(\(\[label\]\) => label\)\.join/);
+  assert.doesNotMatch(chatConversationSource, /failures\.map\(\(\[, reason\]\) => reason\?\.message\)\.find/);
+});
+
+test('chat sidebar data load summarizes multiple failures in source order', async () => {
+  const originalFetch = globalThis.fetch;
+
+  globalThis.fetch = async (url) => {
+    const requestUrl = String(url);
+
+    if (requestUrl === '/api/conversations?characterId=char-1') {
+      return jsonResponse({ message: 'History unavailable' }, 503);
+    }
+
+    if (requestUrl === '/api/characters?search=&sort=created&tag=') {
+      return jsonResponse({ message: 'Characters unavailable' }, 503);
+    }
+
+    if (requestUrl === '/api/presets') {
+      return jsonResponse({ message: 'Presets unavailable' }, 503);
+    }
+
+    return jsonResponse({ message: `Unexpected request: ${requestUrl}` }, 500);
+  };
+
+  try {
+    const chat = useChatConversation({
+      route: { params: { id: 'conv-1' } },
+      emit() {},
+      showError() {}
+    });
+
+    chat.conversation.value = { id: 'conv-1', characterId: 'char-1' };
+    chat.selectedPresetId.value = 'stale-preset';
+
+    await chat.loadSidebarData();
+
+    assert.deepEqual(chat.conversations.value, []);
+    assert.deepEqual(chat.characters.value, []);
+    assert.deepEqual(chat.presetList.value, []);
+    assert.equal(chat.selectedPresetId.value, '');
+    assert.equal(chat.sidebarLoadError.value, '会话历史、角色列表、预设列表加载失败：History unavailable');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test('chat sidebar data load preserves unchanged resource references', async () => {
   const originalFetch = globalThis.fetch;
   let totalTokens = 10;

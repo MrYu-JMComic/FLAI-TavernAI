@@ -40,6 +40,7 @@ The autonomous loop should choose one small item per run. Add new findings here 
 
 ## Done
 
+- 2026-06-08: Summarized chat sidebar load failures with one direct loop instead of map/find pipelines.
 - 2026-06-08: Collected status-bar custom-template validation issues with a direct capped dedupe loop.
 - 2026-06-08: Normalized status-bar variable rows with a capped direct loop.
 - 2026-06-08: Routed StatusBar template option parsing through direct scans instead of includes/filter callbacks.

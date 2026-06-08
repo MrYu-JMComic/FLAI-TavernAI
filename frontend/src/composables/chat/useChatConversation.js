@@ -273,8 +273,16 @@ export function useChatConversation({ route, emit, showError }) {
     if (!failures.length) {
       return '';
     }
-    const labels = failures.map(([label]) => label).join('、');
-    const firstMessage = failures.map(([, reason]) => reason?.message).find(Boolean);
+    let labels = '';
+    let firstMessage = '';
+    for (let index = 0; index < failures.length; index += 1) {
+      const [label, reason] = failures[index];
+      const labelText = label == null ? '' : String(label);
+      labels = labels ? `${labels}、${labelText}` : labelText;
+      if (!firstMessage && reason?.message) {
+        firstMessage = reason.message;
+      }
+    }
     return firstMessage ? `${labels}加载失败：${firstMessage}` : `${labels}加载失败`;
   }
 
