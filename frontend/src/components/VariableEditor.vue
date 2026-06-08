@@ -63,7 +63,11 @@ onBeforeUnmount(() => {
 });
 
 function onInput(event) {
-  emit('update:modelValue', event.target.value);
+  const target = event?.target;
+  if (!target || target.value === undefined) {
+    return;
+  }
+  emit('update:modelValue', target.value);
 }
 
 function scheduleSyncScroll() {
