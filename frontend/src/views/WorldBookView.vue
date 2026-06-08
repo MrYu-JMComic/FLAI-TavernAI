@@ -27,6 +27,7 @@ import {
 } from '../api';
 import { useNotify } from '../composables/useNotify';
 import { useProviderModels } from '../composables/useProviderModels';
+import { appendAiToolList, cloneAiToolList } from '../utils/aiToolLists';
 
 const props = defineProps({
   route: { type: Object, required: true },
@@ -920,20 +921,6 @@ function appendAiToolCall(log) {
   }
   nextToolCalls.push(log);
   setAiToolCallsIfChanged(nextToolCalls);
-}
-
-function cloneAiToolList(tools = []) {
-  const clonedTools = [];
-  for (const tool of Array.isArray(tools) ? tools : []) {
-    clonedTools.push(tool);
-  }
-  return clonedTools;
-}
-
-function appendAiToolList(tools = [], log) {
-  const nextTools = cloneAiToolList(tools);
-  nextTools.push(log);
-  return nextTools;
 }
 
 function formatAiValue(value) {

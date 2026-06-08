@@ -86,12 +86,10 @@ test('WorldBookView preserves unchanged AI draft and process panel references', 
   );
   assert.match(
     worldBookViewScript,
-    /function cloneAiToolList\(tools = \[\]\) \{[\s\S]*const clonedTools = \[\];[\s\S]*for \(const tool of Array\.isArray\(tools\) \? tools : \[\]\) \{[\s\S]*clonedTools\.push\(tool\);[\s\S]*return clonedTools;[\s\S]*\}/
+    /import \{ appendAiToolList, cloneAiToolList \} from '\.\.\/utils\/aiToolLists';/
   );
-  assert.match(
-    worldBookViewScript,
-    /function appendAiToolList\(tools = \[\], log\) \{[\s\S]*const nextTools = cloneAiToolList\(tools\);[\s\S]*nextTools\.push\(log\);[\s\S]*return nextTools;[\s\S]*\}/
-  );
+  assert.doesNotMatch(worldBookViewScript, /function cloneAiToolList\(/);
+  assert.doesNotMatch(worldBookViewScript, /function appendAiToolList\(/);
   assert.doesNotMatch(worldBookViewScript, /currentProcess\.findIndex\(/);
   assert.doesNotMatch(worldBookViewScript, /currentProcess\.map\(\(item, index\) => \(index === stepIndex \? nextStep : item\)\)/);
   assert.doesNotMatch(worldBookViewScript, /\[\.\.\.currentProcess, nextStep\]/);

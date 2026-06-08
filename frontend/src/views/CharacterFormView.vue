@@ -9,6 +9,7 @@ import TalentRollDialog from '../components/TalentRollDialog.vue';
 import VariableEditor from '../components/VariableEditor.vue';
 import { useNotify } from '../composables/useNotify';
 import { useProviderModels } from '../composables/useProviderModels';
+import { appendAiToolList, cloneAiToolList } from '../utils/aiToolLists';
 
 const props = defineProps({
   route: {
@@ -1567,20 +1568,6 @@ function appendAiToolCall(log) {
   }
   nextToolCalls.push(log);
   setAiToolCallsIfChanged(nextToolCalls);
-}
-
-function cloneAiToolList(tools = []) {
-  const clonedTools = [];
-  for (const tool of Array.isArray(tools) ? tools : []) {
-    clonedTools.push(tool);
-  }
-  return clonedTools;
-}
-
-function appendAiToolList(tools = [], log) {
-  const nextTools = cloneAiToolList(tools);
-  nextTools.push(log);
-  return nextTools;
 }
 
 function formatAiValue(value) {
