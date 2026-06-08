@@ -40,6 +40,8 @@ The autonomous loop should choose one small item per run. Add new findings here 
 
 ## Done
 
+- 2026-06-08: Parsed security colon-delimited password and secret fields with a direct scanner.
+- 2026-06-08: Scanned CharacterImagePanel upload files and image MIME checks directly.
 - 2026-06-08: Registered applicable Mod extensions with direct scans instead of filter/include arrays.
 - 2026-06-08: Scanned chat appearance scoped CSS selector lists directly while preserving nested commas.
 - 2026-06-08: Scanned talent roll weights directly instead of building weighted map/reduce arrays.

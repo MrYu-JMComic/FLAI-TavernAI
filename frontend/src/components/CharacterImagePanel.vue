@@ -152,7 +152,7 @@ function sameImageSummary(current = {}, next = {}) {
 async function handleUpload(event) {
   if (imagePanelDisposed) return;
   const input = event?.target;
-  const files = Array.from(input?.files || []);
+  const files = collectUploadFiles(input?.files);
   if (input) {
     input.value = '';
   }
@@ -165,7 +165,7 @@ async function handleUpload(event) {
   uploading.value = true;
   for (const file of files) {
     if (!isCurrentImageUpload(uploadToken, characterId)) return;
-    if (!['image/png', 'image/jpeg', 'image/webp'].includes(file.type)) {
+    if (!isSupportedImageFileType(file?.type)) {
       notify.warning(`${file.name} 不是支持的图片格式`);
       continue;
     }
@@ -193,6 +193,22 @@ async function handleUpload(event) {
   if (isCurrentImageUpload(uploadToken, characterId)) {
     uploading.value = false;
   }
+}
+
+function collectUploadFiles(fileList) {
+  const files = [];
+  const count = Number(fileList?.length) || 0;
+  for (let index = 0; index < count; index += 1) {
+    const file = fileList[index];
+    if (file) {
+      files.push(file);
+    }
+  }
+  return files;
+}
+
+function isSupportedImageFileType(type) {
+  return type === 'image/png' || type === 'image/jpeg' || type === 'image/webp';
 }
 
 function isCurrentImageUpload(uploadToken, characterId) {

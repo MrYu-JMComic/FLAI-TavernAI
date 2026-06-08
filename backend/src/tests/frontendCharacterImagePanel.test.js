@@ -43,6 +43,24 @@ test('CharacterImagePanel disables image actions while one image mutation is bus
   assert.match(characterImagePanelTemplate, /:aria-busy="imageActionBusyId === 'image-order'"/);
 });
 
+test('CharacterImagePanel scans selected upload files directly', () => {
+  assert.match(
+    characterImagePanelScript,
+    /const files = collectUploadFiles\(input\?\.files\);/
+  );
+  assert.match(
+    characterImagePanelScript,
+    /function collectUploadFiles\(fileList\)\s*{\s*const files = \[\];[\s\S]*const count = Number\(fileList\?\.length\) \|\| 0;[\s\S]*for \(let index = 0; index < count; index \+= 1\) {[\s\S]*files\.push\(file\);[\s\S]*return files;[\s\S]*}/
+  );
+  assert.match(
+    characterImagePanelScript,
+    /function isSupportedImageFileType\(type\)\s*{\s*return type === 'image\/png' \|\| type === 'image\/jpeg' \|\| type === 'image\/webp';\s*}/
+  );
+  assert.match(characterImagePanelScript, /if \(!isSupportedImageFileType\(file\?\.type\)\) {/);
+  assert.doesNotMatch(characterImagePanelScript, /Array\.from\(input\?\.files/);
+  assert.doesNotMatch(characterImagePanelScript, /\['image\/png', 'image\/jpeg', 'image\/webp'\]\.includes/);
+});
+
 test('CharacterImagePanel ignores stale image item events before mutations', () => {
   assert.match(
     characterImagePanelScript,

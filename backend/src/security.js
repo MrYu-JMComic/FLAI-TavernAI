@@ -105,7 +105,12 @@ export async function hashPassword(password) {
 }
 
 export async function verifyPassword(password, storedHash) {
-  const [scheme, salt, hash] = String(storedHash || '').split(':');
+  const passwordHashParts = parseColonFields(storedHash, 3);
+  if (!passwordHashParts) {
+    return false;
+  }
+
+  const [scheme, salt, hash] = passwordHashParts;
   if (scheme !== 'scrypt' || !salt || !hash) {
     return false;
   }
@@ -134,12 +139,15 @@ export function decryptSecret(value) {
     return '';
   }
 
-  const parts = String(value).split(':');
-  const version = parts[0];
+  const parts = parseColonFields(value, 4);
+  if (!parts || hasEmptyColonField(parts)) {
+    throw new Error('Unsupported encrypted secret format');
+  }
+
+  const [version, ivText, tagText, encryptedText] = parts;
 
   if (version === 'v2') {
     // v2: AES-256-GCM with scrypt-derived key
-    const [, ivText, tagText, encryptedText] = parts;
     let lastError;
     for (const secret of secretCandidates()) {
       try {
@@ -158,7 +166,6 @@ export function decryptSecret(value) {
 
   if (version === 'v1') {
     // v1 (legacy): AES-256-GCM with SHA-256 key — backward compatible
-    const [, ivText, tagText, encryptedText] = parts;
     let lastError;
     for (const secret of secretCandidates()) {
       try {
@@ -176,6 +183,34 @@ export function decryptSecret(value) {
   }
 
   throw new Error('Unsupported encrypted secret format');
+}
+
+function parseColonFields(value, expectedCount) {
+  const source = String(value || '');
+  const fields = [];
+  let startIndex = 0;
+
+  for (let index = 0; index <= source.length; index += 1) {
+    if (index < source.length && source[index] !== ':') {
+      continue;
+    }
+    if (index < source.length && fields.length === expectedCount - 1) {
+      return null;
+    }
+    fields.push(source.slice(startIndex, index));
+    startIndex = index + 1;
+  }
+
+  return fields.length === expectedCount ? fields : null;
+}
+
+function hasEmptyColonField(fields) {
+  for (const field of fields) {
+    if (!field) {
+      return true;
+    }
+  }
+  return false;
 }
 
 export function apiKeyHint(apiKey) {

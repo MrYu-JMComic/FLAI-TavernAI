@@ -169,6 +169,25 @@ test('password hashes verify and reject wrong passwords', async () => {
   assert.equal(await verifyPassword('wrong horse battery', hash), false);
 });
 
+test('security colon-delimited formats reject trailing fields', async () => {
+  const hash = await hashPassword('correct horse battery');
+  assert.equal(await verifyPassword('correct horse battery', `${hash}:ignored`), false);
+
+  const encrypted = encryptSecret('sk-test-secret');
+  assert.throws(
+    () => decryptSecret(`${encrypted}:ignored`),
+    /Unsupported encrypted secret format/
+  );
+});
+
+test('security colon-delimited formats parse exact fields without split allocation', () => {
+  const source = fs.readFileSync(new URL('../security.js', import.meta.url), 'utf8');
+  const match = source.match(/export async function verifyPassword[\s\S]*?\nexport function apiKeyHint/);
+  assert.ok(match);
+  assert.match(match[0], /function parseColonFields\(value, expectedCount\) \{[\s\S]*for \(let index = 0; index <= source\.length; index \+= 1\)/);
+  assert.doesNotMatch(match[0], /\.split\(':'\)/);
+});
+
 test('parseCookies skips malformed percent-encoded pairs', () => {
   assert.deepEqual(
     parseCookies('flai_session=session%201; broken=%E0%A4%A; bad%ZZ=value; empty=; theme=dark'),
