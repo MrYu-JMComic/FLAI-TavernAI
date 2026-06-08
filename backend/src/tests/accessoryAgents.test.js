@@ -6,7 +6,7 @@ process.env.FLAI_DB_PATH = ':memory:';
 process.env.APP_SECRET = 'test-secret-accessory-agents';
 
 const { createAppDatabase } = await import('../db.js');
-const { normalizeAdvancedSettings } = await import('../modules/advancedSettings.js');
+const { mergeAdvancedSettings, normalizeAdvancedSettings } = await import('../modules/advancedSettings.js');
 const { createCharacter } = await import('../modules/characters.js');
 const { getConversationEconomyState, getTransactionHistory } = await import('../modules/economy.js');
 const { hideConversationNpc, listConversationNpcs } = await import('../modules/npcs.js');
@@ -72,6 +72,32 @@ test('accessory skill payloads build active flags without Object.fromEntries map
   assert.match(accessoryAgentsSource, /const active = \{\};\r?\n  for \(const key of Object\.keys\(skills\)\) \{/);
   assert.doesNotMatch(advancedSettingsSource, /Object\.fromEntries\(\s*Object\.entries\(createDefaultAccessorySkills\(\)\)\.map/);
   assert.doesNotMatch(accessoryAgentsSource, /Object\.fromEntries\(\s*Object\.keys\(skills\)\.map/);
+});
+
+test('advanced settings text fields merge without filter join arrays', () => {
+  const merged = mergeAdvancedSettings(
+    {
+      customCss: '.author {}',
+      customJs: 'author();',
+      statusBarPrompt: 'Author status prompt'
+    },
+    {
+      customCss: '.user {}',
+      customJs: 'user();',
+      statusBarPrompt: 'User status prompt'
+    }
+  );
+
+  assert.equal(merged.customCss, '.author {}\n\n.user {}');
+  assert.equal(merged.customJs, 'author();\n\nuser();');
+  assert.equal(merged.statusBarPrompt, 'Author status prompt\n\nUser status prompt');
+  assert.match(
+    advancedSettingsSource,
+    /function mergeAdvancedText\(authorValue = '', userValue = ''\) \{\s*if \(authorValue && userValue\) \{\s*return `\$\{authorValue\}\\n\\n\$\{userValue\}`;/
+  );
+  assert.doesNotMatch(advancedSettingsSource, /\[authorSettings\.customCss, userSettings\.customCss\]\.filter\(Boolean\)\.join\('\\n\\n'\)/);
+  assert.doesNotMatch(advancedSettingsSource, /\[authorSettings\.customJs, userSettings\.customJs\]\.filter\(Boolean\)\.join\('\\n\\n'\)/);
+  assert.doesNotMatch(advancedSettingsSource, /\[authorSettings\.statusBarPrompt, userSettings\.statusBarPrompt\]\.filter\(Boolean\)\.join\('\\n\\n'\)/);
 });
 
 test('status bar agent auto mode activates when variables or prompt exist and can update them', async () => {

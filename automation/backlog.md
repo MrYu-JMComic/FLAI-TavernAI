@@ -40,6 +40,7 @@ The autonomous loop should choose one small item per run. Add new findings here 
 
 ## Done
 
+- 2026-06-08: Resolved ChatSettingsDrawer lorebook binding labels through a computed direct scan.
 - 2026-06-08: Shared ChatSettingsDrawer status template token parsing and direct variable lookup.
 - 2026-06-08: Formatted CharacterAssistant enabled-section prompt lists with a direct helper.
 - 2026-06-08: Merged CharacterAssistant process reasoning with a bounded direct loop.

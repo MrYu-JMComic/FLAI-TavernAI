@@ -22,9 +22,9 @@ export function mergeAdvancedSettings(author = {}, user = {}) {
   return {
     desktopBackgroundUrl: userSettings.desktopBackgroundUrl || authorSettings.desktopBackgroundUrl,
     mobileBackgroundUrl: userSettings.mobileBackgroundUrl || authorSettings.mobileBackgroundUrl,
-    customCss: [authorSettings.customCss, userSettings.customCss].filter(Boolean).join('\n\n'),
-    customJs: [authorSettings.customJs, userSettings.customJs].filter(Boolean).join('\n\n'),
-    statusBarPrompt: [authorSettings.statusBarPrompt, userSettings.statusBarPrompt].filter(Boolean).join('\n\n'),
+    customCss: mergeAdvancedText(authorSettings.customCss, userSettings.customCss),
+    customJs: mergeAdvancedText(authorSettings.customJs, userSettings.customJs),
+    statusBarPrompt: mergeAdvancedText(authorSettings.statusBarPrompt, userSettings.statusBarPrompt),
     statusBarBlueprint: hasStatusBarBlueprint(userSettings.statusBarBlueprint)
       ? userSettings.statusBarBlueprint
       : authorSettings.statusBarBlueprint,
@@ -33,6 +33,13 @@ export function mergeAdvancedSettings(author = {}, user = {}) {
       userSource.accessorySkills ?? userSource.accessory_skills ?? {}
     )
   };
+}
+
+function mergeAdvancedText(authorValue = '', userValue = '') {
+  if (authorValue && userValue) {
+    return `${authorValue}\n\n${userValue}`;
+  }
+  return authorValue || userValue || '';
 }
 
 export function normalizeStatusBarBlueprint(input = {}) {
