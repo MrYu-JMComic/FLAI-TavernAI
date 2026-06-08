@@ -40,20 +40,9 @@ export function createModExtension(mod) {
  * @param {Object[]} mods - Array of mod objects from the backend
  */
 export function syncModsToExtensions(mods, options = {}) {
-  const characterId = typeof options === 'string'
-    ? options
-    : String(options?.characterId || '').trim();
-  const existing = getAllExtensions();
-  for (const ext of existing) {
-    if (ext.manifest.name.startsWith(MOD_EXTENSION_PREFIX)) {
-      unregisterExtension(ext.manifest.name);
-    }
-  }
-
-  for (const mod of mods.filter((item) => modAppliesToCharacter(item, characterId))) {
-    const { manifest, module } = createModExtension(mod);
-    registerExtension(manifest, module);
-  }
+  const characterId = getCharacterIdOption(options);
+  unregisterModExtensions();
+  registerApplicableModExtensions(mods, characterId);
 }
 
 /**
@@ -61,12 +50,10 @@ export function syncModsToExtensions(mods, options = {}) {
  * @returns {Promise<Object[]>} The full mod list returned by the API
  */
 export async function loadAndSyncMods(options = {}) {
-  const characterId = typeof options === 'string'
-    ? options
-    : String(options?.characterId || '').trim();
+  const characterId = getCharacterIdOption(options);
   const mods = await apiRequest('/api/mods');
-  const enabled = mods.filter((mod) => mod.enabled && modAppliesToCharacter(mod, characterId));
-  syncModsToExtensions(enabled, { characterId });
+  unregisterModExtensions();
+  registerApplicableModExtensions(mods, characterId, true);
   return mods;
 }
 
@@ -82,7 +69,7 @@ export function modAppliesToCharacter(mod, characterId = '') {
   if (scope === 'all_characters') {
     return true;
   }
-  return normalizeCharacterIds(characterIds).includes(characterId);
+  return characterIdsInclude(characterIds, characterId);
 }
 
 function normalizeModScope(scope, characterIds = []) {
@@ -90,17 +77,52 @@ function normalizeModScope(scope, characterIds = []) {
   if (['global', 'all_characters', 'characters'].includes(value)) {
     return value;
   }
-  return normalizeCharacterIds(characterIds).length ? 'characters' : 'global';
+  return hasAnyCharacterId(characterIds) ? 'characters' : 'global';
 }
 
-function normalizeCharacterIds(ids = []) {
-  const seen = new Set();
-  const normalized = [];
+function getCharacterIdOption(options) {
+  return typeof options === 'string'
+    ? options
+    : String(options?.characterId || '').trim();
+}
+
+function unregisterModExtensions() {
+  const existing = getAllExtensions();
+  for (const ext of existing) {
+    if (ext.manifest.name.startsWith(MOD_EXTENSION_PREFIX)) {
+      unregisterExtension(ext.manifest.name);
+    }
+  }
+}
+
+function registerApplicableModExtensions(mods, characterId, enabledOnly = false) {
+  for (const mod of mods) {
+    if (enabledOnly && !mod?.enabled) {
+      continue;
+    }
+    if (!modAppliesToCharacter(mod, characterId)) {
+      continue;
+    }
+    const { manifest, module } = createModExtension(mod);
+    registerExtension(manifest, module);
+  }
+}
+
+function hasAnyCharacterId(ids = []) {
   for (const rawId of Array.isArray(ids) ? ids : []) {
     const id = String(rawId || '').trim();
-    if (!id || seen.has(id)) continue;
-    seen.add(id);
-    normalized.push(id);
+    if (id) {
+      return true;
+    }
   }
-  return normalized;
+  return false;
+}
+
+function characterIdsInclude(ids = [], characterId = '') {
+  for (const rawId of Array.isArray(ids) ? ids : []) {
+    if (String(rawId || '').trim() === characterId) {
+      return true;
+    }
+  }
+  return false;
 }

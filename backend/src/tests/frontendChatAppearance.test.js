@@ -4,7 +4,7 @@ import { readRepoText, readVueBlocks } from './frontendSfcTestUtils.js';
 
 const { useChatAppearance } = await import('../../../frontend/src/composables/chat/useChatAppearance.js');
 const { useChatConversation } = await import('../../../frontend/src/composables/chat/useChatConversation.js');
-const { mergeChatAppearance, runChatCustomScript } = await import('../../../frontend/src/utils/chatAppearance.js');
+const { buildScopedChatCss, mergeChatAppearance, runChatCustomScript } = await import('../../../frontend/src/utils/chatAppearance.js');
 
 const chatAppearanceSource = readRepoText('frontend/src/composables/chat/useChatAppearance.js');
 const chatAppearanceUtilsSource = readRepoText('frontend/src/utils/chatAppearance.js');
@@ -112,6 +112,20 @@ test('chat appearance merges layered text fields without filter arrays', () => {
     /function mergeAppearanceText\(authorText, userText\) \{[\s\S]*if \(authorText && userText\) \{[\s\S]*return `\$\{authorText\}\\n\\n\$\{userText\}`;[\s\S]*return authorText \|\| userText \|\| '';[\s\S]*\}/
   );
   assert.doesNotMatch(chatAppearanceUtilsSource, /\[authorSettings\.(?:customCss|customJs|statusBarPrompt), userSettings\.(?:customCss|customJs|statusBarPrompt)\]\.filter\(Boolean\)\.join/);
+});
+
+test('chat appearance scopes selector lists with a direct comma scanner', () => {
+  assert.equal(
+    buildScopedChatCss('.message:is(.sent, .failed), [data-label="HP, MP"], :root { color: red; }', '[data-chat-scope="conv"]'),
+    '\n[data-chat-scope="conv"] .message:is(.sent, .failed), [data-chat-scope="conv"] [data-label="HP, MP"], [data-chat-scope="conv"] { color: red; }'
+  );
+  assert.match(
+    chatAppearanceUtilsSource,
+    /function scopeCssSelectorList\(selectorText, scopeSelector\) \{[\s\S]*for \(let index = 0; index <= selectorText\.length; index \+= 1\) \{[\s\S]*appendScopedCssSelector/
+  );
+  assert.doesNotMatch(chatAppearanceUtilsSource, /selectorText\s*\.split\(',/);
+  assert.doesNotMatch(chatAppearanceUtilsSource, /\.map\(\(selector\) => scopeSelectorSelector/);
+  assert.doesNotMatch(chatAppearanceUtilsSource, /\.filter\(Boolean\)\s*\.join\(', '\)/);
 });
 
 test('chat appearance background mutations ignore saving events before invalidating upload tokens', () => {

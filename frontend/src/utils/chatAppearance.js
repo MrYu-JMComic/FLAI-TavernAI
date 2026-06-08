@@ -282,13 +282,66 @@ function findBlockEnd(source, startIndex) {
 
 function prefixCssSelectors(source, scopeSelector) {
   return source.replace(/(^|})\s*([^@{}][^{}]*?)\s*\{/g, (full, prefix, selectorText) => {
-    const selectors = selectorText
-      .split(',')
-      .map((selector) => scopeSelectorSelector(selector.trim(), scopeSelector))
-      .filter(Boolean)
-      .join(', ');
+    const selectors = scopeCssSelectorList(selectorText, scopeSelector);
     return `${prefix}\n${selectors} {`;
   });
+}
+
+function scopeCssSelectorList(selectorText, scopeSelector) {
+  let output = '';
+  let startIndex = 0;
+  let quote = '';
+  let escaped = false;
+  let bracketDepth = 0;
+  let parenDepth = 0;
+
+  for (let index = 0; index <= selectorText.length; index += 1) {
+    const char = selectorText[index];
+    if (
+      index === selectorText.length
+      || (char === ',' && !quote && bracketDepth === 0 && parenDepth === 0)
+    ) {
+      output = appendScopedCssSelector(output, selectorText.slice(startIndex, index), scopeSelector);
+      startIndex = index + 1;
+      continue;
+    }
+
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+
+    if (quote) {
+      if (char === '\\') {
+        escaped = true;
+      } else if (char === quote) {
+        quote = '';
+      }
+      continue;
+    }
+
+    if (char === '"' || char === "'") {
+      quote = char;
+    } else if (char === '[') {
+      bracketDepth += 1;
+    } else if (char === ']' && bracketDepth > 0) {
+      bracketDepth -= 1;
+    } else if (char === '(') {
+      parenDepth += 1;
+    } else if (char === ')' && parenDepth > 0) {
+      parenDepth -= 1;
+    }
+  }
+
+  return output;
+}
+
+function appendScopedCssSelector(output, selector, scopeSelector) {
+  const scopedSelector = scopeSelectorSelector(selector.trim(), scopeSelector);
+  if (!scopedSelector) {
+    return output;
+  }
+  return output ? `${output}, ${scopedSelector}` : scopedSelector;
 }
 
 function scopeSelectorSelector(selector, scopeSelector) {

@@ -40,6 +40,8 @@ The autonomous loop should choose one small item per run. Add new findings here 
 
 ## Done
 
+- 2026-06-08: Registered applicable Mod extensions with direct scans instead of filter/include arrays.
+- 2026-06-08: Scanned chat appearance scoped CSS selector lists directly while preserving nested commas.
 - 2026-06-08: Scanned talent roll weights directly instead of building weighted map/reduce arrays.
 - 2026-06-08: Scanned status-bar inline style declarations directly while preserving quoted semicolon values.
 - 2026-06-08: Scored character image scene and emotion keywords with one direct own-key helper.
