@@ -60,6 +60,7 @@ let tagCreateToken = 0;
 let suggestedModCreateToken = 0;
 const ASSISTANT_MODEL_STORAGE_KEY = 'flai-assistant-model';
 const ASSISTANT_USE_CURRENT_STORAGE_KEY = 'flai-assistant-use-current-draft';
+const AI_DRAFT_SEED_FIELDS = ['name', 'gender', 'age', 'background', 'worldview', 'persona', 'openingMessage'];
 const assistantModel = ref(loadAssistantModel());
 const aiUseCurrentDraft = ref(loadAiUseCurrentDraft());
 const { providerModelOptionsFor } = useProviderModels(computed(() => props.provider));
@@ -1817,10 +1818,20 @@ function shouldApplyAiValue(value, { applyEmptyValues = true, key = '' } = {}) {
 
 function hasDraftSeed() {
   const payload = toPayload();
-  return ['name', 'gender', 'age', 'background', 'worldview', 'persona', 'openingMessage']
-    .some((key) => String(payload[key] || '').trim())
-    || payload.tags.length > 0
-    || payload.regexRules.length > 0;
+  if (hasDraftSeedText(payload)) {
+    return true;
+  }
+  return (Array.isArray(payload.tags) && payload.tags.length > 0)
+    || (Array.isArray(payload.regexRules) && payload.regexRules.length > 0);
+}
+
+function hasDraftSeedText(payload = {}) {
+  for (const key of AI_DRAFT_SEED_FIELDS) {
+    if (String(payload[key] || '').trim()) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function emptyCharacter() {

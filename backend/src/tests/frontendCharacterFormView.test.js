@@ -385,6 +385,23 @@ test('CharacterFormView normalizes accessory skill payloads with a direct defaul
   assert.doesNotMatch(nonDefaultSnippet, /Object\.keys\(defaults\)\.some/);
 });
 
+test('CharacterFormView scans AI draft seed fields without key-array callbacks', () => {
+  assert.match(
+    characterFormScript,
+    /const AI_DRAFT_SEED_FIELDS = \['name', 'gender', 'age', 'background', 'worldview', 'persona', 'openingMessage'\];/
+  );
+  assert.match(
+    characterFormScript,
+    /function hasDraftSeed\(\) \{\s*const payload = toPayload\(\);[\s\S]*if \(hasDraftSeedText\(payload\)\) \{[\s\S]*return true;[\s\S]*return \(Array\.isArray\(payload\.tags\) && payload\.tags\.length > 0\)[\s\S]*\|\| \(Array\.isArray\(payload\.regexRules\) && payload\.regexRules\.length > 0\);[\s\S]*\}/
+  );
+  assert.match(
+    characterFormScript,
+    /function hasDraftSeedText\(payload = \{\}\) \{\s*for \(const key of AI_DRAFT_SEED_FIELDS\) \{[\s\S]*if \(String\(payload\[key\] \|\| ''\)\.trim\(\)\) \{[\s\S]*return true;[\s\S]*return false;[\s\S]*\}/
+  );
+  assert.doesNotMatch(characterFormScript, /\['name', 'gender', 'age', 'background', 'worldview', 'persona', 'openingMessage'\]\s*\.\s*some/);
+  assert.doesNotMatch(characterFormScript, /Object\.keys\(payload\)\.some/);
+});
+
 test('CharacterFormView preserves unchanged AI process panel references', () => {
   assert.match(characterFormScript, /import \{ countOwnObjectKeys \} from '\.\.\/utils\/objectKeys';/);
   assert.match(
