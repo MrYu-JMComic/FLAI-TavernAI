@@ -18,10 +18,10 @@ Reduce temporary arrays while keeping Mod extension registration scoped to the a
 
 ## Validation
 
-- PASS: `powershell -ExecutionPolicy Bypass -File scripts\review-gate.ps1` (815 backend/source tests passed; frontend build passed)
-- PASS: `node --test backend\src\tests\frontendChatAppearance.test.js backend\src\tests\frontendModExtension.test.js` (18 tests passed)
+- PASS: `node --test backend\src\tests\frontendModExtension.test.js` (3 tests passed)
 - PASS: `node scripts\check-encoding.mjs` (scanned 510 files)
 - PASS: `git diff --check`
+- PASS: `powershell -ExecutionPolicy Bypass -File scripts\review-gate.ps1` (818 backend/source tests passed; frontend build passed)
 
 ## Next
 
