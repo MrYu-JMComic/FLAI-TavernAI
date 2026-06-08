@@ -56,9 +56,14 @@ onBeforeUnmount(() => {
 });
 
 function handleDocumentClick(event) {
-  if (!userMenuRef.value?.contains(event.target)) {
+  const target = event?.target;
+  if (!isDomEventTarget(target) || !userMenuRef.value?.contains(target)) {
     userMenuOpen.value = false;
   }
+}
+
+function isDomEventTarget(target) {
+  return Boolean(target && typeof target === 'object' && typeof target.nodeType === 'number');
 }
 
 function openUserSettings() {
