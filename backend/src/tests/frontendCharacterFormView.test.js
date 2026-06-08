@@ -396,6 +396,29 @@ test('CharacterFormView builds status blueprint editor rows without intermediate
   assert.doesNotMatch(characterFormScript, /variables\.forEach\(/);
 });
 
+test('CharacterFormView status blueprint input handlers tolerate missing event targets', () => {
+  assert.match(
+    characterFormScript,
+    /function readEventTargetValue\(event\) {\s*const target = event\?\.target;\s*return target && target\.value !== undefined \? target\.value : undefined;\s*}/
+  );
+  assert.match(
+    characterFormScript,
+    /function setStatusBlueprintVariableValueFromEvent\(name, event\) {\s*const value = readEventTargetValue\(event\);\s*if \(value === undefined\) {\s*return;\s*}\s*setStatusBlueprintVariableValue\(name, value\);\s*}/
+  );
+  assert.match(
+    characterFormScript,
+    /function setStatusBlueprintVariableModeFromEvent\(variable, event\) {\s*const value = readEventTargetValue\(event\);\s*if \(value === undefined\) {\s*return;\s*}\s*setStatusBlueprintVariableMode\(variable, value\);\s*}/
+  );
+  assert.match(
+    characterFormScript,
+    /function setColorValueFromEvent\(target, key, event\) {\s*const value = readEventTargetValue\(event\);\s*if \(value === undefined\) {\s*return;\s*}\s*setColorValue\(target, key, value\);\s*}/
+  );
+  assert.match(characterFormTemplate, /@input="setStatusBlueprintVariableValueFromEvent\(part\.name, \$event\)"/);
+  assert.match(characterFormTemplate, /@change="setStatusBlueprintVariableModeFromEvent\(row\.variable, \$event\)"/);
+  assert.match(characterFormTemplate, /@input="setColorValueFromEvent\(row\.variable, 'color', \$event\)"/);
+  assert.doesNotMatch(characterFormTemplate, /\$event\.target\.value/);
+});
+
 test('CharacterFormView normalizes accessory skill payloads with a direct defaults loop', () => {
   const start = characterFormScript.indexOf('function normalizeAccessorySkillsForPayload(input = {}) {');
   const end = characterFormScript.indexOf('\nfunction createDefaultStatusBarBlueprint', start);

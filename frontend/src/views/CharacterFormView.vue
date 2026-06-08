@@ -2522,6 +2522,35 @@ function setColorValue(target, key, value) {
   target[key] = normalizeHexColor(value);
 }
 
+function readEventTargetValue(event) {
+  const target = event?.target;
+  return target && target.value !== undefined ? target.value : undefined;
+}
+
+function setStatusBlueprintVariableValueFromEvent(name, event) {
+  const value = readEventTargetValue(event);
+  if (value === undefined) {
+    return;
+  }
+  setStatusBlueprintVariableValue(name, value);
+}
+
+function setStatusBlueprintVariableModeFromEvent(variable, event) {
+  const value = readEventTargetValue(event);
+  if (value === undefined) {
+    return;
+  }
+  setStatusBlueprintVariableMode(variable, value);
+}
+
+function setColorValueFromEvent(target, key, event) {
+  const value = readEventTargetValue(event);
+  if (value === undefined) {
+    return;
+  }
+  setColorValue(target, key, value);
+}
+
 function normalizeForForm(character) {
   return {
     ...emptyCharacter(),
@@ -3247,7 +3276,7 @@ function applyLocalRules(text, rules, phase) {
                         placeholder="文本内容"
                         :disabled="!canEdit"
                         :aria-label="`初始状态栏 ${row.label} 的 ${part.name}`"
-                        @input="setStatusBlueprintVariableValue(part.name, $event.target.value)"
+                        @input="setStatusBlueprintVariableValueFromEvent(part.name, $event)"
                       />
                     </label>
                   </div>
@@ -3267,7 +3296,7 @@ function applyLocalRules(text, rules, phase) {
                     :value="isStatusBlueprintMeterVariable(row.variable) ? 'meter' : 'text'"
                     :disabled="!canEdit"
                     :aria-label="`初始状态栏变量 ${row.index + 1} 类型`"
-                    @change="setStatusBlueprintVariableMode(row.variable, $event.target.value)"
+                    @change="setStatusBlueprintVariableModeFromEvent(row.variable, $event)"
                   >
                     <option value="text">文本</option>
                     <option value="meter">数值</option>
@@ -3290,7 +3319,7 @@ function applyLocalRules(text, rules, phase) {
                       :disabled="!canEdit"
                       :aria-label="`初始状态栏变量 ${row.index + 1} 最大值`"
                     />
-                    <input :value="normalizeHexColor(row.variable.color)" class="variable-input color" type="color" title="颜色" :disabled="!canEdit" @input="setColorValue(row.variable, 'color', $event.target.value)" />
+                    <input :value="normalizeHexColor(row.variable.color)" class="variable-input color" type="color" title="颜色" :disabled="!canEdit" @input="setColorValueFromEvent(row.variable, 'color', $event)" />
                   </template>
                   <button
                     v-if="canEdit"
