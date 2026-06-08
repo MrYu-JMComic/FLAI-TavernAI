@@ -665,15 +665,15 @@ function handleGlobalPointerDown(event) {
   if (!npcPanelOpen.value) {
     return;
   }
-  const target = event.target;
+  const target = event?.target;
   const shouldClose = target?.closest?.('.npc-close') || target?.classList?.contains('npc-panel-overlay');
   if (!shouldClose) {
     return;
   }
   suppressNpcPanelClick = true;
   closeNpcPanel();
-  event.preventDefault();
-  event.stopPropagation();
+  event?.preventDefault?.();
+  event?.stopPropagation?.();
 }
 
 function handleGlobalClick(event) {
@@ -681,8 +681,8 @@ function handleGlobalClick(event) {
     return;
   }
   suppressNpcPanelClick = false;
-  event.preventDefault();
-  event.stopPropagation();
+  event?.preventDefault?.();
+  event?.stopPropagation?.();
 }
 
 function handleComposerEnter(payload) {

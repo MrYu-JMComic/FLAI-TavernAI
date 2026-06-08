@@ -188,6 +188,18 @@ test('ChatView routes active conversation refreshes through the stable setter', 
   assert.doesNotMatch(chatViewScript, /conversation\.value\s*=\s*null/);
 });
 
+test('ChatView NPC panel global event handlers tolerate missing event targets', () => {
+  assert.match(
+    chatViewScript,
+    /function handleGlobalPointerDown\(event\) \{[\s\S]*const target = event\?\.target;[\s\S]*target\?\.closest\?\.\('\.npc-close'\) \|\| target\?\.classList\?\.contains\('npc-panel-overlay'\)[\s\S]*event\?\.preventDefault\?\.\(\);[\s\S]*event\?\.stopPropagation\?\.\(\);[\s\S]*\}/
+  );
+  assert.match(
+    chatViewScript,
+    /function handleGlobalClick\(event\) \{[\s\S]*suppressNpcPanelClick = false;[\s\S]*event\?\.preventDefault\?\.\(\);[\s\S]*event\?\.stopPropagation\?\.\(\);[\s\S]*\}/
+  );
+  assert.doesNotMatch(chatViewScript, /const target = event\.target/);
+});
+
 test('chat message setter preserves unchanged list references', () => {
   const chat = useChatConversation({
     route: { params: { id: 'conv-active' } },
