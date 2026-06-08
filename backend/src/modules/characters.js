@@ -383,11 +383,13 @@ export function testRegexRule(rule, text) {
 }
 
 export function applyRegexRules(text, rules, phase) {
-  const ruleList = rules && typeof rules[Symbol.iterator] === 'function' ? [...rules].filter((rule) => rule != null) : [];
-  const sorted = ruleList.sort((a, b) => (a?.priority ?? 0) - (b?.priority ?? 0));
-  return sorted.reduce((value, rule) => {
+  const sorted = collectRegexRules(rules);
+  let value = String(text || '');
+
+  for (let index = 0; index < sorted.length; index += 1) {
+    const rule = sorted[index];
     if (!rule?.enabled || !rule.pattern || !scopeApplies(rule.scope, phase)) {
-      return value;
+      continue;
     }
 
     try {
@@ -398,13 +400,34 @@ export function applyRegexRules(text, rules, phase) {
         if (Date.now() > deadline) {
           console.warn('[regex] script exceeded 100ms budget, consider optimizing:', rule.label);
         }
-        return String(result ?? value);
+        value = String(result ?? value);
+      } else {
+        value = value.replace(new RegExp(rule.pattern, rule.flags || 'g'), rule.replacement || '');
       }
-      return value.replace(new RegExp(rule.pattern, rule.flags || 'g'), rule.replacement || '');
     } catch {
-      return value;
+      continue;
     }
-  }, String(text || ''));
+  }
+
+  return value;
+}
+
+function collectRegexRules(rules) {
+  const sorted = [];
+  if (!rules || typeof rules[Symbol.iterator] !== 'function') {
+    return sorted;
+  }
+
+  for (const rule of rules) {
+    if (rule != null) {
+      sorted.push(rule);
+    }
+  }
+
+  if (sorted.length > 1) {
+    sorted.sort((a, b) => (a?.priority ?? 0) - (b?.priority ?? 0));
+  }
+  return sorted;
 }
 
 function normalizeCharacterPayload(payload = {}) {

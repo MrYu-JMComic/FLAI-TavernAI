@@ -401,6 +401,15 @@ test('applyRegexRules skips null rule items', () => {
   );
 });
 
+test('applyRegexRules applies sorted rules without spread/filter/reduce pipelines', () => {
+  const source = fs.readFileSync(new URL('../modules/characters.js', import.meta.url), 'utf8');
+  const match = source.match(/export function applyRegexRules[\s\S]*?\n}\n\nfunction normalizeCharacterPayload/);
+  assert.ok(match);
+  assert.match(match[0], /for \(let index = 0; index < sorted\.length; index \+= 1\)/);
+  assert.match(match[0], /for \(const rule of rules\)/);
+  assert.doesNotMatch(match[0], /\[\.\.\.rules\]|\.filter\(|\.reduce\(/);
+});
+
 test('regex partial reorder keeps priorities unique', () => {
   const database = createAppDatabase(':memory:');
   const userId = 'regex-partial-user';
