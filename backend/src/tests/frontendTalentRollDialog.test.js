@@ -56,7 +56,7 @@ test('TalentRollDialog ignores stale pool and talent item actions before mutatio
   );
   assert.match(
     talentRollDialogScript,
-    /if \(!isCurrentDialogContext\(context\) \|\| selectedPoolId\.value !== poolId \|\| !isCurrentPoolId\(poolId\)\) \{\s*return;\s*\}/
+    /if \(!isCurrentDialogContext\(context\)\) \{\s*return;\s*\}\s*if \(selectedPoolId\.value !== poolId \|\| !isCurrentPoolId\(poolId\)\) \{\s*rolling\.value = false;\s*return;\s*\}/
   );
   assert.match(
     talentRollDialogScript,

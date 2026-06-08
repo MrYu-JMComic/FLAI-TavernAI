@@ -262,7 +262,11 @@ async function doRoll() {
 
   // Artificial delay for animation
   await new Promise((r) => setTimeout(r, 1200));
-  if (!isCurrentDialogContext(context) || selectedPoolId.value !== poolId || !isCurrentPoolId(poolId)) {
+  if (!isCurrentDialogContext(context)) {
+    return;
+  }
+  if (selectedPoolId.value !== poolId || !isCurrentPoolId(poolId)) {
+    rolling.value = false;
     return;
   }
 
