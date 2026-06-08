@@ -40,6 +40,8 @@ The autonomous loop should choose one small item per run. Add new findings here 
 
 ## Done
 
+- 2026-06-09: Guarded CharacterFormView AI panel pointer coordinates against malformed drag and resize events.
+- 2026-06-09: Cleaned up StatusBar custom-template copy fallback textareas when selection throws.
 - 2026-06-09: Cleaned up chat message copy fallback textareas when clipboard copy throws.
 - 2026-06-09: Guarded chat appearance custom-script wait and paint resumes against stale conversation UI writes.
 - 2026-06-09: Guarded App ripple pointer handling against missing targets and coordinates.

@@ -122,3 +122,14 @@ test('StatusBar custom template click handler tolerates missing event targets', 
   assert.doesNotMatch(statusBarScript, /event\.target\?\.closest/);
   assert.doesNotMatch(statusBarScript, /event\.currentTarget\?\.contains\(target\)/);
 });
+
+test('StatusBar copy fallback cleans up temporary textareas when selection throws', () => {
+  assert.match(
+    statusBarScript,
+    /document\.body\.appendChild\(textarea\);\s*try \{\s*textarea\.select\(\);\s*document\.execCommand\('copy'\);[\s\S]*\} finally \{\s*document\.body\.removeChild\(textarea\);/
+  );
+  assert.doesNotMatch(
+    statusBarScript,
+    /document\.body\.appendChild\(textarea\);\s*textarea\.select\(\);\s*try \{/
+  );
+});

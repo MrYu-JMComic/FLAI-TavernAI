@@ -10,6 +10,7 @@ import VariableEditor from '../components/VariableEditor.vue';
 import { useNotify } from '../composables/useNotify';
 import { useProviderModels } from '../composables/useProviderModels';
 import { appendAiToolList, cloneAiToolList } from '../utils/aiToolLists';
+import { callEventMethod } from '../utils/eventMethods';
 import { countOwnObjectKeys } from '../utils/objectKeys';
 import { samePlainValue } from '../utils/plainValues';
 import { parseStatusTemplateToken } from '../../../shared/statusTemplateTokens.js';
@@ -365,16 +366,27 @@ function clampAiPanelPos(x, y, size = getAiPanelMeasuredSize()) {
   };
 }
 
+function readAiPanelPointerPoint(event) {
+  const source = event?.touches?.[0] || event;
+  const clientX = source?.clientX;
+  const clientY = source?.clientY;
+  if (!Number.isFinite(clientX) || !Number.isFinite(clientY)) {
+    return null;
+  }
+  return { clientX, clientY };
+}
+
 function onAiPanelDragStart(e) {
   if (window.innerWidth <= 760 || aiPanelResizing) return;
-  const evt = e;
+  const point = readAiPanelPointerPoint(e);
+  if (!point) return;
   const panel = aiPanelRef.value;
   if (!panel) return;
   const rect = panel.getBoundingClientRect();
-  dragStartX = evt.clientX;
-  dragStartY = evt.clientY;
-  dragOffsetX = evt.clientX - rect.left;
-  dragOffsetY = evt.clientY - rect.top;
+  dragStartX = point.clientX;
+  dragStartY = point.clientY;
+  dragOffsetX = point.clientX - rect.left;
+  dragOffsetY = point.clientY - rect.top;
   aiPanelDragTracking = true;
   aiPanelDragging.value = false;
   dragStarted = false;
@@ -385,15 +397,16 @@ function onAiPanelDragStart(e) {
 
 function onAiPanelDragMove(e) {
   if (!aiPanelDragTracking) return;
-  e.preventDefault();
-  const evt = e;
-  const distance = Math.hypot(evt.clientX - dragStartX, evt.clientY - dragStartY);
+  callEventMethod(e, 'preventDefault');
+  const point = readAiPanelPointerPoint(e);
+  if (!point) return;
+  const distance = Math.hypot(point.clientX - dragStartX, point.clientY - dragStartY);
   if (distance < AI_PANEL_DRAG_THRESHOLD) {
     return;
   }
   dragStarted = true;
   aiPanelDragging.value = true;
-  const clamped = clampAiPanelPos(evt.clientX - dragOffsetX, evt.clientY - dragOffsetY);
+  const clamped = clampAiPanelPos(point.clientX - dragOffsetX, point.clientY - dragOffsetY);
   aiPanelPos.value = { x: clamped.x, y: clamped.y };
 }
 
@@ -410,13 +423,15 @@ function onAiPanelDragEnd() {
 
 function onAiPanelResizeStart(e) {
   if (window.innerWidth <= 760) return;
+  const point = readAiPanelPointerPoint(e);
+  if (!point) return;
   const panel = aiPanelRef.value;
   if (!panel) return;
-  e.preventDefault();
+  callEventMethod(e, 'preventDefault');
   const rect = panel.getBoundingClientRect();
   aiPanelResizing = true;
-  resizeStartX = e.clientX;
-  resizeStartY = e.clientY;
+  resizeStartX = point.clientX;
+  resizeStartY = point.clientY;
   resizeStartWidth = rect.width || aiPanelSize.value.w;
   resizeStartHeight = rect.height || aiPanelSize.value.h || AI_PANEL_MIN_HEIGHT;
   document.addEventListener('pointermove', onAiPanelResizeMove, { passive: false });
@@ -426,10 +441,12 @@ function onAiPanelResizeStart(e) {
 
 function onAiPanelResizeMove(e) {
   if (!aiPanelResizing) return;
-  e.preventDefault();
+  callEventMethod(e, 'preventDefault');
+  const point = readAiPanelPointerPoint(e);
+  if (!point) return;
   const nextSize = {
-    w: Math.max(AI_PANEL_MIN_WIDTH, Math.round(resizeStartWidth + e.clientX - resizeStartX)),
-    h: Math.max(AI_PANEL_MIN_HEIGHT, Math.round(resizeStartHeight + e.clientY - resizeStartY))
+    w: Math.max(AI_PANEL_MIN_WIDTH, Math.round(resizeStartWidth + point.clientX - resizeStartX)),
+    h: Math.max(AI_PANEL_MIN_HEIGHT, Math.round(resizeStartHeight + point.clientY - resizeStartY))
   };
   aiPanelSize.value = nextSize;
   const clamped = clampAiPanelPos(aiPanelPos.value.x, aiPanelPos.value.y, nextSize);

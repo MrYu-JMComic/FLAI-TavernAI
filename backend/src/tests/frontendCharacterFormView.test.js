@@ -634,13 +634,35 @@ test('CharacterFormView uses a flowing card layout and modal status preview', ()
 });
 
 test('CharacterFormView keeps the floating AI draft panel layout stable on focus', () => {
+  assert.match(characterFormScript, /import \{ callEventMethod \} from '\.\.\/utils\/eventMethods';/);
   assert.match(characterFormScript, /const AI_PANEL_DRAG_THRESHOLD = 8;/);
   assert.match(characterFormScript, /const AI_PANEL_MIN_WIDTH = 320;/);
   assert.match(characterFormScript, /const AI_PANEL_MIN_HEIGHT = 180;/);
   assert.match(characterFormScript, /let aiPanelLayoutRafId = null;/);
+  assert.match(
+    characterFormScript,
+    /function readAiPanelPointerPoint\(event\) \{[\s\S]*const source = event\?\.touches\?\.\[0\] \|\| event;[\s\S]*Number\.isFinite\(clientX\)[\s\S]*Number\.isFinite\(clientY\)[\s\S]*return \{ clientX, clientY \};[\s\S]*\}/
+  );
+  assert.match(
+    characterFormScript,
+    /function onAiPanelDragStart\(e\) \{[\s\S]*const point = readAiPanelPointerPoint\(e\);[\s\S]*if \(!point\) return;[\s\S]*dragStartX = point\.clientX;[\s\S]*dragOffsetY = point\.clientY - rect\.top;/
+  );
+  assert.match(
+    characterFormScript,
+    /function onAiPanelDragMove\(e\) \{[\s\S]*callEventMethod\(e, 'preventDefault'\);[\s\S]*const point = readAiPanelPointerPoint\(e\);[\s\S]*if \(!point\) return;[\s\S]*clampAiPanelPos\(point\.clientX - dragOffsetX, point\.clientY - dragOffsetY\);/
+  );
+  assert.match(
+    characterFormScript,
+    /function onAiPanelResizeStart\(e\) \{[\s\S]*const point = readAiPanelPointerPoint\(e\);[\s\S]*if \(!point\) return;[\s\S]*callEventMethod\(e, 'preventDefault'\);[\s\S]*resizeStartX = point\.clientX;/
+  );
+  assert.match(
+    characterFormScript,
+    /function onAiPanelResizeMove\(e\) \{[\s\S]*callEventMethod\(e, 'preventDefault'\);[\s\S]*const point = readAiPanelPointerPoint\(e\);[\s\S]*Math\.round\(resizeStartWidth \+ point\.clientX - resizeStartX\)/
+  );
   assert.match(characterFormScript, /function scheduleAiPanelLayoutSync\(\) \{[\s\S]*requestAnimationFrame\(flushScheduledAiPanelLayout\);/);
   assert.match(characterFormScript, /function onAiPanelResizeStart\(e\) \{[\s\S]*document\.addEventListener\('pointermove', onAiPanelResizeMove/);
   assert.match(characterFormScript, /function onAiPanelResizeEnd\(\) \{[\s\S]*saveAiPanelState\(\);/);
+  assert.doesNotMatch(characterFormScript, /e\.preventDefault\(\);/);
   assert.doesNotMatch(characterFormScript, /ResizeObserver|pendingAiPanelSizeSync|syncAiPanelSizeAndPosition/);
 
   assert.match(characterFormTemplate, /ref="aiPanelRef"/);

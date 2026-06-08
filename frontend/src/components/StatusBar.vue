@@ -354,8 +354,8 @@ async function copyTemplateText(text) {
   textarea.style.position = 'fixed';
   textarea.style.opacity = '0';
   document.body.appendChild(textarea);
-  textarea.select();
   try {
+    textarea.select();
     document.execCommand('copy');
   } catch {
     // Copy buttons are optional; ignore unavailable clipboard APIs.
