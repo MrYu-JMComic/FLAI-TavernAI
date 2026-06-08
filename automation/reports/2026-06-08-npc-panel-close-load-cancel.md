@@ -18,6 +18,8 @@ Closed NPC panels now invalidate pending list and detail loads before hidden req
 - PASS: `node --test src/tests/frontendNpcPanel.test.js` in `backend` (9 tests passed)
 - PASS: `node scripts/check-encoding.mjs`
 - PASS: `git diff --check`
+- PASS: `npm.cmd test` in `backend` (829 tests passed)
+- PASS: `npm.cmd run build` in `frontend`
 - PASS: `powershell -ExecutionPolicy Bypass -File scripts/review-gate.ps1`
 
 ## Next Recommended Task
