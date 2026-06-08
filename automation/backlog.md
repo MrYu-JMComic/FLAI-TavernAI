@@ -40,6 +40,7 @@ The autonomous loop should choose one small item per run. Add new findings here 
 
 ## Done
 
+- 2026-06-08: Compared App and SettingsView plain refresh values with direct loops instead of Object.keys/every callbacks.
 - 2026-06-08: Compared CharacterFormView AI plain-object refresh values with own-key loops instead of Object.keys arrays.
 - 2026-06-08: Compared WorldBookView AI plain-object refresh values with own-key loops instead of Object.keys arrays.
 - 2026-06-08: Collected chat conversation stable-serialization object keys with a direct sorted own-key loop.

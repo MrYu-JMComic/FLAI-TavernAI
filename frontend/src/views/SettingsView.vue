@@ -594,23 +594,45 @@ function samePlainValue(left, right) {
     return false;
   }
   if (Array.isArray(left) || Array.isArray(right)) {
-    return Array.isArray(left)
-      && Array.isArray(right)
-      && left.length === right.length
-      && left.every((item, index) => samePlainValue(item, right[index]));
+    if (!Array.isArray(left) || !Array.isArray(right) || left.length !== right.length) {
+      return false;
+    }
+    for (let index = 0; index < left.length; index += 1) {
+      if (!samePlainValue(left[index], right[index])) {
+        return false;
+      }
+    }
+    return true;
   }
-  const leftKeys = Object.keys(left);
-  const rightKeys = Object.keys(right);
-  return leftKeys.length === rightKeys.length
-    && leftKeys.every((key) => Object.prototype.hasOwnProperty.call(right, key)
-      && samePlainValue(left[key], right[key]));
+  let leftKeyCount = 0;
+  for (const key in left) {
+    if (!Object.prototype.hasOwnProperty.call(left, key)) {
+      continue;
+    }
+    leftKeyCount += 1;
+    if (!Object.prototype.hasOwnProperty.call(right, key) || !samePlainValue(left[key], right[key])) {
+      return false;
+    }
+  }
+  let rightKeyCount = 0;
+  for (const key in right) {
+    if (Object.prototype.hasOwnProperty.call(right, key)) {
+      rightKeyCount += 1;
+    }
+  }
+  return leftKeyCount === rightKeyCount;
 }
 
 function sameListItems(currentList, nextList) {
-  return Array.isArray(currentList)
-    && Array.isArray(nextList)
-    && currentList.length === nextList.length
-    && currentList.every((item, index) => samePlainValue(item, nextList[index]));
+  if (!Array.isArray(currentList) || !Array.isArray(nextList) || currentList.length !== nextList.length) {
+    return false;
+  }
+  for (let index = 0; index < currentList.length; index += 1) {
+    if (!samePlainValue(currentList[index], nextList[index])) {
+      return false;
+    }
+  }
+  return true;
 }
 
 function setPlainValueIfChanged(valueRef, nextValue) {

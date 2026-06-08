@@ -156,6 +156,14 @@ test('SettingsView extension retry handlers ignore events while already loading'
 test('SettingsView preserves unchanged extension list references during refreshes', () => {
   assert.match(
     settingsViewScript,
+    /function samePlainValue\(left, right\) \{[\s\S]*Object\.is\(left, right\)[\s\S]*Array\.isArray\(left\)[\s\S]*for \(let index = 0; index < left\.length; index \+= 1\) \{[\s\S]*samePlainValue\(left\[index\], right\[index\]\)[\s\S]*let leftKeyCount = 0;[\s\S]*for \(const key in left\) \{[\s\S]*leftKeyCount \+= 1;[\s\S]*samePlainValue\(left\[key\], right\[key\]\)[\s\S]*let rightKeyCount = 0;[\s\S]*for \(const key in right\) \{[\s\S]*rightKeyCount \+= 1;[\s\S]*return leftKeyCount === rightKeyCount;[\s\S]*\}/
+  );
+  assert.match(
+    settingsViewScript,
+    /function sameListItems\(currentList, nextList\) \{[\s\S]*currentList\.length !== nextList\.length[\s\S]*for \(let index = 0; index < currentList\.length; index \+= 1\) \{[\s\S]*samePlainValue\(currentList\[index\], nextList\[index\]\)[\s\S]*return true;[\s\S]*\}/
+  );
+  assert.match(
+    settingsViewScript,
     /function setListIfChanged\(listRef, nextList\) \{[\s\S]*sameListItems\(listRef\.value, normalizedNextList\)[\s\S]*listRef\.value = normalizedNextList;[\s\S]*return true;[\s\S]*\}/
   );
   assert.match(
@@ -206,6 +214,11 @@ test('SettingsView preserves unchanged extension list references during refreshe
     settingsViewScript,
     /(tagList|presetList|modList|modCharacterOptions|regexRules)\.value\s*=/
   );
+  assert.doesNotMatch(settingsViewScript, /left\.every\(/);
+  assert.doesNotMatch(settingsViewScript, /leftKeys\.every\(/);
+  assert.doesNotMatch(settingsViewScript, /currentList\.every\(/);
+  assert.doesNotMatch(settingsViewScript, /Object\.keys\(left\)/);
+  assert.doesNotMatch(settingsViewScript, /Object\.keys\(right\)/);
 });
 
 test('SettingsView preserves unchanged personal profile and balance references', () => {

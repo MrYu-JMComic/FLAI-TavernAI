@@ -19,7 +19,11 @@ test('App session state preserves user and provider references for unchanged pay
   );
   assert.match(
     appScript,
-    /function samePlainValue\(current, next\) {[\s\S]*Object\.is\(current, next\)[\s\S]*Array\.isArray\(current\)[\s\S]*Object\.keys\(current\)[\s\S]*samePlainValue\(current\[key\], next\[key\]\)[\s\S]*}/
+    /function samePlainValue\(current, next\) {[\s\S]*Object\.is\(current, next\)[\s\S]*Array\.isArray\(current\)[\s\S]*for \(let index = 0; index < current\.length; index \+= 1\) {[\s\S]*samePlainValue\(current\[index\], next\[index\]\)[\s\S]*let currentKeyCount = 0;[\s\S]*for \(const key in current\) {[\s\S]*currentKeyCount \+= 1;[\s\S]*samePlainValue\(current\[key\], next\[key\]\)[\s\S]*let nextKeyCount = 0;[\s\S]*for \(const key in next\) {[\s\S]*nextKeyCount \+= 1;[\s\S]*return currentKeyCount === nextKeyCount;[\s\S]*}/
+  );
+  assert.doesNotMatch(
+    appScript,
+    /Object\.keys\(current\)/
   );
   assert.match(
     appScript,
