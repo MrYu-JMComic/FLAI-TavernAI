@@ -689,12 +689,12 @@ function mergeCharacter(nextCharacter) {
 }
 
 async function handleImportFile(event) {
-  if (importLoading.value) {
-    return;
+  const input = event?.target;
+  const file = input?.files?.[0];
+  if (input) {
+    input.value = '';
   }
-  const file = event.target.files?.[0];
-  if (!file) return;
-  event.target.value = '';
+  if (importLoading.value || !file || !isHomeActive()) return;
   const readToken = ++importFileReadToken;
 
   try {
@@ -810,10 +810,10 @@ function formatCount(value) {
             <Plus :size="18" />
             <span>创建角色</span>
           </button>
-          <label class="home-secondary-action home-file-action">
+          <label class="home-secondary-action home-file-action" :class="{ disabled: importLoading }">
             <Upload :size="18" />
             <span>导入角色卡</span>
-            <input type="file" accept=".json" @change="handleImportFile" />
+            <input type="file" accept=".json" :disabled="importLoading" @change="handleImportFile" />
           </label>
         </div>
       </div>
@@ -1130,10 +1130,10 @@ function formatCount(value) {
           <Plus :size="18" />
           <span>创建角色</span>
         </button>
-        <label v-if="!hasActiveFilters" class="home-secondary-action home-file-action">
+        <label v-if="!hasActiveFilters" class="home-secondary-action home-file-action" :class="{ disabled: importLoading }">
           <Upload :size="18" />
           <span>导入角色卡</span>
-          <input type="file" accept=".json" @change="handleImportFile" />
+          <input type="file" accept=".json" :disabled="importLoading" @change="handleImportFile" />
         </label>
       </div>
     </section>

@@ -9700,6 +9700,11 @@ fieldset.accessory-skills-grid:disabled {
   cursor: pointer;
 }
 
+.home-file-action.disabled {
+  cursor: not-allowed;
+  opacity: 0.64;
+}
+
 .home-file-action input {
   position: absolute;
   inset: 0;

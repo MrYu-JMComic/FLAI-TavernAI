@@ -235,7 +235,7 @@ test('HomeView ignores stale character import file reads', () => {
   );
   assert.match(
     homeViewScript,
-    /async function handleImportFile\(event\) {[\s\S]*const readToken = \+\+importFileReadToken;[\s\S]*const text = await file\.text\(\);[\s\S]*if \(!isCurrentImportFileRead\(readToken\)\) return;[\s\S]*importPreview\.value = data;[\s\S]*} catch {[\s\S]*if \(!isCurrentImportFileRead\(readToken\)\) return;/
+    /async function handleImportFile\(event\) {[\s\S]*const input = event\?\.target;[\s\S]*const file = input\?\.files\?\.\[0\];[\s\S]*if \(input\) {\s*input\.value = '';[\s\S]*if \(importLoading\.value \|\| !file \|\| !isHomeActive\(\)\) return;[\s\S]*const readToken = \+\+importFileReadToken;[\s\S]*const text = await file\.text\(\);[\s\S]*if \(!isCurrentImportFileRead\(readToken\)\) return;[\s\S]*importPreview\.value = data;[\s\S]*} catch {[\s\S]*if \(!isCurrentImportFileRead\(readToken\)\) return;/
   );
   assert.match(
     homeViewScript,
@@ -245,4 +245,6 @@ test('HomeView ignores stale character import file reads', () => {
     homeViewScript,
     /function cancelImport\(\) {[\s\S]*importFileReadToken \+= 1;[\s\S]*importPreview\.value = null;[\s\S]*}/
   );
+  assert.equal(countMatches(homeViewTemplate, /class="home-secondary-action home-file-action" :class="\{ disabled: importLoading \}"/g), 2);
+  assert.equal(countMatches(homeViewTemplate, /<input type="file" accept="\.json" :disabled="importLoading" @change="handleImportFile" \/>/g), 2);
 });

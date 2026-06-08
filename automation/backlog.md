@@ -40,6 +40,7 @@ The autonomous loop should choose one small item per run. Add new findings here 
 
 ## Done
 
+- 2026-06-08: Locked HomeView character import file inputs while import confirmation is pending and cleared stale file selections before early returns.
 - 2026-06-08: Guarded SettingsView preset and regex import file handlers against missing event targets.
 - 2026-06-08: Delayed CharacterFormView and CharacterImagePanel upload token invalidation until selected files pass validation.
 - 2026-06-08: Delayed chat appearance background upload token invalidation until selected files pass validation.
