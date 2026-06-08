@@ -23,6 +23,9 @@ function withFakeWindow(callback) {
     },
     clearTimeout() {},
     localStorage: {
+      getItem() {
+        return null;
+      },
       setItem() {}
     }
   };
@@ -80,6 +83,28 @@ function withFakeAnimationFrame(callback) {
   }
 }
 
+function withNoAnimationFrame(callback) {
+  const originalRequestAnimationFrame = globalThis.requestAnimationFrame;
+  const originalCancelAnimationFrame = globalThis.cancelAnimationFrame;
+  delete globalThis.requestAnimationFrame;
+  delete globalThis.cancelAnimationFrame;
+
+  try {
+    return callback();
+  } finally {
+    if (originalRequestAnimationFrame === undefined) {
+      delete globalThis.requestAnimationFrame;
+    } else {
+      globalThis.requestAnimationFrame = originalRequestAnimationFrame;
+    }
+    if (originalCancelAnimationFrame === undefined) {
+      delete globalThis.cancelAnimationFrame;
+    } else {
+      globalThis.cancelAnimationFrame = originalCancelAnimationFrame;
+    }
+  }
+}
+
 test('chat scroll can anchor a sent message above the composer padding', () => {
   withFakeWindow(() => {
     const messageElement = {
@@ -114,6 +139,33 @@ test('chat scroll can anchor a sent message above the composer padding', () => {
 
     scroll.cleanup();
   });
+});
+
+test('chat scroll falls back when animation frames are unavailable', () => {
+  withFakeWindow(() => withNoAnimationFrame(() => {
+    const scroller = {
+      scrollTop: 0,
+      scrollHeight: 1000,
+      clientHeight: 300,
+      scrollTo({ top }) {
+        this.scrollTop = top;
+      }
+    };
+
+    const scroll = useChatScroll({
+      messageScroller: refValue(scroller),
+      conversationId: refValue('conv-1')
+    });
+
+    assert.doesNotThrow(() => scroll.scrollToBottom(false, true));
+    assert.equal(scroller.scrollTop, 1000);
+
+    scroller.scrollTop = 100;
+    assert.doesNotThrow(() => scroll.restoreMessageScrollPosition(refValue([{ role: 'user' }])));
+    assert.equal(scroller.scrollTop, 1000);
+
+    scroll.cleanup();
+  }));
 });
 
 test('chat scroll message lookup scans DOM nodes without cloning the node list', () => {

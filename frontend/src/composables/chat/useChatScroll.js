@@ -93,11 +93,7 @@ export function useChatScroll({ messageScroller, conversationId }) {
     if (disposed || scrollStateRafId) {
       return;
     }
-    if (typeof requestAnimationFrame !== 'function') {
-      updateScrollState();
-      return;
-    }
-    scrollStateRafId = requestAnimationFrame(() => {
+    scrollStateRafId = scheduleFrame(() => {
       scrollStateRafId = null;
       updateScrollState();
     });
@@ -147,10 +143,10 @@ export function useChatScroll({ messageScroller, conversationId }) {
       userPausedAutoScroll = false;
       isScrollPinned.value = true;
     }
-    if (scrollToBottomRafId) {
-      cancelAnimationFrame(scrollToBottomRafId);
+    if (scrollToBottomRafId !== null) {
+      cancelScheduledFrame(scrollToBottomRafId);
     }
-    scrollToBottomRafId = requestAnimationFrame(() => {
+    scrollToBottomRafId = scheduleFrame(() => {
       scrollToBottomRafId = null;
       if (disposed) {
         return;
@@ -183,8 +179,8 @@ export function useChatScroll({ messageScroller, conversationId }) {
       return false;
     }
 
-    if (scrollToBottomRafId) {
-      cancelAnimationFrame(scrollToBottomRafId);
+    if (scrollToBottomRafId !== null) {
+      cancelScheduledFrame(scrollToBottomRafId);
       scrollToBottomRafId = null;
     }
 
@@ -277,10 +273,10 @@ export function useChatScroll({ messageScroller, conversationId }) {
     if (disposed) {
       return;
     }
-    if (restoreScrollRafId) {
-      cancelAnimationFrame(restoreScrollRafId);
+    if (restoreScrollRafId !== null) {
+      cancelScheduledFrame(restoreScrollRafId);
     }
-    restoreScrollRafId = requestAnimationFrame(() => {
+    restoreScrollRafId = scheduleFrame(() => {
       restoreScrollRafId = null;
       if (disposed) {
         return;
@@ -373,6 +369,20 @@ export function useChatScroll({ messageScroller, conversationId }) {
     }, 360);
   }
 
+  function scheduleFrame(callback) {
+    if (typeof requestAnimationFrame !== 'function') {
+      callback();
+      return null;
+    }
+    return requestAnimationFrame(callback);
+  }
+
+  function cancelScheduledFrame(frameId) {
+    if (frameId !== null && typeof cancelAnimationFrame === 'function') {
+      cancelAnimationFrame(frameId);
+    }
+  }
+
   function cleanup() {
     disposed = true;
     if (scrollSaveTimer) {
@@ -383,16 +393,16 @@ export function useChatScroll({ messageScroller, conversationId }) {
       window.clearTimeout(smoothScrollStateTimer);
       smoothScrollStateTimer = null;
     }
-    if (scrollToBottomRafId) {
-      cancelAnimationFrame(scrollToBottomRafId);
+    if (scrollToBottomRafId !== null) {
+      cancelScheduledFrame(scrollToBottomRafId);
       scrollToBottomRafId = null;
     }
-    if (restoreScrollRafId) {
-      cancelAnimationFrame(restoreScrollRafId);
+    if (restoreScrollRafId !== null) {
+      cancelScheduledFrame(restoreScrollRafId);
       restoreScrollRafId = null;
     }
-    if (scrollStateRafId) {
-      cancelAnimationFrame(scrollStateRafId);
+    if (scrollStateRafId !== null) {
+      cancelScheduledFrame(scrollStateRafId);
       scrollStateRafId = null;
     }
   }
