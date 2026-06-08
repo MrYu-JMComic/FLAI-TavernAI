@@ -86,15 +86,29 @@ export function unregisterHook(hookType, extensionName) {
   const entries = hooks.get(hookType);
   if (!entries) return false;
 
-  const before = entries.length;
-  const filtered = entries.filter(e => e.extensionName !== extensionName);
+  let nextEntries = null;
+  for (let index = 0; index < entries.length; index += 1) {
+    const entry = entries[index];
+    if (entry.extensionName === extensionName) {
+      if (!nextEntries) {
+        nextEntries = [];
+        for (let copyIndex = 0; copyIndex < index; copyIndex += 1) {
+          nextEntries.push(entries[copyIndex]);
+        }
+      }
+      continue;
+    }
+    if (nextEntries) {
+      nextEntries.push(entry);
+    }
+  }
 
-  if (filtered.length === before) return false;
+  if (!nextEntries) return false;
 
-  if (filtered.length === 0) {
+  if (nextEntries.length === 0) {
     hooks.delete(hookType);
   } else {
-    hooks.set(hookType, filtered);
+    hooks.set(hookType, nextEntries);
   }
   return true;
 }

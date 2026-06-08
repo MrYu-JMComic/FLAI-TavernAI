@@ -346,6 +346,19 @@ test('CharacterFormView normalizes accessory skill payloads with a direct defaul
   assert.match(snippet, /return normalized;/);
   assert.doesNotMatch(snippet, /Object\.fromEntries/);
   assert.doesNotMatch(snippet, /Object\.keys\(defaults\)\.map/);
+
+  const nonDefaultStart = characterFormScript.indexOf('function hasNonDefaultAccessorySkills(skills = {}) {');
+  const nonDefaultEnd = characterFormScript.indexOf('\nfunction normalizeSkillEnabled', nonDefaultStart);
+  assert.notEqual(nonDefaultStart, -1);
+  assert.notEqual(nonDefaultEnd, -1);
+  const nonDefaultSnippet = characterFormScript.slice(nonDefaultStart, nonDefaultEnd);
+  assert.match(nonDefaultSnippet, /const defaults = createDefaultAccessorySkills\(\);/);
+  assert.match(nonDefaultSnippet, /for \(const key in defaults\)/);
+  assert.match(nonDefaultSnippet, /Object\.prototype\.hasOwnProperty\.call\(defaults, key\)/);
+  assert.match(nonDefaultSnippet, /normalizeSkillEnabled\(current\.enabled, fallback\.enabled\) !== fallback\.enabled/);
+  assert.match(nonDefaultSnippet, /return true;/);
+  assert.match(nonDefaultSnippet, /return false;/);
+  assert.doesNotMatch(nonDefaultSnippet, /Object\.keys\(defaults\)\.some/);
 });
 
 test('CharacterFormView preserves unchanged AI process panel references', () => {

@@ -2445,12 +2445,20 @@ function hasStatusBarBlueprintContent(blueprint = {}) {
 
 function hasNonDefaultAccessorySkills(skills = {}) {
   const defaults = createDefaultAccessorySkills();
-  return Object.keys(defaults).some((key) => {
+  for (const key in defaults) {
+    if (!Object.prototype.hasOwnProperty.call(defaults, key)) {
+      continue;
+    }
     const current = skills?.[key] || {};
     const fallback = defaults[key] || {};
-    return normalizeSkillEnabled(current.enabled, fallback.enabled) !== fallback.enabled ||
-      String(current.modelOverride || current.model_override || '').trim();
-  });
+    if (
+      normalizeSkillEnabled(current.enabled, fallback.enabled) !== fallback.enabled ||
+      String(current.modelOverride || current.model_override || '').trim()
+    ) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function normalizeSkillEnabled(value, fallback = false) {

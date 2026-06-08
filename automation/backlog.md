@@ -40,6 +40,8 @@ The autonomous loop should choose one small item per run. Add new findings here 
 
 ## Done
 
+- 2026-06-08: Checked CharacterFormView non-default accessory skills with a direct defaults loop instead of Object.keys/some.
+- 2026-06-08: Unregistered extension hooks with a no-op-aware direct loop instead of filter allocation.
 - 2026-06-08: Removed WorldBookView deleted book rows with a no-op-aware direct loop instead of filter allocation.
 - 2026-06-08: Compared provider model cache rows with a direct index loop instead of every callbacks.
 - 2026-06-08: Compared NpcPanel unchanged NPC and detail lists with a direct index loop instead of every callbacks.
