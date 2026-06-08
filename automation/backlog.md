@@ -40,6 +40,8 @@ The autonomous loop should choose one small item per run. Add new findings here 
 
 ## Done
 
+- 2026-06-08: Checked SettingsView refreshed model containment with a direct helper instead of an inline some callback.
+- 2026-06-08: Listed chat messages with a direct displayable-row loop instead of filter/map arrays.
 - 2026-06-08: Routed CharacterFormView tag-create visibility through a computed direct scan.
 - 2026-06-08: Scanned CharacterFormView AI draft seed fields with a stable direct loop.
 - 2026-06-08: Built NPC prompt registry visibility and metadata indexes with one direct scan.

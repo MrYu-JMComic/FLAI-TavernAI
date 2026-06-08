@@ -43,8 +43,13 @@ test('SettingsView model refresh ignores events while refresh is unavailable or 
   );
   assert.match(
     settingsViewScript,
-    /const nextOptions = await refreshProviderModels\(request, \{ forceRefresh: true \}\);[\s\S]*applyModelOptions\(nextOptions\);[\s\S]*if \(!nextOptions\.length\)[\s\S]*!nextOptions\.some\(\(model\) => model\.id === form\.model\)[\s\S]*form\.model = nextOptions\[0\]\.id;/
+    /const nextOptions = await refreshProviderModels\(request, \{ forceRefresh: true \}\);[\s\S]*applyModelOptions\(nextOptions\);[\s\S]*if \(!nextOptions\.length\)[\s\S]*!hasProviderModelOption\(nextOptions, form\.model\)[\s\S]*form\.model = nextOptions\[0\]\.id;/
   );
+  assert.match(
+    settingsViewScript,
+    /function hasProviderModelOption\(options, modelId\) \{\s*const id = String\(modelId \|\| ''\)\.trim\(\);[\s\S]*if \(!id\) \{[\s\S]*return false;[\s\S]*for \(const model of Array\.isArray\(options\) \? options : \[\]\) \{[\s\S]*if \(model\?\.id === id\) \{[\s\S]*return true;[\s\S]*return false;[\s\S]*\}/
+  );
+  assert.doesNotMatch(settingsViewScript, /nextOptions\.some\(\(model\) => model\.id === form\.model\)/);
   assert.match(
     settingsViewTemplate,
     /<button class="ghost-button compact-button" type="button" :disabled="providerControlsBusy \|\| !canFetchModels" @click="loadModels">/

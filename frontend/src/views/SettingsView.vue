@@ -283,7 +283,7 @@ async function loadModels() {
     applyModelOptions(nextOptions);
     if (!nextOptions.length) {
       notify.info('网关没有返回可选模型，请确认 /models 接口可用。');
-    } else if (!nextOptions.some((model) => model.id === form.model)) {
+    } else if (!hasProviderModelOption(nextOptions, form.model)) {
       form.model = nextOptions[0].id;
       notify.success(`已刷新 ${nextOptions.length} 个模型，并自动选择第一个。`);
     } else {
@@ -562,6 +562,19 @@ function applyModelOptions(nextOptions) {
   }
   modelOptions.value = nextOptions;
   return true;
+}
+
+function hasProviderModelOption(options, modelId) {
+  const id = String(modelId || '').trim();
+  if (!id) {
+    return false;
+  }
+  for (const model of Array.isArray(options) ? options : []) {
+    if (model?.id === id) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function readAsDataUrl(file) {

@@ -684,15 +684,20 @@ export function createConversationsRouter(ctx) {
   }
 
   function getMessages(userId, conversationId) {
-    return db
+    const rows = db
       .prepare(
         `SELECT * FROM messages
          WHERE user_id = ? AND conversation_id = ?
          ORDER BY created_at ASC, rowid ASC`
       )
-      .all(userId, conversationId)
-      .filter(isDisplayableMessageRow)
-      .map(toMessage);
+      .all(userId, conversationId);
+    const messages = [];
+    for (const row of rows) {
+      if (isDisplayableMessageRow(row)) {
+        messages.push(toMessage(row));
+      }
+    }
+    return messages;
   }
 
   function getMessage(userId, conversationId, messageId) {

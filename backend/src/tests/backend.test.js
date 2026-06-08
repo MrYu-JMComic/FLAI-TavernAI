@@ -7441,6 +7441,18 @@ test('conversation messages preserve insertion order when timestamps tie', async
       body.messages.map((message) => message.content),
       ['First tied message', 'Second tied message', 'Third tied message']
     );
+
+    const routeSource = fs.readFileSync(new URL('../routes/conversations.js', import.meta.url), 'utf8');
+    const start = routeSource.indexOf('function getMessages(userId, conversationId) {');
+    const end = routeSource.indexOf('\n  function getMessage', start);
+    assert.notEqual(start, -1);
+    assert.notEqual(end, -1);
+    const snippet = routeSource.slice(start, end);
+    assert.match(snippet, /const rows = db\s*\.prepare/);
+    assert.match(snippet, /const messages = \[\];/);
+    assert.match(snippet, /for \(const row of rows\) \{[\s\S]*if \(isDisplayableMessageRow\(row\)\) \{[\s\S]*messages\.push\(toMessage\(row\)\);/);
+    assert.doesNotMatch(snippet, /\.filter\(isDisplayableMessageRow\)/);
+    assert.doesNotMatch(snippet, /\.map\(toMessage\)/);
   } finally {
     await new Promise((resolve) => server.close(resolve));
   }
