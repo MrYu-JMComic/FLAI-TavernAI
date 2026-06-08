@@ -329,10 +329,9 @@ function pushNotification(input = {}) {
     actionLabel: input.actionLabel || '',
     action: typeof input.action === 'function' ? input.action : null
   };
-  notifications.value = [item, ...notifications.value].slice(0, 4);
-  const visibleIds = new Set(notifications.value.map((notification) => notification.id));
+  const visibleNotifications = prependNotificationWithLimit(item);
   for (const [timerId, timer] of notificationTimers.entries()) {
-    if (!visibleIds.has(timerId)) {
+    if (!isNotificationVisible(visibleNotifications, timerId)) {
       window.clearTimeout(timer);
       notificationTimers.delete(timerId);
     }
@@ -348,6 +347,28 @@ function pushNotification(input = {}) {
     notificationTimers.set(id, timer);
   }
   return id;
+}
+
+function prependNotificationWithLimit(item) {
+  const currentNotifications = Array.isArray(notifications.value) ? notifications.value : [];
+  const nextNotifications = [item];
+  for (const notification of currentNotifications) {
+    if (nextNotifications.length >= 4) {
+      break;
+    }
+    nextNotifications.push(notification);
+  }
+  notifications.value = nextNotifications;
+  return nextNotifications;
+}
+
+function isNotificationVisible(currentNotifications, notificationId) {
+  for (const notification of currentNotifications) {
+    if (notification?.id === notificationId) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function normalizeNotificationMessage(value, type) {
@@ -367,19 +388,29 @@ function normalizeNotificationMessage(value, type) {
 }
 
 function dismissNotification(id) {
-  const notificationIndex = notifications.value.findIndex((item) => item.id === id);
   const timer = notificationTimers.get(id);
   if (timer) {
     window.clearTimeout(timer);
     notificationTimers.delete(id);
   }
-  if (notificationIndex === -1) {
-    return;
+  removeNotificationByIdIfPresent(id);
+}
+
+function removeNotificationByIdIfPresent(id) {
+  const currentNotifications = Array.isArray(notifications.value) ? notifications.value : [];
+  const nextNotifications = [];
+  let changed = false;
+  for (const notification of currentNotifications) {
+    if (notification?.id === id) {
+      changed = true;
+    } else {
+      nextNotifications.push(notification);
+    }
   }
-  notifications.value = [
-    ...notifications.value.slice(0, notificationIndex),
-    ...notifications.value.slice(notificationIndex + 1)
-  ];
+  if (changed) {
+    notifications.value = nextNotifications;
+  }
+  return changed;
 }
 
 function clearNotifications() {
