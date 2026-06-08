@@ -40,6 +40,8 @@ The autonomous loop should choose one small item per run. Add new findings here 
 
 ## Done
 
+- 2026-06-08: Cleared chat message swipe state with an own-key loop instead of Object.keys allocations.
+- 2026-06-08: Rechecked persisted chat draft reconcile state with an arguments loop instead of rest-array/some allocations.
 - 2026-06-08: Compared chat message branch refresh rows with direct loops instead of every callbacks.
 - 2026-06-08: Serialized chat accessory template config with a direct has-config flag instead of Object.keys.
 - 2026-06-08: Synced chat accessory skill defaults with a stable key loop instead of Object.keys allocations.

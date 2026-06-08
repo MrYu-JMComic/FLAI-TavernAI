@@ -773,11 +773,15 @@ export function useChatSubmit({
     await new Promise((resolve) => setTimeout(resolve, delayMs));
   }
 
-  function needsPersistedDraftReconcile(...items) {
-    return items.some((item) => {
+  function needsPersistedDraftReconcile() {
+    for (let index = 0; index < arguments.length; index += 1) {
+      const item = arguments[index];
       const currentItem = findMessageListItem(item?.id);
-      return isLocalDraft(currentItem) && !currentItem.streaming;
-    });
+      if (isLocalDraft(currentItem) && !currentItem.streaming) {
+        return true;
+      }
+    }
+    return false;
   }
 
   function isLocalDraft(message) {

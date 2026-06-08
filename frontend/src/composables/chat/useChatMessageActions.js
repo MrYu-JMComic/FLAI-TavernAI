@@ -551,8 +551,10 @@ export function useChatMessageActions({
     if (invalidate) {
       swipeInitToken += 1;
     }
-    for (const key of Object.keys(messageSwipeState)) {
-      delete messageSwipeState[key];
+    for (const key in messageSwipeState) {
+      if (Object.prototype.hasOwnProperty.call(messageSwipeState, key)) {
+        delete messageSwipeState[key];
+      }
     }
     clearSetRef(swipeLoading);
   }

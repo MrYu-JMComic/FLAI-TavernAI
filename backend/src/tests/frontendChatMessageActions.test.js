@@ -664,6 +664,11 @@ test('message UI reset clears populated collection state', () => {
   assert.equal(actions.swipeLoading.value.size, 0);
   assert.equal(actions.conversationBranches.value.length, 0);
   assert.deepEqual(Object.keys(actions.messageSwipeState), []);
+  assert.match(
+    chatMessageActionsSource,
+    /function resetMessageSwipeState\(\{ invalidate = true \} = \{\}\) \{[\s\S]*for \(const key in messageSwipeState\) \{[\s\S]*Object\.prototype\.hasOwnProperty\.call\(messageSwipeState, key\)[\s\S]*delete messageSwipeState\[key\];[\s\S]*clearSetRef\(swipeLoading\);[\s\S]*\}/
+  );
+  assert.doesNotMatch(chatMessageActionsSource, /Object\.keys\(messageSwipeState\)/);
 });
 
 test('message swipe generation replaces loading Set refs when pending state changes', async () => {

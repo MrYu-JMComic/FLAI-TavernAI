@@ -328,11 +328,17 @@ test('chat submit persisted draft matching avoids candidate list allocations', (
     chatSubmitSource,
     /function findPersistedAssistantMessage\(messages, draft, userMessage = null\) \{[\s\S]*let lastPersistedAssistant = null;[\s\S]*for \(const message of messageList\) \{[\s\S]*lastPersistedAssistant = message;[\s\S]*for \(let index = messageList\.length - 1; index >= 0; index -= 1\) \{[\s\S]*return lastPersistedAssistant;[\s\S]*\}/
   );
+  assert.match(
+    chatSubmitSource,
+    /function needsPersistedDraftReconcile\(\) \{[\s\S]*for \(let index = 0; index < arguments\.length; index \+= 1\) \{[\s\S]*const item = arguments\[index\];[\s\S]*findMessageListItem\(item\?\.id\);[\s\S]*return true;[\s\S]*return false;[\s\S]*\}/
+  );
   assert.doesNotMatch(chatSubmitSource, /\[\.\.\.messages\]\.reverse\(\)\.find/);
   assert.doesNotMatch(chatSubmitSource, /const candidates = messages\.filter/);
   assert.doesNotMatch(chatSubmitSource, /messages\.findIndex/);
   assert.doesNotMatch(chatSubmitSource, /\.slice\(userIndex \+ 1\)/);
   assert.doesNotMatch(chatSubmitSource, /\[\.\.\.candidates\]\.reverse\(\)\.find/);
+  assert.doesNotMatch(chatSubmitSource, /function needsPersistedDraftReconcile\(\.\.\.items\)/);
+  assert.doesNotMatch(chatSubmitSource, /items\.some\(\(item\) =>/);
 });
 
 test('chat submit message removal avoids no-op filter replacements', () => {
