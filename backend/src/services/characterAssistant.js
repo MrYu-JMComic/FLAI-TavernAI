@@ -707,9 +707,16 @@ function summarizeDraft(toolCalls = []) {
 }
 
 function collectReasoning(process = []) {
-  return process
-    .map((step) => String(step.reasoning || '').trim())
-    .filter(Boolean)
-    .join('\n\n')
-    .slice(0, 8000);
+  let merged = '';
+  for (const step of Array.isArray(process) ? process : []) {
+    const reasoning = String(step?.reasoning || '').trim();
+    if (!reasoning) {
+      continue;
+    }
+    merged = merged ? `${merged}\n\n${reasoning}` : reasoning;
+    if (merged.length >= 8000) {
+      return merged.slice(0, 8000);
+    }
+  }
+  return merged;
 }

@@ -136,3 +136,16 @@ test('character assistant normalizes generated extension arrays with direct list
   assert.doesNotMatch(source, /renderPlugins[\s\S]{0,120}\.map\(\(plugin, index\) => normalizeRenderPlugin\(plugin, index\)\)[\s\S]{0,120}\.filter/);
   assert.doesNotMatch(source, /modSuggestions[\s\S]{0,120}\.map\(\(mod, index\) => normalizeModSuggestion\(mod, index\)\)[\s\S]{0,120}\.filter/);
 });
+
+test('character assistant collects process reasoning without array joins', () => {
+  const source = fs.readFileSync(new URL('../services/characterAssistant.js', import.meta.url), 'utf8');
+
+  assert.match(
+    source,
+    /function collectReasoning\(process = \[\]\) \{\s*let merged = '';\s*for \(const step of Array\.isArray\(process\) \? process : \[\]\) \{/
+  );
+  assert.match(source, /if \(merged\.length >= 8000\) \{\s*return merged\.slice\(0, 8000\);/);
+  assert.doesNotMatch(source, /\.map\(\(step\) => String\(step\.reasoning \|\| ''\)\.trim\(\)\)/);
+  assert.doesNotMatch(source, /\.filter\(Boolean\)/);
+  assert.doesNotMatch(source, /\.join\('\\n\\n'\)/);
+});

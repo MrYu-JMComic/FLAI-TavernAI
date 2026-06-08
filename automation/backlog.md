@@ -40,6 +40,7 @@ The autonomous loop should choose one small item per run. Add new findings here 
 
 ## Done
 
+- 2026-06-08: Merged CharacterAssistant process reasoning with a bounded direct loop.
 - 2026-06-08: Merged WorldBookAssistant process reasoning with a bounded direct loop.
 - 2026-06-08: Shared WorldBookAssistant entry normalization through direct list helpers.
 - 2026-06-08: Scanned status bar template inferred variable keys directly in backend status helpers.
