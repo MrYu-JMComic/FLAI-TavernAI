@@ -19,7 +19,7 @@ Reduce generic array work in the character image upload entry while keeping the 
 ## Validation
 
 - PASS: `node --test backend\src\tests\frontendCharacterImagePanel.test.js` (6 tests passed)
-- PASS: `node scripts\check-encoding.mjs` (scanned 513 files)
+- PASS: `node scripts\check-encoding.mjs` (scanned 512 files)
 - PASS: `git diff --check`
 - PASS: `powershell -ExecutionPolicy Bypass -File scripts\review-gate.ps1` (821 backend/source tests passed; frontend build passed)
 
