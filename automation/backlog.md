@@ -40,6 +40,7 @@ The autonomous loop should choose one small item per run. Add new findings here 
 
 ## Done
 
+- 2026-06-09: Shared frontend plain-value comparison logic across session, chat submit, character AI, settings, and world book state paths.
 - 2026-06-09: Made HomeView clear-filter actions reload characters immediately while suppressing duplicate watcher reloads.
 - 2026-06-09: Settled TalentRollDialog rolling state when a roll target becomes stale after the animation delay.
 - 2026-06-09: Guarded BaseLayout document click handling against malformed event targets.

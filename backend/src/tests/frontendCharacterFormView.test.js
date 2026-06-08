@@ -468,6 +468,7 @@ test('CharacterFormView scans AI draft seed fields without key-array callbacks',
 
 test('CharacterFormView preserves unchanged AI process panel references', () => {
   assert.match(characterFormScript, /import \{ countOwnObjectKeys \} from '\.\.\/utils\/objectKeys';/);
+  assert.match(characterFormScript, /import \{ samePlainValue \} from '\.\.\/utils\/plainValues';/);
   assert.match(
     characterFormScript,
     /function toolResultLabel\(result = \{\}\) \{[\s\S]*result\?\.applied && typeof result\.applied === 'object'[\s\S]*countOwnObjectKeys\(result\.applied\)[\s\S]*\}/
@@ -490,9 +491,9 @@ test('CharacterFormView preserves unchanged AI process panel references', () => 
     characterFormScript,
     /function setAiPlainListIfChanged\(listRef, nextItems\) \{[\s\S]*sameListItems\(listRef\.value, normalizedItems, samePlainValue\)[\s\S]*listRef\.value = normalizedItems;[\s\S]*return true;[\s\S]*\}/
   );
-  assert.match(
+  assert.doesNotMatch(
     characterFormScript,
-    /function samePlainValue\(current, next\) \{[\s\S]*Object\.is\(current, next\)[\s\S]*Array\.isArray\(current\)[\s\S]*let currentKeyCount = 0;[\s\S]*for \(const key in current\) \{[\s\S]*currentKeyCount \+= 1;[\s\S]*samePlainValue\(current\[key\], next\[key\]\)[\s\S]*let nextKeyCount = 0;[\s\S]*for \(const key in next\) \{[\s\S]*nextKeyCount \+= 1;[\s\S]*return currentKeyCount === nextKeyCount;[\s\S]*\}/
+    /function samePlainValue\(/
   );
   assert.doesNotMatch(characterFormScript, /Object\.keys\(current\)/);
   assert.doesNotMatch(characterFormScript, /currentList\.every\(/);

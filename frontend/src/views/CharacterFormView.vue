@@ -11,6 +11,7 @@ import { useNotify } from '../composables/useNotify';
 import { useProviderModels } from '../composables/useProviderModels';
 import { appendAiToolList, cloneAiToolList } from '../utils/aiToolLists';
 import { countOwnObjectKeys } from '../utils/objectKeys';
+import { samePlainValue } from '../utils/plainValues';
 import { parseStatusTemplateToken } from '../../../shared/statusTemplateTokens.js';
 
 const props = defineProps({
@@ -1024,43 +1025,6 @@ function sameTagOption(current = {}, next = {}) {
     && String(current?.name || '') === String(next?.name || '')
     && String(current?.color || '') === String(next?.color || '')
     && Number(current?.usageCount || 0) === Number(next?.usageCount || 0);
-}
-
-function samePlainValue(current, next) {
-  if (Object.is(current, next)) {
-    return true;
-  }
-  if (!current || !next || typeof current !== 'object' || typeof next !== 'object') {
-    return false;
-  }
-  if (Array.isArray(current) || Array.isArray(next)) {
-    if (!Array.isArray(current) || !Array.isArray(next) || current.length !== next.length) {
-      return false;
-    }
-    for (let index = 0; index < current.length; index += 1) {
-      if (!samePlainValue(current[index], next[index])) {
-        return false;
-      }
-    }
-    return true;
-  }
-  let currentKeyCount = 0;
-  for (const key in current) {
-    if (!Object.prototype.hasOwnProperty.call(current, key)) {
-      continue;
-    }
-    currentKeyCount += 1;
-    if (!Object.prototype.hasOwnProperty.call(next, key) || !samePlainValue(current[key], next[key])) {
-      return false;
-    }
-  }
-  let nextKeyCount = 0;
-  for (const key in next) {
-    if (Object.prototype.hasOwnProperty.call(next, key)) {
-      nextKeyCount += 1;
-    }
-  }
-  return currentKeyCount === nextKeyCount;
 }
 
 async function submit() {

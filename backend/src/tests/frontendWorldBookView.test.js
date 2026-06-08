@@ -87,7 +87,11 @@ test('WorldBookView preserves unchanged AI draft and process panel references', 
   );
   assert.match(
     worldBookViewScript,
-    /function samePlainValue\(current, next\) {[\s\S]*Object\.is\(current, next\)[\s\S]*Array\.isArray\(current\)[\s\S]*let currentKeyCount = 0;[\s\S]*for \(const key in current\) {[\s\S]*currentKeyCount \+= 1;[\s\S]*samePlainValue\(current\[key\], next\[key\]\)[\s\S]*let nextKeyCount = 0;[\s\S]*for \(const key in next\) {[\s\S]*nextKeyCount \+= 1;[\s\S]*return currentKeyCount === nextKeyCount;[\s\S]*}/
+    /import \{ samePlainValue \} from '\.\.\/utils\/plainValues';/
+  );
+  assert.doesNotMatch(
+    worldBookViewScript,
+    /function samePlainValue\(/
   );
   assert.doesNotMatch(worldBookViewScript, /(?:currentBooks|currentEntries|current|currentKeys)\.every\(/);
   assert.doesNotMatch(worldBookViewScript, /Object\.keys\(current\)/);

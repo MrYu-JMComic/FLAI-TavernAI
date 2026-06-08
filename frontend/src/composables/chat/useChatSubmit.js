@@ -1,5 +1,6 @@
 import { computed, nextTick, ref, triggerRef } from 'vue';
 import { fetchConversationMessages, sendMessage, streamMessage } from '../../api.js';
+import { samePlainValue } from '../../utils/plainValues.js';
 
 export function useChatSubmit({
   route,
@@ -440,46 +441,6 @@ export function useChatSubmit({
     }
     valueRef.value = nextValue;
     return true;
-  }
-
-  function samePlainValue(current, next) {
-    if (Object.is(current, next)) {
-      return true;
-    }
-    if (typeof current !== typeof next || current === null || next === null) {
-      return false;
-    }
-    if (Array.isArray(current) || Array.isArray(next)) {
-      if (!Array.isArray(current) || !Array.isArray(next) || current.length !== next.length) {
-        return false;
-      }
-      for (let index = 0; index < current.length; index += 1) {
-        if (!samePlainValue(current[index], next[index])) {
-          return false;
-        }
-      }
-      return true;
-    }
-    if (typeof current !== 'object') {
-      return false;
-    }
-    let currentKeyCount = 0;
-    for (const key in current) {
-      if (!Object.prototype.hasOwnProperty.call(current, key)) {
-        continue;
-      }
-      currentKeyCount += 1;
-      if (!Object.prototype.hasOwnProperty.call(next, key) || !samePlainValue(current[key], next[key])) {
-        return false;
-      }
-    }
-    let nextKeyCount = 0;
-    for (const key in next) {
-      if (Object.prototype.hasOwnProperty.call(next, key)) {
-        nextKeyCount += 1;
-      }
-    }
-    return currentKeyCount === nextKeyCount;
   }
 
   function followSubmitScroll(message, anchorAssistantReply, smooth = false) {

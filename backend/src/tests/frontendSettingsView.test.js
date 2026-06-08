@@ -161,7 +161,11 @@ test('SettingsView extension retry handlers ignore events while already loading'
 test('SettingsView preserves unchanged extension list references during refreshes', () => {
   assert.match(
     settingsViewScript,
-    /function samePlainValue\(left, right\) \{[\s\S]*Object\.is\(left, right\)[\s\S]*Array\.isArray\(left\)[\s\S]*for \(let index = 0; index < left\.length; index \+= 1\) \{[\s\S]*samePlainValue\(left\[index\], right\[index\]\)[\s\S]*let leftKeyCount = 0;[\s\S]*for \(const key in left\) \{[\s\S]*leftKeyCount \+= 1;[\s\S]*samePlainValue\(left\[key\], right\[key\]\)[\s\S]*let rightKeyCount = 0;[\s\S]*for \(const key in right\) \{[\s\S]*rightKeyCount \+= 1;[\s\S]*return leftKeyCount === rightKeyCount;[\s\S]*\}/
+    /import \{ samePlainValue \} from '\.\.\/utils\/plainValues';/
+  );
+  assert.doesNotMatch(
+    settingsViewScript,
+    /function samePlainValue\(/
   );
   assert.match(
     settingsViewScript,

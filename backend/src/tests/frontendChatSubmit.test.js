@@ -356,11 +356,15 @@ test('chat submit message removal avoids no-op filter replacements', () => {
 test('chat submit refresh and plain metadata comparisons avoid callback allocations', () => {
   assert.match(
     chatSubmitSource,
-    /function refreshConversationChrome\(\) \{[\s\S]*const tasks = \[\];[\s\S]*const sidebarTask = createRefreshTask\(loadSidebarData\);[\s\S]*tasks\.push\(sidebarTask\);[\s\S]*const economyTask = createRefreshTask\(loadEconomyBalance\);[\s\S]*tasks\.push\(economyTask\);[\s\S]*Promise\.allSettled\(tasks\);[\s\S]*\}/
+    /import \{ samePlainValue \} from '\.\.\/\.\.\/utils\/plainValues\.js';/
   );
   assert.match(
     chatSubmitSource,
-    /function samePlainValue\(current, next\) \{[\s\S]*for \(let index = 0; index < current\.length; index \+= 1\) \{[\s\S]*samePlainValue\(current\[index\], next\[index\]\)[\s\S]*let currentKeyCount = 0;[\s\S]*for \(const key in current\) \{[\s\S]*currentKeyCount \+= 1;[\s\S]*samePlainValue\(current\[key\], next\[key\]\)[\s\S]*let nextKeyCount = 0;[\s\S]*for \(const key in next\) \{[\s\S]*nextKeyCount \+= 1;[\s\S]*return currentKeyCount === nextKeyCount;[\s\S]*\}/
+    /function refreshConversationChrome\(\) \{[\s\S]*const tasks = \[\];[\s\S]*const sidebarTask = createRefreshTask\(loadSidebarData\);[\s\S]*tasks\.push\(sidebarTask\);[\s\S]*const economyTask = createRefreshTask\(loadEconomyBalance\);[\s\S]*tasks\.push\(economyTask\);[\s\S]*Promise\.allSettled\(tasks\);[\s\S]*\}/
+  );
+  assert.doesNotMatch(
+    chatSubmitSource,
+    /function samePlainValue\(/
   );
   assert.match(
     chatSubmitSource,

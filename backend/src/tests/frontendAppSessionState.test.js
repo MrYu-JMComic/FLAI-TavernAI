@@ -7,6 +7,10 @@ const { script: appScript } = readVueBlocks('frontend/src/App.vue', ['script']);
 test('App session state preserves user and provider references for unchanged payloads', () => {
   assert.match(
     appScript,
+    /import \{ samePlainValue \} from '\.\/utils\/plainValues';/
+  );
+  assert.match(
+    appScript,
     /function setUserIfChanged\(nextUser\) {\s*return setRefIfPlainValueChanged\(user, nextUser \|\| null\);\s*}/
   );
   assert.match(
@@ -17,9 +21,9 @@ test('App session state preserves user and provider references for unchanged pay
     appScript,
     /function setRefIfPlainValueChanged\(valueRef, nextValue\) {[\s\S]*samePlainValue\(valueRef\.value, nextValue\)[\s\S]*valueRef\.value = nextValue;[\s\S]*return true;[\s\S]*}/
   );
-  assert.match(
+  assert.doesNotMatch(
     appScript,
-    /function samePlainValue\(current, next\) {[\s\S]*Object\.is\(current, next\)[\s\S]*Array\.isArray\(current\)[\s\S]*for \(let index = 0; index < current\.length; index \+= 1\) {[\s\S]*samePlainValue\(current\[index\], next\[index\]\)[\s\S]*let currentKeyCount = 0;[\s\S]*for \(const key in current\) {[\s\S]*currentKeyCount \+= 1;[\s\S]*samePlainValue\(current\[key\], next\[key\]\)[\s\S]*let nextKeyCount = 0;[\s\S]*for \(const key in next\) {[\s\S]*nextKeyCount \+= 1;[\s\S]*return currentKeyCount === nextKeyCount;[\s\S]*}/
+    /function samePlainValue\(/
   );
   assert.doesNotMatch(
     appScript,

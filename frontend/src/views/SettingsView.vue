@@ -34,6 +34,7 @@ import {
   readCachedProviderModels,
   refreshProviderModels
 } from '../services/modelCatalog';
+import { samePlainValue } from '../utils/plainValues';
 import { isLocalOrPrivateBaseUrl } from '../../../shared/privateNetwork.js';
 
 const props = defineProps({
@@ -597,43 +598,6 @@ function visibilityText(value) {
 // ── Tag Management ──
 function loadFailureMessage(error, fallback) {
   return error?.message || fallback;
-}
-
-function samePlainValue(left, right) {
-  if (Object.is(left, right)) {
-    return true;
-  }
-  if (!left || !right || typeof left !== 'object' || typeof right !== 'object') {
-    return false;
-  }
-  if (Array.isArray(left) || Array.isArray(right)) {
-    if (!Array.isArray(left) || !Array.isArray(right) || left.length !== right.length) {
-      return false;
-    }
-    for (let index = 0; index < left.length; index += 1) {
-      if (!samePlainValue(left[index], right[index])) {
-        return false;
-      }
-    }
-    return true;
-  }
-  let leftKeyCount = 0;
-  for (const key in left) {
-    if (!Object.prototype.hasOwnProperty.call(left, key)) {
-      continue;
-    }
-    leftKeyCount += 1;
-    if (!Object.prototype.hasOwnProperty.call(right, key) || !samePlainValue(left[key], right[key])) {
-      return false;
-    }
-  }
-  let rightKeyCount = 0;
-  for (const key in right) {
-    if (Object.prototype.hasOwnProperty.call(right, key)) {
-      rightKeyCount += 1;
-    }
-  }
-  return leftKeyCount === rightKeyCount;
 }
 
 function sameListItems(currentList, nextList) {
