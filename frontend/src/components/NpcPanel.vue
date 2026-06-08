@@ -161,6 +161,7 @@ onBeforeUnmount(() => {
 });
 
 function requestClose() {
+  if (npcActionBusy.value) return;
   emit('update:open', false);
   emit('close');
 }
@@ -918,6 +919,8 @@ function formatTime(iso) {
               class="npc-close"
               type="button"
               aria-label="关闭 NPC 管理面板"
+              :disabled="npcActionBusy"
+              :aria-busy="npcActionBusy"
               @pointerdown.stop
               @click.stop="requestClose"
             >
@@ -1418,7 +1421,7 @@ function formatTime(iso) {
   display: flex;
   align-items: center;
 }
-.npc-close:hover {
+.npc-close:hover:not(:disabled) {
   background: var(--hover, rgba(255,255,255,0.08));
   color: var(--text, #e8e6e3);
 }
@@ -2070,6 +2073,7 @@ function formatTime(iso) {
 .npc-add-button:disabled,
 .npc-save:disabled,
 .npc-cancel:disabled,
+.npc-close:disabled,
 .npc-card-toggle:disabled,
 .npc-card-delete:disabled {
   opacity: 0.48;

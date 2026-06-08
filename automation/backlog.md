@@ -40,6 +40,7 @@ The autonomous loop should choose one small item per run. Add new findings here 
 
 ## Done
 
+- 2026-06-08: Locked NpcPanel close actions while an NPC mutation is busy so hidden mutations cannot finish against a closed panel.
 - 2026-06-08: Canceled pending NpcPanel list and detail loads when the panel closes so hidden responses cannot rewrite loading or error state.
 - 2026-06-08: Canceled pending EconomyPanel account and history loads when the panel closes so hidden responses cannot rewrite loading or error state.
 - 2026-06-08: Canceled pending SaveLoadPanel list loads when the panel closes so stale responses cannot write closed-panel state.

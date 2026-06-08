@@ -40,6 +40,19 @@ test('NpcPanel disables NPC mutations while one action is busy', () => {
   assert.match(npcPanelStyle, /\.npc-card-delete:hover:not\(:disabled\)/);
 });
 
+test('NpcPanel locks close actions while an NPC mutation is busy', () => {
+  assert.match(
+    npcPanelScript,
+    /function requestClose\(\)\s*{\s*if \(npcActionBusy\.value\) return;\s*emit\('update:open', false\);\s*emit\('close'\);\s*}/
+  );
+  assert.match(
+    npcPanelTemplate,
+    /class="npc-close"[\s\S]*:disabled="npcActionBusy"[\s\S]*:aria-busy="npcActionBusy"[\s\S]*@click\.stop="requestClose"/
+  );
+  assert.match(npcPanelStyle, /\.npc-close:hover:not\(:disabled\)/);
+  assert.match(npcPanelStyle, /\.npc-close:disabled,/);
+});
+
 test('NpcPanel memory cards use a neutral themed card treatment', () => {
   assert.match(npcPanelTemplate, /class="npc-card npc-memory-card"/);
   assert.match(npcPanelStyle, /\.npc-card\s*{[\s\S]*var\(--surface, #fbfaf6\)[\s\S]*border-radius: 8px;/);
