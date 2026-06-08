@@ -58,20 +58,39 @@ let customTemplateStyleElement = null;
 
 const cfg = computed(() => {
   const raw = props.templateConfig || {};
-  const variant = VALID_VARIANTS.includes(raw.variant) ? raw.variant : 'default';
-  const density = VALID_DENSITIES.includes(raw.density) ? raw.density : 'default';
-  const effects = Array.isArray(raw.effects)
-    ? raw.effects.filter((e) => VALID_EFFECTS.includes(e))
-    : [];
+  const variant = isAllowedTemplateOption(VALID_VARIANTS, raw.variant) ? raw.variant : 'default';
+  const density = isAllowedTemplateOption(VALID_DENSITIES, raw.density) ? raw.density : 'default';
+  const effects = normalizeTemplateEffects(raw.effects);
   const accentColor = typeof raw.accentColor === 'string' && raw.accentColor.trim()
     ? raw.accentColor.trim()
     : '';
   const customCss = typeof raw.customCss === 'string' ? raw.customCss : '';
-  const displayMode = VALID_DISPLAY_MODES.includes(raw.displayMode) ? raw.displayMode : 'compact';
+  const displayMode = isAllowedTemplateOption(VALID_DISPLAY_MODES, raw.displayMode) ? raw.displayMode : 'compact';
   const characters = Array.isArray(raw.characters) ? raw.characters : [];
   const quickReplies = Array.isArray(raw.quickReplies) ? raw.quickReplies : [];
   return { variant, density, effects, accentColor, customCss, displayMode, characters, quickReplies };
 });
+
+function isAllowedTemplateOption(options, value) {
+  for (let index = 0; index < options.length; index += 1) {
+    if (options[index] === value) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function normalizeTemplateEffects(effects) {
+  const rows = [];
+  const source = Array.isArray(effects) ? effects : [];
+  for (let index = 0; index < source.length; index += 1) {
+    const effect = source[index];
+    if (isAllowedTemplateOption(VALID_EFFECTS, effect)) {
+      rows.push(effect);
+    }
+  }
+  return rows;
+}
 
 const hasContent = computed(() => {
   return props.statusBar && Array.isArray(props.statusBar.variables) && props.statusBar.variables.length > 0;

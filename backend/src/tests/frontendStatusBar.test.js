@@ -37,6 +37,35 @@ test('StatusBar normalizes display variables and immersive characters with direc
   assert.doesNotMatch(statusBarScript, /String\(token \|\| ''\)\.split\('\.'\)\.map/);
 });
 
+test('StatusBar normalizes template option lists with direct loops', () => {
+  assert.match(
+    statusBarScript,
+    /const variant = isAllowedTemplateOption\(VALID_VARIANTS, raw\.variant\) \? raw\.variant : 'default';/
+  );
+  assert.match(
+    statusBarScript,
+    /const density = isAllowedTemplateOption\(VALID_DENSITIES, raw\.density\) \? raw\.density : 'default';/
+  );
+  assert.match(statusBarScript, /const effects = normalizeTemplateEffects\(raw\.effects\);/);
+  assert.match(
+    statusBarScript,
+    /const displayMode = isAllowedTemplateOption\(VALID_DISPLAY_MODES, raw\.displayMode\) \? raw\.displayMode : 'compact';/
+  );
+  assert.match(
+    statusBarScript,
+    /function isAllowedTemplateOption\(options, value\) \{\s*for \(let index = 0; index < options\.length; index \+= 1\) \{[\s\S]*if \(options\[index\] === value\) \{[\s\S]*return true;[\s\S]*return false;[\s\S]*\}/
+  );
+  assert.match(
+    statusBarScript,
+    /function normalizeTemplateEffects\(effects\) \{\s*const rows = \[\];\s*const source = Array\.isArray\(effects\) \? effects : \[\];\s*for \(let index = 0; index < source\.length; index \+= 1\) \{[\s\S]*if \(isAllowedTemplateOption\(VALID_EFFECTS, effect\)\) \{[\s\S]*rows\.push\(effect\);[\s\S]*return rows;[\s\S]*\}/
+  );
+  assert.doesNotMatch(statusBarScript, /VALID_VARIANTS\.includes/);
+  assert.doesNotMatch(statusBarScript, /VALID_DENSITIES\.includes/);
+  assert.doesNotMatch(statusBarScript, /VALID_EFFECTS\.includes/);
+  assert.doesNotMatch(statusBarScript, /VALID_DISPLAY_MODES\.includes/);
+  assert.doesNotMatch(statusBarScript, /raw\.effects\.filter/);
+});
+
 test('StatusBar builds custom template CSS and style text without array pipelines', () => {
   assert.match(
     statusBarScript,
