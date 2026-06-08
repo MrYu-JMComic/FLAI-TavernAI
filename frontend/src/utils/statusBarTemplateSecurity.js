@@ -37,11 +37,53 @@ export function isSafeStatusBarCssValue(value) {
 }
 
 export function sanitizeStatusBarStyleText(value) {
-  return String(value || '')
-    .split(';')
-    .map((part) => part.trim())
-    .filter((part) => part && isSafeStatusBarCssValue(part))
-    .join('; ');
+  const source = String(value || '');
+  let output = '';
+  let startIndex = 0;
+  let quote = '';
+  let escaped = false;
+  let parenDepth = 0;
+
+  for (let index = 0; index <= source.length; index += 1) {
+    const char = source[index];
+    if (index === source.length || (char === ';' && !quote && parenDepth === 0)) {
+      output = appendSafeStatusBarStylePart(output, source.slice(startIndex, index));
+      startIndex = index + 1;
+      continue;
+    }
+
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+
+    if (quote) {
+      if (char === '\\') {
+        escaped = true;
+      } else if (char === quote) {
+        quote = '';
+      }
+      continue;
+    }
+
+    if (char === '"' || char === "'") {
+      quote = char;
+    } else if (char === '(') {
+      parenDepth += 1;
+    } else if (char === ')' && parenDepth > 0) {
+      parenDepth -= 1;
+    }
+  }
+
+  return output;
+}
+
+function appendSafeStatusBarStylePart(output, part) {
+  const trimmed = part.trim();
+  if (!trimmed || !isSafeStatusBarCssValue(trimmed)) {
+    return output;
+  }
+  return output ? `${output}; ${trimmed}` : trimmed;
 }
 
 export function sanitizeStatusBarStyleBlock(value) {

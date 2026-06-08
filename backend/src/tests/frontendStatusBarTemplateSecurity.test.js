@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { readRepoText } from './frontendSfcTestUtils.js';
 
 const {
   STATUS_BAR_TEMPLATE_ALLOWED_TAGS,
@@ -11,6 +12,8 @@ const {
   sanitizeStatusBarStyleText
 } = await import('../../../frontend/src/utils/statusBarTemplateSecurity.js');
 const { validateStatusBarCustomTemplate } = await import('../../../frontend/src/composables/chat/useChatAccessory.js');
+
+const securitySource = readRepoText('frontend/src/utils/statusBarTemplateSecurity.js');
 
 test('status bar template tag allowlists stay aligned between validation and rendering', () => {
   assert.equal(STATUS_BAR_TEMPLATE_ALLOWED_TAGS.has('button'), true);
@@ -37,6 +40,21 @@ test('status bar template CSS helpers reject unsafe CSS patterns consistently', 
   assert.doesNotMatch(cleanedBlock, /@import|url\s*\(|javascript:|behavior\s*:/i);
   assert.match(cleanedBlock, /color: #fff/);
   assert.match(cleanedBlock, /box-shadow: 0 0 4px #fff/);
+});
+
+test('status bar inline style sanitizer scans declarations without split pipelines', () => {
+  assert.equal(
+    sanitizeStatusBarStyleText(' color: #fff ; ; --sb-label: "HP; MP"; background: url(javascript:alert(1)); border: 1px solid currentColor '),
+    'color: #fff; --sb-label: "HP; MP"; border: 1px solid currentColor'
+  );
+
+  assert.match(
+    securitySource,
+    /function sanitizeStatusBarStyleText\(value\) \{[\s\S]*for \(let index = 0; index <= source\.length; index \+= 1\) \{[\s\S]*appendSafeStatusBarStylePart/
+  );
+  assert.doesNotMatch(securitySource, /\.split\(';'\)/);
+  assert.doesNotMatch(securitySource, /\.map\(\(part\) => part\.trim\(\)\)/);
+  assert.doesNotMatch(securitySource, /\.filter\(\(part\) => part && isSafeStatusBarCssValue\(part\)\)/);
 });
 
 test('status bar custom template validation uses the shared dangerous CSS detector', () => {

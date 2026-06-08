@@ -40,6 +40,8 @@ The autonomous loop should choose one small item per run. Add new findings here 
 
 ## Done
 
+- 2026-06-08: Scanned talent roll weights directly instead of building weighted map/reduce arrays.
+- 2026-06-08: Scanned status-bar inline style declarations directly while preserving quoted semicolon values.
 - 2026-06-08: Scored character image scene and emotion keywords with one direct own-key helper.
 - 2026-06-08: Parsed and compared NpcPanel aliases with direct scans instead of split/map temporary arrays.
 - 2026-06-08: Parsed CharacterFormView manual tag text with a direct scanner instead of split/map/filter arrays.

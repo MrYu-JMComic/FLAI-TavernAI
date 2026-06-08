@@ -193,17 +193,16 @@ export function buildTalentSystemPrompt(database, characterId) {
 // ── Roll engine: weighted random ──
 
 export function weightedRandomPick(talents) {
-  // Calculate total weight based on rarity
-  const weighted = talents.map((talent) => {
+  let totalWeight = 0;
+  for (const talent of talents) {
+    const rarity = talent.rarity || 'common';
+    totalWeight += RARITY_WEIGHTS[rarity] || RARITY_WEIGHTS.common;
+  }
+
+  let random = Math.random() * totalWeight;
+  for (const talent of talents) {
     const rarity = talent.rarity || 'common';
     const weight = RARITY_WEIGHTS[rarity] || RARITY_WEIGHTS.common;
-    return { talent, weight };
-  });
-
-  const totalWeight = weighted.reduce((sum, w) => sum + w.weight, 0);
-  let random = Math.random() * totalWeight;
-
-  for (const { talent, weight } of weighted) {
     random -= weight;
     if (random <= 0) {
       return talent;
