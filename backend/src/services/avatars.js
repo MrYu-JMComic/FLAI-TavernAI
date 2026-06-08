@@ -28,9 +28,10 @@ const characterAssetOwnerTypes = new Set([
   characterBackgroundOwnerTypes.desktop,
   characterBackgroundOwnerTypes.mobile
 ]);
+const avatarShortUrlPrefix = '/api/avatars/';
 
 export function avatarShortUrl(assetId) {
-  return assetId ? `/api/avatars/${assetId}` : '';
+  return assetId ? `${avatarShortUrlPrefix}${assetId}` : '';
 }
 
 export function getUserAvatarUrl(database, userId) {
@@ -105,7 +106,7 @@ function saveImageAssetInput(database, {
     return '';
   }
 
-  if (input.startsWith('/api/avatars/')) {
+  if (input.startsWith(avatarShortUrlPrefix)) {
     return keepExistingShortUrl(database, { userId, ownerType, ownerId, input });
   }
 
@@ -229,7 +230,10 @@ function isValidBase64Payload(value) {
 }
 
 function keepExistingShortUrl(database, { userId, ownerType, ownerId, input }) {
-  const assetId = input.split('/').pop();
+  const assetId = getAvatarShortUrlAssetId(input);
+  if (!assetId) {
+    return input;
+  }
   const row = database.prepare('SELECT * FROM avatar_assets WHERE id = ?').get(assetId);
   if (!row) {
     // Asset no longer exists — preserve the existing URL to avoid silently clearing the avatar
@@ -242,6 +246,23 @@ function keepExistingShortUrl(database, { userId, ownerType, ownerId, input }) {
 
   // Ownership mismatch — clear the URL (belongs to another user/type)
   return '';
+}
+
+function getAvatarShortUrlAssetId(input) {
+  const text = String(input || '');
+  if (!text.startsWith(avatarShortUrlPrefix)) {
+    return '';
+  }
+  const start = avatarShortUrlPrefix.length;
+  if (start >= text.length) {
+    return '';
+  }
+  for (let index = start; index < text.length; index += 1) {
+    if (text[index] === '/') {
+      return '';
+    }
+  }
+  return text.slice(start);
 }
 
 function readLegacyUpload(value, options = {}) {

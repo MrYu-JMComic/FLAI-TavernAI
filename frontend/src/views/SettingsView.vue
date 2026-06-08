@@ -34,6 +34,7 @@ import {
   readCachedProviderModels,
   refreshProviderModels
 } from '../services/modelCatalog';
+import { isLocalOrPrivateBaseUrl } from '../../../shared/privateNetwork.js';
 
 const props = defineProps({
   route: {
@@ -637,6 +638,20 @@ function setListIfChanged(listRef, nextList) {
   return true;
 }
 
+function getListItemById(listRef, itemId) {
+  const targetId = String(itemId || '');
+  if (!targetId) {
+    return null;
+  }
+  const currentList = Array.isArray(listRef.value) ? listRef.value : [];
+  for (const item of currentList) {
+    if (item?.id === targetId) {
+      return item;
+    }
+  }
+  return null;
+}
+
 function prependListItemByIdWithLimit(listRef, nextItem, limit) {
   const nextId = String(nextItem?.id || '');
   const normalizedLimit = Math.max(0, Number(limit) || 0);
@@ -751,28 +766,6 @@ function canUseNoAuthProvider() {
   return form.providerType === 'custom' && isLocalOrPrivateBaseUrl(form.baseUrl);
 }
 
-function isLocalOrPrivateBaseUrl(value) {
-  try {
-    const { hostname } = new URL(String(value || ''));
-    const host = hostname.replace(/^\[(.*)\]$/, '$1').toLowerCase();
-    if (['localhost', '127.0.0.1', '::1', '0.0.0.0'].includes(host) || host.startsWith('127.')) {
-      return true;
-    }
-    const parts = host.split('.').map((part) => Number(part));
-    if (parts.length !== 4 || parts.some((part) => !Number.isInteger(part) || part < 0 || part > 255)) {
-      return false;
-    }
-    return (
-      parts[0] === 10 ||
-      (parts[0] === 172 && parts[1] >= 16 && parts[1] <= 31) ||
-      (parts[0] === 192 && parts[1] === 168) ||
-      (parts[0] === 198 && parts[1] === 18)
-    );
-  } catch {
-    return false;
-  }
-}
-
 const tagList = ref([]);
 const newTagName = ref('');
 const TAG_LOAD_LIMIT_DEFAULT = 80;
@@ -854,8 +847,7 @@ function isCurrentTagMutation(mutationToken) {
 }
 
 function getCurrentTag(id) {
-  const currentId = String(id || '');
-  return tagList.value.find((tag) => tag?.id === currentId) || null;
+  return getListItemById(tagList, id);
 }
 
 function updateTagLoadLimit() {
@@ -1024,8 +1016,7 @@ function isCurrentPresetMutation(mutationToken) {
 }
 
 function getCurrentPreset(id) {
-  const currentId = String(id || '');
-  return presetList.value.find((preset) => preset?.id === currentId) || null;
+  return getListItemById(presetList, id);
 }
 
 function resetPresetForm() {
@@ -1358,8 +1349,7 @@ function isCurrentModMutation(mutationToken) {
 }
 
 function getCurrentMod(id) {
-  const currentId = String(id || '');
-  return modList.value.find((mod) => mod?.id === currentId) || null;
+  return getListItemById(modList, id);
 }
 
 function resetModForm() {
@@ -1587,27 +1577,21 @@ async function onModDrop(event, targetMod) {
     return;
   }
 
-  const previousList = [...modList.value];
-  const fromIndex = modList.value.findIndex((m) => m.id === currentDraggedMod.id);
-  const toIndex = modList.value.findIndex((m) => m.id === currentTargetMod.id);
-  if (fromIndex === -1 || toIndex === -1) {
+  const moveResult = moveListItemToTargetIndexById(modList, currentDraggedMod.id, currentTargetMod.id);
+  if (!moveResult) {
     dragOverMod.value = null;
     return;
   }
 
   const mutationToken = beginModMutation('mod-reorder');
-  const newList = [...modList.value];
-  const [moved] = newList.splice(fromIndex, 1);
-  newList.splice(toIndex, 0, moved);
-  setListIfChanged(modList, newList);
   dragOverMod.value = null;
 
   try {
-    await reorderMods(newList.map((m) => m.id));
+    await reorderMods(moveResult.ids);
     if (!isCurrentModMutation(mutationToken)) return;
   } catch (err) {
     if (!isCurrentModMutation(mutationToken)) return;
-    setListIfChanged(modList, previousList);
+    setListIfChanged(modList, moveResult.previousList);
     notify.error(err.message);
     finishModMutation(mutationToken);
     await loadMods();
@@ -1738,8 +1722,7 @@ function isCurrentRegexMutation(mutationToken, groupFilter) {
 }
 
 function getCurrentRegexRule(ruleId) {
-  const currentRuleId = String(ruleId || '');
-  return regexRules.value.find((rule) => rule?.id === currentRuleId) || null;
+  return getListItemById(regexRules, ruleId);
 }
 
 function handleRegexGroupFilterChange() {

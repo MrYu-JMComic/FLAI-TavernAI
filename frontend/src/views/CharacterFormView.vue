@@ -1,6 +1,6 @@
 ﻿<script setup>
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
-import { ArrowLeft, Dice6, Download, Eye, ListChecks, Plus, RotateCcw, Save, Settings, Sparkles, Trash2, Upload, WandSparkles, X } from '@lucide/vue';
+import { ArrowLeft, ChevronLeft, ChevronRight, Dice6, Download, Eye, ListChecks, Plus, RotateCcw, Save, Settings, Sparkles, Trash2, Upload, WandSparkles, X } from '@lucide/vue';
 import { createCharacter, createMod, createTag, deleteCharacter, exportCharacter, fetchCharacter, fetchCharacterWorldBooks, fetchTags, fetchWorldBooks, linkCharacterWorldBook, streamCharacterDraft, unlinkCharacterWorldBook, updateCharacter } from '../api';
 import CharacterImagePanel from '../components/CharacterImagePanel.vue';
 import MarkdownContent from '../components/MarkdownContent.vue';
@@ -780,7 +780,7 @@ async function loadEditingCharacter() {
     ]);
     if (!isCurrentEditingCharacterLoad(loadToken, characterId)) return;
     Object.assign(form, normalizeForForm(character));
-    setSelectedWorldBookIdsIfChanged(linkedBooks.map((book) => book.id));
+    setSelectedWorldBookIdsFromBooksIfChanged(linkedBooks);
   } catch (err) {
     if (!isCurrentEditingCharacterLoad(loadToken, characterId)) return;
     const message = err?.message || '加载角色失败';
@@ -908,8 +908,24 @@ function clampWorldBookPage(page, pageCount) {
   return Math.max(1, Math.min(safePage, safePageCount));
 }
 
+function normalizeWorldBookIds(nextIds) {
+  const normalizedIds = [];
+  for (const id of Array.isArray(nextIds) ? nextIds : []) {
+    normalizedIds.push(String(id || ''));
+  }
+  return normalizedIds;
+}
+
+function setSelectedWorldBookIdsFromBooksIfChanged(nextBooks) {
+  const nextIds = [];
+  for (const book of Array.isArray(nextBooks) ? nextBooks : []) {
+    nextIds.push(book?.id);
+  }
+  return setSelectedWorldBookIdsIfChanged(nextIds);
+}
+
 function setSelectedWorldBookIdsIfChanged(nextIds) {
-  const normalizedIds = Array.isArray(nextIds) ? nextIds.map((id) => String(id || '')) : [];
+  const normalizedIds = normalizeWorldBookIds(nextIds);
   if (sameListItems(selectedWorldBookIds.value, normalizedIds, Object.is)) {
     return false;
   }
@@ -947,7 +963,12 @@ function sameListItems(currentItems, nextItems, sameItem) {
   if (currentList.length !== nextList.length) {
     return false;
   }
-  return currentList.every((item, index) => sameItem(item, nextList[index]));
+  for (let index = 0; index < currentList.length; index += 1) {
+    if (!sameItem(currentList[index], nextList[index])) {
+      return false;
+    }
+  }
+  return true;
 }
 
 function sameWorldBookOption(current = {}, next = {}) {
@@ -975,16 +996,27 @@ function samePlainValue(current, next) {
     return false;
   }
   if (Array.isArray(current) || Array.isArray(next)) {
-    return Array.isArray(current)
-      && Array.isArray(next)
-      && current.length === next.length
-      && current.every((item, index) => samePlainValue(item, next[index]));
+    if (!Array.isArray(current) || !Array.isArray(next) || current.length !== next.length) {
+      return false;
+    }
+    for (let index = 0; index < current.length; index += 1) {
+      if (!samePlainValue(current[index], next[index])) {
+        return false;
+      }
+    }
+    return true;
   }
   const currentKeys = Object.keys(current);
   const nextKeys = Object.keys(next);
-  return currentKeys.length === nextKeys.length
-    && currentKeys.every((key) => Object.prototype.hasOwnProperty.call(next, key)
-      && samePlainValue(current[key], next[key]));
+  if (currentKeys.length !== nextKeys.length) {
+    return false;
+  }
+  for (const key of currentKeys) {
+    if (!Object.prototype.hasOwnProperty.call(next, key) || !samePlainValue(current[key], next[key])) {
+      return false;
+    }
+  }
+  return true;
 }
 
 async function submit() {
@@ -1025,17 +1057,25 @@ async function syncCharacterWorldBooks(characterId, { editing = isEditing.value,
   const currentLinked = editing
     ? await fetchCharacterWorldBooks(characterId)
     : [];
-  const currentIds = currentLinked.map((book) => book.id);
-  const currentIdSet = new Set(currentIds);
-  const targetIdSet = new Set(targetIds);
-  const toAdd = targetIds.filter((id) => !currentIdSet.has(id));
-  const toRemove = currentIds.filter((id) => !targetIdSet.has(id));
-
-  for (const bookId of toAdd) {
-    await linkCharacterWorldBook(characterId, bookId);
+  const currentIds = [];
+  for (const book of currentLinked) {
+    currentIds.push(book?.id);
   }
-  for (const bookId of toRemove) {
-    await unlinkCharacterWorldBook(characterId, bookId);
+  const currentIdSet = new Set(currentIds);
+  const targetIdSet = new Set();
+  for (const id of targetIds) {
+    targetIdSet.add(id);
+  }
+
+  for (const bookId of targetIds) {
+    if (!currentIdSet.has(bookId)) {
+      await linkCharacterWorldBook(characterId, bookId);
+    }
+  }
+  for (const bookId of currentIds) {
+    if (!targetIdSet.has(bookId)) {
+      await unlinkCharacterWorldBook(characterId, bookId);
+    }
   }
 }
 
@@ -1355,10 +1395,18 @@ function toggleWorldBook(bookId) {
     return;
   }
   const currentIds = selectedWorldBookIds.value;
-  const idx = currentIds.indexOf(normalizedId);
-  const nextIds = idx >= 0
-    ? currentIds.filter((id) => id !== normalizedId)
-    : [...currentIds, normalizedId];
+  const nextIds = [];
+  let removedSelectedId = false;
+  for (const id of currentIds) {
+    if (id === normalizedId) {
+      removedSelectedId = true;
+      continue;
+    }
+    nextIds.push(id);
+  }
+  if (!removedSelectedId) {
+    nextIds.push(normalizedId);
+  }
   setSelectedWorldBookIdsIfChanged(nextIds);
 }
 
@@ -1770,18 +1818,16 @@ function createDefaultAccessorySkills() {
 
 function normalizeAccessorySkillsForPayload(input = {}) {
   const defaults = createDefaultAccessorySkills();
-  return Object.fromEntries(
-    Object.keys(defaults).map((key) => {
-      const source = input?.[key] || {};
-      return [
-        key,
-        {
-          enabled: normalizeSkillEnabled(source.enabled, defaults[key].enabled),
-          modelOverride: String(source.modelOverride || source.model_override || '').trim()
-        }
-      ];
-    })
-  );
+  const normalized = {};
+  for (const key in defaults) {
+    if (!Object.prototype.hasOwnProperty.call(defaults, key)) continue;
+    const source = input?.[key] || {};
+    normalized[key] = {
+      enabled: normalizeSkillEnabled(source.enabled, defaults[key].enabled),
+      modelOverride: String(source.modelOverride || source.model_override || '').trim()
+    };
+  }
+  return normalized;
 }
 
 function createDefaultStatusBarBlueprint() {

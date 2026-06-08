@@ -9,6 +9,7 @@ import { withSavepoint } from '../modules/savepoint.js';
 import { validate } from '../validations/schemas.js';
 import { normalizeBoolean } from '../utils/boolean.js';
 import { normalizeFiniteNumber } from '../utils/number.js';
+import { normalizeRegexFlags } from '../../../shared/regexFlags.js';
 import { z } from 'zod';
 
 const reorderRegexSchema = z.object({
@@ -134,7 +135,7 @@ export function createRegexRouter(ctx) {
 }
 
 function normalizeImportedRule(item = {}, index = 0) {
-  const flags = normalizeFlags(item.flags);
+  const flags = normalizeRegexFlags(item.flags);
   const pattern = String(item.pattern || '').trim();
   if (pattern) {
     new RegExp(pattern, flags);
@@ -157,8 +158,4 @@ function normalizeImportedRule(item = {}, index = 0) {
 
 function normalizeNonNegativeInteger(value, fallback = 0) {
   return Math.max(0, Math.round(normalizeFiniteNumber(value, fallback)));
-}
-
-function normalizeFlags(flags) {
-  return [...new Set(String(flags || 'g').replace(/[^dgimsuvy]/g, '').split(''))].join('') || 'g';
 }

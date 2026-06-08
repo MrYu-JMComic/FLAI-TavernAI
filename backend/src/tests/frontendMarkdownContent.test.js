@@ -69,12 +69,16 @@ test('MarkdownContent compiles fold plugins with direct loops', () => {
   assert.doesNotMatch(markdownContentScript, /\.filter\(Boolean\)/);
 });
 
-test('MarkdownContent normalizes regex flags without Set or split allocations', () => {
-  assert.match(markdownContentScript, /const VALID_REGEX_FLAGS = 'dimsuvy';/);
+test('MarkdownContent normalizes regex flags through the shared direct scanner', () => {
   assert.match(
     markdownContentScript,
-    /function normalizeRegexFlags\(flags\) \{\s*let normalized = '';[\s\S]*for \(const flag of String\(flags \|\| ''\)\) \{[\s\S]*if \(flag === 'g' \|\| !VALID_REGEX_FLAGS\.includes\(flag\) \|\| normalized\.includes\(flag\)\) \{[\s\S]*continue;[\s\S]*normalized \+= flag;[\s\S]*return normalized \|\| 'u';[\s\S]*}/
+    /import \{ normalizeRegexFlags as normalizeSharedRegexFlags \} from '..\/..\/..\/shared\/regexFlags\.js';/
   );
+  assert.match(
+    markdownContentScript,
+    /function normalizeRegexFlags\(flags\) \{\s*return normalizeSharedRegexFlags\(flags, 'u'\)\.replace\(\/g\/g, ''\) \|\| 'u';\s*\}/
+  );
+  assert.doesNotMatch(markdownContentScript, /const VALID_REGEX_FLAGS = 'dimsuvy';/);
   assert.doesNotMatch(markdownContentScript, /new Set/);
   assert.doesNotMatch(markdownContentScript, /\.split\(''\)/);
 });

@@ -50,11 +50,11 @@ test('CharacterImagePanel ignores stale image item events before mutations', () 
   );
   assert.match(
     characterImagePanelScript,
-    /function isCurrentImageId\(imageId\)\s*{\s*const id = String\(imageId \|\| ''\);[\s\S]*return images\.value\.some\(\(image\) => image\?\.id === id && image\?\.characterId === characterId\);[\s\S]*}/
+    /function isCurrentImageId\(imageId\)\s*{\s*return Boolean\(getCurrentImageById\(imageId\)\);[\s\S]*}/
   );
   assert.match(
     characterImagePanelScript,
-    /function isCurrentImageItem\(image\)\s*{\s*return Boolean\(image\?\.id && image\?\.characterId === props\.characterId && isCurrentImageId\(image\.id\)\);/
+    /function isCurrentImageItem\(image\)\s*{\s*return Boolean\(image\?\.id && image\?\.characterId === props\.characterId && getCurrentImageById\(image\.id\)\);/
   );
   assert.match(
     characterImagePanelScript,
@@ -62,7 +62,7 @@ test('CharacterImagePanel ignores stale image item events before mutations', () 
   );
   assert.match(
     characterImagePanelScript,
-    /function startEdit\(image\)\s*{\s*if \(isImageActionDisabled\(\) \|\| !isCurrentImageItem\(image\)\) return;/
+    /function startEdit\(image\)\s*{\s*if \(isImageActionDisabled\(\) \|\| !isCurrentImageItem\(image\)\) return;\s*const currentImage = getCurrentImageById\(image\.id\);\s*if \(!currentImage\) return;[\s\S]*editingImageId\.value = currentImage\.id;[\s\S]*sceneTag: currentImage\.sceneTag \|\| '',[\s\S]*emotionTag: currentImage\.emotionTag \|\| ''/
   );
   assert.match(
     characterImagePanelScript,
@@ -81,11 +81,11 @@ test('CharacterImagePanel ignores stale image item events before mutations', () 
 test('CharacterImagePanel preserves unchanged image list references during refreshes', () => {
   assert.match(
     characterImagePanelScript,
-    /function setImagesIfChanged\(nextImages\)\s*{\s*const normalizedImages = Array\.isArray\(nextImages\) \? nextImages : \[\];[\s\S]*if \(sameListItems\(currentImages, normalizedImages, sameImageSummary\)\) {\s*return false;\s*}[\s\S]*images\.value = normalizedImages;[\s\S]*return true;[\s\S]*}/
+    /function setImagesIfChanged\(nextImages\)\s*{\s*const normalizedImages = Array\.isArray\(nextImages\) \? nextImages : \[\];[\s\S]*if \(sameListItems\(currentImages, normalizedImages, sameImageSummary\)\) {\s*syncImageTransientStateWithList\(normalizedImages\);\s*return false;\s*}[\s\S]*images\.value = normalizedImages;\s*syncImageTransientStateWithList\(normalizedImages\);[\s\S]*return true;[\s\S]*}/
   );
   assert.match(
     characterImagePanelScript,
-    /function sameListItems\(currentItems, nextItems, sameItem\)\s*{[\s\S]*if \(currentItems === nextItems\) {\s*return true;\s*}[\s\S]*if \(currentItems\.length !== nextItems\.length\) {\s*return false;\s*}[\s\S]*currentItems\.every\(\(item, index\) => sameItem\(item, nextItems\[index\]\)\);[\s\S]*}/
+    /function sameListItems\(currentItems, nextItems, sameItem\)\s*{[\s\S]*if \(currentItems === nextItems\) {\s*return true;\s*}[\s\S]*if \(currentItems\.length !== nextItems\.length\) {\s*return false;\s*}[\s\S]*for \(let index = 0; index < currentItems\.length; index \+= 1\) {[\s\S]*if \(!sameItem\(currentItems\[index\], nextItems\[index\]\)\) {[\s\S]*return false;[\s\S]*return true;[\s\S]*}/
   );
   assert.match(
     characterImagePanelScript,
@@ -95,4 +95,28 @@ test('CharacterImagePanel preserves unchanged image list references during refre
   assert.match(characterImagePanelScript, /setImagesIfChanged\(reordered\);/);
   assert.ok(countMatches(characterImagePanelScript, /setImagesIfChanged\(\[\]\);/g) >= 2);
   assert.ok(countMatches(characterImagePanelScript, /setImagesIfChanged\(/g) >= 5);
+  assert.doesNotMatch(characterImagePanelScript, /currentItems\.every/);
+  assert.doesNotMatch(characterImagePanelScript, /\[\.\.\.images\.value\]/);
+  assert.doesNotMatch(characterImagePanelScript, /reordered\.map/);
+  assert.doesNotMatch(characterImagePanelScript, /images\.value\.find/);
+  assert.doesNotMatch(characterImagePanelScript, /images\.value\.some/);
+});
+
+test('CharacterImagePanel clears stale edit and drag state after image-list refreshes', () => {
+  assert.match(
+    characterImagePanelScript,
+    /function getCurrentImageById\(imageId, imageList = images\.value\)\s*{\s*const id = String\(imageId \|\| ''\);[\s\S]*if \(!id \|\| !characterId\) {[\s\S]*return null;[\s\S]*const currentImages = Array\.isArray\(imageList\) \? imageList : \[\];[\s\S]*for \(const image of currentImages\) {[\s\S]*if \(image\?\.id === id && image\?\.characterId === characterId\) {[\s\S]*return image;[\s\S]*return null;[\s\S]*}/
+  );
+  assert.match(
+    characterImagePanelScript,
+    /function syncImageTransientStateWithList\(currentImages\)\s*{\s*if \(editingImageId\.value && !getCurrentImageById\(editingImageId\.value, currentImages\)\) {[\s\S]*cancelEdit\(\);[\s\S]*if \(!isCurrentImageIndex\(dragIndex\.value\) \|\| !isCurrentImageIndex\(dragOverIndex\.value\)\) {[\s\S]*dragIndex\.value = -1;[\s\S]*dragOverIndex\.value = -1;[\s\S]*}/
+  );
+  assert.match(
+    characterImagePanelScript,
+    /if \(sameListItems\(currentImages, normalizedImages, sameImageSummary\)\) {\s*syncImageTransientStateWithList\(normalizedImages\);\s*return false;\s*}/
+  );
+  assert.match(
+    characterImagePanelScript,
+    /images\.value = normalizedImages;\s*syncImageTransientStateWithList\(normalizedImages\);/
+  );
 });

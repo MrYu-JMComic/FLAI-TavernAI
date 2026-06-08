@@ -3,6 +3,7 @@ import { computed, defineComponent, h } from 'vue';
 import MarkdownIt from 'markdown-it';
 import hljs from 'highlight.js/lib/common';
 import DOMPurify from 'dompurify';
+import { normalizeRegexFlags as normalizeSharedRegexFlags } from '../../../shared/regexFlags.js';
 
 // Initialize markdown-it with highlight.js
 const md = new MarkdownIt({
@@ -43,7 +44,6 @@ md.renderer.rules.fence = (tokens, idx, options, env, self) => {
 // Cache for rendered HTML
 const renderCache = new Map();
 const MAX_CACHE_SIZE = 200;
-const VALID_REGEX_FLAGS = 'dimsuvy';
 const LF_CHAR_CODE = 10;
 const CR_CHAR_CODE = 13;
 const FOLD_CARET = '\u203a';
@@ -170,14 +170,7 @@ function compileFoldPlugins(renderPlugins = []) {
 }
 
 function normalizeRegexFlags(flags) {
-  let normalized = '';
-  for (const flag of String(flags || '')) {
-    if (flag === 'g' || !VALID_REGEX_FLAGS.includes(flag) || normalized.includes(flag)) {
-      continue;
-    }
-    normalized += flag;
-  }
-  return normalized || 'u';
+  return normalizeSharedRegexFlags(flags, 'u').replace(/g/g, '') || 'u';
 }
 
 function matchFoldPlugin(line, plugins) {

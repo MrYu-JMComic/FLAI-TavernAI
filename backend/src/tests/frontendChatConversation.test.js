@@ -510,6 +510,15 @@ test('chat sidebar data load preserves unchanged resource references', async () 
   }
 });
 
+test('chat sidebar preset selection sync scans refreshed presets once', () => {
+  assert.match(
+    chatConversationSource,
+    /function syncSelectedPresetId\(\) \{\s*const currentId = selectedPresetId\.value;\s*let fallbackId = '';[\s\S]*for \(const preset of presetList\.value\) \{[\s\S]*if \(!fallbackId && preset\?\.isDefault\) \{[\s\S]*fallbackId = preset\?\.id \|\| '';[\s\S]*if \(preset\?\.id === currentId\) \{[\s\S]*return false;[\s\S]*if \(currentId === fallbackId\) \{[\s\S]*return false;[\s\S]*selectedPresetId\.value = fallbackId;[\s\S]*return true;[\s\S]*\}/
+  );
+  assert.doesNotMatch(chatConversationSource, /presetList\.value\.some/);
+  assert.doesNotMatch(chatConversationSource, /presetList\.value\.find/);
+});
+
 test('chat sidebar data load ignores stale responses from older conversations', async () => {
   const originalFetch = globalThis.fetch;
   const slowHistory = createDeferred();
@@ -915,6 +924,14 @@ test('chat sidebar selection ignores blank or unknown conversation ids without r
 
   assert.notEqual(chat.selectedConversationIds.value, staleSelectionReference);
   assert.deepEqual([...chat.selectedConversationIds.value], ['conv-a']);
+});
+
+test('chat sidebar stale conversation row guard scans current list directly', () => {
+  assert.match(
+    chatConversationSource,
+    /function hasConversationListItem\(conversationId\) \{\s*const targetId = normalizeConversationSelectionId\(conversationId\);[\s\S]*if \(!targetId\) \{[\s\S]*return false;[\s\S]*const currentConversations = Array\.isArray\(conversations\.value\) \? conversations\.value : \[\];[\s\S]*for \(const item of currentConversations\) \{[\s\S]*if \(item\?\.id === targetId\) \{[\s\S]*return true;[\s\S]*return false;[\s\S]*\}/
+  );
+  assert.doesNotMatch(chatConversationSource, /conversations\.value\.some/);
 });
 
 test('chat sidebar single delete ignores blank or stale row events before confirm', async () => {

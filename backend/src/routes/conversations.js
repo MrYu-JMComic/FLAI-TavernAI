@@ -755,16 +755,22 @@ export function createConversationsRouter(ctx) {
   }
 
   function getRecentMessages(userId, conversationId) {
-    return db
+    const rows = db
       .prepare(
         `SELECT * FROM messages
          WHERE user_id = ? AND conversation_id = ?
          ORDER BY created_at DESC, rowid DESC
          LIMIT 20`
       )
-      .all(userId, conversationId)
-      .reverse()
-      .filter(isDisplayableMessageRow);
+      .all(userId, conversationId);
+    const recentMessages = [];
+    for (let index = rows.length - 1; index >= 0; index -= 1) {
+      const row = rows[index];
+      if (isDisplayableMessageRow(row)) {
+        recentMessages.push(row);
+      }
+    }
+    return recentMessages;
   }
 
   function insertMessage({ userId, conversationId, role, content, reasoning, usage }) {

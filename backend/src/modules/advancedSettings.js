@@ -64,12 +64,12 @@ export function createDefaultAccessorySkills() {
 
 export function normalizeAccessorySkills(input = {}, fallback = createDefaultAccessorySkills()) {
   const source = input && typeof input === 'object' ? input : {};
-  return Object.fromEntries(
-    Object.entries(createDefaultAccessorySkills()).map(([key, defaultValue]) => [
-      key,
-      normalizeSkillConfig(source[key], fallback[key] || defaultValue)
-    ])
-  );
+  const defaults = createDefaultAccessorySkills();
+  const normalized = {};
+  for (const key of Object.keys(defaults)) {
+    normalized[key] = normalizeSkillConfig(source[key], fallback[key] || defaults[key]);
+  }
+  return normalized;
 }
 
 export function mergeAccessorySkills(author = {}, user = {}) {

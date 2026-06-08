@@ -295,13 +295,13 @@ function inferTemplateVariables(template, variables = []) {
   let match;
   while ((match = placeholderPattern.exec(raw))) {
     const token = String(match[1] || match[2] || '').trim();
-    const [rawName, ...propertyParts] = token.split('.');
+    const { rawName, rawProperty } = parseTemplateVariableToken(token);
     const name = normalizeTemplateVariableName(rawName);
     const key = normalizeVariableKey(name);
     if (!name || seen.has(key)) {
       continue;
     }
-    inferred.push(isMeterTemplateProperty(propertyParts.join('.'))
+    inferred.push(isMeterTemplateProperty(rawProperty)
       ? { name: name.slice(0, 40), value: 0, max: 100, color: '' }
       : { name: name.slice(0, 40), value: '', color: '' });
     seen.add(key);
@@ -311,6 +311,17 @@ function inferTemplateVariables(template, variables = []) {
   }
 
   return inferred;
+}
+
+function parseTemplateVariableToken(token) {
+  const separatorIndex = String(token || '').indexOf('.');
+  if (separatorIndex < 0) {
+    return { rawName: token, rawProperty: '' };
+  }
+  return {
+    rawName: token.slice(0, separatorIndex),
+    rawProperty: token.slice(separatorIndex + 1)
+  };
 }
 
 function extractTemplateRowVariables(template) {

@@ -34,7 +34,7 @@ test('ChatSidebar open conversation handler guards blank or stale ids', () => {
   );
   assert.match(
     chatConversationSource,
-    /function hasConversationListItem\(conversationId\) {\s*return conversations\.value\.some\(\(item\) => item\.id === conversationId\);/
+    /function hasConversationListItem\(conversationId\) \{\s*const targetId = normalizeConversationSelectionId\(conversationId\);[\s\S]*if \(!targetId\) \{[\s\S]*return false;[\s\S]*const currentConversations = Array\.isArray\(conversations\.value\) \? conversations\.value : \[\];[\s\S]*for \(const item of currentConversations\) \{[\s\S]*if \(item\?\.id === targetId\) \{[\s\S]*return true;[\s\S]*return false;[\s\S]*\}/
   );
 });
 

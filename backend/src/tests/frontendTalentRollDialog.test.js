@@ -44,11 +44,11 @@ test('TalentRollDialog disables roll and talent mutations while one action is bu
 test('TalentRollDialog ignores stale pool and talent item actions before mutations', () => {
   assert.match(
     talentRollDialogScript,
-    /function isCurrentPoolId\(poolId\)\s*{\s*const id = String\(poolId \|\| ''\);[\s\S]*return Boolean\(id && pools\.value\.some\(\(pool\) => pool\?\.id === id\)\);[\s\S]*}/
+    /function isCurrentPoolId\(poolId\)\s*{\s*return Boolean\(getCurrentPoolById\(poolId\)\);[\s\S]*}/
   );
   assert.match(
     talentRollDialogScript,
-    /function isCurrentTalentId\(talentId\)\s*{\s*const id = String\(talentId \|\| ''\);[\s\S]*return Boolean\(id && characterId && talents\.value\.some\(\(talent\) => talent\?\.id === id && talent\?\.characterId === characterId\)\);[\s\S]*}/
+    /function isCurrentTalentId\(talentId\)\s*{\s*const id = String\(talentId \|\| ''\);[\s\S]*if \(!id \|\| !characterId\) {[\s\S]*return false;[\s\S]*for \(const talent of talents\.value\) {[\s\S]*if \(talent\?\.id === id && talent\?\.characterId === characterId\) {[\s\S]*return true;[\s\S]*return false;[\s\S]*}/
   );
   assert.match(
     talentRollDialogScript,
@@ -67,7 +67,11 @@ test('TalentRollDialog ignores stale pool and talent item actions before mutatio
 test('TalentRollDialog preserves unchanged pool and talent list references during refreshes', () => {
   assert.match(
     talentRollDialogScript,
-    /function setPoolsIfChanged\(nextPools\)\s*{\s*const normalizedPools = Array\.isArray\(nextPools\) \? nextPools : \[\];[\s\S]*if \(sameListItems\(currentPools, normalizedPools, samePoolSummary\)\) {\s*return false;\s*}[\s\S]*pools\.value = normalizedPools;[\s\S]*return true;[\s\S]*}/
+    /const selectedPool = computed\(\(\) => getCurrentPoolById\(selectedPoolId\.value\)\);/
+  );
+  assert.match(
+    talentRollDialogScript,
+    /function setPoolsIfChanged\(nextPools\)\s*{\s*const normalizedPools = Array\.isArray\(nextPools\) \? nextPools : \[\];[\s\S]*if \(sameListItems\(currentPools, normalizedPools, samePoolSummary\)\) {\s*syncSelectedPoolWithPoolList\(normalizedPools\);\s*return false;\s*}[\s\S]*pools\.value = normalizedPools;\s*syncSelectedPoolWithPoolList\(normalizedPools\);[\s\S]*return true;[\s\S]*}/
   );
   assert.match(
     talentRollDialogScript,
@@ -75,7 +79,7 @@ test('TalentRollDialog preserves unchanged pool and talent list references durin
   );
   assert.match(
     talentRollDialogScript,
-    /function sameListItems\(currentItems, nextItems, sameItem\)\s*{[\s\S]*if \(currentItems === nextItems\) {\s*return true;\s*}[\s\S]*if \(currentItems\.length !== nextItems\.length\) {\s*return false;\s*}[\s\S]*currentItems\.every\(\(item, index\) => sameItem\(item, nextItems\[index\]\)\);[\s\S]*}/
+    /function sameListItems\(currentItems, nextItems, sameItem\)\s*{[\s\S]*if \(currentItems === nextItems\) {\s*return true;\s*}[\s\S]*if \(currentItems\.length !== nextItems\.length\) {\s*return false;\s*}[\s\S]*for \(let index = 0; index < currentItems\.length; index \+= 1\) {[\s\S]*if \(!sameItem\(currentItems\[index\], nextItems\[index\]\)\) {[\s\S]*return false;[\s\S]*return true;[\s\S]*}/
   );
   assert.match(
     talentRollDialogScript,
@@ -87,7 +91,11 @@ test('TalentRollDialog preserves unchanged pool and talent list references durin
   );
   assert.match(talentRollDialogScript, /setPoolsIfChanged\(poolData\);/);
   assert.match(talentRollDialogScript, /setTalentsIfChanged\(talentData\);/);
-  assert.match(talentRollDialogScript, /setTalentsIfChanged\(\[result, \.\.\.talents\.value\]\);/);
+  assert.match(talentRollDialogScript, /prependTalentIfChanged\(result\);/);
+  assert.match(
+    talentRollDialogScript,
+    /function prependTalentIfChanged\(talent\) \{\s*if \(!talent\) return false;\s*const nextTalents = \[talent\];[\s\S]*for \(const currentTalent of talents\.value\) \{[\s\S]*nextTalents\.push\(currentTalent\);[\s\S]*return setTalentsIfChanged\(nextTalents\);/
+  );
   assert.match(
     talentRollDialogScript,
     /function removeTalentByIdIfPresent\(talentId\) \{\s*const nextTalents = \[\];\s*let changed = false;[\s\S]*for \(const talent of talents\.value\) \{[\s\S]*if \(talent\?\.id === talentId\) \{[\s\S]*changed = true;[\s\S]*} else \{[\s\S]*nextTalents\.push\(talent\);[\s\S]*}[\s\S]*if \(changed\) \{[\s\S]*setTalentsIfChanged\(nextTalents\);[\s\S]*return changed;/
@@ -96,5 +104,27 @@ test('TalentRollDialog preserves unchanged pool and talent list references durin
   assert.ok(countMatches(talentRollDialogScript, /setPoolsIfChanged\(\[\]\);/g) >= 2);
   assert.ok(countMatches(talentRollDialogScript, /setTalentsIfChanged\(\[\]\);/g) >= 3);
   assert.ok(countMatches(talentRollDialogScript, /setTalentsIfChanged\(/g) >= 6);
+  assert.doesNotMatch(talentRollDialogScript, /currentItems\.every/);
+  assert.doesNotMatch(talentRollDialogScript, /\[\s*result,\s*\.\.\.talents\.value\s*\]/);
   assert.doesNotMatch(talentRollDialogScript, /setTalentsIfChanged\(talents\.value\.filter/);
+});
+
+test('TalentRollDialog syncs selected pool after pool-list refreshes', () => {
+  assert.match(
+    talentRollDialogScript,
+    /function getCurrentPoolById\(poolId, poolList = pools\.value\)\s*{\s*const id = String\(poolId \|\| ''\);[\s\S]*if \(!id\) {[\s\S]*return null;[\s\S]*const currentPools = Array\.isArray\(poolList\) \? poolList : \[\];[\s\S]*for \(const pool of currentPools\) {[\s\S]*if \(pool\?\.id === id\) {[\s\S]*return pool;[\s\S]*return null;[\s\S]*}/
+  );
+  assert.match(
+    talentRollDialogScript,
+    /function syncSelectedPoolWithPoolList\(currentPools\)\s*{\s*const normalizedPools = Array\.isArray\(currentPools\) \? currentPools : \[\];[\s\S]*if \(getCurrentPoolById\(selectedPoolId\.value, normalizedPools\)\) {[\s\S]*return;[\s\S]*selectedPoolId\.value = normalizedPools\[0\]\?\.id \|\| '';[\s\S]*}/
+  );
+  assert.match(
+    talentRollDialogScript,
+    /if \(sameListItems\(currentPools, normalizedPools, samePoolSummary\)\) {\s*syncSelectedPoolWithPoolList\(normalizedPools\);\s*return false;\s*}/
+  );
+  assert.match(
+    talentRollDialogScript,
+    /pools\.value = normalizedPools;\s*syncSelectedPoolWithPoolList\(normalizedPools\);/
+  );
+  assert.doesNotMatch(talentRollDialogScript, /pools\.value\.some/);
 });

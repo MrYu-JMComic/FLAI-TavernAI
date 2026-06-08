@@ -21,6 +21,8 @@
 - PASS: `node scripts/check-encoding.mjs`
   - Result: scanned 387 files; no common Chinese mojibake markers found.
 - PASS: `git diff --check`
+- PASS: `powershell -ExecutionPolicy Bypass -File scripts\review-gate.ps1`
+  - Result: backend tests passed with 738 tests, frontend build passed, review gate passed.
 
 ## Next Recommended Task
 

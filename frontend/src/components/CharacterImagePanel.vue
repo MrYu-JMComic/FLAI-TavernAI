@@ -117,9 +117,11 @@ function setImagesIfChanged(nextImages) {
   const normalizedImages = Array.isArray(nextImages) ? nextImages : [];
   const currentImages = Array.isArray(images.value) ? images.value : [];
   if (sameListItems(currentImages, normalizedImages, sameImageSummary)) {
+    syncImageTransientStateWithList(normalizedImages);
     return false;
   }
   images.value = normalizedImages;
+  syncImageTransientStateWithList(normalizedImages);
   return true;
 }
 
@@ -130,7 +132,12 @@ function sameListItems(currentItems, nextItems, sameItem) {
   if (currentItems.length !== nextItems.length) {
     return false;
   }
-  return currentItems.every((item, index) => sameItem(item, nextItems[index]));
+  for (let index = 0; index < currentItems.length; index += 1) {
+    if (!sameItem(currentItems[index], nextItems[index])) {
+      return false;
+    }
+  }
+  return true;
 }
 
 function sameImageSummary(current = {}, next = {}) {
@@ -197,16 +204,36 @@ function isCurrentImageMutation(mutationToken, characterId) {
 }
 
 function isCurrentImageId(imageId) {
-  const id = String(imageId || '');
-  const characterId = props.characterId;
-  if (!id || !characterId) {
-    return false;
-  }
-  return images.value.some((image) => image?.id === id && image?.characterId === characterId);
+  return Boolean(getCurrentImageById(imageId));
 }
 
 function isCurrentImageItem(image) {
-  return Boolean(image?.id && image?.characterId === props.characterId && isCurrentImageId(image.id));
+  return Boolean(image?.id && image?.characterId === props.characterId && getCurrentImageById(image.id));
+}
+
+function getCurrentImageById(imageId, imageList = images.value) {
+  const id = String(imageId || '');
+  const characterId = props.characterId;
+  if (!id || !characterId) {
+    return null;
+  }
+  const currentImages = Array.isArray(imageList) ? imageList : [];
+  for (const image of currentImages) {
+    if (image?.id === id && image?.characterId === characterId) {
+      return image;
+    }
+  }
+  return null;
+}
+
+function syncImageTransientStateWithList(currentImages) {
+  if (editingImageId.value && !getCurrentImageById(editingImageId.value, currentImages)) {
+    cancelEdit();
+  }
+  if (!isCurrentImageIndex(dragIndex.value) || !isCurrentImageIndex(dragOverIndex.value)) {
+    dragIndex.value = -1;
+    dragOverIndex.value = -1;
+  }
 }
 
 function isCurrentImageIndex(index) {
@@ -237,10 +264,12 @@ function isImageActionDisabled() {
 
 function startEdit(image) {
   if (isImageActionDisabled() || !isCurrentImageItem(image)) return;
-  editingImageId.value = image.id;
+  const currentImage = getCurrentImageById(image.id);
+  if (!currentImage) return;
+  editingImageId.value = currentImage.id;
   editForm.value = {
-    sceneTag: image.sceneTag || '',
-    emotionTag: image.emotionTag || ''
+    sceneTag: currentImage.sceneTag || '',
+    emotionTag: currentImage.emotionTag || ''
   };
 }
 
@@ -279,7 +308,13 @@ async function setDefault(imageId) {
 
   try {
     // Clear old default
-    const currentDefault = images.value.find((img) => img.isDefault);
+    let currentDefault = null;
+    for (const image of images.value) {
+      if (image?.isDefault) {
+        currentDefault = image;
+        break;
+      }
+    }
     if (currentDefault && currentDefault.id !== imageId) {
       await updateCharacterImage(characterId, currentDefault.id, { isDefault: false });
     }
@@ -345,11 +380,17 @@ function onDragEnd() {
     return;
   }
 
-  const reordered = [...images.value];
+  const reordered = [];
+  for (const image of images.value) {
+    reordered.push(image);
+  }
   const [moved] = reordered.splice(dragIndex.value, 1);
   reordered.splice(dragOverIndex.value, 0, moved);
   setImagesIfChanged(reordered);
-  const orderedIds = reordered.map((img) => img.id);
+  const orderedIds = [];
+  for (const image of reordered) {
+    orderedIds.push(image.id);
+  }
   const characterId = props.characterId;
   dragIndex.value = -1;
   dragOverIndex.value = -1;

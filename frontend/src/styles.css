@@ -1256,6 +1256,7 @@ p {
 
 .world-book-dialog-list {
   display: grid;
+  align-content: start;
   gap: 8px;
   min-height: 0;
   overflow: auto;
@@ -1267,7 +1268,7 @@ p {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
   gap: 10px;
-  align-items: center;
+  align-items: start;
   min-height: 72px;
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -1287,9 +1288,11 @@ p {
 }
 
 .world-book-dialog-option input {
+  align-self: start;
   width: 18px;
   height: 18px;
   margin: 0;
+  margin-top: 3px;
   accent-color: var(--primary);
 }
 
@@ -10462,8 +10465,26 @@ fieldset.accessory-skills-grid:disabled {
   }
 
   .world-book-dialog-tools,
-  .world-book-dialog-option {
+  .world-book-dialog-search,
+  .world-book-dialog-sort {
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  .world-book-dialog-option {
+    grid-template-columns: auto minmax(0, 1fr);
+    grid-template-areas:
+      "check main"
+      "check meta";
+    row-gap: 6px;
+    min-height: 0;
+  }
+
+  .world-book-dialog-option input {
+    grid-area: check;
+  }
+
+  .world-book-dialog-option-main {
+    grid-area: main;
   }
 
   .world-book-clear-search,
@@ -10472,6 +10493,7 @@ fieldset.accessory-skills-grid:disabled {
   }
 
   .world-book-dialog-meta {
+    grid-area: meta;
     justify-content: flex-start;
     max-width: none;
   }

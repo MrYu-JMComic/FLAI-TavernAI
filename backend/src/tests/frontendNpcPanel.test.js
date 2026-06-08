@@ -90,6 +90,27 @@ test('NpcPanel exposes NPC status aliases and memory seal metadata controls', ()
   assert.match(npcPanelStyle, /\.npc-seal-input:checked \+ \.npc-seal-control/);
 });
 
+test('NpcPanel aggregates panel stats and empty NPC names in one pass', () => {
+  assert.match(
+    npcPanelScript,
+    /const npcPanelSummary = computed\(\(\) => \{[\s\S]*const sourceNpcs = Array\.isArray\(npcs\.value\) \? npcs\.value : \[\];[\s\S]*const stats = \{[\s\S]*npcCount: sourceNpcs\.length,[\s\S]*memoryCount: 0,[\s\S]*behaviorCount: 0[\s\S]*const emptyNpcNames = \[\];[\s\S]*for \(const npc of sourceNpcs\) \{[\s\S]*const memoryCount = Number\(npc\?\.memoryCount \|\| 0\);[\s\S]*const behaviorCount = Number\(npc\?\.behaviorCount \|\| 0\);[\s\S]*stats\.memoryCount \+= memoryCount;[\s\S]*stats\.behaviorCount \+= behaviorCount;[\s\S]*emptyNpcNames\.push\(npc\?\.name\);[\s\S]*return \{ stats, emptyNpcNames \};[\s\S]*\}\);/
+  );
+  assert.match(npcPanelScript, /const npcPanelStats = computed\(\(\) => npcPanelSummary\.value\.stats\);/);
+  assert.match(npcPanelScript, /const emptyNpcNames = computed\(\(\) => npcPanelSummary\.value\.emptyNpcNames\);/);
+  assert.doesNotMatch(npcPanelScript, /npcs\.value\.reduce/);
+  assert.doesNotMatch(npcPanelScript, /const emptyNpcNames = computed\(\(\) => npcs\.value\s*\.\s*filter/);
+});
+
+test('NpcPanel selected NPC lookup scans current list directly', () => {
+  assert.match(npcPanelScript, /const selectedNpcData = computed\(\(\) => getCurrentNpcByName\(selectedNpc\.value\)\);/);
+  assert.match(
+    npcPanelScript,
+    /function getCurrentNpcByName\(name, sourceNpcs = npcs\.value\) \{\s*const targetName = String\(name \|\| ''\)\.trim\(\);[\s\S]*if \(!targetName\) \{[\s\S]*return null;[\s\S]*const currentNpcs = Array\.isArray\(sourceNpcs\) \? sourceNpcs : \[\];[\s\S]*for \(const npc of currentNpcs\) \{[\s\S]*if \(npc\?\.name === targetName\) \{[\s\S]*return npc;[\s\S]*return null;[\s\S]*\}/
+  );
+  assert.match(npcPanelScript, /if \(selectedNpc\.value && !getCurrentNpcByName\(selectedNpc\.value\)\) \{\s*setSelectedNpc\(''\);/);
+  assert.doesNotMatch(npcPanelScript, /npcs\.value\.find/);
+});
+
 test('NpcPanel ignores stale NPC detail item actions', () => {
   assert.match(
     npcPanelScript,

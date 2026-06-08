@@ -395,10 +395,15 @@ export function useChatSubmit({
     if (submitDisposed) {
       return;
     }
-    const tasks = [
-      createRefreshTask(loadSidebarData),
-      createRefreshTask(loadEconomyBalance)
-    ].filter(Boolean);
+    const tasks = [];
+    const sidebarTask = createRefreshTask(loadSidebarData);
+    if (sidebarTask) {
+      tasks.push(sidebarTask);
+    }
+    const economyTask = createRefreshTask(loadEconomyBalance);
+    if (economyTask) {
+      tasks.push(economyTask);
+    }
     if (tasks.length) {
       void Promise.allSettled(tasks);
     }
@@ -445,19 +450,30 @@ export function useChatSubmit({
       return false;
     }
     if (Array.isArray(current) || Array.isArray(next)) {
-      return Array.isArray(current)
-        && Array.isArray(next)
-        && current.length === next.length
-        && current.every((item, index) => samePlainValue(item, next[index]));
+      if (!Array.isArray(current) || !Array.isArray(next) || current.length !== next.length) {
+        return false;
+      }
+      for (let index = 0; index < current.length; index += 1) {
+        if (!samePlainValue(current[index], next[index])) {
+          return false;
+        }
+      }
+      return true;
     }
     if (typeof current !== 'object') {
       return false;
     }
     const currentKeys = Object.keys(current);
     const nextKeys = Object.keys(next);
-    return currentKeys.length === nextKeys.length
-      && currentKeys.every((key) => Object.prototype.hasOwnProperty.call(next, key))
-      && currentKeys.every((key) => samePlainValue(current[key], next[key]));
+    if (currentKeys.length !== nextKeys.length) {
+      return false;
+    }
+    for (const key of currentKeys) {
+      if (!Object.prototype.hasOwnProperty.call(next, key) || !samePlainValue(current[key], next[key])) {
+        return false;
+      }
+    }
+    return true;
   }
 
   function followSubmitScroll(message, anchorAssistantReply, smooth = false) {

@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
 process.env.FLAI_DB_PATH = ':memory:';
@@ -11,6 +12,8 @@ const { getConversationEconomyState, getTransactionHistory } = await import('../
 const { hideConversationNpc, listConversationNpcs } = await import('../modules/npcs.js');
 const { getStatusBar, upsertStatusBar } = await import('../modules/statusBars.js');
 const { getAccessorySkillsPayload, runAccessoryAgents } = await import('../services/accessoryAgents.js');
+const accessoryAgentsSource = readFileSync(new URL('../services/accessoryAgents.js', import.meta.url), 'utf8');
+const advancedSettingsSource = readFileSync(new URL('../modules/advancedSettings.js', import.meta.url), 'utf8');
 
 test('accessory agents stay inactive when skills are disabled', async () => {
   const env = setupConversation({
@@ -40,6 +43,35 @@ test('accessory agents stay inactive when skills are disabled', async () => {
   assert.equal(env.db.prepare('SELECT COUNT(*) AS count FROM npc_memories').get().count, 0);
   assert.equal(getConversationEconomyState(env.db, env.userId, env.conversation.id, { ensureDefaultAccount: false }).accounts.length, 0);
   assert.equal(getStatusBar(env.db, env.userId, env.conversation.id).variables[0].value, 100);
+});
+
+test('accessory skill payloads build active flags without Object.fromEntries map allocation', () => {
+  const env = setupConversation({
+    npcAgent: skill(false),
+    statusBarAgent: skill('auto'),
+    economyAgent: skill(true)
+  });
+  env.conversation.settings.statusBarPrompt = 'Track visible mood changes.';
+
+  const payload = getAccessorySkillsPayload(env.conversation, null);
+
+  assert.deepEqual(Object.keys(payload.skills), [
+    'npcAgent',
+    'statusBarAgent',
+    'economyAgent',
+    'talentPrompt',
+    'cgScene'
+  ]);
+  assert.equal(payload.active.npcAgent, false);
+  assert.equal(payload.active.statusBarAgent, true);
+  assert.equal(payload.active.economyAgent, true);
+  assert.equal(payload.active.talentPrompt, false);
+  assert.equal(payload.active.cgScene, false);
+  assert.match(advancedSettingsSource, /const normalized = \{\};\r?\n  for \(const key of Object\.keys\(defaults\)\) \{/);
+  assert.match(accessoryAgentsSource, /const activeContext = \{/);
+  assert.match(accessoryAgentsSource, /const active = \{\};\r?\n  for \(const key of Object\.keys\(skills\)\) \{/);
+  assert.doesNotMatch(advancedSettingsSource, /Object\.fromEntries\(\s*Object\.entries\(createDefaultAccessorySkills\(\)\)\.map/);
+  assert.doesNotMatch(accessoryAgentsSource, /Object\.fromEntries\(\s*Object\.keys\(skills\)\.map/);
 });
 
 test('status bar agent auto mode activates when variables or prompt exist and can update them', async () => {

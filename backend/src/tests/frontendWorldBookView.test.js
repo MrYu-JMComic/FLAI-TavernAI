@@ -42,6 +42,14 @@ test('WorldBookView preserves unchanged book and entry references during refresh
     worldBookViewScript,
     /function sameEntrySummary\(currentEntry, nextEntry\) \{[\s\S]*currentEntry\?\.triggerKeys === nextEntry\?\.triggerKeys[\s\S]*nullableComparable\(currentEntry\?\.sticky\) === nullableComparable\(nextEntry\?\.sticky\)[\s\S]*Number\(currentEntry\?\.orderIndex \|\| 0\) === Number\(nextEntry\?\.orderIndex \|\| 0\);[\s\S]*\}/
   );
+  assert.match(
+    worldBookViewScript,
+    /function sameBookList\(currentBooks, nextBooks\) \{[\s\S]*for \(let index = 0; index < currentBooks\.length; index \+= 1\) \{[\s\S]*sameBookSummary\(currentBooks\[index\], nextBooks\[index\]\)[\s\S]*return true;[\s\S]*\}/
+  );
+  assert.match(
+    worldBookViewScript,
+    /function sameEntryList\(currentEntries, nextEntries\) \{[\s\S]*for \(let index = 0; index < currentEntries\.length; index \+= 1\) \{[\s\S]*sameEntrySummary\(currentEntries\[index\], nextEntries\[index\]\)[\s\S]*return true;[\s\S]*\}/
+  );
   assert.equal(countMatches(worldBookViewScript, /books\.value\s*=/g), 1);
   assert.equal(countMatches(worldBookViewScript, /currentBook\.value\s*=/g), 2);
 });
@@ -67,6 +75,7 @@ test('WorldBookView preserves unchanged AI draft and process panel references', 
     worldBookViewScript,
     /function samePlainValue\(current, next\) {[\s\S]*Object\.is\(current, next\)[\s\S]*Array\.isArray\(current\)[\s\S]*Object\.keys\(current\)[\s\S]*samePlainValue\(current\[key\], next\[key\]\)[\s\S]*}/
   );
+  assert.doesNotMatch(worldBookViewScript, /(?:currentBooks|currentEntries|current|currentKeys)\.every\(/);
   assert.match(
     worldBookViewScript,
     /function updateAiProcessStep\(round = 1, updateStep\) {[\s\S]*const currentProcess = Array\.isArray\(aiProcess\.value\) \? aiProcess\.value : \[\];[\s\S]*const nextProcess = stepIndex >= 0[\s\S]*currentProcess\.map\(\(item, index\) => \(index === stepIndex \? nextStep : item\)\)[\s\S]*\[\.\.\.currentProcess, nextStep\][\s\S]*setAiProcessIfChanged\(nextProcess\);[\s\S]*}/
@@ -119,6 +128,18 @@ test('WorldBookView aggregates current entry stats in one pass', () => {
   assert.doesNotMatch(worldBookViewScript, /const enabledEntryCount = computed\(\(\) => currentEntries\.value\.filter/);
   assert.doesNotMatch(worldBookViewScript, /const alwaysActiveEntryCount = computed\(\(\) => currentEntries\.value\.filter/);
   assert.doesNotMatch(worldBookViewScript, /const probabilityEntryCount = computed\(\(\) => currentEntries\.value\.filter/);
+});
+
+test('WorldBookView aggregates book list stats in one pass', () => {
+  assert.match(
+    worldBookViewScript,
+    /const bookListStats = computed\(\(\) => \{[\s\S]*const sourceBooks = Array\.isArray\(books\.value\) \? books\.value : \[\];[\s\S]*let totalEntries = 0;[\s\S]*let withEntries = 0;[\s\S]*for \(const book of sourceBooks\) \{[\s\S]*const entryCount = Number\(book\?\.entryCount \|\| 0\);[\s\S]*totalEntries \+= entryCount;[\s\S]*withEntries \+= 1;[\s\S]*averageEntries: sourceBooks\.length \? Math\.round\(totalEntries \/ sourceBooks\.length\) : 0[\s\S]*\}\);/
+  );
+  assert.match(worldBookViewScript, /const totalEntryCount = computed\(\(\) => bookListStats\.value\.totalEntries\);/);
+  assert.match(worldBookViewScript, /const booksWithEntriesCount = computed\(\(\) => bookListStats\.value\.withEntries\);/);
+  assert.match(worldBookViewScript, /const averageEntryCount = computed\(\(\) => bookListStats\.value\.averageEntries\);/);
+  assert.doesNotMatch(worldBookViewScript, /const totalEntryCount = computed\(\(\) => books\.value\.reduce/);
+  assert.doesNotMatch(worldBookViewScript, /const booksWithEntriesCount = computed\(\(\) => books\.value\.filter/);
 });
 
 test('WorldBookView locks world book mutations while saving is active', () => {

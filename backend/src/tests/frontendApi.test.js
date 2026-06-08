@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import test from 'node:test';
+import { findSseBlockSeparator, forEachSseLine } from '../../../shared/sse.js';
 
 const { apiRequest, streamCharacterDraft, updateCharacter } = await import('../../../frontend/src/api.js');
+const frontendApiSource = readFileSync(new URL('../../../frontend/src/api.js', import.meta.url), 'utf8');
 
 function jsonResponse(data, status = 200) {
   return new Response(JSON.stringify(data), {
@@ -104,6 +107,67 @@ test('frontend assistant SSE errors preserve plain text payloads', async () => {
   } finally {
     globalThis.fetch = originalFetch;
   }
+});
+
+test('frontend assistant SSE parser scans CRLF data lines without block split allocation', async () => {
+  const originalFetch = globalThis.fetch;
+
+  globalThis.fetch = async (url) => {
+    if (String(url).endsWith('/api/csrf-token')) {
+      return jsonResponse({ csrfToken: 'csrf-for-frontend-api-crlf-sse-test' });
+    }
+    return sseResponse('event: error\r\ndata: First line\r\ndata: Second line\r\n\r\n');
+  };
+
+  try {
+    await assert.rejects(
+      () => streamCharacterDraft({ name: 'CRLF Error Target' }),
+      /First line Second line/
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+
+  const sharedLines = [];
+  forEachSseLine('event: error\r\ndata: First line', (line) => sharedLines.push(line));
+  assert.deepEqual(sharedLines, ['event: error', 'data: First line']);
+  assert.match(frontendApiSource, /from '..\/..\/shared\/sse\.js'/);
+  assert.match(frontendApiSource, /forEachSseLine\(block, \(line\) => \{/);
+  assert.doesNotMatch(frontendApiSource, /function forEachSseLine\(text, visit\)/);
+  assert.doesNotMatch(frontendApiSource, /block\.split\(\s*\/\\r\?\\n\//);
+  assert.doesNotMatch(frontendApiSource, /const dataLines = \[\]/);
+  assert.doesNotMatch(frontendApiSource, /dataLines\.push/);
+  assert.doesNotMatch(frontendApiSource, /dataLines\.join/);
+});
+
+test('frontend assistant SSE parser scans split CRLF block separators without regex match allocation', async () => {
+  const originalFetch = globalThis.fetch;
+  const encoder = new TextEncoder();
+
+  globalThis.fetch = async (url) => {
+    if (String(url).endsWith('/api/csrf-token')) {
+      return jsonResponse({ csrfToken: 'csrf-for-frontend-api-split-separator-test' });
+    }
+    return sseByteChunksResponse([
+      encoder.encode('event: done\r'),
+      encoder.encode('\ndata: {"name":"Split Separator Character"}\r'),
+      encoder.encode('\n\r'),
+      encoder.encode('\n')
+    ]);
+  };
+
+  try {
+    const result = await streamCharacterDraft({ name: 'Split Separator Character' });
+    assert.deepEqual(result, { name: 'Split Separator Character' });
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+
+  assert.deepEqual(findSseBlockSeparator('a\r\n\r\nb'), { index: 1, length: 4 });
+  assert.match(frontendApiSource, /from '..\/..\/shared\/sse\.js'/);
+  assert.match(frontendApiSource, /let separator = findSseBlockSeparator\(buffer\);/);
+  assert.doesNotMatch(frontendApiSource, /function findSseBlockSeparator\(text\)/);
+  assert.doesNotMatch(frontendApiSource, /buffer\.match\(\s*\/\\r\?\\n\\r\?\\n\//);
 });
 
 test('frontend assistant SSE errors flush truncated trailing UTF-8 bytes', async () => {

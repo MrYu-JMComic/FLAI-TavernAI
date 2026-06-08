@@ -10,18 +10,18 @@ const agentTimeoutMs = 20000;
 export function getAccessorySkillsPayload(conversation, statusBar = null) {
   const skills = normalizeAccessorySkills(conversation?.settings?.accessorySkills || {});
   const advancedSettings = normalizeAdvancedSettings(conversation?.settings || {});
+  const activeContext = {
+    statusBar,
+    statusBarPrompt: advancedSettings.statusBarPrompt,
+    statusBarBlueprint: advancedSettings.statusBarBlueprint
+  };
+  const active = {};
+  for (const key of Object.keys(skills)) {
+    active[key] = isAccessorySkillActive(skills, key, activeContext);
+  }
   return {
     skills,
-    active: Object.fromEntries(
-      Object.keys(skills).map((key) => [
-        key,
-        isAccessorySkillActive(skills, key, {
-          statusBar,
-          statusBarPrompt: advancedSettings.statusBarPrompt,
-          statusBarBlueprint: advancedSettings.statusBarBlueprint
-        })
-      ])
-    )
+    active
   };
 }
 

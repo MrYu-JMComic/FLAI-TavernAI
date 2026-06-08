@@ -108,10 +108,18 @@ function setPresetsIfChanged(nextPresets) {
 }
 
 function samePresetList(currentPresets, nextPresets) {
-  return Array.isArray(currentPresets)
-    && Array.isArray(nextPresets)
-    && currentPresets.length === nextPresets.length
-    && currentPresets.every((preset, index) => samePresetSummary(preset, nextPresets[index]));
+  if (!Array.isArray(currentPresets) || !Array.isArray(nextPresets)) {
+    return false;
+  }
+  if (currentPresets.length !== nextPresets.length) {
+    return false;
+  }
+  for (let index = 0; index < currentPresets.length; index += 1) {
+    if (!samePresetSummary(currentPresets[index], nextPresets[index])) {
+      return false;
+    }
+  }
+  return true;
 }
 
 function samePresetSummary(currentPreset, nextPreset) {
@@ -134,16 +142,18 @@ function startCreate() {
 
 function startEdit(preset) {
   if (presetListActionBusy.value) return;
-  editing.value = { id: preset.id };
+  const currentPreset = getCurrentPreset(preset?.id);
+  if (!currentPreset) return;
+  editing.value = { id: currentPreset.id };
   form.value = {
-    name: preset.name || '',
-    systemPrompt: preset.systemPrompt || '',
-    temperature: Number(preset.temperature) || 1.0,
-    maxTokens: Math.round(Number(preset.maxTokens)) || 4096,
-    topP: Number(preset.topP) || 1.0,
-    frequencyPenalty: Number(preset.frequencyPenalty) || 0,
-    presencePenalty: Number(preset.presencePenalty) || 0,
-    isDefault: Boolean(preset.isDefault)
+    name: currentPreset.name || '',
+    systemPrompt: currentPreset.systemPrompt || '',
+    temperature: Number(currentPreset.temperature) || 1.0,
+    maxTokens: Math.round(Number(currentPreset.maxTokens)) || 4096,
+    topP: Number(currentPreset.topP) || 1.0,
+    frequencyPenalty: Number(currentPreset.frequencyPenalty) || 0,
+    presencePenalty: Number(currentPreset.presencePenalty) || 0,
+    isDefault: Boolean(currentPreset.isDefault)
   };
 }
 
@@ -221,16 +231,18 @@ function isActivePresetSave(saveToken) {
 }
 
 async function handleDelete(preset) {
-  if (presetViewDisposed || presetListActionBusy.value || !preset?.id) {
+  if (presetViewDisposed || presetListActionBusy.value) {
     return;
   }
+  const currentPreset = getCurrentPreset(preset?.id);
+  if (!currentPreset) return;
   if (presets.value.length <= 1) {
     notify.warning('至少需要保留一个预设');
     return;
   }
-  if (!window.confirm(`确定删除预设「${preset.name}」吗？`)) return;
+  if (!window.confirm(`确定删除预设「${currentPreset.name}」吗？`)) return;
   const deleteToken = ++presetDeleteToken;
-  const presetId = preset.id;
+  const presetId = currentPreset.id;
   deletingPresetId.value = presetId;
   try {
     await deletePreset(presetId);
@@ -259,19 +271,21 @@ function isActivePresetDelete(deleteToken) {
 }
 
 async function handleSetDefault(preset) {
-  if (presetViewDisposed || presetListActionBusy.value || !preset?.id) {
+  if (presetViewDisposed || presetListActionBusy.value) {
     return;
   }
+  const currentPreset = getCurrentPreset(preset?.id);
+  if (!currentPreset) return;
 
   const defaultToken = ++presetDefaultToken;
-  const presetId = preset.id;
+  const presetId = currentPreset.id;
   defaultingPresetId.value = presetId;
   try {
     await setDefaultPreset(presetId);
     if (!isCurrentPresetDefault(defaultToken, presetId)) return;
     await loadPresets();
     if (!isCurrentPresetDefault(defaultToken, presetId)) return;
-    notify.success(`已将「${preset.name}」设为默认预设`);
+    notify.success(`已将「${currentPreset.name}」设为默认预设`);
   } catch (err) {
     if (!isCurrentPresetDefault(defaultToken, presetId)) return;
     notify.error(err.message);
@@ -288,6 +302,18 @@ function isCurrentPresetDefault(defaultToken, presetId) {
 
 function isActivePresetDefault(defaultToken) {
   return !presetViewDisposed && defaultToken === presetDefaultToken;
+}
+
+function getCurrentPreset(presetId) {
+  if (!presetId) {
+    return null;
+  }
+  for (const preset of presets.value) {
+    if (preset?.id === presetId) {
+      return preset;
+    }
+  }
+  return null;
 }
 
 function promptSummary(text) {

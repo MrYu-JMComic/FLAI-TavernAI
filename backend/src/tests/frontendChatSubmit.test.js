@@ -342,6 +342,20 @@ test('chat submit message removal avoids no-op filter replacements', () => {
   assert.doesNotMatch(chatSubmitSource, /messages\.value\.filter/);
 });
 
+test('chat submit refresh and plain metadata comparisons avoid callback allocations', () => {
+  assert.match(
+    chatSubmitSource,
+    /function refreshConversationChrome\(\) \{[\s\S]*const tasks = \[\];[\s\S]*const sidebarTask = createRefreshTask\(loadSidebarData\);[\s\S]*tasks\.push\(sidebarTask\);[\s\S]*const economyTask = createRefreshTask\(loadEconomyBalance\);[\s\S]*tasks\.push\(economyTask\);[\s\S]*Promise\.allSettled\(tasks\);[\s\S]*\}/
+  );
+  assert.match(
+    chatSubmitSource,
+    /function samePlainValue\(current, next\) \{[\s\S]*for \(let index = 0; index < current\.length; index \+= 1\) \{[\s\S]*samePlainValue\(current\[index\], next\[index\]\)[\s\S]*for \(const key of currentKeys\) \{[\s\S]*samePlainValue\(current\[key\], next\[key\]\)[\s\S]*return true;[\s\S]*\}/
+  );
+  assert.doesNotMatch(chatSubmitSource, /\.filter\(Boolean\)/);
+  assert.doesNotMatch(chatSubmitSource, /current\.every\(/);
+  assert.doesNotMatch(chatSubmitSource, /currentKeys\.every\(/);
+});
+
 test('chat submit anchors the assistant reply when an expanded status bar is already pinned', async () => {
   const originalFetch = globalThis.fetch;
   const messages = refValue([]);

@@ -27,7 +27,7 @@ let loadRequestId = 0;
 let dialogContextVersion = 0;
 let dialogDisposed = false;
 
-const selectedPool = computed(() => pools.value.find((p) => p.id === selectedPoolId.value));
+const selectedPool = computed(() => getCurrentPoolById(selectedPoolId.value));
 const talentMutationBusy = computed(() => clearingAll.value || Boolean(removingTalentId.value));
 const talentActionBusy = computed(() => loading.value || rolling.value || talentMutationBusy.value);
 const dialogCloseLocked = computed(() => rolling.value || talentMutationBusy.value);
@@ -66,12 +66,6 @@ async function loadDialogData() {
     }
     setPoolsIfChanged(poolData);
     setTalentsIfChanged(talentData);
-    if (!pools.value.some((pool) => pool.id === selectedPoolId.value)) {
-      selectedPoolId.value = '';
-    }
-    if (!selectedPoolId.value && pools.value.length) {
-      selectedPoolId.value = pools.value[0].id;
-    }
   } catch (err) {
     if (requestId !== loadRequestId || !isCurrentDialogContext(context)) {
       return;
@@ -122,9 +116,11 @@ function setPoolsIfChanged(nextPools) {
   const normalizedPools = Array.isArray(nextPools) ? nextPools : [];
   const currentPools = Array.isArray(pools.value) ? pools.value : [];
   if (sameListItems(currentPools, normalizedPools, samePoolSummary)) {
+    syncSelectedPoolWithPoolList(normalizedPools);
     return false;
   }
   pools.value = normalizedPools;
+  syncSelectedPoolWithPoolList(normalizedPools);
   return true;
 }
 
@@ -145,7 +141,12 @@ function sameListItems(currentItems, nextItems, sameItem) {
   if (currentItems.length !== nextItems.length) {
     return false;
   }
-  return currentItems.every((item, index) => sameItem(item, nextItems[index]));
+  for (let index = 0; index < currentItems.length; index += 1) {
+    if (!sameItem(currentItems[index], nextItems[index])) {
+      return false;
+    }
+  }
+  return true;
 }
 
 function samePoolSummary(current = {}, next = {}) {
@@ -167,14 +168,43 @@ function sameTalentSummary(current = {}, next = {}) {
 }
 
 function isCurrentPoolId(poolId) {
-  const id = String(poolId || '');
-  return Boolean(id && pools.value.some((pool) => pool?.id === id));
+  return Boolean(getCurrentPoolById(poolId));
 }
 
 function isCurrentTalentId(talentId) {
   const id = String(talentId || '');
   const characterId = props.characterId;
-  return Boolean(id && characterId && talents.value.some((talent) => talent?.id === id && talent?.characterId === characterId));
+  if (!id || !characterId) {
+    return false;
+  }
+  for (const talent of talents.value) {
+    if (talent?.id === id && talent?.characterId === characterId) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function getCurrentPoolById(poolId, poolList = pools.value) {
+  const id = String(poolId || '');
+  if (!id) {
+    return null;
+  }
+  const currentPools = Array.isArray(poolList) ? poolList : [];
+  for (const pool of currentPools) {
+    if (pool?.id === id) {
+      return pool;
+    }
+  }
+  return null;
+}
+
+function syncSelectedPoolWithPoolList(currentPools) {
+  const normalizedPools = Array.isArray(currentPools) ? currentPools : [];
+  if (getCurrentPoolById(selectedPoolId.value, normalizedPools)) {
+    return;
+  }
+  selectedPoolId.value = normalizedPools[0]?.id || '';
 }
 
 function removeTalentByIdIfPresent(talentId) {
@@ -191,6 +221,15 @@ function removeTalentByIdIfPresent(talentId) {
     setTalentsIfChanged(nextTalents);
   }
   return changed;
+}
+
+function prependTalentIfChanged(talent) {
+  if (!talent) return false;
+  const nextTalents = [talent];
+  for (const currentTalent of talents.value) {
+    nextTalents.push(currentTalent);
+  }
+  return setTalentsIfChanged(nextTalents);
 }
 
 function rarityClass(rarity) {
@@ -234,7 +273,7 @@ async function doRoll() {
     }
     rollResult.value = result;
     showResult.value = true;
-    setTalentsIfChanged([result, ...talents.value]);
+    prependTalentIfChanged(result);
     emit('updated');
   } catch (err) {
     if (isCurrentDialogContext(context)) {

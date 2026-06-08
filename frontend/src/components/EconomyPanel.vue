@@ -51,13 +51,17 @@ const transactionTypeLabels = {
 };
 
 const currencyFilterOptions = computed(() => {
-  return [
-    { value: '', label: '全部货币' },
-    ...accounts.value.map(a => ({
-      value: a.currencyType,
-      label: `${currencyMeta[a.currencyType]?.icon || '🪙'} ${currencyMeta[a.currencyType]?.label || a.currencyType}`
-    }))
-  ];
+  const options = [{ value: '', label: '全部货币' }];
+  const sourceAccounts = Array.isArray(accounts.value) ? accounts.value : [];
+  for (const account of sourceAccounts) {
+    const currencyType = account?.currencyType || '';
+    const meta = currencyMeta[currencyType];
+    options.push({
+      value: currencyType,
+      label: `${meta?.icon || '🪙'} ${meta?.label || currencyType}`
+    });
+  }
+  return options;
 });
 
 const totalPages = computed(() => Math.max(1, Math.ceil(historyTotal.value / historyLimit)));
@@ -167,6 +171,7 @@ async function loadHistory(offset = 0, expectedConversationId = '') {
 function setAccountsIfChanged(nextAccounts) {
   const normalizedAccounts = Array.isArray(nextAccounts) ? nextAccounts : [];
   const currentAccounts = Array.isArray(accounts.value) ? accounts.value : [];
+  pruneUnavailableHistoryCurrencyFilter(normalizedAccounts);
   if (sameListItems(currentAccounts, normalizedAccounts, sameAccountSummary)) {
     return false;
   }
@@ -191,7 +196,26 @@ function sameListItems(currentItems, nextItems, sameItem) {
   if (currentItems.length !== nextItems.length) {
     return false;
   }
-  return currentItems.every((item, index) => sameItem(item, nextItems[index]));
+  for (let index = 0; index < currentItems.length; index += 1) {
+    if (!sameItem(currentItems[index], nextItems[index])) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function pruneUnavailableHistoryCurrencyFilter(sourceAccounts) {
+  const selectedCurrency = historyCurrencyFilter.value;
+  if (!selectedCurrency) {
+    return false;
+  }
+  for (const account of sourceAccounts) {
+    if (account?.currencyType === selectedCurrency) {
+      return false;
+    }
+  }
+  historyCurrencyFilter.value = '';
+  return true;
 }
 
 function sameAccountSummary(current = {}, next = {}) {

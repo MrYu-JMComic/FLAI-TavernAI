@@ -70,13 +70,30 @@ const UPDATE_STATUS_META = {
   'not-updated': { key: 'not-updated', label: '未更新' }
 };
 
-const selectedNpcData = computed(() => npcs.value.find((n) => n.name === selectedNpc.value) || null);
+const selectedNpcData = computed(() => getCurrentNpcByName(selectedNpc.value));
 const updateStatusMeta = computed(() => UPDATE_STATUS_META[props.updateStatus] || UPDATE_STATUS_META['not-updated']);
-const npcPanelStats = computed(() => ({
-  npcCount: npcs.value.length,
-  memoryCount: npcs.value.reduce((sum, npc) => sum + Number(npc.memoryCount || 0), 0),
-  behaviorCount: npcs.value.reduce((sum, npc) => sum + Number(npc.behaviorCount || 0), 0)
-}));
+const npcPanelSummary = computed(() => {
+  const sourceNpcs = Array.isArray(npcs.value) ? npcs.value : [];
+  const stats = {
+    npcCount: sourceNpcs.length,
+    memoryCount: 0,
+    behaviorCount: 0
+  };
+  const emptyNpcNames = [];
+
+  for (const npc of sourceNpcs) {
+    const memoryCount = Number(npc?.memoryCount || 0);
+    const behaviorCount = Number(npc?.behaviorCount || 0);
+    stats.memoryCount += memoryCount;
+    stats.behaviorCount += behaviorCount;
+    if (memoryCount === 0 && behaviorCount === 0) {
+      emptyNpcNames.push(npc?.name);
+    }
+  }
+
+  return { stats, emptyNpcNames };
+});
+const npcPanelStats = computed(() => npcPanelSummary.value.stats);
 
 const selectedNpcStats = computed(() => ({
   memoryCount: memories.value.length,
@@ -84,9 +101,7 @@ const selectedNpcStats = computed(() => ({
   aliasCount: selectedNpcData.value?.aliases?.length || 0
 }));
 const selectedNpcMemorySealActive = computed(() => Boolean(selectedNpcData.value?.memorySealActive));
-const emptyNpcNames = computed(() => npcs.value
-  .filter((npc) => Number(npc.memoryCount || 0) === 0 && Number(npc.behaviorCount || 0) === 0)
-  .map((npc) => npc.name));
+const emptyNpcNames = computed(() => npcPanelSummary.value.emptyNpcNames);
 const npcActionBusy = computed(() => Boolean(npcActionBusyId.value));
 
 const memoryTypeOptions = [
@@ -347,6 +362,20 @@ function normalizeStringList(value) {
   return Array.isArray(value) ? value.map((item) => String(item)) : [];
 }
 
+function getCurrentNpcByName(name, sourceNpcs = npcs.value) {
+  const targetName = String(name || '').trim();
+  if (!targetName) {
+    return null;
+  }
+  const currentNpcs = Array.isArray(sourceNpcs) ? sourceNpcs : [];
+  for (const npc of currentNpcs) {
+    if (npc?.name === targetName) {
+      return npc;
+    }
+  }
+  return null;
+}
+
 function removeMemoryByIdIfPresent(memoryId) {
   const nextMemories = [];
   let changed = false;
@@ -418,7 +447,7 @@ async function loadNpcs(options = {}) {
     loadError.value = '';
     setNpcsIfChanged(nextNpcs);
     emit('npcs-loaded', { conversationId, npcs: nextNpcs });
-    if (selectedNpc.value && !npcs.value.find((n) => n.name === selectedNpc.value)) {
+    if (selectedNpc.value && !getCurrentNpcByName(selectedNpc.value)) {
       setSelectedNpc('');
     }
     if (!selectedNpc.value && npcs.value.length > 0) {

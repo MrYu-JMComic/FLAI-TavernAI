@@ -63,12 +63,26 @@ let worldBookMutationToken = 0;
 const isDetailView = computed(() => Boolean(props.route.params.id));
 const bookId = computed(() => props.route.params.id);
 const aiDraftEntryCount = computed(() => aiDraft.value?.entries?.length || 0);
-const totalEntryCount = computed(() => books.value.reduce((sum, book) => sum + Number(book.entryCount || 0), 0));
-const booksWithEntriesCount = computed(() => books.value.filter((book) => Number(book.entryCount || 0) > 0).length);
-const averageEntryCount = computed(() => {
-  if (!books.value.length) return 0;
-  return Math.round(totalEntryCount.value / books.value.length);
+const bookListStats = computed(() => {
+  const sourceBooks = Array.isArray(books.value) ? books.value : [];
+  let totalEntries = 0;
+  let withEntries = 0;
+  for (const book of sourceBooks) {
+    const entryCount = Number(book?.entryCount || 0);
+    totalEntries += entryCount;
+    if (entryCount > 0) {
+      withEntries += 1;
+    }
+  }
+  return {
+    totalEntries,
+    withEntries,
+    averageEntries: sourceBooks.length ? Math.round(totalEntries / sourceBooks.length) : 0
+  };
 });
+const totalEntryCount = computed(() => bookListStats.value.totalEntries);
+const booksWithEntriesCount = computed(() => bookListStats.value.withEntries);
+const averageEntryCount = computed(() => bookListStats.value.averageEntries);
 const currentEntries = computed(() => currentBook.value?.entries || []);
 const currentEntryStats = computed(() => {
   const stats = {
@@ -260,10 +274,15 @@ function setAiPlainRefIfChanged(valueRef, nextValue) {
 }
 
 function sameBookList(currentBooks, nextBooks) {
-  return Array.isArray(currentBooks)
-    && Array.isArray(nextBooks)
-    && currentBooks.length === nextBooks.length
-    && currentBooks.every((book, index) => sameBookSummary(book, nextBooks[index]));
+  if (!Array.isArray(currentBooks) || !Array.isArray(nextBooks) || currentBooks.length !== nextBooks.length) {
+    return false;
+  }
+  for (let index = 0; index < currentBooks.length; index += 1) {
+    if (!sameBookSummary(currentBooks[index], nextBooks[index])) {
+      return false;
+    }
+  }
+  return true;
 }
 
 function sameBookSummary(currentBookSummary, nextBookSummary) {
@@ -282,10 +301,15 @@ function sameBookDetail(currentDetail, nextDetail) {
 }
 
 function sameEntryList(currentEntries, nextEntries) {
-  return Array.isArray(currentEntries)
-    && Array.isArray(nextEntries)
-    && currentEntries.length === nextEntries.length
-    && currentEntries.every((entry, index) => sameEntrySummary(entry, nextEntries[index]));
+  if (!Array.isArray(currentEntries) || !Array.isArray(nextEntries) || currentEntries.length !== nextEntries.length) {
+    return false;
+  }
+  for (let index = 0; index < currentEntries.length; index += 1) {
+    if (!sameEntrySummary(currentEntries[index], nextEntries[index])) {
+      return false;
+    }
+  }
+  return true;
 }
 
 function sameEntrySummary(currentEntry, nextEntry) {
@@ -320,16 +344,27 @@ function samePlainValue(current, next) {
     return false;
   }
   if (Array.isArray(current) || Array.isArray(next)) {
-    return Array.isArray(current)
-      && Array.isArray(next)
-      && current.length === next.length
-      && current.every((item, index) => samePlainValue(item, next[index]));
+    if (!Array.isArray(current) || !Array.isArray(next) || current.length !== next.length) {
+      return false;
+    }
+    for (let index = 0; index < current.length; index += 1) {
+      if (!samePlainValue(current[index], next[index])) {
+        return false;
+      }
+    }
+    return true;
   }
   const currentKeys = Object.keys(current);
   const nextKeys = Object.keys(next);
-  return currentKeys.length === nextKeys.length
-    && currentKeys.every((key) => Object.prototype.hasOwnProperty.call(next, key)
-      && samePlainValue(current[key], next[key]));
+  if (currentKeys.length !== nextKeys.length) {
+    return false;
+  }
+  for (const key of currentKeys) {
+    if (!Object.prototype.hasOwnProperty.call(next, key) || !samePlainValue(current[key], next[key])) {
+      return false;
+    }
+  }
+  return true;
 }
 
 function nullableComparable(value) {

@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { isLocalOrPrivateBaseUrl } from '../../../shared/privateNetwork.js';
 import { countMatches, readVueBlocks } from './frontendSfcTestUtils.js';
 
 const { script: settingsViewScript, template: settingsViewTemplate } = readVueBlocks('frontend/src/views/SettingsView.vue');
@@ -109,6 +110,20 @@ test('SettingsView personal provider and profile saves expose visible busy guard
   );
 });
 
+test('SettingsView no-key custom provider readiness trusts parsed private IPv4 hosts only', () => {
+  assert.equal(isLocalOrPrivateBaseUrl('http://127.0.0.1:8317/v1'), true);
+  assert.equal(isLocalOrPrivateBaseUrl('http://10.0.0.8:8317/v1'), true);
+  assert.equal(isLocalOrPrivateBaseUrl('http://172.31.255.1/v1'), true);
+  assert.equal(isLocalOrPrivateBaseUrl('http://172.32.0.1/v1'), false);
+  assert.equal(isLocalOrPrivateBaseUrl('http://127.evil.test/v1'), false);
+
+  assert.match(settingsViewScript, /from '..\/..\/..\/shared\/privateNetwork\.js'/);
+  assert.doesNotMatch(settingsViewScript, /function isLocalOrPrivateBaseUrl\(value\) \{/);
+  assert.doesNotMatch(settingsViewScript, /function parseIpv4Address\(host\) \{/);
+  assert.doesNotMatch(settingsViewScript, /host\.startsWith\('127\.'\)/);
+  assert.doesNotMatch(settingsViewScript, /host\.split\('\\.'\)\.map/);
+});
+
 test('SettingsView extension retry handlers ignore events while already loading', () => {
   const cases = [
     ['loadTags', 'tagControlsBusy', 'tagControlsBusy'],
@@ -162,6 +177,10 @@ test('SettingsView preserves unchanged extension list references during refreshe
   assert.match(
     settingsViewScript,
     /function setModCharacterOptionsIfChanged\(characters\) \{\s*const nextOptions = \[\];\s*if \(Array\.isArray\(characters\)\) \{\s*for \(const character of characters\) \{\s*if \(character\?\.canUse !== false\) \{\s*nextOptions\.push\(character\);\s*\}\s*\}\s*\}\s*return setListIfChanged\(modCharacterOptions, nextOptions\);\s*\}/
+  );
+  assert.match(
+    settingsViewScript,
+    /function getListItemById\(listRef, itemId\) \{\s*const targetId = String\(itemId \|\| ''\);[\s\S]*const currentList = Array\.isArray\(listRef\.value\) \? listRef\.value : \[\];[\s\S]*for \(const item of currentList\) \{[\s\S]*if \(item\?\.id === targetId\) \{[\s\S]*return item;[\s\S]*}\s*}\s*return null;[\s\S]*\}/
   );
   assert.match(
     settingsViewScript,
@@ -223,7 +242,7 @@ test('SettingsView tag mutations expose one busy guard for add, delete, and load
   assert.match(settingsViewScript, /const tagActionBusyId = ref\(''\);/);
   assert.match(settingsViewScript, /const tagActionBusy = computed\(\(\) => Boolean\(tagActionBusyId\.value\)\);/);
   assert.match(settingsViewScript, /const tagControlsBusy = computed\(\(\) => tagLoading\.value \|\| tagActionBusy\.value\);/);
-  assert.match(settingsViewScript, /function getCurrentTag\(id\) {\s*const currentId = String\(id \|\| ''\);[\s\S]*return tagList\.value\.find\(\(tag\) => tag\?\.id === currentId\) \|\| null;[\s\S]*}/);
+  assert.match(settingsViewScript, /function getCurrentTag\(id\) {\s*return getListItemById\(tagList, id\);\s*}/);
   assert.match(settingsViewScript, /function updateTagLoadLimit\(\) {\s*if \(tagControlsBusy\.value\) return;/);
   assert.match(
     settingsViewScript,
@@ -251,7 +270,7 @@ test('SettingsView preset mutations expose visible busy guards for edit, import,
   assert.match(settingsViewScript, /const presetActionBusyId = ref\(''\);/);
   assert.match(settingsViewScript, /const presetActionBusy = computed\(\(\) => Boolean\(presetActionBusyId\.value\)\);/);
   assert.match(settingsViewScript, /const presetControlsBusy = computed\(\(\) => presetLoading\.value \|\| presetActionBusy\.value\);/);
-  assert.match(settingsViewScript, /function getCurrentPreset\(id\) {\s*const currentId = String\(id \|\| ''\);[\s\S]*return presetList\.value\.find\(\(preset\) => preset\?\.id === currentId\) \|\| null;[\s\S]*}/);
+  assert.match(settingsViewScript, /function getCurrentPreset\(id\) {\s*return getListItemById\(presetList, id\);\s*}/);
   assert.match(settingsViewScript, /function startNewPreset\(\) {\s*if \(presetControlsBusy\.value\) return;/);
   assert.match(settingsViewScript, /function startEditPreset\(preset\) {\s*if \(presetControlsBusy\.value\) return;\s*const currentPreset = getCurrentPreset\(preset\?\.id\);\s*if \(!currentPreset\) return;[\s\S]*presetEditing\.value = currentPreset\.id;/);
   assert.match(settingsViewScript, /function cancelPresetEdit\(\) {\s*if \(presetActionBusy\.value\) return;/);
@@ -289,7 +308,7 @@ test('SettingsView mod mutations expose visible busy guards for editor, toggle, 
   assert.match(settingsViewScript, /const modActionBusyId = ref\(''\);/);
   assert.match(settingsViewScript, /const modActionBusy = computed\(\(\) => Boolean\(modActionBusyId\.value\)\);/);
   assert.match(settingsViewScript, /const modControlsBusy = computed\(\(\) => modLoading\.value \|\| modActionBusy\.value\);/);
-  assert.match(settingsViewScript, /function getCurrentMod\(id\) {\s*const currentId = String\(id \|\| ''\);[\s\S]*return modList\.value\.find\(\(mod\) => mod\?\.id === currentId\) \|\| null;[\s\S]*}/);
+  assert.match(settingsViewScript, /function getCurrentMod\(id\) {\s*return getListItemById\(modList, id\);\s*}/);
   assert.match(settingsViewScript, /function startNewMod\(\) {\s*if \(modControlsBusy\.value\) return;/);
   assert.match(settingsViewScript, /function startEditMod\(mod\) {\s*if \(modControlsBusy\.value\) return;\s*const currentMod = getCurrentMod\(mod\?\.id\);\s*if \(!currentMod\) return;[\s\S]*modEditing\.value = currentMod\.id;/);
   assert.match(settingsViewScript, /function cancelModEdit\(\) {\s*if \(modActionBusy\.value\) return;/);
@@ -315,6 +334,12 @@ test('SettingsView mod mutations expose visible busy guards for editor, toggle, 
     /function onModDragOver\(event, mod\) {\s*if \(modControlsBusy\.value\) return;\s*const currentMod = getCurrentMod\(mod\?\.id\);\s*if \(!currentMod\) return;\s*event\.preventDefault\(\);\s*if \(dragOverMod\.value !== currentMod\.id\) {\s*dragOverMod\.value = currentMod\.id;\s*}/
   );
   assert.match(settingsViewScript, /async function onModDrop\(event, targetMod\) {[\s\S]*if \(modControlsBusy\.value\) return;[\s\S]*const currentDraggedMod = getCurrentMod\(draggedId\);[\s\S]*const currentTargetMod = getCurrentMod\(targetMod\?\.id\);[\s\S]*if \(!currentDraggedMod \|\| !currentTargetMod \|\| currentDraggedMod\.id === currentTargetMod\.id\)[\s\S]*beginModMutation\('mod-reorder'\)[\s\S]*finally {\s*finishModMutation\(mutationToken\);/);
+  assert.match(
+    settingsViewScript,
+    /const moveResult = moveListItemToTargetIndexById\(modList, currentDraggedMod\.id, currentTargetMod\.id\);[\s\S]*await reorderMods\(moveResult\.ids\);[\s\S]*setListIfChanged\(modList, moveResult\.previousList\);/
+  );
+  assert.doesNotMatch(settingsViewScript, /modList\.value\.findIndex/);
+  assert.doesNotMatch(settingsViewScript, /reorderMods\([^)]*\.map/);
 
   assert.match(settingsViewTemplate, /<button class="ghost-button" type="button" :disabled="modControlsBusy" @click="startNewMod">/);
   assert.match(settingsViewTemplate, /:disabled="modControlsBusy" @click="loadMods"/);
@@ -338,7 +363,7 @@ test('SettingsView regex mutations expose visible busy guards for filter, import
   assert.match(settingsViewScript, /const regexActionBusy = computed\(\(\) => Boolean\(regexActionBusyId\.value\)\);/);
   assert.match(settingsViewScript, /const regexControlsBusy = computed\(\(\) => regexLoading\.value \|\| regexActionBusy\.value\);/);
   assert.match(settingsViewScript, /const draggingRegexRuleId = ref\(''\);/);
-  assert.match(settingsViewScript, /function getCurrentRegexRule\(ruleId\) {\s*const currentRuleId = String\(ruleId \|\| ''\);[\s\S]*return regexRules\.value\.find\(\(rule\) => rule\?\.id === currentRuleId\) \|\| null;[\s\S]*}/);
+  assert.match(settingsViewScript, /function getCurrentRegexRule\(ruleId\) {\s*return getListItemById\(regexRules, ruleId\);\s*}/);
   assert.match(settingsViewScript, /function handleRegexGroupFilterChange\(\) {\s*if \(regexControlsBusy\.value\) return;/);
   assert.match(
     settingsViewScript,

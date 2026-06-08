@@ -2,6 +2,7 @@ import { newId, nowIso } from '../security.js';
 import { parseJson } from '../utils/json.js';
 import { normalizeBoolean } from '../utils/boolean.js';
 import { normalizeFiniteNumber } from '../utils/number.js';
+import { normalizeRegexFlags } from '../../../shared/regexFlags.js';
 import {
   avatarShortUrl,
   characterBackgroundOwnerTypes,
@@ -505,7 +506,7 @@ function normalizeRegexRules(rules = []) {
   }
 
   return rules.slice(0, 40).filter((rule) => rule && typeof rule === 'object').map((rule, index) => {
-    const flags = normalizeFlags(rule.flags);
+    const flags = normalizeRegexFlags(rule.flags);
     const pattern = String(rule.pattern || '').trim();
     if (pattern) {
       new RegExp(pattern, flags);
@@ -533,7 +534,7 @@ function normalizeRenderPlugins(plugins = []) {
   }
 
   return plugins.slice(0, 20).filter((plugin) => plugin && typeof plugin === 'object').map((plugin, index) => {
-    const flags = normalizeFlags(plugin.flags || 'u').replace(/[gy]/g, '') || 'u';
+    const flags = normalizeRegexFlags(plugin.flags || 'u').replace(/[gy]/g, '') || 'u';
     const pattern = String(plugin.pattern || '').trim().slice(0, 260);
     if (pattern) {
       new RegExp(pattern, flags);
@@ -549,11 +550,6 @@ function normalizeRenderPlugins(plugins = []) {
       enabled: normalizeBoolean(plugin.enabled, true)
     };
   }).filter((plugin) => plugin.pattern);
-}
-
-function normalizeFlags(flags) {
-  const unique = new Set(String(flags || 'g').replace(/[^dgimsuvy]/g, '').split(''));
-  return [...unique].join('') || 'g';
 }
 
 function scopeApplies(scope, phase) {

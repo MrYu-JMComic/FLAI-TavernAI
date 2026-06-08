@@ -2,6 +2,7 @@ import { runToolCompletion, streamToolCompletion } from './providers.js';
 import { resolvePromptUserName, userVariableToken } from './promptVariables.js';
 import { normalizeAdvancedSettings, normalizeAccessorySkills } from '../modules/advancedSettings.js';
 import { nullToEmptyObject, objectOrEmpty, parseLooseJsonObject } from './assistantUtils.js';
+import { normalizeRegexFlags } from '../../../shared/regexFlags.js';
 
 const characterTools = [
   {
@@ -499,9 +500,13 @@ function normalizeGenerationOptions(options = {}) {
     advancedSettings: true,
     modSuggestions: true
   };
-  return Object.fromEntries(
-    Object.entries(defaults).map(([key, fallback]) => [key, options[key] === undefined ? fallback : Boolean(options[key])])
-  );
+  const normalized = {};
+  for (const key in defaults) {
+    if (!Object.prototype.hasOwnProperty.call(defaults, key)) continue;
+    const fallback = defaults[key];
+    normalized[key] = options[key] === undefined ? fallback : Boolean(options[key]);
+  }
+  return normalized;
 }
 
 function filterToolArgs(name, args = {}, enabled = {}) {
@@ -573,7 +578,7 @@ function normalizeTags(tags = []) {
 
 function normalizeRegexRule(rule = {}, index = 0) {
   rule = objectOrEmpty(rule);
-  const flags = normalizeFlags(rule.flags);
+  const flags = normalizeRegexFlags(rule.flags);
   const pattern = String(rule.pattern || '').trim();
   if (pattern) {
     try {
@@ -601,7 +606,7 @@ function normalizeRegexRule(rule = {}, index = 0) {
 
 function normalizeRenderPlugin(plugin = {}, index = 0) {
   plugin = objectOrEmpty(plugin);
-  const flags = normalizeFlags(plugin.flags || 'u').replace(/g/g, '') || 'u';
+  const flags = normalizeRegexFlags(plugin.flags || 'u').replace(/g/g, '') || 'u';
   const pattern = String(plugin.pattern || '').trim();
   if (pattern) {
     try {
@@ -636,10 +641,6 @@ function skillConfigSchema() {
       modelOverride: { type: 'string' }
     }
   };
-}
-
-function normalizeFlags(flags) {
-  return [...new Set(String(flags || 'g').replace(/[^dgimsuvy]/g, '').split(''))].join('') || 'g';
 }
 
 function limitText(value, key) {

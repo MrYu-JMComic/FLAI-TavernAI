@@ -418,7 +418,17 @@ export function useChatConversation({ route, emit, showError }) {
   }
 
   function hasConversationListItem(conversationId) {
-    return conversations.value.some((item) => item.id === conversationId);
+    const targetId = normalizeConversationSelectionId(conversationId);
+    if (!targetId) {
+      return false;
+    }
+    const currentConversations = Array.isArray(conversations.value) ? conversations.value : [];
+    for (const item of currentConversations) {
+      if (item?.id === targetId) {
+        return true;
+      }
+    }
+    return false;
   }
 
   function toggleAllVisibleConversations() {
@@ -558,15 +568,21 @@ export function useChatConversation({ route, emit, showError }) {
   }
 
   function syncSelectedPresetId() {
-    if (!presetList.value.length) {
-      selectedPresetId.value = '';
-      return;
+    const currentId = selectedPresetId.value;
+    let fallbackId = '';
+    for (const preset of presetList.value) {
+      if (!fallbackId && preset?.isDefault) {
+        fallbackId = preset?.id || '';
+      }
+      if (preset?.id === currentId) {
+        return false;
+      }
     }
-    if (presetList.value.some((preset) => preset.id === selectedPresetId.value)) {
-      return;
+    if (currentId === fallbackId) {
+      return false;
     }
-    const defaultPreset = presetList.value.find((preset) => preset.isDefault);
-    selectedPresetId.value = defaultPreset?.id || '';
+    selectedPresetId.value = fallbackId;
+    return true;
   }
 
   function formatConversationUsage(item) {

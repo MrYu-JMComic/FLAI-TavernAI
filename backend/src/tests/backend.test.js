@@ -5,6 +5,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
+import { isLocalOrPrivateBaseUrl } from '../../../shared/privateNetwork.js';
+import { findSseBlockSeparator, forEachSseLine } from '../../../shared/sse.js';
 
 process.env.FLAI_DB_PATH = ':memory:';
 process.env.APP_SECRET = 'test-secret';
@@ -2862,6 +2864,50 @@ test('OpenAI-compatible parser strips thinking tags from non-stream content', as
   }
 });
 
+test('OpenAI-compatible parser merges multiple thinking tags without array joins', async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () =>
+    jsonResponse({
+      choices: [
+        {
+          message: {
+            content: '<thinking>first plan</thinking>answer<thinking>second plan</thinking><thinking>tail plan'
+          }
+        }
+      ]
+    });
+
+  try {
+    const result = await generateCompletion(
+      {
+        providerType: 'custom',
+        gatewayName: 'Custom',
+        baseUrl: 'https://example.test',
+        model: 'local-model',
+        apiKey: 'sk-test',
+        supportsReasoning: false,
+        extraBody: {}
+      },
+      [{ role: 'user', content: 'hi' }]
+    );
+
+    assert.equal(result.content, 'answer');
+    assert.equal(result.reasoning, 'first plan\n\nsecond plan\n\ntail plan');
+
+    const providerSource = fs.readFileSync(
+      new URL('../services/providers.js', import.meta.url),
+      'utf8'
+    );
+    assert.match(providerSource, /function splitThinkingTags\(text\) \{/);
+    assert.match(providerSource, /reasoning = appendReasoning\(reasoning, inner\);/);
+    assert.doesNotMatch(providerSource, /const reasoning = \[\];\r?\n  let content = value\.replace/);
+    assert.doesNotMatch(providerSource, /reasoning\.push\(/);
+    assert.doesNotMatch(providerSource, /reasoning\.join\('\\n\\n'\)/);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test('OpenAI-compatible parser merges reasoning sources without array map/filter allocation', async () => {
   const originalFetch = globalThis.fetch;
   const originalMap = Array.prototype.map;
@@ -3243,6 +3289,98 @@ test('OpenAI Responses request protects reserved fields from extra body', async 
   }
 });
 
+test('OpenAI Responses parser reads output content text with direct loops', async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () =>
+    jsonResponse({
+      output: [
+        { content: [{ text: 'hel' }, { text: 'lo' }] },
+        { content: [{ text: ' world' }] }
+      ],
+      usage: { total_tokens: 5 }
+    });
+
+  try {
+    const result = await generateCompletion(
+      {
+        providerType: 'openai',
+        gatewayName: 'OpenAI',
+        baseUrl: 'https://example.test/v1',
+        model: 'o4-mini',
+        apiKey: 'sk-test',
+        supportsReasoning: true,
+        extraBody: {}
+      },
+      [{ role: 'user', content: 'hi' }],
+      { thinkingEnabled: true }
+    );
+
+    assert.equal(result.content, 'hello world');
+
+    const providerSource = fs.readFileSync(
+      new URL('../services/providers.js', import.meta.url),
+      'utf8'
+    );
+    assert.match(providerSource, /function extractOpenAiOutputText\(json\) \{/);
+    assert.match(providerSource, /for \(const item of json\.output\)/);
+    assert.doesNotMatch(providerSource, /\.flatMap\(\(item\) => item\.content \|\| \[\]\)/);
+    assert.doesNotMatch(providerSource, /\.map\(\(item\) => item\.text \|\| ''\)/);
+    assert.doesNotMatch(providerSource, /\.join\(''\)/);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('OpenAI Responses parser merges reasoning output without item arrays', async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () =>
+    jsonResponse({
+      output_text: 'answer',
+      output: [
+        {
+          type: 'reasoning',
+          summary: 'summary plan',
+          content: 'content plan',
+          reasoning_content: 'field plan'
+        },
+        { type: 'message', content: [{ text: 'ignored' }] }
+      ],
+      response: { reasoning: 'response plan' },
+      usage: { total_tokens: 7 }
+    });
+
+  try {
+    const result = await generateCompletion(
+      {
+        providerType: 'openai',
+        gatewayName: 'OpenAI',
+        baseUrl: 'https://example.test/v1',
+        model: 'o4-mini',
+        apiKey: 'sk-test',
+        supportsReasoning: true,
+        extraBody: {}
+      },
+      [{ role: 'user', content: 'hi' }],
+      { thinkingEnabled: true }
+    );
+
+    assert.equal(result.content, 'answer');
+    assert.equal(result.reasoning, 'summary plan\n\ncontent plan\n\nfield plan\n\nresponse plan');
+
+    const providerSource = fs.readFileSync(
+      new URL('../services/providers.js', import.meta.url),
+      'utf8'
+    );
+    assert.match(providerSource, /function appendReasoning\(merged, item\) \{/);
+    assert.match(providerSource, /let reasoning = '';\r?\n  if \(Array\.isArray\(json\.output\)\) \{/);
+    assert.doesNotMatch(providerSource, /const items = \[\];\r?\n  for \(const item of json\.output \|\| \[\]\)/);
+    assert.doesNotMatch(providerSource, /items\.push\(extractText/);
+    assert.doesNotMatch(providerSource, /return mergeReasoning\(\.\.\.items\);/);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test('provider model list normalizes official /models responses', async () => {
   const originalFetch = globalThis.fetch;
   try {
@@ -3577,6 +3715,70 @@ test('custom local proxy retries without Authorization after auth rejection', as
 
     assert.deepEqual(authorizations, ['Bearer sk-wrong', null]);
     assert.deepEqual(models.map((model) => model.id), ['local-model']);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('custom proxy auth retry only trusts parsed private IPv4 hosts', async () => {
+  const originalFetch = globalThis.fetch;
+  const privateAuthorizations = [];
+  const externalAuthorizations = [];
+  try {
+    globalThis.fetch = async (_url, request = {}) => {
+      privateAuthorizations.push(new Headers(request.headers).get('authorization'));
+      if (privateAuthorizations.length === 1) {
+        return new Response(JSON.stringify({ error: { message: 'bad token' } }), {
+          status: 401,
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+      return jsonResponse({ data: [{ id: 'private-model' }] });
+    };
+
+    const models = await listProviderModels({
+      providerType: 'custom',
+      gatewayName: 'Private proxy',
+      baseUrl: 'http://10.0.0.8:8317/v1',
+      model: 'private-model',
+      apiKey: 'sk-wrong'
+    });
+    assert.deepEqual(privateAuthorizations, ['Bearer sk-wrong', null]);
+    assert.deepEqual(models.map((model) => model.id), ['private-model']);
+
+    globalThis.fetch = async (_url, request = {}) => {
+      externalAuthorizations.push(new Headers(request.headers).get('authorization'));
+      return new Response(JSON.stringify({ error: { message: 'external bad token' } }), {
+        status: 401,
+        headers: { 'Content-Type': 'application/json' }
+      });
+    };
+
+    await assert.rejects(
+      listProviderModels({
+        providerType: 'custom',
+        gatewayName: 'External proxy',
+        baseUrl: 'http://127.evil.test/v1',
+        model: 'external-model',
+        apiKey: 'sk-wrong'
+      }),
+      { message: /external bad token|401/ }
+    );
+    assert.deepEqual(externalAuthorizations, ['Bearer sk-wrong']);
+
+    const providerSource = fs.readFileSync(
+      new URL('../services/providers.js', import.meta.url),
+      'utf8'
+    );
+    assert.equal(isLocalOrPrivateBaseUrl('http://127.0.0.1:8317/v1'), true);
+    assert.equal(isLocalOrPrivateBaseUrl('http://10.0.0.8:8317/v1'), true);
+    assert.equal(isLocalOrPrivateBaseUrl('http://172.31.255.1/v1'), true);
+    assert.equal(isLocalOrPrivateBaseUrl('http://172.32.0.1/v1'), false);
+    assert.equal(isLocalOrPrivateBaseUrl('http://127.evil.test/v1'), false);
+    assert.match(providerSource, /from '..\/..\/..\/shared\/privateNetwork\.js'/);
+    assert.doesNotMatch(providerSource, /function parseIpv4Address\(host\) \{/);
+    assert.doesNotMatch(providerSource, /host\.startsWith\('127\.'\)/);
+    assert.doesNotMatch(providerSource, /host\.split\('\\.'\)\.map/);
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -7251,6 +7453,18 @@ test('chat prompt history keeps latest tied-timestamp messages in insertion orde
       Array.from({ length: 20 }, (_, index) => `history-${String(index + 6).padStart(2, '0')}`)
     );
     assert.equal(providerBody.messages.at(-1).content, 'new prompt');
+
+    const routeSource = fs.readFileSync(new URL('../routes/conversations.js', import.meta.url), 'utf8');
+    const start = routeSource.indexOf('function getRecentMessages(userId, conversationId) {');
+    const end = routeSource.indexOf('\n  function insertMessage', start);
+    assert.notEqual(start, -1);
+    assert.notEqual(end, -1);
+    const snippet = routeSource.slice(start, end);
+    assert.match(snippet, /const rows = db\s*\.prepare/);
+    assert.match(snippet, /for \(let index = rows\.length - 1; index >= 0; index -= 1\)/);
+    assert.match(snippet, /if \(isDisplayableMessageRow\(row\)\) \{\s*recentMessages\.push\(row\);/);
+    assert.doesNotMatch(snippet, /\.reverse\(\)/);
+    assert.doesNotMatch(snippet, /\.filter\(isDisplayableMessageRow\)/);
   } finally {
     globalThis.fetch = originalFetch;
     await new Promise((resolve) => server.close(resolve));
@@ -9661,6 +9875,59 @@ test('streamCompletion parses final SSE event without trailing blank line', asyn
   } finally {
     globalThis.fetch = originalFetch;
   }
+});
+
+test('streamCompletion scans split CRLF SSE separators without regex or split allocation', async () => {
+  const originalFetch = globalThis.fetch;
+  try {
+    globalThis.fetch = async () => {
+      const encoder = new TextEncoder();
+      return new Response(
+        new ReadableStream({
+          start(controller) {
+            controller.enqueue(encoder.encode('data: {"choices":[{"delta":{"content":"split"}}]}\r'));
+            controller.enqueue(encoder.encode('\n\r'));
+            controller.enqueue(encoder.encode('\n'));
+            controller.close();
+          }
+        }),
+        { headers: { 'Content-Type': 'text/event-stream' } }
+      );
+    };
+
+    const events = [];
+    const result = await streamCompletion(
+      {
+        providerType: 'deepseek',
+        gatewayName: 'DeepSeek',
+        baseUrl: 'https://example.test',
+        model: 'deepseek-chat',
+        apiKey: 'sk-test',
+        supportsReasoning: false,
+        extraBody: {}
+      },
+      [{ role: 'user', content: 'hi' }],
+      (event, data) => events.push({ event, data })
+    );
+
+    assert.equal(result.content, 'split');
+    assert.deepEqual(events.map((event) => event.event), ['content']);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+
+  const providerSource = fs.readFileSync(new URL('../services/providers.js', import.meta.url), 'utf8');
+  const sharedLines = [];
+  forEachSseLine('data: first\r\ndata: second', (line) => sharedLines.push(line));
+  assert.deepEqual(sharedLines, ['data: first', 'data: second']);
+  assert.deepEqual(findSseBlockSeparator('a\r\n\r\nb'), { index: 1, length: 4 });
+  assert.match(providerSource, /from '..\/..\/..\/shared\/sse\.js'/);
+  assert.match(providerSource, /let separator = findSseBlockSeparator\(buffer\);/);
+  assert.match(providerSource, /forEachSseLine\(block, \(line\) => \{/);
+  assert.doesNotMatch(providerSource, /function findSseBlockSeparator\(text\)/);
+  assert.doesNotMatch(providerSource, /function forEachSseLine\(text, visit\)/);
+  assert.doesNotMatch(providerSource, /buffer\.match\(\s*\/\\r\?\\n\\r\?\\n\//);
+  assert.doesNotMatch(providerSource, /block\.split\(\s*\/\\r\?\\n\//);
 });
 
 test('streamCompletion returns empty content for immediately closed empty stream', async () => {

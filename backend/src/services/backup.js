@@ -5,6 +5,23 @@ import { dataDir } from '../db.js';
 const BACKUP_DIR = path.join(dataDir, 'backups');
 const MAX_BACKUPS = 7;
 
+function compareBackupFileNameNewestFirst(current, next) {
+  if (current < next) return 1;
+  if (current > next) return -1;
+  return 0;
+}
+
+export function getBackupFileNamesNewestFirst(fileNames = []) {
+  const backupFileNames = [];
+  for (const fileName of fileNames) {
+    if (typeof fileName === 'string' && fileName.startsWith('flai-') && fileName.endsWith('.sqlite')) {
+      backupFileNames.push(fileName);
+    }
+  }
+  backupFileNames.sort(compareBackupFileNameNewestFirst);
+  return backupFileNames;
+}
+
 function ensureBackupDir() {
   fs.mkdirSync(BACKUP_DIR, { recursive: true });
 }
@@ -49,14 +66,7 @@ export function createBackup() {
  * Remove backups older than MAX_BACKUPS days, keeping only the most recent ones.
  */
 function pruneOldBackups() {
-  if (!fs.existsSync(BACKUP_DIR)) {
-    return;
-  }
-
-  const files = fs.readdirSync(BACKUP_DIR)
-    .filter((f) => f.startsWith('flai-') && f.endsWith('.sqlite'))
-    .sort()
-    .reverse();
+  const files = readBackupFileNamesNewestFirst();
 
   // Keep only the most recent MAX_BACKUPS backups
   for (const file of files.slice(MAX_BACKUPS)) {
@@ -103,10 +113,7 @@ export function scheduleDailyBackup() {
  */
 export function listBackups() {
   ensureBackupDir();
-  const files = fs.readdirSync(BACKUP_DIR)
-    .filter((f) => f.startsWith('flai-') && f.endsWith('.sqlite'))
-    .sort()
-    .reverse();
+  const files = readBackupFileNamesNewestFirst();
 
   return files.map((f) => {
     const stat = fs.statSync(path.join(BACKUP_DIR, f));
@@ -116,4 +123,11 @@ export function listBackups() {
       createdAt: stat.mtime.toISOString()
     };
   });
+}
+
+function readBackupFileNamesNewestFirst() {
+  if (!fs.existsSync(BACKUP_DIR)) {
+    return [];
+  }
+  return getBackupFileNamesNewestFirst(fs.readdirSync(BACKUP_DIR));
 }

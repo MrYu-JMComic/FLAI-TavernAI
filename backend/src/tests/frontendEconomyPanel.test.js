@@ -29,6 +29,22 @@ test('EconomyPanel disables history controls while economy or history is loading
   assert.match(economyPanelStyle, /\.history-currency-select:disabled/);
 });
 
+test('EconomyPanel prunes stale currency filters when accounts refresh', () => {
+  assert.match(
+    economyPanelScript,
+    /const currencyFilterOptions = computed\(\(\) => \{[\s\S]*const options = \[\{ value: '', label: '全部货币' \}\];[\s\S]*const sourceAccounts = Array\.isArray\(accounts\.value\) \? accounts\.value : \[\];[\s\S]*for \(const account of sourceAccounts\) \{[\s\S]*const currencyType = account\?\.currencyType \|\| '';[\s\S]*const meta = currencyMeta\[currencyType\];[\s\S]*options\.push\(\{[\s\S]*value: currencyType,[\s\S]*label: `\$\{meta\?\.icon \|\| '🪙'\} \$\{meta\?\.label \|\| currencyType\}`[\s\S]*return options;[\s\S]*\}\);/
+  );
+  assert.match(
+    economyPanelScript,
+    /function setAccountsIfChanged\(nextAccounts\)\s*{[\s\S]*const normalizedAccounts = Array\.isArray\(nextAccounts\) \? nextAccounts : \[\];[\s\S]*pruneUnavailableHistoryCurrencyFilter\(normalizedAccounts\);[\s\S]*if \(sameListItems\(currentAccounts, normalizedAccounts, sameAccountSummary\)\) {/
+  );
+  assert.match(
+    economyPanelScript,
+    /function pruneUnavailableHistoryCurrencyFilter\(sourceAccounts\)\s*{[\s\S]*const selectedCurrency = historyCurrencyFilter\.value;[\s\S]*if \(!selectedCurrency\) {[\s\S]*return false;[\s\S]*for \(const account of sourceAccounts\) {[\s\S]*if \(account\?\.currencyType === selectedCurrency\) {[\s\S]*return false;[\s\S]*historyCurrencyFilter\.value = '';[\s\S]*return true;[\s\S]*}/
+  );
+  assert.doesNotMatch(economyPanelScript, /accounts\.value\.map/);
+});
+
 test('EconomyPanel preserves unchanged account and transaction list references', () => {
   assert.match(
     economyPanelScript,
@@ -40,7 +56,7 @@ test('EconomyPanel preserves unchanged account and transaction list references',
   );
   assert.match(
     economyPanelScript,
-    /function sameListItems\(currentItems, nextItems, sameItem\)\s*{[\s\S]*if \(currentItems === nextItems\) {\s*return true;\s*}[\s\S]*if \(currentItems\.length !== nextItems\.length\) {\s*return false;\s*}[\s\S]*currentItems\.every\(\(item, index\) => sameItem\(item, nextItems\[index\]\)\);[\s\S]*}/
+    /function sameListItems\(currentItems, nextItems, sameItem\)\s*{[\s\S]*if \(currentItems === nextItems\) {\s*return true;\s*}[\s\S]*if \(currentItems\.length !== nextItems\.length\) {\s*return false;\s*}[\s\S]*for \(let index = 0; index < currentItems\.length; index \+= 1\) {[\s\S]*if \(!sameItem\(currentItems\[index\], nextItems\[index\]\)\) {[\s\S]*return false;[\s\S]*return true;[\s\S]*}/
   );
   assert.match(
     economyPanelScript,
@@ -60,4 +76,5 @@ test('EconomyPanel preserves unchanged account and transaction list references',
   assert.doesNotMatch(economyPanelScript, /\n\s+transactions\.value = \[\];/);
   assert.doesNotMatch(economyPanelScript, /\n\s+accounts\.value = result\.accounts/);
   assert.doesNotMatch(economyPanelScript, /\n\s+transactions\.value = result\.transactions/);
+  assert.doesNotMatch(economyPanelScript, /currentItems\.every/);
 });

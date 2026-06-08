@@ -1,6 +1,8 @@
 import { createHash } from 'node:crypto';
 import { decryptSecret } from '../security.js';
 import { parseJson } from '../utils/json.js';
+import { isLocalOrPrivateBaseUrl } from '../../../shared/privateNetwork.js';
+import { findSseBlockSeparator, forEachSseLine } from '../../../shared/sse.js';
 
 const deepSeekPricingCnyPerMillion = {
   'deepseek-v4-flash': {
@@ -1559,28 +1561,6 @@ function providerAllowsNoAuth(settings) {
   return settings?.providerType === 'custom' && isLocalOrPrivateBaseUrl(settings.baseUrl);
 }
 
-function isLocalOrPrivateBaseUrl(value) {
-  try {
-    const { hostname } = new URL(String(value || ''));
-    const host = hostname.replace(/^\[(.*)\]$/, '$1').toLowerCase();
-    if (['localhost', '127.0.0.1', '::1', '0.0.0.0'].includes(host) || host.startsWith('127.')) {
-      return true;
-    }
-    const parts = host.split('.').map((part) => Number(part));
-    if (parts.length !== 4 || parts.some((part) => !Number.isInteger(part) || part < 0 || part > 255)) {
-      return false;
-    }
-    return (
-      parts[0] === 10 ||
-      (parts[0] === 172 && parts[1] >= 16 && parts[1] <= 31) ||
-      (parts[0] === 192 && parts[1] === 168) ||
-      (parts[0] === 198 && parts[1] === 18)
-    );
-  } catch {
-    return false;
-  }
-}
-
 async function readJsonResponse(response) {
   const text = await response.text().catch(() => '');
   const json = parseJson(text || 'null', null);
@@ -1632,15 +1612,15 @@ async function* parseSse(stream) {
     }
 
     buffer += decoder.decode(value, { stream: true });
-    let match = buffer.match(/\r?\n\r?\n/);
-    while (match) {
-      const block = buffer.slice(0, match.index);
-      buffer = buffer.slice(match.index + match[0].length);
+    let separator = findSseBlockSeparator(buffer);
+    while (separator) {
+      const block = buffer.slice(0, separator.index);
+      buffer = buffer.slice(separator.index + separator.length);
       const event = parseSseBlock(block);
       if (event.data) {
         yield event;
       }
-      match = buffer.match(/\r?\n\r?\n/);
+      separator = findSseBlockSeparator(buffer);
     }
   }
 
@@ -1665,18 +1645,21 @@ async function readSseChunk(reader) {
 
 function parseSseBlock(block) {
   const event = { event: 'message', data: '' };
-  const data = [];
+  let hasData = false;
 
-  for (const line of block.split(/\r?\n/)) {
+  forEachSseLine(block, (line) => {
     if (line.startsWith('event:')) {
       event.event = line.slice(6).trim();
     }
     if (line.startsWith('data:')) {
-      data.push(line.slice(5).trimStart());
+      if (hasData) {
+        event.data += '\n';
+      }
+      event.data += line.slice(5).trimStart();
+      hasData = true;
     }
-  }
+  });
 
-  event.data = data.join('\n');
   return event;
 }
 
@@ -1837,13 +1820,17 @@ function isReasoningBlock(item) {
 function mergeReasoning(...items) {
   let merged = '';
   for (const item of items) {
-    const value = String(item || '').trim();
-    if (!value) {
-      continue;
-    }
-    merged = merged ? `${merged}\n\n${value}` : value;
+    merged = appendReasoning(merged, item);
   }
   return merged;
+}
+
+function appendReasoning(merged, item) {
+  const value = String(item || '').trim();
+  if (!value) {
+    return merged;
+  }
+  return merged ? `${merged}\n\n${value}` : value;
 }
 
 function splitThinkingTags(text) {
@@ -1851,24 +1838,20 @@ function splitThinkingTags(text) {
   if (!value) {
     return { content: '', reasoning: '' };
   }
-  const reasoning = [];
+  let reasoning = '';
   let content = value.replace(/<thinking\b[^>]*>([\s\S]*?)<\/thinking>/gi, (_match, inner) => {
-    if (String(inner || '').trim()) {
-      reasoning.push(String(inner).trim());
-    }
+    reasoning = appendReasoning(reasoning, inner);
     return '';
   });
   content = content.replace(/<thinking\b[^>]*>[\s\S]*$/i, (match) => {
     const inner = match.replace(/^<thinking\b[^>]*>/i, '').trim();
-    if (inner) {
-      reasoning.push(inner);
-    }
+    reasoning = appendReasoning(reasoning, inner);
     return '';
   });
   content = content.replace(/<\/thinking>/gi, '');
   return {
     content: content.trimStart(),
-    reasoning: reasoning.join('\n\n')
+    reasoning
   };
 }
 
@@ -1946,24 +1929,41 @@ function safeTagEmitLength(value, tag) {
 }
 
 function extractOpenAiOutputText(json) {
-  return (json.output || [])
-    .flatMap((item) => item.content || [])
-    .map((item) => item.text || '')
-    .join('');
+  if (!Array.isArray(json.output)) {
+    return '';
+  }
+
+  let text = '';
+  for (const item of json.output) {
+    const content = item?.content;
+    if (!Array.isArray(content)) {
+      continue;
+    }
+
+    for (const contentItem of content) {
+      text += contentItem?.text || '';
+    }
+  }
+  return text;
 }
 
 function extractOpenAiReasoning(json) {
-  const items = [];
-  for (const item of json.output || []) {
-    if (item?.type !== 'reasoning') {
-      continue;
+  let reasoning = '';
+  if (Array.isArray(json.output)) {
+    for (const item of json.output) {
+      if (item?.type !== 'reasoning') {
+        continue;
+      }
+      reasoning = appendReasoning(reasoning, extractText(item.summary || ''));
+      reasoning = appendReasoning(reasoning, extractText(item.content || ''));
+      reasoning = appendReasoning(
+        reasoning,
+        extractText(item.text || item.reasoning || item.reasoning_content || '')
+      );
     }
-    items.push(extractText(item.summary || ''));
-    items.push(extractText(item.content || ''));
-    items.push(extractText(item.text || item.reasoning || item.reasoning_content || ''));
   }
-  items.push(extractText(json.reasoning || json.response?.reasoning || ''));
-  return mergeReasoning(...items);
+
+  return appendReasoning(reasoning, extractText(json.reasoning || json.response?.reasoning || ''));
 }
 
 function extractResponsesReasoningDelta(type, json = {}) {

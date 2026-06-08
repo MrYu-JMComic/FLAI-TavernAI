@@ -40,6 +40,41 @@ The autonomous loop should choose one small item per run. Add new findings here 
 
 ## Done
 
+- 2026-06-08: Parsed status bar template placeholder suffixes with one token scan instead of split/rest/join arrays.
+- 2026-06-08: Scanned CharacterFormView world-book selection and sync ids with direct loops instead of map/filter/spread intermediates.
+- 2026-06-08: Parsed avatar short URLs with a single-segment scanner so nested paths cannot be reinterpreted as asset ids.
+- 2026-06-08: Compared CharacterFormView option and AI panel state with direct loops instead of every callbacks.
+- 2026-06-08: Compared chat submit usage/provider metadata and refresh tasks with direct loops instead of callback allocation paths.
+- 2026-06-08: Shared backup database file-name filtering and newest-first sorting through one pure helper.
+- 2026-06-08: Compared WorldBookView refreshed book, entry, and AI process values with direct loops instead of every callbacks.
+- 2026-06-08: Routed SettingsView extension current-row lookups and Mod reorder through shared direct list helpers.
+- 2026-06-08: Routed MarkdownContent fold-plugin flags through the shared regex flag scanner while preserving no-global fallback behavior.
+- 2026-06-08: Routed NpcPanel selected NPC current-row checks through one direct list scan before detail refresh.
+- 2026-06-08: Shared backend regex flag normalization through one direct scanner helper.
+- 2026-06-08: Scanned recent conversation messages from the limited result tail instead of reverse/filter chaining.
+- 2026-06-08: Scanned chat sidebar stale conversation row guards directly before open, select, and delete actions.
+- 2026-06-08: Normalized CharacterFormView accessory skill payloads with a direct defaults loop instead of Object.fromEntries/map allocation.
+- 2026-06-08: Synced chat sidebar selected presets with one direct refreshed-preset scan and no-op assignments.
+- 2026-06-08: Normalized character assistant generation options with a direct defaults loop instead of Object.fromEntries/map allocation.
+- 2026-06-08: Built accessory skill defaults and active flags with direct loops instead of Object.fromEntries map chains.
+- 2026-06-08: Kept ChatModelSwitcher draft models scoped to refreshed model options before selection and save.
+- 2026-06-08: Shared frontend and backend SSE block and line scanners through one root helper to avoid parser drift.
+- 2026-06-08: Cleared stale CharacterImagePanel edit and drag state during image-list refreshes with direct current-image scans.
+- 2026-06-08: Synced TalentRollDialog selected pools inside pool-list refreshes and scanned pool/talent rows with direct loops.
+- 2026-06-08: Shared backend and SettingsView local/private provider URL checks through one strict IPv4 helper.
+- 2026-06-08: Re-read SaveLoadPanel save rows before item mutations and cleared stale rename drafts after save-list refreshes.
+- 2026-06-08: Aligned SettingsView no-key custom provider readiness with strict private IPv4 parsing.
+- 2026-06-08: Tightened custom local/private proxy auth retry checks with strict IPv4 parsing instead of prefix and split/map tests.
+- 2026-06-08: Guarded PresetView edit, delete, and default actions against stale preset row events after list refreshes.
+- 2026-06-08: Merged non-streaming thinking-tag reasoning directly instead of collecting and joining an array.
+- 2026-06-08: Pruned stale EconomyPanel currency filters after account refreshes and built filter options with a direct loop.
+- 2026-06-08: Merged OpenAI Responses reasoning fallback text directly instead of collecting item arrays.
+- 2026-06-08: Read OpenAI Responses output text with direct loops instead of flatMap/map/join chains.
+- 2026-06-08: Aggregated NpcPanel list stats and empty NPC names in one pass instead of separate reduce/filter/map scans.
+- 2026-06-08: Aggregated WorldBookView book-list stats in one pass instead of separate reduce/filter scans.
+- 2026-06-08: Scanned backend provider SSE blocks and lines directly instead of regex match and split arrays.
+- 2026-06-08: Scanned frontend SSE block separators directly instead of repeated regex matches.
+- 2026-06-08: Parsed frontend SSE event lines with a direct scanner instead of per-block split arrays.
 - 2026-06-08: Scanned unreferenced Vue import suffixes without regex split allocations.
 - 2026-06-08: Bounded chat accessory skill-result lists and placeholder token parsing with direct helpers.
 - 2026-06-08: Compared chat conversation resource and render-plugin summaries with direct loops.

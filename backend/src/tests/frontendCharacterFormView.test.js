@@ -112,7 +112,7 @@ test('CharacterFormView preserves unchanged option-list references during loads'
   );
   assert.match(
     characterFormScript,
-    /setSelectedWorldBookIdsIfChanged\(linkedBooks\.map\(\(book\) => book\.id\)\);/
+    /setSelectedWorldBookIdsFromBooksIfChanged\(linkedBooks\);/
   );
   assert.match(
     characterFormScript,
@@ -128,11 +128,23 @@ test('CharacterFormView preserves unchanged option-list references during loads'
   );
   assert.match(
     characterFormScript,
-    /function setSelectedWorldBookIdsIfChanged\(nextIds\) \{[\s\S]*sameListItems\(selectedWorldBookIds\.value, normalizedIds, Object\.is\)[\s\S]*selectedWorldBookIds\.value = normalizedIds;[\s\S]*return true;[\s\S]*\}/
+    /function normalizeWorldBookIds\(nextIds\) \{[\s\S]*const normalizedIds = \[\];[\s\S]*for \(const id of Array\.isArray\(nextIds\) \? nextIds : \[\]\) \{[\s\S]*normalizedIds\.push\(String\(id \|\| ''\)\);[\s\S]*return normalizedIds;[\s\S]*\}/
   );
   assert.match(
     characterFormScript,
-    /function toggleWorldBook\(bookId\) \{[\s\S]*const normalizedId = String\(bookId \|\| ''\);[\s\S]*if \(!normalizedId\) \{[\s\S]*return;[\s\S]*\}[\s\S]*const currentIds = selectedWorldBookIds\.value;[\s\S]*const idx = currentIds\.indexOf\(normalizedId\);[\s\S]*const nextIds = idx >= 0[\s\S]*currentIds\.filter\(\(id\) => id !== normalizedId\)[\s\S]*\[\.\.\.currentIds, normalizedId\][\s\S]*setSelectedWorldBookIdsIfChanged\(nextIds\);[\s\S]*\}/
+    /function setSelectedWorldBookIdsFromBooksIfChanged\(nextBooks\) \{[\s\S]*const nextIds = \[\];[\s\S]*for \(const book of Array\.isArray\(nextBooks\) \? nextBooks : \[\]\) \{[\s\S]*nextIds\.push\(book\?\.id\);[\s\S]*return setSelectedWorldBookIdsIfChanged\(nextIds\);[\s\S]*\}/
+  );
+  assert.match(
+    characterFormScript,
+    /function setSelectedWorldBookIdsIfChanged\(nextIds\) \{[\s\S]*const normalizedIds = normalizeWorldBookIds\(nextIds\);[\s\S]*sameListItems\(selectedWorldBookIds\.value, normalizedIds, Object\.is\)[\s\S]*selectedWorldBookIds\.value = normalizedIds;[\s\S]*return true;[\s\S]*\}/
+  );
+  assert.match(
+    characterFormScript,
+    /function sameListItems\(currentItems, nextItems, sameItem\) \{[\s\S]*for \(let index = 0; index < currentList\.length; index \+= 1\) \{[\s\S]*sameItem\(currentList\[index\], nextList\[index\]\)[\s\S]*return true;[\s\S]*\}/
+  );
+  assert.match(
+    characterFormScript,
+    /function toggleWorldBook\(bookId\) \{[\s\S]*const normalizedId = String\(bookId \|\| ''\);[\s\S]*if \(!normalizedId\) \{[\s\S]*return;[\s\S]*\}[\s\S]*const currentIds = selectedWorldBookIds\.value;[\s\S]*const nextIds = \[\];[\s\S]*let removedSelectedId = false;[\s\S]*for \(const id of currentIds\) \{[\s\S]*if \(id === normalizedId\) \{[\s\S]*removedSelectedId = true;[\s\S]*continue;[\s\S]*\}[\s\S]*nextIds\.push\(id\);[\s\S]*if \(!removedSelectedId\) \{[\s\S]*nextIds\.push\(normalizedId\);[\s\S]*\}[\s\S]*setSelectedWorldBookIdsIfChanged\(nextIds\);[\s\S]*\}/
   );
   assert.match(
     characterFormScript,
@@ -145,6 +157,9 @@ test('CharacterFormView preserves unchanged option-list references during loads'
   assert.doesNotMatch(characterFormScript, /worldBooks\.value\s*=\s*nextWorldBooks/);
   assert.doesNotMatch(characterFormScript, /availableTags\.value\s*=\s*nextTags/);
   assert.doesNotMatch(characterFormScript, /selectedWorldBookIds\.value\s*=\s*linkedBooks\.map/);
+  assert.doesNotMatch(characterFormScript, /linkedBooks\.map\(\(book\) => book\.id\)/);
+  assert.doesNotMatch(characterFormScript, /currentLinked\.map\(\(book\) => book\.id\)/);
+  assert.doesNotMatch(characterFormScript, /currentIds\.filter\(\(id\) => id !== normalizedId\)/);
   assert.doesNotMatch(characterFormScript, /selectedWorldBookIds\.value\.(?:push|splice)\(/);
 });
 
@@ -206,12 +221,14 @@ test('CharacterFormView uses a searchable paged dialog for world book linking', 
 
   assert.match(stylesSource, /\.world-book-picker\s*\{[\s\S]*border:\s*1px solid var\(--line\);[\s\S]*background:\s*color-mix\(in srgb, var\(--surface\) 78%, transparent\);/);
   assert.match(stylesSource, /\.world-book-dialog-tools\s*\{[\s\S]*grid-template-columns:\s*minmax\(220px, 1fr\) minmax\(160px, 220px\) auto;/);
-  assert.match(stylesSource, /\.world-book-dialog-list\s*\{[\s\S]*overflow:\s*auto;/);
-  assert.match(stylesSource, /\.world-book-dialog-option\s*\{[\s\S]*grid-template-columns:\s*auto minmax\(0, 1fr\) auto;/);
+  assert.match(stylesSource, /\.world-book-dialog-list\s*\{[\s\S]*align-content:\s*start;[\s\S]*overflow:\s*auto;/);
+  assert.match(stylesSource, /\.world-book-dialog-option\s*\{[\s\S]*grid-template-columns:\s*auto minmax\(0, 1fr\) auto;[\s\S]*align-items:\s*start;/);
   assert.match(
     stylesSource,
-    /@media \(max-width: 760px\) \{[\s\S]*\.world-book-dialog-tools,[\s\S]*\.world-book-dialog-option\s*\{[\s\S]*grid-template-columns:\s*minmax\(0, 1fr\);/
+    /@media \(max-width: 760px\) \{[\s\S]*\.world-book-dialog-option\s*\{[\s\S]*grid-template-columns:\s*auto minmax\(0, 1fr\);[\s\S]*grid-template-areas:[\s\S]*"check main"[\s\S]*"check meta";/
   );
+  assert.match(stylesSource, /\.world-book-dialog-option-main\s*\{[\s\S]*grid-area:\s*main;/);
+  assert.match(stylesSource, /\.world-book-dialog-meta\s*\{[\s\S]*grid-area:\s*meta;/);
 });
 
 test('CharacterFormView filters tag search results in one pass', () => {
@@ -256,6 +273,23 @@ test('CharacterFormView builds status blueprint editor rows without intermediate
   assert.doesNotMatch(characterFormScript, /variables\.forEach\(/);
 });
 
+test('CharacterFormView normalizes accessory skill payloads with a direct defaults loop', () => {
+  const start = characterFormScript.indexOf('function normalizeAccessorySkillsForPayload(input = {}) {');
+  const end = characterFormScript.indexOf('\nfunction createDefaultStatusBarBlueprint', start);
+  assert.notEqual(start, -1);
+  assert.notEqual(end, -1);
+  const snippet = characterFormScript.slice(start, end);
+
+  assert.match(snippet, /const normalized = \{\};/);
+  assert.match(snippet, /for \(const key in defaults\)/);
+  assert.match(snippet, /normalized\[key\] = \{/);
+  assert.match(snippet, /enabled: normalizeSkillEnabled\(source\.enabled, defaults\[key\]\.enabled\)/);
+  assert.match(snippet, /modelOverride: String\(source\.modelOverride \|\| source\.model_override \|\| ''\)\.trim\(\)/);
+  assert.match(snippet, /return normalized;/);
+  assert.doesNotMatch(snippet, /Object\.fromEntries/);
+  assert.doesNotMatch(snippet, /Object\.keys\(defaults\)\.map/);
+});
+
 test('CharacterFormView preserves unchanged AI process panel references', () => {
   assert.match(
     characterFormScript,
@@ -277,6 +311,9 @@ test('CharacterFormView preserves unchanged AI process panel references', () => 
     characterFormScript,
     /function samePlainValue\(current, next\) \{[\s\S]*Object\.is\(current, next\)[\s\S]*Array\.isArray\(current\)[\s\S]*Object\.keys\(current\)[\s\S]*samePlainValue\(current\[key\], next\[key\]\)[\s\S]*\}/
   );
+  assert.doesNotMatch(characterFormScript, /currentList\.every\(/);
+  assert.doesNotMatch(characterFormScript, /current\.every\(/);
+  assert.doesNotMatch(characterFormScript, /currentKeys\.every\(/);
   assert.match(
     characterFormScript,
     /function updateAiProcessStep\(round = 1, updateStep\) \{[\s\S]*const currentProcess = Array\.isArray\(aiProcess\.value\) \? aiProcess\.value : \[\];[\s\S]*const nextProcess = stepIndex >= 0[\s\S]*currentProcess\.map\(\(item, index\) => \(index === stepIndex \? nextStep : item\)\)[\s\S]*\[\.\.\.currentProcess, nextStep\][\s\S]*setAiProcessIfChanged\(nextProcess\);[\s\S]*\}/

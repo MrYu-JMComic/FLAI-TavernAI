@@ -11,7 +11,7 @@ const stylesSource = readFrontendStyles();
 test('ChatModelSwitcher locks model selection while saving', () => {
   assert.match(chatModelSwitcherScript, /const modelSelectionLocked = computed\(\(\) => props\.saving\)/);
   assert.match(chatModelSwitcherScript, /const canRefresh = computed\(\(\) => Boolean\(props\.provider\?\.baseUrl\) && !props\.refreshing && !modelSelectionLocked\.value\)/);
-  assert.match(chatModelSwitcherScript, /function chooseModel\(modelId\)\s*{\s*if \(modelSelectionLocked\.value\) return;/);
+  assert.match(chatModelSwitcherScript, /function chooseModel\(modelId\)\s*{\s*if \(modelSelectionLocked\.value\) return;\s*if \(!hasModelOption\(modelOptions\.value, modelId\)\) return;/);
   assert.match(chatModelSwitcherScript, /function closeSwitcher\(\)\s*{\s*if \(props\.saving\) return;\s*emit\('close'\);/);
 
   assert.match(chatModelSwitcherTemplate, /:aria-busy="saving \|\| refreshing"/);
@@ -40,6 +40,26 @@ test('ChatModelSwitcher filters model search results without model-options filte
     /function filterModelOptions\(options, rawKeyword\) \{\s*const currentOptions = Array\.isArray\(options\) \? options : \[\];\s*const keyword = String\(rawKeyword \|\| ''\)\.trim\(\)\.toLowerCase\(\);[\s\S]*if \(!keyword\) \{\s*return currentOptions;\s*\}[\s\S]*const matches = \[\];\s*for \(const model of currentOptions\) \{[\s\S]*matches\.push\(model\);[\s\S]*\}\s*return matches;\s*\}/
   );
   assert.doesNotMatch(chatModelSwitcherScript, /modelOptions\.value\.filter\(/);
+});
+
+test('ChatModelSwitcher keeps draft model scoped to refreshed options', () => {
+  assert.match(
+    chatModelSwitcherScript,
+    /const canSave = computed\(\(\) => \{[\s\S]*draftModel\.value !== currentModel\.value &&[\s\S]*hasModelOption\(modelOptions\.value, draftModel\.value\) &&[\s\S]*!props\.saving;[\s\S]*\}\);/
+  );
+  assert.match(
+    chatModelSwitcherScript,
+    /watch\(modelOptions, \(options\) => \{\s*if \(!props\.open\) return;\s*syncDraftModelWithOptions\(options\);[\s\S]*\}\);/
+  );
+  assert.match(
+    chatModelSwitcherScript,
+    /function hasModelOption\(options, modelId\)\s*{\s*const id = String\(modelId \|\| ''\)\.trim\(\);[\s\S]*if \(!id\) {[\s\S]*return false;[\s\S]*const currentOptions = Array\.isArray\(options\) \? options : \[\];[\s\S]*for \(const model of currentOptions\) {[\s\S]*if \(model\?\.id === id\) {[\s\S]*return true;[\s\S]*return false;[\s\S]*}/
+  );
+  assert.match(
+    chatModelSwitcherScript,
+    /function syncDraftModelWithOptions\(options = modelOptions\.value\)\s*{\s*const current = currentModel\.value;[\s\S]*if \(!draftModel\.value\) {[\s\S]*draftModel\.value = current;[\s\S]*return;[\s\S]*if \(hasModelOption\(options, draftModel\.value\)\) {[\s\S]*return;[\s\S]*draftModel\.value = current;[\s\S]*}/
+  );
+  assert.doesNotMatch(chatModelSwitcherScript, /modelOptions\.value\.some/);
 });
 
 test('ChatView guards model switcher refresh and save handlers while work is pending', () => {

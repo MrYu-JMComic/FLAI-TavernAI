@@ -1,3 +1,5 @@
+import { findSseBlockSeparator, forEachSseLine } from '../../shared/sse.js';
+
 const jsonHeaders = {
   'Content-Type': 'application/json'
 };
@@ -854,13 +856,13 @@ async function streamSSE(path, payload, handlers = {}, signal, options = {}) {
     }
 
     buffer += decoder.decode(value, { stream: true });
-    let match = buffer.match(/\r?\n\r?\n/);
-    while (match) {
-      const block = buffer.slice(0, match.index);
-      buffer = buffer.slice(match.index + match[0].length);
+    let separator = findSseBlockSeparator(buffer);
+    while (separator) {
+      const block = buffer.slice(0, separator.index);
+      buffer = buffer.slice(separator.index + separator.length);
       const event = parseSseBlock(block);
       await handleSseEvent(event);
-      match = buffer.match(/\r?\n\r?\n/);
+      separator = findSseBlockSeparator(buffer);
     }
   }
 
@@ -900,17 +902,21 @@ function getSseReader(response) {
 
 function parseSseBlock(block) {
   let name = 'message';
-  const dataLines = [];
+  let rawText = '';
+  let hasData = false;
 
-  for (const line of block.split(/\r?\n/)) {
+  forEachSseLine(block, (line) => {
     if (line.startsWith('event:')) {
       name = line.slice(6).trim();
     } else if (line.startsWith('data:')) {
-      dataLines.push(line.slice(5).trimStart());
+      if (hasData) {
+        rawText += '\n';
+      }
+      rawText += line.slice(5).trimStart();
+      hasData = true;
     }
-  }
+  });
 
-  const rawText = dataLines.join('\n');
   return {
     name,
     data: safeJson(rawText),

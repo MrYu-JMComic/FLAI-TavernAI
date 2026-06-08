@@ -37,19 +37,19 @@ test('SaveLoadPanel disables all item actions while one save item mutation is bu
   );
   assert.match(
     saveLoadPanelScript,
-    /async function doLoadSave\(item\)\s*{\s*if \(savePanelBusy\.value \|\| !isCurrentSaveItem\(item\)\) return;/
+    /async function doLoadSave\(item\)\s*{\s*if \(savePanelBusy\.value\) return;\s*const currentItem = getCurrentSaveItem\(item\);\s*if \(!currentItem\) return;/
   );
   assert.match(
     saveLoadPanelScript,
-    /async function doDeleteSave\(item\)\s*{\s*if \(savePanelBusy\.value \|\| !isCurrentSaveItem\(item\)\) return;/
+    /async function doDeleteSave\(item\)\s*{\s*if \(savePanelBusy\.value\) return;\s*const currentItem = getCurrentSaveItem\(item\);\s*if \(!currentItem\) return;/
   );
   assert.match(
     saveLoadPanelScript,
-    /function beginRename\(item\)\s*{\s*if \(savePanelBusy\.value \|\| !isCurrentSaveItem\(item\)\) return;/
+    /function beginRename\(item\)\s*{\s*if \(savePanelBusy\.value\) return;\s*const currentItem = getCurrentSaveItem\(item\);\s*if \(!currentItem\) return;/
   );
   assert.match(
     saveLoadPanelScript,
-    /if \(!name \|\| savePanelBusy\.value \|\| !isCurrentSaveItem\(item\)\) return;/
+    /if \(!name \|\| savePanelBusy\.value\) return;\s*const currentItem = getCurrentSaveItem\(item\);\s*if \(!currentItem\) return;/
   );
 
   assert.equal(countMatches(saveLoadPanelTemplate, /:disabled="isSaveActionDisabled\(\)"/g), 4);
@@ -65,11 +65,15 @@ test('SaveLoadPanel disables all item actions while one save item mutation is bu
 test('SaveLoadPanel preserves save-list references for unchanged refresh results', () => {
   assert.match(
     saveLoadPanelScript,
-    /function setSavesIfChanged\(nextSaves\)\s*{\s*const normalizedSaves = Array\.isArray\(nextSaves\) \? nextSaves : \[\];[\s\S]*if \(sameSaveList\(currentSaves, normalizedSaves\)\) {\s*return false;\s*}[\s\S]*saves\.value = normalizedSaves;[\s\S]*return true;[\s\S]*}/
+    /const sortedSaves = computed\(\(\) => saves\.value\);/
   );
   assert.match(
     saveLoadPanelScript,
-    /function sameSaveList\(currentSaves, nextSaves\)\s*{[\s\S]*if \(currentSaves === nextSaves\) {\s*return true;\s*}[\s\S]*currentSaves\.every\(\(save, index\) => sameSaveSummary\(save, nextSaves\[index\]\)\);[\s\S]*}/
+    /function setSavesIfChanged\(nextSaves\)\s*{\s*const normalizedSaves = Array\.isArray\(nextSaves\) \? nextSaves : \[\];[\s\S]*if \(sameSaveList\(currentSaves, normalizedSaves\)\) {\s*syncRenameDraftWithSaveList\(normalizedSaves\);\s*return false;\s*}[\s\S]*saves\.value = normalizedSaves;\s*syncRenameDraftWithSaveList\(normalizedSaves\);[\s\S]*return true;[\s\S]*}/
+  );
+  assert.match(
+    saveLoadPanelScript,
+    /function sameSaveList\(currentSaves, nextSaves\)\s*{[\s\S]*if \(currentSaves === nextSaves\) {\s*return true;\s*}[\s\S]*for \(let index = 0; index < currentSaves\.length; index \+= 1\) {[\s\S]*if \(!sameSaveSummary\(currentSaves\[index\], nextSaves\[index\]\)\) {[\s\S]*return false;[\s\S]*return true;[\s\S]*}/
   );
   assert.match(
     saveLoadPanelScript,
@@ -81,7 +85,7 @@ test('SaveLoadPanel preserves save-list references for unchanged refresh results
   );
   assert.match(
     saveLoadPanelScript,
-    /await deleteSave\(item\.id, conversationId\);[\s\S]*removeSaveItemByIdIfPresent\(item\.id\);/
+    /await deleteSave\(currentItem\.id, conversationId\);[\s\S]*removeSaveItemByIdIfPresent\(currentItem\.id\);/
   );
   assert.match(
     saveLoadPanelScript,
@@ -93,9 +97,11 @@ test('SaveLoadPanel preserves save-list references for unchanged refresh results
   );
   assert.match(
     saveLoadPanelScript,
-    /const updated = await renameSave\(item\.id, name, conversationId\);[\s\S]*updateSaveItemNameIfChanged\(item\.id, updated\.name\);/
+    /const updated = await renameSave\(currentItem\.id, name, conversationId\);[\s\S]*updateSaveItemNameIfChanged\(currentItem\.id, updated\.name\);/
   );
   assert.ok(countMatches(saveLoadPanelScript, /setSavesIfChanged\(/g) >= 5);
+  assert.doesNotMatch(saveLoadPanelScript, /\[\.\.\.saves\.value\]/);
+  assert.doesNotMatch(saveLoadPanelScript, /currentSaves\.every/);
   assert.doesNotMatch(saveLoadPanelScript, /\n\s+saves\.value = nextSaves;/);
   assert.doesNotMatch(saveLoadPanelScript, /\n\s+saves\.value = \[\];/);
   assert.doesNotMatch(saveLoadPanelScript, /\n\s+saves\.value = saves\.value\.filter/);
@@ -104,10 +110,10 @@ test('SaveLoadPanel preserves save-list references for unchanged refresh results
   assert.doesNotMatch(saveLoadPanelScript, /saves\.value\[[^\]]+\]\s*=/);
 });
 
-test('SaveLoadPanel ignores stale save item events before mutations', () => {
+test('SaveLoadPanel re-reads current save rows before item mutations', () => {
   assert.match(
     saveLoadPanelScript,
-    /function isCurrentSaveItem\(item\)\s*{\s*const conversationId = props\.conversationId;[\s\S]*if \(!conversationId \|\| !item\?\.id \|\| item\.conversationId !== conversationId\) \{\s*return false;\s*\}[\s\S]*return saves\.value\.some\(\(save\) => save\?\.id === item\.id && save\?\.conversationId === conversationId\);[\s\S]*}/
+    /function getCurrentSaveItem\(item\)\s*{\s*const conversationId = props\.conversationId;[\s\S]*if \(!conversationId \|\| !item\?\.id \|\| item\.conversationId !== conversationId\) \{\s*return null;\s*\}[\s\S]*for \(const save of saves\.value\) \{[\s\S]*if \(save\?\.id === item\.id && save\?\.conversationId === conversationId\) \{[\s\S]*return save;[\s\S]*return null;[\s\S]*}/
   );
   assert.match(
     saveLoadPanelScript,
@@ -115,19 +121,35 @@ test('SaveLoadPanel ignores stale save item events before mutations', () => {
   );
   assert.match(
     saveLoadPanelScript,
-    /async function doLoadSave\(item\)\s*{\s*if \(savePanelBusy\.value \|\| !isCurrentSaveItem\(item\)\) return;[\s\S]*const result = await loadSave\(item\.id, conversationId\);[\s\S]*if \(!isCurrentSaveLoadResult\(result, conversationId\)\) return;[\s\S]*emit\('loaded', \{ \.\.\.result, conversationId \}\);/
+    /async function doLoadSave\(item\)\s*{\s*if \(savePanelBusy\.value\) return;\s*const currentItem = getCurrentSaveItem\(item\);\s*if \(!currentItem\) return;[\s\S]*const result = await loadSave\(currentItem\.id, conversationId\);[\s\S]*if \(!isCurrentSaveLoadResult\(result, conversationId\)\) return;[\s\S]*emit\('loaded', \{ \.\.\.result, conversationId \}\);/
   );
   assert.doesNotMatch(saveLoadPanelScript, /result\?\.conversationId && result\.conversationId !== conversationId/);
   assert.match(
     saveLoadPanelScript,
-    /async function doDeleteSave\(item\)\s*{\s*if \(savePanelBusy\.value \|\| !isCurrentSaveItem\(item\)\) return;[\s\S]*await deleteSave\(item\.id, conversationId\);/
+    /async function doDeleteSave\(item\)\s*{\s*if \(savePanelBusy\.value\) return;\s*const currentItem = getCurrentSaveItem\(item\);\s*if \(!currentItem\) return;[\s\S]*await deleteSave\(currentItem\.id, conversationId\);/
   );
   assert.match(
     saveLoadPanelScript,
-    /function beginRename\(item\)\s*{\s*if \(savePanelBusy\.value \|\| !isCurrentSaveItem\(item\)\) return;/
+    /function beginRename\(item\)\s*{\s*if \(savePanelBusy\.value\) return;\s*const currentItem = getCurrentSaveItem\(item\);\s*if \(!currentItem\) return;[\s\S]*renamingId\.value = currentItem\.id;\s*renameValue\.value = currentItem\.name;/
   );
   assert.match(
     saveLoadPanelScript,
-    /if \(!name \|\| savePanelBusy\.value \|\| !isCurrentSaveItem\(item\)\) return;[\s\S]*const updated = await renameSave\(item\.id, name, conversationId\);/
+    /if \(!name \|\| savePanelBusy\.value\) return;\s*const currentItem = getCurrentSaveItem\(item\);\s*if \(!currentItem\) return;[\s\S]*const updated = await renameSave\(currentItem\.id, name, conversationId\);/
+  );
+  assert.doesNotMatch(saveLoadPanelScript, /isCurrentSaveItem/);
+});
+
+test('SaveLoadPanel clears rename drafts when refreshed save rows disappear', () => {
+  assert.match(
+    saveLoadPanelScript,
+    /function syncRenameDraftWithSaveList\(currentSaves\)\s*{\s*const saveId = renamingId\.value;\s*if \(!saveId\) return;\s*const conversationId = props\.conversationId;[\s\S]*for \(const save of currentSaves\) \{[\s\S]*if \(save\?\.id === saveId && save\?\.conversationId === conversationId\) \{[\s\S]*return;[\s\S]*cancelRename\(\);[\s\S]*}/
+  );
+  assert.match(
+    saveLoadPanelScript,
+    /if \(sameSaveList\(currentSaves, normalizedSaves\)\) {\s*syncRenameDraftWithSaveList\(normalizedSaves\);\s*return false;\s*}/
+  );
+  assert.match(
+    saveLoadPanelScript,
+    /saves\.value = normalizedSaves;\s*syncRenameDraftWithSaveList\(normalizedSaves\);/
   );
 });
