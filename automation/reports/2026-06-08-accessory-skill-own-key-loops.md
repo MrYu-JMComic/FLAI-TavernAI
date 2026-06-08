@@ -27,7 +27,7 @@ Finish removing intermediate key-array/list allocation from accessory skill help
 - PASS: `node --test backend\src\tests\accessoryAgents.test.js backend\src\tests\statusBars.test.js` (21 tests passed)
 - PASS: `node scripts/check-encoding.mjs` (scanned 501 files)
 - PASS: `git diff --check`
-- PASS: `powershell -ExecutionPolicy Bypass -File scripts\review-gate.ps1` (810 backend/source tests passed; frontend build passed)
+- PASS: `powershell -ExecutionPolicy Bypass -File scripts\review-gate.ps1` (812 backend/source tests passed; frontend build passed)
 
 ## Next
 
