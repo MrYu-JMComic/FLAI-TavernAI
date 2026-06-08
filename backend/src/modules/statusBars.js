@@ -278,7 +278,7 @@ function normalizeTemplate(template) {
 
 function inferTemplateVariables(template, variables = []) {
   const inferred = [...variables];
-  const seen = new Set(inferred.map((item) => normalizeVariableKey(item.name)));
+  const seen = collectVariableKeys(inferred);
   const raw = String(template || '');
   if (!raw) {
     return inferred;
@@ -312,6 +312,14 @@ function inferTemplateVariables(template, variables = []) {
   }
 
   return inferred;
+}
+
+function collectVariableKeys(variables = []) {
+  const keys = new Set();
+  for (const item of Array.isArray(variables) ? variables : []) {
+    keys.add(normalizeVariableKey(item?.name));
+  }
+  return keys;
 }
 
 function extractTemplateRowVariables(template) {

@@ -46,6 +46,15 @@ test('status bar template placeholders parse property suffixes without split arr
     ]
   );
   assert.match(statusBarsSource, /from '..\/..\/..\/shared\/statusTemplateTokens\.js'/);
+  assert.match(
+    statusBarsSource,
+    /function inferTemplateVariables\(template, variables = \[\]\) \{[\s\S]*const inferred = \[\.\.\.variables\];[\s\S]*const seen = collectVariableKeys\(inferred\);/
+  );
+  assert.match(
+    statusBarsSource,
+    /function collectVariableKeys\(variables = \[\]\) \{\s*const keys = new Set\(\);\s*for \(const item of Array\.isArray\(variables\) \? variables : \[\]\) \{\s*keys\.add\(normalizeVariableKey\(item\?\.name\)\);\s*\}\s*return keys;\s*\}/
+  );
   assert.doesNotMatch(statusBarsSource, /function parseTemplateVariableToken\(token\) \{/);
   assert.doesNotMatch(statusBarsSource, /token\.split\('\.'\)/);
+  assert.doesNotMatch(statusBarsSource, /new Set\(inferred\.map/);
 });
