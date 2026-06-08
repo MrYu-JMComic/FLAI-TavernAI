@@ -35,5 +35,10 @@ export function readVueBlocks(relativePath, tags = ['script', 'template']) {
 }
 
 export function countMatches(source, pattern) {
-  return [...source.matchAll(pattern)].length;
+  if (pattern instanceof RegExp) {
+    const flags = pattern.global ? pattern.flags : `${pattern.flags}g`;
+    return [...String(source).matchAll(new RegExp(pattern.source, flags))].length;
+  }
+
+  return [...String(source).matchAll(pattern)].length;
 }

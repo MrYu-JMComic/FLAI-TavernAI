@@ -40,6 +40,7 @@ The autonomous loop should choose one small item per run. Add new findings here 
 
 ## Done
 
+- 2026-06-08: Hardened frontend SFC test `countMatches()` so source tests can count non-global regular expressions without throwing.
 - 2026-06-08: Routed NpcPanel close actions through the local load-cancellation helper before emitting close so pending NPC list/detail loads are invalidated immediately.
 - 2026-06-08: Routed SaveLoadPanel close actions through the local load-cancellation helper before emitting close so pending save-list loads are invalidated immediately.
 - 2026-06-08: Routed EconomyPanel close actions through a local cancellation helper before emitting close so pending loads are invalidated immediately.
