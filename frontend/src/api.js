@@ -444,22 +444,24 @@ export function fetchSave(saveId) {
   return apiRequest(`/api/saves/${saveId}`);
 }
 
-export function loadSave(saveId) {
+export function loadSave(saveId, conversationId = '') {
   return apiRequest(`/api/saves/${saveId}/load`, {
-    method: 'POST'
+    method: 'POST',
+    body: JSON.stringify({ conversationId })
   });
 }
 
-export function renameSave(saveId, name) {
+export function renameSave(saveId, name, conversationId = '') {
   return apiRequest(`/api/saves/${saveId}`, {
     method: 'PUT',
-    body: JSON.stringify({ name })
+    body: JSON.stringify({ name, conversationId })
   });
 }
 
-export function deleteSave(saveId) {
+export function deleteSave(saveId, conversationId = '') {
   return apiRequest(`/api/saves/${saveId}`, {
-    method: 'DELETE'
+    method: 'DELETE',
+    body: JSON.stringify({ conversationId })
   });
 }
 

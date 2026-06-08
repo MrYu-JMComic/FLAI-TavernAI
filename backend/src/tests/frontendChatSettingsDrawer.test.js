@@ -68,6 +68,16 @@ test('ChatSettingsDrawer freezes status bar editor fields while saving status ba
   assert.match(stylesSource, /\.variable-remove:hover:not\(:disabled\)/);
 });
 
+test('ChatSettingsDrawer builds status bar editor rows without intermediate mapping arrays', () => {
+  assert.match(
+    chatSettingsDrawerScript,
+    /const statusBarEditorRows = computed\(\(\) => \{[\s\S]*const rows = \[\];\s*for \(let index = 0; index < compositeRows\.length; index \+= 1\) \{[\s\S]*let compositePartKey = '';[\s\S]*for \(let partIndex = 0; partIndex < row\.parts\.length; partIndex \+= 1\) \{[\s\S]*compositePartKey \+= `\$\{partIndex > 0 \? '\|' : ''\}\$\{part\?\.name \?\? ''\}`;[\s\S]*key: `composite:\$\{index\}:\$\{row\.label\}:\$\{compositePartKey\}`,[\s\S]*for \(let index = 0; index < variables\.length; index \+= 1\) \{[\s\S]*const variable = variables\[index\];[\s\S]*continue;[\s\S]*key: `variable:\$\{index\}:\$\{key\}`,/
+  );
+  assert.doesNotMatch(chatSettingsDrawerScript, /compositeRows\.map\(/);
+  assert.doesNotMatch(chatSettingsDrawerScript, /row\.parts\.map\(/);
+  assert.doesNotMatch(chatSettingsDrawerScript, /variables\.forEach\(/);
+});
+
 test('ChatSettingsDrawer freezes accessory skill fields while saving accessory settings', () => {
   assert.match(
     chatSettingsDrawerTemplate,

@@ -54,13 +54,7 @@ const modelOptions = computed(() => {
   }
   return [...byId.values()];
 });
-const filteredModels = computed(() => {
-  const keyword = search.value.trim().toLowerCase();
-  if (!keyword) return modelOptions.value;
-  return modelOptions.value.filter((model) => {
-    return `${model.id} ${model.label} ${model.ownedBy}`.toLowerCase().includes(keyword);
-  });
-});
+const filteredModels = computed(() => filterModelOptions(modelOptions.value, search.value));
 const canSave = computed(() => {
   return Boolean(draftModel.value) &&
     draftModel.value !== currentModel.value &&
@@ -86,6 +80,21 @@ watch(currentModel, (value, previousValue) => {
 function chooseModel(modelId) {
   if (modelSelectionLocked.value) return;
   draftModel.value = modelId;
+}
+
+function filterModelOptions(options, rawKeyword) {
+  const currentOptions = Array.isArray(options) ? options : [];
+  const keyword = String(rawKeyword || '').trim().toLowerCase();
+  if (!keyword) {
+    return currentOptions;
+  }
+  const matches = [];
+  for (const model of currentOptions) {
+    if (`${model?.id || ''} ${model?.label || ''} ${model?.ownedBy || ''}`.toLowerCase().includes(keyword)) {
+      matches.push(model);
+    }
+  }
+  return matches;
 }
 
 function saveDraft() {

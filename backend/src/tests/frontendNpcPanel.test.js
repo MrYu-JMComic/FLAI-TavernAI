@@ -90,6 +90,30 @@ test('NpcPanel exposes NPC status aliases and memory seal metadata controls', ()
   assert.match(npcPanelStyle, /\.npc-seal-input:checked \+ \.npc-seal-control/);
 });
 
+test('NpcPanel ignores stale NPC detail item actions', () => {
+  assert.match(
+    npcPanelScript,
+    /function getCurrentMemory\(memoryId\)\s*{[\s\S]*memory\?\.id === memoryId[\s\S]*memory\?\.conversationId === props\.conversationId[\s\S]*memory\?\.npcName === selectedNpc\.value[\s\S]*}/
+  );
+  assert.match(
+    npcPanelScript,
+    /function getCurrentBehavior\(behaviorId\)\s*{[\s\S]*behavior\?\.id === behaviorId[\s\S]*behavior\?\.conversationId === props\.conversationId[\s\S]*behavior\?\.npcName === selectedNpc\.value[\s\S]*}/
+  );
+  assert.match(
+    npcPanelScript,
+    /async function removeMemory\(memoryId\)[\s\S]*const currentMemory = getCurrentMemory\(memoryId\);[\s\S]*if \(!conversationId \|\| !npcName \|\| !currentMemory\) return;[\s\S]*deleteNpcMemory\(conversationId, npcName, currentMemory\.id\)[\s\S]*removeMemoryByIdIfPresent\(currentMemory\.id\);/
+  );
+  assert.match(
+    npcPanelScript,
+    /async function toggleBehavior\(behavior\)[\s\S]*const currentBehavior = getCurrentBehavior\(behavior\?\.id\);[\s\S]*if \(!conversationId \|\| !npcName \|\| !currentBehavior\) return;[\s\S]*const behaviorId = currentBehavior\.id;[\s\S]*enabled: !currentBehavior\.enabled[\s\S]*if \(!getCurrentBehavior\(behaviorId\)\) return;[\s\S]*updateBehaviorByIdIfChanged\(behaviorId, updated\);/
+  );
+  assert.match(
+    npcPanelScript,
+    /async function removeBehavior\(behaviorId\)[\s\S]*const currentBehavior = getCurrentBehavior\(behaviorId\);[\s\S]*if \(!conversationId \|\| !npcName \|\| !currentBehavior\) return;[\s\S]*deleteNpcBehavior\(conversationId, npcName, currentBehavior\.id\)[\s\S]*removeBehaviorByIdIfPresent\(currentBehavior\.id\);/
+  );
+  assert.doesNotMatch(npcPanelScript, /Object\.assign\(behavior, updated\)/);
+});
+
 test('NpcPanel preserves unchanged NPC and detail list references during refreshes', () => {
   assert.match(
     npcPanelScript,
@@ -116,13 +140,30 @@ test('NpcPanel preserves unchanged NPC and detail list references during refresh
     /function sameBehaviorSummary\(current = {}, next = {}\)\s*{[\s\S]*current\?\.id === next\?\.id[\s\S]*current\?\.conversationId === next\?\.conversationId[\s\S]*current\?\.npcName === next\?\.npcName[\s\S]*current\?\.behaviorType === next\?\.behaviorType[\s\S]*current\?\.triggerCondition === next\?\.triggerCondition[\s\S]*current\?\.action === next\?\.action[\s\S]*Number\(current\?\.priority \|\| 0\) === Number\(next\?\.priority \|\| 0\)[\s\S]*Boolean\(current\?\.enabled\) === Boolean\(next\?\.enabled\)[\s\S]*current\?\.createdAt === next\?\.createdAt;[\s\S]*}/
   );
 
-  assert.match(npcPanelScript, /setNpcsIfChanged\(nextNpcs\);[\s\S]*emit\('npcs-loaded', nextNpcs\);/);
+  assert.match(npcPanelScript, /setNpcsIfChanged\(nextNpcs\);[\s\S]*emit\('npcs-loaded', \{ conversationId, npcs: nextNpcs \}\);/);
   assert.match(npcPanelScript, /setMemoriesIfChanged\(mem\);[\s\S]*setBehaviorsIfChanged\(beh\);/);
-  assert.match(npcPanelScript, /setMemoriesIfChanged\(memories\.value\.filter\(\(m\) => m\.id !== memoryId\)\);/);
-  assert.match(npcPanelScript, /setBehaviorsIfChanged\(behaviors\.value\.filter\(\(b\) => b\.id !== behaviorId\)\);/);
+  assert.match(npcPanelScript, /setMemoriesIfChanged\(\[mem, \.\.\.memories\.value\]\);/);
+  assert.match(npcPanelScript, /setBehaviorsIfChanged\(\[\.\.\.behaviors\.value, beh\]\);/);
+  assert.match(
+    npcPanelScript,
+    /function removeMemoryByIdIfPresent\(memoryId\) \{\s*const nextMemories = \[\];\s*let changed = false;[\s\S]*for \(const memory of memories\.value\) \{[\s\S]*if \(memory\?\.id === memoryId\) \{[\s\S]*changed = true;[\s\S]*} else \{[\s\S]*nextMemories\.push\(memory\);[\s\S]*}[\s\S]*if \(changed\) \{[\s\S]*setMemoriesIfChanged\(nextMemories\);[\s\S]*return changed;/
+  );
+  assert.match(
+    npcPanelScript,
+    /function updateBehaviorByIdIfChanged\(behaviorId, nextBehavior\) \{\s*const nextBehaviors = \[\];\s*let changed = false;[\s\S]*for \(const behavior of behaviors\.value\) \{[\s\S]*if \(behavior\?\.id === behaviorId\) \{[\s\S]*if \(!sameBehaviorSummary\(behavior, nextBehavior\)\) \{[\s\S]*changed = true;[\s\S]*nextBehaviors\.push\(nextBehavior\);[\s\S]*} else \{[\s\S]*nextBehaviors\.push\(behavior\);[\s\S]*}[\s\S]*if \(changed\) \{[\s\S]*setBehaviorsIfChanged\(nextBehaviors\);[\s\S]*return changed;/
+  );
+  assert.match(
+    npcPanelScript,
+    /function removeBehaviorByIdIfPresent\(behaviorId\) \{\s*const nextBehaviors = \[\];\s*let changed = false;[\s\S]*for \(const behavior of behaviors\.value\) \{[\s\S]*if \(behavior\?\.id === behaviorId\) \{[\s\S]*changed = true;[\s\S]*} else \{[\s\S]*nextBehaviors\.push\(behavior\);[\s\S]*}[\s\S]*if \(changed\) \{[\s\S]*setBehaviorsIfChanged\(nextBehaviors\);[\s\S]*return changed;/
+  );
   assert.ok(countMatches(npcPanelScript, /setNpcsIfChanged\(/g) >= 3);
   assert.ok(countMatches(npcPanelScript, /setMemoriesIfChanged\(/g) >= 8);
   assert.ok(countMatches(npcPanelScript, /setBehaviorsIfChanged\(/g) >= 8);
+  assert.doesNotMatch(npcPanelScript, /setMemoriesIfChanged\(memories\.value\.filter/);
+  assert.doesNotMatch(npcPanelScript, /setBehaviorsIfChanged\(behaviors\.value\.filter/);
+  assert.doesNotMatch(npcPanelScript, /setBehaviorsIfChanged\(behaviors\.value\.map\(\(item\) => \(item\.id === behaviorId \? updated : item\)\)\);/);
+  assert.doesNotMatch(npcPanelScript, /memories\.value\.unshift/);
+  assert.doesNotMatch(npcPanelScript, /behaviors\.value\.push/);
   assert.doesNotMatch(npcPanelScript, /\n\s+npcs\.value = \[\];/);
   assert.doesNotMatch(npcPanelScript, /\n\s+memories\.value = \[\];/);
   assert.doesNotMatch(npcPanelScript, /\n\s+behaviors\.value = \[\];/);

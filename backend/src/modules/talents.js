@@ -155,8 +155,10 @@ export function getCharacterTalents(database, characterId) {
     .map(toCharacterTalent);
 }
 
-export function deleteCharacterTalent(database, talentId) {
-  const result = database.prepare('DELETE FROM character_talents WHERE id = ?').run(talentId);
+export function deleteCharacterTalent(database, talentId, characterId = '') {
+  const result = characterId
+    ? database.prepare('DELETE FROM character_talents WHERE id = ? AND character_id = ?').run(talentId, characterId)
+    : database.prepare('DELETE FROM character_talents WHERE id = ?').run(talentId);
   return result.changes > 0;
 }
 

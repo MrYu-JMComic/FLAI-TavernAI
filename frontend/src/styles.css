@@ -1096,6 +1096,284 @@ p {
   font-size: 0.82rem;
 }
 
+/* -- World Book Picker (Character Form) -- */
+
+.world-book-field {
+  align-content: start;
+}
+
+.world-book-field .field-heading small {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 800;
+}
+
+.world-book-picker {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px;
+  background: color-mix(in srgb, var(--surface) 78%, transparent);
+}
+
+.world-book-picker-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 42px;
+  width: fit-content;
+  max-width: 100%;
+  border: 1px solid color-mix(in srgb, var(--green) 34%, var(--line));
+  border-radius: 8px;
+  padding: 0 14px;
+  color: var(--text);
+  background: color-mix(in srgb, var(--surface-strong) 72%, var(--surface));
+  font-weight: 850;
+}
+
+.world-book-picker-button:hover:not(:disabled),
+.world-book-picker-button:focus-visible {
+  border-color: var(--green);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--green) 16%, transparent);
+}
+
+.world-book-selected-preview {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+}
+
+.world-book-selected-chip,
+.world-book-selected-more {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 30px;
+  max-width: min(100%, 260px);
+  border: 1px solid color-mix(in srgb, var(--primary) 28%, var(--line));
+  border-radius: 8px;
+  padding: 0 9px;
+  color: var(--text);
+  background: color-mix(in srgb, var(--primary-soft) 42%, var(--surface));
+  font-size: 0.8rem;
+  font-weight: 800;
+}
+
+.world-book-selected-chip span {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.world-book-selected-chip small {
+  flex: 0 0 auto;
+  color: var(--muted);
+  font-size: 0.72rem;
+}
+
+.world-book-selected-more {
+  color: var(--primary);
+}
+
+.world-book-dialog-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 92;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: color-mix(in srgb, var(--bg) 70%, rgba(0, 0, 0, 0.46));
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  animation: status-preview-overlay-in 0.16s ease both;
+}
+
+.world-book-dialog {
+  display: grid;
+  grid-template-rows: auto auto auto minmax(0, 1fr) auto;
+  gap: 12px;
+  width: min(860px, calc(100vw - 32px));
+  max-height: min(760px, calc(100dvh - 32px));
+  box-shadow: 0 28px 80px rgba(0, 0, 0, 0.34);
+  animation: status-preview-dialog-in 0.18s ease both;
+}
+
+.world-book-dialog-header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: start;
+}
+
+.world-book-dialog-header h2 {
+  margin: 0;
+  font-size: 1.15rem;
+}
+
+.world-book-dialog-header p {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 0.88rem;
+  line-height: 1.5;
+}
+
+.world-book-dialog-tools {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) minmax(160px, 220px) auto;
+  gap: 10px;
+  align-items: end;
+}
+
+.world-book-clear-search {
+  min-height: 42px;
+  white-space: nowrap;
+}
+
+.world-book-dialog-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.world-book-dialog-summary span {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  border: 1px solid color-mix(in srgb, var(--line) 72%, transparent);
+  border-radius: 8px;
+  padding: 0 9px;
+  color: var(--muted);
+  background: color-mix(in srgb, var(--surface-strong) 58%, transparent);
+  font-size: 0.78rem;
+  font-weight: 800;
+}
+
+.world-book-dialog-list {
+  display: grid;
+  gap: 8px;
+  min-height: 0;
+  overflow: auto;
+  padding-right: 2px;
+  scrollbar-gutter: stable;
+}
+
+.world-book-dialog-option {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  min-height: 72px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: color-mix(in srgb, var(--surface) 84%, transparent);
+}
+
+.world-book-dialog-option:hover,
+.world-book-dialog-option:focus-within {
+  border-color: color-mix(in srgb, var(--green) 42%, var(--line));
+  background: color-mix(in srgb, var(--surface-strong) 72%, var(--surface));
+}
+
+.world-book-dialog-option.selected {
+  border-color: color-mix(in srgb, var(--primary) 52%, var(--line));
+  background: color-mix(in srgb, var(--primary-soft) 40%, var(--surface));
+}
+
+.world-book-dialog-option input {
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  accent-color: var(--primary);
+}
+
+.world-book-dialog-option-main {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.world-book-dialog-option-main strong,
+.world-book-dialog-option-main small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.world-book-dialog-option-main strong {
+  color: var(--text);
+  font-size: 0.92rem;
+}
+
+.world-book-dialog-option-main small {
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.world-book-dialog-meta {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 5px;
+  max-width: 230px;
+}
+
+.world-book-dialog-meta small {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  border-radius: 8px;
+  padding: 0 7px;
+  color: var(--muted);
+  background: color-mix(in srgb, var(--surface-strong) 68%, transparent);
+  font-size: 0.72rem;
+  font-weight: 800;
+}
+
+.world-book-dialog-state {
+  display: grid;
+  place-items: center;
+  min-height: 180px;
+  border: 1px dashed color-mix(in srgb, var(--line) 86%, transparent);
+  border-radius: 8px;
+  color: var(--muted);
+  background: color-mix(in srgb, var(--surface) 58%, transparent);
+  font-size: 0.9rem;
+  font-weight: 800;
+  text-align: center;
+}
+
+.world-book-dialog-footer,
+.world-book-pagination {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.world-book-dialog-footer {
+  justify-content: space-between;
+  padding-top: 2px;
+}
+
+.world-book-pagination {
+  min-width: 0;
+}
+
+.world-book-pagination span {
+  min-width: 0;
+  color: var(--muted);
+  font-size: 0.82rem;
+  font-weight: 800;
+  overflow-wrap: anywhere;
+}
+
 .permission-badges {
   display: flex;
   flex-wrap: wrap;
@@ -10169,6 +10447,46 @@ fieldset.accessory-skills-grid:disabled {
 
   .home-character-list {
     padding-bottom: 26px;
+  }
+
+  .world-book-dialog-overlay {
+    align-items: end;
+    padding: 0;
+  }
+
+  .world-book-dialog {
+    width: 100%;
+    max-height: 92dvh;
+    border-radius: 8px 8px 0 0;
+    padding: 16px;
+  }
+
+  .world-book-dialog-tools,
+  .world-book-dialog-option {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .world-book-clear-search,
+  .world-book-dialog-footer .primary-button {
+    width: 100%;
+  }
+
+  .world-book-dialog-meta {
+    justify-content: flex-start;
+    max-width: none;
+  }
+
+  .world-book-dialog-footer {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .world-book-pagination {
+    justify-content: space-between;
+  }
+
+  .world-book-picker-button {
+    width: 100%;
   }
 }
 

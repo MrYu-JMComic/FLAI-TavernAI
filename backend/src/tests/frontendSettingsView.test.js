@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { readVueBlocks } from './frontendSfcTestUtils.js';
+import { countMatches, readVueBlocks } from './frontendSfcTestUtils.js';
 
 const { script: settingsViewScript, template: settingsViewTemplate } = readVueBlocks('frontend/src/views/SettingsView.vue');
 
@@ -157,7 +157,27 @@ test('SettingsView preserves unchanged extension list references during refreshe
   );
   assert.match(
     settingsViewScript,
-    /setListIfChanged\(\s*modCharacterOptions,[\s\S]*characters\.filter\(\(character\) => character\?\.canUse !== false\)[\s\S]*\);/
+    /const characters = await fetchCharacters\(\{ sort: 'name' \}\);[\s\S]*setModCharacterOptionsIfChanged\(characters\);/
+  );
+  assert.match(
+    settingsViewScript,
+    /function setModCharacterOptionsIfChanged\(characters\) \{\s*const nextOptions = \[\];\s*if \(Array\.isArray\(characters\)\) \{\s*for \(const character of characters\) \{\s*if \(character\?\.canUse !== false\) \{\s*nextOptions\.push\(character\);\s*\}\s*\}\s*\}\s*return setListIfChanged\(modCharacterOptions, nextOptions\);\s*\}/
+  );
+  assert.match(
+    settingsViewScript,
+    /function prependListItemByIdWithLimit\(listRef, nextItem, limit\) \{[\s\S]*const nextList = \[nextItem\];[\s\S]*for \(const item of currentList\) \{[\s\S]*if \(item\?\.id === nextId\) continue;[\s\S]*if \(nextList\.length >= normalizedLimit\) break;[\s\S]*nextList\.push\(item\);[\s\S]*return setListIfChanged\(listRef, nextList\);[\s\S]*\}/
+  );
+  assert.match(
+    settingsViewScript,
+    /function removeListItemByIdIfPresent\(listRef, itemId\) \{[\s\S]*const nextList = \[\];\s*let changed = false;[\s\S]*for \(const item of currentList\) \{[\s\S]*if \(item\?\.id === targetId\) \{[\s\S]*changed = true;[\s\S]*} else \{[\s\S]*nextList\.push\(item\);[\s\S]*}[\s\S]*if \(changed\) \{[\s\S]*setListIfChanged\(listRef, nextList\);[\s\S]*return changed;[\s\S]*\}/
+  );
+  assert.match(
+    settingsViewScript,
+    /function updateListItemByIdIfChanged\(listRef, itemId, nextItem\) \{[\s\S]*const nextList = \[\];\s*let changed = false;[\s\S]*for \(const item of currentList\) \{[\s\S]*if \(item\?\.id === targetId\) \{[\s\S]*if \(!samePlainValue\(item, nextItem\)\) \{[\s\S]*changed = true;[\s\S]*nextList\.push\(nextItem\);[\s\S]*} else \{[\s\S]*nextList\.push\(item\);[\s\S]*}[\s\S]*if \(changed\) \{[\s\S]*setListIfChanged\(listRef, nextList\);[\s\S]*return changed;[\s\S]*\}/
+  );
+  assert.match(
+    settingsViewScript,
+    /function moveListItemToTargetIndexById\(listRef, itemId, targetItemId\) \{[\s\S]*for \(let index = 0; index < currentList\.length; index \+= 1\) \{[\s\S]*if \(id === sourceId\) \{[\s\S]*fromIndex = index;[\s\S]*} else if \(id === targetId\) \{[\s\S]*targetIndex = index;[\s\S]*}[\s\S]*const nextList = currentList\.slice\(\);[\s\S]*nextList\.splice\(targetIndex, 0, moved\);[\s\S]*const ids = \[\];[\s\S]*for \(const item of nextList\) \{[\s\S]*ids\.push\(item\.id\);[\s\S]*setListIfChanged\(listRef, nextList\);[\s\S]*return \{ previousList: currentList, nextList, ids \};[\s\S]*\}/
   );
   assert.match(
     settingsViewScript,
@@ -169,10 +189,41 @@ test('SettingsView preserves unchanged extension list references during refreshe
   );
 });
 
+test('SettingsView preserves unchanged personal profile and balance references', () => {
+  assert.match(
+    settingsViewScript,
+    /function setPlainValueIfChanged\(valueRef, nextValue\) \{[\s\S]*samePlainValue\(valueRef\.value, nextValue\)[\s\S]*valueRef\.value = nextValue;[\s\S]*return true;[\s\S]*\}/
+  );
+  assert.match(
+    settingsViewScript,
+    /function setBalanceIfChanged\(nextBalance\) \{\s*return setPlainValueIfChanged\(balance, nextBalance\);\s*\}/
+  );
+  assert.match(
+    settingsViewScript,
+    /function setProfileStatsIfChanged\(nextStats\) \{\s*return setPlainValueIfChanged\(profileStats, nextStats \|\| profileStats\.value\);\s*\}/
+  );
+  assert.match(
+    settingsViewScript,
+    /function setOwnedCharactersIfChanged\(nextCharacters\) \{\s*return setListIfChanged\(ownedCharacters, nextCharacters\);\s*\}/
+  );
+  assert.match(
+    settingsViewScript,
+    /const nextBalance = await fetchDeepSeekBalance\(\);[\s\S]*setBalanceIfChanged\(nextBalance\);/
+  );
+  assert.match(
+    settingsViewScript,
+    /function applyProfile\(result = \{\}\) \{\s*applyProfileUser\(result\.user \|\| \{\}\);\s*setProfileStatsIfChanged\(result\.stats\);\s*setOwnedCharactersIfChanged\(result\.ownedCharacters\);\s*\}/
+  );
+  assert.doesNotMatch(settingsViewScript, /balance\.value\s*=\s*nextBalance/);
+  assert.doesNotMatch(settingsViewScript, /profileStats\.value\s*=\s*result\.stats/);
+  assert.doesNotMatch(settingsViewScript, /ownedCharacters\.value\s*=\s*result\.ownedCharacters/);
+});
+
 test('SettingsView tag mutations expose one busy guard for add, delete, and load-limit edits', () => {
   assert.match(settingsViewScript, /const tagActionBusyId = ref\(''\);/);
   assert.match(settingsViewScript, /const tagActionBusy = computed\(\(\) => Boolean\(tagActionBusyId\.value\)\);/);
   assert.match(settingsViewScript, /const tagControlsBusy = computed\(\(\) => tagLoading\.value \|\| tagActionBusy\.value\);/);
+  assert.match(settingsViewScript, /function getCurrentTag\(id\) {\s*const currentId = String\(id \|\| ''\);[\s\S]*return tagList\.value\.find\(\(tag\) => tag\?\.id === currentId\) \|\| null;[\s\S]*}/);
   assert.match(settingsViewScript, /function updateTagLoadLimit\(\) {\s*if \(tagControlsBusy\.value\) return;/);
   assert.match(
     settingsViewScript,
@@ -180,8 +231,14 @@ test('SettingsView tag mutations expose one busy guard for add, delete, and load
   );
   assert.match(
     settingsViewScript,
-    /async function removeTag\(id, name\) {\s*if \(tagControlsBusy\.value\) return;[\s\S]*beginTagMutation\(tagDeleteActionId\(id\)\)[\s\S]*finally {\s*finishTagMutation\(mutationToken\);/
+    /const tag = await createTag\(\{ name \}\);[\s\S]*prependListItemByIdWithLimit\(tagList, tag, normalizedTagLoadLimit\.value\);/
   );
+  assert.match(
+    settingsViewScript,
+    /async function removeTag\(id, name\) {\s*if \(tagControlsBusy\.value\) return;\s*const currentTag = getCurrentTag\(id\);\s*if \(!currentTag\) return;[\s\S]*beginTagMutation\(tagDeleteActionId\(currentTag\.id\)\)[\s\S]*await deleteTag\(currentTag\.id\);[\s\S]*removeListItemByIdIfPresent\(tagList, currentTag\.id\);[\s\S]*finally {\s*finishTagMutation\(mutationToken\);/
+  );
+  assert.equal(countMatches(settingsViewScript, /removeListItemByIdIfPresent\(tagList, currentTag\.id\);/g), 2);
+  assert.doesNotMatch(settingsViewScript, /tagList\.value\.filter/);
 
   assert.match(settingsViewTemplate, /:disabled="tagControlsBusy" @keyup\.enter="addTag"/);
   assert.match(settingsViewTemplate, /:disabled="tagControlsBusy \|\| !newTagName\.trim\(\)" :aria-busy="tagActionBusyId === 'tag-add'"/);
@@ -194,20 +251,22 @@ test('SettingsView preset mutations expose visible busy guards for edit, import,
   assert.match(settingsViewScript, /const presetActionBusyId = ref\(''\);/);
   assert.match(settingsViewScript, /const presetActionBusy = computed\(\(\) => Boolean\(presetActionBusyId\.value\)\);/);
   assert.match(settingsViewScript, /const presetControlsBusy = computed\(\(\) => presetLoading\.value \|\| presetActionBusy\.value\);/);
+  assert.match(settingsViewScript, /function getCurrentPreset\(id\) {\s*const currentId = String\(id \|\| ''\);[\s\S]*return presetList\.value\.find\(\(preset\) => preset\?\.id === currentId\) \|\| null;[\s\S]*}/);
   assert.match(settingsViewScript, /function startNewPreset\(\) {\s*if \(presetControlsBusy\.value\) return;/);
-  assert.match(settingsViewScript, /function startEditPreset\(preset\) {\s*if \(presetControlsBusy\.value\) return;/);
+  assert.match(settingsViewScript, /function startEditPreset\(preset\) {\s*if \(presetControlsBusy\.value\) return;\s*const currentPreset = getCurrentPreset\(preset\?\.id\);\s*if \(!currentPreset\) return;[\s\S]*presetEditing\.value = currentPreset\.id;/);
   assert.match(settingsViewScript, /function cancelPresetEdit\(\) {\s*if \(presetActionBusy\.value\) return;/);
   assert.match(
     settingsViewScript,
-    /async function savePreset\(\) {\s*if \(presetControlsBusy\.value\) return;[\s\S]*beginPresetMutation\('preset-save'\)[\s\S]*finishPresetMutation\(mutationToken\);\s*await loadPresets\(\);[\s\S]*finally {\s*finishPresetMutation\(mutationToken\);/
+    /async function savePreset\(\) {\s*if \(presetControlsBusy\.value\) return;\s*const editingId = presetEditing\.value;\s*const editingPreset = editingId \? getCurrentPreset\(editingId\) : null;\s*if \(editingId && !editingPreset\) {[\s\S]*resetPresetForm\(\);[\s\S]*return;[\s\S]*}[\s\S]*beginPresetMutation\('preset-save'\)[\s\S]*await updatePreset\(editingPreset\.id, payload\);[\s\S]*finishPresetMutation\(mutationToken\);\s*await loadPresets\(\);[\s\S]*finally {\s*finishPresetMutation\(mutationToken\);/
   );
   assert.match(
     settingsViewScript,
-    /async function removePreset\(id, name\) {\s*if \(presetControlsBusy\.value\) return;[\s\S]*beginPresetMutation\(presetDeleteActionId\(id\)\)[\s\S]*finally {\s*finishPresetMutation\(mutationToken\);/
+    /async function removePreset\(id, name\) {\s*if \(presetControlsBusy\.value\) return;\s*const currentPreset = getCurrentPreset\(id\);\s*if \(!currentPreset\) return;[\s\S]*beginPresetMutation\(presetDeleteActionId\(currentPreset\.id\)\)[\s\S]*await deletePreset\(currentPreset\.id\);[\s\S]*removeListItemByIdIfPresent\(presetList, currentPreset\.id\);[\s\S]*finally {\s*finishPresetMutation\(mutationToken\);/
   );
+  assert.doesNotMatch(settingsViewScript, /presetList\.value\.filter/);
   assert.match(
     settingsViewScript,
-    /async function makeDefaultPreset\(id\) {\s*if \(presetControlsBusy\.value\) return;[\s\S]*beginPresetMutation\(presetDefaultActionId\(id\)\)[\s\S]*finishPresetMutation\(mutationToken\);\s*await loadPresets\(\);[\s\S]*finally {\s*finishPresetMutation\(mutationToken\);/
+    /async function makeDefaultPreset\(id\) {\s*if \(presetControlsBusy\.value\) return;\s*const currentPreset = getCurrentPreset\(id\);\s*if \(!currentPreset\) return;[\s\S]*beginPresetMutation\(presetDefaultActionId\(currentPreset\.id\)\)[\s\S]*await setDefaultPreset\(currentPreset\.id\);[\s\S]*finishPresetMutation\(mutationToken\);\s*await loadPresets\(\);[\s\S]*finally {\s*finishPresetMutation\(mutationToken\);/
   );
   assert.match(settingsViewScript, /async function importPresets\(mutationToken = beginPresetMutation\('preset-import'\)\)/);
   assert.match(settingsViewScript, /if \(!file \|\| presetControlsBusy\.value\) return;/);
@@ -230,29 +289,32 @@ test('SettingsView mod mutations expose visible busy guards for editor, toggle, 
   assert.match(settingsViewScript, /const modActionBusyId = ref\(''\);/);
   assert.match(settingsViewScript, /const modActionBusy = computed\(\(\) => Boolean\(modActionBusyId\.value\)\);/);
   assert.match(settingsViewScript, /const modControlsBusy = computed\(\(\) => modLoading\.value \|\| modActionBusy\.value\);/);
+  assert.match(settingsViewScript, /function getCurrentMod\(id\) {\s*const currentId = String\(id \|\| ''\);[\s\S]*return modList\.value\.find\(\(mod\) => mod\?\.id === currentId\) \|\| null;[\s\S]*}/);
   assert.match(settingsViewScript, /function startNewMod\(\) {\s*if \(modControlsBusy\.value\) return;/);
-  assert.match(settingsViewScript, /function startEditMod\(mod\) {\s*if \(modControlsBusy\.value\) return;/);
+  assert.match(settingsViewScript, /function startEditMod\(mod\) {\s*if \(modControlsBusy\.value\) return;\s*const currentMod = getCurrentMod\(mod\?\.id\);\s*if \(!currentMod\) return;[\s\S]*modEditing\.value = currentMod\.id;/);
   assert.match(settingsViewScript, /function cancelModEdit\(\) {\s*if \(modActionBusy\.value\) return;/);
   assert.match(
     settingsViewScript,
-    /async function saveMod\(\) {\s*if \(modControlsBusy\.value\) return;[\s\S]*beginModMutation\('mod-save'\)[\s\S]*finishModMutation\(mutationToken\);\s*await loadMods\(\);[\s\S]*finally {\s*finishModMutation\(mutationToken\);/
+    /async function saveMod\(\) {\s*if \(modControlsBusy\.value\) return;[\s\S]*if \(editingId && !getCurrentMod\(editingId\)\) {[\s\S]*closeModEditor\(\);[\s\S]*return;[\s\S]*}[\s\S]*beginModMutation\('mod-save'\)[\s\S]*finishModMutation\(mutationToken\);\s*await loadMods\(\);[\s\S]*finally {\s*finishModMutation\(mutationToken\);/
   );
   assert.match(
     settingsViewScript,
-    /async function removeMod\(id, name\) {\s*if \(modControlsBusy\.value\) return;[\s\S]*beginModMutation\(modDeleteActionId\(id\)\)[\s\S]*finally {\s*finishModMutation\(mutationToken\);/
+    /async function removeMod\(id, name\) {\s*if \(modControlsBusy\.value\) return;\s*const currentMod = getCurrentMod\(id\);\s*if \(!currentMod\) return;[\s\S]*beginModMutation\(modDeleteActionId\(currentMod\.id\)\)[\s\S]*await deleteMod\(currentMod\.id\);[\s\S]*removeListItemByIdIfPresent\(modList, currentMod\.id\);[\s\S]*finally {\s*finishModMutation\(mutationToken\);/
   );
   assert.match(
     settingsViewScript,
-    /async function toggleMod\(mod\) {\s*if \(modControlsBusy\.value\) return;[\s\S]*beginModMutation\(modToggleActionId\(mod\.id\)\)[\s\S]*finally {\s*finishModMutation\(mutationToken\);/
+    /async function toggleMod\(mod\) {\s*if \(modControlsBusy\.value\) return;\s*const currentMod = getCurrentMod\(mod\?\.id\);\s*if \(!currentMod\) return;[\s\S]*beginModMutation\(modToggleActionId\(currentMod\.id\)\)[\s\S]*await updateMod\(currentMod\.id, \{ enabled: nextEnabled \}\);[\s\S]*if \(!getCurrentMod\(currentMod\.id\)\) return;[\s\S]*updateListItemByIdIfChanged\(modList, currentMod\.id, nextMod\);[\s\S]*finally {\s*finishModMutation\(mutationToken\);/
   );
+  assert.doesNotMatch(settingsViewScript, /modList\.value\.filter/);
+  assert.doesNotMatch(settingsViewScript, /modList\.value\.map\(\(item\) => \(item\.id === currentMod\.id \? nextMod : item\)\)/);
   assert.match(settingsViewScript, /function selectAllModCharacters\(\) {\s*if \(modActionBusy\.value\) return;/);
   assert.match(settingsViewScript, /function clearModCharacters\(\) {\s*if \(modActionBusy\.value\) return;/);
-  assert.match(settingsViewScript, /function onModDragStart\(event, mod\) {\s*if \(modControlsBusy\.value\) {[\s\S]*event\.preventDefault\(\);/);
+  assert.match(settingsViewScript, /function onModDragStart\(event, mod\) {\s*if \(modControlsBusy\.value\) {[\s\S]*event\.preventDefault\(\);[\s\S]*const currentMod = getCurrentMod\(mod\?\.id\);[\s\S]*if \(!currentMod\) {[\s\S]*event\.preventDefault\(\);[\s\S]*draggingMod\.value = currentMod\.id;/);
   assert.match(
     settingsViewScript,
-    /function onModDragOver\(event, mod\) {\s*if \(modControlsBusy\.value\) return;\s*event\.preventDefault\(\);\s*if \(dragOverMod\.value !== mod\.id\) {\s*dragOverMod\.value = mod\.id;\s*}/
+    /function onModDragOver\(event, mod\) {\s*if \(modControlsBusy\.value\) return;\s*const currentMod = getCurrentMod\(mod\?\.id\);\s*if \(!currentMod\) return;\s*event\.preventDefault\(\);\s*if \(dragOverMod\.value !== currentMod\.id\) {\s*dragOverMod\.value = currentMod\.id;\s*}/
   );
-  assert.match(settingsViewScript, /async function onModDrop\(event, targetMod\) {[\s\S]*if \(modControlsBusy\.value\) return;[\s\S]*beginModMutation\('mod-reorder'\)[\s\S]*finally {\s*finishModMutation\(mutationToken\);/);
+  assert.match(settingsViewScript, /async function onModDrop\(event, targetMod\) {[\s\S]*if \(modControlsBusy\.value\) return;[\s\S]*const currentDraggedMod = getCurrentMod\(draggedId\);[\s\S]*const currentTargetMod = getCurrentMod\(targetMod\?\.id\);[\s\S]*if \(!currentDraggedMod \|\| !currentTargetMod \|\| currentDraggedMod\.id === currentTargetMod\.id\)[\s\S]*beginModMutation\('mod-reorder'\)[\s\S]*finally {\s*finishModMutation\(mutationToken\);/);
 
   assert.match(settingsViewTemplate, /<button class="ghost-button" type="button" :disabled="modControlsBusy" @click="startNewMod">/);
   assert.match(settingsViewTemplate, /:disabled="modControlsBusy" @click="loadMods"/);
@@ -275,16 +337,24 @@ test('SettingsView regex mutations expose visible busy guards for filter, import
   assert.match(settingsViewScript, /const regexActionBusyId = ref\(''\);/);
   assert.match(settingsViewScript, /const regexActionBusy = computed\(\(\) => Boolean\(regexActionBusyId\.value\)\);/);
   assert.match(settingsViewScript, /const regexControlsBusy = computed\(\(\) => regexLoading\.value \|\| regexActionBusy\.value\);/);
+  assert.match(settingsViewScript, /const draggingRegexRuleId = ref\(''\);/);
+  assert.match(settingsViewScript, /function getCurrentRegexRule\(ruleId\) {\s*const currentRuleId = String\(ruleId \|\| ''\);[\s\S]*return regexRules\.value\.find\(\(rule\) => rule\?\.id === currentRuleId\) \|\| null;[\s\S]*}/);
   assert.match(settingsViewScript, /function handleRegexGroupFilterChange\(\) {\s*if \(regexControlsBusy\.value\) return;/);
   assert.match(
     settingsViewScript,
-    /async function handleToggleRegexRule\(ruleId\) {\s*if \(regexControlsBusy\.value\) return;[\s\S]*beginRegexMutation\(regexToggleActionId\(ruleId\)\)[\s\S]*finishRegexMutation\(mutationToken\);\s*await loadRegexRules\(\);[\s\S]*finally {\s*finishRegexMutation\(mutationToken\);/
+    /async function handleToggleRegexRule\(ruleId\) {\s*if \(regexControlsBusy\.value\) return;\s*const currentRule = getCurrentRegexRule\(ruleId\);\s*if \(!currentRule\) return;[\s\S]*beginRegexMutation\(regexToggleActionId\(currentRule\.id\)\)[\s\S]*await toggleRegexRule\(currentRule\.id\);[\s\S]*finishRegexMutation\(mutationToken\);\s*await loadRegexRules\(\);[\s\S]*finally {\s*finishRegexMutation\(mutationToken\);/
   );
-  assert.match(settingsViewScript, /function onRegexDragStart\(event, index\) {\s*if \(regexControlsBusy\.value\) {[\s\S]*event\.preventDefault\(\);/);
+  assert.match(settingsViewScript, /function onRegexDragStart\(event, ruleId\) {\s*if \(regexControlsBusy\.value\) {[\s\S]*event\.preventDefault\(\);[\s\S]*const currentRule = getCurrentRegexRule\(ruleId\);[\s\S]*if \(!currentRule\) {[\s\S]*event\.preventDefault\(\);[\s\S]*draggingRegexRuleId\.value = currentRule\.id;/);
   assert.match(
     settingsViewScript,
-    /async function onRegexDrop\(dropIndex\) {[\s\S]*if \(regexControlsBusy\.value\) return;[\s\S]*beginRegexMutation\('regex-reorder'\)[\s\S]*finally {\s*finishRegexMutation\(mutationToken\);/
+    /function onRegexDragOver\(event, ruleId\) {\s*if \(regexControlsBusy\.value\) return;\s*if \(!getCurrentRegexRule\(ruleId\)\) return;\s*event\.preventDefault\(\);/
   );
+  assert.match(
+    settingsViewScript,
+    /async function onRegexDrop\(targetRuleId\) {[\s\S]*const currentDraggedRule = getCurrentRegexRule\(draggingRegexRuleId\.value\);[\s\S]*const currentTargetRule = getCurrentRegexRule\(targetRuleId\);[\s\S]*if \(!currentDraggedRule \|\| !currentTargetRule \|\| currentDraggedRule\.id === currentTargetRule\.id\)[\s\S]*const moveResult = moveListItemToTargetIndexById\(regexRules, currentDraggedRule\.id, currentTargetRule\.id\);[\s\S]*await reorderRegexRules\(moveResult\.ids, groupFilter\);[\s\S]*setListIfChanged\(regexRules, moveResult\.previousList\);[\s\S]*finally {\s*finishRegexMutation\(mutationToken\);/
+  );
+  assert.doesNotMatch(settingsViewScript, /reorderRegexRules\(items\.map/);
+  assert.doesNotMatch(settingsViewScript, /const fromIndex = items\.findIndex/);
   assert.match(settingsViewScript, /function exportRegexRules\(\) {\s*if \(regexControlsBusy\.value\) return;/);
   assert.match(settingsViewScript, /async function importRegexRules\(mutationToken = beginRegexMutation\('regex-import'\), groupFilter = regexGroupFilter\.value\)/);
   assert.match(settingsViewScript, /if \(!file \|\| regexControlsBusy\.value\) return;/);
@@ -294,6 +364,8 @@ test('SettingsView regex mutations expose visible busy guards for filter, import
   assert.match(settingsViewTemplate, /<label class="ghost-button file-import-button" :class="\{ disabled: regexControlsBusy \}" :aria-busy="regexActionBusyId === 'regex-import'">[\s\S]*<input type="file" accept="\.json" :disabled="regexControlsBusy" @change="handleRegexImportFile" \/>/);
   assert.match(settingsViewTemplate, /:disabled="regexControlsBusy" @click="loadRegexRules"/);
   assert.match(settingsViewTemplate, /:draggable="!regexControlsBusy"[\s\S]*:aria-busy="isRegexToggleBusy\(rule\.id\) \|\| regexActionBusyId === 'regex-reorder'"/);
-  assert.match(settingsViewTemplate, /@dragstart="onRegexDragStart\(\$event, index\)"/);
+  assert.match(settingsViewTemplate, /@dragstart="onRegexDragStart\(\$event, rule\.id\)"/);
+  assert.match(settingsViewTemplate, /@dragover="onRegexDragOver\(\$event, rule\.id\)"/);
+  assert.match(settingsViewTemplate, /@drop="onRegexDrop\(rule\.id\)"/);
   assert.match(settingsViewTemplate, /:disabled="regexControlsBusy"[\s\S]*:aria-busy="isRegexToggleBusy\(rule\.id\)"[\s\S]*@click="handleToggleRegexRule\(rule\.id\)"/);
 });

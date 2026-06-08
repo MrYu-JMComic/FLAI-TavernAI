@@ -252,6 +252,22 @@ function behaviorDeleteActionId(behaviorId) {
   return `behavior-delete:${behaviorId}`;
 }
 
+function getCurrentMemory(memoryId) {
+  return memories.value.find((memory) => (
+    memory?.id === memoryId
+      && memory?.conversationId === props.conversationId
+      && memory?.npcName === selectedNpc.value
+  )) || null;
+}
+
+function getCurrentBehavior(behaviorId) {
+  return behaviors.value.find((behavior) => (
+    behavior?.id === behaviorId
+      && behavior?.conversationId === props.conversationId
+      && behavior?.npcName === selectedNpc.value
+  )) || null;
+}
+
 function setNpcsIfChanged(nextNpcs) {
   const normalizedNpcs = Array.isArray(nextNpcs) ? nextNpcs : [];
   const currentNpcs = Array.isArray(npcs.value) ? npcs.value : [];
@@ -331,6 +347,59 @@ function normalizeStringList(value) {
   return Array.isArray(value) ? value.map((item) => String(item)) : [];
 }
 
+function removeMemoryByIdIfPresent(memoryId) {
+  const nextMemories = [];
+  let changed = false;
+  for (const memory of memories.value) {
+    if (memory?.id === memoryId) {
+      changed = true;
+    } else {
+      nextMemories.push(memory);
+    }
+  }
+  if (changed) {
+    setMemoriesIfChanged(nextMemories);
+  }
+  return changed;
+}
+
+function updateBehaviorByIdIfChanged(behaviorId, nextBehavior) {
+  const nextBehaviors = [];
+  let changed = false;
+  for (const behavior of behaviors.value) {
+    if (behavior?.id === behaviorId) {
+      if (!sameBehaviorSummary(behavior, nextBehavior)) {
+        changed = true;
+        nextBehaviors.push(nextBehavior);
+      } else {
+        nextBehaviors.push(behavior);
+      }
+    } else {
+      nextBehaviors.push(behavior);
+    }
+  }
+  if (changed) {
+    setBehaviorsIfChanged(nextBehaviors);
+  }
+  return changed;
+}
+
+function removeBehaviorByIdIfPresent(behaviorId) {
+  const nextBehaviors = [];
+  let changed = false;
+  for (const behavior of behaviors.value) {
+    if (behavior?.id === behaviorId) {
+      changed = true;
+    } else {
+      nextBehaviors.push(behavior);
+    }
+  }
+  if (changed) {
+    setBehaviorsIfChanged(nextBehaviors);
+  }
+  return changed;
+}
+
 async function loadNpcs(options = {}) {
   if (npcPanelDisposed) return;
   const allowWhileBusy = Boolean(options.allowWhileBusy);
@@ -348,7 +417,7 @@ async function loadNpcs(options = {}) {
     if (npcPanelDisposed || requestToken !== npcLoadToken || conversationId !== props.conversationId) return;
     loadError.value = '';
     setNpcsIfChanged(nextNpcs);
-    emit('npcs-loaded', nextNpcs);
+    emit('npcs-loaded', { conversationId, npcs: nextNpcs });
     if (selectedNpc.value && !npcs.value.find((n) => n.name === selectedNpc.value)) {
       setSelectedNpc('');
     }
@@ -475,7 +544,7 @@ async function submitMemory() {
       content: memoryForm.content.trim()
     });
     if (!isCurrentNpcMutation(mutationToken, conversationId, npcName)) return;
-    memories.value.unshift(mem);
+    setMemoriesIfChanged([mem, ...memories.value]);
     memoryForm.content = '';
     addMemoryOpen.value = false;
     await loadNpcs({ allowWhileBusy: true });
@@ -493,14 +562,15 @@ async function removeMemory(memoryId) {
   if (npcPanelDisposed) return;
   const conversationId = props.conversationId;
   const npcName = selectedNpc.value;
-  if (!conversationId || !npcName) return;
-  const actionId = memoryActionId(memoryId);
+  const currentMemory = getCurrentMemory(memoryId);
+  if (!conversationId || !npcName || !currentMemory) return;
+  const actionId = memoryActionId(currentMemory.id);
   if (!startNpcAction(actionId)) return;
   const mutationToken = npcMutationToken;
   try {
-    await deleteNpcMemory(conversationId, npcName, memoryId);
+    await deleteNpcMemory(conversationId, npcName, currentMemory.id);
     if (!isCurrentNpcMutation(mutationToken, conversationId, npcName)) return;
-    setMemoriesIfChanged(memories.value.filter((m) => m.id !== memoryId));
+    removeMemoryByIdIfPresent(currentMemory.id);
     await loadNpcs({ allowWhileBusy: true });
     if (!isCurrentNpcMutation(mutationToken, conversationId, npcName)) return;
     notify.success('记忆已删除');
@@ -533,7 +603,7 @@ async function submitBehavior() {
       enabled: behaviorForm.enabled
     });
     if (!isCurrentNpcMutation(mutationToken, conversationId, npcName)) return;
-    behaviors.value.push(beh);
+    setBehaviorsIfChanged([...behaviors.value, beh]);
     behaviorForm.triggerCondition = '';
     behaviorForm.action = '';
     behaviorForm.priority = 0;
@@ -553,16 +623,19 @@ async function toggleBehavior(behavior) {
   if (npcPanelDisposed) return;
   const conversationId = props.conversationId;
   const npcName = selectedNpc.value;
-  if (!conversationId || !npcName) return;
-  const actionId = behaviorToggleActionId(behavior.id);
+  const currentBehavior = getCurrentBehavior(behavior?.id);
+  if (!conversationId || !npcName || !currentBehavior) return;
+  const behaviorId = currentBehavior.id;
+  const actionId = behaviorToggleActionId(behaviorId);
   if (!startNpcAction(actionId)) return;
   const mutationToken = npcMutationToken;
   try {
-    const updated = await updateNpcBehavior(conversationId, npcName, behavior.id, {
-      enabled: !behavior.enabled
+    const updated = await updateNpcBehavior(conversationId, npcName, behaviorId, {
+      enabled: !currentBehavior.enabled
     });
     if (!isCurrentNpcMutation(mutationToken, conversationId, npcName)) return;
-    Object.assign(behavior, updated);
+    if (!getCurrentBehavior(behaviorId)) return;
+    updateBehaviorByIdIfChanged(behaviorId, updated);
   } catch (err) {
     if (!isCurrentNpcMutation(mutationToken, conversationId, npcName)) return;
     notify.error(err.message || '更新失败');
@@ -575,14 +648,15 @@ async function removeBehavior(behaviorId) {
   if (npcPanelDisposed) return;
   const conversationId = props.conversationId;
   const npcName = selectedNpc.value;
-  if (!conversationId || !npcName) return;
-  const actionId = behaviorDeleteActionId(behaviorId);
+  const currentBehavior = getCurrentBehavior(behaviorId);
+  if (!conversationId || !npcName || !currentBehavior) return;
+  const actionId = behaviorDeleteActionId(currentBehavior.id);
   if (!startNpcAction(actionId)) return;
   const mutationToken = npcMutationToken;
   try {
-    await deleteNpcBehavior(conversationId, npcName, behaviorId);
+    await deleteNpcBehavior(conversationId, npcName, currentBehavior.id);
     if (!isCurrentNpcMutation(mutationToken, conversationId, npcName)) return;
-    setBehaviorsIfChanged(behaviors.value.filter((b) => b.id !== behaviorId));
+    removeBehaviorByIdIfPresent(currentBehavior.id);
     await loadNpcs({ allowWhileBusy: true });
     if (!isCurrentNpcMutation(mutationToken, conversationId, npcName)) return;
     notify.success('行为规则已删除');

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-const { getChatProviderSettingsFromContext, normalizeIdList, parseJson } = await import('../routes/helpers.js');
+const { getChatProviderSettingsFromContext, normalizeIdList, parseJson, withConversationUsage } = await import('../routes/helpers.js');
 
 test('parseJson returns parsed JSON values', () => {
   assert.deepEqual(parseJson('{"enabled":true,"count":2}', {}), { enabled: true, count: 2 });
@@ -35,6 +35,51 @@ test('normalizeIdList caps request size at 100 ids', () => {
   assert.equal(result.length, 100);
   assert.equal(result[0], 'conversation-0');
   assert.equal(result[99], 'conversation-99');
+});
+
+test('normalizeIdList stops coercing ids after reaching the cap', () => {
+  const ids = Array.from({ length: 100 }, (_, index) => `conversation-${index}`);
+  ids.push({
+    toString() {
+      throw new Error('id after cap should not be coerced');
+    }
+  });
+
+  const result = normalizeIdList(ids);
+
+  assert.equal(result.length, 100);
+  assert.equal(result[99], 'conversation-99');
+});
+
+test('withConversationUsage aggregates valid usage rows and skips invalid JSON', () => {
+  const db = {
+    prepare(sql) {
+      assert.match(sql, /SELECT usage_json FROM messages/);
+      return {
+        all(userId, conversationId) {
+          assert.equal(userId, 'user-1');
+          assert.equal(conversationId, 'conversation-1');
+          return [
+            { usage_json: '{"total_tokens":3,"_flai":{"totalCostCny":0.02}}' },
+            { usage_json: '{invalid' },
+            { usage_json: '{"totalTokens":4}' }
+          ];
+        }
+      };
+    }
+  };
+
+  const result = withConversationUsage({ id: 'conversation-1', title: 'Story' }, 'user-1', db);
+
+  assert.deepEqual(result, {
+    id: 'conversation-1',
+    title: 'Story',
+    usage: {
+      totalTokens: 7,
+      totalCostCny: 0.02,
+      currency: 'CNY'
+    }
+  });
 });
 
 test('getChatProviderSettingsFromContext delegates to a provided context helper', () => {

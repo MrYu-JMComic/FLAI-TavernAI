@@ -28,9 +28,9 @@ test('CharacterImagePanel disables image actions while one image mutation is bus
   assert.match(characterImagePanelScript, /function finishImageAction\(mutationToken, characterId\)/);
   assert.match(
     characterImagePanelScript,
-    /function onDragOver\(index\) {\s*if \(isImageActionDisabled\(\)\) return;\s*if \(dragOverIndex\.value !== index\) {\s*dragOverIndex\.value = index;\s*}/
+    /function onDragOver\(index\) {\s*if \(isImageActionDisabled\(\) \|\| !isCurrentImageIndex\(dragIndex\.value\) \|\| !isCurrentImageIndex\(index\)\) return;\s*if \(dragOverIndex\.value !== index\) {\s*dragOverIndex\.value = index;\s*}/
   );
-  assert.equal(countMatches(characterImagePanelScript, /if \(!characterId \|\| !startImageAction\(imageId\)\) return;/g), 2);
+  assert.equal(countMatches(characterImagePanelScript, /if \(!characterId \|\| !isCurrentImageId\(imageId\) \|\| !startImageAction\(imageId\)\) return;/g), 2);
   assert.match(characterImagePanelScript, /if \(!startImageAction\(imageId\)\) return;/);
   assert.match(characterImagePanelScript, /if \(!characterId \|\| !startImageAction\('image-order'\)\) return;/);
   assert.equal(countMatches(characterImagePanelScript, /finally\s*{\s*finishImageAction\(mutationToken, characterId\);\s*}/g), 4);
@@ -41,6 +41,41 @@ test('CharacterImagePanel disables image actions while one image mutation is bus
   assert.equal(countMatches(characterImagePanelTemplate, /:disabled="isImageActionDisabled\(\)"/g), 8);
   assert.equal(countMatches(characterImagePanelTemplate, /:aria-busy="isImageActionBusy\(image\.id\)"/g), 3);
   assert.match(characterImagePanelTemplate, /:aria-busy="imageActionBusyId === 'image-order'"/);
+});
+
+test('CharacterImagePanel ignores stale image item events before mutations', () => {
+  assert.match(
+    characterImagePanelScript,
+    /function resetImagePanelState\(\)\s*{[\s\S]*setImagesIfChanged\(\[\]\);[\s\S]*editingImageId\.value = '';[\s\S]*editForm\.value = \{ sceneTag: '', emotionTag: '' \};[\s\S]*dragIndex\.value = -1;[\s\S]*dragOverIndex\.value = -1;[\s\S]*}/
+  );
+  assert.match(
+    characterImagePanelScript,
+    /function isCurrentImageId\(imageId\)\s*{\s*const id = String\(imageId \|\| ''\);[\s\S]*return images\.value\.some\(\(image\) => image\?\.id === id && image\?\.characterId === characterId\);[\s\S]*}/
+  );
+  assert.match(
+    characterImagePanelScript,
+    /function isCurrentImageItem\(image\)\s*{\s*return Boolean\(image\?\.id && image\?\.characterId === props\.characterId && isCurrentImageId\(image\.id\)\);/
+  );
+  assert.match(
+    characterImagePanelScript,
+    /function isCurrentImageIndex\(index\)\s*{\s*return Number\.isInteger\(index\) && index >= 0 && index < images\.value\.length && isCurrentImageItem\(images\.value\[index\]\);/
+  );
+  assert.match(
+    characterImagePanelScript,
+    /function startEdit\(image\)\s*{\s*if \(isImageActionDisabled\(\) \|\| !isCurrentImageItem\(image\)\) return;/
+  );
+  assert.match(
+    characterImagePanelScript,
+    /async function removeImage\(imageId\)\s*{\s*if \(isImageActionDisabled\(\) \|\| !props\.characterId \|\| !isCurrentImageId\(imageId\)\) return;[\s\S]*if \(!window\.confirm/
+  );
+  assert.match(
+    characterImagePanelScript,
+    /function onDragStart\(index\)\s*{\s*if \(isImageActionDisabled\(\) \|\| !isCurrentImageIndex\(index\)\) return;/
+  );
+  assert.match(
+    characterImagePanelScript,
+    /!isCurrentImageIndex\(dragIndex\.value\) \|\|\s*!isCurrentImageIndex\(dragOverIndex\.value\) \|\|\s*dragIndex\.value === dragOverIndex\.value/
+  );
 });
 
 test('CharacterImagePanel preserves unchanged image list references during refreshes', () => {

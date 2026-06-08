@@ -43,12 +43,21 @@ md.renderer.rules.fence = (tokens, idx, options, env, self) => {
 // Cache for rendered HTML
 const renderCache = new Map();
 const MAX_CACHE_SIZE = 200;
+const VALID_REGEX_FLAGS = 'dimsuvy';
+const LF_CHAR_CODE = 10;
+const CR_CHAR_CODE = 13;
+const FOLD_CARET = '\u203a';
+const DEFAULT_FOLD_TITLE = '\u6298\u53e0\u5185\u5bb9';
 
 function getCachedRender(text, renderPlugins = []) {
   if (!text) return '';
-  const cacheKey = `${text}\n<!--plugins:${JSON.stringify(pluginCacheShape(renderPlugins))}-->`;
-  const cached = renderCache.get(cacheKey);
-  if (cached) return cached;
+  const cacheKey = `${text}\n<!--plugins:${buildPluginCacheKey(renderPlugins)}-->`;
+  if (renderCache.has(cacheKey)) {
+    const cached = renderCache.get(cacheKey);
+    renderCache.delete(cacheKey);
+    renderCache.set(cacheKey, cached);
+    return cached;
+  }
   
   const rawHtml = renderWithPlugins(text, renderPlugins);
   const html = DOMPurify.sanitize(rawHtml, {
@@ -72,75 +81,103 @@ function renderWithPlugins(text, renderPlugins = []) {
     return md.render(text);
   }
 
-  const segments = [];
-  let normal = [];
+  let html = '';
+  let normalText = '';
+  let hasNormalText = false;
   let fold = null;
   const flushNormal = () => {
-    if (normal.length) {
-      segments.push({ type: 'markdown', text: normal.join('\n') });
-      normal = [];
+    if (hasNormalText) {
+      html += md.render(normalText);
+      normalText = '';
+      hasNormalText = false;
     }
   };
   const flushFold = () => {
     if (fold) {
-      segments.push(fold);
+      html += renderFoldSegment(fold);
       fold = null;
     }
   };
 
-  for (const line of String(text || '').split(/\r?\n/)) {
+  forEachMarkdownLine(String(text || ''), (line) => {
     const match = matchFoldPlugin(line, plugins);
     if (match) {
       flushNormal();
       flushFold();
-      fold = { type: 'fold', title: match.title, body: [] };
-      continue;
+      fold = { title: match.title, bodyText: '', hasBodyText: false };
+      return;
     }
     if (fold) {
-      fold.body.push(line);
+      fold.bodyText = appendLineText(fold.bodyText, line, fold.hasBodyText);
+      fold.hasBodyText = true;
     } else {
-      normal.push(line);
+      normalText = appendLineText(normalText, line, hasNormalText);
+      hasNormalText = true;
     }
-  }
+  });
   flushFold();
   flushNormal();
 
-  return segments.map((segment) => {
-    if (segment.type === 'fold') {
-      const body = md.render(segment.body.join('\n').trim());
-      return [
-        '<details class="markdown-fold">',
-        '<summary class="markdown-fold-summary">',
-        '<span class="markdown-fold-caret">›</span>',
-        `<span class="markdown-fold-title">${md.utils.escapeHtml(segment.title || '折叠内容')}</span>`,
-        '</summary>',
-        `<div class="markdown-fold-body">${body}</div>`,
-        '</details>'
-      ].join('');
+  return html;
+}
+
+function appendLineText(currentText, line, hasText) {
+  return hasText ? `${currentText}\n${line}` : line;
+}
+
+function forEachMarkdownLine(text, visit) {
+  let startIndex = 0;
+  for (let index = 0; index < text.length; index += 1) {
+    if (text.charCodeAt(index) !== LF_CHAR_CODE) {
+      continue;
     }
-    return md.render(segment.text);
-  }).join('');
+    const endIndex = index > startIndex && text.charCodeAt(index - 1) === CR_CHAR_CODE
+      ? index - 1
+      : index;
+    visit(text.slice(startIndex, endIndex));
+    startIndex = index + 1;
+  }
+  visit(text.slice(startIndex));
+}
+
+function renderFoldSegment(segment) {
+  const body = md.render(segment.bodyText.trim());
+  return '<details class="markdown-fold">'
+    + '<summary class="markdown-fold-summary">'
+    + `<span class="markdown-fold-caret">${FOLD_CARET}</span>`
+    + `<span class="markdown-fold-title">${md.utils.escapeHtml(segment.title || DEFAULT_FOLD_TITLE)}</span>`
+    + '</summary>'
+    + `<div class="markdown-fold-body">${body}</div>`
+    + '</details>';
 }
 
 function compileFoldPlugins(renderPlugins = []) {
-  return renderPlugins
-    .filter((plugin) => plugin && plugin.enabled !== false && (plugin.type || 'fold') === 'fold' && plugin.pattern)
-    .map((plugin) => {
-      try {
-        const flags = normalizeRegexFlags(plugin.flags || 'u');
-        return {
-          regex: new RegExp(plugin.pattern, flags),
-          titleTemplate: String(plugin.titleTemplate || plugin.label || '$1')
-        };
-      } catch {
-        return null;
-      }
-    })
-    .filter(Boolean);
+  const plugins = [];
+  const sourcePlugins = Array.isArray(renderPlugins) ? renderPlugins : [];
+  for (const plugin of sourcePlugins) {
+    if (!plugin || plugin.enabled === false || (plugin.type || 'fold') !== 'fold' || !plugin.pattern) {
+      continue;
+    }
+    try {
+      const flags = normalizeRegexFlags(plugin.flags || 'u');
+      plugins.push({
+        regex: new RegExp(plugin.pattern, flags),
+        titleTemplate: String(plugin.titleTemplate || plugin.label || '$1')
+      });
+    } catch {}
+  }
+  return plugins;
 }
 
 function normalizeRegexFlags(flags) {
-  return [...new Set(String(flags || '').replace(/[^dgimsuvy]/g, '').replace('g', '').split(''))].join('') || 'u';
+  let normalized = '';
+  for (const flag of String(flags || '')) {
+    if (flag === 'g' || !VALID_REGEX_FLAGS.includes(flag) || normalized.includes(flag)) {
+      continue;
+    }
+    normalized += flag;
+  }
+  return normalized || 'u';
 }
 
 function matchFoldPlugin(line, plugins) {
@@ -158,17 +195,25 @@ function matchFoldPlugin(line, plugins) {
 
 function applyTitleTemplate(template, match, fallback) {
   const value = String(template || '$1').replace(/\$(\d+)/g, (_, index) => match[Number(index)] || '');
-  return (value.trim() || fallback.trim() || '折叠内容').slice(0, 80);
+  return (value.trim() || fallback.trim() || DEFAULT_FOLD_TITLE).slice(0, 80);
 }
 
-function pluginCacheShape(renderPlugins = []) {
-  return renderPlugins.map((plugin) => ({
-    enabled: plugin?.enabled !== false,
-    type: plugin?.type || 'fold',
-    pattern: plugin?.pattern || '',
-    flags: plugin?.flags || '',
-    titleTemplate: plugin?.titleTemplate || plugin?.label || ''
-  }));
+function buildPluginCacheKey(renderPlugins = []) {
+  let cacheKey = '';
+  const sourcePlugins = Array.isArray(renderPlugins) ? renderPlugins : [];
+  for (const plugin of sourcePlugins) {
+    cacheKey = appendPluginCacheField(cacheKey, plugin?.enabled !== false ? '1' : '0');
+    cacheKey = appendPluginCacheField(cacheKey, plugin?.type || 'fold');
+    cacheKey = appendPluginCacheField(cacheKey, plugin?.pattern || '');
+    cacheKey = appendPluginCacheField(cacheKey, plugin?.flags || '');
+    cacheKey = appendPluginCacheField(cacheKey, plugin?.titleTemplate || plugin?.label || '');
+  }
+  return cacheKey;
+}
+
+function appendPluginCacheField(cacheKey, value) {
+  const text = String(value ?? '');
+  return `${cacheKey}${text.length}:${text};`;
 }
 
 export default defineComponent({

@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const currentFile = fileURLToPath(import.meta.url);
 const repoRoot = path.resolve(path.dirname(currentFile), '../../..');
@@ -15,6 +15,18 @@ function readJson(relativePath) {
 
 function readText(relativePath) {
   return fs.readFileSync(path.join(repoRoot, relativePath), 'utf8');
+}
+
+function assertTextMatches(text, patterns) {
+  for (const pattern of patterns) {
+    assert.match(text, pattern);
+  }
+}
+
+function assertTextDoesNotMatch(text, patterns) {
+  for (const pattern of patterns) {
+    assert.doesNotMatch(text, pattern);
+  }
 }
 
 function runNodeScript(relativePath, args = []) {
@@ -118,31 +130,78 @@ test('package scripts keep encoding checks wired into backend tests and frontend
 test('review gate keeps required validation stages wired', () => {
   const reviewGate = readText('scripts/review-gate.ps1');
 
-  assert.match(reviewGate, /node\s+scripts\/check-encoding\.mjs/);
-  assert.match(reviewGate, /node\s+scripts\/find-unreferenced-vue-components\.mjs/);
-  assert.match(reviewGate, /node\s+scripts\/find-inaccessible-vue-controls\.mjs/);
-  assert.match(reviewGate, /未引用 Vue 组件诊断/);
-  assert.match(reviewGate, /Vue 控件可访问性诊断/);
-  assert.doesNotMatch(reviewGate, /\$failures\s*\+=\s*["']未引用组件/);
-  assert.match(reviewGate, /Push-Location\s+backend[\s\S]*npm\s+test/);
-  assert.match(reviewGate, /Push-Location\s+frontend[\s\S]*npm\s+run\s+build/);
-  assert.match(reviewGate, /\$LASTEXITCODE\s+-ne\s+0/);
-  assert.match(reviewGate, /exit\s+1/);
+  assertTextMatches(reviewGate, [
+    /Invoke-LoggedNativeCommand\s+-File\s+"node"\s+-Arguments\s+@\("scripts\/check-encoding\.mjs"\)/,
+    /Invoke-LoggedNativeCommand\s+-File\s+"node"\s+-Arguments\s+@\("scripts\/find-unreferenced-vue-components\.mjs"\)/,
+    /Invoke-LoggedNativeCommand\s+-File\s+"node"\s+-Arguments\s+@\("scripts\/find-inaccessible-vue-controls\.mjs"\)/,
+    /未引用 Vue 组件诊断/,
+    /Vue 控件可访问性诊断/,
+    /function\s+Invoke-CapturedNativeCommand/,
+    /function\s+Invoke-LoggedNativeCommand/,
+    /Push-Location\s+\$projectRoot\s*\r?\ntry\s*\{/,
+    /}\s*finally\s*\{\s*\r?\n\s*Pop-Location\s*\r?\n\}\s*$/,
+    /\$exitCode\s*=\s*1/,
+    /Get-Command\s+\$File\s+-ErrorAction\s+Stop\s+\|\s+Out-Null/,
+    /&\s+\$File\s+@Arguments\s+2>&1\s+\|\s+ForEach-Object\s+\{\s*\$_\.ToString\(\)\s*\}/,
+    /\$exitCode\s*=\s*\$LASTEXITCODE/,
+    /\$null\s+-eq\s+\$LASTEXITCODE/,
+    /finally\s*\{[\s\S]*\$ErrorActionPreference\s*=\s*\$prevEAP[\s\S]*if\s+\(\$WorkingDirectory\)\s*\{[\s\S]*Pop-Location[\s\S]*\}/,
+    /ExitCode\s*=\s*\$exitCode/,
+    /Output\s*=\s*@\(\$output\)/,
+    /Invoke-CapturedNativeCommand\s+-File\s+\$File\s+-WorkingDirectory\s+\$WorkingDirectory\s+-Arguments\s+\$Arguments/,
+    /return\s+\$result\.ExitCode/,
+    /Invoke-LoggedNativeCommand\s+-File\s+"npm"\s+-WorkingDirectory\s+"backend"\s+-Arguments\s+@\("test"\)/,
+    /Invoke-LoggedNativeCommand\s+-File\s+"npm"\s+-WorkingDirectory\s+"frontend"\s+-Arguments\s+@\("run",\s*"build"\)/,
+    /Invoke-LoggedNativeCommand\s+-File\s+"git"\s+-Arguments\s+@\("diff",\s*"--check"\)/,
+    /Invoke-LoggedNativeCommand\s+-File\s+"git"\s+-Arguments\s+@\("diff",\s*"--cached",\s*"--check"\)/,
+    /Invoke-CapturedNativeCommand\s+-File\s+"git"\s+-Arguments\s+@\("status",\s*"--short"\)/,
+    /Git working tree diff whitespace check failed/,
+    /Git staged diff whitespace check failed/,
+    /Git status check failed/,
+    /exit\s+1/
+  ]);
+  assertTextDoesNotMatch(reviewGate, [
+    /\$failures\s*\+=\s*["']未引用组件/,
+    /function\s+Invoke-GitDiffCheck/,
+    /node\s+scripts\/[^\\s]+\.mjs\s+2>&1\s+\|\s+Write-Host/,
+    /\$gitStatus\s*=\s*git\s+status\s+--short/,
+    /\$LASTEXITCODE\s+-ne\s+0/
+  ]);
+  assert.equal((reviewGate.match(/\bPop-Location\b/g) ?? []).length, 2);
 });
 
 test('encoding checker keeps reports in scope and reports scan coverage', () => {
   const encodingCheck = readText('scripts/check-encoding.mjs');
 
-  assert.doesNotMatch(encodingCheck, /path\.normalize\(['"]automation\/reports['"]\)/);
-  assert.match(encodingCheck, /scannedFileCount\s*\+=\s*1/);
-  assert.match(encodingCheck, /scanned\s+\$\{scannedFileCount\}\s+files/);
+  assertTextMatches(encodingCheck, [
+    /function comparePathText/,
+    /const suspiciousChars = new Set\(\);/,
+    /for \(const point of suspiciousCodePoints\)/,
+    /suspiciousChars\.add\(String\.fromCodePoint\(point\)\);/,
+    /function hasSuspiciousChar/,
+    /function getLineReportText/,
+    /const text = readFileSync\(filePath, 'utf8'\);/,
+    /let lineStart = 0;/,
+    /if \(!lineHasSuspiciousChar && hasSuspiciousChar\(char\)\)/,
+    /scannedFileCount\s*\+=\s*1/,
+    /scanned\s+\$\{scannedFileCount\}\s+files/
+  ]);
+  assertTextDoesNotMatch(encodingCheck, [
+    /path\.normalize\(['"]automation\/reports['"]\)/,
+    /localeCompare/,
+    /suspiciousCodePoints\.map/,
+    /readFileSync\(filePath\);\s*\r?\n\s*const text = buffer\.toString\('utf8'\)/,
+    /text\.split\(\s*\/\\r\?\\n\/\s*\)/,
+    /\[\s*\.\.\.\s*line\s*\]\.some/
+  ]);
 });
 
 test('encoding checker flags common UTF-8-as-GBK mojibake markers', () => {
   const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'flai-encoding-check-'));
   try {
     writeFixtureFile(fixtureRoot, 'scripts/check-encoding.mjs', readText('scripts/check-encoding.mjs'));
-    writeFixtureFile(fixtureRoot, 'automation/backlog.md', `# ${String.fromCodePoint(0x951b)}\n`);
+    writeFixtureFile(fixtureRoot, 'B-bad.md', `# ${String.fromCodePoint(0x951b)} upper\n`);
+    writeFixtureFile(fixtureRoot, 'a-bad.md', `ok\r\n# ${String.fromCodePoint(0x951b)} lower\n`);
 
     const result = spawnSync(process.execPath, [path.join(fixtureRoot, 'scripts', 'check-encoding.mjs')], {
       cwd: fixtureRoot,
@@ -151,7 +210,141 @@ test('encoding checker flags common UTF-8-as-GBK mojibake markers', () => {
 
     assert.notEqual(result.status, 0);
     assert.match(result.stderr, /Possible Chinese encoding corruption found/);
-    assert.match(result.stderr, /automation[\\/]backlog\.md/);
+    assert.ok(result.stderr.indexOf('B-bad.md') < result.stderr.indexOf('a-bad.md'), result.stderr);
+    assert.match(result.stderr, /a-bad\.md\r?\n\s+2: #/);
+  } finally {
+    fs.rmSync(fixtureRoot, { recursive: true, force: true });
+  }
+});
+
+test('Markdown report archiver keeps deterministic report ordering', () => {
+  const archiver = readText('scripts/archive-markdown-reports.mjs');
+  const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'flai-report-archive-'));
+
+  try {
+    writeFixtureFile(fixtureRoot, 'scripts/archive-markdown-reports.mjs', archiver);
+    writeFixtureFile(fixtureRoot, 'automation/reports/2026-06-09-z-report.md', '# 2026-06-09 z\n');
+    writeFixtureFile(fixtureRoot, 'automation/reports/2026-06-10-b-report.md', '# 2026-06-10 b\n');
+    writeFixtureFile(fixtureRoot, 'automation/reports/2026-06-10-A-report.md', '# 2026-06-10 A\n');
+
+    assertTextMatches(archiver, [
+      /function compareReportText/,
+      /error\?\.code !== 'ENOENT'/,
+      /function readOptionValue/,
+      /value\.startsWith\('--'\)/,
+      /const parts = \{\};/,
+      /parts\[part\.type\] = part\.value;/,
+      /const listItemPattern = \/\^- `\(\[\^`\]\+\)`\$\/gm;/,
+      /while \(\(item = listItemPattern\.exec\(match\[1\]\)\)\)/,
+      /let section;/,
+      /while \(\(section = sectionPattern\.exec\(text\)\)\)/,
+      /sections\.set\(section\[1\], section\[2\]\.trimEnd\(\)\);/,
+      /function formatArchiveList/,
+      /for \(const name of names\)/,
+      /listItems\.push\(/,
+      /return listItems\.join\('\\n'\);/,
+      /const archivedNames = \[\];/,
+      /archivedNames\.push\(file\.name\)/,
+      /archived: archivedNames,/,
+      /removedDuplicateTopLevel: deleted\.length - archivedNames\.length/,
+      /const candidateOutput = \{\};/,
+      /candidateOutput\[date\] = names;/,
+      /const results = \[\];/,
+      /results\.push\(archiveGroup\(date, files\)\)/,
+      /--exclude requires a dated top-level report filename/
+    ]);
+    assertTextDoesNotMatch(archiver, [
+      /localeCompare/,
+      /existsSync/,
+      /formatToParts\(new Date\(\)\)\.map/,
+      /\[\.\.\.match\[1\]\.matchAll/,
+      /text\.matchAll\(sectionPattern\)/,
+      /names\.map\(\(name\)/,
+      /archived: newSections\.map/,
+      /Object\.fromEntries\(groups\.map/,
+      /const results = groups\.map/
+    ]);
+
+    const badExcludeRun = spawnSync(process.execPath, [
+      path.join(fixtureRoot, 'scripts/archive-markdown-reports.mjs'),
+      '--all',
+      '--exclude',
+      '--dry-run'
+    ], {
+      cwd: fixtureRoot,
+      encoding: 'utf8'
+    });
+
+    assert.notEqual(badExcludeRun.status, 0);
+    assert.match(badExcludeRun.stderr, /--exclude requires a value/);
+    assert.equal(
+      fs.existsSync(path.join(fixtureRoot, 'automation/reports/2026-06-10-A-report.md')),
+      true
+    );
+
+    const badExcludeNameRun = spawnSync(process.execPath, [
+      path.join(fixtureRoot, 'scripts/archive-markdown-reports.mjs'),
+      '--all',
+      '--exclude',
+      'not-a-report.md',
+      '--dry-run'
+    ], {
+      cwd: fixtureRoot,
+      encoding: 'utf8'
+    });
+
+    assert.notEqual(badExcludeNameRun.status, 0);
+    assert.match(badExcludeNameRun.stderr, /--exclude requires a dated top-level report filename/);
+    assert.equal(
+      fs.existsSync(path.join(fixtureRoot, 'automation/reports/2026-06-10-A-report.md')),
+      true
+    );
+
+    const dryRun = spawnSync(process.execPath, [
+      path.join(fixtureRoot, 'scripts/archive-markdown-reports.mjs'),
+      '--all',
+      '--dry-run'
+    ], {
+      cwd: fixtureRoot,
+      encoding: 'utf8'
+    });
+
+    assert.equal(dryRun.status, 0, `${dryRun.stdout}\n${dryRun.stderr}`);
+    const dryRunOutput = JSON.parse(dryRun.stdout);
+    assert.deepEqual(Object.keys(dryRunOutput.candidates), ['2026-06-09', '2026-06-10']);
+    assert.deepEqual(dryRunOutput.candidates['2026-06-10'], [
+      '2026-06-10-A-report.md',
+      '2026-06-10-b-report.md'
+    ]);
+
+    const archiveRun = spawnSync(process.execPath, [
+      path.join(fixtureRoot, 'scripts/archive-markdown-reports.mjs'),
+      '--date',
+      '2026-06-10'
+    ], {
+      cwd: fixtureRoot,
+      encoding: 'utf8'
+    });
+
+    assert.equal(archiveRun.status, 0, `${archiveRun.stdout}\n${archiveRun.stderr}`);
+    assert.deepEqual(JSON.parse(archiveRun.stdout), {
+      archivedDates: [
+        {
+          archive: 'automation/reports/archive/daily-reports-2026-06-10.md',
+          archived: ['2026-06-10-A-report.md', '2026-06-10-b-report.md'],
+          removedDuplicateTopLevel: 0,
+          totalArchivedForDate: 2
+        }
+      ]
+    });
+    const archiveText = fs.readFileSync(
+      path.join(fixtureRoot, 'automation/reports/archive/daily-reports-2026-06-10.md'),
+      'utf8'
+    );
+    assert.deepEqual(
+      [...archiveText.matchAll(/^- `([^`]+)`$/gm)].map((match) => match[1]),
+      ['2026-06-10-A-report.md', '2026-06-10-b-report.md']
+    );
   } finally {
     fs.rmSync(fixtureRoot, { recursive: true, force: true });
   }
@@ -162,13 +355,197 @@ test('diagnostic scripts share safe file-read helpers', () => {
   const unreferencedScanner = readText('scripts/find-unreferenced-vue-components.mjs');
   const accessibilityScanner = readText('scripts/find-inaccessible-vue-controls.mjs');
 
-  assert.match(fileUtils, /const smallTextFileLimitBytes = 1024 \* 1024;/);
-  assert.match(fileUtils, /export function readSmallTextFile/);
-  assert.match(fileUtils, /export function readJsonFile/);
-  assert.match(unreferencedScanner, /import \{ readJsonFile, readSmallTextFile \} from '\.\/diagnostic-file-utils\.mjs';/);
-  assert.match(accessibilityScanner, /import \{ readSmallTextFile \} from '\.\/diagnostic-file-utils\.mjs';/);
-  assert.doesNotMatch(unreferencedScanner, /function readSmallTextFile/);
-  assert.doesNotMatch(accessibilityScanner, /function readSmallTextFile/);
+  assertTextMatches(fileUtils, [
+    /const smallTextFileLimitBytes = 1024 \* 1024;/,
+    /export function compareDiagnosticText/,
+    /export function getCliOptionValue/,
+    /export function\* walkFiles/,
+    /export function toPosixPath/,
+    /export function maskNonNewlineText/,
+    /export function escapeRegExp/,
+    /export function readSmallTextFile/,
+    /export function readJsonFile/
+  ]);
+  assertTextDoesNotMatch(fileUtils, [
+    /rawArgs\.find/,
+    /rawArgs\.indexOf/,
+    /split\(path\.sep\)\.join\('\/'\)/,
+    /localeCompare/
+  ]);
+  assertTextMatches(unreferencedScanner, [
+    /import \{ compareDiagnosticText, escapeRegExp, getCliOptionValue, maskNonNewlineText, readJsonFile, readSmallTextFile, toPosixPath, walkFiles \} from '\.\/diagnostic-file-utils\.mjs';/,
+    /function\s+createRangeMembershipChecker/,
+    /while \(rangeIndex < ranges\.length && ranges\[rangeIndex\]\[1\] <= index\)/,
+    /const isInsideStringLiteral = createRangeMembershipChecker\(stringLiteralRanges\);/,
+    /const isInsideRegexLiteral = createRangeMembershipChecker\(regexLiteralRanges\);/,
+    /isInsideStringLiteral\(match\.index\) \|\|/,
+    /isInsideRegexLiteral\(match\.index\)/
+  ]);
+  assertTextDoesNotMatch(unreferencedScanner, [
+    /function readSmallTextFile/,
+    /function getOptionValue/,
+    /function\* walk/,
+    /function toPosixPath/,
+    /function maskNonNewlineText/,
+    /function escapeRegExp/,
+    /function\s+isInsideStringLiteral\(index, ranges\)/,
+    /ranges\.some\(\(\[start, end\]\)/,
+    /localeCompare/
+  ]);
+  assertTextMatches(accessibilityScanner, [
+    /import \{ compareDiagnosticText, escapeRegExp, getCliOptionValue, maskNonNewlineText, readSmallTextFile, toPosixPath, walkFiles \} from '\.\/diagnostic-file-utils\.mjs';/,
+    /const boundAttributePatternCache = new Map\(\);/,
+    /const staticAttributePatternCache = new Map\(\);/,
+    /const closingTagPatternCache = new Map\(\);/,
+    /const scannableControlPattern = \/<\(\?:button\|input\|textarea\|select\)\\b\/i;/,
+    /const ariaHiddenTruePattern = \/\^true\$\/i;/,
+    /const hiddenInputTypePattern = \/\^hidden\$\/i;/,
+    /const nonWhitespaceTextPattern = \/\\S\/;/,
+    /const staticTokenSeparatorPattern = \/\\s\/;/,
+    /function\s+maskQuotedAttributeMarkup/,
+    /function\s+hasScannableControl/,
+    /function\s+buildLineStarts/,
+    /function\s+lineNumberAt/,
+    /function\s+getBoundAttributePattern/,
+    /function\s+getStaticAttributePattern/,
+    /function\s+getClosingTagPattern/,
+    /function\s+forEachStaticToken/,
+    /function\s+hasNonWhitespaceText/,
+    /return scannableControlPattern\.test\(text\);/,
+    /boundAttributePatternCache\.set\(key, new RegExp/,
+    /staticAttributePatternCache\.set\(key, new RegExp/,
+    /closingTagPatternCache\.set\(key, new RegExp/,
+    /function\s+hasBoundAttribute\(attrs, names\)\s*\{\s*\r?\n\s*for \(const name of names\)/,
+    /if \(getBoundAttributePattern\(name\)\.test\(attrs\)\) \{/,
+    /const match = attrs\.match\(getStaticAttributePattern\(name\)\);/,
+    /function\s+hasNonEmptyStaticAttribute\(attrs, names\)\s*\{\s*\r?\n\s*for \(const name of names\)/,
+    /if \(getStaticAttribute\(attrs, name\)\.trim\(\)\.length > 0\) \{/,
+    /function\s+collectStaticAriaLabelledByIds/,
+    /forEachStaticToken\(labelledBy, \(id\) => \{/,
+    /referencedIds\.add\(id\);/,
+    /function\s+buildReferencedNameIndex/,
+    /const referencedIds = collectStaticAriaLabelledByIds\(text\);/,
+    /if \(!referencedIds\.size\) \{/,
+    /return referencedNameIndex;/,
+    /if \(!referencedIds\.has\(id\) \|\| referencedNameIndex\.has\(id\)\)/,
+    /referencedNameIndex\.set\(id, elementProvidesName\(attrs, body\)\);/,
+    /if \(referencedNameIndex\.size === referencedIds\.size\) \{/,
+    /break;/,
+    /function\s+findElementBodyRange/,
+    /const closePattern = getClosingTagPattern\(tagName\);/,
+    /const bodyRange = findElementBodyRange\(text, tagName, tagEnd\);/,
+    /const bodyRange = findElementBodyRange\(text, 'button', tagEnd\);/,
+    /buttonPattern\.lastIndex = bodyRange\.nextIndex;/,
+    /const labelClosePattern = getClosingTagPattern\('label'\);/,
+    /labelClosePattern\.lastIndex = index;/,
+    /let hasReferencedName = false;/,
+    /if \(referencedNameIndex\.get\(id\) === true\) \{/,
+    /hasReferencedName = true;/,
+    /return false;/,
+    /return hasReferencedName;/,
+    /function\s+buildExternalLabelNameIndex/,
+    /return externalLabelNameIndex\.has\(id\);/,
+    /closePattern\.lastIndex = tagEnd \+ 1;/,
+    /const closeMatch = closePattern\.exec\(text\);/,
+    /return ariaHiddenTruePattern\.test\(getStaticAttribute\(attrs, 'aria-hidden'\)\.trim\(\)\);/,
+    /return hiddenInputTypePattern\.test\(getStaticAttribute\(attrs, 'type'\)\.trim\(\)\);/,
+    /return nonWhitespaceTextPattern\.test\(text\);/,
+    /return hasNonWhitespaceText\(stripTags\(body\)\);/,
+    /return hasNonWhitespaceText\(stripTags\(stripLabelControlContent\(text\)\)\);/,
+    /if \(!hasScannableControl\(text\)\) \{\s*\r?\n\s*continue;\s*\r?\n\s*\}\s*\r?\n\s*const lineStarts = buildLineStarts\(text\);/,
+    /const referencedNameIndex = buildReferencedNameIndex\(text\);/,
+    /const externalLabelNameIndex = buildExternalLabelNameIndex\(text, referencedNameIndex\);/,
+    /findButtonViolations\(fileLabel, text, lineStarts, referencedNameIndex\)/,
+    /findFormControlViolations\(fileLabel, text, lineStarts, externalLabelNameIndex, referencedNameIndex\)/,
+    /hasAssociatedLabel\(text, attrs, match\.index, externalLabelNameIndex, referencedNameIndex\)/,
+    /text\.lastIndexOf\('<label', index\)/,
+    /function\s+hasProvidedAttribute/,
+    /function\s+inputHasNativeAccessibleName/
+  ]);
+  assertTextDoesNotMatch(accessibilityScanner, [
+    /function\s+inputValueProvidesName/,
+    /function\s+inputAltProvidesName/,
+    /return \/<\(\?:button\|input\|textarea\|select\)\\b\/i\.test\(text\);/,
+    /return \/\^true\$\/i\.test\(getStaticAttribute\(attrs, 'aria-hidden'\)\.trim\(\)\);/,
+    /return \/\^hidden\$\/i\.test\(getStaticAttribute\(attrs, 'type'\)\.trim\(\)\);/,
+    /stripTags\(body\)\.replace\(\/\\s\+\/g, ''\)\.length > 0/,
+    /stripTags\(stripLabelControlContent\(text\)\)\.replace\(\/\\s\+\/g, ''\)\.length > 0/,
+    /slice\(0,\s*index\)\.split/,
+    /const before = text\.slice\(0,\s*index\)/,
+    /closePattern\.exec\(text\.slice\(tagEnd \+ 1\)\)/,
+    /lineNumberAt\(text,\s*match\.index\)/,
+    /hasAssociatedLabel\(text, attrs, match\.index\)/,
+    /function\s+findElementByStaticId/,
+    /function\s+referencedElementProvidesName/,
+    /hasAccessibleNameAttribute\(attrs, text\)/,
+    /buildExternalLabelNameIndex\(text\);/,
+    /const closePattern = \/<\\\/button\\s\*>\/gi;/,
+    /const labelClosePattern = \/<\\\/label\\s\*>\/gi;/,
+    /function readSmallTextFile/,
+    /function getOptionValue/,
+    /function\* walk/,
+    /function toPosixPath/,
+    /function maskNonNewlineText/,
+    /function escapeRegExp/,
+    /names\.some\(\(name\) => getBoundAttributePattern\(name\)\.test\(attrs\)\)/,
+    /names\.some\(\(name\) => getStaticAttribute\(attrs, name\)\.trim\(\)\.length > 0\)/,
+    /labelledBy\.split\(\/\\s\+\/\)/,
+    /localeCompare/
+  ]);
+});
+
+test('diagnostic file utilities keep shared helper behavior stable', async () => {
+  const utils = await import(pathToFileURL(path.join(repoRoot, 'scripts/diagnostic-file-utils.mjs')));
+  const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'flai-diagnostic-utils-'));
+
+  try {
+    writeFixtureFile(fixtureRoot, 'nested/source.txt', 'plain text');
+    writeFixtureFile(fixtureRoot, 'config/options.json', '{"ok":true}');
+    writeFixtureFile(fixtureRoot, 'config/broken.json', '{"ok":');
+    writeFixtureFile(fixtureRoot, 'config/large.json', ' '.repeat(1024 * 1024) + '{"ok":true}');
+    writeFixtureFile(fixtureRoot, 'large.txt', 'x'.repeat((1024 * 1024) + 1));
+    writeFixtureFile(fixtureRoot, 'B.txt', 'B');
+    writeFixtureFile(fixtureRoot, 'a.txt', 'a');
+
+    assert.equal(utils.compareDiagnosticText('B.txt', 'a.txt'), -1);
+    assert.equal(utils.compareDiagnosticText('same', 'same'), 0);
+    assert.equal(utils.compareDiagnosticText('z.txt', 'a.txt'), 1);
+    assert.equal(utils.getCliOptionValue(['--project-root', 'fixture-root'], '--project-root'), 'fixture-root');
+    assert.equal(utils.getCliOptionValue(['--project-root=inline-root'], '--project-root'), 'inline-root');
+    assert.equal(
+      utils.getCliOptionValue(['--project-root', 'separate-root', '--project-root=inline-root'], '--project-root'),
+      'inline-root'
+    );
+    assert.equal(utils.getCliOptionValue(['--project-root='], '--project-root'), null);
+    assert.equal(utils.getCliOptionValue(['--project-root=', '--project-root', 'fixture-root'], '--project-root'), 'fixture-root');
+    assert.equal(utils.getCliOptionValue(['--project-root'], '--project-root'), null);
+    assert.equal(utils.getCliOptionValue(['--project-root', ''], '--project-root'), null);
+    assert.equal(utils.getCliOptionValue(['--project-root', '--json'], '--project-root'), null);
+    assert.equal(utils.getCliOptionValue(['--project-root', '--json', '--project-root', 'fixture-root'], '--project-root'), 'fixture-root');
+    assert.equal(utils.getCliOptionValue([], '--project-root'), null);
+    assert.equal(utils.toPosixPath(['nested', 'source.txt'].join(path.sep)), 'nested/source.txt');
+    assert.equal(utils.toPosixPath('nested\\source.txt'), 'nested/source.txt');
+    assert.equal(utils.toPosixPath('nested\\mixed/source.txt'), 'nested/mixed/source.txt');
+    assert.equal(utils.maskNonNewlineText('a\r\n<tag>'), ' \r\n     ');
+    assert.equal(utils.escapeRegExp('A+B*(test)?[x]\\'), 'A\\+B\\*\\(test\\)\\?\\[x\\]\\\\');
+    assert.equal(utils.readSmallTextFile(path.join(fixtureRoot, 'nested/source.txt')), 'plain text');
+    assert.equal(utils.readSmallTextFile(path.join(fixtureRoot, 'large.txt')), '');
+    assert.equal(utils.readSmallTextFile(path.join(fixtureRoot, 'missing.txt')), '');
+    assert.equal(utils.readSmallTextFile(path.join(fixtureRoot, 'nested')), '');
+    assert.deepEqual(utils.readJsonFile(path.join(fixtureRoot, 'config/options.json'), { ok: false }), { ok: true });
+    assert.deepEqual(utils.readJsonFile(path.join(fixtureRoot, 'config/broken.json'), { broken: true }), { broken: true });
+    assert.deepEqual(utils.readJsonFile(path.join(fixtureRoot, 'config/large.json'), { large: true }), { large: true });
+    assert.deepEqual(utils.readJsonFile(path.join(fixtureRoot, 'missing.json'), { missing: true }), { missing: true });
+    assert.deepEqual(
+      [...utils.walkFiles(fixtureRoot)]
+        .map((filePath) => utils.toPosixPath(path.relative(fixtureRoot, filePath))),
+      ['B.txt', 'a.txt', 'config/broken.json', 'config/large.json', 'config/options.json', 'large.txt', 'nested/source.txt']
+    );
+    assert.deepEqual([...utils.walkFiles(path.join(fixtureRoot, 'missing-dir'))], []);
+    assert.deepEqual([...utils.walkFiles(path.join(fixtureRoot, 'nested/source.txt'))], []);
+  } finally {
+    fs.rmSync(fixtureRoot, { recursive: true, force: true });
+  }
 });
 
 test('prepare commit stages single tracked and untracked paths as separate targets', {
@@ -223,9 +600,13 @@ test('unreferenced Vue component scanner reports candidates without failing by d
   assert.ok(Array.isArray(parsed.candidates));
   assert.ok(Array.isArray(parsed.reviewed));
   assert.match(scanner, /function\s+toKebabCase/);
+  assert.match(scanner, /function\s+componentLookupNames/);
+  assert.match(scanner, /return basename === kebabName \? \[basename\] : \[basename, kebabName\];/);
   assert.match(scanner, /function\s+componentTagPatterns/);
+  assert.match(scanner, /function\s+componentTagPatterns\(lookupNames\)/);
   assert.match(scanner, /<\\\\s\*\$\{escapedName\}/);
   assert.match(scanner, /function\s+componentIsAttributePatterns/);
+  assert.match(scanner, /function\s+componentIsAttributePatterns\(lookupNames\)/);
   assert.match(scanner, /<\\\\s\*component/);
   assert.match(scanner, /v-bind:is/);
   assert.match(scanner, /function\s+maskComponentTokenSearchText/);
@@ -235,13 +616,42 @@ test('unreferenced Vue component scanner reports candidates without failing by d
   assert.match(scanner, /preserveComponentIsAttributes/);
   assert.match(scanner, /function\s+collectComponentReferenceLiterals/);
   assert.match(scanner, /import\\\.meta\\\.glob/);
+  assert.match(scanner, /function\s+stripImportSuffix/);
+  assert.match(scanner, /for \(let index = 0; index < text\.length; index \+= 1\)/);
+  assert.match(scanner, /if \(char === '\?' \|\| char === '#'\) \{/);
+  assert.doesNotMatch(scanner, /\.split\(\s*\/\[\?#\]\//);
   assert.doesNotMatch(scanner, /frontendRelativeWithoutExtension/);
   assert.doesNotMatch(scanner, /@\/\$\{frontendRelative/);
   assert.doesNotMatch(scanner, /\.component\('\$\{/);
   assert.match(scanner, /function\s+resolveComponentReference/);
   assert.match(scanner, /function\s+resolveComponentGlob/);
   assert.match(scanner, /function\s+globToRegExp/);
+  assert.match(scanner, /const sources = \[\];/);
+  assert.match(scanner, /resolvedPath: path\.resolve\(filePath\)/);
+  assert.match(scanner, /for \(const source of sourceIndex\)/);
+  assert.doesNotMatch(scanner, /\[\.\.\.walkFiles\(frontendSrc\)\]\s*\.\s*filter/);
+  assert.doesNotMatch(scanner, /path\.resolve\(source\.filePath\)/);
+  assert.doesNotMatch(scanner, /\[\.\.\.new Set\(\[basename,\s*kebabName\]\)\]\.flatMap/);
+  assert.doesNotMatch(scanner, /names\.flatMap\(\(name\)/);
+  assert.match(scanner, /const lookupNames = componentLookupNames\(componentPath\);/);
+  assert.match(scanner, /const tagPatterns = componentTagPatterns\(lookupNames\);/);
+  assert.match(scanner, /const isAttributePatterns = componentIsAttributePatterns\(lookupNames\);/);
+  assert.doesNotMatch(scanner, /componentTagPatterns\(componentPath\)/);
+  assert.doesNotMatch(scanner, /componentIsAttributePatterns\(componentPath\)/);
   assert.match(scanner, /function\s+loadReviewedComponents/);
+  assert.match(scanner, /const reviewedComponents = new Map\(\);/);
+  assert.match(scanner, /for \(const entry of reviewed\)/);
+  assert.match(scanner, /const file = toPosixPath\(entry\.file\.trim\(\)\);/);
+  assert.match(scanner, /reviewedComponents\.set\(file,/);
+  assert.doesNotMatch(scanner, /reviewed\s*\.\s*filter\(\(entry\)/);
+  assert.doesNotMatch(scanner, /reviewed\s*\.\s*filter\([\s\S]*?\.map\(\(entry\)/);
+  assert.match(scanner, /function\s+collectUnreferencedComponents/);
+  assert.match(scanner, /const unreferencedComponents = collectUnreferencedComponents\(sourceIndex\);/);
+  assert.match(scanner, /function\s+splitReviewedComponents/);
+  assert.match(scanner, /const \{ candidates, reviewed \} = splitReviewedComponents\(unreferencedComponents, reviewedComponents\);/);
+  assert.doesNotMatch(scanner, /\[\.\.\.walkFiles\(componentsDir\)\]\s*\.\s*filter/);
+  assert.doesNotMatch(scanner, /const candidates = unreferencedComponents\s*\.\s*filter/);
+  assert.doesNotMatch(scanner, /const reviewed = unreferencedComponents\s*\.\s*filter/);
   assert.match(scanner, /reviewed-unreferenced-vue-components\.json/);
   for (const candidate of parsed.candidates) {
     assert.match(candidate.file, /^frontend\/src\/components\/.+\.vue$/);
@@ -440,8 +850,13 @@ test('Vue accessibility scanner reports unlabeled controls without failing by de
   <button><XIcon /></button>
   <button aria-label="Close"><XIcon /></button>
   <button><span>Save</span></button>
+  <div data-example="<button><Icon /></button><input /><textarea></textarea><select></select>"></div>
   <label for="named">Name</label>
   <input id="named" />
+  <input type="submit" value="Save" />
+  <input type="button" :value="dynamicButtonText" />
+  <input type="image" alt="Search" />
+  <input type="image" :alt="imageButtonLabel" />
   <label>Mode<select><option>Auto</option></select></label>
   <input type="hidden" />
   <textarea placeholder="Notes"></textarea>
@@ -478,6 +893,10 @@ const exampleMarkup = '<button><Icon /></button><input />';
   <button aria-labelledby=unquoted-button-label><Icon /></button>
   <span id=unquoted-input-label>Unquoted input name</span>
   <input aria-labelledby=unquoted-input-label />
+  <button aria-labelledby="missing-token unquoted-button-label"><Icon /></button>
+  <input aria-labelledby="missing-token unquoted-input-label" />
+  <span id=dynamic-reference-label :title="dynamicReferenceTitle"></span>
+  <input aria-labelledby=dynamic-reference-label />
 </template>
 `
     );
@@ -489,6 +908,8 @@ const exampleMarkup = '<button><Icon /></button><input />';
   <button aria-label=""><Icon /></button>
   <input title=" " />
   <textarea aria-labelledby=""></textarea>
+  <input type="submit" value="" />
+  <input type="image" alt="" />
   <label for="empty-external"></label>
   <input id="empty-external" />
   <label><input /></label>
@@ -538,6 +959,8 @@ const commentPrefix = '<!--';
         ['frontend/src/components/EmptyNamePanel.vue', 'textarea', 'Form control needs an accessible label'],
         ['frontend/src/components/EmptyNamePanel.vue', 'input', 'Form control needs an accessible label'],
         ['frontend/src/components/EmptyNamePanel.vue', 'input', 'Form control needs an accessible label'],
+        ['frontend/src/components/EmptyNamePanel.vue', 'input', 'Form control needs an accessible label'],
+        ['frontend/src/components/EmptyNamePanel.vue', 'input', 'Form control needs an accessible label'],
         ['frontend/src/components/EmptyNamePanel.vue', 'button', 'Icon-only button needs aria-label or aria-labelledby'],
         ['frontend/src/components/EmptyNamePanel.vue', 'input', 'Form control needs an accessible label'],
         ['frontend/src/components/EmptyNamePanel.vue', 'select', 'Form control needs an accessible label'],
@@ -550,7 +973,7 @@ const commentPrefix = '<!--';
 
     const defaultRun = spawnNodeScript('scripts/find-inaccessible-vue-controls.mjs', ['--project-root', fixtureRoot]);
     assert.equal(defaultRun.status, 0);
-    assert.match(defaultRun.stdout, /Potentially inaccessible Vue controls: 14/);
+    assert.match(defaultRun.stdout, /Potentially inaccessible Vue controls: 16/);
 
     const strictRun = spawnNodeScript('scripts/find-inaccessible-vue-controls.mjs', [
       '--project-root',

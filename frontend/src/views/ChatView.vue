@@ -50,7 +50,8 @@ let latestNpcFingerprint = '';
 let accessoryRefreshSnapshot = {
   conversationId: '',
   statusBar: '',
-  npc: ''
+  npc: '',
+  npcSynced: true
 };
 
 const ACCESSORY_UPDATING = 'updating';
@@ -86,13 +87,13 @@ const {
   presetList, selectedPresetId,
   filteredConversations, visibleConversationIds,
   selectedConversationCount, allVisibleConversationsSelected, conversationReady,
-  loadSidebarData, startNewConversation, openConversation,
+  loadSidebarData, reloadSidebarData, startNewConversation, openConversation,
   openSidebar, closeSidebar, openSettings, closeSettings,
   openSavePanel, closeSavePanel, openNpcPanel, closeNpcPanel,
   openEconomyPanel, closeEconomyPanel,
   toggleConversationSelection, toggleAllVisibleConversations,
   deleteOneConversation, deleteSelectedConversations,
-  setActiveConversationIfChanged,
+  setActiveConversationIfChanged, setMessagesIfChanged,
   formatConversationUsage,
   cleanup: cleanupConversationState
 } = useChatConversation({ route: props.route, emit, showError });
@@ -113,7 +114,7 @@ const {
   addCharacterVariable, removeCharacterVariable,
   addQuickReply, removeQuickReply,
   closeAccessoryPanels, cleanupAccessory
-} = useChatAccessory({ conversation, showActionNotice, showError });
+} = useChatAccessory({ conversation, setActiveConversationIfChanged, showActionNotice, showError });
 
 const {
   chatAppearanceForm, authorChatAppearance, chatViewportIsPhone, appearanceSaving,
@@ -130,15 +131,16 @@ const {
   user: computed(() => props.user), provider: computed(() => props.provider), messages, notify,
   openSidebar, closeSidebar, openSettings, closeSettings,
   scrollToBottom: (...args) => scroll.scrollToBottom(...args),
+  setActiveConversationIfChanged,
   showActionNotice, showError
 });
 
 const {
-  editingMessageId, editingMessageContent, messageActionBusy,
+  editingMessageId, editingMessageContent, messageActionBusy, copyBusy,
   toggleReasoning, expandReasoning, reasoningOpen,
   isReasoningTyping, isContentTyping, messagePlaceholder,
   messageAuthorName, messageAuthorInitial, messageAvatarUrl,
-  canEditMessage, canDeleteMessage,
+  canEditMessage, canDeleteMessage, canBranchMessage,
   beginEditMessage, cancelEditMessage,
   setEditingMessageContent, saveMessageEdit, removeMessage, copyMessage,
   messageSwipeState, swipeLoading, initMessageSwipes, swipeMessagePrev, swipeMessageNext, getSwipeDisplay,
@@ -195,6 +197,7 @@ const {
   showError
 });
 const { providerModels, syncProviderModels } = useProviderModels(computed(() => props.provider));
+const chatRenderPlugins = computed(() => activeRenderPlugins());
 
 function openModelSwitcher() {
   if (sending.value) {
@@ -311,12 +314,12 @@ async function saveQuickModel(model) {
 
 async function loadConversation() {
   const conversationId = props.route.params.id;
-  if (!conversationId) return;
+  if (chatViewDisposed || !conversationId) return;
   const requestToken = ++conversationLoadToken;
   if (conversation.value?.id && conversation.value.id !== conversationId) {
     setActiveConversationIfChanged(null);
-    messages.value = [];
-    statusBar.value = null;
+    setMessagesIfChanged([]);
+    applyStatusBarUpdate(null, { syncForm: false });
     syncAccessorySkills();
     resetAccessoryUpdateStatus({ clearNpcFingerprint: true });
   }
@@ -324,39 +327,55 @@ async function loadConversation() {
   error.value = '';
   try {
     const result = await fetchConversationMessages(conversationId);
-    if (requestToken !== conversationLoadToken || props.route.params.id !== conversationId) return;
+    if (!isCurrentConversationLoad(requestToken, conversationId)) return;
     setActiveConversationIfChanged(result.conversation);
-    messages.value = result.messages;
+    setMessagesIfChanged(result.messages);
     await nextTick();
+    if (!isCurrentConversationLoad(requestToken, conversationId)) return;
+    loading.value = false;
     syncConversationAppearance(result.conversation?.settings);
     syncAccessorySkills(result.conversation?.settings?.accessorySkills);
     await applyConversationAppearance();
+    if (!isCurrentConversationLoad(requestToken, conversationId)) return;
     // Parallel: these 4 operations are independent of each other
     const [, , , branchesResult] = await Promise.all([
       loadStatusBar(),
       loadAccessorySkills(),
       typeof initMessageSwipes === 'function'
         ? initMessageSwipes(conversationId)
-        : Promise.resolve(),
+      : Promise.resolve(),
       loadConversationBranches(conversationId)
     ]);
-    if (requestToken !== conversationLoadToken || props.route.params.id !== conversationId) return;
+    if (!isCurrentConversationLoad(requestToken, conversationId)) return;
     await syncNpcFingerprint(conversationId);
-    if (requestToken !== conversationLoadToken || props.route.params.id !== conversationId) return;
+    if (!isCurrentConversationLoad(requestToken, conversationId)) return;
     resetAccessoryUpdateStatus();
     restoreMessageScrollPosition(messages);
   } catch (err) {
-    if (requestToken !== conversationLoadToken || props.route.params.id !== conversationId) return;
+    if (!isCurrentConversationLoad(requestToken, conversationId)) return;
     showError(err.message);
   } finally {
-    if (requestToken === conversationLoadToken && props.route.params.id === conversationId) {
+    if (isCurrentConversationLoad(requestToken, conversationId)) {
       loading.value = false;
     }
   }
 }
 
-async function onSavesLoaded() {
+function isCurrentConversationLoad(requestToken, conversationId) {
+  return !chatViewDisposed
+    && requestToken === conversationLoadToken
+    && props.route.params.id === conversationId;
+}
+
+async function onSavesLoaded(payload = {}) {
+  const eventConversationId = payload?.conversationId || '';
+  if (!eventConversationId || eventConversationId !== props.route.params.id) {
+    return;
+  }
   await loadConversation();
+  if (props.route.params.id !== eventConversationId || conversation.value?.id !== eventConversationId) {
+    return;
+  }
   await loadSidebarData();
 }
 
@@ -381,7 +400,8 @@ function beginAccessoryRefreshStatus() {
   accessoryRefreshSnapshot = {
     conversationId,
     statusBar: serializeStatusBarSnapshot(statusBar.value),
-    npc: latestNpcFingerprint
+    npc: latestNpcFingerprint,
+    npcSynced: false
   };
   statusBarUpdateStatus.value = isAccessorySkillActiveLocal('statusBarAgent')
     ? ACCESSORY_UPDATING
@@ -389,9 +409,14 @@ function beginAccessoryRefreshStatus() {
   npcUpdateStatus.value = showNpcFeature.value
     ? ACCESSORY_UPDATING
     : ACCESSORY_NOT_UPDATED;
+  return hasPendingAccessoryRefresh();
 }
 
 function handleAccessorySkillResult(data = {}) {
+  const eventConversationId = String(data?.conversationId || '').trim();
+  if (!eventConversationId || eventConversationId !== conversation.value?.id) {
+    return;
+  }
   const result = data.result || {};
   if (data.skill === 'statusBarAgent') {
     const hasUpdates = Array.isArray(result.updates)
@@ -413,10 +438,16 @@ function handleAccessorySkillResult(data = {}) {
 
 async function refreshAccessoryPanels(payload = {}) {
   refreshStatusBarUpdateStatus(payload);
-  await refreshNpcUpdateStatus(Boolean(payload?.isFinal));
-  if (npcPanelOpen.value) {
+  const shouldRefreshNpcPanel = await refreshNpcUpdateStatus(Boolean(payload?.isFinal));
+  if (npcPanelOpen.value && shouldRefreshNpcPanel) {
     npcRefreshKey.value += 1;
   }
+  return hasPendingAccessoryRefresh();
+}
+
+function hasPendingAccessoryRefresh() {
+  return statusBarUpdateStatus.value === ACCESSORY_UPDATING ||
+    npcUpdateStatus.value === ACCESSORY_UPDATING;
 }
 
 function refreshStatusBarUpdateStatus(payload = {}) {
@@ -443,26 +474,38 @@ function refreshStatusBarUpdateStatus(payload = {}) {
 async function refreshNpcUpdateStatus(isFinal = false) {
   if (!showNpcFeature.value) {
     npcUpdateStatus.value = ACCESSORY_NOT_UPDATED;
-    return;
+    return false;
   }
   const conversationId = conversation.value?.id;
   if (!conversationId || accessoryRefreshSnapshot.conversationId !== conversationId) {
-    return;
+    return false;
+  }
+  if (npcUpdateStatus.value !== ACCESSORY_UPDATING && accessoryRefreshSnapshot.npcSynced) {
+    return false;
   }
   try {
     const npcs = await fetchConversationNpcs(conversationId);
     if (conversation.value?.id !== conversationId || accessoryRefreshSnapshot.conversationId !== conversationId) {
-      return;
+      return false;
     }
     const nextFingerprint = serializeNpcSnapshot(npcs);
-    if (npcUpdateStatus.value === ACCESSORY_UPDATING && nextFingerprint !== accessoryRefreshSnapshot.npc) {
+    const npcChanged = nextFingerprint !== accessoryRefreshSnapshot.npc;
+    if (npcUpdateStatus.value === ACCESSORY_UPDATING && npcChanged) {
       npcUpdateStatus.value = ACCESSORY_UPDATED;
     }
     latestNpcFingerprint = nextFingerprint;
+    accessoryRefreshSnapshot.npcSynced = true;
+    return npcChanged;
   } catch {
     // Keep the visible state pending until the final scheduled poll can settle it.
+    return false;
   } finally {
-    if (isFinal && npcUpdateStatus.value === ACCESSORY_UPDATING) {
+    if (
+      isFinal &&
+      npcUpdateStatus.value === ACCESSORY_UPDATING &&
+      conversation.value?.id === conversationId &&
+      accessoryRefreshSnapshot.conversationId === conversationId
+    ) {
       npcUpdateStatus.value = ACCESSORY_NOT_UPDATED;
     }
   }
@@ -480,15 +523,22 @@ async function syncNpcFingerprint(conversationId = conversation.value?.id) {
     }
     latestNpcFingerprint = serializeNpcSnapshot(npcs);
   } catch {
-    latestNpcFingerprint = '';
+    if (conversation.value?.id === conversationId) {
+      latestNpcFingerprint = '';
+    }
   }
   return latestNpcFingerprint;
 }
 
-function handleNpcPanelLoaded(npcs = []) {
+function handleNpcPanelLoaded(payload = {}) {
   if (npcUpdateStatus.value === ACCESSORY_UPDATING) {
     return;
   }
+  const eventConversationId = payload?.conversationId || '';
+  if (!eventConversationId || eventConversationId !== conversation.value?.id) {
+    return;
+  }
+  const npcs = Array.isArray(payload?.npcs) ? payload.npcs : [];
   latestNpcFingerprint = serializeNpcSnapshot(npcs);
 }
 
@@ -501,7 +551,8 @@ function resetAccessoryUpdateStatus(options = {}) {
   accessoryRefreshSnapshot = {
     conversationId: conversation.value?.id || '',
     statusBar: serializeStatusBarSnapshot(statusBar.value),
-    npc: latestNpcFingerprint
+    npc: latestNpcFingerprint,
+    npcSynced: true
   };
 }
 
@@ -509,39 +560,58 @@ function serializeStatusBarSnapshot(value = null) {
   if (!value) {
     return '';
   }
-  return JSON.stringify({
-    id: value.id || '',
-    name: value.name || '',
-    template: value.template || '',
-    updatedAt: value.updatedAt || '',
-    variables: Array.isArray(value.variables)
-      ? value.variables.map((item) => ({
-        name: item?.name || '',
-        value: item?.value ?? '',
-        max: item?.max ?? '',
-        color: item?.color || ''
-      }))
-      : []
-  });
+  let snapshot = '';
+  snapshot = appendSnapshotField(snapshot, value.id || '');
+  snapshot = appendSnapshotField(snapshot, value.name || '');
+  snapshot = appendSnapshotField(snapshot, value.template || '');
+  snapshot = appendSnapshotField(snapshot, value.updatedAt || '');
+  const sourceVariables = Array.isArray(value.variables) ? value.variables : [];
+  snapshot = appendSnapshotField(snapshot, sourceVariables.length);
+  for (let index = 0; index < sourceVariables.length; index += 1) {
+    const item = sourceVariables[index];
+    snapshot = appendSnapshotField(snapshot, item?.name || '');
+    snapshot = appendSnapshotField(snapshot, item?.value ?? '');
+    snapshot = appendSnapshotField(snapshot, item?.max ?? '');
+    snapshot = appendSnapshotField(snapshot, item?.color || '');
+  }
+  return snapshot;
 }
 
 function serializeNpcSnapshot(value = []) {
-  const items = Array.isArray(value) ? value : [];
-  return JSON.stringify(items
-    .map((npc) => ({
-      name: String(npc?.name || ''),
-      memoryCount: Number(npc?.memoryCount || 0),
-      behaviorCount: Number(npc?.behaviorCount || 0),
-      source: String(npc?.source || ''),
-      confidence: Number(npc?.confidence || 0),
-      evidence: String(npc?.evidence || '')
-    }))
-    .sort((a, b) => a.name.localeCompare(b.name)));
+  const items = [];
+  const sourceNpcs = Array.isArray(value) ? value : [];
+  for (let index = 0; index < sourceNpcs.length; index += 1) {
+    const npc = sourceNpcs[index];
+    const name = String(npc?.name || '');
+    let snapshot = '';
+    snapshot = appendSnapshotField(snapshot, name);
+    snapshot = appendSnapshotField(snapshot, Number(npc?.memoryCount || 0));
+    snapshot = appendSnapshotField(snapshot, Number(npc?.behaviorCount || 0));
+    snapshot = appendSnapshotField(snapshot, npc?.source || '');
+    snapshot = appendSnapshotField(snapshot, Number(npc?.confidence || 0));
+    snapshot = appendSnapshotField(snapshot, npc?.evidence || '');
+    items.push({ name, snapshot });
+  }
+  items.sort((a, b) => a.name.localeCompare(b.name));
+  let serialized = '';
+  for (let index = 0; index < items.length; index += 1) {
+    serialized += items[index].snapshot;
+  }
+  return serialized;
+}
+
+function appendSnapshotField(snapshot, value) {
+  const text = String(value ?? '');
+  return `${snapshot}${text.length}:${text};`;
 }
 
 async function createBranchFromMessage(message) {
-  await handleBranchMessage(message, props.route.params.id, async (branchId) => {
+  const branchConversationId = props.route.params.id;
+  await handleBranchMessage(message, branchConversationId, async (branchId, isCurrentBranchAction) => {
     await loadSidebarData();
+    if (!isCurrentBranchAction()) {
+      return;
+    }
     emit('navigate', 'chat', { id: branchId });
   });
 }
@@ -793,7 +863,13 @@ function cancelComposerLayoutWork() {
 }
 
 const latestAssistantMessage = computed(() => {
-  return [...messages.value].reverse().find((m) => m.role === 'assistant') || null;
+  for (let index = messages.value.length - 1; index >= 0; index -= 1) {
+    const message = messages.value[index];
+    if (message?.role === 'assistant') {
+      return message;
+    }
+  }
+  return null;
 });
 
 const hasStatusBarVisible = computed(() => {
@@ -943,7 +1019,7 @@ watch(showNpcFeature, (active) => {
       @toggle-selection="toggleConversationSelection"
       @delete-one="deleteOneConversation"
       @delete-selected="deleteSelectedConversations"
-      @reload-sidebar="loadSidebarData"
+      @reload-sidebar="reloadSidebarData"
       @open-settings="openSettings"
     />
 
@@ -1050,12 +1126,14 @@ watch(showNpcFeature, (active) => {
             :avatar-url="messageAvatarUrl(message)"
             :can-edit="canEditMessage(message)"
             :can-delete="canDeleteMessage(message)"
-            :message-action-busy="messageActionBusy === message.id"
-            :render-plugins="activeRenderPlugins()"
+            :branch-can="canBranchMessage(message)"
+            :message-action-busy="messageActionBusy === message.id || branchBusy"
+            :copy-busy="copyBusy"
+            :render-plugins="chatRenderPlugins"
             :swipe-display="getSwipeDisplay(message)"
             :swipe-can-prev="canSwipePrev(message)"
             :swipe-can-next="message.role === 'assistant'"
-            :swipe-loading="swipeLoading.has(message.id)"
+            :swipe-loading="swipeLoading.has(message.id) || messageActionBusy === message.id || branchBusy"
             :branch-busy="branchBusy"
             @toggle-reasoning="toggleReasoning"
             @begin-edit="beginEditMessage"

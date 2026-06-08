@@ -1,48 +1,26 @@
-import { readdirSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { readSmallTextFile } from './diagnostic-file-utils.mjs';
+import { compareDiagnosticText, escapeRegExp, getCliOptionValue, maskNonNewlineText, readSmallTextFile, toPosixPath, walkFiles } from './diagnostic-file-utils.mjs';
 
 const rawArgs = process.argv.slice(2);
 const args = new Set(rawArgs);
 const defaultProjectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const projectRoot = path.resolve(getOptionValue('--project-root') ?? defaultProjectRoot);
+const projectRoot = path.resolve(getCliOptionValue(rawArgs, '--project-root') ?? defaultProjectRoot);
 const frontendSrc = path.join(projectRoot, 'frontend', 'src');
 const vueExtension = '.vue';
-const maxTextViolations = normalizeMaxViolations(getOptionValue('--max-output') ?? 30);
-
-function getOptionValue(name) {
-  const inlinePrefix = `${name}=`;
-  const inlineValue = rawArgs.find((arg) => arg.startsWith(inlinePrefix));
-  if (inlineValue) {
-    return inlineValue.slice(inlinePrefix.length);
-  }
-
-  const valueIndex = rawArgs.indexOf(name);
-  if (valueIndex === -1 || valueIndex === rawArgs.length - 1) {
-    return null;
-  }
-  return rawArgs[valueIndex + 1];
-}
+const maxTextViolations = normalizeMaxViolations(getCliOptionValue(rawArgs, '--max-output') ?? 30);
+const boundAttributePatternCache = new Map();
+const staticAttributePatternCache = new Map();
+const closingTagPatternCache = new Map();
+const scannableControlPattern = /<(?:button|input|textarea|select)\b/i;
+const ariaHiddenTruePattern = /^true$/i;
+const hiddenInputTypePattern = /^hidden$/i;
+const nonWhitespaceTextPattern = /\S/;
+const staticTokenSeparatorPattern = /\s/;
 
 function normalizeMaxViolations(value) {
   const parsed = Number(value);
   return Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : 30;
-}
-
-function* walk(dir) {
-  for (const entry of readdirSync(dir, { withFileTypes: true })) {
-    const entryPath = path.join(dir, entry.name);
-    if (entry.isDirectory()) {
-      yield* walk(entryPath);
-    } else if (entry.isFile()) {
-      yield entryPath;
-    }
-  }
-}
-
-function toPosixPath(filePath) {
-  return filePath.split(path.sep).join('/');
 }
 
 function relativePath(filePath) {
@@ -50,39 +28,165 @@ function relativePath(filePath) {
 }
 
 function maskHtmlComments(text) {
-  return text.replace(/<!--[\s\S]*?-->/g, (match) => match.replace(/[^\r\n]/g, ' '));
+  return text.replace(/<!--[\s\S]*?-->/g, maskNonNewlineText);
 }
 
 function maskSfcScriptAndStyleBlocks(text) {
-  return text.replace(/<(script|style)\b[\s\S]*?<\/\1>/gi, (match) => match.replace(/[^\r\n]/g, ' '));
+  return text.replace(/<(script|style)\b[\s\S]*?<\/\1>/gi, maskNonNewlineText);
+}
+
+function maskQuotedAttributeMarkup(text) {
+  return text.replace(/([:@\w-]+)\s*=\s*(['"])((?:\\.|(?!\2)[\s\S])*?)\2/g, (match, _name, quote, value) => {
+    const valueStart = match.indexOf(value, match.indexOf(quote) + 1);
+    const maskedValue = value.replace(/[<>]/g, ' ');
+    return `${match.slice(0, valueStart)}${maskedValue}${match.slice(valueStart + value.length)}`;
+  });
 }
 
 function maskNonTemplateNoise(text) {
-  return maskHtmlComments(maskSfcScriptAndStyleBlocks(text));
+  return maskQuotedAttributeMarkup(maskHtmlComments(maskSfcScriptAndStyleBlocks(text)));
 }
 
-function lineNumberAt(text, index) {
-  return text.slice(0, index).split(/\r?\n/).length;
+function hasScannableControl(text) {
+  return scannableControlPattern.test(text);
+}
+
+function buildLineStarts(text) {
+  const lineStarts = [0];
+  for (let index = 0; index < text.length; index += 1) {
+    if (text[index] === '\n') {
+      lineStarts.push(index + 1);
+    }
+  }
+  return lineStarts;
+}
+
+function lineNumberAt(lineStarts, index) {
+  const limit = Math.max(index, 0);
+  let low = 0;
+  let high = lineStarts.length;
+
+  while (low < high) {
+    const middle = Math.floor((low + high) / 2);
+    if (lineStarts[middle] <= limit) {
+      low = middle + 1;
+    } else {
+      high = middle;
+    }
+  }
+
+  return low;
+}
+
+function getBoundAttributePattern(name) {
+  const key = name.toLowerCase();
+  if (!boundAttributePatternCache.has(key)) {
+    boundAttributePatternCache.set(key, new RegExp(`(?:^|\\s)(?::|v-bind:)${escapeRegExp(key)}\\s*=`, 'i'));
+  }
+  return boundAttributePatternCache.get(key);
+}
+
+function getStaticAttributePattern(name) {
+  const key = name.toLowerCase();
+  if (!staticAttributePatternCache.has(key)) {
+    staticAttributePatternCache.set(key, new RegExp(`(?:^|\\s)${escapeRegExp(key)}\\s*=\\s*(?:(['"])(.*?)\\1|([^\\s>]+))`, 'i'));
+  }
+  return staticAttributePatternCache.get(key);
+}
+
+function getClosingTagPattern(tagName) {
+  const key = tagName.toLowerCase();
+  if (!closingTagPatternCache.has(key)) {
+    closingTagPatternCache.set(key, new RegExp(`</${escapeRegExp(key)}\\s*>`, 'gi'));
+  }
+  return closingTagPatternCache.get(key);
 }
 
 function hasBoundAttribute(attrs, names) {
-  return names.some((name) => new RegExp(`(?:^|\\s)(?::|v-bind:)${name}\\s*=`, 'i').test(attrs));
+  for (const name of names) {
+    if (getBoundAttributePattern(name).test(attrs)) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function getStaticAttribute(attrs, name) {
-  const match = attrs.match(new RegExp(`(?:^|\\s)${name}\\s*=\\s*(?:(['"])(.*?)\\1|([^\\s>]+))`, 'i'));
+  const match = attrs.match(getStaticAttributePattern(name));
   return match ? (match[2] ?? match[3] ?? '') : '';
 }
 
+function forEachStaticToken(value, callback) {
+  let tokenStart = -1;
+
+  for (let index = 0; index <= value.length; index += 1) {
+    if (index < value.length && !staticTokenSeparatorPattern.test(value[index])) {
+      if (tokenStart === -1) {
+        tokenStart = index;
+      }
+      continue;
+    }
+
+    if (tokenStart === -1) {
+      continue;
+    }
+
+    if (callback(value.slice(tokenStart, index)) === false) {
+      return false;
+    }
+    tokenStart = -1;
+  }
+
+  return true;
+}
+
 function hasNonEmptyStaticAttribute(attrs, names) {
-  return names.some((name) => getStaticAttribute(attrs, name).trim().length > 0);
+  for (const name of names) {
+    if (getStaticAttribute(attrs, name).trim().length > 0) {
+      return true;
+    }
+  }
+  return false;
 }
 
-function escapeRegExp(value) {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+function hasProvidedAttribute(attrs, names) {
+  return hasBoundAttribute(attrs, names) || hasNonEmptyStaticAttribute(attrs, names);
 }
 
-function findElementByStaticId(text, id) {
+function findElementBodyRange(text, tagName, tagEnd) {
+  if (text[tagEnd - 1] === '/') {
+    return {
+      bodyStart: tagEnd + 1,
+      bodyEnd: tagEnd + 1,
+      nextIndex: tagEnd + 1
+    };
+  }
+
+  const closePattern = getClosingTagPattern(tagName);
+  closePattern.lastIndex = tagEnd + 1;
+  const closeMatch = closePattern.exec(text);
+  if (!closeMatch) {
+    return null;
+  }
+
+  return {
+    bodyStart: tagEnd + 1,
+    bodyEnd: closeMatch.index,
+    nextIndex: closePattern.lastIndex
+  };
+}
+
+function getElementBody(text, tagName, tagEnd) {
+  const bodyRange = findElementBodyRange(text, tagName, tagEnd);
+  return bodyRange ? text.slice(bodyRange.bodyStart, bodyRange.bodyEnd) : '';
+}
+
+function elementProvidesName(attrs, body) {
+  return hasProvidedAttribute(attrs, ['aria-label', 'title']) || hasLabelTextContent(body);
+}
+
+function collectStaticAriaLabelledByIds(text) {
+  const referencedIds = new Set();
   const tagPattern = /<([a-z][\w:-]*)\b/gi;
   let match;
 
@@ -93,54 +197,79 @@ function findElementByStaticId(text, id) {
     }
 
     const attrs = text.slice(tagPattern.lastIndex, tagEnd);
-    if (getStaticAttribute(attrs, 'id').trim() !== id) {
+    const labelledBy = getStaticAttribute(attrs, 'aria-labelledby');
+    if (labelledBy) {
+      forEachStaticToken(labelledBy, (id) => {
+        referencedIds.add(id);
+      });
+    }
+    tagPattern.lastIndex = tagEnd + 1;
+  }
+
+  return referencedIds;
+}
+
+function buildReferencedNameIndex(text) {
+  const referencedNameIndex = new Map();
+  const referencedIds = collectStaticAriaLabelledByIds(text);
+  if (!referencedIds.size) {
+    return referencedNameIndex;
+  }
+
+  const tagPattern = /<([a-z][\w:-]*)\b/gi;
+  let match;
+
+  while ((match = tagPattern.exec(text))) {
+    const tagEnd = findTagEnd(text, tagPattern.lastIndex);
+    if (tagEnd === -1) {
+      break;
+    }
+
+    const attrs = text.slice(tagPattern.lastIndex, tagEnd);
+    const id = getStaticAttribute(attrs, 'id').trim();
+    if (!referencedIds.has(id) || referencedNameIndex.has(id)) {
       tagPattern.lastIndex = tagEnd + 1;
       continue;
     }
 
-    const tagName = match[1];
-    if (text[tagEnd - 1] === '/') {
-      return { attrs, body: '' };
+    const body = getElementBody(text, match[1], tagEnd);
+    referencedNameIndex.set(id, elementProvidesName(attrs, body));
+    if (referencedNameIndex.size === referencedIds.size) {
+      break;
     }
-
-    const closePattern = new RegExp(`</${escapeRegExp(tagName)}\\s*>`, 'i');
-    const closeMatch = closePattern.exec(text.slice(tagEnd + 1));
-    return {
-      attrs,
-      body: closeMatch ? text.slice(tagEnd + 1, tagEnd + 1 + closeMatch.index) : ''
-    };
+    tagPattern.lastIndex = tagEnd + 1;
   }
 
-  return null;
+  return referencedNameIndex;
 }
 
-function referencedElementProvidesName(text, id) {
-  const element = findElementByStaticId(text, id);
-  if (!element) {
-    return false;
-  }
-  return hasNonEmptyStaticAttribute(element.attrs, ['aria-label', 'title']) || hasLabelTextContent(element.body);
-}
-
-function hasStaticAriaLabelledByReference(attrs, text) {
-  const labelledBy = getStaticAttribute(attrs, 'aria-labelledby').trim();
-  if (!labelledBy || !text) {
+function hasStaticAriaLabelledByReference(attrs, referencedNameIndex) {
+  const labelledBy = getStaticAttribute(attrs, 'aria-labelledby');
+  if (!labelledBy || !referencedNameIndex) {
     return false;
   }
 
-  return labelledBy.split(/\s+/).some((id) => referencedElementProvidesName(text, id));
+  let hasReferencedName = false;
+  forEachStaticToken(labelledBy, (id) => {
+    if (referencedNameIndex.get(id) === true) {
+      hasReferencedName = true;
+      return false;
+    }
+    return true;
+  });
+  return hasReferencedName;
 }
 
-function hasAccessibleNameAttribute(attrs, text = '') {
+function hasAccessibleNameAttribute(attrs, referencedNameIndex) {
   return (
-    hasBoundAttribute(attrs, ['aria-label', 'aria-labelledby']) ||
-    hasNonEmptyStaticAttribute(attrs, ['aria-label']) ||
-    hasStaticAriaLabelledByReference(attrs, text)
+    hasProvidedAttribute(attrs, ['aria-label']) ||
+    hasBoundAttribute(attrs, ['aria-labelledby']) ||
+    hasStaticAriaLabelledByReference(attrs, referencedNameIndex)
   );
 }
 
 function hasTitleAttribute(attrs) {
-  return hasBoundAttribute(attrs, ['title']) || hasNonEmptyStaticAttribute(attrs, ['title']);
+  return hasProvidedAttribute(attrs, ['title']);
 }
 
 function findTagEnd(text, startIndex) {
@@ -168,7 +297,7 @@ function findTagEnd(text, startIndex) {
 }
 
 function isAriaHidden(attrs) {
-  return /^true$/i.test(getStaticAttribute(attrs, 'aria-hidden').trim());
+  return ariaHiddenTruePattern.test(getStaticAttribute(attrs, 'aria-hidden').trim());
 }
 
 function stripAriaHiddenContent(text) {
@@ -185,12 +314,27 @@ function stripTags(text) {
     .replace(/&nbsp;/gi, ' ');
 }
 
+function hasNonWhitespaceText(text) {
+  return nonWhitespaceTextPattern.test(text);
+}
+
 function hasVisibleButtonText(body) {
-  return stripTags(body).replace(/\s+/g, '').length > 0;
+  return hasNonWhitespaceText(stripTags(body));
 }
 
 function isHiddenInput(attrs) {
-  return /^hidden$/i.test(getStaticAttribute(attrs, 'type').trim());
+  return hiddenInputTypePattern.test(getStaticAttribute(attrs, 'type').trim());
+}
+
+function inputHasNativeAccessibleName(attrs) {
+  const type = getStaticAttribute(attrs, 'type').trim().toLowerCase();
+  if (['button', 'reset', 'submit'].includes(type)) {
+    return hasProvidedAttribute(attrs, ['value']);
+  }
+  if (type === 'image') {
+    return hasProvidedAttribute(attrs, ['alt']);
+  }
+  return false;
 }
 
 function stripLabelControlContent(text) {
@@ -201,17 +345,31 @@ function stripLabelControlContent(text) {
 }
 
 function hasLabelTextContent(text) {
-  return stripTags(stripLabelControlContent(text)).replace(/\s+/g, '').length > 0;
+  return hasNonWhitespaceText(stripTags(stripLabelControlContent(text)));
 }
 
-function labelProvidesName(attrs, body, text) {
-  return hasAccessibleNameAttribute(attrs, text) || hasLabelTextContent(body);
+function labelProvidesName(attrs, body, referencedNameIndex) {
+  return hasAccessibleNameAttribute(attrs, referencedNameIndex) || hasLabelTextContent(body);
+}
+
+function buildExternalLabelNameIndex(text, referencedNameIndex) {
+  const labelNameIndex = new Set();
+  const labelPattern = /<label\b([^>]*)>([\s\S]*?)<\/label\s*>/gi;
+  let match;
+
+  while ((match = labelPattern.exec(text))) {
+    const id = getStaticAttribute(match[1], 'for').trim();
+    if (id && labelProvidesName(match[1], match[2], referencedNameIndex)) {
+      labelNameIndex.add(id);
+    }
+  }
+
+  return labelNameIndex;
 }
 
 function findWrappingLabel(text, index) {
-  const before = text.slice(0, index);
-  const labelStart = before.lastIndexOf('<label');
-  if (labelStart <= before.lastIndexOf('</label>')) {
+  const labelStart = text.lastIndexOf('<label', index);
+  if (labelStart <= text.lastIndexOf('</label>', index)) {
     return null;
   }
 
@@ -220,7 +378,7 @@ function findWrappingLabel(text, index) {
     return null;
   }
 
-  const labelClosePattern = /<\/label\s*>/gi;
+  const labelClosePattern = getClosingTagPattern('label');
   labelClosePattern.lastIndex = index;
   const labelClose = labelClosePattern.exec(text);
   if (!labelClose) {
@@ -233,10 +391,10 @@ function findWrappingLabel(text, index) {
   };
 }
 
-function hasAssociatedLabel(text, attrs, index) {
+function hasAssociatedLabel(text, attrs, index, externalLabelNameIndex, referencedNameIndex) {
   const wrappingLabel = findWrappingLabel(text, index);
   if (wrappingLabel) {
-    return labelProvidesName(wrappingLabel.attrs, wrappingLabel.body, text);
+    return labelProvidesName(wrappingLabel.attrs, wrappingLabel.body, referencedNameIndex);
   }
 
   const id = getStaticAttribute(attrs, 'id').trim();
@@ -244,17 +402,10 @@ function hasAssociatedLabel(text, attrs, index) {
     return false;
   }
 
-  const labelPattern = /<label\b([^>]*)>([\s\S]*?)<\/label\s*>/gi;
-  let match;
-  while ((match = labelPattern.exec(text))) {
-    if (getStaticAttribute(match[1], 'for').trim() === id && labelProvidesName(match[1], match[2], text)) {
-      return true;
-    }
-  }
-  return false;
+  return externalLabelNameIndex.has(id);
 }
 
-function findButtonViolations(fileLabel, text) {
+function findButtonViolations(fileLabel, text, lineStarts, referencedNameIndex) {
   const violations = [];
   const buttonPattern = /<button\b/gi;
   let match;
@@ -265,23 +416,21 @@ function findButtonViolations(fileLabel, text) {
       break;
     }
     const attrs = text.slice(buttonPattern.lastIndex, tagEnd);
-    const closePattern = /<\/button\s*>/gi;
-    closePattern.lastIndex = tagEnd + 1;
-    const closeMatch = closePattern.exec(text);
-    if (!closeMatch) {
+    const bodyRange = findElementBodyRange(text, 'button', tagEnd);
+    if (!bodyRange) {
       buttonPattern.lastIndex = tagEnd + 1;
       continue;
     }
 
-    const body = text.slice(tagEnd + 1, closeMatch.index);
-    buttonPattern.lastIndex = closePattern.lastIndex;
-    if (hasAccessibleNameAttribute(attrs, text) || hasVisibleButtonText(body)) {
+    const body = text.slice(bodyRange.bodyStart, bodyRange.bodyEnd);
+    buttonPattern.lastIndex = bodyRange.nextIndex;
+    if (hasAccessibleNameAttribute(attrs, referencedNameIndex) || hasVisibleButtonText(body)) {
       continue;
     }
 
     violations.push({
       file: fileLabel,
-      line: lineNumberAt(text, match.index),
+      line: lineNumberAt(lineStarts, match.index),
       control: 'button',
       message: 'Icon-only button needs aria-label or aria-labelledby'
     });
@@ -290,7 +439,7 @@ function findButtonViolations(fileLabel, text) {
   return violations;
 }
 
-function findFormControlViolations(fileLabel, text) {
+function findFormControlViolations(fileLabel, text, lineStarts, externalLabelNameIndex, referencedNameIndex) {
   const violations = [];
   const controlPattern = /<(input|textarea|select)\b/gi;
   let match;
@@ -303,18 +452,20 @@ function findFormControlViolations(fileLabel, text) {
     }
 
     const attrs = text.slice(controlPattern.lastIndex, tagEnd);
+    const controlName = control.toLowerCase();
+    const isInput = controlName === 'input';
     controlPattern.lastIndex = tagEnd + 1;
-    if (control.toLowerCase() === 'input' && isHiddenInput(attrs)) {
+    if (isInput && (isHiddenInput(attrs) || inputHasNativeAccessibleName(attrs))) {
       continue;
     }
-    if (hasAccessibleNameAttribute(attrs, text) || hasTitleAttribute(attrs) || hasAssociatedLabel(text, attrs, match.index)) {
+    if (hasAccessibleNameAttribute(attrs, referencedNameIndex) || hasTitleAttribute(attrs) || hasAssociatedLabel(text, attrs, match.index, externalLabelNameIndex, referencedNameIndex)) {
       continue;
     }
 
     violations.push({
       file: fileLabel,
-      line: lineNumberAt(text, match.index),
-      control: control.toLowerCase(),
+      line: lineNumberAt(lineStarts, match.index),
+      control: controlName,
       message: 'Form control needs an accessible label'
     });
   }
@@ -325,18 +476,25 @@ function findFormControlViolations(fileLabel, text) {
 function findViolations() {
   const violations = [];
 
-  for (const filePath of walk(frontendSrc)) {
+  for (const filePath of walkFiles(frontendSrc)) {
     if (path.extname(filePath).toLowerCase() !== vueExtension) {
       continue;
     }
 
     const text = maskNonTemplateNoise(readSmallTextFile(filePath));
+    if (!hasScannableControl(text)) {
+      continue;
+    }
+
+    const lineStarts = buildLineStarts(text);
+    const referencedNameIndex = buildReferencedNameIndex(text);
+    const externalLabelNameIndex = buildExternalLabelNameIndex(text, referencedNameIndex);
     const fileLabel = relativePath(filePath);
-    violations.push(...findButtonViolations(fileLabel, text));
-    violations.push(...findFormControlViolations(fileLabel, text));
+    violations.push(...findButtonViolations(fileLabel, text, lineStarts, referencedNameIndex));
+    violations.push(...findFormControlViolations(fileLabel, text, lineStarts, externalLabelNameIndex, referencedNameIndex));
   }
 
-  return violations.sort((a, b) => a.file.localeCompare(b.file) || a.line - b.line || a.control.localeCompare(b.control));
+  return violations.sort((a, b) => compareDiagnosticText(a.file, b.file) || a.line - b.line || compareDiagnosticText(a.control, b.control));
 }
 
 const violations = findViolations();

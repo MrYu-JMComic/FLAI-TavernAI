@@ -64,7 +64,7 @@ const { branchConversation, getConversationBranches } = await import('../modules
 const { completeCharacterDraft } = await import('../services/characterAssistant.js');
 const { completeWorldBookDraft } = await import('../services/worldBookAssistant.js');
 const { createCharactersRouter } = await import('../routes/characters.js');
-const { createConversationsRouter } = await import('../routes/conversations.js');
+const { createConversationsRouter, createSavesRouter } = await import('../routes/conversations.js');
 const { createRegexRouter } = await import('../routes/regex.js');
 const { createSwipesRouter } = await import('../routes/swipes.js');
 const { createSettingsRouter } = await import('../routes/settings.js');
@@ -213,6 +213,20 @@ test('provider API keys encrypted with the old dev secret still decrypt', () => 
   assert.equal(decryptSecret(encrypted), 'sk-legacy-secret');
 });
 
+test('provider API key fallback secrets decrypt without array filter allocation', () => {
+  const encrypted = encryptWithSecret('sk-legacy-secret-no-filter', 'flai-dev-secret-change-me');
+  const originalFilter = Array.prototype.filter;
+  try {
+    Array.prototype.filter = function filter() {
+      throw new Error('secret candidates should not use array filter');
+    };
+
+    assert.equal(decryptSecret(encrypted), 'sk-legacy-secret-no-filter');
+  } finally {
+    Array.prototype.filter = originalFilter;
+  }
+});
+
 test('provider rows report undecryptable API keys without throwing', () => {
   const brokenEncryptedKey = encryptSecret('sk-test-secret').replace(/.$/, (char) => (char === 'A' ? 'B' : 'A'));
   const row = {
@@ -275,6 +289,42 @@ test('characters persist with regex rules in order', () => {
   assert.equal(saved.regexRules.length, 2);
   assert.equal(applyRegexRules('猫在门口', saved.regexRules, 'input'), '伙伴在门口');
   assert.equal(applyRegexRules('窗外有雨', saved.regexRules, 'output'), '窗外有灯光');
+});
+
+test('character payload tags normalize in one pass up to the tag cap', () => {
+  const database = createAppDatabase(':memory:');
+  const userId = 'character-tag-cap-user';
+  database.prepare('INSERT INTO users (id, username, password_hash, created_at) VALUES (?, ?, ?, ?)').run(
+    userId,
+    'charactertagcap',
+    'hash',
+    new Date().toISOString()
+  );
+
+  const arrayTags = [' tag-00 ', '', ' '];
+  const expectedTags = ['tag-00'];
+  for (let index = 1; index < 12; index += 1) {
+    const tag = `tag-${String(index).padStart(2, '0')}`;
+    arrayTags.push(` ${tag} `);
+    expectedTags.push(tag);
+  }
+  arrayTags.push({
+    toString() {
+      throw new Error('trailing character tag should not be coerced');
+    }
+  });
+
+  const arrayCharacter = createCharacter(database, userId, {
+    name: 'Character Tag Array Cap',
+    tags: arrayTags
+  });
+  const textCharacter = createCharacter(database, userId, {
+    name: 'Character Tag Text Cap',
+    tags: `${expectedTags.join(',')},ignored-tag`
+  });
+
+  assert.deepEqual(arrayCharacter.tags, expectedTags);
+  assert.deepEqual(textCharacter.tags, expectedTags);
 });
 
 test('replaceRegexRules keeps existing rules when replacement insert fails', () => {
@@ -641,6 +691,26 @@ test('prompt variables render the current user name', () => {
 
 test('expandMacros treats null context as defaults', () => {
   assert.equal(expandMacros('plain {{unknown}}', null), 'plain {{unknown}}');
+});
+
+test('expandMacros random choices scan trimmed non-empty options without split allocation', () => {
+  const originalRandom = Math.random;
+  const originalSplit = String.prototype.split;
+  try {
+    Math.random = () => 0.5;
+    String.prototype.split = function split(separator, ...args) {
+      if (separator === '|') {
+        throw new Error('random macro should not split choices');
+      }
+      return originalSplit.call(this, separator, ...args);
+    };
+
+    assert.equal(expandMacros('pick {{random: alpha | | beta | gamma }}', {}), 'pick beta');
+    assert.equal(expandMacros('empty {{random: | | }}', {}), 'empty ');
+  } finally {
+    Math.random = originalRandom;
+    String.prototype.split = originalSplit;
+  }
 });
 
 test('character schema accepts null worldBookId for unlinked characters', () => {
@@ -2490,6 +2560,129 @@ test('streamToolCompletion treats null options as defaults', async () => {
   }
 });
 
+test('streamToolCompletion normalizes streaming tool calls without source map/filter allocation', async () => {
+  const originalFetch = globalThis.fetch;
+  const originalMap = Array.prototype.map;
+  const originalFilter = Array.prototype.filter;
+  const executed = [];
+  try {
+    Array.prototype.map = function map(callback, ...args) {
+      if (this.source_marker === 'tool-message-source') {
+        throw new Error('streaming tool completion should not map source messages');
+      }
+      for (let index = 0; index < this.length; index += 1) {
+        if (this[index]?.source_marker === 'stream-tool-call-source') {
+          throw new Error('streaming tool call normalization should not map source calls');
+        }
+      }
+      if (this[0]?.name === 'set_value' && typeof this[0]?.arguments === 'string') {
+        throw new Error('streaming pending tool calls should not be mapped into executable calls');
+      }
+      if (this[0]?.raw?.id === 'call-stream') {
+        throw new Error('streaming raw tool calls should not be collected with array map');
+      }
+      return originalMap.call(this, callback, ...args);
+    };
+    Array.prototype.filter = function filter(callback, ...args) {
+      for (let index = 0; index < this.length; index += 1) {
+        if (this[index]?.source_marker === 'stream-tool-call-source') {
+          throw new Error('streaming tool call normalization should not filter source calls');
+        }
+      }
+      if (this[0]?.name === 'set_value' && typeof this[0]?.arguments === 'string') {
+        throw new Error('streaming pending tool calls should not filter executable calls');
+      }
+      return originalFilter.call(this, callback, ...args);
+    };
+    globalThis.fetch = async () =>
+      new Response(sseStream([
+        `data: ${JSON.stringify({
+          choices: [
+            {
+              delta: {
+                tool_calls: [
+                  {
+                    source_marker: 'stream-tool-call-source',
+                    index: 0,
+                    id: 'call-stream',
+                    function: { name: 'set_value', arguments: '{"value":' }
+                  },
+                  {
+                    source_marker: 'stream-tool-call-source',
+                    index: 1,
+                    function: { arguments: '{}' }
+                  },
+                  null
+                ]
+              }
+            }
+          ]
+        })}`,
+        `data: ${JSON.stringify({
+          choices: [
+            {
+              delta: {
+                tool_calls: [
+                  {
+                    source_marker: 'stream-tool-call-source',
+                    index: 0,
+                    function: { arguments: '7}' }
+                  }
+                ]
+              }
+            }
+          ]
+        })}`,
+        'data: [DONE]'
+      ]));
+
+    const events = [];
+    const sourceMessages = [{ role: 'user', content: 'set a value' }];
+    Object.defineProperty(sourceMessages, 'source_marker', { value: 'tool-message-source' });
+    const result = await streamToolCompletion(
+      {
+        providerType: 'custom',
+        gatewayName: 'Custom',
+        baseUrl: 'https://provider.test',
+        model: 'custom-model',
+        apiKey: 'sk-test',
+        supportsReasoning: false,
+        extraBody: {}
+      },
+      sourceMessages,
+      [
+        {
+          type: 'function',
+          function: {
+            name: 'set_value',
+            description: 'set a value',
+            parameters: {
+              type: 'object',
+              properties: { value: { type: 'number' } }
+            }
+          }
+        }
+      ],
+      async (name, args, call) => {
+        executed.push({ name, args, id: call.id });
+        return { ok: true };
+      },
+      (event, data) => events.push({ event, data }),
+      undefined,
+      { maxRounds: 1 }
+    );
+
+    assert.equal(result.toolCalls.length, 1);
+    assert.deepEqual(executed, [{ name: 'set_value', args: { value: 7 }, id: 'call-stream' }]);
+    assert.deepEqual(result.process[0].tools[0].arguments, { value: 7 });
+    assert.equal(events.some((event) => event.event === 'tool'), true);
+  } finally {
+    globalThis.fetch = originalFetch;
+    Array.prototype.map = originalMap;
+    Array.prototype.filter = originalFilter;
+  }
+});
+
 test('generateCompletion treats null options as defaults', async () => {
   const originalFetch = globalThis.fetch;
   let requestBody = null;
@@ -2564,6 +2757,77 @@ test('streamCompletion treats null options as defaults', async () => {
   }
 });
 
+test('mock provider reads latest user message without cloning or reversing message list', async () => {
+  const originalReverse = Array.prototype.reverse;
+  try {
+    Array.prototype.reverse = function reverse(...args) {
+      for (let index = 0; index < this.length; index += 1) {
+        if (this[index]?.source_marker === 'mock-message-source') {
+          throw new Error('mock provider should not reverse source messages');
+        }
+      }
+      return originalReverse.apply(this, args);
+    };
+
+    const settings = {
+      providerType: 'custom',
+      gatewayName: 'Missing Key',
+      baseUrl: 'https://provider.test',
+      model: 'custom-model',
+      apiKey: '',
+      supportsReasoning: false,
+      extraBody: {}
+    };
+
+    const result = await generateCompletion(
+      settings,
+      [
+        { role: 'user', content: 'old prompt', source_marker: 'mock-message-source' },
+        { role: 'assistant', content: 'old answer', source_marker: 'mock-message-source' },
+        { role: 'user', content: 'latest prompt', source_marker: 'mock-message-source' }
+      ]
+    );
+    const nullMessagesResult = await generateCompletion(settings, null);
+
+    assert.equal(result.providerType, 'mock');
+    assert.match(result.content, /latest prompt/);
+    assert.equal(nullMessagesResult.providerType, 'mock');
+    assert.doesNotMatch(nullMessagesResult.content, /latest prompt/);
+  } finally {
+    Array.prototype.reverse = originalReverse;
+  }
+});
+
+test('mock provider stream emits chunks matching final fallback content', async () => {
+  const settings = {
+    providerType: 'custom',
+    gatewayName: 'Missing Key',
+    baseUrl: 'https://provider.test',
+    model: 'custom-model',
+    apiKey: '',
+    supportsReasoning: false,
+    extraBody: {}
+  };
+  let streamed = '';
+  let chunks = 0;
+
+  const result = await streamCompletion(
+    settings,
+    [{ role: 'user', content: 'latest stream prompt' }],
+    (event, data) => {
+      if (event === 'content') {
+        chunks += 1;
+        streamed += data.text;
+      }
+    }
+  );
+
+  assert.equal(result.providerType, 'mock');
+  assert.match(result.content, /latest stream prompt/);
+  assert.equal(streamed, result.content);
+  assert.ok(chunks > 1);
+});
+
 test('OpenAI-compatible parser strips thinking tags from non-stream content', async () => {
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async () =>
@@ -2595,6 +2859,61 @@ test('OpenAI-compatible parser strips thinking tags from non-stream content', as
     assert.equal(result.reasoning, 'plan');
   } finally {
     globalThis.fetch = originalFetch;
+  }
+});
+
+test('OpenAI-compatible parser merges reasoning sources without array map/filter allocation', async () => {
+  const originalFetch = globalThis.fetch;
+  const originalMap = Array.prototype.map;
+  const originalFilter = Array.prototype.filter;
+  try {
+    globalThis.fetch = async () => {
+      const response = jsonResponse({
+        choices: [
+          {
+            message: {
+              reasoning_content: 'field plan',
+              content: '<thinking>tag plan</thinking>answer'
+            }
+          }
+        ]
+      });
+
+      Array.prototype.map = function map(callback, ...args) {
+        if (this.length === 2 && this[0] === 'field plan' && this[1] === 'tag plan') {
+          throw new Error('reasoning merge should not map source fragments');
+        }
+        return originalMap.call(this, callback, ...args);
+      };
+      Array.prototype.filter = function filter(callback, ...args) {
+        if (this.length === 2 && this[0] === 'field plan' && this[1] === 'tag plan') {
+          throw new Error('reasoning merge should not filter source fragments');
+        }
+        return originalFilter.call(this, callback, ...args);
+      };
+
+      return response;
+    };
+
+    const result = await generateCompletion(
+      {
+        providerType: 'custom',
+        gatewayName: 'Custom',
+        baseUrl: 'https://example.test',
+        model: 'local-model',
+        apiKey: 'sk-test',
+        supportsReasoning: false,
+        extraBody: {}
+      },
+      [{ role: 'user', content: 'hi' }]
+    );
+
+    assert.equal(result.content, 'answer');
+    assert.equal(result.reasoning, 'field plan\n\ntag plan');
+  } finally {
+    globalThis.fetch = originalFetch;
+    Array.prototype.map = originalMap;
+    Array.prototype.filter = originalFilter;
   }
 });
 
@@ -2763,12 +3082,30 @@ test('OpenAI-compatible streaming parser reads output message reasoning chunks',
 
 test('OpenAI-compatible streaming parser reads thought content array chunks', async () => {
   const originalFetch = globalThis.fetch;
-  globalThis.fetch = async () =>
-    new Response(sseStream([
+  const originalMap = Array.prototype.map;
+  const originalFilter = Array.prototype.filter;
+  globalThis.fetch = async () => {
+    const response = new Response(sseStream([
       'data: {"choices":[{"delta":{"content":[{"type":"text","thought":true,"text":"plan"}]}}]}',
       'data: {"choices":[{"delta":{"content":[{"type":"text","text":"answer"}]}}]}',
       'data: [DONE]'
     ]));
+
+    Array.prototype.map = function map(callback, ...args) {
+      if (this.length === 1 && this[0]?.type === 'text') {
+        throw new Error('content array parsing should not map fragments');
+      }
+      return originalMap.call(this, callback, ...args);
+    };
+    Array.prototype.filter = function filter(callback, ...args) {
+      if (this.length === 1 && this[0]?.type === 'text') {
+        throw new Error('content array parsing should not filter fragments');
+      }
+      return originalFilter.call(this, callback, ...args);
+    };
+
+    return response;
+  };
 
   const events = [];
   try {
@@ -2791,6 +3128,8 @@ test('OpenAI-compatible streaming parser reads thought content array chunks', as
     assert.deepEqual(events.map((event) => event.event), ['reasoning', 'content']);
   } finally {
     globalThis.fetch = originalFetch;
+    Array.prototype.map = originalMap;
+    Array.prototype.filter = originalFilter;
   }
 });
 
@@ -2932,6 +3271,57 @@ test('provider model list normalizes official /models responses', async () => {
   }
 });
 
+test('provider model list normalizes model rows without source map/filter allocation', async () => {
+  const originalFetch = globalThis.fetch;
+  const originalMap = Array.prototype.map;
+  const originalFilter = Array.prototype.filter;
+  try {
+    globalThis.fetch = async () => {
+      const response = jsonResponse({
+        data: [
+          { id: 'zeta-model', owned_by: 'vendor', source_marker: 'model-list-source' },
+          { name: 'alpha-model', displayName: 'Alpha Model', publisher: 'custom', source_marker: 'model-list-source' },
+          { model: '', source_marker: 'model-list-source' },
+          null
+        ]
+      });
+
+      Array.prototype.map = function map(callback, ...args) {
+        if (this[0]?.source_marker === 'model-list-source') {
+          throw new Error('model list normalization should not map source rows');
+        }
+        return originalMap.call(this, callback, ...args);
+      };
+      Array.prototype.filter = function filter(callback, ...args) {
+        if (this[0]?.source_marker === 'model-list-source') {
+          throw new Error('model list normalization should not filter source rows');
+        }
+        return originalFilter.call(this, callback, ...args);
+      };
+
+      return response;
+    };
+
+    const models = await listProviderModels({
+      providerType: 'custom',
+      gatewayName: 'Source Loop Models',
+      baseUrl: 'https://source-loop-models.example/v1',
+      model: 'alpha-model',
+      apiKey: 'sk-source-loop',
+      extraBody: {}
+    });
+
+    assert.deepEqual(models, [
+      { id: 'alpha-model', label: 'Alpha Model', ownedBy: 'custom' },
+      { id: 'zeta-model', label: 'zeta-model', ownedBy: 'vendor' }
+    ]);
+  } finally {
+    globalThis.fetch = originalFetch;
+    Array.prototype.map = originalMap;
+    Array.prototype.filter = originalFilter;
+  }
+});
+
 test('provider model list treats null options as defaults', async () => {
   const originalFetch = globalThis.fetch;
   let calls = 0;
@@ -2994,6 +3384,114 @@ test('provider model cache refreshes when API key changes', async () => {
     assert.deepEqual(calls, ['Bearer sk-first', 'Bearer sk-second']);
   } finally {
     globalThis.fetch = originalFetch;
+  }
+});
+
+test('provider model cache normalizes nested extra body without array map/reduce allocation', async () => {
+  const originalFetch = globalThis.fetch;
+  const originalMap = Array.prototype.map;
+  const originalReduce = Array.prototype.reduce;
+  let calls = 0;
+  try {
+    Array.prototype.map = function map(callback, ...args) {
+      if (this[0]?.source_marker === 'extra-body-array') {
+        throw new Error('extra body array normalization should not map nested values');
+      }
+      return originalMap.call(this, callback, ...args);
+    };
+    Array.prototype.reduce = function reduce(callback, ...args) {
+      if (this.includes('alpha') && this.includes('zeta')) {
+        throw new Error('extra body object normalization should not reduce sorted keys');
+      }
+      return originalReduce.call(this, callback, ...args);
+    };
+    globalThis.fetch = async () => {
+      calls += 1;
+      return jsonResponse({
+        data: [
+          { id: 'extra-body-model' }
+        ]
+      });
+    };
+
+    const settings = {
+      providerType: 'custom',
+      gatewayName: 'Extra Body Cache Test',
+      baseUrl: 'https://extra-body-cache.example/v1',
+      model: 'extra-body-model',
+      apiKey: 'sk-extra-body-cache',
+      extraBody: {
+        zeta: [{ source_marker: 'extra-body-array', beta: 2, alpha: 1 }],
+        alpha: { zeta: true, alpha: true }
+      }
+    };
+
+    const first = await listProviderModels(settings);
+    const cached = await listProviderModels({
+      ...settings,
+      extraBody: {
+        alpha: { alpha: true, zeta: true },
+        zeta: [{ alpha: 1, beta: 2, source_marker: 'extra-body-array' }]
+      }
+    });
+
+    assert.equal(calls, 1);
+    assert.deepEqual(first, [
+      { id: 'extra-body-model', label: 'extra-body-model', ownedBy: '' }
+    ]);
+    assert.deepEqual(cached, first);
+  } finally {
+    globalThis.fetch = originalFetch;
+    Array.prototype.map = originalMap;
+    Array.prototype.reduce = originalReduce;
+  }
+});
+
+test('provider model cache returns cloned rows without array map allocation', async () => {
+  const originalFetch = globalThis.fetch;
+  const originalMap = Array.prototype.map;
+  let calls = 0;
+  try {
+    globalThis.fetch = async () => {
+      calls += 1;
+      const response = jsonResponse({
+        data: [
+          { id: 'clone-source-model', owned_by: 'provider' }
+        ]
+      });
+
+      Array.prototype.map = function map(callback, ...args) {
+        if (this[0]?.id === 'clone-source-model') {
+          throw new Error('model cache cloning should not map cached rows');
+        }
+        return originalMap.call(this, callback, ...args);
+      };
+
+      return response;
+    };
+
+    const settings = {
+      providerType: 'custom',
+      gatewayName: 'Clone Cache Test',
+      baseUrl: 'https://clone-cache.example/v1',
+      model: 'clone-source-model',
+      apiKey: 'sk-clone-cache',
+      extraBody: {}
+    };
+
+    const first = await listProviderModels(settings);
+    first[0].id = 'mutated-model';
+    first[0].label = 'Mutated Model';
+
+    const cached = await listProviderModels(settings);
+
+    assert.equal(calls, 1);
+    assert.deepEqual(cached, [
+      { id: 'clone-source-model', label: 'clone-source-model', ownedBy: 'provider' }
+    ]);
+  } finally {
+    globalThis.fetch = originalFetch;
+    Array.prototype.map = originalMap;
   }
 });
 
@@ -3586,6 +4084,113 @@ test('Anthropic tool completion maps OpenAI tool schema to native tool_use loop'
   }
 });
 
+test('Anthropic tool completion skips malformed tool rows without source map/filter allocation', async () => {
+  const originalFetch = globalThis.fetch;
+  const originalMap = Array.prototype.map;
+  const originalFilter = Array.prototype.filter;
+  const requests = [];
+  const executed = [];
+  try {
+    Array.prototype.map = function map(callback, ...args) {
+      if (this[0]?.role === 'user' && this[0]?.content === 'set it') {
+        throw new Error('Anthropic tool completion should not map converted messages');
+      }
+      for (let index = 0; index < this.length; index += 1) {
+        if (
+          this[index]?.source_marker === 'anthropic-tool-schema' ||
+          this[index]?.source_marker === 'anthropic-tool-use'
+        ) {
+          throw new Error('Anthropic tool normalization should not map source rows');
+        }
+      }
+      return originalMap.call(this, callback, ...args);
+    };
+    Array.prototype.filter = function filter(callback, ...args) {
+      for (let index = 0; index < this.length; index += 1) {
+        if (
+          this[index]?.source_marker === 'anthropic-tool-schema' ||
+          this[index]?.source_marker === 'anthropic-tool-use'
+        ) {
+          throw new Error('Anthropic tool normalization should not filter source rows');
+        }
+      }
+      return originalFilter.call(this, callback, ...args);
+    };
+    globalThis.fetch = async (_url, request = {}) => {
+      const body = JSON.parse(request.body);
+      requests.push(body);
+      if (requests.length === 1) {
+        return jsonResponse({
+          content: [
+            { type: 'text', text: 'working' },
+            { type: 'tool_use', source_marker: 'anthropic-tool-use', input: { value: 1 } },
+            {
+              type: 'tool_use',
+              source_marker: 'anthropic-tool-use',
+              id: 'toolu_direct',
+              name: 'set_value',
+              input: '{"value":7}'
+            },
+            null
+          ],
+          usage: { input_tokens: 1, output_tokens: 2 }
+        });
+      }
+      return jsonResponse({
+        content: [
+          { type: 'text', text: 'done' }
+        ],
+        usage: { input_tokens: 2, output_tokens: 1 }
+      });
+    };
+
+    const result = await runToolCompletion(
+      {
+        providerType: 'anthropic',
+        gatewayName: 'Anthropic',
+        baseUrl: 'https://api.anthropic.com/v1',
+        model: 'claude-sonnet-4-6',
+        apiKey: 'sk-ant-test',
+        supportsReasoning: true,
+        extraBody: {}
+      },
+      [{ role: 'user', content: 'set it' }],
+      [
+        null,
+        { source_marker: 'anthropic-tool-schema' },
+        {
+          source_marker: 'anthropic-tool-schema',
+          type: 'function',
+          function: {
+            name: 'set_value',
+            description: 'set a value',
+            parameters: {
+              type: 'object',
+              properties: { value: { type: 'number' } },
+              required: ['value']
+            }
+          }
+        }
+      ],
+      async (name, args, call) => {
+        executed.push({ name, args, id: call.id });
+        return { ok: true, value: args.value };
+      },
+      { thinkingEnabled: true, maxRounds: 2 }
+    );
+
+    assert.equal(requests[0].tools.length, 1);
+    assert.equal(requests[0].tools[0].name, 'set_value');
+    assert.deepEqual(executed, [{ name: 'set_value', args: { value: 7 }, id: 'toolu_direct' }]);
+    assert.equal(requests[1].messages.at(-1).content[0].tool_use_id, 'toolu_direct');
+    assert.equal(result.toolCalls.length, 1);
+  } finally {
+    globalThis.fetch = originalFetch;
+    Array.prototype.map = originalMap;
+    Array.prototype.filter = originalFilter;
+  }
+});
+
 test('runToolCompletion treats null options as defaults', async () => {
   const originalFetch = globalThis.fetch;
   const requests = [];
@@ -3633,6 +4238,114 @@ test('runToolCompletion treats null options as defaults', async () => {
     assert.equal(requests[0].tools[0].function.name, 'set_value');
   } finally {
     globalThis.fetch = originalFetch;
+  }
+});
+
+test('runToolCompletion skips malformed tool calls without source map/filter allocation', async () => {
+  const originalFetch = globalThis.fetch;
+  const originalMap = Array.prototype.map;
+  const originalFilter = Array.prototype.filter;
+  const executed = [];
+  let requests = 0;
+  try {
+    Array.prototype.map = function map(callback, ...args) {
+      if (this.source_marker === 'tool-message-source') {
+        throw new Error('tool completion should not map source messages');
+      }
+      for (let index = 0; index < this.length; index += 1) {
+        if (this[index]?.source_marker === 'tool-call-source') {
+          throw new Error('tool call normalization should not map source calls');
+        }
+      }
+      if (this[0]?.raw?.id === 'call-valid') {
+        throw new Error('raw tool calls should not be collected with array map');
+      }
+      return originalMap.call(this, callback, ...args);
+    };
+    Array.prototype.filter = function filter(callback, ...args) {
+      for (let index = 0; index < this.length; index += 1) {
+        if (this[index]?.source_marker === 'tool-call-source') {
+          throw new Error('tool call normalization should not filter source calls');
+        }
+      }
+      return originalFilter.call(this, callback, ...args);
+    };
+
+    globalThis.fetch = async () => {
+      requests += 1;
+      return jsonResponse({
+        choices: [
+          {
+            message: {
+              role: 'assistant',
+              content: null,
+              tool_calls: [
+                {
+                  source_marker: 'tool-call-source',
+                  id: 'call-valid',
+                  type: 'function',
+                  function: {
+                    name: 'set_value',
+                    arguments: JSON.stringify({ value: 7 })
+                  }
+                },
+                {
+                  source_marker: 'tool-call-source',
+                  id: 'call-missing-name',
+                  type: 'function',
+                  function: {
+                    arguments: '{}'
+                  }
+                },
+                null
+              ]
+            }
+          }
+        ]
+      });
+    };
+
+    const sourceMessages = [{ role: 'user', content: 'set a value' }];
+    Object.defineProperty(sourceMessages, 'source_marker', { value: 'tool-message-source' });
+    const result = await runToolCompletion(
+      {
+        providerType: 'custom',
+        gatewayName: 'Custom',
+        baseUrl: 'https://provider.test',
+        model: 'custom-model',
+        apiKey: 'sk-test',
+        supportsReasoning: false,
+        extraBody: {}
+      },
+      sourceMessages,
+      [
+        {
+          type: 'function',
+          function: {
+            name: 'set_value',
+            description: 'set a value',
+            parameters: {
+              type: 'object',
+              properties: { value: { type: 'number' } }
+            }
+          }
+        }
+      ],
+      async (name, args, call) => {
+        executed.push({ name, args, id: call.id });
+        return { stop: true };
+      },
+      { maxRounds: 1 }
+    );
+
+    assert.equal(requests, 1);
+    assert.deepEqual(executed, [{ name: 'set_value', args: { value: 7 }, id: 'call-valid' }]);
+    assert.equal(result.toolCalls.length, 1);
+    assert.deepEqual(result.process[0].tools[0].arguments, { value: 7 });
+  } finally {
+    globalThis.fetch = originalFetch;
+    Array.prototype.map = originalMap;
+    Array.prototype.filter = originalFilter;
   }
 });
 
@@ -4343,11 +5056,65 @@ test('world book trigger matching ignores non-string scan text items', () => {
 
   const objectMatches = matchWorldBookEntries(database, character.id, [{ maybe: 'text' }]);
   const symbolMatches = matchWorldBookEntries(database, character.id, [Symbol('symbol-trigger')]);
-  const stringMatches = matchWorldBookEntries(database, character.id, ['ignored', 'symbol-trigger']);
+  let stringMatches;
+  const originalFilter = Array.prototype.filter;
+  const stringScanTexts = ['ignored', 'symbol-trigger'];
+  Object.defineProperty(stringScanTexts, 'source_marker', { value: 'world-book-scan-text-source' });
+  try {
+    Array.prototype.filter = function filter(callback, ...args) {
+      if (this.source_marker === 'world-book-scan-text-source') {
+        throw new Error('world book scan text normalization should not filter source text arrays');
+      }
+      return originalFilter.call(this, callback, ...args);
+    };
+    stringMatches = matchWorldBookEntries(database, character.id, stringScanTexts);
+  } finally {
+    Array.prototype.filter = originalFilter;
+  }
 
   assert.deepEqual(objectMatches.map((entry) => entry.name), []);
   assert.deepEqual(symbolMatches.map((entry) => entry.name), []);
   assert.deepEqual(stringMatches.map((entry) => entry.name), ['Symbol text']);
+});
+
+test('world book key matching scans primary and secondary keys without split allocation', () => {
+  const database = createAppDatabase(':memory:');
+  database.prepare('INSERT INTO users (id, username, password_hash, created_at) VALUES (?, ?, ?, ?)').run(
+    'user-1', 'tester', 'hash', new Date().toISOString()
+  );
+  const character = createCharacter(database, 'user-1', { name: 'Key Scan Loop', visibility: 'private' });
+  const book = createWorldBook(database, 'user-1', { name: 'Key Scan Loop Book' });
+  linkWorldBookToCharacter(database, book.id, character.id);
+  createEntry(database, 'user-1', book.id, {
+    name: 'Loop scanned keys',
+    triggerKeys: 'alpha-trigger, beta-trigger',
+    content: 'loop scanned key content',
+    enabled: true,
+    selective: true,
+    selectiveLogic: 0,
+    keysSecondary: 'focus-key, other-key'
+  });
+
+  const originalSplit = String.prototype.split;
+  let matches;
+  let noSecondary;
+  try {
+    String.prototype.split = function split(separator, ...args) {
+      const value = String(this);
+      if (separator === ',' && (value.includes('alpha-trigger') || value.includes('focus-key'))) {
+        throw new Error('world book key matching should not split source key lists');
+      }
+      return originalSplit.call(this, separator, ...args);
+    };
+
+    matches = matchWorldBookEntries(database, character.id, 'beta-trigger with focus-key');
+    noSecondary = matchWorldBookEntries(database, character.id, 'beta-trigger without secondary');
+  } finally {
+    String.prototype.split = originalSplit;
+  }
+
+  assert.deepEqual(matches.map((entry) => entry.name), ['Loop scanned keys']);
+  assert.deepEqual(noSecondary.map((entry) => entry.name), []);
 });
 
 test('world book scanDepth override does not scan all history for invalid values', () => {
@@ -4382,15 +5149,31 @@ test('world book context treats null entries as empty', () => {
 });
 
 test('world book context preserves position and depth order in one pass', () => {
-  const context = buildWorldBookContext([
-    { position: 'after_char', depth: 2, content: 'after-2' },
-    { position: 'before_char', depth: 3, content: 'before-3' },
-    { position: 'at_depth', depth: 0, content: 'separate-message' },
-    { position: 'at_start', depth: 5, content: 'start-5' },
-    { position: 'before_char', depth: 1, content: 'before-1' },
-    { position: 'at_start', depth: 1, content: 'start-1' },
-    { position: 'after_char', depth: 1, content: 'after-1' }
-  ]);
+  const entries = [
+    { position: 'after_char', depth: 2, content: 'after-2', source_marker: 'world-book-context-entry' },
+    { position: 'before_char', depth: 3, content: 'before-3', source_marker: 'world-book-context-entry' },
+    { position: 'at_depth', depth: 0, content: 'separate-message', source_marker: 'world-book-context-entry' },
+    { position: 'at_start', depth: 5, content: 'start-5', source_marker: 'world-book-context-entry' },
+    { position: 'before_char', depth: 1, content: 'before-1', source_marker: 'world-book-context-entry' },
+    { position: 'at_start', depth: 1, content: 'start-1', source_marker: 'world-book-context-entry' },
+    { position: 'after_char', depth: 1, content: 'after-1', source_marker: 'world-book-context-entry' }
+  ];
+  const originalMap = Array.prototype.map;
+  let context;
+  try {
+    Array.prototype.map = function map(callback, ...args) {
+      for (let index = 0; index < this.length; index += 1) {
+        if (this[index]?.source_marker === 'world-book-context-entry') {
+          throw new Error('world book context assembly should not map matched context entries');
+        }
+      }
+      return originalMap.call(this, callback, ...args);
+    };
+
+    context = buildWorldBookContext(entries);
+  } finally {
+    Array.prototype.map = originalMap;
+  }
 
   assert.equal(context, ['start-1', 'start-5', 'before-1', 'before-3', 'after-1', 'after-2'].join('\n\n'));
 });
@@ -4401,6 +5184,55 @@ test('world book at_depth injection treats null entries as empty', () => {
 
   assert.equal(result, messages);
   assert.deepEqual(messages, [{ role: 'user', content: 'hello' }]);
+});
+
+test('world book at_depth injection scans source entries without filter or iterator copy', () => {
+  const messages = [
+    { role: 'system', content: 'system' },
+    { role: 'user', content: 'first' },
+    { role: 'assistant', content: 'reply' },
+    { role: 'user', content: 'latest' }
+  ];
+  const entries = [
+    { position: 'before_char', depth: 9, content: 'ignored' },
+    { position: 'at_depth', depth: 1, role: 1, content: 'depth-one' },
+    { position: 'at_depth', depth: 2, role: 2, content: 'depth-two' }
+  ];
+  Object.defineProperty(entries, 'source_marker', { value: 'world-book-at-depth-source' });
+  const originalFilter = Array.prototype.filter;
+  const iteratorDescriptor = Object.getOwnPropertyDescriptor(entries, Symbol.iterator);
+  try {
+    Array.prototype.filter = function filter(callback, ...args) {
+      if (this.source_marker === 'world-book-at-depth-source') {
+        throw new Error('world book at_depth injection should not filter source entries');
+      }
+      return originalFilter.call(this, callback, ...args);
+    };
+    Object.defineProperty(entries, Symbol.iterator, {
+      configurable: true,
+      value() {
+        throw new Error('world book at_depth injection should not iterator-copy source entries');
+      }
+    });
+
+    assert.equal(injectAtDepthEntries(messages, entries), messages);
+  } finally {
+    Array.prototype.filter = originalFilter;
+    if (iteratorDescriptor) {
+      Object.defineProperty(entries, Symbol.iterator, iteratorDescriptor);
+    } else {
+      delete entries[Symbol.iterator];
+    }
+  }
+
+  assert.deepEqual(messages, [
+    { role: 'system', content: 'system' },
+    { role: 'user', content: 'first' },
+    { role: 'assistant', content: 'depth-two' },
+    { role: 'assistant', content: 'reply' },
+    { role: 'user', content: 'depth-one' },
+    { role: 'user', content: 'latest' }
+  ]);
 });
 
 test('world book name validation rejects empty or too long names', () => {
@@ -4857,6 +5689,32 @@ test('character tags sync replaces old tags', () => {
   // Clear all tags
   setCharacterTags(database, userId, character.id, []);
   assert.deepEqual(getCharacterTagNames(database, character.id), []);
+});
+
+test('setCharacterTags stops coercing tag names after the unique tag cap', () => {
+  const database = createAppDatabase(':memory:');
+  const userId = 'tag-cap-user';
+  database.prepare('INSERT INTO users (id, username, password_hash, created_at) VALUES (?, ?, ?, ?)').run(
+    userId, 'tagcap', 'hash', new Date().toISOString()
+  );
+  const character = createCharacter(database, userId, { name: 'Tag Cap' });
+  const tagNames = [' tag-00 ', 'tag-00', ' '];
+  const expectedNames = ['tag-00'];
+  for (let index = 1; index < 12; index += 1) {
+    const name = `tag-${String(index).padStart(2, '0')}`;
+    tagNames.push(` ${name} `);
+    expectedNames.push(name);
+  }
+  tagNames.push({
+    toString() {
+      throw new Error('trailing tag should not be coerced');
+    }
+  });
+
+  setCharacterTags(database, userId, character.id, tagNames);
+
+  assert.deepEqual(getCharacterTagNames(database, character.id), expectedNames);
+  assert.deepEqual(listTags(database, userId).map((tag) => tag.name), expectedNames);
 });
 
 test('setCharacterTags works inside an existing transaction', () => {
@@ -6603,6 +7461,111 @@ test('chat prompt injects NPC memories and behaviors when NPC agent is active', 
   }
 });
 
+test('NPC detail mutation routes are scoped to the route NPC name', async () => {
+  const database = createAppDatabase(':memory:');
+  const userId = 'npc-route-scope-user';
+  const timestamp = '2026-01-01T00:00:00.000Z';
+  database.prepare('INSERT INTO users (id, username, password_hash, created_at) VALUES (?, ?, ?, ?)').run(
+    userId, 'npc-route-scope', 'hash', timestamp
+  );
+  const character = createCharacter(database, userId, { name: 'NpcRouteScope', visibility: 'private' });
+  const conversationId = 'npc-route-scope-conversation';
+  database.prepare(
+    'INSERT INTO conversations (id, user_id, character_id, title, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)'
+  ).run(conversationId, userId, character.id, 'NPC route scope', timestamp, timestamp);
+  database.prepare(
+    'INSERT INTO npc_memories (id, conversation_id, npc_name, memory_type, content, created_at) VALUES (?, ?, ?, ?, ?, ?)'
+  ).run('npc-route-alice-memory', conversationId, 'Alice', 'event', 'Alice memory', timestamp);
+  database.prepare(
+    'INSERT INTO npc_memories (id, conversation_id, npc_name, memory_type, content, created_at) VALUES (?, ?, ?, ?, ?, ?)'
+  ).run('npc-route-bob-memory', conversationId, 'Bob', 'event', 'Bob memory', timestamp);
+  database.prepare(
+    'INSERT INTO npc_behaviors (id, conversation_id, npc_name, behavior_type, trigger_condition, action, priority, enabled, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
+  ).run('npc-route-alice-behavior', conversationId, 'Alice', 'reaction', '', 'Alice action', 0, 1, timestamp);
+  database.prepare(
+    'INSERT INTO npc_behaviors (id, conversation_id, npc_name, behavior_type, trigger_condition, action, priority, enabled, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
+  ).run('npc-route-bob-behavior', conversationId, 'Bob', 'reaction', '', 'Bob action', 0, 1, timestamp);
+
+  const app = express();
+  app.use(express.json());
+  app.use('/api/conversations', createConversationsRouter({
+    db: database,
+    requireAuth: (request, _response, next) => {
+      request.auth = { user: { id: userId, username: 'npc-route-scope' } };
+      next();
+    },
+    asyncRoute: (handler) => (request, response, next) => Promise.resolve(handler(request, response, next)).catch(next),
+    newId,
+    nowIso: () => timestamp,
+    withEtag: (_request, response, data) => response.json(data),
+    withListCache: (_request, response, data) => response.json(data),
+    providerWithSecret: (row) => row,
+    getProviderRow: () => null,
+    hasUsableProvider
+  }));
+  app.use((error, _request, response, _next) => {
+    response.status(500).json({ error: error.message });
+  });
+
+  const server = await new Promise((resolve) => {
+    const listener = app.listen(0, () => resolve(listener));
+  });
+  try {
+    const baseUrl = `http://127.0.0.1:${server.address().port}`;
+    const alicePath = `${baseUrl}/api/conversations/${conversationId}/npcs/Alice`;
+    const bobPath = `${baseUrl}/api/conversations/${conversationId}/npcs/Bob`;
+
+    const wrongMemoryDelete = await fetch(`${bobPath}/memories/npc-route-alice-memory`, { method: 'DELETE' });
+    assert.equal(wrongMemoryDelete.status, 404);
+    assert.equal(
+      database.prepare('SELECT COUNT(*) AS count FROM npc_memories WHERE id = ? AND npc_name = ?').get('npc-route-alice-memory', 'Alice').count,
+      1
+    );
+
+    const wrongBehaviorUpdate = await fetch(`${bobPath}/behaviors/npc-route-alice-behavior`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ enabled: false })
+    });
+    assert.equal(wrongBehaviorUpdate.status, 404);
+    assert.equal(
+      database.prepare('SELECT enabled FROM npc_behaviors WHERE id = ? AND npc_name = ?').get('npc-route-alice-behavior', 'Alice').enabled,
+      1
+    );
+
+    const wrongBehaviorDelete = await fetch(`${bobPath}/behaviors/npc-route-alice-behavior`, { method: 'DELETE' });
+    assert.equal(wrongBehaviorDelete.status, 404);
+    assert.equal(
+      database.prepare('SELECT COUNT(*) AS count FROM npc_behaviors WHERE id = ? AND npc_name = ?').get('npc-route-alice-behavior', 'Alice').count,
+      1
+    );
+
+    const ownerMemoryDelete = await fetch(`${alicePath}/memories/npc-route-alice-memory`, { method: 'DELETE' });
+    assert.equal(ownerMemoryDelete.status, 200);
+    assert.equal(
+      database.prepare('SELECT COUNT(*) AS count FROM npc_memories WHERE id = ?').get('npc-route-alice-memory').count,
+      0
+    );
+
+    const ownerBehaviorDelete = await fetch(`${alicePath}/behaviors/npc-route-alice-behavior`, { method: 'DELETE' });
+    assert.equal(ownerBehaviorDelete.status, 200);
+    assert.equal(
+      database.prepare('SELECT COUNT(*) AS count FROM npc_behaviors WHERE id = ?').get('npc-route-alice-behavior').count,
+      0
+    );
+    assert.equal(
+      database.prepare('SELECT COUNT(*) AS count FROM npc_memories WHERE id = ? AND npc_name = ?').get('npc-route-bob-memory', 'Bob').count,
+      1
+    );
+    assert.equal(
+      database.prepare('SELECT COUNT(*) AS count FROM npc_behaviors WHERE id = ? AND npc_name = ?').get('npc-route-bob-behavior', 'Bob').count,
+      1
+    );
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
 test('branchConversation works inside an existing transaction', () => {
   const database = createAppDatabase(':memory:');
   const { userId, conversationId } = createTestSetup(database);
@@ -7048,7 +8011,7 @@ test('character talents can be listed and deleted', () => {
   assert.equal(talents[0].characterId, character.id);
 
   // Delete one talent
-  assert.equal(deleteCharacterTalent(database, r1.id), true);
+  assert.equal(deleteCharacterTalent(database, r1.id, character.id), true);
   assert.equal(getCharacterTalents(database, character.id).length, 1);
 
   // Delete all talents
@@ -7059,6 +8022,91 @@ test('character talents can be listed and deleted', () => {
 test('delete character talent returns false for nonexistent', () => {
   const database = createAppDatabase(':memory:');
   assert.equal(deleteCharacterTalent(database, 'nonexistent'), false);
+});
+
+test('delete character talent respects optional character scope', () => {
+  const database = createAppDatabase(':memory:');
+  const userId = 'ct-scope-user';
+  database.prepare('INSERT INTO users (id, username, password_hash, created_at) VALUES (?, ?, ?, ?)').run(
+    userId, 'ct-scope-tester', 'hash', new Date().toISOString()
+  );
+  const firstCharacter = createCharacter(database, userId, { name: 'First Talent Owner', visibility: 'private' });
+  const secondCharacter = createCharacter(database, userId, { name: 'Second Talent Owner', visibility: 'private' });
+  const pool = createTalentPool(database, {
+    name: '作用域测试池',
+    talents: [{ name: '作用域天赋', rarity: 'common' }]
+  });
+  const firstTalent = rollTalent(database, firstCharacter.id, pool.id);
+
+  assert.equal(deleteCharacterTalent(database, firstTalent.id, secondCharacter.id), false);
+  assert.equal(getCharacterTalents(database, firstCharacter.id).length, 1);
+  assert.equal(getCharacterTalents(database, secondCharacter.id).length, 0);
+
+  assert.equal(deleteCharacterTalent(database, firstTalent.id, firstCharacter.id), true);
+  assert.equal(getCharacterTalents(database, firstCharacter.id).length, 0);
+});
+
+test('character talent delete route only deletes talents for the route character', async () => {
+  const database = createAppDatabase(':memory:');
+  const userId = 'talent-route-user';
+  database.prepare('INSERT INTO users (id, username, password_hash, created_at) VALUES (?, ?, ?, ?)').run(
+    userId, 'talentroute', 'hash', new Date().toISOString()
+  );
+  const firstCharacter = createCharacter(database, userId, { name: 'Route Talent One', visibility: 'private' });
+  const secondCharacter = createCharacter(database, userId, { name: 'Route Talent Two', visibility: 'private' });
+  const pool = createTalentPool(database, {
+    name: '路由作用域测试池',
+    talents: [{ name: '路由天赋', rarity: 'common' }]
+  });
+  const firstTalent = rollTalent(database, firstCharacter.id, pool.id);
+  rollTalent(database, secondCharacter.id, pool.id);
+
+  const app = express();
+  app.use(express.json());
+  app.use('/api/characters', createCharactersRouter({
+    db: database,
+    requireAuth: (request, _response, next) => {
+      request.auth = { user: { id: userId, username: 'talentroute' } };
+      next();
+    },
+    asyncRoute: (handler) => (request, response, next) => Promise.resolve(handler(request, response, next)).catch(next),
+    withCharacterTags: (character) => character,
+    withWorldBookId: (character) => character,
+    hasUsableProvider: () => true,
+    getChatProviderSettings: () => ({ ok: false, error: 'unused' }),
+    withEtag: (_request, response, data) => response.json(data),
+    withListCache: (_request, response, data) => response.json(data),
+    nowIso: () => new Date().toISOString()
+  }));
+  app.use((error, _request, response, _next) => {
+    response.status(500).json({ error: error.message });
+  });
+
+  const server = await new Promise((resolve) => {
+    const listener = app.listen(0, () => resolve(listener));
+  });
+  try {
+    const baseUrl = `http://127.0.0.1:${server.address().port}`;
+    const wrongCharacterResponse = await fetch(
+      `${baseUrl}/api/characters/${secondCharacter.id}/talents/${firstTalent.id}`,
+      { method: 'DELETE' }
+    );
+
+    assert.equal(wrongCharacterResponse.status, 404);
+    assert.equal(getCharacterTalents(database, firstCharacter.id).length, 1);
+    assert.equal(getCharacterTalents(database, secondCharacter.id).length, 1);
+
+    const ownerResponse = await fetch(
+      `${baseUrl}/api/characters/${firstCharacter.id}/talents/${firstTalent.id}`,
+      { method: 'DELETE' }
+    );
+
+    assert.equal(ownerResponse.status, 200);
+    assert.equal(getCharacterTalents(database, firstCharacter.id).length, 0);
+    assert.equal(getCharacterTalents(database, secondCharacter.id).length, 1);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
 });
 
 // ── Talent System Prompt ──
@@ -7283,6 +8331,30 @@ test('saves deleteSave removes a save', () => {
   assert.equal(deleteSave(database, userId, 'nonexistent-id'), false);
 });
 
+test('saves updateSave and deleteSave respect optional conversation scope', () => {
+  const database = createAppDatabase(':memory:');
+  const { userId, character, conversationId, timestamp } = createTestSetup(database);
+  const otherConversationId = newId();
+
+  database.prepare(
+    'INSERT INTO conversations (id, user_id, character_id, title, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)'
+  ).run(otherConversationId, userId, character.id, 'Other Save Mutation Conversation', timestamp, timestamp);
+
+  insertMessage(database, userId, conversationId, 'user', 'Save mutation scope source', timestamp);
+  const save = createSave(database, userId, conversationId, { name: 'Scoped mutation save' });
+
+  assert.equal(updateSave(database, userId, save.id, { name: 'Wrong rename' }, otherConversationId), null);
+  assert.equal(getSave(database, userId, save.id).name, 'Scoped mutation save');
+  assert.equal(deleteSave(database, userId, save.id, otherConversationId), false);
+  assert.equal(listSaves(database, userId, conversationId).length, 1);
+
+  const updated = updateSave(database, userId, save.id, { name: 'Correct rename' }, conversationId);
+  assert.ok(updated);
+  assert.equal(updated.name, 'Correct rename');
+  assert.equal(deleteSave(database, userId, save.id, conversationId), true);
+  assert.equal(listSaves(database, userId, conversationId).length, 0);
+});
+
 test('saves loadSave restores messages to saved state', () => {
   const database = createAppDatabase(':memory:');
   const { userId, conversationId, timestamp } = createTestSetup(database);
@@ -7317,6 +8389,176 @@ test('saves loadSave restores messages to saved state', () => {
   assert.equal(afterLoad.length, 2);
   assert.equal(afterLoad[0].content, '第一条消息');
   assert.equal(afterLoad[1].content, '第一条回复');
+});
+
+test('saves loadSave respects optional conversation scope', () => {
+  const database = createAppDatabase(':memory:');
+  const { userId, character, conversationId, timestamp } = createTestSetup(database);
+  const otherConversationId = newId();
+
+  database.prepare(
+    'INSERT INTO conversations (id, user_id, character_id, title, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)'
+  ).run(otherConversationId, userId, character.id, 'Other Save Conversation', timestamp, timestamp);
+
+  insertMessage(database, userId, conversationId, 'user', 'Saved message', timestamp);
+  const save = createSave(database, userId, conversationId, { name: 'Scoped save' });
+  insertMessage(database, userId, conversationId, 'assistant', 'Current source message', timestamp);
+  insertMessage(database, userId, otherConversationId, 'user', 'Other conversation message', timestamp);
+
+  assert.equal(loadSave(database, userId, save.id, otherConversationId), null);
+
+  const sourceMessages = database
+    .prepare('SELECT content FROM messages WHERE user_id = ? AND conversation_id = ? ORDER BY created_at ASC, rowid ASC')
+    .all(userId, conversationId)
+    .map((row) => row.content);
+  const otherMessages = database
+    .prepare('SELECT content FROM messages WHERE user_id = ? AND conversation_id = ? ORDER BY created_at ASC, rowid ASC')
+    .all(userId, otherConversationId)
+    .map((row) => row.content);
+
+  assert.deepEqual(sourceMessages, ['Saved message', 'Current source message']);
+  assert.deepEqual(otherMessages, ['Other conversation message']);
+  assert.equal(loadSave(database, userId, save.id, conversationId)?.messageCount, 1);
+});
+
+test('save load route respects requested conversation scope', async () => {
+  const database = createAppDatabase(':memory:');
+  const { userId, character, conversationId, timestamp } = createTestSetup(database);
+  const otherConversationId = newId();
+
+  database.prepare(
+    'INSERT INTO conversations (id, user_id, character_id, title, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)'
+  ).run(otherConversationId, userId, character.id, 'Other Save Route Conversation', timestamp, timestamp);
+
+  insertMessage(database, userId, conversationId, 'user', 'Route saved message', timestamp);
+  const save = createSave(database, userId, conversationId, { name: 'Route scoped save' });
+  insertMessage(database, userId, conversationId, 'assistant', 'Route current source message', timestamp);
+
+  const app = express();
+  app.use(express.json());
+  app.use('/api/saves', createSavesRouter({
+    db: database,
+    requireAuth: (request, _response, next) => {
+      request.auth = { user: { id: userId, username: 'saveroute' } };
+      next();
+    }
+  }));
+
+  const server = await new Promise((resolve) => {
+    const listener = app.listen(0, () => resolve(listener));
+  });
+
+  try {
+    const baseUrl = `http://127.0.0.1:${server.address().port}`;
+    const missingScopeResponse = await fetch(`${baseUrl}/api/saves/${save.id}/load`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({})
+    });
+    const staleResponse = await fetch(`${baseUrl}/api/saves/${save.id}/load`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ conversationId: otherConversationId })
+    });
+    const afterStaleMessages = database
+      .prepare('SELECT content FROM messages WHERE user_id = ? AND conversation_id = ? ORDER BY created_at ASC, rowid ASC')
+      .all(userId, conversationId)
+      .map((row) => row.content);
+
+    assert.equal(missingScopeResponse.status, 400);
+    assert.equal(staleResponse.status, 404);
+    assert.deepEqual(afterStaleMessages, ['Route saved message', 'Route current source message']);
+
+    const scopedResponse = await fetch(`${baseUrl}/api/saves/${save.id}/load`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ conversationId })
+    });
+    const scopedBody = await scopedResponse.json();
+
+    assert.equal(scopedResponse.status, 200);
+    assert.equal(scopedBody.conversationId, conversationId);
+    assert.equal(scopedBody.messageCount, 1);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
+test('save rename and delete routes respect requested conversation scope', async () => {
+  const database = createAppDatabase(':memory:');
+  const { userId, character, conversationId, timestamp } = createTestSetup(database);
+  const otherConversationId = newId();
+
+  database.prepare(
+    'INSERT INTO conversations (id, user_id, character_id, title, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)'
+  ).run(otherConversationId, userId, character.id, 'Other Save Route Mutation', timestamp, timestamp);
+
+  insertMessage(database, userId, conversationId, 'user', 'Route mutation saved message', timestamp);
+  const save = createSave(database, userId, conversationId, { name: 'Route mutation save' });
+
+  const app = express();
+  app.use(express.json());
+  app.use('/api/saves', createSavesRouter({
+    db: database,
+    requireAuth: (request, _response, next) => {
+      request.auth = { user: { id: userId, username: 'saveroutemutation' } };
+      next();
+    }
+  }));
+
+  const server = await new Promise((resolve) => {
+    const listener = app.listen(0, () => resolve(listener));
+  });
+
+  try {
+    const baseUrl = `http://127.0.0.1:${server.address().port}`;
+    const missingRenameScope = await fetch(`${baseUrl}/api/saves/${save.id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: 'Missing scope rename' })
+    });
+    const staleRename = await fetch(`${baseUrl}/api/saves/${save.id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: 'Wrong route rename', conversationId: otherConversationId })
+    });
+
+    assert.equal(missingRenameScope.status, 400);
+    assert.equal(staleRename.status, 404);
+    assert.equal(getSave(database, userId, save.id).name, 'Route mutation save');
+
+    const scopedRename = await fetch(`${baseUrl}/api/saves/${save.id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: 'Right route rename', conversationId })
+    });
+    const scopedRenameBody = await scopedRename.json();
+
+    assert.equal(scopedRename.status, 200);
+    assert.equal(scopedRenameBody.name, 'Right route rename');
+
+    const staleDelete = await fetch(`${baseUrl}/api/saves/${save.id}`, {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ conversationId: otherConversationId })
+    });
+    assert.equal(staleDelete.status, 404);
+    assert.equal(getSave(database, userId, save.id).name, 'Right route rename');
+
+    const missingDeleteScope = await fetch(`${baseUrl}/api/saves/${save.id}`, { method: 'DELETE' });
+    assert.equal(missingDeleteScope.status, 400);
+
+    const scopedDelete = await fetch(`${baseUrl}/api/saves/${save.id}`, {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ conversationId })
+    });
+
+    assert.equal(scopedDelete.status, 200);
+    assert.equal(getSave(database, userId, save.id), null);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
 });
 
 test('saves loadSave works inside an existing transaction', () => {
@@ -7578,9 +8820,34 @@ test('world book group inclusion keeps only one entry per group', () => {
     groupWeight: 70
   });
 
-  const matches = matchWorldBookEntries(database, character.id, '无关键词');
-  assert.equal(matches.length, 1, 'group inclusion should keep exactly 1 of 3 entries');
-  assert.ok(['内容A', '内容B', '内容C'].includes(matches[0].content));
+  const originalMap = Array.prototype.map;
+  const originalReduce = Array.prototype.reduce;
+  const groupContents = new Set(['内容A', '内容B', '内容C']);
+  try {
+    Array.prototype.map = function map(callback, ...args) {
+      for (let index = 0; index < this.length; index += 1) {
+        if (this[index]?.world_book_id === book.id || groupContents.has(this[index]?.content)) {
+          throw new Error('world book entry ids, index, and group weights should not be built with array map');
+        }
+      }
+      return originalMap.call(this, callback, ...args);
+    };
+    Array.prototype.reduce = function reduce(callback, ...args) {
+      for (let index = 0; index < this.length; index += 1) {
+        if (groupContents.has(this[index]?.content)) {
+          throw new Error('world book group weights should not be accumulated with array reduce');
+        }
+      }
+      return originalReduce.call(this, callback, ...args);
+    };
+
+    const matches = matchWorldBookEntries(database, character.id, '无关键词');
+    assert.equal(matches.length, 1, 'group inclusion should keep exactly 1 of 3 entries');
+    assert.ok(['内容A', '内容B', '内容C'].includes(matches[0].content));
+  } finally {
+    Array.prototype.map = originalMap;
+    Array.prototype.reduce = originalReduce;
+  }
 });
 
 test('world book recursive activation preserves group inclusion', () => {
@@ -7607,15 +8874,25 @@ test('world book recursive activation preserves group inclusion', () => {
     groupWeight: 1
   });
 
+  const originalFilter = Array.prototype.filter;
   const originalRandom = Math.random;
   Math.random = () => 0;
   try {
+    Array.prototype.filter = function filter(callback, ...args) {
+      for (let index = 0; index < this.length; index += 1) {
+        if (this[index]?.orderIndex !== undefined && this[index]?.name === 'Recursive source') {
+          throw new Error('recursive world book activation should not filter matched entries');
+        }
+      }
+      return originalFilter.call(this, callback, ...args);
+    };
     const matches = matchWorldBookEntries(database, character.id, 'initial prompt');
 
     assert.equal(matches.length, 1);
     assert.equal(matches[0].name, 'Recursive source');
   } finally {
     Math.random = originalRandom;
+    Array.prototype.filter = originalFilter;
   }
 });
 
@@ -7705,27 +8982,40 @@ test('world book at_depth entry role field controls injected message role', () =
 test('saves preview uses last assistant message', () => {
   const database = createAppDatabase(':memory:');
   const { userId, character, conversationId, timestamp } = createTestSetup(database);
+  const originalReverse = Array.prototype.reverse;
+  try {
+    Array.prototype.reverse = function reverse(...args) {
+      for (let index = 0; index < this.length; index += 1) {
+        if (this[index]?.role === 'assistant' && this[index]?.content) {
+          throw new Error('save preview should not reverse assistant message snapshots');
+        }
+      }
+      return originalReverse.apply(this, args);
+    };
 
-  // Only user messages - preview should be message count
-  insertMessage(database, userId, conversationId, 'user', '只有用户消息', timestamp);
-  const save1 = createSave(database, userId, conversationId, { name: '用户消息存档' });
-  const detail1 = getSave(database, userId, save1.id);
-  assert.equal(detail1.preview, '1 条消息');
+    // Only user messages - preview should be message count
+    insertMessage(database, userId, conversationId, 'user', '只有用户消息', timestamp);
+    const save1 = createSave(database, userId, conversationId, { name: '用户消息存档' });
+    const detail1 = getSave(database, userId, save1.id);
+    assert.equal(detail1.preview, '1 条消息');
 
-  // With assistant message - preview should be assistant content
-  insertMessage(database, userId, conversationId, 'assistant', '这是助手的回复内容', timestamp);
-  const save2 = createSave(database, userId, conversationId, { name: '助手消息存档' });
-  const detail2 = getSave(database, userId, save2.id);
-  assert.equal(detail2.preview, '这是助手的回复内容');
+    // With assistant message - preview should be assistant content
+    insertMessage(database, userId, conversationId, 'assistant', '这是助手的回复内容', timestamp);
+    const save2 = createSave(database, userId, conversationId, { name: '助手消息存档' });
+    const detail2 = getSave(database, userId, save2.id);
+    assert.equal(detail2.preview, '这是助手的回复内容');
 
-  // Empty conversation - preview should indicate empty
-  const emptyConvId = newId();
-  database.prepare(
-    'INSERT INTO conversations (id, user_id, character_id, title, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)'
-  ).run(emptyConvId, userId, character.id, 'Empty', timestamp, timestamp);
-  const save3 = createSave(database, userId, emptyConvId, { name: '空会话存档' });
-  const detail3 = getSave(database, userId, save3.id);
-  assert.equal(detail3.preview, '空会话');
+    // Empty conversation - preview should indicate empty
+    const emptyConvId = newId();
+    database.prepare(
+      'INSERT INTO conversations (id, user_id, character_id, title, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)'
+    ).run(emptyConvId, userId, character.id, 'Empty', timestamp, timestamp);
+    const save3 = createSave(database, userId, emptyConvId, { name: '空会话存档' });
+    const detail3 = getSave(database, userId, save3.id);
+    assert.equal(detail3.preview, '空会话');
+  } finally {
+    Array.prototype.reverse = originalReverse;
+  }
 });
 
 // ── World Book Sticky / Cooldown / Delay ──

@@ -1707,6 +1707,7 @@ Manually verify in the browser that scrolling upward during a long AI stream lea
 
 - `frontend/src/composables/chat/useChatConversation.js`
 - `backend/src/tests/frontendChatConversation.test.js`
+- `backend/src/tests/frontendChatHeader.test.js`
 - `automation/backlog.md`
 - `automation/reports/archive/daily-reports-2026-06-08.md`
 
@@ -1891,6 +1892,7 @@ Manually verify in the browser that scrolling upward during a long AI stream lea
 
 - `frontend/src/composables/chat/useChatMessageActions.js`
 - `backend/src/tests/frontendChatMessageActions.test.js`
+- `backend/src/tests/frontendChatMessageItem.test.js`
 - `automation/backlog.md`
 - `automation/reports/archive/daily-reports-2026-06-08.md`
 
@@ -1935,6 +1937,7 @@ Manually verify in the browser that scrolling upward during a long AI stream lea
 
 - `frontend/src/composables/chat/useChatMessageActions.js`
 - `backend/src/tests/frontendChatMessageActions.test.js`
+- `backend/src/tests/frontendChatMessageItem.test.js`
 - `automation/backlog.md`
 - `automation/reports/archive/daily-reports-2026-06-08.md`
 
@@ -2007,6 +2010,49 @@ Manually verify in the browser that scrolling upward during a long AI stream lea
 ## Next Recommended Task
 
 - Continue reviewing chat loaders that still perform per-item network work sequentially or replace reactive state after same-result refreshes.
+
+
+---
+
+### `2026-06-08-chat-swipe-init-stale-route-guard.md`
+
+# 2026-06-08 Chat Swipe Init Stale Route Guard
+
+## Scope
+
+- Continue the UI/state freshness and performance audit.
+- Keep stale route swipe initialization calls from clearing visible swipe controls or invalidating the current conversation's swipe initialization.
+
+## Changed Files
+
+- `frontend/src/composables/chat/useChatMessageActions.js`
+- `backend/src/tests/frontendChatMessageActions.test.js`
+- `automation/backlog.md`
+- `automation/reports/archive/daily-reports-2026-06-08.md`
+
+## What Changed
+
+- Added an active-route guard at the start of `initMessageSwipes()`.
+- Added `isCurrentSwipeInitRun()` and reused it inside per-message swipe init guards.
+- Kept swipe state reset behind the active-route check so stale calls do not clear current `messageSwipeState` or `swipeLoading`.
+- Added regression coverage that seeds existing swipe state, switches the route, calls stale init, and verifies no network requests or state clearing occur.
+
+## Validation
+
+- PASS: `node --test backend\src\tests\frontendChatMessageActions.test.js` (25 tests)
+- PASS: `node --test backend\src\tests\source-hygiene.test.js backend\src\tests\test-hygiene.test.js` (41 tests)
+- PASS: `npm run build` in `frontend`
+- PASS: `node scripts\check-encoding.mjs`
+- PASS: `powershell -ExecutionPolicy Bypass -File scripts\review-gate.ps1`
+
+## Notes
+
+- No secrets were written.
+- Existing unrelated dirty worktree and parallel diagnostic/accessibility/report changes were preserved.
+
+## Next Recommended Task
+
+- Continue auditing branch action follow-up navigation and sidebar refreshes for stale-route completions.
 
 
 ---
@@ -2678,3 +2724,4278 @@ Manually verify in the browser that scrolling upward during a long AI stream lea
 ## Next Recommended Task
 
 - Continue folding local active-conversation mutations from chat appearance and accessory-skill saves through the same reference-preserving helper.
+
+
+---
+
+### `2026-06-08-chat-local-save-conversation-reference-stability.md`
+
+# 2026-06-08 Chat Local Save Conversation Reference Stability
+
+## Scope
+
+- Continue the UI/state freshness and performance audit.
+- Remove remaining direct active-conversation object replacements after local chat appearance and accessory setting saves.
+
+## Changed Files
+
+- `frontend/src/composables/chat/useChatAppearance.js`
+- `frontend/src/composables/chat/useChatAccessory.js`
+- `frontend/src/views/ChatView.vue`
+- `backend/src/tests/frontendChatAppearance.test.js`
+- `backend/src/tests/frontendChatAccessory.test.js`
+- `automation/backlog.md`
+- `automation/reports/archive/daily-reports-2026-06-08.md`
+
+## What Changed
+
+- Injected `setActiveConversationIfChanged` into chat appearance and accessory composables from ChatView.
+- Routed saved appearance and accessory-skill conversation patches through fallback-safe local wrappers instead of direct `conversation.value = { ... }` replacement.
+- Preserved standalone composable behavior by falling back to direct assignment only when no stable setter is supplied.
+- Added focused save-path coverage proving unchanged server responses keep the active conversation reference stable.
+- Added ChatView wiring guards for both appearance and accessory save paths.
+
+## Validation
+
+- PASS: `node --test backend\src\tests\frontendChatAccessory.test.js` (6 tests)
+- PASS: `node --test backend\src\tests\frontendChatAppearance.test.js` (5 tests)
+- PASS: `node --test backend\src\tests\frontendChatConversation.test.js` (15 tests)
+- PASS: `node --test backend\src\tests\source-hygiene.test.js` (31 tests)
+- PASS: `npm run build` in `frontend`
+- PASS: `node scripts\check-encoding.mjs`
+- PASS: `powershell -ExecutionPolicy Bypass -File scripts\review-gate.ps1`
+
+## Notes
+
+- No secrets were written.
+- Existing unrelated dirty worktree and parallel validation-diagnostic/report changes were preserved.
+
+## Next Recommended Task
+
+- Continue auditing remaining chat refresh paths for message-list or accessory-panel no-op replacements that still trigger avoidable UI updates.
+
+
+---
+
+### `2026-06-08-chat-route-message-list-reference-stability.md`
+
+# 2026-06-08 Chat Route Message List Reference Stability
+
+## Scope
+
+- Continue the UI/state freshness and performance audit.
+- Reduce avoidable ChatView and message-item churn when route conversation reloads return the same message payload.
+
+## Changed Files
+
+- `frontend/src/composables/chat/useChatConversation.js`
+- `frontend/src/views/ChatView.vue`
+- `backend/src/tests/frontendChatConversation.test.js`
+- `automation/backlog.md`
+- `automation/reports/archive/daily-reports-2026-06-08.md`
+
+## What Changed
+
+- Added `setMessagesIfChanged` to the chat conversation composable, reusing the existing stable structural comparison for message objects.
+- Routed ChatView route-switch clears and loaded message payloads through the new helper instead of direct `messages.value` replacement.
+- Preserved array references for unchanged message reloads, including equivalent object key ordering.
+- Kept changed message payloads and populated-to-empty route transitions replacing the list normally.
+- Added focused behavior and ChatView wiring coverage.
+
+## Validation
+
+- PASS: `node --test backend\src\tests\frontendChatConversation.test.js` (17 tests)
+- PASS: `node --test backend\src\tests\source-hygiene.test.js` (31 tests)
+- PASS: `npm run build` in `frontend`
+- PASS: `node scripts\check-encoding.mjs`
+- PASS: `powershell -ExecutionPolicy Bypass -File scripts\review-gate.ps1`
+
+## Notes
+
+- No secrets were written.
+- Existing unrelated dirty worktree and parallel accessibility/report changes were preserved.
+
+## Next Recommended Task
+
+- Continue auditing chat accessory refresh panels and save/load callbacks for no-op replacements or stale UI state after route reloads.
+
+
+---
+
+### `2026-06-08-chat-appearance-duplicate-sync-guard.md`
+
+# 2026-06-08 Chat Appearance Duplicate Sync Guard
+
+## Scope
+
+- Continue the UI/state freshness and performance audit.
+- Prevent duplicate chat route reloads from resetting appearance drafts and custom-script state when the normalized server appearance has not changed.
+
+## Changed Files
+
+- `frontend/src/composables/chat/useChatAppearance.js`
+- `backend/src/tests/frontendChatAppearance.test.js`
+- `automation/backlog.md`
+- `automation/reports/archive/daily-reports-2026-06-08.md`
+
+## What Changed
+
+- Added a last-synced appearance signature for normalized author settings, user settings, and chat lorebook binding.
+- Made duplicate `syncConversationAppearance` calls return early without replacing author appearance refs, form fields, local lorebook drafts, or custom appearance state.
+- Kept explicit `resetConversationAppearance` forceful so the reset button still restores server settings even when the server snapshot is unchanged.
+- Added focused coverage proving duplicate server syncs preserve local drafts and custom-script state while reset still clears them.
+
+## Validation
+
+- PASS: `node --test backend\src\tests\frontendChatAppearance.test.js` (6 tests)
+- PASS: `node --test backend\src\tests\source-hygiene.test.js` (31 tests)
+- PASS: `npm run build` in `frontend`
+- PASS: `node scripts\check-encoding.mjs`
+- PASS: `powershell -ExecutionPolicy Bypass -File scripts\review-gate.ps1`
+
+## Notes
+
+- No secrets were written.
+- Existing unrelated dirty worktree and parallel accessibility/report changes were preserved.
+
+## Next Recommended Task
+
+- Continue auditing status-bar route clears and accessory refresh callbacks for direct no-op assignments or draft resets.
+
+
+---
+
+### `2026-06-08-chat-status-bar-stable-updates.md`
+
+# 2026-06-08 Chat Status Bar Stable Updates
+
+## Scope
+
+- Continue the UI/state freshness and performance audit.
+- Reduce avoidable status-bar UI churn when save/delete/route-clear paths produce unchanged state.
+
+## Changed Files
+
+- `frontend/src/composables/chat/useChatAccessory.js`
+- `frontend/src/views/ChatView.vue`
+- `backend/src/tests/frontendChatAccessory.test.js`
+- `automation/backlog.md`
+- `automation/reports/archive/daily-reports-2026-06-08.md`
+
+## What Changed
+
+- Routed status-bar save responses through `applyStatusBarUpdate` so equivalent server payloads preserve the existing status-bar object reference.
+- Routed status-bar deletes and ChatView conversation-switch clears through the same reference-preserving helper instead of direct `statusBar.value = null` writes.
+- Kept delete form cleanup explicit while avoiding redundant ref replacement when the status bar is already empty.
+- Added focused regression coverage for unchanged save responses and ChatView route-clear wiring.
+- Relaxed an existing accessory-skill save test so it no longer depends on CSRF token cache order after another mutation test runs first.
+
+## Validation
+
+- PASS: `node --test backend\src\tests\frontendChatAccessory.test.js` (8 tests)
+- PASS: `node --test backend\src\tests\source-hygiene.test.js` (31 tests)
+- PASS: `npm run build` in `frontend`
+- PASS: `node scripts\check-encoding.mjs`
+- PASS: `powershell -ExecutionPolicy Bypass -File scripts\review-gate.ps1`
+
+## Notes
+
+- No secrets were written.
+- Existing unrelated dirty worktree and parallel accessibility/report changes were preserved.
+
+## Next Recommended Task
+
+- Continue auditing chat appearance world-book refreshes and remaining accessory panel list refreshes for unchanged array replacements.
+
+
+---
+
+### `2026-06-08-chat-appearance-world-books-reference-stability.md`
+
+# 2026-06-08 Chat Appearance World Books Reference Stability
+
+## Scope
+
+- Continue the UI/state freshness and performance audit.
+- Reduce avoidable ChatSettingsDrawer option-list churn when world-book refreshes return unchanged lorebook summaries.
+
+## Changed Files
+
+- `frontend/src/composables/chat/useChatAppearance.js`
+- `backend/src/tests/frontendChatAppearance.test.js`
+- `automation/backlog.md`
+- `automation/reports/archive/daily-reports-2026-06-08.md`
+
+## What Changed
+
+- Routed `loadWorldBooks()` through `setWorldBooksIfChanged()` instead of replacing `worldBooks.value` directly.
+- Added summary comparison for id, name, description, character binding, scan depth, context percent, and entry count.
+- Preserved the existing world-book array reference when refreshed API payloads are equivalent, including different object key order.
+- Kept changed lorebook summaries replacing the list normally so option labels update when entry counts or names change.
+- Added focused behavior and source wiring coverage for the chat appearance composable.
+
+## Validation
+
+- PASS: `node --test backend\src\tests\frontendChatAppearance.test.js` (8 tests)
+- PASS: `node --test backend\src\tests\source-hygiene.test.js` (31 tests)
+- PASS: `npm run build` in `frontend`
+- PASS: `node scripts\check-encoding.mjs`
+- PASS: `powershell -ExecutionPolicy Bypass -File scripts\review-gate.ps1`
+
+## Notes
+
+- No secrets were written.
+- Existing unrelated dirty worktree and parallel accessibility/report changes were preserved.
+
+## Next Recommended Task
+
+- Continue auditing CharacterFormView option loading and chat accessory panel arrays for remaining direct list replacements.
+
+
+---
+
+### `2026-06-08-chat-appearance-custom-script-helper-scope.md`
+
+# 2026-06-08 Chat Appearance Custom Script Helper Scope
+
+## Scope
+
+- Continue the UI/state freshness and performance audit.
+- Prevent delayed custom appearance scripts from mutating the newly active conversation through provided UI helper callbacks after route changes.
+
+## Changed Files
+
+- `frontend/src/composables/chat/useChatAppearance.js`
+- `backend/src/tests/frontendChatAppearance.test.js`
+- `automation/backlog.md`
+- `automation/reports/archive/daily-reports-2026-06-08.md`
+
+## What Changed
+
+- Wrapped custom-script UI helpers with the active appearance apply token and conversation id.
+- Scoped `openSidebar`, `closeSidebar`, `openSettings`, `closeSettings`, `scrollToBottom`, `setCssVar`, and `notify` method calls so stale custom-script resumes no-op after the active conversation changes.
+- Preserved existing cleanup behavior for stale script completion while reducing helper-driven UI churn in the new route.
+- Added a delayed custom-script regression test that switches conversations before the script resumes and verifies helper calls are ignored.
+- Added source coverage to keep the helper wiring token-scoped.
+
+## Validation
+
+- PASS: `node --test backend\src\tests\frontendChatAppearance.test.js` (10 tests)
+- PASS: `node --test backend\src\tests\source-hygiene.test.js backend\src\tests\test-hygiene.test.js` (40 tests)
+- PASS: `npm run build` in `frontend`
+- PASS: `node scripts\check-encoding.mjs`
+- PASS: `powershell -ExecutionPolicy Bypass -File scripts\review-gate.ps1`
+
+## Notes
+
+- No secrets were written.
+- Existing unrelated dirty worktree and parallel diagnostic/accessibility/report changes were preserved.
+
+## Next Recommended Task
+
+- Continue auditing branch refresh and message-swipe initialization paths for stale route completions and unnecessary repeated work.
+
+
+---
+
+### `2026-06-08-character-form-option-reference-stability.md`
+
+# 2026-06-08 Character Form Option Reference Stability
+
+## Scope
+
+- Continue the UI/state freshness and performance audit.
+- Reduce avoidable CharacterFormView reactivity churn when tag and world-book option loads return unchanged data.
+
+## Changed Files
+
+- `frontend/src/views/CharacterFormView.vue`
+- `backend/src/tests/frontendCharacterFormView.test.js`
+- `automation/backlog.md`
+- `automation/reports/archive/daily-reports-2026-06-08.md`
+
+## What Changed
+
+- Routed character-form world-book option refreshes through `setWorldBooksIfChanged()`.
+- Routed tag option refreshes and post-create tag option additions through `setAvailableTagsIfChanged()`.
+- Routed edit-character linked world-book ids through `setSelectedWorldBookIdsIfChanged()`.
+- Added shared list comparison helpers plus focused world-book and tag summary comparisons so equivalent payloads keep existing array references.
+- Added source coverage preventing the option-load paths from regressing to direct array replacement.
+
+## Validation
+
+- PASS: `node --test backend\src\tests\frontendCharacterFormView.test.js` (7 tests)
+- PASS: `node --test backend\src\tests\source-hygiene.test.js` (31 tests)
+- PASS: `npm run build` in `frontend`
+- PASS: `node scripts\check-encoding.mjs`
+- PASS: `powershell -ExecutionPolicy Bypass -File scripts\review-gate.ps1`
+
+## Notes
+
+- No secrets were written.
+- Existing unrelated dirty worktree and parallel accessibility/report changes were preserved.
+
+## Next Recommended Task
+
+- Continue auditing remaining accessory panel and editor option arrays for direct no-op replacements.
+
+
+---
+
+### `2026-06-08-settings-personal-reference-stability.md`
+
+# 2026-06-08 Settings Personal Reference Stability
+
+## Scope
+
+- Continue the UI/state freshness and performance audit.
+- Reduce avoidable Settings personal-page reactivity churn when refreshed profile, character, or balance data is unchanged.
+
+## Changed Files
+
+- `frontend/src/views/SettingsView.vue`
+- `backend/src/tests/frontendSettingsView.test.js`
+- `automation/backlog.md`
+- `automation/reports/archive/daily-reports-2026-06-08.md`
+
+## What Changed
+
+- Routed DeepSeek balance refresh results through `setBalanceIfChanged()` instead of replacing the balance ref directly.
+- Routed personal profile stats through `setProfileStatsIfChanged()` so equivalent stats payloads keep the existing object reference.
+- Routed owned-character profile lists through `setOwnedCharactersIfChanged()` so unchanged arrays reuse the current list reference.
+- Reused the existing plain-value and list comparison helpers for focused personal-page state updates.
+- Added source coverage preventing the balance/profile paths from regressing to direct ref replacement.
+
+## Validation
+
+- PASS: `node --test backend\src\tests\frontendSettingsView.test.js` (10 tests)
+- PASS: `node --test backend\src\tests\source-hygiene.test.js` (31 tests)
+- PASS: `npm run build` in `frontend`
+- PASS: `node scripts\check-encoding.mjs`
+- PASS: `powershell -ExecutionPolicy Bypass -File scripts\review-gate.ps1` (605 backend tests plus frontend build and diagnostics)
+
+## Notes
+
+- No secrets were written.
+- Existing unrelated dirty worktree and parallel diagnostic/accessibility changes were preserved.
+
+## Next Recommended Task
+
+- Continue auditing remaining editor option arrays and personal-page reset paths for direct no-op object or array replacements.
+
+
+---
+
+### `2026-06-08-app-session-reference-stability.md`
+
+# 2026-06-08 App Session Reference Stability
+
+## Scope
+
+- Continue the UI/state freshness and performance audit.
+- Reduce avoidable top-level App reactivity churn when session, profile, or provider payloads are unchanged.
+
+## Changed Files
+
+- `frontend/src/App.vue`
+- `backend/src/tests/frontendAppSessionState.test.js`
+- `automation/backlog.md`
+- `automation/reports/archive/daily-reports-2026-06-08.md`
+
+## What Changed
+
+- Routed session refresh user payloads through `setUserIfChanged()`.
+- Routed provider refresh payloads through `setProviderIfChanged()`.
+- Routed auth boundary resets, profile-saved updates, and logout clears through the same stable setters.
+- Added a plain-value comparison helper so equivalent user/provider objects keep their existing references.
+- Added source coverage preventing App session paths from regressing to direct user/provider ref replacement.
+
+## Validation
+
+- PASS: `node --test backend\src\tests\frontendAppSessionState.test.js backend\src\tests\frontendAppRoute.test.js backend\src\tests\frontendAppNotifications.test.js` (5 tests)
+- PASS: `node --test backend\src\tests\source-hygiene.test.js` (31 tests)
+- PASS: `npm run build` in `frontend`
+- PASS: `node scripts\check-encoding.mjs`
+- PASS: `powershell -ExecutionPolicy Bypass -File scripts\review-gate.ps1` (608 backend tests plus frontend build and diagnostics)
+
+## Notes
+
+- No secrets were written.
+- Existing unrelated dirty worktree and parallel diagnostic/accessibility changes were preserved.
+
+## Next Recommended Task
+
+- Continue auditing chat submit metadata and AI assistant result panels for redundant object or array replacements during repeated equivalent events.
+
+
+---
+
+### `2026-06-08-character-form-ai-process-reference-stability.md`
+
+# 2026-06-08 Character Form AI Process Reference Stability
+
+## Scope
+
+- Continue the UI/state freshness and performance audit.
+- Reduce avoidable CharacterFormView AI process-panel reactivity churn when repeated AI results or resets are unchanged.
+
+## Changed Files
+
+- `frontend/src/views/CharacterFormView.vue`
+- `backend/src/tests/frontendCharacterFormView.test.js`
+- `automation/backlog.md`
+- `automation/reports/archive/daily-reports-2026-06-08.md`
+
+## What Changed
+
+- Routed AI tool-call list updates through `setAiToolCallsIfChanged()`.
+- Routed AI process-step list updates through `setAiProcessIfChanged()`.
+- Routed AI Mod suggestion list updates and post-create clears through `setAiModSuggestionsIfChanged()`.
+- Added a shared plain-list comparison helper for AI process-panel arrays so equivalent nested payloads preserve current references.
+- Added source coverage preventing AI panel result paths from regressing to direct array replacement.
+
+## Validation
+
+- PASS: `node --test backend\src\tests\frontendCharacterFormView.test.js` (8 tests)
+- PASS: `node --test backend\src\tests\source-hygiene.test.js` (31 tests)
+- PASS: `npm run build` in `frontend`
+- PASS: `node scripts\check-encoding.mjs`
+- PASS: `powershell -ExecutionPolicy Bypass -File scripts\review-gate.ps1` (609 backend tests plus frontend build and diagnostics)
+
+## Notes
+
+- No secrets were written.
+- Existing unrelated dirty worktree and parallel diagnostic/accessibility changes were preserved.
+- `frontend/src/views/CharacterFormView.vue` already contained earlier uncommitted option-list stability changes; this run only extended the AI process-panel state path.
+
+## Next Recommended Task
+
+- Continue auditing WorldBookView AI draft/process result arrays and chat submit usage metadata for redundant equivalent object or array replacements.
+
+
+---
+
+### `2026-06-08-world-book-ai-process-reference-stability.md`
+
+# 2026-06-08 World Book AI Process Reference Stability
+
+## Scope
+
+- Continue the UI/state freshness and performance audit.
+- Reduce avoidable WorldBookView AI draft and process-panel reactivity churn when repeated AI results or resets are unchanged.
+
+## Changed Files
+
+- `frontend/src/views/WorldBookView.vue`
+- `backend/src/tests/frontendWorldBookView.test.js`
+- `automation/backlog.md`
+- `automation/reports/archive/daily-reports-2026-06-08.md`
+
+## What Changed
+
+- Routed AI draft updates through `setAiDraftIfChanged()`.
+- Routed AI tool-call list updates through `setAiToolCallsIfChanged()`.
+- Routed AI process-step list updates and error process states through `setAiProcessIfChanged()`.
+- Routed invalid-draft and post-create draft clears through the same stable draft setter.
+- Added plain-value comparison helpers plus source coverage preventing AI result paths from regressing to direct ref replacement.
+
+## Validation
+
+- PASS: `node --test backend\src\tests\frontendWorldBookView.test.js` (5 tests)
+- PASS: `node --test backend\src\tests\source-hygiene.test.js` (31 tests)
+- PASS: `npm run build` in `frontend`
+- PASS: `node scripts\check-encoding.mjs`
+- PASS: `powershell -ExecutionPolicy Bypass -File scripts\review-gate.ps1` (610 backend tests plus frontend build and diagnostics)
+
+## Notes
+
+- No secrets were written.
+- Existing unrelated dirty worktree and parallel diagnostic/accessibility changes were preserved.
+
+## Next Recommended Task
+
+- Continue auditing chat submit usage/provider metadata for redundant equivalent object replacements during repeated stream or non-stream completion events.
+
+
+---
+
+### `2026-06-08-chat-submit-metadata-reference-stability.md`
+
+# 2026-06-08 Chat Submit Metadata Reference Stability
+
+## Scope
+
+- Continue the UI/state freshness and performance audit.
+- Reduce avoidable ChatComposer token-chip and submit metadata churn when repeated completion payloads are unchanged.
+
+## Changed Files
+
+- `frontend/src/composables/chat/useChatSubmit.js`
+- `backend/src/tests/frontendChatSubmit.test.js`
+- `automation/backlog.md`
+- `automation/reports/archive/daily-reports-2026-06-08.md`
+
+## What Changed
+
+- Routed stream meta events through `setProviderMetaIfChanged()`.
+- Routed stream done usage/provider updates through stable plain-value setters.
+- Routed non-stream completion usage/provider updates through the same stable setters.
+- Added a local plain-value comparison helper so equivalent nested metadata keeps existing refs.
+- Added behavior coverage proving two equivalent non-stream completions preserve `usage` and `providerMeta` references.
+
+## Validation
+
+- PASS: `node --test backend\src\tests\frontendChatSubmit.test.js` (7 tests)
+- PASS: `node --test backend\src\tests\source-hygiene.test.js` (31 tests)
+- PASS: `npm run build` in `frontend`
+- PASS: `node scripts\check-encoding.mjs`
+- PASS: `powershell -ExecutionPolicy Bypass -File scripts\review-gate.ps1` (611 backend tests plus frontend build and diagnostics)
+
+## Notes
+
+- No secrets were written.
+- Existing unrelated dirty worktree and parallel diagnostic/accessibility changes were preserved.
+
+## Next Recommended Task
+
+- Continue auditing stream-time completion cleanup and accessory refresh metadata for direct no-op object replacements.
+
+
+---
+
+### `2026-06-08-chat-npc-accessory-refresh-poll-guard.md`
+
+# 2026-06-08 Chat NPC Accessory Refresh Poll Guard
+
+## Scope
+
+- Continue the UI/state freshness and performance audit.
+- Reduce unnecessary ChatView NPC accessory refresh work after a scheduled refresh has already synced the latest NPC fingerprint.
+
+## Changed Files
+
+- `frontend/src/views/ChatView.vue`
+- `backend/src/tests/frontendChatAccessory.test.js`
+- `automation/backlog.md`
+- `automation/reports/archive/daily-reports-2026-06-08.md`
+
+## What Changed
+
+- Added `npcSynced` to the accessory refresh snapshot.
+- Marked each accessory refresh run as needing one NPC fingerprint sync at start.
+- Skipped later scheduled NPC polls once the visible NPC update state no longer needs polling and the fingerprint has already synced.
+- Kept reset snapshots marked synced so stale scheduled callbacks cannot trigger avoidable NPC fetches after reset.
+- Added source coverage for the ChatView NPC accessory polling guard.
+
+## Validation
+
+- PASS: `node --test backend\src\tests\frontendChatAccessory.test.js` (9 tests)
+- PASS: `node --test backend\src\tests\source-hygiene.test.js` (31 tests)
+- PASS: `npm run build` in `frontend`
+- PASS: `node scripts\check-encoding.mjs`
+- PASS: `powershell -ExecutionPolicy Bypass -File scripts\review-gate.ps1` (612 backend tests plus frontend build and diagnostics)
+
+## Notes
+
+- No secrets were written.
+- Existing unrelated dirty worktree and parallel diagnostic/accessibility changes were preserved.
+
+## Next Recommended Task
+
+- Continue auditing chat submit cleanup and message-action paths for redundant list replacements or avoidable refreshes after terminal states.
+
+
+---
+
+### `2026-06-08-chat-submit-finish-draft-trigger-guard.md`
+
+# 2026-06-08 Chat Submit Finish Draft Trigger Guard
+
+## Scope
+
+- Continue the UI/state freshness and performance audit.
+- Reduce unnecessary chat message-list watcher triggers when assistant drafts are already settled.
+
+## Changed Files
+
+- `frontend/src/composables/chat/useChatSubmit.js`
+- `backend/src/tests/frontendChatSubmit.test.js`
+- `automation/backlog.md`
+- `automation/reports/archive/daily-reports-2026-06-08.md`
+
+## What Changed
+
+- Made `finishAssistantDraft()` return early for missing messages.
+- Only clears streaming flags when at least one flag is still active.
+- Only replaces the message list when an empty draft is actually present and removed.
+- Only calls `triggerRef(messages)` when a visible assistant draft state changed.
+- Added watcher-backed Vue behavior coverage for no-op settled drafts and active draft settlement.
+
+## Validation
+
+- PASS: `node --test backend\src\tests\frontendChatSubmit.test.js` (9 tests)
+- PASS: `node --test backend\src\tests\source-hygiene.test.js` (31 tests)
+- PASS: `npm run build` in `frontend`
+- PASS: `node scripts\check-encoding.mjs`
+- PASS: `powershell -ExecutionPolicy Bypass -File scripts\review-gate.ps1` (614 backend tests plus frontend build and diagnostics)
+
+## Notes
+
+- No secrets were written.
+- Existing unrelated dirty worktree and parallel diagnostic/accessibility changes were preserved.
+
+## Next Recommended Task
+
+- Continue auditing chat message-action cleanup paths for redundant list replacements after stale or repeated terminal events.
+
+
+---
+
+### `2026-06-08-chat-message-unchanged-edit-save-guard.md`
+
+# 2026-06-08 Chat Message Unchanged Edit Save Guard
+
+## Scope
+
+- Continue the UI/state freshness and performance audit.
+- Avoid unnecessary chat message edit API calls, sidebar refreshes, and message-list updates when the submitted edit content is unchanged after trimming.
+
+## Changed Files
+
+- `frontend/src/composables/chat/useChatMessageActions.js`
+- `backend/src/tests/frontendChatMessageActions.test.js`
+- `automation/backlog.md`
+- `automation/reports/archive/daily-reports-2026-06-08.md`
+
+## What Changed
+
+- Added an unchanged-content guard in `saveMessageEdit()`.
+- Closed the edit draft through the existing scroll-anchor helper when the normalized content matches the current message.
+- Skipped `updateMessage()`, message busy state, message ref triggering, action notices, and sidebar refresh work for unchanged edits.
+- Added behavior coverage that fails if an unchanged edit save reaches `fetch` or sidebar refresh work.
+
+## Validation
+
+- PASS: `node --test backend\src\tests\frontendChatMessageActions.test.js backend\src\tests\frontendChatMessageItem.test.js` (9 tests)
+- PASS: `node --test backend\src\tests\source-hygiene.test.js` (31 tests)
+- PASS: `npm run build` in `frontend`
+- PASS: `node scripts\check-encoding.mjs`
+- PASS: `powershell -ExecutionPolicy Bypass -File scripts\review-gate.ps1` (615 backend tests plus frontend build and diagnostics)
+
+## Notes
+
+- No secrets were written.
+- Existing unrelated dirty worktree and parallel diagnostic/accessibility changes were preserved.
+
+## Next Recommended Task
+
+- Continue auditing chat message delete and swipe paths for no-op state replacements or avoidable refreshes after stale actions.
+
+
+---
+
+### `2026-06-08-chat-message-stale-delete-list-guard.md`
+
+# 2026-06-08 Chat Message Stale Delete List Guard
+
+## Scope
+
+- Continue the UI/state freshness and performance audit.
+- Avoid unnecessary chat message-list replacements when a delete response returns after the message is already gone from the local list.
+
+## Changed Files
+
+- `frontend/src/composables/chat/useChatMessageActions.js`
+- `backend/src/tests/frontendChatMessageActions.test.js`
+- `automation/backlog.md`
+- `automation/reports/archive/daily-reports-2026-06-08.md`
+
+## What Changed
+
+- Routed delete-result list updates through `removeMessageFromListIfPresent()`.
+- Skipped replacing `messages.value` when filtering by the deleted id would not remove anything.
+- Kept edit cleanup, deletion notice, and sidebar refresh behavior intact after a successful backend delete.
+- Added behavior coverage for the stale local-list case where the backend delete succeeds but the message id is already absent locally.
+
+## Validation
+
+- PASS: `node --test backend\src\tests\frontendChatMessageActions.test.js backend\src\tests\frontendChatMessageItem.test.js` (10 tests)
+- PASS: `node --test backend\src\tests\source-hygiene.test.js` (31 tests)
+- PASS: `npm run build` in `frontend`
+- PASS: `node scripts\check-encoding.mjs`
+- PASS: `powershell -ExecutionPolicy Bypass -File scripts\review-gate.ps1` (616 backend tests plus frontend build and diagnostics)
+
+## Notes
+
+- No secrets were written.
+- Existing unrelated dirty worktree and parallel diagnostic/accessibility changes were preserved.
+
+## Next Recommended Task
+
+- Continue auditing chat swipe state updates for no-op message mutations or redundant loading-state work.
+
+
+---
+
+### `2026-06-08-chat-swipe-loading-set-ref-refresh.md`
+
+# 2026-06-08 Chat Swipe Loading Set Ref Refresh
+
+## Scope
+
+- Continue the UI/state freshness and performance audit.
+- Fix chat swipe generation controls whose pending state could lag because the loading `Set` was mutated in place.
+
+## Changed Files
+
+- `frontend/src/composables/chat/useChatMessageActions.js`
+- `backend/src/tests/frontendChatMessageActions.test.js`
+- `automation/backlog.md`
+- `automation/reports/archive/daily-reports-2026-06-08.md`
+
+## What Changed
+
+- Added `addSetRefItem()` and `deleteSetRefItem()` helpers that replace a `Set` ref only when membership actually changes.
+- Routed swipe-generation loading start and finish through those helpers instead of `swipeLoading.value.add()` and `.delete()`.
+- Kept existing duplicate-swipe guards and reset cleanup behavior intact.
+- Added behavior coverage proving swipe generation replaces the loading Set reference when pending state starts and clears.
+
+## Validation
+
+- PASS: `node --test backend\src\tests\frontendChatMessageActions.test.js` (9 tests)
+- PASS: `node --test backend\src\tests\frontendChatMessageActions.test.js backend\src\tests\frontendChatMessageItem.test.js` (11 tests)
+- PASS: `node --test backend\src\tests\source-hygiene.test.js` (31 tests)
+- PASS: `npm run build` in `frontend`
+- PASS: `node scripts\check-encoding.mjs`
+- PASS: `powershell -ExecutionPolicy Bypass -File scripts\review-gate.ps1` (617 backend tests plus frontend build and diagnostics)
+
+## Notes
+
+- No secrets were written.
+- Existing unrelated dirty worktree and parallel diagnostic/accessibility changes were preserved.
+
+## Next Recommended Task
+
+- Continue auditing chat swipe previous/next content assignment paths for no-op message mutation and explicit message-list triggering where needed.
+
+
+---
+
+### `2026-06-08-chat-swipe-content-trigger-guard.md`
+
+# 2026-06-08 Chat Swipe Content Trigger Guard
+
+## Scope
+
+- Continue the UI/state freshness and performance audit.
+- Make chat swipe content switches refresh message-list consumers consistently without triggering redundant updates for equivalent text.
+
+## Changed Files
+
+- `frontend/src/composables/chat/useChatMessageActions.js`
+- `backend/src/tests/frontendChatMessageActions.test.js`
+- `automation/backlog.md`
+- `automation/reports/archive/daily-reports-2026-06-08.md`
+
+## What Changed
+
+- Added `applySwipeContentToMessage()` for previous, existing-next, and newly generated swipe content application.
+- Skipped content/reasoning writes when the visible text is unchanged.
+- Called `triggerRef(messages)` only after swipe content or reasoning actually changes, matching the explicit message-list refresh pattern used by chat stream/edit paths.
+- Added watcher-backed coverage using a shallow message ref to prove changed swipe text triggers one message-list update while equivalent swipe text triggers none.
+
+## Validation
+
+- PASS: `node --test backend\src\tests\frontendChatMessageActions.test.js` (10 tests)
+- PASS: `node --test backend\src\tests\frontendChatMessageActions.test.js backend\src\tests\frontendChatMessageItem.test.js` (12 tests)
+- PASS: `node --test backend\src\tests\source-hygiene.test.js` (31 tests)
+- PASS: `npm run build` in `frontend`
+- PASS: `node scripts\check-encoding.mjs`
+- PASS: `powershell -ExecutionPolicy Bypass -File scripts\review-gate.ps1` (619 backend tests plus frontend build and diagnostics)
+
+## Notes
+
+- No secrets were written.
+- Existing unrelated dirty worktree and parallel diagnostic/accessibility changes were preserved.
+
+## Next Recommended Task
+
+- Continue auditing chat swipe initialization and branch switching for stale-result or no-op state updates under rapid conversation changes.
+
+
+---
+
+### `2026-06-08-chat-branch-action-eligibility-guard.md`
+
+# 2026-06-08 Chat Branch Action Eligibility Guard
+
+## Scope
+
+- Continue the UI/state freshness and performance audit.
+- Prevent branch creation controls from appearing actionable for messages that cannot safely branch.
+
+## Changed Files
+
+- `frontend/src/composables/chat/useChatMessageActions.js`
+- `frontend/src/views/ChatView.vue`
+- `frontend/src/components/chat/ChatMessageItem.vue`
+- `backend/src/tests/frontendChatMessageActions.test.js`
+- `backend/src/tests/frontendChatMessageItem.test.js`
+- `automation/backlog.md`
+- `automation/reports/archive/daily-reports-2026-06-08.md`
+
+## What Changed
+
+- Added `canBranchMessage()` so branch eligibility matches persisted message state and respects message-action and branch busy guards.
+- Routed ChatView branch button state through `canBranchMessage(message)`.
+- Added a `branchCan` prop to ChatMessageItem and disabled the branch button when the message cannot branch or another branch action is busy.
+- Guarded `handleBranchMessage()` before any API or busy-state work when the message is local, streaming, missing an id, already blocked by another message action, or missing a conversation id.
+- Added behavior and source coverage for the UI and handler guards.
+
+## Validation
+
+- PASS: `node --test backend\src\tests\frontendChatMessageActions.test.js backend\src\tests\frontendChatMessageItem.test.js` (14 tests)
+- PASS: `node --test backend\src\tests\source-hygiene.test.js` (31 tests)
+- PASS: `npm run build` in `frontend`
+- PASS: `node scripts\check-encoding.mjs`
+- PASS: `powershell -ExecutionPolicy Bypass -File scripts\review-gate.ps1` (621 backend tests plus frontend build and diagnostics)
+
+## Notes
+
+- No secrets were written.
+- Existing unrelated dirty worktree and parallel diagnostic/accessibility/report changes were preserved.
+
+## Next Recommended Task
+
+- Continue auditing chat swipe initialization for avoidable counter flicker or no-op reactive writes during repeated same-conversation refreshes.
+
+
+---
+
+### `2026-06-08-chat-branch-busy-message-action-lock.md`
+
+# 2026-06-08 Chat Branch Busy Message Action Lock
+
+## Scope
+
+- Continue the UI/state freshness and performance audit.
+- Prevent edit/delete message controls from staying actionable while branch creation is already pending.
+
+## Changed Files
+
+- `frontend/src/composables/chat/useChatMessageActions.js`
+- `frontend/src/views/ChatView.vue`
+- `backend/src/tests/frontendChatMessageActions.test.js`
+- `backend/src/tests/frontendChatMessageItem.test.js`
+- `automation/backlog.md`
+- `automation/reports/archive/daily-reports-2026-06-08.md`
+
+## What Changed
+
+- Added `branchBusy` to `canEditMessage()` and `canDeleteMessage()` so message edit/delete entry points lock while branch creation is pending.
+- Routed ChatView message edit busy state through `messageActionBusy === message.id || branchBusy` so already-open edit boxes visibly freeze during branch creation.
+- Added behavior coverage proving edit/delete handlers do not call APIs or change busy state while branch creation is pending.
+- Added source coverage for the ChatView and ChatMessageItem wiring.
+
+## Validation
+
+- PASS: `node --test backend\src\tests\frontendChatMessageActions.test.js backend\src\tests\frontendChatMessageItem.test.js` (16 tests)
+- PASS: `node --test backend\src\tests\source-hygiene.test.js` (32 tests)
+- PASS: `npm run build` in `frontend`
+- PASS: `node scripts\check-encoding.mjs`
+- PASS: `powershell -ExecutionPolicy Bypass -File scripts\review-gate.ps1` (625 backend tests plus frontend build and diagnostics)
+
+## Notes
+
+- No secrets were written.
+- Existing unrelated dirty worktree and parallel diagnostic/accessibility/report changes were preserved.
+
+## Next Recommended Task
+
+- Continue auditing swipe and branch interactions for remaining overlapping action states, especially swipe navigation while other message mutations are pending.
+
+
+---
+
+### `2026-06-08-chat-swipe-message-action-lock.md`
+
+# 2026-06-08 Chat Swipe Message Action Lock
+
+## Scope
+
+- Continue the UI/state freshness and performance audit.
+- Prevent swipe navigation from changing message content while another message mutation or branch action is pending.
+
+## Changed Files
+
+- `frontend/src/composables/chat/useChatMessageActions.js`
+- `frontend/src/views/ChatView.vue`
+- `backend/src/tests/frontendChatMessageActions.test.js`
+- `backend/src/tests/frontendChatMessageItem.test.js`
+- `automation/backlog.md`
+- `automation/reports/archive/daily-reports-2026-06-08.md`
+
+## What Changed
+
+- Added `isSwipeActionLocked()` so swipe previous/next handlers ignore clicks while message edit/delete work, branch creation, or swipe generation is busy.
+- Routed ChatView `swipe-loading` through the combined busy state: swipe loading, matching message action busy, or branch busy.
+- Kept ChatMessageItem's existing disabled and aria-busy behavior, now driven by the broader busy state from ChatView.
+- Added behavior coverage proving swipe navigation does not alter message content or swipe index while message or branch actions are busy.
+- Added source coverage for the combined busy-state wiring.
+
+## Validation
+
+- PASS: `node --test backend\src\tests\frontendChatMessageActions.test.js backend\src\tests\frontendChatMessageItem.test.js` (17 tests)
+- PASS: `node --test backend\src\tests\source-hygiene.test.js` (32 tests)
+- PASS: `npm run build` in `frontend`
+- PASS: `node scripts\check-encoding.mjs`
+- PASS: `powershell -ExecutionPolicy Bypass -File scripts\review-gate.ps1` (626 backend tests plus frontend build and diagnostics)
+
+## Notes
+
+- No secrets were written.
+- Existing unrelated dirty worktree and parallel diagnostic/accessibility/report changes were preserved.
+
+## Next Recommended Task
+
+- Continue auditing chat copy and reasoning toggle paths for redundant updates or missing disabled states during pending message mutations.
+
+
+---
+
+### `2026-06-08-chat-edit-draft-branch-lock.md`
+
+# 2026-06-08 Chat Edit Draft Branch Lock
+
+## Scope
+
+- Continue the UI/state freshness and performance audit.
+- Keep chat message edit draft entry points aligned with the visible branch-busy edit lock.
+
+## Changed Files
+
+- `frontend/src/composables/chat/useChatMessageActions.js`
+- `backend/src/tests/frontendChatMessageActions.test.js`
+- `backend/src/tests/frontendChatMessageItem.test.js`
+- `automation/backlog.md`
+- `automation/reports/archive/daily-reports-2026-06-08.md`
+
+## What Changed
+
+- Added a shared `isMessageMutationLocked()` helper for chat edit, delete, branch, cancel-edit, and edit-draft update guards.
+- Prevented `cancelEditMessage()` and `setEditingMessageContent()` from mutating edit draft state while branch creation is pending.
+- Expanded behavior coverage so message edit draft entry points are locked during both message actions and branch actions.
+- Updated ChatMessageItem source coverage to assert the shared mutation-lock helper and draft-entry guards.
+
+## Validation
+
+- PASS: `node --test backend\src\tests\frontendChatMessageActions.test.js backend\src\tests\frontendChatMessageItem.test.js` (17 tests)
+- PASS: `node --test backend\src\tests\source-hygiene.test.js` (32 tests)
+- PASS: `npm run build` in `frontend`
+- PASS: `node scripts\check-encoding.mjs`
+- PASS: `powershell -ExecutionPolicy Bypass -File scripts\review-gate.ps1` (626 backend tests plus frontend build and diagnostics)
+
+## Notes
+
+- No secrets were written.
+- Existing unrelated dirty worktree and parallel diagnostic/accessibility/report changes were preserved.
+
+## Next Recommended Task
+
+- Continue auditing chat copy and reasoning toggle paths for redundant updates or missing disabled states during pending message mutations.
+
+
+---
+
+### `2026-06-08-chat-copy-busy-lock.md`
+
+# 2026-06-08 Chat Copy Busy Lock
+
+## Scope
+
+- Continue the UI/state freshness and performance audit.
+- Prevent repeated chat copy clicks from spawning overlapping clipboard work or duplicate notices.
+
+## Changed Files
+
+- `frontend/src/composables/chat/useChatMessageActions.js`
+- `frontend/src/components/chat/ChatMessageItem.vue`
+- `frontend/src/views/ChatView.vue`
+- `backend/src/tests/frontendChatMessageActions.test.js`
+- `backend/src/tests/frontendChatMessageItem.test.js`
+- `automation/backlog.md`
+- `automation/reports/archive/daily-reports-2026-06-08.md`
+
+## What Changed
+
+- Added a `copyBusy` ref and copy action token so duplicate copy requests return while clipboard work is pending.
+- Reset and invalidated pending copy work during message UI resets and cleanup so stale async completions do not show late notices.
+- Passed `copyBusy` through ChatView into ChatMessageItem and disabled the copy button with `aria-busy` while copy work is pending.
+- Added behavior and source coverage for the duplicate-copy guard and visible busy-state wiring.
+
+## Validation
+
+- PASS: `node --test backend\src\tests\frontendChatMessageActions.test.js backend\src\tests\frontendChatMessageItem.test.js` (19 tests)
+- PASS: `node --test backend\src\tests\source-hygiene.test.js` (32 tests)
+- PASS: `npm run build` in `frontend`
+- PASS: `node scripts\check-encoding.mjs`
+- PASS: `powershell -ExecutionPolicy Bypass -File scripts\review-gate.ps1` (628 backend tests plus frontend build and diagnostics)
+
+## Notes
+
+- No secrets were written.
+- Existing unrelated dirty worktree and parallel diagnostic/accessibility/report changes were preserved.
+
+## Next Recommended Task
+
+- Continue auditing reasoning toggle state and remaining lightweight chat controls for no-op updates or missing pending-state feedback.
+
+
+---
+
+### `2026-06-08-chat-reasoning-id-noop.md`
+
+# 2026-06-08 Chat Reasoning ID No-Op Guard
+
+## Scope
+
+- Continue the UI/state freshness and performance audit.
+- Avoid needless reasoning open-state updates from malformed or blank message ids.
+
+## Changed Files
+
+- `frontend/src/composables/chat/useChatMessageActions.js`
+- `backend/src/tests/frontendChatMessageActions.test.js`
+- `automation/backlog.md`
+- `automation/reports/archive/daily-reports-2026-06-08.md`
+
+## What Changed
+
+- Normalized chat message UI ids before reading or writing the expanded reasoning Set.
+- Made `toggleReasoning()`, `expandReasoning()`, and `reasoningOpen()` no-op for blank ids.
+- Preserved the existing expanded-reasoning Set reference when blank ids or already-open ids are passed.
+- Added behavior coverage for blank-id no-ops and numeric id normalization.
+
+## Validation
+
+- PASS: `node --test backend\src\tests\frontendChatMessageActions.test.js backend\src\tests\frontendChatMessageItem.test.js` (20 tests)
+- PASS: `node --test backend\src\tests\source-hygiene.test.js` (32 tests)
+- PASS: `npm run build` in `frontend`
+- PASS: `node scripts\check-encoding.mjs`
+- PASS: `powershell -ExecutionPolicy Bypass -File scripts\review-gate.ps1` (629 backend tests plus frontend build and diagnostics)
+
+## Notes
+
+- No secrets were written.
+- Existing unrelated dirty worktree and parallel diagnostic/accessibility/report changes were preserved.
+
+## Next Recommended Task
+
+- Continue auditing remaining lightweight chat toolbar controls for duplicate pending work or redundant reactive updates.
+
+
+---
+
+### `2026-06-08-chat-sidebar-selection-id-guard.md`
+
+# 2026-06-08 Chat Sidebar Selection ID Guard
+
+## Scope
+
+- Continue the UI/state freshness and performance audit.
+- Prevent stale or malformed chat sidebar selection events from creating invisible selected ids or redundant Set replacements.
+
+## Changed Files
+
+- `frontend/src/composables/chat/useChatConversation.js`
+- `backend/src/tests/frontendChatConversation.test.js`
+- `automation/backlog.md`
+- `automation/reports/archive/daily-reports-2026-06-08.md`
+
+## What Changed
+
+- Normalized sidebar selection ids before toggling conversation selection.
+- Ignored blank ids and unknown, unselected ids without replacing `selectedConversationIds`.
+- Preserved the ability to remove already-selected stale ids if a late event targets one.
+- Added behavior coverage for blank ids, unknown ids, stable Set references, and stale selected-id cleanup.
+
+## Validation
+
+- PASS: `node --test backend\src\tests\frontendChatConversation.test.js` (18 tests)
+- PASS: `node --test backend\src\tests\source-hygiene.test.js` (32 tests)
+- PASS: `npm run build` in `frontend`
+- PASS: `node scripts\check-encoding.mjs`
+- PASS: `powershell -ExecutionPolicy Bypass -File scripts\review-gate.ps1` (630 backend tests plus frontend build and diagnostics)
+
+## Notes
+
+- No secrets were written.
+- Existing unrelated dirty worktree and parallel diagnostic/accessibility/report changes were preserved.
+
+## Next Recommended Task
+
+- Continue auditing chat sidebar and message toolbar actions for duplicate pending work or redundant reactive updates.
+
+
+---
+
+### `2026-06-08-chat-sidebar-manual-reload-guard.md`
+
+# 2026-06-08 Chat Sidebar Manual Reload Guard
+
+## Scope
+
+- Continue the UI/state freshness and performance audit.
+- Prevent ChatSidebar manual retry clicks from starting duplicate or overlapping sidebar refreshes while preserving internal stale-load replacement behavior.
+
+## Changed Files
+
+- `frontend/src/composables/chat/useChatConversation.js`
+- `frontend/src/components/chat/ChatSidebar.vue`
+- `frontend/src/views/ChatView.vue`
+- `backend/src/tests/frontendChatConversation.test.js`
+- `backend/src/tests/frontendChatSidebar.test.js`
+- `automation/backlog.md`
+- `automation/reports/archive/daily-reports-2026-06-08.md`
+
+## What Changed
+
+- Added `reloadSidebarData()` as a guarded manual reload entry point while leaving `loadSidebarData()` available for internal refresh flows.
+- Routed ChatView's `reload-sidebar` event through the guarded manual reload path.
+- Disabled the ChatSidebar retry button while sidebar loading, conversation actions, or new-chat creation are busy.
+- Added behavior and source coverage for duplicate reload suppression and busy-state wiring.
+
+## Validation
+
+- PASS: `node --test backend\src\tests\frontendChatConversation.test.js backend\src\tests\frontendChatSidebar.test.js` (23 tests)
+- PASS: `node --test backend\src\tests\source-hygiene.test.js` (32 tests)
+- PASS: `npm run build` in `frontend`
+- PASS: `node scripts\check-encoding.mjs`
+- PASS: `powershell -ExecutionPolicy Bypass -File scripts\review-gate.ps1` (632 backend tests plus frontend build and diagnostics)
+
+## Notes
+
+- No secrets were written.
+- Existing unrelated dirty worktree and parallel diagnostic/accessibility/report changes were preserved.
+
+## Next Recommended Task
+
+- Continue auditing chat sidebar/manual action entry points for stale events that can bypass visible disabled states.
+
+
+---
+
+### `2026-06-08-chat-sidebar-open-id-guard.md`
+
+# 2026-06-08 Chat Sidebar Open ID Guard
+
+## Scope
+
+- Continue the UI/state freshness and performance audit.
+- Prevent stale ChatSidebar row events from navigating to blank or no-longer-listed conversation ids.
+
+## Changed Files
+
+- `frontend/src/composables/chat/useChatConversation.js`
+- `backend/src/tests/frontendChatSidebar.test.js`
+- `automation/backlog.md`
+- `automation/reports/archive/daily-reports-2026-06-08.md`
+
+## What Changed
+
+- Normalized conversation ids before ChatSidebar open navigation.
+- Ignored blank ids and ids no longer present in the sidebar conversation list.
+- Preserved current-conversation behavior: selecting the active conversation just closes the sidebar.
+- Reused the conversation-list existence helper for sidebar selection and open-navigation checks.
+- Added behavior and source coverage for blank, stale, active, and valid listed conversation ids.
+
+## Validation
+
+- PASS: `node --test backend\src\tests\frontendChatConversation.test.js backend\src\tests\frontendChatSidebar.test.js` (25 tests)
+- PASS: `node --test backend\src\tests\source-hygiene.test.js` (32 tests)
+- PASS: `npm run build` in `frontend`
+- PASS: `node scripts\check-encoding.mjs`
+- PASS: `powershell -ExecutionPolicy Bypass -File scripts\review-gate.ps1` (634 backend tests plus frontend build and diagnostics)
+
+## Notes
+
+- No secrets were written.
+- Existing unrelated dirty worktree and parallel diagnostic/accessibility/report changes were preserved.
+
+## Next Recommended Task
+
+- Continue auditing chat sidebar delete/open actions for stale events that can bypass visible disabled states.
+
+
+---
+
+### `2026-06-08-chat-sidebar-single-delete-id-guard.md`
+
+# 2026-06-08 Chat Sidebar Single Delete ID Guard
+
+## Scope
+
+- Continue the UI/state freshness and performance audit.
+- Prevent stale ChatSidebar delete-row events from confirming or deleting conversations that are no longer present in the current sidebar list.
+
+## Changed Files
+
+- `frontend/src/composables/chat/useChatConversation.js`
+- `backend/src/tests/frontendChatConversation.test.js`
+- `automation/backlog.md`
+- `automation/reports/archive/daily-reports-2026-06-08.md`
+
+## What Changed
+
+- Normalized single-delete conversation ids before any confirm dialog or API call.
+- Ignored blank ids and ids no longer present in the current `conversations` list.
+- Sent the normalized id to the delete API and local removal helper.
+- Added behavior coverage that stale/blank row events do not confirm or request deletion, while a valid listed id still deletes.
+
+## Validation
+
+- PASS: `node --test backend\src\tests\frontendChatConversation.test.js backend\src\tests\frontendChatSidebar.test.js` (26 tests)
+- PASS: `node --test backend\src\tests\source-hygiene.test.js` (32 tests)
+- PASS: `npm run build` in `frontend`
+- PASS: `node scripts\check-encoding.mjs`
+- PASS: `powershell -ExecutionPolicy Bypass -File scripts\review-gate.ps1` (635 backend tests plus frontend build and diagnostics)
+
+## Notes
+
+- No secrets were written.
+- Existing unrelated dirty worktree and parallel diagnostic/accessibility/report changes were preserved.
+
+## Next Recommended Task
+
+- Continue auditing ChatSidebar bulk-delete and message toolbar paths for stale events that can bypass visible disabled states.
+
+
+---
+
+### `2026-06-08-chat-message-current-list-guard.md`
+
+# 2026-06-08 Chat Message Current List Guard
+
+## Scope
+
+- Continue the UI/state freshness and performance audit.
+- Prevent stale chat message edit, delete, and branch events from acting on messages that are no longer current in the visible message list.
+
+## Changed Files
+
+- `frontend/src/composables/chat/useChatMessageActions.js`
+- `backend/src/tests/frontendChatMessageActions.test.js`
+- `automation/backlog.md`
+- `automation/reports/archive/daily-reports-2026-06-08.md`
+
+## What Changed
+
+- Routed persisted message action checks through the current `messages` list instead of trusting the event payload object.
+- Blocked edit, delete, and branch actions when the current message id is missing, local-only, or still streaming.
+- Used the current list item as the edit draft/update target for stale same-id events, so UI state updates land on the rendered object.
+- Normalized ids when removing messages from the local list.
+- Added behavior coverage for stale same-id edit drafts, stale same-id edit saves, current streaming guards, stale delete suppression, and branch stale-id suppression.
+
+## Validation
+
+- PASS: `node --test backend\src\tests\frontendChatMessageActions.test.js` (18 tests)
+- PASS: `node --test backend\src\tests\source-hygiene.test.js` (32 tests)
+- PASS: `npm run build` in `frontend`
+- PASS: `node scripts\check-encoding.mjs`
+- PASS: `powershell -ExecutionPolicy Bypass -File scripts\review-gate.ps1` (638 backend tests plus frontend build and diagnostics)
+
+## Notes
+
+- No secrets were written.
+- Existing unrelated dirty worktree and parallel diagnostic/accessibility/report changes were preserved.
+
+## Next Recommended Task
+
+- Continue auditing swipe generation and branch-list refresh paths for stale same-id payloads and redundant reactive updates.
+
+
+---
+
+### `2026-06-08-chat-message-swipe-current-list-guard.md`
+
+# 2026-06-08 Chat Message Swipe Current List Guard
+
+## Scope
+
+- Continue the UI/state freshness and performance audit.
+- Prevent chat swipe navigation and generation from mutating stale message event objects instead of the current rendered message list.
+
+## Changed Files
+
+- `frontend/src/composables/chat/useChatMessageActions.js`
+- `backend/src/tests/frontendChatMessageActions.test.js`
+- `automation/backlog.md`
+- `automation/reports/archive/daily-reports-2026-06-08.md`
+
+## What Changed
+
+- Routed swipe previous/next actions through the current `messages` list item for the normalized message id.
+- Used current message content, reasoning, and usage when generating a new swipe from a stale same-id event.
+- Saved an original content/reasoning snapshot when initializing swipe state, then restored it when navigating back to the original swipe slot.
+- Skipped swipe initialization for local-only or still-streaming assistant messages.
+- Normalized message ids for swipe display and current-message checks.
+- Added behavior coverage for stale same-id swipe navigation, original-content restoration, and stale same-id swipe generation payloads.
+
+## Validation
+
+- PASS: `node --test backend\src\tests\frontendChatMessageActions.test.js` (20 tests)
+- PASS: `node --test backend\src\tests\source-hygiene.test.js` (32 tests)
+- PASS: `npm run build` in `frontend`
+- PASS: `node scripts\check-encoding.mjs`
+- PASS: `powershell -ExecutionPolicy Bypass -File scripts\review-gate.ps1` (640 backend tests plus frontend build and diagnostics)
+
+## Notes
+
+- No secrets were written.
+- Existing unrelated dirty worktree and parallel diagnostic/accessibility/report changes were preserved.
+
+## Next Recommended Task
+
+- Continue auditing branch-list refresh and chat submit paths for stale same-id payloads and redundant reactive updates.
+
+
+---
+
+### `2026-06-08-chat-submit-current-list-guard.md`
+
+# 2026-06-08 Chat Submit Current List Guard
+
+## Scope
+
+- Continue the UI/state freshness and performance audit.
+- Prevent chat submit draft finalization and stream text appends from mutating stale draft objects that are no longer the current rendered message-list items.
+
+## Changed Files
+
+- `frontend/src/composables/chat/useChatSubmit.js`
+- `backend/src/tests/frontendChatSubmit.test.js`
+- `automation/backlog.md`
+- `automation/reports/archive/daily-reports-2026-06-08.md`
+
+## What Changed
+
+- Added normalized current-message lookup for submit draft updates.
+- Routed assistant draft finishing through the current `messages` list item and left stale same-id draft objects untouched.
+- Routed non-stream user/assistant finalization through the same finalization helpers used by streaming paths, ensuring shallow message refs are triggered after server ids arrive.
+- Routed streamed text appends through the current list item and used that item for follow-scroll anchoring.
+- Normalized ids when removing empty assistant drafts.
+- Added behavior coverage for stale same-id assistant draft finishing and shallow-ref non-stream finalization updates.
+
+## Validation
+
+- PASS: `node --test backend\src\tests\frontendChatSubmit.test.js` (11 tests)
+- PASS: `node --test backend\src\tests\source-hygiene.test.js` (32 tests)
+- PASS: `npm run build` in `frontend`
+- PASS: `node scripts\check-encoding.mjs`
+- PASS: `powershell -ExecutionPolicy Bypass -File scripts\review-gate.ps1` (642 backend tests plus frontend build and diagnostics)
+
+## Notes
+
+- No secrets were written.
+- Existing unrelated dirty worktree and parallel diagnostic/accessibility/report changes were preserved.
+
+## Next Recommended Task
+
+- Continue auditing submit reconciliation and branch-list refresh paths for stale same-id payloads and redundant reactive updates.
+
+
+---
+
+### `2026-06-08-chat-submit-stream-reconcile-current-items.md`
+
+# 2026-06-08 Chat Submit Stream Reconcile Current Items
+
+## Scope
+
+- Continue the UI/state freshness and performance audit.
+- Keep streaming flags and interrupted stream persistence reconciliation aligned with the current rendered message-list items after same-id list replacement.
+
+## Changed Files
+
+- `frontend/src/composables/chat/useChatSubmit.js`
+- `backend/src/tests/frontendChatSubmit.test.js`
+- `automation/backlog.md`
+- `automation/reports/archive/daily-reports-2026-06-08.md`
+
+## What Changed
+
+- Routed stream `reasoningStreaming` and `contentStreaming` state changes through the current `messages` list item.
+- Used current message-list items when deciding whether interrupted drafts contain payloads and need persisted reconciliation.
+- Merged persisted user and assistant replacements into the current list items instead of stale same-id closure objects.
+- Avoided triggering the message ref when the reconciliation fetch does not update any rendered message.
+- Added regression coverage for a refreshed same-id message list during an open stream, then stopping generation and reconciling the persisted partial reply.
+
+## Validation
+
+- PASS: `node --test backend\src\tests\frontendChatSubmit.test.js` (12 tests)
+- PASS: `node --test backend\src\tests\test-hygiene.test.js` (7 tests)
+- PASS: `node --test backend\src\tests\source-hygiene.test.js` (32 tests)
+- PASS: `npm run build` in `frontend`
+- PASS: `node scripts\check-encoding.mjs`
+- PASS: `powershell -ExecutionPolicy Bypass -File scripts\review-gate.ps1`
+
+## Notes
+
+- No secrets were written.
+- Existing unrelated dirty worktree and parallel diagnostic/accessibility/report changes were preserved.
+
+## Next Recommended Task
+
+- Continue auditing branch-list refresh and chat accessory refresh paths for stale same-id payloads and redundant reactive updates.
+
+
+---
+
+### `2026-06-08-talent-roll-dialog-remove-direct-loop.md`
+
+# 2026-06-08 TalentRollDialog Remove Direct Loop
+
+## Scope
+
+- Continue the UI/state freshness and performance audit.
+- Avoid replacing the owned-talent list when a delete completion no longer changes visible rows.
+
+## Changed Files
+
+- `frontend/src/components/TalentRollDialog.vue`
+- `backend/src/tests/frontendTalentRollDialog.test.js`
+- `automation/backlog.md`
+- `automation/reports/archive/daily-reports-2026-06-08.md`
+
+## What Changed
+
+- Added `removeTalentByIdIfPresent` to remove deleted talent rows with a direct loop.
+- Preserved unchanged talent row references and only routed through `setTalentsIfChanged` when the target talent is still present.
+- Added source-level regression coverage so the single-talent delete path does not reintroduce `setTalentsIfChanged(talents.value.filter(...))`.
+
+## Validation
+
+- PASS: `node --test backend\src\tests\frontendTalentRollDialog.test.js` (4 tests)
+- PASS: `npm run build` in `frontend`
+- PASS: `node scripts\check-encoding.mjs`
+- PASS: `powershell -ExecutionPolicy Bypass -File scripts\review-gate.ps1`
+
+## Notes
+
+- No secrets were written.
+- Existing unrelated dirty worktree and parallel automation report changes were preserved.
+
+## Next Recommended Task
+
+- Continue auditing NPC and Settings list mutation helpers that still rebuild arrays with `filter` or `map` after single-row mutations.
+
+
+---
+
+### `2026-06-08-save-load-panel-rename-list-update.md`
+
+# 2026-06-08 SaveLoadPanel Rename List Update
+
+## Scope
+
+- Continue the UI/state freshness and performance audit.
+- Keep save-list UI updates consistent when a rename completes with changed or unchanged data.
+
+## Changed Files
+
+- `frontend/src/components/SaveLoadPanel.vue`
+- `backend/src/tests/frontendSaveLoadPanel.test.js`
+- `automation/backlog.md`
+- `automation/reports/archive/daily-reports-2026-06-08.md`
+
+## What Changed
+
+- Replaced the rename success path's direct `findIndex` plus `saves.value[index] = ...` mutation with `updateSaveItemNameIfChanged`.
+- The new helper scans the current save list once, preserves unchanged row references, and only routes through `setSavesIfChanged` when the renamed row summary actually changes.
+- Added source-level regression coverage so the rename path keeps using the helper and does not reintroduce direct save-array index assignment.
+
+## Validation
+
+- PASS: `node --test backend\src\tests\frontendSaveLoadPanel.test.js` (3 tests)
+- PASS: `npm run build` in `frontend`
+- PASS: `node scripts\check-encoding.mjs`
+- PASS: `powershell -ExecutionPolicy Bypass -File scripts\review-gate.ps1`
+
+## Notes
+
+- No secrets were written.
+- Existing unrelated dirty worktree and parallel automation report changes were preserved.
+
+## Next Recommended Task
+
+- Continue auditing remaining list-update helpers for direct row mutation paths that can skip the shared no-op-aware setters.
+
+
+---
+
+### `2026-06-08-save-load-panel-delete-direct-loop.md`
+
+# 2026-06-08 SaveLoadPanel Delete Direct Loop
+
+## Scope
+
+- Continue the UI/state freshness and performance audit.
+- Reduce save-list allocation and reference churn after SaveLoadPanel delete actions.
+
+## Changed Files
+
+- `frontend/src/components/SaveLoadPanel.vue`
+- `backend/src/tests/frontendSaveLoadPanel.test.js`
+- `automation/backlog.md`
+- `automation/reports/archive/daily-reports-2026-06-08.md`
+
+## What Changed
+
+- Replaced the successful delete path's `saves.value.filter(...)` cleanup with `removeSaveItemByIdIfPresent()`.
+- The helper scans the current save list once, keeps existing row objects, and only calls `setSavesIfChanged()` if a matching save id was actually present.
+- Updated SaveLoadPanel source coverage to require the direct-loop helper and reject the old filter-based cleanup.
+
+## Validation
+
+- PASS: `node --test backend\src\tests\frontendSaveLoadPanel.test.js` (3 tests)
+- PASS: `npm run build` in `frontend`
+- PASS: `node scripts\check-encoding.mjs`
+- PASS: `powershell -ExecutionPolicy Bypass -File scripts\review-gate.ps1`
+
+## Notes
+
+- No secrets were written.
+- Existing unrelated dirty worktree, untracked reports, and parallel SaveLoadPanel scope changes were preserved.
+
+## Next Recommended Task
+
+- Continue auditing SaveLoadPanel and adjacent panel list helpers for remaining filter/map cleanup paths that can become no-op-aware direct loops.
+
+
+---
+
+### `2026-06-08-home-dashboard-stats-single-pass.md`
+
+# 2026-06-08 Home Dashboard Stats Single Pass
+
+## Scope
+
+- Continue the UI/state freshness and performance audit.
+- Reduce repeated Home dashboard derived-stat scans when the character list changes.
+
+## Changed Files
+
+- `frontend/src/views/HomeView.vue`
+- `backend/src/tests/frontendHomeView.test.js`
+- `automation/backlog.md`
+- `automation/reports/archive/daily-reports-2026-06-08.md`
+
+## What Changed
+
+- Replaced separate `characters.value.filter(...)` passes for public and favorite counts with one `countHomeCharacterStats()` loop.
+- Kept the existing stat labels and values while deriving total, public, and favorite counts from the same scan.
+- Added HomeView source coverage so the dashboard stats stay off repeated `characters.value.filter(...)` scans.
+
+## Validation
+
+- PASS: `node --test backend\src\tests\frontendHomeView.test.js` (6 tests)
+- PASS: `npm run build` in `frontend`
+- PASS: `node scripts\check-encoding.mjs`
+- PASS: `powershell -ExecutionPolicy Bypass -File scripts\review-gate.ps1`
+
+## Notes
+
+- No secrets were written.
+- Existing unrelated dirty worktree, untracked reports, and parallel source changes were preserved.
+
+## Next Recommended Task
+
+- Continue auditing HomeView hot-tag and card merge helpers for avoidable array churn on large character/tag lists.
+
+
+---
+
+### `2026-06-08-message-toast-pending-sync-direct-loop.md`
+
+# 2026-06-08 Message Toast Pending Sync Direct Loop
+
+## Scope
+
+- Continue the UI/state freshness and performance audit.
+- Refine the existing MessageToasts pending-action guard so toast-list updates do less allocation work while preserving duplicate-click locking.
+
+## Changed Files
+
+- `frontend/src/components/MessageToasts.vue`
+- `backend/src/tests/frontendMessageToasts.test.js`
+- `backend/src/tests/backend.test.js`
+- `automation/backlog.md`
+- `automation/reports/archive/daily-reports-2026-06-08.md`
+
+## What Changed
+
+- Replaced the pending-action spread/filter cleanup with one direct loop that only replaces the pending `Set` when a pending toast id actually disappeared.
+- Added a direct-loop `collectToastIds` helper for the active toast ids.
+- Watched the toast item array reference instead of building a mapped id array on every notification-list update.
+- Updated the MessageToasts source guard to keep the duplicate-click lock while rejecting the old allocation-heavy cleanup path.
+- Reordered the dirty world-book test's `Math.random` restore to stay inside the hygiene scanner's `finally` contract.
+
+## Validation
+
+- PASS: `node --test backend\src\tests\frontendMessageToasts.test.js` (1 test)
+- PASS: `node --test backend\src\tests\test-hygiene.test.js` (7 tests)
+- PASS: `node --test backend\src\tests\backend.test.js --test-name-pattern "world book recursive activation preserves group inclusion"`
+- PASS: `npm run build` in `frontend`
+- PASS: `node scripts\check-encoding.mjs`
+- PASS: `powershell -ExecutionPolicy Bypass -File scripts\review-gate.ps1`
+
+## Notes
+
+- No secrets were written.
+- Existing unrelated dirty worktree, untracked reports, and parallel source changes were preserved.
+
+## Next Recommended Task
+
+- Continue auditing notification and panel list helpers for no-op reference churn after same-result refreshes.
+
+
+---
+
+### `2026-06-08-chat-npc-panel-stale-reopen-guard.md`
+
+# 2026-06-08 Chat NPC Panel Stale Reopen Guard
+
+## Scope
+
+- Continue the UI/state freshness and performance audit.
+- Prevent the chat NPC panel refresh reopen from crossing route or active-conversation changes during Vue's next tick.
+
+## Changed Files
+
+- `frontend/src/composables/chat/useChatConversation.js`
+- `backend/src/tests/frontendChatConversation.test.js`
+- `automation/backlog.md`
+- `automation/reports/archive/daily-reports-2026-06-08.md`
+
+## What Changed
+
+- Captured the active conversation id before closing an already-open NPC panel for refresh.
+- Added a current-panel conversation guard that requires the composable to be alive, the conversation to be ready, the active conversation id to match, and the route id to still match.
+- Rechecked that guard after `await nextTick()` before reopening the NPC panel.
+- Added behavior coverage for a route change during the reopen tick and source coverage for the guard contract.
+- Realigned the ChatHeader readiness source guard with the new current-panel conversation helper.
+
+## Validation
+
+- PASS: `node --test backend\src\tests\frontendChatConversation.test.js` (26 tests)
+- PASS: `node --test backend\src\tests\frontendChatConversation.test.js backend\src\tests\frontendChatHeader.test.js` (27 tests)
+- PASS: `npm run build` in `frontend`
+- PASS: `node scripts\check-encoding.mjs`
+- PASS: `powershell -ExecutionPolicy Bypass -File scripts\review-gate.ps1`
+
+## Notes
+
+- No secrets were written.
+- Existing unrelated dirty worktree and parallel report/source changes were preserved.
+
+## Next Recommended Task
+
+- Continue auditing chat panel open/reopen flows such as save and economy panels for route-scoped stale async transitions.
+
+
+---
+
+### `2026-06-08-chat-submit-message-removal.md`
+
+# 2026-06-08 Chat Submit Message Removal
+
+## Scope
+
+- Continue the UI/state freshness and performance audit.
+- Avoid unnecessary chat message-list ref replacements when submit cleanup paths have no local draft to remove.
+
+## Changed Files
+
+- `frontend/src/composables/chat/useChatSubmit.js`
+- `backend/src/tests/frontendChatSubmit.test.js`
+- `automation/backlog.md`
+- `automation/reports/archive/daily-reports-2026-06-08.md`
+
+## What Changed
+
+- Replaced route-stale local draft cleanup with a direct reference-removal loop that preserves the message-list ref when nothing is removed.
+- Replaced rejected-request and empty assistant draft cleanup with a normalized-id direct loop.
+- Added behavior coverage for removing an empty assistant draft once without repeated no-op list replacements.
+- Added a source-level regression guard so submit cleanup paths stay off `messages.value.filter`.
+
+## Validation
+
+- PASS: `node --test backend\src\tests\frontendChatSubmit.test.js` (25 tests)
+- PASS: `npm run build` in `frontend`
+- PASS: `node scripts\check-encoding.mjs`
+- PASS: `powershell -ExecutionPolicy Bypass -File scripts\review-gate.ps1`
+
+## Notes
+
+- No secrets were written.
+- Existing unrelated dirty worktree and parallel diagnostic/accessibility/report changes were preserved.
+
+## Next Recommended Task
+
+- Continue auditing chat submit and message action cleanup paths for redundant ref updates after stale route changes.
+
+
+---
+
+### `2026-06-08-chat-submit-persisted-draft-matching.md`
+
+# 2026-06-08 Chat Submit Persisted Draft Matching
+
+## Scope
+
+- Continue the UI/state freshness and performance audit.
+- Reduce array allocations while reconciling interrupted streamed drafts against persisted conversation messages.
+
+## Changed Files
+
+- `frontend/src/composables/chat/useChatSubmit.js`
+- `backend/src/tests/frontendChatSubmit.test.js`
+- `automation/backlog.md`
+- `automation/reports/archive/daily-reports-2026-06-08.md`
+
+## What Changed
+
+- Replaced persisted user-message matching's cloned reverse lookup with a direct reverse scan.
+- Replaced persisted assistant-message matching's candidate `filter`, `slice`, `findIndex`, and cloned reverse lookups with direct scans.
+- Preserved existing matching priority: after matched user id, after user time, exact streamed draft payload, then latest persisted assistant.
+- Added a source-level regression guard so this reconciliation path stays off candidate arrays.
+
+## Validation
+
+- PASS: `node --test backend\src\tests\frontendChatSubmit.test.js` (23 tests)
+- PASS: `npm run build` in `frontend`
+- PASS: `node scripts\check-encoding.mjs`
+- PASS: `powershell -ExecutionPolicy Bypass -File scripts\review-gate.ps1`
+
+## Notes
+
+- No secrets were written.
+- Existing unrelated dirty worktree and parallel diagnostic/accessibility/report changes were preserved.
+
+## Next Recommended Task
+
+- Continue auditing chat submit cleanup and message removal paths for no-op-aware list replacement and stale-route guards.
+
+
+---
+
+### `2026-06-08-chat-submit-current-message-loop.md`
+
+# 2026-06-08 Chat Submit Current Message Loop
+
+## Scope
+
+- Continue the UI/state freshness and performance audit.
+- Reduce avoidable message-list cloning and callback scans on chat submit stop and streaming draft update paths.
+
+## Changed Files
+
+- `frontend/src/composables/chat/useChatSubmit.js`
+- `backend/src/tests/frontendChatSubmit.test.js`
+- `automation/backlog.md`
+- `automation/reports/archive/daily-reports-2026-06-08.md`
+
+## What Changed
+
+- Replaced stop-time `[...messages.value].reverse().find(...)` with a direct reverse scan for the latest streaming draft.
+- Replaced current-message lookup in submit finalization and streaming helpers with a direct loop over the current message list.
+- Added a source-level regression guard so chat submit does not reintroduce cloned message-list scans for these paths.
+
+## Validation
+
+- PASS: `node --test backend\src\tests\frontendChatSubmit.test.js` (22 tests)
+- PASS: `npm run build` in `frontend`
+- PASS: `node scripts\check-encoding.mjs`
+- PASS: `powershell -ExecutionPolicy Bypass -File scripts\review-gate.ps1`
+
+## Notes
+
+- No secrets were written.
+- Existing unrelated dirty worktree and parallel diagnostic/accessibility/report changes were preserved.
+
+## Next Recommended Task
+
+- Continue auditing chat submit persisted-draft reconciliation matching for filter/slice/reverse allocations on long conversations.
+
+
+---
+
+### `2026-06-08-chat-message-current-index.md`
+
+# 2026-06-08 Chat Message Current Index
+
+## Scope
+
+- Continue the UI/state freshness and performance audit.
+- Reduce repeated long-message-list scans during chat action button state checks and stale message guards.
+
+## Changed Files
+
+- `frontend/src/composables/chat/useChatMessageActions.js`
+- `backend/src/tests/frontendChatMessageActions.test.js`
+- `automation/backlog.md`
+- `automation/reports/archive/daily-reports-2026-06-08.md`
+
+## What Changed
+
+- Added a computed current-message index keyed by normalized message id.
+- Routed `findMessageListItem` through that index so edit, delete, branch, and swipe stale guards reuse the same current-list lookup structure.
+- Preserved first-match behavior for duplicate ids and kept stale same-id streaming guards intact.
+- Added a source-level regression guard to keep the action path off `messages.value.find` scans.
+
+## Validation
+
+- PASS: `node --test backend\src\tests\frontendChatMessageActions.test.js` (28 tests)
+- PASS: `npm run build` in `frontend`
+- PASS: `node scripts\check-encoding.mjs`
+- PASS: `powershell -ExecutionPolicy Bypass -File scripts\review-gate.ps1`
+
+## Notes
+
+- No secrets were written.
+- Existing unrelated dirty worktree and parallel diagnostic/accessibility/report changes were preserved.
+
+## Next Recommended Task
+
+- Continue auditing render-time chat helpers for repeated per-message lookups and redundant reactive writes in long conversations.
+
+
+---
+
+### `2026-06-08-chat-swipe-init-current-message.md`
+
+# 2026-06-08 Chat Swipe Init Current Message
+
+## Scope
+
+- Continue the UI/state freshness and performance audit.
+- Avoid duplicate current-message lookups after each assistant swipe initialization request settles.
+
+## Changed Files
+
+- `frontend/src/composables/chat/useChatMessageActions.js`
+- `backend/src/tests/frontendChatMessageActions.test.js`
+- `automation/backlog.md`
+- `automation/reports/archive/daily-reports-2026-06-08.md`
+
+## What Changed
+
+- Replaced the post-fetch `isCurrentSwipeInit` boolean check plus separate `findMessageListItem` call with one `getCurrentSwipeInitMessage` helper.
+- Reused the returned current message in both successful and fallback swipe initialization paths.
+- Removed the old `isCurrentConversationMessage` helper that only existed to repeat the same lookup.
+- Added source coverage to keep the single current-message lookup contract in place.
+
+## Validation
+
+- PASS: `node --test backend\src\tests\frontendChatMessageActions.test.js` (28 tests)
+- PASS: `npm run build` in `frontend`
+- PASS: `node scripts\check-encoding.mjs`
+- PASS: `powershell -ExecutionPolicy Bypass -File scripts\review-gate.ps1`
+
+## Notes
+
+- No secrets were written.
+- Existing unrelated dirty worktree and parallel diagnostic/accessibility/report changes were preserved.
+
+## Next Recommended Task
+
+- Continue auditing long-conversation message UI helpers for avoidable duplicate lookups and stale async completions.
+
+
+---
+
+### `2026-06-08-chat-swipe-init-list-scan.md`
+
+# 2026-06-08 Chat Swipe Init List Scan
+
+## Scope
+
+- Continue the UI/state freshness and performance audit.
+- Remove an avoidable repeated message-list scan while initializing assistant swipe state for long conversations.
+
+## Changed Files
+
+- `frontend/src/composables/chat/useChatMessageActions.js`
+- `backend/src/tests/frontendChatMessageActions.test.js`
+- `automation/backlog.md`
+- `automation/reports/archive/daily-reports-2026-06-08.md`
+
+## What Changed
+
+- Added a list-item-specific persisted message id helper for swipe initialization.
+- Reused the current loop item instead of calling the full action guard, which searched the message list again for every assistant message.
+- Kept local draft and streaming assistant messages out of swipe initialization requests.
+- Added behavior coverage for local and streaming assistant skips plus source coverage that prevents the repeated list-scan path from returning.
+
+## Validation
+
+- PASS: `node --test backend\src\tests\frontendChatMessageActions.test.js` (28 tests)
+- PASS: `npm run build` in `frontend`
+- PASS: `node scripts\check-encoding.mjs`
+- PASS: `powershell -ExecutionPolicy Bypass -File scripts\review-gate.ps1`
+
+## Notes
+
+- No secrets were written.
+- Existing unrelated dirty worktree and parallel diagnostic/accessibility/report changes were preserved.
+
+## Next Recommended Task
+
+- Continue auditing long-conversation message UI helpers for avoidable O(n^2) scans and stale async completions.
+
+
+---
+
+### `2026-06-08-chat-message-action-direct-loops.md`
+
+# 2026-06-08 Chat Message Action Direct Loops
+
+## Scope
+
+- Continue the UI/state freshness and performance audit.
+- Reduce long-conversation allocations in message scroll anchoring and assistant swipe initialization.
+
+## Changed Files
+
+- `frontend/src/composables/chat/useChatMessageActions.js`
+- `backend/src/tests/frontendChatMessageActions.test.js`
+- `automation/backlog.md`
+- `automation/reports/archive/daily-reports-2026-06-08.md`
+
+## What Changed
+
+- Replaced scroll-anchor message element lookup's NodeList spread/find chain with a direct `querySelectorAll` loop.
+- Replaced assistant swipe initialization's filter/map chain with one direct loop that still starts swipe loads in parallel and waits with `Promise.all`.
+- Added source-level regression coverage to keep both helpers off list-clone allocation paths.
+
+## Validation
+
+- PASS: `node --test backend\src\tests\frontendChatMessageActions.test.js` (27 tests)
+- PASS: `npm run build` in `frontend`
+- PASS: `node scripts\check-encoding.mjs`
+- PASS: `powershell -ExecutionPolicy Bypass -File scripts\review-gate.ps1`
+
+## Notes
+
+- No secrets were written.
+- Existing unrelated dirty worktree and parallel diagnostic/accessibility/report changes were preserved.
+
+## Next Recommended Task
+
+- Continue auditing long-conversation message UI helpers for avoidable list allocations and stale async completions.
+
+
+---
+
+### `2026-06-08-chat-view-latest-assistant-scan.md`
+
+# 2026-06-08 Chat View Latest Assistant Scan
+
+## Scope
+
+- Continue the UI/state freshness and performance audit.
+- Reduce repeated allocations in the chat message render path used to decide where the status bar is displayed.
+
+## Changed Files
+
+- `frontend/src/views/ChatView.vue`
+- `backend/src/tests/frontendChatAccessory.test.js`
+- `automation/backlog.md`
+- `automation/reports/archive/daily-reports-2026-06-08.md`
+
+## What Changed
+
+- Replaced the `latestAssistantMessage` computed spread/reverse/find chain with a reverse index scan over `messages.value`.
+- Preserved behavior by returning the last assistant message object or `null`.
+- Added source-level regression coverage so the computed does not clone and reverse the full message list again.
+
+## Validation
+
+- PASS: `node --test backend\src\tests\frontendChatAccessory.test.js` (17 tests)
+- PASS: `npm run build` in `frontend`
+- PASS: `node scripts\check-encoding.mjs`
+- PASS: `powershell -ExecutionPolicy Bypass -File scripts\review-gate.ps1`
+
+## Notes
+
+- No secrets were written.
+- Existing unrelated dirty worktree and parallel diagnostic/accessibility/report changes were preserved.
+
+## Next Recommended Task
+
+- Continue auditing long-conversation message UI helpers for unnecessary list cloning, DOM query allocations, and stale async completions.
+
+
+---
+
+### `2026-06-08-chat-sidebar-visible-selection-summary.md`
+
+# 2026-06-08 Chat Sidebar Visible Selection Summary
+
+## Scope
+
+- Continue the UI/state freshness and performance audit.
+- Reduce repeated derived-state scans and transient allocations in chat sidebar filtering, visible selection counts, bulk selection, and selection pruning.
+
+## Changed Files
+
+- `frontend/src/composables/chat/useChatConversation.js`
+- `backend/src/tests/frontendChatConversation.test.js`
+- `automation/backlog.md`
+- `automation/reports/archive/daily-reports-2026-06-08.md`
+
+## What Changed
+
+- Routed chat sidebar conversation search through a direct-loop helper while preserving the original conversation-list reference for empty search queries.
+- Summarized visible selected count and all-visible-selected state through one computed helper instead of separate filter/every passes over visible ids.
+- Reworked bulk select, bulk delete id collection, deleted-conversation removal, and selection pruning to use direct loops instead of spread/filter/map intermediates.
+- Added source-level regression coverage for the visible selection summary path and removed allocation patterns.
+
+## Validation
+
+- PASS: `node --test backend\src\tests\frontendChatConversation.test.js` (24 tests)
+- PASS: `npm run build` in `frontend`
+- PASS: `node scripts\check-encoding.mjs`
+- PASS: `powershell -ExecutionPolicy Bypass -File scripts\review-gate.ps1`
+
+## Notes
+
+- No secrets were written.
+- Existing unrelated dirty worktree and parallel diagnostic/accessibility/report changes were preserved.
+
+## Next Recommended Task
+
+- Continue auditing branch-list and chat sidebar refresh paths for stale completions and redundant reactive updates during route changes.
+
+
+---
+
+### `2026-06-08-chat-model-switcher-filter-loop.md`
+
+# 2026-06-08 Chat Model Switcher Filter Loop
+
+## Scope
+
+- Continue the UI/state freshness and performance audit.
+- Reduce avoidable callback/allocation work while filtering the chat model switcher list during search input.
+
+## Changed Files
+
+- `frontend/src/components/chat/ChatModelSwitcher.vue`
+- `backend/src/tests/frontendChatModelSwitcher.test.js`
+- `automation/backlog.md`
+- `automation/reports/archive/daily-reports-2026-06-08.md`
+
+## What Changed
+
+- Routed `filteredModels` through `filterModelOptions(modelOptions.value, search.value)`.
+- Preserved the original model-options array reference when search is empty.
+- Replaced `modelOptions.value.filter(...)` with a direct loop for non-empty search results.
+- Added focused source coverage to keep the model switcher search path allocation-light.
+
+## Validation
+
+- PASS: `node --test backend\src\tests\frontendChatModelSwitcher.test.js` (3 tests)
+- PASS: `node --test backend\src\tests\source-hygiene.test.js backend\src\tests\test-hygiene.test.js` (41 tests)
+- PASS: `npm run build` in `frontend`
+- PASS: `node scripts\check-encoding.mjs`
+- PASS: `powershell -ExecutionPolicy Bypass -File scripts\review-gate.ps1` (697 backend tests)
+
+## Notes
+
+- No secrets were written.
+- Existing unrelated dirty worktree and parallel automation/report/backend/frontend changes were preserved.
+
+## Next Recommended Task
+
+- Continue auditing chat sidebar visible-selection derived state for redundant visible-id arrays and stale selection updates.
+
+
+---
+
+### `2026-06-08-chat-settings-status-row-loop.md`
+
+# 2026-06-08 Chat Settings Status Row Loop
+
+## Scope
+
+- Continue the UI/state freshness and performance audit.
+- Reduce avoidable array churn while deriving status bar editor rows in the active chat settings drawer.
+
+## Changed Files
+
+- `frontend/src/components/chat/ChatSettingsDrawer.vue`
+- `backend/src/tests/frontendChatSettingsDrawer.test.js`
+- `automation/backlog.md`
+- `automation/reports/archive/daily-reports-2026-06-08.md`
+
+## What Changed
+
+- Replaced `compositeRows.map(...)` in `statusBarEditorRows` with an indexed loop that appends rows directly.
+- Built composite row keys while scanning row parts, avoiding `row.parts.map(...).join('|')`.
+- Replaced the variable `forEach` callback with an indexed loop and `continue` guards.
+- Added focused source coverage to keep the chat settings status editor on the allocation-light path.
+
+## Validation
+
+- PASS: `node --test backend\src\tests\frontendChatSettingsDrawer.test.js` (5 tests)
+- PASS: `node --test backend\src\tests\source-hygiene.test.js backend\src\tests\test-hygiene.test.js` (41 tests)
+- PASS: `npm run build` in `frontend`
+- PASS: `node scripts\check-encoding.mjs`
+- PASS: `powershell -ExecutionPolicy Bypass -File scripts\review-gate.ps1` (696 backend tests)
+
+## Notes
+
+- No secrets were written.
+- Existing unrelated dirty worktree and parallel automation/report/backend/frontend changes were preserved.
+
+## Next Recommended Task
+
+- Continue auditing chat settings/accessory derived status-bar helpers for stale async completions and redundant list replacements.
+
+
+---
+
+### `2026-06-08-character-status-blueprint-editor-row-loop.md`
+
+# 2026-06-08 Character Status Blueprint Editor Row Loop
+
+## Scope
+
+- Continue the UI/state freshness and performance audit.
+- Reduce avoidable array churn while deriving CharacterFormView status blueprint editor rows from custom templates.
+
+## Changed Files
+
+- `frontend/src/views/CharacterFormView.vue`
+- `backend/src/tests/frontendCharacterFormView.test.js`
+- `automation/backlog.md`
+- `automation/reports/archive/daily-reports-2026-06-08.md`
+
+## What Changed
+
+- Replaced `compositeRows.map(...)` in `statusBlueprintEditorRows` with an indexed loop that directly appends rows.
+- Built composite row keys during the same part scan that records child variable keys, avoiding `row.parts.map(...).join('|')`.
+- Replaced the variable `forEach` callback with an indexed loop and `continue` guards.
+- Added source-level coverage to keep the editor-row derivation on the allocation-light path.
+
+## Validation
+
+- PASS: `node --test backend\src\tests\frontendCharacterFormView.test.js` (11 tests)
+- PASS: `node --test backend\src\tests\source-hygiene.test.js backend\src\tests\test-hygiene.test.js` (41 tests)
+- PASS: `npm run build` in `frontend`
+- PASS: `node scripts\check-encoding.mjs`
+- PASS: `powershell -ExecutionPolicy Bypass -File scripts\review-gate.ps1` (695 backend tests)
+
+## Notes
+
+- No secrets were written.
+- Existing unrelated dirty worktree and parallel automation/report/backend/frontend changes were preserved.
+
+## Next Recommended Task
+
+- Continue auditing CharacterFormView and SettingsView for post-mutation reloads or derived option lists that can skip redundant reference replacements.
+
+
+---
+
+### `2026-06-08-settings-mod-character-options-single-pass.md`
+
+# 2026-06-08 Settings Mod Character Options Single Pass
+
+## Scope
+
+- Continue the UI/state freshness and performance audit.
+- Reduce redundant reactive work when Settings extension Mod character options refresh.
+
+## Changed Files
+
+- `frontend/src/views/SettingsView.vue`
+- `backend/src/tests/frontendSettingsView.test.js`
+- `automation/backlog.md`
+- `automation/reports/archive/daily-reports-2026-06-08.md`
+
+## What Changed
+
+- Routed Mod character option refreshes through `setModCharacterOptionsIfChanged`.
+- Built selectable character options in one explicit pass before using the existing reference-preserving list setter.
+- Updated SettingsView source coverage so future edits keep the single-pass, reference-preserving refresh path.
+
+## Validation
+
+- PASS: `node --test backend\src\tests\frontendSettingsView.test.js` (10 tests)
+- PASS: `node --test backend\src\tests\source-hygiene.test.js backend\src\tests\test-hygiene.test.js` (41 tests)
+- PASS: `npm run build` in `frontend`
+- PASS: `node scripts\check-encoding.mjs`
+- PASS: `powershell -ExecutionPolicy Bypass -File scripts\review-gate.ps1`
+
+## Notes
+
+- No secrets were written.
+- Existing unrelated dirty worktree and parallel automation/report changes were preserved.
+
+## Next Recommended Task
+
+- Continue auditing SettingsView import FileReader and post-mutation reload paths for stale completions or avoidable duplicate refreshes.
+
+
+---
+
+### `2026-06-08-save-load-result-conversation-guard.md`
+
+# 2026-06-08 Save Load Result Conversation Guard
+
+## Scope
+
+- Continue the UI/state freshness and performance audit.
+- Prevent malformed or stale save-load responses from refreshing the current chat UI unless they explicitly match the active conversation.
+
+## Changed Files
+
+- `frontend/src/components/SaveLoadPanel.vue`
+- `backend/src/tests/frontendSaveLoadPanel.test.js`
+- `automation/backlog.md`
+- `automation/reports/archive/daily-reports-2026-06-08.md`
+
+## What Changed
+
+- Added `isCurrentSaveLoadResult` so save-load completion requires the returned `conversationId` to equal the active panel conversation.
+- Replaced the previous optional mismatch check with a strict result guard before success toast and `loaded` emission.
+- Updated SaveLoadPanel source coverage to reject the old missing-conversation-id path.
+
+## Validation
+
+- PASS: `node --test backend\src\tests\frontendSaveLoadPanel.test.js` (3 tests)
+- PASS: `node --test backend\src\tests\source-hygiene.test.js backend\src\tests\test-hygiene.test.js` (41 tests)
+- PASS: `npm run build` in `frontend`
+- PASS: `node scripts\check-encoding.mjs`
+- PASS: `powershell -ExecutionPolicy Bypass -File scripts\review-gate.ps1`
+
+## Notes
+
+- No secrets were written.
+- Existing unrelated dirty worktree and parallel automation/report changes were preserved.
+
+## Next Recommended Task
+
+- Continue auditing CharacterFormView derived status blueprint stats and AI/import paths for redundant reactive work or stale completions.
+
+
+---
+
+### `2026-06-08-character-status-blueprint-stats-loop.md`
+
+# 2026-06-08 Character Status Blueprint Stats Loop
+
+## Scope
+
+- Continue the UI/state freshness and performance audit.
+- Reduce repeated reactive work while editing CharacterFormView status blueprint templates.
+
+## Changed Files
+
+- `frontend/src/views/CharacterFormView.vue`
+- `backend/src/tests/frontendCharacterFormView.test.js`
+- `automation/backlog.md`
+- `automation/reports/archive/daily-reports-2026-06-08.md`
+
+## What Changed
+
+- Routed `statusBarBlueprintTemplateStats` variable counting through `countStatusBlueprintVariableStats`.
+- Built inferred status variable keys with an explicit loop instead of mapping the inferred list.
+- Counted inferred and meter variables in one pass over normalized variables instead of two `filter` passes.
+- Added source-level coverage to keep this computed path on the single-pass implementation.
+
+## Validation
+
+- PASS: `node --test backend\src\tests\frontendCharacterFormView.test.js` (9 tests)
+- PASS: `node --test backend\src\tests\source-hygiene.test.js backend\src\tests\test-hygiene.test.js` (41 tests)
+- PASS: `npm run build` in `frontend`
+- PASS: `node scripts\check-encoding.mjs`
+- PASS: `powershell -ExecutionPolicy Bypass -File scripts\review-gate.ps1`
+
+## Notes
+
+- No secrets were written.
+- Existing unrelated dirty worktree and parallel automation/report changes were preserved.
+
+## Next Recommended Task
+
+- Continue auditing CharacterFormView tag filtering and status blueprint row construction for avoidable intermediate arrays during typing.
+
+
+---
+
+### `2026-06-08-character-tag-search-filter-loop.md`
+
+# 2026-06-08 Character Tag Search Filter Loop
+
+## Scope
+
+- Continue the UI/state freshness and performance audit.
+- Reduce per-keystroke allocations in CharacterFormView tag search filtering.
+
+## Changed Files
+
+- `frontend/src/views/CharacterFormView.vue`
+- `backend/src/tests/frontendCharacterFormView.test.js`
+- `automation/backlog.md`
+- `automation/reports/archive/daily-reports-2026-06-08.md`
+
+## What Changed
+
+- Routed `filteredTags` through `filterTagsBySearch`.
+- Preserved the current tag-list reference for empty searches.
+- Replaced direct `availableTags.value.filter(...)` with an explicit one-pass search helper.
+- Added source-level coverage to keep tag search on the allocation-light path.
+
+## Validation
+
+- PASS: `node --test backend\src\tests\frontendCharacterFormView.test.js` (10 tests)
+- PASS: `node --test backend\src\tests\source-hygiene.test.js backend\src\tests\test-hygiene.test.js` (41 tests)
+- PASS: `npm run build` in `frontend`
+- PASS: `node scripts\check-encoding.mjs`
+- PASS: `powershell -ExecutionPolicy Bypass -File scripts\review-gate.ps1`
+
+## Notes
+
+- No secrets were written.
+- Existing unrelated dirty worktree and parallel automation/report changes were preserved.
+
+## Next Recommended Task
+
+- Continue auditing CharacterFormView status blueprint row construction, especially composite row key assembly, for avoidable intermediate arrays while editing templates.
+
+
+---
+
+### `2026-06-08-worldbook-entry-stats-single-pass.md`
+
+# 2026-06-08 WorldBook Entry Stats Single Pass
+
+## Scope
+
+- Continue the UI/state freshness and performance audit.
+- Reduce repeated reactive array scans in the WorldBook detail header for long entry lists.
+
+## Changed Files
+
+- `frontend/src/views/WorldBookView.vue`
+- `backend/src/tests/frontendWorldBookView.test.js`
+- `automation/backlog.md`
+- `automation/reports/archive/daily-reports-2026-06-08.md`
+
+## What Changed
+
+- Replaced separate `filter()` passes for enabled, disabled, always-active, and probability entry counts with a single `currentEntryStats` computed.
+- Kept the existing count outputs as small computed accessors so the template contract stays unchanged.
+- Added source-level coverage to keep the current-entry stats aggregated in one pass.
+
+## Validation
+
+- PASS: `node --test backend\src\tests\frontendWorldBookView.test.js` (6 tests)
+- PASS: `node --test backend\src\tests\source-hygiene.test.js backend\src\tests\test-hygiene.test.js` (41 tests)
+- PASS: `npm run build` in `frontend`
+- PASS: `node scripts\check-encoding.mjs`
+- PASS: `powershell -ExecutionPolicy Bypass -File scripts\review-gate.ps1`
+
+## Notes
+
+- No secrets were written.
+- Existing unrelated dirty worktree and parallel automation/report/source changes were preserved.
+
+## Next Recommended Task
+
+- Continue auditing SettingsView and provider-model refresh paths for stale post-await side effects and repeated reactive work.
+
+
+---
+
+### `2026-06-08-chat-accessory-skill-result-context.md`
+
+# 2026-06-08 Chat Accessory Skill Result Context
+
+## Scope
+
+- Continue the UI/state freshness and performance audit.
+- Prevent delayed accessory skill results without a current conversation id from updating the visible chat UI after route changes.
+
+## Changed Files
+
+- `frontend/src/composables/chat/useChatAccessory.js`
+- `frontend/src/views/ChatView.vue`
+- `backend/src/tests/frontendChatAccessory.test.js`
+- `backend/src/tests/frontendChatSubmit.test.js`
+- `automation/backlog.md`
+- `automation/reports/archive/daily-reports-2026-06-08.md`
+
+## What Changed
+
+- Required accessory skill results to include the active conversation id before mutating status-bar state, economy refresh state, or recent skill-result UI.
+- Applied the same current-conversation requirement in `ChatView` before updating accessory status badges.
+- Added submit-path coverage showing non-stream skill results are normalized to the active conversation id before reaching accessory handling.
+- Extended accessory regression coverage for missing-id, stale-id, and current-id skill results.
+
+## Validation
+
+- PASS: `node --test backend\src\tests\frontendChatAccessory.test.js` (16 tests)
+- PASS: `node --test backend\src\tests\frontendChatSubmit.test.js` (21 tests)
+- PASS: `node --test backend\src\tests\source-hygiene.test.js backend\src\tests\test-hygiene.test.js` (41 tests)
+- PASS: `npm run build` in `frontend`
+- PASS: `node scripts\check-encoding.mjs`
+- PASS: `powershell -ExecutionPolicy Bypass -File scripts\review-gate.ps1`
+
+## Notes
+
+- No secrets were written.
+- Existing unrelated dirty worktree and parallel automation/report/source changes were preserved.
+
+## Next Recommended Task
+
+- Continue auditing provider-model refresh and accessory save follow-up work for stale post-await side effects and redundant reactive assignments.
+
+
+---
+
+### `2026-06-08-chat-branch-navigation-stale-context.md`
+
+# 2026-06-08 Chat Branch Navigation Stale Context
+
+## Scope
+
+- Continue the UI/state freshness and performance audit.
+- Prevent branch creation follow-up navigation from running after the active chat route changes during sidebar refresh work.
+
+## Changed Files
+
+- `frontend/src/composables/chat/useChatMessageActions.js`
+- `frontend/src/views/ChatView.vue`
+- `backend/src/tests/frontendChatMessageActions.test.js`
+- `backend/src/tests/frontendChatConversation.test.js`
+- `automation/backlog.md`
+- `automation/reports/archive/daily-reports-2026-06-08.md`
+
+## What Changed
+
+- Captured the current branch action token, conversation id, and message-list item before branch creation follow-up work.
+- Passed branch success callbacks a context guard that becomes false if the route, token, or current message item changes.
+- Guarded `ChatView` branch navigation after `loadSidebarData()` so a stale source conversation cannot navigate over the user's newer route.
+- Added focused regression coverage for the branch callback guard and the `ChatView` navigation wiring.
+
+## Validation
+
+- PASS: `node --test backend\src\tests\frontendChatMessageActions.test.js` (26 tests)
+- PASS: `node --test backend\src\tests\frontendChatConversation.test.js` (23 tests)
+- PASS: `node --test backend\src\tests\source-hygiene.test.js backend\src\tests\test-hygiene.test.js` (41 tests)
+- PASS: `npm run build` in `frontend`
+- PASS: `node scripts\check-encoding.mjs`
+- PASS: `powershell -ExecutionPolicy Bypass -File scripts\review-gate.ps1`
+
+## Notes
+
+- No secrets were written.
+- Existing unrelated dirty worktree and parallel automation/report/source changes were preserved.
+
+## Next Recommended Task
+
+- Continue auditing chat accessory and provider-model refresh callbacks for stale post-await side effects and redundant reactive assignments.
+
+
+---
+
+### `2026-06-08-chat-view-conversation-load-side-effect-guard.md`
+
+# 2026-06-08 ChatView Conversation Load Side Effect Guard
+
+## Scope
+
+- Continue the UI/state freshness and performance audit.
+- Keep route-changing conversation loads from applying stale appearance/accessory side effects or secondary refreshes after async boundaries.
+
+## Changed Files
+
+- `frontend/src/views/ChatView.vue`
+- `backend/src/tests/frontendChatConversation.test.js`
+- `automation/backlog.md`
+- `automation/reports/archive/daily-reports-2026-06-08.md`
+
+## What Changed
+
+- Added a shared `isCurrentConversationLoad` guard for ChatView conversation load completions.
+- Rechecked the active route after `nextTick()` before syncing appearance and accessory drafts.
+- Rechecked again after `applyConversationAppearance()` before starting status bar, accessory skill, swipe, and branch refresh work for the loaded conversation.
+- Routed catch/finally cleanup through the same guard so stale route loads do not clear the current loading state.
+- Added source coverage to preserve the guard placement around the route-changing awaits.
+
+## Validation
+
+- PASS: `node --test backend\src\tests\frontendChatConversation.test.js` (22 tests)
+- PASS: `node --test backend\src\tests\source-hygiene.test.js backend\src\tests\test-hygiene.test.js` (39 tests)
+- PASS: `npm run build` in `frontend`
+- PASS: `node scripts\check-encoding.mjs`
+- PASS: `powershell -ExecutionPolicy Bypass -File scripts\review-gate.ps1`
+
+## Notes
+
+- No secrets were written.
+- Existing unrelated dirty worktree and parallel diagnostic/accessibility/report changes were preserved.
+
+## Next Recommended Task
+
+- Continue auditing chat appearance custom-script cleanup and branch refresh flows for stale async completions after route changes.
+
+
+---
+
+### `2026-06-08-chat-submit-reconcile-route-change-guard.md`
+
+# 2026-06-08 Chat Submit Reconcile Route Change Guard
+
+## Scope
+
+- Continue the UI/state freshness and performance audit.
+- Stop interrupted chat submit stream reconciliation retries from doing stale persisted-message refreshes after the user navigates to another conversation.
+
+## Changed Files
+
+- `frontend/src/composables/chat/useChatSubmit.js`
+- `backend/src/tests/frontendChatSubmit.test.js`
+- `automation/backlog.md`
+- `automation/reports/archive/daily-reports-2026-06-08.md`
+
+## What Changed
+
+- Added an active-conversation guard before and after persisted stream reconciliation fetches.
+- Rechecked the active route before each retry attempt so delayed interrupted-stream retries exit without a stale GET after navigation.
+- Normalized the conversation comparison used by reconciliation, matching the submit and accessory refresh guards already in this composable.
+- Added a regression test that stops a partial stream, forces the first retry delay, changes the route, and verifies no second persisted-message fetch runs.
+
+## Validation
+
+- PASS: `node --test backend\src\tests\frontendChatSubmit.test.js` (20 tests)
+- PASS: `node --test backend\src\tests\test-hygiene.test.js backend\src\tests\source-hygiene.test.js` (39 tests)
+- PASS: `npm run build` in `frontend`
+- PASS: `node scripts\check-encoding.mjs`
+- PASS: `powershell -ExecutionPolicy Bypass -File scripts\review-gate.ps1`
+
+## Notes
+
+- No secrets were written.
+- Existing unrelated dirty worktree and parallel diagnostic/accessibility/report changes were preserved.
+
+## Next Recommended Task
+
+- Continue auditing chat stream timeout/error paths and conversation reload flows for stale busy-state cleanup and redundant async work.
+
+
+---
+
+### `2026-06-08-chat-submit-skip-finalized-reconcile.md`
+
+# 2026-06-08 Chat Submit Skip Finalized Reconcile
+
+## Scope
+
+- Continue the UI/state freshness and performance audit.
+- Avoid redundant persisted-message refreshes after stream completion has already finalized the currently rendered draft items.
+
+## Changed Files
+
+- `frontend/src/composables/chat/useChatSubmit.js`
+- `backend/src/tests/frontendChatSubmit.test.js`
+- `automation/backlog.md`
+- `automation/reports/archive/daily-reports-2026-06-08.md`
+
+## What Changed
+
+- Tightened `needsPersistedDraftReconcile` so it only requests a persisted refresh when a local draft is still present in the current message list and is no longer streaming.
+- Avoided treating stale local draft objects as reconcile targets after the visible list item has already been replaced/finalized with server ids.
+- Added regression coverage for a stream whose local draft objects are replaced before the final `done` event completes.
+
+## Validation
+
+- PASS: `node --test backend\src\tests\frontendChatSubmit.test.js` (19 tests)
+- PASS: `node --test backend\src\tests\test-hygiene.test.js backend\src\tests\source-hygiene.test.js` (39 tests)
+- PASS: `npm run build` in `frontend`
+- PASS: `node scripts\check-encoding.mjs`
+- PASS: `powershell -ExecutionPolicy Bypass -File scripts\review-gate.ps1` (674 backend tests plus frontend build)
+
+## Notes
+
+- No secrets were written.
+- Existing unrelated dirty worktree and parallel diagnostic/accessibility/report changes were preserved.
+
+## Next Recommended Task
+
+- Continue auditing chat stream abort/error paths for busy-state cleanup and stale reconciliation attempts.
+
+
+---
+
+### `2026-06-08-chat-submit-accessory-refresh-conversation-guard.md`
+
+# 2026-06-08 Chat Submit Accessory Refresh Conversation Guard
+
+## Scope
+
+- Continue the UI/state freshness and performance audit.
+- Keep delayed post-submit accessory polling from refreshing the wrong conversation after navigation or route changes.
+
+## Changed Files
+
+- `frontend/src/composables/chat/useChatSubmit.js`
+- `backend/src/tests/frontendChatSubmit.test.js`
+- `automation/backlog.md`
+- `automation/reports/archive/daily-reports-2026-06-08.md`
+
+## What Changed
+
+- Captured the submit conversation id when scheduling delayed accessory refresh polling.
+- Passed that conversation id through `onAccessoryRefreshStart` and `onAccessoryRefresh` payloads.
+- Checked the active route conversation before and after delayed refresh tasks so old timers cannot refresh status/economy data or invoke completion callbacks for a different active conversation.
+- Added focused coverage for route changes before a delayed accessory refresh timer fires.
+
+## Validation
+
+- PASS: `node --test backend\src\tests\frontendChatSubmit.test.js` (18 tests)
+- PASS: `node --test backend\src\tests\frontendChatAccessory.test.js` (16 tests)
+- PASS: `node --test backend\src\tests\test-hygiene.test.js backend\src\tests\source-hygiene.test.js`
+- PASS: `npm run build` in `frontend`
+- PASS: `node scripts\check-encoding.mjs`
+- PASS: `powershell -ExecutionPolicy Bypass -File scripts\review-gate.ps1`
+
+## Notes
+
+- No secrets were written.
+- Existing unrelated dirty worktree and parallel diagnostic/accessibility/report changes were preserved.
+
+## Next Recommended Task
+
+- Continue auditing chat submit stream abort/error paths for visible busy-state cleanup and redundant reconciliation fetches.
+
+
+---
+
+### `2026-06-08-chat-submit-skill-result-conversation-guard.md`
+
+# 2026-06-08 Chat Submit Skill Result Conversation Guard
+
+## Scope
+
+- Continue the UI/state freshness and performance audit.
+- Prevent delayed chat submit completions and accessory skill results from updating the wrong active conversation.
+
+## Changed Files
+
+- `frontend/src/composables/chat/useChatSubmit.js`
+- `frontend/src/composables/chat/useChatAccessory.js`
+- `frontend/src/views/ChatView.vue`
+- `backend/src/tests/frontendChatSubmit.test.js`
+- `backend/src/tests/frontendChatAccessory.test.js`
+- `automation/backlog.md`
+- `automation/reports/archive/daily-reports-2026-06-08.md`
+
+## What Changed
+
+- Captured the conversation id at submit start and required submit completions to still match the active route before mutating visible messages, status bar state, usage metadata, accessory refreshes, or sidebar/economy refresh chrome.
+- Annotated stream and non-stream accessory skill results with the submit conversation id.
+- Ignored stale conversation-scoped skill results in both `useChatAccessory` and the ChatView badge update path.
+- Scoped stream timeout aborts to the controller created for that submit so an old timer cannot abort a newer request.
+
+## Validation
+
+- PASS: `node --test backend\src\tests\frontendChatSubmit.test.js` (17 tests)
+- PASS: `node --test backend\src\tests\frontendChatAccessory.test.js` (16 tests)
+- PASS: `node --test backend\src\tests\test-hygiene.test.js backend\src\tests\source-hygiene.test.js` (39 tests)
+- PASS: `npm run build` in `frontend`
+- PASS: `node scripts\check-encoding.mjs`
+- PASS: `powershell -ExecutionPolicy Bypass -File scripts\review-gate.ps1` (672 backend tests plus frontend build)
+
+## Notes
+
+- No secrets were written.
+- Existing unrelated dirty worktree and parallel diagnostic/accessibility/report changes were preserved.
+
+## Next Recommended Task
+
+- Continue auditing chat submit stream error/abort paths and accessory refresh scheduling for stale visible busy states and redundant follow-up requests.
+
+
+---
+
+### `2026-06-08-chat-message-edit-delete-current-target-guard.md`
+
+# 2026-06-08 Chat Message Edit Delete Current Target Guard
+
+## Scope
+
+- Continue the UI/state freshness and performance audit.
+- Prevent delayed chat edit and delete responses from mutating or removing a newer same-id visible message row after the list item was replaced.
+
+## Changed Files
+
+- `frontend/src/composables/chat/useChatMessageActions.js`
+- `backend/src/tests/frontendChatMessageActions.test.js`
+- `automation/backlog.md`
+- `automation/reports/archive/daily-reports-2026-06-08.md`
+
+## What Changed
+
+- Added `isCurrentMessageActionTarget` to verify the route, action token, and current message object identity before applying edit/delete completions.
+- Routed edit-save completion through the new target guard before `Object.assign` updates the message object.
+- Routed delete completion through the new target guard before removing the message id from the visible list.
+- Added regression coverage for edit and delete requests that resolve after the same-id message row is replaced.
+
+## Validation
+
+- PASS: `node --test backend\src\tests\frontendChatMessageActions.test.js` (24 tests)
+- PASS: `node --test backend\src\tests\test-hygiene.test.js backend\src\tests\source-hygiene.test.js` (39 tests)
+- PASS: `npm run build` in `frontend`
+- PASS: `node scripts\check-encoding.mjs`
+- PASS: `powershell -ExecutionPolicy Bypass -File scripts\review-gate.ps1`
+
+## Notes
+
+- No secrets were written.
+- Existing unrelated dirty worktree and parallel diagnostic/accessibility/report changes were preserved.
+
+## Next Recommended Task
+
+- Continue auditing chat submit finalization and accessory refresh callbacks for same-id target replacement after awaits.
+
+
+---
+
+### `2026-06-08-ai-stream-process-ref-updates.md`
+
+# 2026-06-08 AI Stream Process Ref Updates
+
+## Scope
+
+- Continue the UI/state freshness and performance audit.
+- Remove the remaining frontend `ref` array push paths from AI stream panels so streamed reasoning, content, and tool updates publish fresh list references.
+
+## Changed Files
+
+- `frontend/src/views/CharacterFormView.vue`
+- `frontend/src/views/WorldBookView.vue`
+- `backend/src/tests/frontendCharacterFormView.test.js`
+- `backend/src/tests/frontendWorldBookView.test.js`
+- `automation/backlog.md`
+- `automation/reports/archive/daily-reports-2026-06-08.md`
+
+## What Changed
+
+- Replaced `ensureAiProcessStep` in CharacterFormView and WorldBookView with `updateAiProcessStep`, which clones the changed process step and replaces it through `setAiProcessIfChanged`.
+- Routed streamed reasoning, content, nudges, and tool-call process rows through the immutable process-step updater.
+- Replaced streamed tool-call `aiToolCalls.value.push` calls with `appendAiToolCall`, which uses `setAiToolCallsIfChanged([...currentToolCalls, log])`.
+- Added source-level regression guards that require stream handlers to use the immutable helpers and forbid direct `aiToolCalls` / `aiProcess` ref-array mutation.
+- Confirmed `rg "\.value\.(push|splice|unshift|shift|pop)\(" frontend\src` returns no matches.
+
+## Validation
+
+- PASS: `node --test backend\src\tests\frontendCharacterFormView.test.js backend\src\tests\frontendWorldBookView.test.js` (13 tests)
+- PASS: `node --test backend\src\tests\test-hygiene.test.js backend\src\tests\source-hygiene.test.js` (39 tests)
+- PASS: `npm run build` in `frontend`
+- PASS: `node scripts\check-encoding.mjs`
+- PASS: `powershell -ExecutionPolicy Bypass -File scripts\review-gate.ps1`
+
+## Notes
+
+- No secrets were written.
+- Existing unrelated dirty worktree and parallel diagnostic/accessibility/report changes were preserved.
+
+## Next Recommended Task
+
+- Continue auditing non-stream UI update paths for stale object mutation and redundant deep comparisons now that frontend ref-array mutations are cleared.
+
+
+---
+
+### `2026-06-08-chat-swipe-generation-current-state-guard.md`
+
+# 2026-06-08 Chat Swipe Generation Current State Guard
+
+## Scope
+
+- Continue the UI/state freshness and performance audit.
+- Prevent delayed swipe-generation responses from updating a same-id message row after the visible message item or swipe state has been replaced.
+
+## Changed Files
+
+- `frontend/src/composables/chat/useChatMessageActions.js`
+- `backend/src/tests/frontendChatMessageActions.test.js`
+- `automation/backlog.md`
+- `automation/reports/archive/daily-reports-2026-06-08.md`
+
+## What Changed
+
+- Added `isCurrentSwipeGeneration` to verify the active conversation, current list item identity, and active swipe-state object still match the swipe request snapshot after `createMessageSwipe` resolves.
+- Routed generated swipe application through the captured current message only after that guard passes.
+- Added regression coverage for replacing the same-id message item and swipe state while a swipe POST is pending, ensuring the delayed response does not overwrite the newer visible row.
+
+## Validation
+
+- PASS: `node --test backend\src\tests\frontendChatMessageActions.test.js` (22 tests)
+- PASS: `node --test backend\src\tests\test-hygiene.test.js backend\src\tests\source-hygiene.test.js` (39 tests)
+- PASS: `npm run build` in `frontend`
+- PASS: `node scripts\check-encoding.mjs`
+- PASS: `powershell -ExecutionPolicy Bypass -File scripts\review-gate.ps1`
+
+## Notes
+
+- No secrets were written.
+- Existing unrelated dirty worktree and parallel diagnostic/accessibility/report changes were preserved.
+
+## Next Recommended Task
+
+- Continue auditing chat async completion paths that mutate current message objects after awaits, especially submit finalization and message edit/delete flows.
+
+
+---
+
+### `2026-06-08-character-world-book-toggle-ref-update.md`
+
+# 2026-06-08 Character World Book Toggle Ref Update
+
+## Scope
+
+- Continue the UI/state freshness and performance audit.
+- Make CharacterFormView world-book selection toggles publish a fresh selected-id array instead of mutating the existing ref array in place.
+
+## Changed Files
+
+- `frontend/src/views/CharacterFormView.vue`
+- `backend/src/tests/frontendCharacterFormView.test.js`
+- `automation/backlog.md`
+- `automation/reports/archive/daily-reports-2026-06-08.md`
+
+## What Changed
+
+- Reworked `toggleWorldBook` to derive the next selected world-book id list with `filter` or spread and pass it through `setSelectedWorldBookIdsIfChanged`.
+- Added a source-level regression guard requiring the toggle path to use the reference-preserving setter and forbidding direct `selectedWorldBookIds.value.push` or `splice` mutations.
+
+## Validation
+
+- PASS: `node --test backend\src\tests\frontendCharacterFormView.test.js` (8 tests)
+- PASS: `node --test backend\src\tests\test-hygiene.test.js backend\src\tests\source-hygiene.test.js` (39 tests)
+- PASS: `npm run build` in `frontend`
+- PASS: `node scripts\check-encoding.mjs`
+- PASS: `powershell -ExecutionPolicy Bypass -File scripts\review-gate.ps1`
+
+## Notes
+
+- No secrets were written.
+- Existing unrelated dirty worktree and parallel diagnostic/accessibility/report changes were preserved.
+
+## Next Recommended Task
+
+- Continue auditing stream-time AI panel updates in CharacterFormView and WorldBookView for in-place process/tool-call mutations.
+
+
+---
+
+### `2026-06-08-chat-npc-panel-refresh-key-gating.md`
+
+# 2026-06-08 Chat NPC Panel Refresh Key Gating
+
+## Scope
+
+- Continue the UI/state freshness and performance audit.
+- Avoid refreshing the open NPC panel after accessory polling ticks that did not actually change NPC data.
+
+## Changed Files
+
+- `frontend/src/views/ChatView.vue`
+- `backend/src/tests/frontendChatAccessory.test.js`
+- `automation/backlog.md`
+- `automation/reports/archive/daily-reports-2026-06-08.md`
+
+## What Changed
+
+- Made `refreshNpcUpdateStatus` return whether the fetched NPC fingerprint changed.
+- Bumped `npcRefreshKey` only when the NPC panel is open and NPC refresh work reports a changed fingerprint.
+- Returned `false` from early NPC refresh exits so disabled, stale, or already-synced runs do not drive panel reloads.
+- Added source-level coverage for the new refresh-key gating contract.
+
+## Validation
+
+- PASS: `node --test backend\src\tests\frontendChatAccessory.test.js` (14 tests)
+- PASS: `node --test backend\src\tests\test-hygiene.test.js backend\src\tests\source-hygiene.test.js` (39 tests)
+- PASS: `npm run build` in `frontend`
+- PASS: `node scripts\check-encoding.mjs`
+- PASS: `powershell -ExecutionPolicy Bypass -File scripts\review-gate.ps1`
+
+## Notes
+
+- No secrets were written.
+- Existing unrelated dirty worktree and parallel diagnostic/accessibility/report changes were preserved.
+
+## Next Recommended Task
+
+- Continue auditing remaining AI process panels and selection-list updates for unnecessary in-place UI mutations or stale completions.
+
+
+---
+
+### `2026-06-08-chat-accessory-refresh-timer-cancellation.md`
+
+# 2026-06-08 Chat Accessory Refresh Timer Cancellation
+
+## Scope
+
+- Continue the UI/state freshness and performance audit.
+- Reduce redundant post-submit accessory polling once ChatView can prove no visible accessory update remains pending.
+
+## Changed Files
+
+- `frontend/src/composables/chat/useChatSubmit.js`
+- `frontend/src/views/ChatView.vue`
+- `backend/src/tests/frontendChatSubmit.test.js`
+- `backend/src/tests/frontendChatAccessory.test.js`
+- `automation/backlog.md`
+- `automation/reports/archive/daily-reports-2026-06-08.md`
+
+## What Changed
+
+- Allowed the accessory refresh start callback to return `false` and skip scheduling the post-submit polling timers.
+- Allowed the accessory refresh callback to return `false` after a timer tick and cancel the remaining scheduled timers for that run.
+- Made ChatView return whether any accessory update status is still `updating` after refresh status reconciliation.
+- Kept NPC polling pending while the NPC status is still `updating`, so late NPC writes are not cut off prematurely.
+- Added focused coverage for start-time cancellation, post-tick cancellation, and ChatView's pending-status callback contract.
+
+## Validation
+
+- PASS: `node --test backend\src\tests\frontendChatSubmit.test.js` (16 tests)
+- PASS: `node --test backend\src\tests\frontendChatAccessory.test.js` (13 tests)
+- PASS: `node --test backend\src\tests\test-hygiene.test.js backend\src\tests\source-hygiene.test.js` (39 tests)
+- PASS: `npm run build` in `frontend`
+- PASS: `node scripts\check-encoding.mjs`
+- PASS: `powershell -ExecutionPolicy Bypass -File scripts\review-gate.ps1`
+
+## Notes
+
+- No secrets were written.
+- Existing unrelated dirty worktree and parallel diagnostic/accessibility/report changes were preserved.
+
+## Next Recommended Task
+
+- Continue auditing remaining chat submit cleanup and accessory panel refresh paths for stale completions or unnecessary background requests.
+
+
+---
+
+### `2026-06-08-chat-submit-draft-insertion-ref-update.md`
+
+# 2026-06-08 Chat Submit Draft Insertion Ref Update
+
+## Scope
+
+- Continue the UI/state freshness and performance audit.
+- Make the pending user/assistant draft insertion visible to shallow message-list refs before the server response returns.
+
+## Changed Files
+
+- `frontend/src/composables/chat/useChatSubmit.js`
+- `backend/src/tests/frontendChatSubmit.test.js`
+- `automation/backlog.md`
+- `automation/reports/archive/daily-reports-2026-06-08.md`
+
+## What Changed
+
+- Replaced the in-place `messages.value.push(...)` draft insertion with a single message-list reference update.
+- Kept the local draft object references for submit finalization, streaming updates, and initial assistant-reply anchoring.
+- Added regression coverage that starts a non-stream submit, holds the server response pending, and verifies the shallow message-list ref updates immediately with the local user and assistant drafts.
+
+## Validation
+
+- PASS: `node --test backend\src\tests\frontendChatSubmit.test.js` (14 tests)
+- PASS: `node --test backend\src\tests\test-hygiene.test.js backend\src\tests\source-hygiene.test.js` (39 tests)
+- PASS: `npm run build` in `frontend`
+- PASS: `node scripts\check-encoding.mjs`
+- PASS: `powershell -ExecutionPolicy Bypass -File scripts\review-gate.ps1`
+
+## Notes
+
+- No secrets were written.
+- Existing unrelated dirty worktree and parallel diagnostic/accessibility/report changes were preserved.
+
+## Next Recommended Task
+
+- Continue auditing chat submit and accessory refresh timers for stale completions or redundant refresh work.
+
+
+---
+
+### `2026-06-08-npc-detail-create-reference-setters.md`
+
+# 2026-06-08 NPC Detail Create Reference Setters
+
+## Scope
+
+- Continue the UI/state freshness and performance audit.
+- Keep NPC detail memory and behavior creation on the same reference-preserving update path as refresh, delete, and toggle actions.
+
+## Changed Files
+
+- `frontend/src/components/NpcPanel.vue`
+- `backend/src/tests/frontendNpcPanel.test.js`
+- `automation/backlog.md`
+- `automation/reports/archive/daily-reports-2026-06-08.md`
+
+## What Changed
+
+- Replaced direct `memories.value.unshift(...)` mutation with `setMemoriesIfChanged([mem, ...memories.value])`.
+- Replaced direct `behaviors.value.push(...)` mutation with `setBehaviorsIfChanged([...behaviors.value, beh])`.
+- Extended NpcPanel source coverage to require the create paths to use reference-preserving detail-list setters and reject direct array mutation.
+
+## Validation
+
+- PASS: `node --test backend\src\tests\frontendNpcPanel.test.js` (5 tests)
+- PASS: `node --test backend\src\tests\test-hygiene.test.js backend\src\tests\source-hygiene.test.js` (39 tests)
+- PASS: `npm run build` in `frontend`
+- PASS: `node scripts\check-encoding.mjs`
+- PASS: `powershell -ExecutionPolicy Bypass -File scripts\review-gate.ps1`
+
+## Notes
+
+- No secrets were written.
+- Existing unrelated dirty worktree and parallel report/diagnostic/UI changes were preserved.
+- This keeps created NPC detail items visible through the same reference-changing path used by other NpcPanel updates.
+
+## Next Recommended Task
+
+- Continue auditing remaining in-place message-list updates, especially submit-time local draft insertion and accessory refresh timers.
+
+
+---
+
+### `2026-06-08-chat-branch-reset-callback-guard.md`
+
+# 2026-06-08 Chat Branch Reset Callback Guard
+
+## Scope
+
+- Continue the UI/state freshness and performance audit.
+- Prevent stale branch-creation completions from navigating after message UI state has been reset.
+
+## Changed Files
+
+- `frontend/src/composables/chat/useChatMessageActions.js`
+- `backend/src/tests/frontendChatMessageActions.test.js`
+- `automation/backlog.md`
+- `automation/reports/archive/daily-reports-2026-06-08.md`
+
+## What Changed
+
+- Added a current-branch-action guard before invoking the `onBranched` callback after branch creation.
+- Reused the existing branch action token and route check so reset/cleanup invalidation suppresses stale navigation callbacks.
+- Added a regression test that starts a branch request, resets message UI state before the response resolves, and verifies no branch callback fires.
+
+## Validation
+
+- PASS: `node --test backend\src\tests\frontendChatMessageActions.test.js` (21 tests)
+- PASS: `node --test backend\src\tests\test-hygiene.test.js backend\src\tests\source-hygiene.test.js` (39 tests)
+- PASS: `npm run build` in `frontend`
+- PASS: `node scripts\check-encoding.mjs`
+- PASS: `powershell -ExecutionPolicy Bypass -File scripts\review-gate.ps1`
+
+## Notes
+
+- No secrets were written.
+- Existing unrelated dirty worktree and parallel report/diagnostic/UI changes were preserved.
+- The final `branchBusy` cleanup remains token-based so a stale completion cannot re-open navigation but also cannot leave the UI stuck.
+
+## Next Recommended Task
+
+- Continue auditing chat accessory scheduled refreshes and branch-list reload triggers for redundant requests.
+
+
+---
+
+### `2026-06-08-save-rename-delete-conversation-scope.md`
+
+# 2026-06-08 Save Rename Delete Conversation Scope
+
+## Scope
+
+- Continue the UI/state freshness and performance audit.
+- Prevent stale save-panel rename/delete events from mutating a save outside the active conversation.
+
+## Changed Files
+
+- `backend/src/modules/saves.js`
+- `backend/src/routes/conversations.js`
+- `backend/src/validations/schemas.js`
+- `backend/src/tests/backend.test.js`
+- `backend/src/tests/frontendSaveLoadPanel.test.js`
+- `frontend/src/api.js`
+- `frontend/src/components/SaveLoadPanel.vue`
+- `automation/backlog.md`
+- `automation/reports/archive/daily-reports-2026-06-08.md`
+
+## What Changed
+
+- Added optional conversation-scope checks to `updateSave` and `deleteSave`.
+- Required `conversationId` for mounted save rename/delete routes and passed it through from `SaveLoadPanel`.
+- Kept frontend stale-item guards aligned with backend scope checks so delayed rename/delete events cannot act on another conversation's save.
+- Added backend route/module regression coverage and source-contract coverage for scoped panel calls.
+
+## Validation
+
+- PASS: `node --test backend\src\tests\backend.test.js --test-name-pattern "save|Save"` (249 tests)
+- PASS: `node --test backend\src\tests\frontendSaveLoadPanel.test.js` (3 tests)
+- PASS: scoped save call scan with `rg`
+- PASS: `node --test backend\src\tests\test-hygiene.test.js backend\src\tests\source-hygiene.test.js` (39 tests)
+- PASS: `npm run build` in `frontend`
+- PASS: `node scripts\check-encoding.mjs`
+- PASS: `powershell -ExecutionPolicy Bypass -File scripts\review-gate.ps1`
+
+## Notes
+
+- No secrets were written.
+- Existing unrelated dirty worktree and parallel report/diagnostic/UI changes were preserved.
+- Direct module helpers still support unscoped calls for existing backend tests and internal use; mounted UI mutation routes now require the active conversation scope.
+
+## Next Recommended Task
+
+- Continue auditing branch-list refresh and chat accessory refresh paths for stale same-id payloads and redundant reactive updates.
+
+
+---
+
+### `2026-06-08-save-load-current-conversation-scope.md`
+
+# 2026-06-08 Save Load Current Conversation Scope
+
+## Scope
+
+- Continue the UI/state freshness and performance audit.
+- Prevent stale save-load actions from restoring a save that belongs to a different conversation before the frontend can discard the result.
+
+## Changed Files
+
+- `backend/src/modules/saves.js`
+- `backend/src/routes/conversations.js`
+- `backend/src/tests/backend.test.js`
+- `backend/src/tests/frontendSaveLoadPanel.test.js`
+- `frontend/src/api.js`
+- `frontend/src/components/SaveLoadPanel.vue`
+- `automation/backlog.md`
+- `automation/reports/archive/daily-reports-2026-06-08.md`
+
+## What Changed
+
+- Added an optional conversation scope to `loadSave` so a save restore can be rejected before messages are modified.
+- Required `/api/saves/:saveId/load` requests to provide `conversationId` and passed that scope into the restore.
+- Sent the current `conversationId` from `SaveLoadPanel` when loading a save.
+- Added module and route coverage for mismatched save-load scopes, including no-message-change assertions.
+- Updated SaveLoadPanel source coverage so save-load calls keep the current conversation id in the request.
+
+## Validation
+
+- PASS: `node --test backend\src\tests\backend.test.js --test-name-pattern "saves|save load route"` (247 tests)
+- PASS: `node --test backend\src\tests\frontendSaveLoadPanel.test.js` (3 tests)
+- PASS: `rg --pcre2 -n "loadSave\(item\.id\)|loadSave\(db, request\.auth\.user\.id, request\.params\.saveId\)(?!,)|export function loadSave\(saveId\)" frontend\src\components\SaveLoadPanel.vue frontend\src\api.js backend\src\routes\conversations.js` returned no stale unscoped save-load calls
+- PASS: `npm run build` in `frontend`
+- PASS: `node --test backend\src\tests\test-hygiene.test.js backend\src\tests\source-hygiene.test.js` (39 tests)
+- PASS: `node scripts\check-encoding.mjs`
+- PASS: `powershell -ExecutionPolicy Bypass -File scripts\review-gate.ps1`
+
+## Notes
+
+- No secrets were written.
+- Existing unrelated dirty worktree and parallel diagnostic/accessibility/report changes were preserved.
+
+## Next Recommended Task
+
+- Continue auditing save rename/delete backend scopes or chat branch refresh paths for stale action side effects.
+
+
+---
+
+### `2026-06-08-settings-tag-preset-current-item-guards.md`
+
+# 2026-06-08 Settings Tag Preset Current Item Guards
+
+## Scope
+
+- Continue the UI/state freshness and performance audit.
+- Prevent stale SettingsView tag and preset UI events from mutating items that are no longer present in the current lists.
+
+## Changed Files
+
+- `frontend/src/views/SettingsView.vue`
+- `backend/src/tests/frontendSettingsView.test.js`
+- `automation/backlog.md`
+- `automation/reports/archive/daily-reports-2026-06-08.md`
+
+## What Changed
+
+- Added current-item lookup helpers for tags and presets.
+- Guarded tag delete actions before confirmation and API work, and used the current tag id/name for deletion and local list cleanup.
+- Guarded preset edit, save, delete, and default actions against stale ids or stale card objects.
+- Closed stale preset edit forms without submitting when the edited preset is no longer in the current list.
+- Updated SettingsView source regression coverage so future edits keep tag and preset mutations current-list scoped.
+
+## Validation
+
+- PASS: `node --test backend\src\tests\frontendSettingsView.test.js` (10 tests)
+- PASS: `npm run build` in `frontend`
+- PASS: `node --test backend\src\tests\test-hygiene.test.js backend\src\tests\source-hygiene.test.js` (39 tests)
+- PASS: `rg -n "beginTagMutation\(tagDeleteActionId\(id\)\)|beginPresetMutation\(presetDeleteActionId\(id\)\)|beginPresetMutation\(presetDefaultActionId\(id\)\)|await updatePreset\(editingId|await deletePreset\(id\)|await setDefaultPreset\(id\)" frontend\src\views\SettingsView.vue backend\src\tests\frontendSettingsView.test.js` returned no stale direct-id mutation calls
+- PASS: `node scripts\check-encoding.mjs`
+- PASS: `powershell -ExecutionPolicy Bypass -File scripts\review-gate.ps1`
+
+## Notes
+
+- No secrets were written.
+- Existing unrelated dirty worktree and parallel diagnostic/accessibility/report changes were preserved.
+
+## Next Recommended Task
+
+- Continue auditing Settings import/file-reader completions and backend child-resource route scopes for stale UI actions.
+
+
+---
+
+### `2026-06-08-settings-regex-current-rule-guards.md`
+
+# 2026-06-08 Settings Regex Current Rule Guards
+
+## Scope
+
+- Continue the UI/state freshness and performance audit.
+- Prevent stale SettingsView regex toggle and reorder events from mutating a rule that is no longer current.
+
+## Changed Files
+
+- `frontend/src/views/SettingsView.vue`
+- `backend/src/tests/frontendSettingsView.test.js`
+- `automation/backlog.md`
+- `automation/reports/archive/daily-reports-2026-06-08.md`
+
+## What Changed
+
+- Added a current-rule lookup helper for regex actions.
+- Routed regex toggle through the current rule id before opening a mutation scope.
+- Tracked regex drag state by rule id instead of by list index so reordered or refreshed lists cannot make a stale drag event target the wrong rule.
+- Guarded regex drag-over and drop handlers against missing source or target rules in the current list.
+- Updated SettingsView source regression coverage for the id-based toggle and reorder contract.
+
+## Validation
+
+- PASS: `node --test backend\src\tests\frontendSettingsView.test.js` (10 tests)
+- PASS: `npm run build` in `frontend`
+- PASS: `node --test backend\src\tests\test-hygiene.test.js backend\src\tests\source-hygiene.test.js` (39 tests)
+- PASS: `rg -n 'dragIndex|onRegexDragStart\(\$event, index\)|onRegexDrop\(index\)' frontend\src\views\SettingsView.vue backend\src\tests\frontendSettingsView.test.js` returned no stale index-based handlers
+- PASS: `node scripts\check-encoding.mjs`
+- PASS: `powershell -ExecutionPolicy Bypass -File scripts\review-gate.ps1`
+
+## Notes
+
+- No secrets were written.
+- Existing unrelated dirty worktree and parallel diagnostic/accessibility/report changes were preserved.
+
+## Next Recommended Task
+
+- Continue auditing Settings tag and preset current-item guards, or backend parent/child route scope for stale UI actions.
+
+
+---
+
+### `2026-06-08-settings-mod-current-item-guards.md`
+
+# 2026-06-08 Settings Mod Current Item Guards
+
+## Scope
+
+- Continue the UI/state freshness and performance audit.
+- Prevent stale Settings Mod list-item events from editing, deleting, toggling, saving, or reordering items that are no longer in the current Mod list.
+
+## Changed Files
+
+- `frontend/src/views/SettingsView.vue`
+- `backend/src/tests/frontendSettingsView.test.js`
+- `automation/backlog.md`
+- `automation/reports/archive/daily-reports-2026-06-08.md`
+
+## What Changed
+
+- Added a `getCurrentMod` guard and routed Mod edit, delete, toggle, save, drag-start, drag-over, and drop actions through the current list item.
+- Closed stale Mod edit contexts without sending a save request when the edited Mod has disappeared from the current list.
+- Updated Mod toggles to write refreshed item data back through `setListIfChanged` instead of mutating an emitted stale object.
+- Added source-level regression coverage for current Mod list-item guards and stale drag/drop protection.
+
+## Validation
+
+- PASS: `node --test backend\src\tests\frontendSettingsView.test.js` (10 tests)
+- PASS: `node --test backend\src\tests\test-hygiene.test.js backend\src\tests\source-hygiene.test.js` (39 tests)
+- PASS: `npm run build` in `frontend`
+- PASS: `node scripts\check-encoding.mjs`
+- PASS: `powershell -ExecutionPolicy Bypass -File scripts\review-gate.ps1`
+
+## Notes
+
+- No secrets were written.
+- Existing unrelated dirty worktree and parallel Settings/report changes were preserved.
+
+## Next Recommended Task
+
+- Continue auditing Settings tag, preset, and regex list-item actions for the same current-item guard pattern.
+
+
+---
+
+### `2026-06-08-npc-detail-current-item-scope-guards.md`
+
+# 2026-06-08 NPC Detail Current Item Scope Guards
+
+## Scope
+
+- Continue the UI/state freshness and performance audit.
+- Prevent stale NPC detail memory or behavior actions from mutating items that no longer belong to the selected NPC.
+
+## Changed Files
+
+- `frontend/src/components/NpcPanel.vue`
+- `backend/src/modules/npcs.js`
+- `backend/src/routes/conversations.js`
+- `backend/src/tests/npcs.test.js`
+- `backend/src/tests/backend.test.js`
+- `backend/src/tests/frontendNpcPanel.test.js`
+- `automation/backlog.md`
+- `automation/reports/archive/daily-reports-2026-06-08.md`
+
+## What Changed
+
+- Added current-list guards for NpcPanel memory deletion, behavior toggling, and behavior deletion before API calls are started.
+- Updated behavior toggles to compute from and write back to the current behavior-list item instead of mutating a potentially stale emitted object.
+- Scoped backend NPC memory deletion, behavior update, and behavior deletion by optional NPC name, and passed the route `:npc` value through the conversation routes.
+- Added module, route, and frontend source regression coverage for stale or mismatched NPC item actions.
+
+## Validation
+
+- PASS: `node --test backend\src\tests\npcs.test.js backend\src\tests\frontendNpcPanel.test.js backend\src\tests\backend.test.js` (270 tests)
+- PASS: `node --test backend\src\tests\test-hygiene.test.js backend\src\tests\source-hygiene.test.js` (39 tests)
+- PASS: `npm run build` in `frontend`
+- PASS: `node scripts\check-encoding.mjs`
+- PASS: `powershell -ExecutionPolicy Bypass -File scripts\review-gate.ps1`
+
+## Notes
+
+- No secrets were written.
+- Existing unrelated dirty worktree and parallel diagnostic/accessibility/report changes were preserved.
+
+## Next Recommended Task
+
+- Continue auditing list-item mutation routes where the URL carries both parent context and child id, especially update paths that still rely only on the child id.
+
+
+---
+
+### `2026-06-08-talent-roll-current-item-guards.md`
+
+# 2026-06-08 Talent Roll Current Item Guards
+
+## Scope
+
+- Continue the UI/state freshness and performance audit.
+- Prevent stale talent dialog pool or talent item events from starting obsolete UI work or mutating the wrong character's talent.
+
+## Changed Files
+
+- `frontend/src/components/TalentRollDialog.vue`
+- `backend/src/modules/talents.js`
+- `backend/src/routes/characters.js`
+- `backend/src/tests/backend.test.js`
+- `backend/src/tests/frontendTalentRollDialog.test.js`
+- `automation/backlog.md`
+- `automation/reports/archive/daily-reports-2026-06-08.md`
+
+## What Changed
+
+- Added current-pool and current-talent guards before Roll and remove actions proceed in `TalentRollDialog`.
+- Rechecked the selected pool after the Roll animation delay so stale selections cannot start an obsolete roll request.
+- Disabled the Roll button based on the resolved current pool instead of only a non-empty selected id.
+- Scoped backend talent deletion to the route character id, preventing a stale or mismatched talent id from deleting another character's talent.
+- Added module, route, and source-level regression coverage for the guarded behavior.
+
+## Validation
+
+- PASS: `node --test backend\src\tests\frontendTalentRollDialog.test.js backend\src\tests\backend.test.js` (248 tests)
+- PASS: `node --test backend\src\tests\test-hygiene.test.js backend\src\tests\source-hygiene.test.js` (39 tests)
+- PASS: `npm run build` in `frontend`
+- PASS: `node scripts\check-encoding.mjs`
+- PASS: `powershell -ExecutionPolicy Bypass -File scripts\review-gate.ps1`
+
+## Notes
+
+- No secrets were written.
+- Existing unrelated dirty worktree and parallel diagnostic/accessibility/report changes were preserved.
+
+## Next Recommended Task
+
+- Continue auditing list-item mutation handlers for stale ids that can cross a route, character, or conversation context boundary.
+
+
+---
+
+### `2026-06-08-character-image-current-item-guards.md`
+
+# 2026-06-08 Character Image Current Item Guards
+
+## Scope
+
+- Continue the UI/state freshness and performance audit.
+- Prevent stale character-image card events from mutating a no-longer-current image after character or list changes.
+
+## Changed Files
+
+- `frontend/src/components/CharacterImagePanel.vue`
+- `backend/src/tests/frontendCharacterImagePanel.test.js`
+- `automation/backlog.md`
+- `automation/reports/archive/daily-reports-2026-06-08.md`
+
+## What Changed
+
+- Reset image list, edit draft, drag indexes, and busy state when the character image panel context changes.
+- Added current-image id, item, and index guards before edit, save, default, delete, and drag reorder actions proceed.
+- Ensured stale delete clicks return before showing confirmation dialogs or starting API work.
+- Added source-level regression coverage for stale image item guards and context reset behavior.
+
+## Validation
+
+- PASS: `node --test backend\src\tests\frontendCharacterImagePanel.test.js` (4 tests)
+- PASS: `node --test backend\src\tests\test-hygiene.test.js backend\src\tests\source-hygiene.test.js` (39 tests)
+- PASS: `npm run build` in `frontend`
+- PASS: `node scripts\check-encoding.mjs`
+- PASS: `powershell -ExecutionPolicy Bypass -File scripts\review-gate.ps1`
+
+## Notes
+
+- No secrets were written.
+- Existing unrelated dirty worktree and parallel diagnostic/accessibility/report changes were preserved.
+
+## Next Recommended Task
+
+- Continue auditing list-card action handlers for stale item ids, especially where delayed clicks can still show confirm dialogs or start API mutations.
+
+
+---
+
+### `2026-06-08-save-panel-loaded-active-conversation.md`
+
+# 2026-06-08 Save Panel Loaded Active Conversation
+
+## Scope
+
+- Continue the UI/state freshness and performance audit.
+- Prevent stale save-panel row events or loaded events from refreshing the wrong active chat after conversation changes.
+
+## Changed Files
+
+- `frontend/src/components/SaveLoadPanel.vue`
+- `frontend/src/views/ChatView.vue`
+- `backend/src/tests/frontendSaveLoadPanel.test.js`
+- `backend/src/tests/frontendChatConversation.test.js`
+- `automation/backlog.md`
+- `automation/reports/archive/daily-reports-2026-06-08.md`
+
+## What Changed
+
+- Added a current-save-item guard before save load, delete, and rename actions can show confirm dialogs or call save APIs.
+- Included the active `conversationId` in `SaveLoadPanel` loaded events after validating the load result still belongs to the same conversation.
+- Scoped `ChatView.onSavesLoaded` to the current route conversation before refreshing messages and sidebar data.
+- Added source-level regression coverage for stale save item events and active-route save-loaded handling.
+
+## Validation
+
+- PASS: `node --test backend\src\tests\frontendSaveLoadPanel.test.js backend\src\tests\frontendChatConversation.test.js` (24 tests)
+- PASS: `node --test backend\src\tests\test-hygiene.test.js backend\src\tests\source-hygiene.test.js` (39 tests)
+- PASS: `npm run build` in `frontend`
+- PASS: `node scripts\check-encoding.mjs`
+- PASS: `powershell -ExecutionPolicy Bypass -File scripts\review-gate.ps1`
+
+## Notes
+
+- No secrets were written.
+- Existing unrelated dirty worktree and parallel diagnostic/accessibility/report changes were preserved.
+
+## Next Recommended Task
+
+- Continue auditing branch-list refresh and child-panel loaded events for stale context guards and redundant reactive refreshes.
+
+
+---
+
+### `2026-06-08-chat-npc-panel-loaded-current-conversation.md`
+
+# 2026-06-08 Chat NPC Panel Loaded Current Conversation
+
+## Scope
+
+- Continue the UI/state freshness and performance audit.
+- Prevent NPC panel loaded events from refreshing the active conversation fingerprint when the payload belongs to another conversation.
+
+## Changed Files
+
+- `frontend/src/components/NpcPanel.vue`
+- `frontend/src/views/ChatView.vue`
+- `backend/src/tests/frontendNpcPanel.test.js`
+- `backend/src/tests/frontendChatAccessory.test.js`
+- `automation/backlog.md`
+- `automation/reports/archive/daily-reports-2026-06-08.md`
+
+## What Changed
+
+- Emitted `npcs-loaded` with `{ conversationId, npcs }` from `NpcPanel` after the existing current-load guard passes.
+- Updated `ChatView` to ignore `npcs-loaded` payloads without a conversation id or whose conversation id no longer matches the active conversation.
+- Kept the fingerprint update no-op while NPC accessory updates are actively polling.
+- Added source-level regression guards for both the child payload shape and the parent active-conversation check.
+
+## Validation
+
+- PASS: `node --test backend\src\tests\frontendChatAccessory.test.js` (12 tests)
+- PASS: `node --test backend\src\tests\frontendNpcPanel.test.js` (4 tests)
+- PASS: `node --test backend\src\tests\test-hygiene.test.js` (7 tests)
+- PASS: `node --test backend\src\tests\source-hygiene.test.js` (32 tests)
+- PASS: `npm run build` in `frontend`
+- PASS: `node scripts\check-encoding.mjs`
+- PASS: `powershell -ExecutionPolicy Bypass -File scripts\review-gate.ps1`
+
+## Notes
+
+- No secrets were written.
+- Existing unrelated dirty worktree and parallel diagnostic/accessibility/report changes were preserved.
+
+## Next Recommended Task
+
+- Continue auditing chat accessory and branch-list refresh paths for stale completion cleanup and redundant async work.
+
+
+---
+
+### `2026-06-08-chat-npc-fingerprint-failure-current-conversation.md`
+
+# 2026-06-08 Chat NPC Fingerprint Failure Current Conversation
+
+## Scope
+
+- Continue the UI/state freshness and performance audit.
+- Prevent stale failed NPC fingerprint syncs from clearing the active conversation's NPC refresh baseline.
+
+## Changed Files
+
+- `frontend/src/views/ChatView.vue`
+- `backend/src/tests/frontendChatAccessory.test.js`
+- `automation/backlog.md`
+- `automation/reports/archive/daily-reports-2026-06-08.md`
+
+## What Changed
+
+- Kept the successful NPC fingerprint sync guard that ignores stale conversation responses.
+- Added the same active-conversation guard to the failure path before clearing `latestNpcFingerprint`.
+- Added a source-level regression guard so future edits keep failed NPC fingerprint sync cleanup scoped to the active conversation.
+
+## Validation
+
+- PASS: `node --test backend\src\tests\frontendChatAccessory.test.js` (11 tests)
+- PASS: `node --test backend\src\tests\test-hygiene.test.js` (7 tests)
+- PASS: `node --test backend\src\tests\source-hygiene.test.js` (32 tests)
+- PASS: `npm run build` in `frontend`
+- PASS: `node scripts\check-encoding.mjs`
+- PASS: `powershell -ExecutionPolicy Bypass -File scripts\review-gate.ps1`
+
+## Notes
+
+- No secrets were written.
+- Existing unrelated dirty worktree and parallel diagnostic/accessibility/report changes were preserved.
+
+## Next Recommended Task
+
+- Continue auditing chat accessory and branch-list refresh paths for stale completion cleanup and redundant async work.
+
+
+---
+
+### `2026-06-08-chat-accessory-final-cleanup-current-conversation.md`
+
+# 2026-06-08 Chat Accessory Final Cleanup Current Conversation
+
+## Scope
+
+- Continue the UI/state freshness and performance audit.
+- Prevent stale scheduled NPC accessory refresh completions from clearing the visible update state after the active conversation has changed.
+
+## Changed Files
+
+- `frontend/src/views/ChatView.vue`
+- `backend/src/tests/frontendChatAccessory.test.js`
+- `automation/backlog.md`
+- `automation/reports/archive/daily-reports-2026-06-08.md`
+
+## What Changed
+
+- Scoped the final NPC accessory refresh cleanup to the same conversation id captured when the refresh started.
+- Required both the active conversation id and the accessory refresh snapshot conversation id to match before changing `npcUpdateStatus` from `updating` to `not-updated`.
+- Added a source-level regression guard so future edits keep final NPC accessory cleanup conversation-scoped.
+
+## Validation
+
+- PASS: `node --test backend\src\tests\frontendChatAccessory.test.js` (10 tests)
+- PASS: `node --test backend\src\tests\test-hygiene.test.js` (7 tests)
+- PASS: `node --test backend\src\tests\source-hygiene.test.js` (32 tests)
+- PASS: `npm run build` in `frontend`
+- PASS: `node scripts\check-encoding.mjs`
+- PASS: `powershell -ExecutionPolicy Bypass -File scripts\review-gate.ps1`
+
+## Notes
+
+- No secrets were written.
+- Existing unrelated dirty worktree and parallel diagnostic/accessibility/report changes were preserved.
+
+## Next Recommended Task
+
+- Continue auditing branch-list refresh and chat accessory refresh paths for redundant requests and stale completion cleanup.
+
+
+---
+
+### `2026-06-08-chat-submit-final-scroll-current-item.md`
+
+# 2026-06-08 Chat Submit Final Scroll Current Item
+
+## Scope
+
+- Continue the UI/state freshness and performance audit.
+- Keep final post-submit assistant-reply scrolling aligned with the rendered message item after local draft ids are replaced by persisted server ids.
+
+## Changed Files
+
+- `frontend/src/composables/chat/useChatSubmit.js`
+- `backend/src/tests/frontendChatSubmit.test.js`
+- `automation/backlog.md`
+- `automation/reports/archive/daily-reports-2026-06-08.md`
+
+## What Changed
+
+- Returned the actual updated current message-list item from submit finalization helpers.
+- Used the finalized current assistant item for the final anchored scroll in both streaming and non-stream submit completion paths.
+- Preserved the existing initial local-draft anchor while preventing final scroll attempts from targeting stale local assistant ids after same-id list replacement.
+- Added regression coverage for a non-stream submit whose local draft objects are replaced before the server response finalizes ids.
+
+## Validation
+
+- PASS: `node --test backend\src\tests\frontendChatSubmit.test.js` (13 tests)
+- PASS: `node --test backend\src\tests\test-hygiene.test.js` (7 tests)
+- PASS: `node --test backend\src\tests\source-hygiene.test.js` (32 tests)
+- PASS: `npm run build` in `frontend`
+- PASS: `node scripts\check-encoding.mjs`
+- PASS: `powershell -ExecutionPolicy Bypass -File scripts\review-gate.ps1`
+
+## Notes
+
+- No secrets were written.
+- Existing unrelated dirty worktree and parallel diagnostic/accessibility/report changes were preserved.
+
+## Next Recommended Task
+
+- Continue auditing branch-list refresh and chat accessory refresh paths for stale same-id payloads and redundant reactive updates.
+
+
+---
+
+### `2026-06-08-npc-panel-detail-direct-loop-mutations.md`
+
+# 2026-06-08 NpcPanel Detail Direct Loop Mutations
+
+## Scope
+
+- Continue the UI/state freshness and performance audit.
+- Keep NPC detail memory and behavior lists from unnecessary replacement work after single-row mutations.
+
+## Changed Files
+
+- `frontend/src/components/NpcPanel.vue`
+- `backend/src/tests/frontendNpcPanel.test.js`
+- `automation/backlog.md`
+- `automation/reports/archive/daily-reports-2026-06-08.md`
+
+## What Changed
+
+- Added `removeMemoryByIdIfPresent`, `updateBehaviorByIdIfChanged`, and `removeBehaviorByIdIfPresent`.
+- Replaced memory delete, behavior toggle, and behavior delete post-mutation `filter/map` list rebuilds with direct-loop helpers that preserve unchanged rows and only call the shared setters when visible data changes.
+- Updated source-level coverage so these detail mutation paths keep using the no-op-aware helpers.
+
+## Validation
+
+- PASS: `node --test backend\src\tests\frontendNpcPanel.test.js` (5 tests)
+- PASS: `npm run build` in `frontend`
+- PASS: `node scripts\check-encoding.mjs`
+- PASS: `powershell -ExecutionPolicy Bypass -File scripts\review-gate.ps1`
+
+## Notes
+
+- No secrets were written.
+- Existing unrelated dirty worktree and parallel automation report changes were preserved.
+
+## Next Recommended Task
+
+- Continue auditing SettingsView tag, preset, and mod single-row mutations that still build whole replacement arrays with `filter` or `map`.
+
+
+---
+
+### `2026-06-08-settings-view-single-row-id-list-helpers.md`
+
+# 2026-06-08 SettingsView Single Row Id List Helpers
+
+## Scope
+
+- Continue the UI/state freshness and performance audit.
+- Reduce unnecessary Settings extension-list replacements after single-row tag, preset, and mod mutations.
+
+## Changed Files
+
+- `frontend/src/views/SettingsView.vue`
+- `backend/src/tests/frontendSettingsView.test.js`
+- `automation/backlog.md`
+- `automation/reports/archive/daily-reports-2026-06-08.md`
+
+## What Changed
+
+- Added shared id-list helpers for prepend-with-limit, remove-if-present, and update-if-changed operations.
+- Routed tag creation/deletion, preset deletion, mod deletion, and mod toggle completions through those helpers instead of per-path `filter` or `map` array rebuilds.
+- Updated source-level coverage so these hot single-row mutation paths keep preserving unchanged list references.
+
+## Validation
+
+- PASS: `node --test backend\src\tests\frontendSettingsView.test.js` (10 tests)
+- PASS: `npm run build` in `frontend`
+- PASS: `node scripts\check-encoding.mjs`
+- PASS: `powershell -ExecutionPolicy Bypass -File scripts\review-gate.ps1`
+
+## Notes
+
+- No secrets were written.
+- Existing unrelated dirty worktree and parallel automation report changes were preserved.
+
+## Next Recommended Task
+
+- Continue auditing SettingsView regex-rule toggle/reorder paths and remaining computed tag list chains for avoidable list churn.
+
+
+---
+
+### `2026-06-08-settings-view-regex-reorder-move-helper.md`
+
+# 2026-06-08 SettingsView Regex Reorder Move Helper
+
+## Scope
+
+- Continue the UI/state freshness and performance audit.
+- Tighten Settings regex-rule drag reorder logic so optimistic UI state is cheaper to build and rolls back promptly on failure.
+
+## Changed Files
+
+- `frontend/src/views/SettingsView.vue`
+- `backend/src/tests/frontendSettingsView.test.js`
+- `automation/backlog.md`
+- `automation/reports/archive/daily-reports-2026-06-08.md`
+
+## What Changed
+
+- Added a shared `moveListItemToTargetIndexById` helper that finds source and target indexes in one direct loop and returns the reordered id list for persistence.
+- Routed regex-rule drop handling through the helper instead of cloning, running two `findIndex` scans, and mapping ids separately.
+- Restored the previous visible regex-rule list immediately if the reorder save fails before falling back to a reload.
+
+## Validation
+
+- PASS: `node --test backend\src\tests\frontendSettingsView.test.js` (10 tests)
+- PASS: `npm run build` in `frontend`
+- PASS: `node scripts\check-encoding.mjs`
+- PASS: `powershell -ExecutionPolicy Bypass -File scripts\review-gate.ps1`
+
+## Notes
+
+- No secrets were written.
+- Existing unrelated dirty worktree and parallel automation report changes were preserved.
+
+## Next Recommended Task
+
+- Continue auditing remaining computed list chains in `SettingsView` and `HomeView` where repeated `filter/map/sort` work can be replaced by single-pass helpers.
+
+
+---
+
+### `2026-06-08-home-view-hot-tag-direct-helpers.md`
+
+# 2026-06-08 HomeView Hot Tag Direct Helpers
+
+## Scope
+
+- Continue the UI/state freshness and performance audit.
+- Reduce repeated intermediate arrays while building the Home hot-tag rail.
+
+## Changed Files
+
+- `frontend/src/views/HomeView.vue`
+- `backend/src/tests/frontendHomeView.test.js`
+- `automation/backlog.md`
+- `automation/reports/archive/daily-reports-2026-06-08.md`
+
+## What Changed
+
+- Replaced the `popularTags` computed filter/slice/sort chain with `collectPopularTags`, which scans tags directly and sorts only the resulting hot tags.
+- Replaced the randomized hot-tag map/sort/slice/map chain with `pickRandomizedHotTags`, which builds scored candidates and selected tag rows through direct loops.
+- Added focused source coverage to keep the hot-tag rail off the old `tags.value.filter` and pool `map` chains.
+
+## Validation
+
+- PASS: `node --test backend\src\tests\frontendHomeView.test.js` (7 tests)
+- PASS: `npm run build` in `frontend`
+- PASS: `node scripts\check-encoding.mjs`
+- PASS: `powershell -ExecutionPolicy Bypass -File scripts\review-gate.ps1`
+
+## Notes
+
+- No secrets were written.
+- Existing unrelated dirty worktree and parallel automation report changes were preserved.
+
+## Next Recommended Task
+
+- Continue auditing HomeView character merge and card tag display helpers for direct list updates and repeated per-card tag allocations.
+
+
+---
+
+### `2026-06-08-home-view-character-merge-helper.md`
+
+# 2026-06-08 HomeView Character Merge Helper
+
+## Scope
+
+- Continue the UI/state freshness and performance audit.
+- Reduce avoidable HomeView character-list replacements after favorite/like reaction completions.
+
+## Changed Files
+
+- `frontend/src/views/HomeView.vue`
+- `backend/src/tests/frontendHomeView.test.js`
+- `automation/backlog.md`
+- `automation/reports/archive/daily-reports-2026-06-08.md`
+
+## What Changed
+
+- Added `updateCharacterByIdIfChanged` so reaction responses scan for the matching character id directly.
+- The helper now returns without replacing `characters` when the response has no id, the row is no longer listed, or the merged visible summary is unchanged.
+- `mergeCharacter` now delegates to the helper instead of remapping the full character list.
+- Updated HomeView source coverage to assert the direct helper path and reject the old `characters.value.map` update.
+
+## Validation
+
+- PASS: `node --test backend\src\tests\frontendHomeView.test.js` (7 tests)
+- PASS: `npm run build` in `frontend`
+- PASS: `node scripts\check-encoding.mjs`
+- PASS: `powershell -ExecutionPolicy Bypass -File scripts\review-gate.ps1`
+
+## Notes
+
+- No secrets were written.
+- Existing unrelated dirty worktree and parallel automation report changes were preserved.
+
+## Next Recommended Task
+
+- Continue auditing HomeView per-card tag display helpers, especially repeated tag normalization in mobile and virtualized card rendering.
+
+
+---
+
+### `2026-06-08-home-view-card-tag-preview-loops.md`
+
+# 2026-06-08 HomeView Card Tag Preview Loops
+
+## Scope
+
+- Continue the UI/state freshness and performance audit.
+- Reduce avoidable per-card tag allocations in HomeView mobile and virtualized character card rendering.
+
+## Changed Files
+
+- `frontend/src/views/HomeView.vue`
+- `backend/src/tests/frontendHomeView.test.js`
+- `automation/backlog.md`
+- `automation/reports/archive/daily-reports-2026-06-08.md`
+
+## What Changed
+
+- Added `CHARACTER_CARD_TAG_LIMIT` so card tag preview and overflow math share one visible cap.
+- Reworked `getCharacterTags` to collect only the first visible tags with bounded direct loops.
+- Reworked `getExtraTagCount` through `countCharacterTags` so overflow counts no longer depend on the old source `slice` path.
+- Added focused source coverage to reject the old full `tags.map` plus `source.slice(0, 5)` preview allocation.
+
+## Validation
+
+- PASS: `node --test backend\src\tests\frontendHomeView.test.js` (8 tests)
+- PASS: `npm run build` in `frontend`
+- PASS: `node scripts\check-encoding.mjs`
+- PASS: `powershell -ExecutionPolicy Bypass -File scripts\review-gate.ps1`
+
+## Notes
+
+- No secrets were written.
+- Existing unrelated dirty worktree and parallel automation report changes were preserved.
+
+## Next Recommended Task
+
+- Continue auditing HomeView and ChatView render helpers for repeated work inside virtualized or frequently updating UI paths.
+
+
+---
+
+### `2026-06-08-home-view-virtual-row-count.md`
+
+# 2026-06-08 HomeView Virtual Row Count
+
+## Scope
+
+- Continue the UI/state freshness and performance audit.
+- Reduce avoidable row-array allocation in the HomeView desktop virtualized character grid.
+
+## Changed Files
+
+- `frontend/src/views/HomeView.vue`
+- `backend/src/tests/frontendHomeView.test.js`
+- `automation/backlog.md`
+- `automation/reports/archive/daily-reports-2026-06-08.md`
+
+## What Changed
+
+- Replaced the `characterRows` computed array of every sliced row with a lightweight `characterRowCount` computed.
+- Added `getCharacterRowItems` so only currently rendered virtual rows slice their visible character items.
+- Updated the virtualizer count to use the row count and the template to read visible row items through the helper.
+- Added focused source coverage to keep HomeView from rebuilding every row slice before virtualization renders.
+
+## Validation
+
+- PASS: `node --test backend\src\tests\frontendHomeView.test.js` (9 tests)
+- PASS: `npm run build` in `frontend`
+- PASS: `node scripts\check-encoding.mjs`
+- PASS: `powershell -ExecutionPolicy Bypass -File scripts\review-gate.ps1`
+
+## Notes
+
+- No secrets were written.
+- Existing unrelated dirty worktree and parallel automation report changes were preserved.
+
+## Next Recommended Task
+
+- Continue auditing ChatView or chat composables for stale async UI updates after route changes and repeated list scans in high-frequency message rendering.
+
+
+---
+
+### `2026-06-08-chat-render-plugin-cache.md`
+
+# 2026-06-08 Chat Render Plugin Cache
+
+## Scope
+
+- Continue the UI/state freshness and performance audit.
+- Reduce repeated active-character and render-plugin lookups while ChatView renders long message lists.
+
+## Changed Files
+
+- `frontend/src/composables/chat/useChatAppearance.js`
+- `frontend/src/views/ChatView.vue`
+- `backend/src/tests/frontendChatAppearance.test.js`
+- `automation/backlog.md`
+- `automation/reports/archive/daily-reports-2026-06-08.md`
+
+## What Changed
+
+- Added computed `activeCharacterValue` and `activeRenderPluginList` inside `useChatAppearance` so active-character lookup runs only when conversation or character resources change.
+- Preserved the existing `activeCharacter()` and `activeRenderPlugins()` function API while routing both through the cached computed values.
+- Added `chatRenderPlugins` in `ChatView` and passed that cached value to each `ChatMessageItem` instead of calling `activeRenderPlugins()` for every rendered message.
+- Added behavior and source coverage for cached active-character/render-plugin lookup and ChatView template wiring.
+
+## Validation
+
+- PASS: `node --test backend\src\tests\frontendChatAppearance.test.js` (12 tests)
+- PASS: `npm run build` in `frontend`
+- PASS: `node scripts\check-encoding.mjs`
+- PASS: `powershell -ExecutionPolicy Bypass -File scripts\review-gate.ps1`
+
+## Notes
+
+- No secrets were written.
+- Existing unrelated dirty worktree and parallel automation report changes were preserved.
+
+## Next Recommended Task
+
+- Continue auditing chat message author/avatar helpers for repeated per-message work that can reuse active-character summaries or cached user labels.
+
+
+---
+
+### `2026-06-08-chat-message-identity-cache.md`
+
+# 2026-06-08 Chat Message Identity Cache
+
+## Scope
+
+- Continue the UI/state freshness and performance audit.
+- Reduce repeated author-name, author-initial, and avatar derivation while rendering long chat message lists.
+
+## Changed Files
+
+- `frontend/src/composables/chat/useChatMessageActions.js`
+- `backend/src/tests/frontendChatMessageActions.test.js`
+- `automation/backlog.md`
+- `automation/reports/archive/daily-reports-2026-06-08.md`
+
+## What Changed
+
+- Added computed assistant and user message identity summaries in `useChatMessageActions`.
+- Routed `messageAuthorName`, `messageAuthorInitial`, and `messageAvatarUrl` through the cached summaries instead of recomputing active-character/user fields per helper call.
+- Kept fallback role identity handling for non-user/non-assistant messages.
+- Added behavior coverage that repeated assistant helper calls reuse the cached active-character summary until the source ref changes.
+
+## Validation
+
+- PASS: `node --test backend\src\tests\frontendChatMessageActions.test.js` (30 tests)
+- PASS: `npm run build` in `frontend`
+- PASS: `node scripts\check-encoding.mjs`
+- PASS: `powershell -ExecutionPolicy Bypass -File scripts\review-gate.ps1`
+
+## Notes
+
+- No secrets were written.
+- Existing unrelated dirty worktree and parallel automation report changes were preserved.
+
+## Next Recommended Task
+
+- Continue auditing chat template helper calls and message-item props for values that can be summarized once per render context instead of once per message.
+
+
+---
+
+### `2026-06-08-markdown-content-plugin-direct-loops.md`
+
+# 2026-06-08 MarkdownContent Plugin Direct Loops
+
+## Scope
+
+- Continue the UI/state freshness and performance audit.
+- Reduce allocation in the shared Markdown renderer used by chat messages, reasoning blocks, and character previews.
+
+## Changed Files
+
+- `frontend/src/components/MarkdownContent.vue`
+- `backend/src/tests/frontendMarkdownContent.test.js`
+- `automation/backlog.md`
+- `automation/reports/archive/daily-reports-2026-06-08.md`
+
+## What Changed
+
+- Replaced the render-plugin cache-key `JSON.stringify(pluginCacheShape(...))` path with a direct length-prefixed field builder.
+- Reworked fold plugin compilation from `filter/map/filter` into one direct loop that skips invalid plugins and malformed regexes.
+- Reworked regex flag normalization to scan flags directly instead of building a `Set` from a split array.
+- Added focused source coverage for the MarkdownContent hot path.
+
+## Validation
+
+- PASS: `node --test backend\src\tests\frontendMarkdownContent.test.js` (3 tests)
+- PASS: `npm run build` in `frontend`
+- PASS: `node scripts\check-encoding.mjs`
+- PASS: `powershell -ExecutionPolicy Bypass -File scripts\review-gate.ps1`
+
+## Notes
+
+- No secrets were written.
+- Existing unrelated dirty worktree and parallel automation report changes were preserved.
+
+## Next Recommended Task
+
+- Continue auditing MarkdownContent segment assembly and chat message rendering for avoidable per-render array joins.
+
+
+---
+
+### `2026-06-08-markdown-content-direct-html-append.md`
+
+# 2026-06-08 MarkdownContent Direct HTML Append
+
+## Scope
+
+- Continue the UI/state freshness and performance audit.
+- Trim the shared Markdown fold-rendering path used by repeated chat message renders.
+
+## Changed Files
+
+- `frontend/src/components/MarkdownContent.vue`
+- `backend/src/tests/frontendMarkdownContent.test.js`
+- `automation/backlog.md`
+- `automation/reports/archive/daily-reports-2026-06-08.md`
+
+## What Changed
+
+- Replaced the fold-rendering `htmlParts` array with direct HTML string appends so each fold/markdown segment no longer adds a temporary output array entry.
+- Hoisted newline scanner character codes and default fold title/caret strings into constants shared by the scan, render, and title-template fallback paths.
+- Updated MarkdownContent source coverage to keep the renderer on direct HTML appends and named scan constants.
+
+## Validation
+
+- PASS: `node --test backend\src\tests\frontendMarkdownContent.test.js` (4 tests)
+- PASS: `npm test` in `backend` (731 tests)
+- PASS: `npm run build` in `frontend`
+- PASS: `node scripts\check-encoding.mjs`
+- PASS: `powershell -ExecutionPolicy Bypass -File scripts\review-gate.ps1`
+
+## Notes
+
+- No secrets were written.
+- Existing unrelated dirty worktree and parallel automation report changes were preserved.
+
+## Next Recommended Task
+
+- Continue auditing chat message render props for remaining per-message helper work that can be summarized once per render context.
+
+
+---
+
+### `2026-06-08-chat-accessory-snapshot-field-key.md`
+
+# 2026-06-08 Chat Accessory Snapshot Field Key
+
+## Scope
+
+- Continue the UI/state freshness and performance audit.
+- Reduce allocation while ChatView compares status-bar and NPC accessory refresh fingerprints.
+
+## Changed Files
+
+- `frontend/src/views/ChatView.vue`
+- `backend/src/tests/frontendChatAccessory.test.js`
+- `automation/backlog.md`
+- `automation/reports/archive/daily-reports-2026-06-08.md`
+
+## What Changed
+
+- Replaced status-bar refresh snapshot object arrays and root `JSON.stringify` with a direct length-prefixed field builder.
+- Replaced NPC refresh snapshot root `JSON.stringify` with sorted lightweight snapshot entries and direct serialized field appends.
+- Added source coverage to keep the accessory refresh fingerprint path on direct loops and field appends.
+
+## Validation
+
+- PASS: `node --test backend\src\tests\frontendChatAccessory.test.js` (18 tests)
+- PASS: `npm test` in `backend` (732 tests)
+- PASS: `npm run build` in `frontend`
+- PASS: `node scripts\check-encoding.mjs`
+- PASS: `powershell -ExecutionPolicy Bypass -File scripts\review-gate.ps1`
+
+## Notes
+
+- No secrets were written.
+- Existing unrelated dirty worktree and parallel automation report changes were preserved.
+
+## Next Recommended Task
+
+- Continue auditing `useChatAccessory` template parsing and status-bar editor row construction for remaining `map/filter` chains on frequently edited UI state.
+
+
+---
+
+### `2026-06-08-chat-accessory-template-direct-loops.md`
+
+# 2026-06-08 Chat Accessory Template Direct Loops
+
+## Scope
+
+- Continue the UI/state freshness and performance audit.
+- Reduce allocation while parsing and cloning built-in status-bar template config in `useChatAccessory`.
+
+## Changed Files
+
+- `frontend/src/composables/chat/useChatAccessory.js`
+- `backend/src/tests/frontendChatAccessory.test.js`
+- `automation/backlog.md`
+- `automation/reports/archive/daily-reports-2026-06-08.md`
+
+## What Changed
+
+- Replaced template character variable parsing, effect filtering, character parsing, and quick-reply parsing chains with direct loops.
+- Added direct-loop clone helpers for status-bar template config, characters, variables, quick replies, and effects.
+- Reworked status variable payload normalization to collect valid rows directly up to the existing limit.
+- Added behavior and source coverage for valid template parsing and the new direct-loop paths.
+
+## Validation
+
+- PASS: `node --test backend\src\tests\frontendChatAccessory.test.js` (21 tests)
+- PASS: `npm test` in `backend` (735 tests)
+- PASS: `npm run build` in `frontend`
+- PASS: `node scripts\check-encoding.mjs`
+- PASS: `powershell -ExecutionPolicy Bypass -File scripts\review-gate.ps1`
+
+## Notes
+
+- No secrets were written.
+- Existing unrelated dirty worktree and parallel automation report changes were preserved.
+
+## Next Recommended Task
+
+- Continue auditing `useChatAccessory` skill-result list updates and template placeholder parsing for remaining hot-path allocations.
+
+
+---
+
+### `2026-06-08-chat-accessory-result-token-direct-helpers.md`
+
+# 2026-06-08 Chat Accessory Result Token Direct Helpers
+
+## Scope
+
+- Continue the UI/state freshness and performance audit.
+- Reduce allocation in chat accessory skill-result UI updates and status-bar placeholder parsing.
+
+## Changed Files
+
+- `frontend/src/composables/chat/useChatAccessory.js`
+- `backend/src/tests/frontendChatAccessory.test.js`
+- `automation/backlog.md`
+- `automation/reports/archive/daily-reports-2026-06-08.md`
+
+## What Changed
+
+- Replaced the skill-result `[data, ...items].slice(0, 8)` update with a direct bounded helper that keeps the newest result first.
+- Reused the direct variable clone helper when syncing status-bar forms from loaded data.
+- Replaced placeholder token `split('.').map(trim)` parsing with a direct parser that preserves the existing first-name/first-property behavior.
+- Added behavior coverage for the bounded newest-first skill-result list and source coverage for the direct helpers.
+
+## Validation
+
+- PASS: `node --test backend\src\tests\frontendChatAccessory.test.js` (22 tests)
+- PASS: `npm test` in `backend` (737 tests)
+- PASS: `npm run build` in `frontend`
+- PASS: `node scripts\check-encoding.mjs`
+- PASS: `powershell -ExecutionPolicy Bypass -File scripts\review-gate.ps1`
+
+## Notes
+
+- No secrets were written.
+- Existing unrelated dirty worktree and parallel automation report changes were preserved.
+
+## Next Recommended Task
+
+- Continue auditing remaining chat accessory source helpers such as settings-source collection and custom-template validation for avoidable transient arrays.

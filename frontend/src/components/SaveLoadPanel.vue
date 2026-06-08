@@ -149,6 +149,18 @@ function isCurrentSaveMutation(mutationToken, conversationId) {
   return !savePanelDisposed && mutationToken === savesMutationToken && conversationId === props.conversationId;
 }
 
+function isCurrentSaveLoadResult(result, conversationId) {
+  return result?.conversationId === conversationId;
+}
+
+function isCurrentSaveItem(item) {
+  const conversationId = props.conversationId;
+  if (!conversationId || !item?.id || item.conversationId !== conversationId) {
+    return false;
+  }
+  return saves.value.some((save) => save?.id === item.id && save?.conversationId === conversationId);
+}
+
 async function doCreateSave() {
   if (savePanelBusy.value) return;
   const conversationId = props.conversationId;
@@ -172,17 +184,18 @@ async function doCreateSave() {
 }
 
 async function doLoadSave(item) {
-  if (savePanelBusy.value) return;
+  if (savePanelBusy.value || !isCurrentSaveItem(item)) return;
   if (!window.confirm(`读取存档「${item.name}」？当前会话消息将被替换。`)) return;
   const conversationId = props.conversationId;
   if (!conversationId) return;
   const mutationToken = savesMutationToken;
   busyId.value = item.id;
   try {
-    const result = await loadSave(item.id);
+    const result = await loadSave(item.id, conversationId);
     if (!isCurrentSaveMutation(mutationToken, conversationId)) return;
+    if (!isCurrentSaveLoadResult(result, conversationId)) return;
     notify.success(`已恢复 ${result.messageCount} 条消息`);
-    emit('loaded', result);
+    emit('loaded', { ...result, conversationId });
   } catch (err) {
     if (!isCurrentSaveMutation(mutationToken, conversationId)) return;
     notify.error(err.message || '读档失败');
@@ -194,16 +207,16 @@ async function doLoadSave(item) {
 }
 
 async function doDeleteSave(item) {
-  if (savePanelBusy.value) return;
+  if (savePanelBusy.value || !isCurrentSaveItem(item)) return;
   if (!window.confirm(`删除存档「${item.name}」？此操作不可撤销。`)) return;
   const conversationId = props.conversationId;
   if (!conversationId) return;
   const mutationToken = savesMutationToken;
   busyId.value = item.id;
   try {
-    await deleteSave(item.id);
+    await deleteSave(item.id, conversationId);
     if (!isCurrentSaveMutation(mutationToken, conversationId)) return;
-    setSavesIfChanged(saves.value.filter((s) => s.id !== item.id));
+    removeSaveItemByIdIfPresent(item.id);
     notify.success('存档已删除');
   } catch (err) {
     if (!isCurrentSaveMutation(mutationToken, conversationId)) return;
@@ -216,7 +229,7 @@ async function doDeleteSave(item) {
 }
 
 function beginRename(item) {
-  if (savePanelBusy.value) return;
+  if (savePanelBusy.value || !isCurrentSaveItem(item)) return;
   renamingId.value = item.id;
   renameValue.value = item.name;
 }
@@ -226,23 +239,55 @@ function cancelRename() {
   renameValue.value = '';
 }
 
+function removeSaveItemByIdIfPresent(saveId) {
+  const nextSaves = [];
+  let changed = false;
+  for (const save of saves.value) {
+    if (save?.id === saveId) {
+      changed = true;
+    } else {
+      nextSaves.push(save);
+    }
+  }
+  if (changed) {
+    setSavesIfChanged(nextSaves);
+  }
+  return changed;
+}
+
+function updateSaveItemNameIfChanged(saveId, nextName) {
+  const nextSaves = [];
+  let changed = false;
+  for (const save of saves.value) {
+    if (save?.id === saveId) {
+      const nextSave = { ...save, name: nextName };
+      if (!sameSaveSummary(save, nextSave)) {
+        changed = true;
+        nextSaves.push(nextSave);
+      } else {
+        nextSaves.push(save);
+      }
+    } else {
+      nextSaves.push(save);
+    }
+  }
+  if (changed) {
+    setSavesIfChanged(nextSaves);
+  }
+  return changed;
+}
+
 async function doRename(item) {
   const name = renameValue.value.trim();
-  if (!name || savePanelBusy.value) return;
+  if (!name || savePanelBusy.value || !isCurrentSaveItem(item)) return;
   const conversationId = props.conversationId;
   if (!conversationId) return;
   const mutationToken = savesMutationToken;
   busyId.value = item.id;
   try {
-    const updated = await renameSave(item.id, name);
+    const updated = await renameSave(item.id, name, conversationId);
     if (!isCurrentSaveMutation(mutationToken, conversationId)) return;
-    const index = saves.value.findIndex((s) => s.id === item.id);
-    if (index !== -1) {
-      const nextSave = { ...saves.value[index], name: updated.name };
-      if (!sameSaveSummary(saves.value[index], nextSave)) {
-        saves.value[index] = nextSave;
-      }
-    }
+    updateSaveItemNameIfChanged(item.id, updated.name);
     cancelRename();
     notify.success('存档名已更新');
   } catch (err) {

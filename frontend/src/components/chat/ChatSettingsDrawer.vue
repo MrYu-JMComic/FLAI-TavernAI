@@ -58,20 +58,26 @@ const statusBarEditorRows = computed(() => {
   const compositeRows = extractStatusTemplateCompositeRows(form.template);
   const compositeChildKeys = new Set();
   const compositeLabelKeys = new Set();
-  const rows = compositeRows.map((row, index) => {
+  const rows = [];
+  for (let index = 0; index < compositeRows.length; index += 1) {
+    const row = compositeRows[index];
     compositeLabelKeys.add(normalizeStatusVariableKey(row.label));
-    for (const part of row.parts) {
+    let compositePartKey = '';
+    for (let partIndex = 0; partIndex < row.parts.length; partIndex += 1) {
+      const part = row.parts[partIndex];
       compositeChildKeys.add(normalizeStatusVariableKey(part.name));
+      compositePartKey += `${partIndex > 0 ? '|' : ''}${part?.name ?? ''}`;
     }
-    return {
+    rows.push({
       kind: 'composite',
-      key: `composite:${index}:${row.label}:${row.parts.map((part) => part.name).join('|')}`,
+      key: `composite:${index}:${row.label}:${compositePartKey}`,
       label: row.label,
       parts: row.parts
-    };
-  });
+    });
+  }
 
-  variables.forEach((variable, index) => {
+  for (let index = 0; index < variables.length; index += 1) {
+    const variable = variables[index];
     const key = normalizeStatusVariableKey(variable?.name);
     if (
       !key ||
@@ -79,7 +85,7 @@ const statusBarEditorRows = computed(() => {
       compositeLabelKeys.has(key) ||
       isCompositeStatusPlaceholderValue(variable?.value, variable?.name)
     ) {
-      return;
+      continue;
     }
     rows.push({
       kind: 'variable',
@@ -87,7 +93,7 @@ const statusBarEditorRows = computed(() => {
       variable,
       index
     });
-  });
+  }
 
   return rows;
 });

@@ -37,19 +37,19 @@ test('SaveLoadPanel disables all item actions while one save item mutation is bu
   );
   assert.match(
     saveLoadPanelScript,
-    /async function doLoadSave\(item\)\s*{\s*if \(savePanelBusy\.value\) return;/
+    /async function doLoadSave\(item\)\s*{\s*if \(savePanelBusy\.value \|\| !isCurrentSaveItem\(item\)\) return;/
   );
   assert.match(
     saveLoadPanelScript,
-    /async function doDeleteSave\(item\)\s*{\s*if \(savePanelBusy\.value\) return;/
+    /async function doDeleteSave\(item\)\s*{\s*if \(savePanelBusy\.value \|\| !isCurrentSaveItem\(item\)\) return;/
   );
   assert.match(
     saveLoadPanelScript,
-    /function beginRename\(item\)\s*{\s*if \(savePanelBusy\.value\) return;/
+    /function beginRename\(item\)\s*{\s*if \(savePanelBusy\.value \|\| !isCurrentSaveItem\(item\)\) return;/
   );
   assert.match(
     saveLoadPanelScript,
-    /if \(!name \|\| savePanelBusy\.value\) return;/
+    /if \(!name \|\| savePanelBusy\.value \|\| !isCurrentSaveItem\(item\)\) return;/
   );
 
   assert.equal(countMatches(saveLoadPanelTemplate, /:disabled="isSaveActionDisabled\(\)"/g), 4);
@@ -81,14 +81,53 @@ test('SaveLoadPanel preserves save-list references for unchanged refresh results
   );
   assert.match(
     saveLoadPanelScript,
-    /setSavesIfChanged\(saves\.value\.filter\(\(s\) => s\.id !== item\.id\)\);/
+    /await deleteSave\(item\.id, conversationId\);[\s\S]*removeSaveItemByIdIfPresent\(item\.id\);/
   );
   assert.match(
     saveLoadPanelScript,
-    /const nextSave = { \.\.\.saves\.value\[index\], name: updated\.name };[\s\S]*if \(!sameSaveSummary\(saves\.value\[index\], nextSave\)\) {\s*saves\.value\[index\] = nextSave;/
+    /function removeSaveItemByIdIfPresent\(saveId\) \{\s*const nextSaves = \[\];\s*let changed = false;[\s\S]*for \(const save of saves\.value\) \{[\s\S]*if \(save\?\.id === saveId\) \{[\s\S]*changed = true;[\s\S]*} else \{[\s\S]*nextSaves\.push\(save\);[\s\S]*}[\s\S]*if \(changed\) \{[\s\S]*setSavesIfChanged\(nextSaves\);[\s\S]*return changed;/
+  );
+  assert.match(
+    saveLoadPanelScript,
+    /function updateSaveItemNameIfChanged\(saveId, nextName\) \{\s*const nextSaves = \[\];\s*let changed = false;[\s\S]*for \(const save of saves\.value\) \{[\s\S]*if \(save\?\.id === saveId\) \{[\s\S]*const nextSave = \{ \.\.\.save, name: nextName \};[\s\S]*if \(!sameSaveSummary\(save, nextSave\)\) \{[\s\S]*changed = true;[\s\S]*nextSaves\.push\(nextSave\);[\s\S]*} else \{[\s\S]*nextSaves\.push\(save\);[\s\S]*}[\s\S]*if \(changed\) \{[\s\S]*setSavesIfChanged\(nextSaves\);[\s\S]*return changed;/
+  );
+  assert.match(
+    saveLoadPanelScript,
+    /const updated = await renameSave\(item\.id, name, conversationId\);[\s\S]*updateSaveItemNameIfChanged\(item\.id, updated\.name\);/
   );
   assert.ok(countMatches(saveLoadPanelScript, /setSavesIfChanged\(/g) >= 5);
   assert.doesNotMatch(saveLoadPanelScript, /\n\s+saves\.value = nextSaves;/);
   assert.doesNotMatch(saveLoadPanelScript, /\n\s+saves\.value = \[\];/);
   assert.doesNotMatch(saveLoadPanelScript, /\n\s+saves\.value = saves\.value\.filter/);
+  assert.doesNotMatch(saveLoadPanelScript, /setSavesIfChanged\(saves\.value\.filter/);
+  assert.doesNotMatch(saveLoadPanelScript, /saves\.value\.findIndex/);
+  assert.doesNotMatch(saveLoadPanelScript, /saves\.value\[[^\]]+\]\s*=/);
+});
+
+test('SaveLoadPanel ignores stale save item events before mutations', () => {
+  assert.match(
+    saveLoadPanelScript,
+    /function isCurrentSaveItem\(item\)\s*{\s*const conversationId = props\.conversationId;[\s\S]*if \(!conversationId \|\| !item\?\.id \|\| item\.conversationId !== conversationId\) \{\s*return false;\s*\}[\s\S]*return saves\.value\.some\(\(save\) => save\?\.id === item\.id && save\?\.conversationId === conversationId\);[\s\S]*}/
+  );
+  assert.match(
+    saveLoadPanelScript,
+    /function isCurrentSaveLoadResult\(result, conversationId\)\s*{\s*return result\?\.conversationId === conversationId;\s*}/
+  );
+  assert.match(
+    saveLoadPanelScript,
+    /async function doLoadSave\(item\)\s*{\s*if \(savePanelBusy\.value \|\| !isCurrentSaveItem\(item\)\) return;[\s\S]*const result = await loadSave\(item\.id, conversationId\);[\s\S]*if \(!isCurrentSaveLoadResult\(result, conversationId\)\) return;[\s\S]*emit\('loaded', \{ \.\.\.result, conversationId \}\);/
+  );
+  assert.doesNotMatch(saveLoadPanelScript, /result\?\.conversationId && result\.conversationId !== conversationId/);
+  assert.match(
+    saveLoadPanelScript,
+    /async function doDeleteSave\(item\)\s*{\s*if \(savePanelBusy\.value \|\| !isCurrentSaveItem\(item\)\) return;[\s\S]*await deleteSave\(item\.id, conversationId\);/
+  );
+  assert.match(
+    saveLoadPanelScript,
+    /function beginRename\(item\)\s*{\s*if \(savePanelBusy\.value \|\| !isCurrentSaveItem\(item\)\) return;/
+  );
+  assert.match(
+    saveLoadPanelScript,
+    /if \(!name \|\| savePanelBusy\.value \|\| !isCurrentSaveItem\(item\)\) return;[\s\S]*const updated = await renameSave\(item\.id, name, conversationId\);/
+  );
 });

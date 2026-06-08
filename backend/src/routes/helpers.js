@@ -68,14 +68,20 @@ function mergeConversationAppearance(row) {
 }
 
 function getConversationUsage(userId, conversationId, db) {
-  const usages = db
+  const rows = db
     .prepare(
       `SELECT usage_json FROM messages
        WHERE user_id = ? AND conversation_id = ? AND usage_json IS NOT NULL`
     )
-    .all(userId, conversationId)
-    .map((row) => parseJson(row.usage_json, null))
-    .filter(Boolean);
+    .all(userId, conversationId);
+
+  const usages = [];
+  for (const row of rows) {
+    const usage = parseJson(row.usage_json, null);
+    if (usage) {
+      usages.push(usage);
+    }
+  }
 
   return summarizeUsageSnapshots(usages);
 }
@@ -102,7 +108,23 @@ export function normalizeIdList(ids) {
   if (!Array.isArray(ids)) {
     return [];
   }
-  return [...new Set(ids.map((id) => String(id || '').trim()).filter(Boolean))].slice(0, 100);
+
+  const normalizedIds = [];
+  const seenIds = new Set();
+  for (const id of ids) {
+    const normalizedId = String(id || '').trim();
+    if (!normalizedId || seenIds.has(normalizedId)) {
+      continue;
+    }
+
+    seenIds.add(normalizedId);
+    normalizedIds.push(normalizedId);
+    if (normalizedIds.length >= 100) {
+      break;
+    }
+  }
+
+  return normalizedIds;
 }
 
 export function getChatProviderSettingsFromContext(ctx, userId) {

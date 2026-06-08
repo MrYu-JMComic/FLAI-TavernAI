@@ -407,19 +407,19 @@ export async function listProviderModels(settings, options = {}) {
   const json = await readJsonResponse(response);
   const models = Array.isArray(json.data) ? json.data : Array.isArray(json.models) ? json.models : [];
 
-  const normalized = models
-    .map((model) => {
-      const id = typeof model === 'string' ? model : model.id || model.name || model.model;
-      return id
-        ? {
-            id,
-            label: model.display_name || model.displayName || model.name || id,
-            ownedBy: model.owned_by || model.ownedBy || model.publisher || ''
-          }
-        : null;
-    })
-    .filter(Boolean)
-    .sort((a, b) => a.id.localeCompare(b.id));
+  const normalized = [];
+  for (const model of models) {
+    const id = typeof model === 'string' ? model : model?.id || model?.name || model?.model;
+    if (!id) {
+      continue;
+    }
+    normalized.push({
+      id,
+      label: model?.display_name || model?.displayName || model?.name || id,
+      ownedBy: model?.owned_by || model?.ownedBy || model?.publisher || ''
+    });
+  }
+  normalized.sort((a, b) => a.id.localeCompare(b.id));
 
   if (cacheKey) {
     providerModelCache.set(cacheKey, {
@@ -456,7 +456,11 @@ function apiKeyCacheFingerprint(apiKey) {
 }
 
 function cloneModels(models = []) {
-  return models.map((model) => ({ ...model }));
+  const cloned = [];
+  for (const model of models) {
+    cloned.push({ ...model });
+  }
+  return cloned;
 }
 
 export function normalizeProviderExtraBody(value) {
@@ -484,17 +488,21 @@ function stableStringifyExtraBody(value) {
 
 function sortObject(value) {
   if (Array.isArray(value)) {
-    return value.map(sortObject);
+    const sortedItems = [];
+    for (const item of value) {
+      sortedItems.push(sortObject(item));
+    }
+    return sortedItems;
   }
   if (!value || typeof value !== 'object') {
     return value;
   }
-  return Object.keys(value)
-    .sort()
-    .reduce((result, key) => {
-      result[key] = sortObject(value[key]);
-      return result;
-    }, {});
+  const sorted = {};
+  const keys = Object.keys(value).sort();
+  for (const key of keys) {
+    sorted[key] = sortObject(value[key]);
+  }
+  return sorted;
 }
 
 function normalizeProviderNumber(value) {
@@ -558,7 +566,7 @@ export async function runToolCompletion(settings, messages, tools, executeTool, 
   }
 
   const maxRounds = normalizeToolCompletionRounds(options.maxRounds);
-  const nextMessages = messages.map((message) => ({ ...message }));
+  const nextMessages = cloneProviderMessages(messages);
   const toolCalls = [];
   const process = [];
   let finalMessage = null;
@@ -606,7 +614,7 @@ export async function runToolCompletion(settings, messages, tools, executeTool, 
     nextMessages.push({
       role: 'assistant',
       content: message.content || null,
-      tool_calls: calls.map((call) => call.raw)
+      tool_calls: collectRawToolCalls(calls)
     });
 
     for (const call of calls) {
@@ -661,7 +669,7 @@ export async function streamToolCompletion(settings, messages, tools, executeToo
   }
 
   const maxRounds = normalizeToolCompletionRounds(options.maxRounds);
-  const nextMessages = messages.map((message) => ({ ...message }));
+  const nextMessages = cloneProviderMessages(messages);
   const toolCalls = [];
   const process = [];
   let finalContent = '';
@@ -752,21 +760,28 @@ export async function streamToolCompletion(settings, messages, tools, executeToo
     }
     thinkingTagFilter.flush();
 
-    const calls = [...pendingToolCalls.values()]
-      .filter((call) => call.name)
-      .map((call, index) => ({
-        id: call.id || `tool-call-${round}-${index}`,
+    const calls = [];
+    let callIndex = 0;
+    for (const call of pendingToolCalls.values()) {
+      if (!call.name) {
+        continue;
+      }
+      const id = call.id || `tool-call-${round}-${callIndex}`;
+      calls.push({
+        id,
         name: call.name,
         arguments: parseJson(call.arguments || '{}', {}),
         raw: {
-          id: call.id || `tool-call-${round}-${index}`,
+          id,
           type: 'function',
           function: {
             name: call.name,
             arguments: call.arguments || '{}'
           }
         }
-      }));
+      });
+      callIndex += 1;
+    }
 
     if (!calls.length) {
       const nudge = typeof options.onNoToolCall === 'function'
@@ -793,7 +808,7 @@ export async function streamToolCompletion(settings, messages, tools, executeToo
     nextMessages.push({
       role: 'assistant',
       content: roundContent || null,
-      tool_calls: calls.map((call) => call.raw)
+      tool_calls: collectRawToolCalls(calls)
     });
 
     for (const call of calls) {
@@ -1067,8 +1082,9 @@ function buildAnthropicRequestBody(settings, system, messages, stream, options =
   }
   assignFiniteProviderNumber(body, 'temperature', options.temperature);
   assignFiniteProviderNumber(body, 'top_p', options.topP);
-  if (options.tools?.length) {
-    body.tools = convertToolsForAnthropic(options.tools);
+  const anthropicTools = convertToolsForAnthropic(options.tools);
+  if (anthropicTools.length) {
+    body.tools = anthropicTools;
     body.tool_choice = convertToolChoiceForAnthropic(options.toolChoice);
   }
 
@@ -1079,7 +1095,7 @@ function buildAnthropicRequestBody(settings, system, messages, stream, options =
 async function runAnthropicToolCompletion(settings, messages, tools, executeTool, options = {}) {
   const maxRounds = normalizeToolCompletionRounds(options.maxRounds);
   const converted = convertMessagesForAnthropic(messages);
-  const nextMessages = converted.messages.map((message) => ({ ...message }));
+  const nextMessages = cloneProviderMessages(converted.messages);
   const toolCalls = [];
   const process = [];
   let finalContent = '';
@@ -1276,23 +1292,27 @@ function convertMessagesForAnthropic(messages = []) {
 }
 
 function convertToolsForAnthropic(tools = []) {
-  return tools
-    .map((tool) => {
-      const fn = tool?.function || {};
-      const name = fn.name || tool.name;
-      if (!name) {
-        return null;
+  if (!Array.isArray(tools)) {
+    return [];
+  }
+
+  const converted = [];
+  for (const tool of tools) {
+    const fn = tool?.function || {};
+    const name = fn.name || tool?.name;
+    if (!name) {
+      continue;
+    }
+    converted.push({
+      name,
+      description: fn.description || tool?.description || '',
+      input_schema: fn.parameters || tool?.input_schema || {
+        type: 'object',
+        properties: {}
       }
-      return {
-        name,
-        description: fn.description || tool.description || '',
-        input_schema: fn.parameters || tool.input_schema || {
-          type: 'object',
-          properties: {}
-        }
-      };
-    })
-    .filter(Boolean);
+    });
+  }
+  return converted;
 }
 
 function convertToolChoiceForAnthropic(toolChoice) {
@@ -1313,13 +1333,19 @@ function normalizeAnthropicToolUses(content = []) {
   if (!Array.isArray(content)) {
     return [];
   }
-  return content
-    .filter((item) => item?.type === 'tool_use' && item.name)
-    .map((item) => ({
+
+  const toolUses = [];
+  for (const item of content) {
+    if (item?.type !== 'tool_use' || !item.name) {
+      continue;
+    }
+    toolUses.push({
       id: item.id || newIdForToolUse(item.name),
       name: item.name,
       arguments: item.input && typeof item.input === 'object' ? item.input : parseJson(item.input || '{}', {})
-    }));
+    });
+  }
+  return toolUses;
 }
 
 function newIdForToolUse(name) {
@@ -1416,7 +1442,7 @@ async function streamOpenAiResponse(settings, messages, emit, signal, options = 
 }
 
 function mockCompletion(messages, settings = {}) {
-  const lastUserMessage = [...messages].reverse().find((message) => message.role === 'user')?.content || '';
+  const lastUserMessage = findLastUserMessageContent(messages);
   const providerHint = settings.apiKeyError
     ? settings.apiKeyError
     : '保存 API Key 后，这里会切换为真实模型回复。';
@@ -1430,10 +1456,36 @@ function mockCompletion(messages, settings = {}) {
   };
 }
 
+function findLastUserMessageContent(messages = []) {
+  if (Array.isArray(messages)) {
+    for (let index = messages.length - 1; index >= 0; index -= 1) {
+      const message = messages[index];
+      if (message?.role === 'user') {
+        return message.content || '';
+      }
+    }
+    return '';
+  }
+
+  if (!messages || typeof messages[Symbol.iterator] !== 'function') {
+    return '';
+  }
+
+  let content = '';
+  for (const message of messages) {
+    if (message?.role === 'user') {
+      content = message.content || '';
+    }
+  }
+  return content;
+}
+
 async function streamMockCompletion(messages, emit, settings = {}) {
   const result = mockCompletion(messages, settings);
-  for (const chunk of chunkText(result.content, 10)) {
-    emit('content', { text: chunk });
+  const content = String(result.content || '');
+  const chunkSize = 10;
+  for (let index = 0; index < content.length; index += chunkSize) {
+    emit('content', { text: content.slice(index, index + chunkSize) });
     await new Promise((resolve) => setTimeout(resolve, 20));
   }
   return result;
@@ -1633,29 +1685,50 @@ function normalizeToolCalls(toolCalls = []) {
     return [];
   }
 
-  return toolCalls
-    .map((call, index) => {
-      const fn = call.function || {};
-      const name = fn.name || call.name;
-      if (!name) {
-        return null;
-      }
+  const normalized = [];
+  for (let index = 0; index < toolCalls.length; index += 1) {
+    const call = toolCalls[index];
+    const fn = call?.function || {};
+    const name = fn.name || call?.name;
+    if (!name) {
+      continue;
+    }
 
-      return {
-        id: call.id || `tool-call-${index}`,
-        name,
-        arguments: parseJson(fn.arguments || call.arguments || '{}', {}),
-        raw: {
-          id: call.id || `tool-call-${index}`,
-          type: call.type || 'function',
-          function: {
-            name,
-            arguments: typeof fn.arguments === 'string' ? fn.arguments : JSON.stringify(fn.arguments || call.arguments || {})
-          }
+    const id = call?.id || `tool-call-${index}`;
+    normalized.push({
+      id,
+      name,
+      arguments: parseJson(fn.arguments || call?.arguments || '{}', {}),
+      raw: {
+        id,
+        type: call?.type || 'function',
+        function: {
+          name,
+          arguments: typeof fn.arguments === 'string' ? fn.arguments : JSON.stringify(fn.arguments || call?.arguments || {})
         }
-      };
-    })
-    .filter(Boolean);
+      }
+    });
+  }
+  return normalized;
+}
+
+function collectRawToolCalls(calls = []) {
+  const rawCalls = [];
+  for (const call of calls) {
+    rawCalls.push(call.raw);
+  }
+  return rawCalls;
+}
+
+function cloneProviderMessages(messages = []) {
+  const cloned = [];
+  if (!messages || typeof messages[Symbol.iterator] !== 'function') {
+    return cloned;
+  }
+  for (const message of messages) {
+    cloned.push({ ...message });
+  }
+  return cloned;
 }
 
 function normalizeStreamingToolCalls(toolCalls = []) {
@@ -1663,12 +1736,17 @@ function normalizeStreamingToolCalls(toolCalls = []) {
     return [];
   }
 
-  return toolCalls.map((call, index) => ({
-    index: Number.isFinite(call?.index) ? call.index : index,
-    id: call?.id || '',
-    name: call?.function?.name || '',
-    arguments: call?.function?.arguments || ''
-  }));
+  const normalized = [];
+  for (let index = 0; index < toolCalls.length; index += 1) {
+    const call = toolCalls[index];
+    normalized.push({
+      index: Number.isFinite(call?.index) ? call.index : index,
+      id: call?.id || '',
+      name: call?.function?.name || '',
+      arguments: call?.function?.arguments || ''
+    });
+  }
+  return normalized;
 }
 
 function extractChatMessage(json = {}) {
@@ -1719,10 +1797,13 @@ function extractText(value) {
   }
 
   if (Array.isArray(value)) {
-    return value
-      .filter((item) => !isReasoningBlock(item))
-      .map((item) => extractText(item?.text || item?.content || item))
-      .join('');
+    let text = '';
+    for (const item of value) {
+      if (!isReasoningBlock(item)) {
+        text += extractText(item?.text || item?.content || item);
+      }
+    }
+    return text;
   }
 
   if (typeof value === 'object') {
@@ -1736,11 +1817,17 @@ function extractReasoningBlocks(value) {
   if (!Array.isArray(value)) {
     return '';
   }
-  return value
-    .filter(isReasoningBlock)
-    .map((item) => extractText(item?.thinking || item?.text || item?.content || item))
-    .filter(Boolean)
-    .join('\n\n');
+  let reasoning = '';
+  for (const item of value) {
+    if (!isReasoningBlock(item)) {
+      continue;
+    }
+    const text = extractText(item?.thinking || item?.text || item?.content || item);
+    if (text) {
+      reasoning = reasoning ? `${reasoning}\n\n${text}` : text;
+    }
+  }
+  return reasoning;
 }
 
 function isReasoningBlock(item) {
@@ -1748,7 +1835,15 @@ function isReasoningBlock(item) {
 }
 
 function mergeReasoning(...items) {
-  return items.map((item) => String(item || '').trim()).filter(Boolean).join('\n\n');
+  let merged = '';
+  for (const item of items) {
+    const value = String(item || '').trim();
+    if (!value) {
+      continue;
+    }
+    merged = merged ? `${merged}\n\n${value}` : value;
+  }
+  return merged;
 }
 
 function splitThinkingTags(text) {
@@ -1959,12 +2054,4 @@ function readOptionalNumber(value) {
 
 function roundMoney(value) {
   return Number(value.toFixed(8));
-}
-
-function chunkText(text, size) {
-  const chunks = [];
-  for (let index = 0; index < text.length; index += size) {
-    chunks.push(text.slice(index, index + size));
-  }
-  return chunks;
 }

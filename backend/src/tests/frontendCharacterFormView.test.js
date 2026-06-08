@@ -105,6 +105,215 @@ test('CharacterFormView tag creation freezes tag controls while pending', () => 
   );
 });
 
+test('CharacterFormView preserves unchanged option-list references during loads', () => {
+  assert.match(
+    characterFormScript,
+    /const \[nextWorldBooks, nextTags\] = await Promise\.all\(\[fetchWorldBooks\(\), fetchTags\(\)\]\);[\s\S]*setWorldBooksIfChanged\(nextWorldBooks\);[\s\S]*setAvailableTagsIfChanged\(nextTags\);/
+  );
+  assert.match(
+    characterFormScript,
+    /setSelectedWorldBookIdsIfChanged\(linkedBooks\.map\(\(book\) => book\.id\)\);/
+  );
+  assert.match(
+    characterFormScript,
+    /setAvailableTagsIfChanged\(\[\.\.\.availableTags\.value, tag\]\);/
+  );
+  assert.match(
+    characterFormScript,
+    /function setWorldBooksIfChanged\(nextBooks\) \{[\s\S]*sameListItems\(worldBooks\.value, normalizedBooks, sameWorldBookOption\)[\s\S]*worldBooks\.value = normalizedBooks;[\s\S]*return true;[\s\S]*\}/
+  );
+  assert.match(
+    characterFormScript,
+    /function setAvailableTagsIfChanged\(nextTags\) \{[\s\S]*sameListItems\(availableTags\.value, normalizedTags, sameTagOption\)[\s\S]*availableTags\.value = normalizedTags;[\s\S]*return true;[\s\S]*\}/
+  );
+  assert.match(
+    characterFormScript,
+    /function setSelectedWorldBookIdsIfChanged\(nextIds\) \{[\s\S]*sameListItems\(selectedWorldBookIds\.value, normalizedIds, Object\.is\)[\s\S]*selectedWorldBookIds\.value = normalizedIds;[\s\S]*return true;[\s\S]*\}/
+  );
+  assert.match(
+    characterFormScript,
+    /function toggleWorldBook\(bookId\) \{[\s\S]*const normalizedId = String\(bookId \|\| ''\);[\s\S]*if \(!normalizedId\) \{[\s\S]*return;[\s\S]*\}[\s\S]*const currentIds = selectedWorldBookIds\.value;[\s\S]*const idx = currentIds\.indexOf\(normalizedId\);[\s\S]*const nextIds = idx >= 0[\s\S]*currentIds\.filter\(\(id\) => id !== normalizedId\)[\s\S]*\[\.\.\.currentIds, normalizedId\][\s\S]*setSelectedWorldBookIdsIfChanged\(nextIds\);[\s\S]*\}/
+  );
+  assert.match(
+    characterFormScript,
+    /function sameWorldBookOption\(current = \{\}, next = \{\}\) \{[\s\S]*String\(current\?\.id \|\| ''\) === String\(next\?\.id \|\| ''\)[\s\S]*Number\(current\?\.entryCount \|\| 0\) === Number\(next\?\.entryCount \|\| 0\);[\s\S]*\}/
+  );
+  assert.match(
+    characterFormScript,
+    /function sameTagOption\(current = \{\}, next = \{\}\) \{[\s\S]*String\(current\?\.name \|\| ''\) === String\(next\?\.name \|\| ''\)[\s\S]*Number\(current\?\.usageCount \|\| 0\) === Number\(next\?\.usageCount \|\| 0\);[\s\S]*\}/
+  );
+  assert.doesNotMatch(characterFormScript, /worldBooks\.value\s*=\s*nextWorldBooks/);
+  assert.doesNotMatch(characterFormScript, /availableTags\.value\s*=\s*nextTags/);
+  assert.doesNotMatch(characterFormScript, /selectedWorldBookIds\.value\s*=\s*linkedBooks\.map/);
+  assert.doesNotMatch(characterFormScript, /selectedWorldBookIds\.value\.(?:push|splice)\(/);
+});
+
+test('CharacterFormView uses a searchable paged dialog for world book linking', () => {
+  assert.match(characterFormScript, /const showWorldBookDialog = ref\(false\);/);
+  assert.match(characterFormScript, /const worldBookSearch = ref\(''\);/);
+  assert.match(characterFormScript, /const worldBookSort = ref\('updatedDesc'\);/);
+  assert.match(characterFormScript, /const worldBookPage = ref\(1\);/);
+  assert.match(characterFormScript, /const WORLD_BOOK_SELECTOR_PAGE_SIZE = 8;/);
+  assert.match(characterFormScript, /const WORLD_BOOK_SORT_OPTIONS = \[[\s\S]*updatedDesc[\s\S]*nameAsc[\s\S]*entryCountDesc[\s\S]*\];/);
+  assert.match(
+    characterFormScript,
+    /const selectedWorldBooks = computed\(\(\) => getSelectedWorldBooks\(worldBooks\.value, selectedWorldBookIds\.value\)\);/
+  );
+  assert.match(
+    characterFormScript,
+    /const filteredWorldBooks = computed\(\(\) => filterAndSortWorldBooks\(worldBooks\.value, worldBookSearch\.value, worldBookSort\.value\)\);/
+  );
+  assert.match(
+    characterFormScript,
+    /const pagedWorldBooks = computed\(\(\) => getWorldBookPageItems\(filteredWorldBooks\.value, worldBookPage\.value, WORLD_BOOK_SELECTOR_PAGE_SIZE\)\);/
+  );
+  assert.match(
+    characterFormScript,
+    /watch\(\[worldBookSearch, worldBookSort\], \(\) => \{\s*setWorldBookPage\(1\);/
+  );
+  assert.match(
+    characterFormScript,
+    /function filterAndSortWorldBooks\(books, rawSearch, sortKey\) \{[\s\S]*haystack\.includes\(search\)[\s\S]*return sortWorldBooks\(matches, sortKey\);/
+  );
+  assert.match(
+    characterFormScript,
+    /function sortWorldBooks\(books, sortKey\) \{[\s\S]*sortKey === 'nameAsc'[\s\S]*sortKey === 'entryCountDesc'[\s\S]*getWorldBookSortTime\(next\) - getWorldBookSortTime\(current\)/
+  );
+  assert.match(
+    characterFormScript,
+    /function getWorldBookPageItems\(books, page, pageSize\) \{[\s\S]*return currentBooks\.slice\(start, start \+ safePageSize\);/
+  );
+  assert.match(
+    characterFormScript,
+    /function openWorldBookDialog\(\) \{[\s\S]*showWorldBookDialog\.value = true;[\s\S]*setWorldBookPage\(worldBookPage\.value\);/
+  );
+  assert.match(
+    characterFormScript,
+    /function setWorldBookPage\(page\) \{[\s\S]*clampWorldBookPage\(page, worldBookPageCount\.value\)[\s\S]*worldBookPage\.value = nextPage;/
+  );
+
+  assert.match(characterFormTemplate, /class="field full-span world-book-field"/);
+  assert.match(characterFormTemplate, /class="world-book-picker-button"[\s\S]*@click="openWorldBookDialog"/);
+  assert.match(characterFormTemplate, /class="world-book-selected-preview"/);
+  assert.match(characterFormTemplate, /v-if="showWorldBookDialog"[\s\S]*class="world-book-dialog-overlay"/);
+  assert.match(characterFormTemplate, /class="world-book-dialog form-panel"[\s\S]*role="dialog"[\s\S]*aria-modal="true"/);
+  assert.match(characterFormTemplate, /v-model="worldBookSearch"[\s\S]*type="search"/);
+  assert.match(characterFormTemplate, /v-model="worldBookSort"[\s\S]*v-for="option in WORLD_BOOK_SORT_OPTIONS"/);
+  assert.match(characterFormTemplate, /v-for="book in pagedWorldBooks"/);
+  assert.match(characterFormTemplate, /@click="setWorldBookPage\(worldBookPage - 1\)"/);
+  assert.match(characterFormTemplate, /@click="setWorldBookPage\(worldBookPage \+ 1\)"/);
+  assert.doesNotMatch(characterFormTemplate, /class="world-book-selector"/);
+
+  assert.match(stylesSource, /\.world-book-picker\s*\{[\s\S]*border:\s*1px solid var\(--line\);[\s\S]*background:\s*color-mix\(in srgb, var\(--surface\) 78%, transparent\);/);
+  assert.match(stylesSource, /\.world-book-dialog-tools\s*\{[\s\S]*grid-template-columns:\s*minmax\(220px, 1fr\) minmax\(160px, 220px\) auto;/);
+  assert.match(stylesSource, /\.world-book-dialog-list\s*\{[\s\S]*overflow:\s*auto;/);
+  assert.match(stylesSource, /\.world-book-dialog-option\s*\{[\s\S]*grid-template-columns:\s*auto minmax\(0, 1fr\) auto;/);
+  assert.match(
+    stylesSource,
+    /@media \(max-width: 760px\) \{[\s\S]*\.world-book-dialog-tools,[\s\S]*\.world-book-dialog-option\s*\{[\s\S]*grid-template-columns:\s*minmax\(0, 1fr\);/
+  );
+});
+
+test('CharacterFormView filters tag search results in one pass', () => {
+  assert.match(
+    characterFormScript,
+    /const filteredTags = computed\(\(\) => filterTagsBySearch\(availableTags\.value, tagSearch\.value\)\);/
+  );
+  assert.match(
+    characterFormScript,
+    /function filterTagsBySearch\(tags, rawSearch\) \{\s*const currentTags = Array\.isArray\(tags\) \? tags : \[\];\s*const search = String\(rawSearch \|\| ''\)\.trim\(\)\.toLowerCase\(\);[\s\S]*if \(!search\) \{\s*return currentTags;\s*\}[\s\S]*const matches = \[\];\s*for \(const tag of currentTags\) \{[\s\S]*matches\.push\(tag\);[\s\S]*\}\s*return matches;\s*\}/
+  );
+  assert.doesNotMatch(characterFormScript, /availableTags\.value\.filter\(/);
+});
+
+test('CharacterFormView counts status blueprint variable stats in one pass', () => {
+  assert.match(
+    characterFormScript,
+    /const variableStats = countStatusBlueprintVariableStats\(normalized\.variables, template\);[\s\S]*inferred: variableStats\.inferred,[\s\S]*text: Math\.max\(0, normalized\.variables\.length - variableStats\.meter\),[\s\S]*meter: variableStats\.meter,/
+  );
+  assert.match(
+    characterFormScript,
+    /function collectInferredStatusVariableKeys\(template = ''\) \{\s*const inferredKeys = new Set\(\);\s*for \(const variable of inferStatusVariablesFromTemplate\(template, \[\]\)\) \{\s*inferredKeys\.add\(normalizeStatusVariableKey\(variable\.name\)\);\s*\}\s*return inferredKeys;\s*\}/
+  );
+  assert.match(
+    characterFormScript,
+    /function countStatusBlueprintVariableStats\(variables = \[\], template = ''\) \{\s*const inferredKeys = collectInferredStatusVariableKeys\(template\);\s*const stats = \{ inferred: 0, meter: 0 \};\s*for \(const variable of Array\.isArray\(variables\) \? variables : \[\]\) \{[\s\S]*stats\.inferred \+= 1;[\s\S]*stats\.meter \+= 1;[\s\S]*\}\s*return stats;\s*\}/
+  );
+  assert.doesNotMatch(
+    characterFormScript,
+    /inferStatusVariablesFromTemplate\(template, \[\]\)\.map\(\(variable\) => normalizeStatusVariableKey\(variable\.name\)\)/
+  );
+  assert.doesNotMatch(characterFormScript, /normalized\.variables\.filter\(/);
+});
+
+test('CharacterFormView builds status blueprint editor rows without intermediate mapping arrays', () => {
+  assert.match(
+    characterFormScript,
+    /const statusBlueprintEditorRows = computed\(\(\) => \{[\s\S]*const rows = \[\];\s*for \(let index = 0; index < compositeRows\.length; index \+= 1\) \{[\s\S]*let compositePartKey = '';[\s\S]*for \(let partIndex = 0; partIndex < row\.parts\.length; partIndex \+= 1\) \{[\s\S]*compositePartKey \+= `\$\{partIndex > 0 \? '\|' : ''\}\$\{part\?\.name \?\? ''\}`;[\s\S]*key: `composite:\$\{index\}:\$\{row\.label\}:\$\{compositePartKey\}`,[\s\S]*for \(let index = 0; index < variables\.length; index \+= 1\) \{[\s\S]*const variable = variables\[index\];[\s\S]*continue;[\s\S]*key: `variable:\$\{index\}:\$\{key\}`,/
+  );
+  assert.doesNotMatch(characterFormScript, /compositeRows\.map\(/);
+  assert.doesNotMatch(characterFormScript, /row\.parts\.map\(/);
+  assert.doesNotMatch(characterFormScript, /variables\.forEach\(/);
+});
+
+test('CharacterFormView preserves unchanged AI process panel references', () => {
+  assert.match(
+    characterFormScript,
+    /function setAiToolCallsIfChanged\(nextToolCalls\) \{\s*return setAiPlainListIfChanged\(aiToolCalls, nextToolCalls\);\s*\}/
+  );
+  assert.match(
+    characterFormScript,
+    /function setAiProcessIfChanged\(nextProcess\) \{\s*return setAiPlainListIfChanged\(aiProcess, nextProcess\);\s*\}/
+  );
+  assert.match(
+    characterFormScript,
+    /function setAiModSuggestionsIfChanged\(nextSuggestions\) \{\s*return setAiPlainListIfChanged\(aiModSuggestions, nextSuggestions\);\s*\}/
+  );
+  assert.match(
+    characterFormScript,
+    /function setAiPlainListIfChanged\(listRef, nextItems\) \{[\s\S]*sameListItems\(listRef\.value, normalizedItems, samePlainValue\)[\s\S]*listRef\.value = normalizedItems;[\s\S]*return true;[\s\S]*\}/
+  );
+  assert.match(
+    characterFormScript,
+    /function samePlainValue\(current, next\) \{[\s\S]*Object\.is\(current, next\)[\s\S]*Array\.isArray\(current\)[\s\S]*Object\.keys\(current\)[\s\S]*samePlainValue\(current\[key\], next\[key\]\)[\s\S]*\}/
+  );
+  assert.match(
+    characterFormScript,
+    /function updateAiProcessStep\(round = 1, updateStep\) \{[\s\S]*const currentProcess = Array\.isArray\(aiProcess\.value\) \? aiProcess\.value : \[\];[\s\S]*const nextProcess = stepIndex >= 0[\s\S]*currentProcess\.map\(\(item, index\) => \(index === stepIndex \? nextStep : item\)\)[\s\S]*\[\.\.\.currentProcess, nextStep\][\s\S]*setAiProcessIfChanged\(nextProcess\);[\s\S]*\}/
+  );
+  assert.match(
+    characterFormScript,
+    /function appendAiToolCall\(log\) \{[\s\S]*const currentToolCalls = Array\.isArray\(aiToolCalls\.value\) \? aiToolCalls\.value : \[\];[\s\S]*setAiToolCallsIfChanged\(\[\.\.\.currentToolCalls, log\]\);[\s\S]*\}/
+  );
+  assert.match(
+    characterFormScript,
+    /async function completeWithAi\(\) \{[\s\S]*setAiToolCallsIfChanged\(\[\]\);[\s\S]*setAiProcessIfChanged\(\[\{ round: 1, reasoning: '等待模型响应\.\.\.', content: '', tools: \[\] \}\]\);[\s\S]*setAiModSuggestionsIfChanged\(\[\]\);/
+  );
+  assert.match(
+    characterFormScript,
+    /setAiModSuggestionsIfChanged\(result\.character\?\.modSuggestions\);[\s\S]*setAiToolCallsIfChanged\(result\.toolCalls\);[\s\S]*setAiProcessIfChanged\(result\.process\);/
+  );
+  assert.match(
+    characterFormScript,
+    /async function completeAdvancedSettingsWithAi\(\) \{[\s\S]*setAiProcessIfChanged\(\[\{ round: 1, reasoning: '等待模型响应\.\.\.', content: '', tools: \[\] \}\]\);[\s\S]*setAiToolCallsIfChanged\(\[\]\);/
+  );
+  assert.match(
+    characterFormScript,
+    /notify\.success\(`已创建 \$\{suggestions\.length\} 个 Mod`\);\s*setAiModSuggestionsIfChanged\(\[\]\);/
+  );
+  assert.match(
+    characterFormScript,
+    /function aiStreamHandlers\(isCurrent = \(\) => !characterFormDisposed\) \{[\s\S]*step: \(step = \{\}\) => \{[\s\S]*updateAiProcessStep\(step\.round \|\| 1, \(target\) => \(\{[\s\S]*content: target\.content \|\| step\.content \|\| ''[\s\S]*reasoning: target\.reasoning === '等待模型响应\.\.\.'[\s\S]*tools: target\.tools\?\.length \? target\.tools : Array\.isArray\(step\.tools\) \? \[\.\.\.step\.tools\] : \[\][\s\S]*tool: \(call = \{\}\) => \{[\s\S]*updateAiProcessStep\(call\.round \|\| 1, \(target\) => \(\{[\s\S]*tools: \[\.\.\.\(Array\.isArray\(target\.tools\) \? target\.tools : \[\]\), log\][\s\S]*appendAiToolCall\(log\);/
+  );
+  assert.ok(countMatches(characterFormScript, /setAiProcessIfChanged\(\[\{ round: 1, reasoning: err\.message, content: '', tools: \[\] \}\]\);/g) >= 2);
+  assert.doesNotMatch(characterFormScript, /aiToolCalls\.value\s*=(?!=)/);
+  assert.doesNotMatch(characterFormScript, /aiProcess\.value\s*=(?!=)/);
+  assert.doesNotMatch(characterFormScript, /aiModSuggestions\.value\s*=(?!=)/);
+  assert.doesNotMatch(characterFormScript, /(?:aiToolCalls|aiProcess)\.value\.(?:push|splice|unshift|shift|pop)\(/);
+  assert.doesNotMatch(characterFormScript, /target\.tools\.push\(/);
+  assert.doesNotMatch(characterFormScript, /function ensureAiProcessStep/);
+});
+
 test('CharacterFormView uses granular sticky section navigation', () => {
   assert.match(characterFormScript, /const sectionNavRef = ref\(null\);/);
   assert.match(characterFormScript, /let sectionNavRafId = null;/);

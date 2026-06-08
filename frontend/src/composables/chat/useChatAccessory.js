@@ -19,6 +19,7 @@ const VALID_EFFECTS = ['glow', 'striped', 'pulse'];
 const VALID_DISPLAY_MODES = ['immersive', 'compact'];
 const VALID_CHAR_STATUSES = ['active', 'dead', 'forgotten', 'left', 'hidden'];
 const STATUS_BAR_VARIABLE_LIMIT = 60;
+const ACCESSORY_SKILL_RESULT_LIMIT = 8;
 
 function parseCharacter(raw) {
   if (!raw || typeof raw !== 'object') return null;
@@ -31,15 +32,24 @@ function parseCharacter(raw) {
   if (typeof raw.accentColor === 'string' && raw.accentColor.trim()) ch.accentColor = raw.accentColor.trim();
   if (typeof raw.customCss === 'string' && raw.customCss.trim()) ch.customCss = raw.customCss.trim();
   if (Array.isArray(raw.variables)) {
-    ch.variables = raw.variables
-      .filter((v) => v && typeof v === 'object')
-      .map((v) => ({
-        name: String(v.name || ''),
-        value: Number(v.value) || 0,
-        max: Number(v.max) || 100,
-        color: String(v.color || '#6c757d')
-      }))
-      .filter((v) => v.name);
+    const variables = [];
+    for (let index = 0; index < raw.variables.length; index += 1) {
+      const variable = raw.variables[index];
+      if (!variable || typeof variable !== 'object') {
+        continue;
+      }
+      const name = String(variable.name || '');
+      if (!name) {
+        continue;
+      }
+      variables.push({
+        name,
+        value: Number(variable.value) || 0,
+        max: Number(variable.max) || 100,
+        color: String(variable.color || '#6c757d')
+      });
+    }
+    ch.variables = variables;
   }
   return ch;
 }
@@ -65,8 +75,14 @@ function parseTemplateConfig(raw) {
       cfg.accentColor = parsed.accentColor.trim();
     }
     if (Array.isArray(parsed.effects)) {
-      const valid = parsed.effects.filter((e) => VALID_EFFECTS.includes(e));
-      if (valid.length) cfg.effects = valid;
+      const effects = [];
+      for (let index = 0; index < parsed.effects.length; index += 1) {
+        const effect = parsed.effects[index];
+        if (VALID_EFFECTS.includes(effect)) {
+          effects.push(effect);
+        }
+      }
+      if (effects.length) cfg.effects = effects;
     }
     if (typeof parsed.customCss === 'string' && parsed.customCss.trim()) {
       cfg.customCss = parsed.customCss.trim();
@@ -75,17 +91,95 @@ function parseTemplateConfig(raw) {
       cfg.displayMode = parsed.displayMode;
     }
     if (Array.isArray(parsed.characters)) {
-      const chars = parsed.characters.map(parseCharacter).filter(Boolean);
+      const chars = [];
+      for (let index = 0; index < parsed.characters.length; index += 1) {
+        const character = parseCharacter(parsed.characters[index]);
+        if (character) {
+          chars.push(character);
+        }
+      }
       if (chars.length) cfg.characters = chars;
     }
     if (Array.isArray(parsed.quickReplies)) {
-      const qrs = parsed.quickReplies.map(parseQuickReply).filter(Boolean);
+      const qrs = [];
+      for (let index = 0; index < parsed.quickReplies.length; index += 1) {
+        const quickReply = parseQuickReply(parsed.quickReplies[index]);
+        if (quickReply) {
+          qrs.push(quickReply);
+        }
+      }
       if (qrs.length) cfg.quickReplies = qrs;
     }
     return cfg;
   } catch {
     return {};
   }
+}
+
+function cloneTemplateConfig(cfg = {}) {
+  return {
+    variant: cfg.variant,
+    density: cfg.density,
+    accentColor: cfg.accentColor,
+    effects: cloneTemplateEffects(cfg.effects),
+    customCss: cfg.customCss,
+    displayMode: cfg.displayMode,
+    characters: cloneTemplateCharacters(cfg.characters),
+    quickReplies: cloneTemplateQuickReplies(cfg.quickReplies)
+  };
+}
+
+function cloneTemplateEffects(effects = []) {
+  const cloned = [];
+  const sourceEffects = Array.isArray(effects) ? effects : [];
+  for (let index = 0; index < sourceEffects.length; index += 1) {
+    cloned.push(sourceEffects[index]);
+  }
+  return cloned;
+}
+
+function cloneTemplateCharacters(characters = []) {
+  const cloned = [];
+  const sourceCharacters = Array.isArray(characters) ? characters : [];
+  for (let index = 0; index < sourceCharacters.length; index += 1) {
+    const character = sourceCharacters[index] || {};
+    cloned.push({
+      ...character,
+      variables: cloneTemplateVariables(character.variables)
+    });
+  }
+  return cloned;
+}
+
+function cloneTemplateVariables(variables = []) {
+  const cloned = [];
+  const sourceVariables = Array.isArray(variables) ? variables : [];
+  for (let index = 0; index < sourceVariables.length; index += 1) {
+    cloned.push({ ...sourceVariables[index] });
+  }
+  return cloned;
+}
+
+function cloneTemplateQuickReplies(quickReplies = []) {
+  const cloned = [];
+  const sourceQuickReplies = Array.isArray(quickReplies) ? quickReplies : [];
+  for (let index = 0; index < sourceQuickReplies.length; index += 1) {
+    cloned.push({ ...sourceQuickReplies[index] });
+  }
+  return cloned;
+}
+
+function prependAccessorySkillResult(result, currentResults = []) {
+  const nextResults = [result];
+  const sourceResults = Array.isArray(currentResults) ? currentResults : [];
+  for (
+    let index = 0;
+    index < sourceResults.length && nextResults.length < ACCESSORY_SKILL_RESULT_LIMIT;
+    index += 1
+  ) {
+    nextResults.push(sourceResults[index]);
+  }
+  return nextResults;
 }
 
 function validateStatusBarCustomTemplate(template) {
@@ -168,7 +262,7 @@ function hasBalancedCssBraces(css) {
 
 export { parseTemplateConfig, validateStatusBarCustomTemplate };
 
-export function useChatAccessory({ conversation, showActionNotice, showError }) {
+export function useChatAccessory({ conversation, setActiveConversationIfChanged, showActionNotice, showError }) {
   const statusBar = ref(null);
   const statusBarEditorOpen = ref(false);
   const statusBarSaving = ref(false);
@@ -234,16 +328,7 @@ export function useChatAccessory({ conversation, showActionNotice, showError }) 
     ));
   });
 
-  const statusBarTemplateConfig = computed(() => ({
-    variant: statusBarTemplateCfg.variant,
-    density: statusBarTemplateCfg.density,
-    accentColor: statusBarTemplateCfg.accentColor,
-    effects: [...statusBarTemplateCfg.effects],
-    customCss: statusBarTemplateCfg.customCss,
-    displayMode: statusBarTemplateCfg.displayMode,
-    characters: statusBarTemplateCfg.characters.map((c) => ({ ...c, variables: (c.variables || []).map((v) => ({ ...v })) })),
-    quickReplies: statusBarTemplateCfg.quickReplies.map((q) => ({ ...q }))
-  }));
+  const statusBarTemplateConfig = computed(() => cloneTemplateConfig(statusBarTemplateCfg));
 
   const showEconomyFeature = computed(() => {
     return isAccessorySkillActiveLocal('economyAgent');
@@ -314,7 +399,12 @@ export function useChatAccessory({ conversation, showActionNotice, showError }) 
     if (currentList.length !== nextList.length) {
       return false;
     }
-    return currentList.every((variable, index) => sameStatusVariableSummary(variable, nextList[index]));
+    for (let index = 0; index < currentList.length; index += 1) {
+      if (!sameStatusVariableSummary(currentList[index], nextList[index])) {
+        return false;
+      }
+    }
+    return true;
   }
 
   function sameStatusVariableSummary(current = {}, next = {}) {
@@ -363,7 +453,12 @@ export function useChatAccessory({ conversation, showActionNotice, showError }) 
     if (currentAccounts.length !== nextAccounts.length) {
       return false;
     }
-    return currentAccounts.every((account, index) => sameEconomyAccountSummary(account, nextAccounts[index]));
+    for (let index = 0; index < currentAccounts.length; index += 1) {
+      if (!sameEconomyAccountSummary(currentAccounts[index], nextAccounts[index])) {
+        return false;
+      }
+    }
+    return true;
   }
 
   function sameEconomyAccountSummary(current = {}, next = {}) {
@@ -461,7 +556,7 @@ export function useChatAccessory({ conversation, showActionNotice, showError }) 
         return;
       }
       syncAccessorySkills(payload.skills);
-      conversation.value = {
+      updateActiveConversationIfChanged({
         ...conversation.value,
         settings: {
           ...(conversation.value?.settings || {}),
@@ -471,7 +566,7 @@ export function useChatAccessory({ conversation, showActionNotice, showError }) 
           ...(conversation.value?.userSettings || {}),
           accessorySkills: payload.skills
         }
-      };
+      });
       await loadEconomyBalance();
       if (!isCurrentAccessorySave(requestToken, conversationId)) {
         return;
@@ -493,13 +588,21 @@ export function useChatAccessory({ conversation, showActionNotice, showError }) 
     return isActiveAccessorySave(requestToken) && conversation.value?.id === conversationId;
   }
 
+  function updateActiveConversationIfChanged(nextConversation) {
+    if (typeof setActiveConversationIfChanged === 'function') {
+      return setActiveConversationIfChanged(nextConversation);
+    }
+    conversation.value = nextConversation || null;
+    return true;
+  }
+
   function isActiveAccessorySave(requestToken) {
     return !accessoryDisposed && requestToken === accessorySaveToken;
   }
 
   function handleSkillResult(data = {}) {
-    if (accessoryDisposed) return;
-    accessorySkillResults.value = [data, ...accessorySkillResults.value].slice(0, 8);
+    if (accessoryDisposed || !isCurrentSkillResult(data)) return;
+    accessorySkillResults.value = prependAccessorySkillResult(data, accessorySkillResults.value);
     if (!data.ok) {
       return;
     }
@@ -514,9 +617,7 @@ export function useChatAccessory({ conversation, showActionNotice, showError }) 
 
   function syncStatusBarForm(data = {}) {
     statusBarForm.name = data.name || '状态栏';
-    statusBarForm.variables = Array.isArray(data.variables)
-      ? data.variables.map((v) => ({ ...v }))
-      : [];
+    statusBarForm.variables = cloneTemplateVariables(data.variables);
     statusBarForm.template = data.template || '';
     statusBarTemplateMode.value = isCustomTemplate(statusBarForm.template) ? 'custom' : 'builtin';
     syncTemplateCfgFromForm();
@@ -561,7 +662,7 @@ export function useChatAccessory({ conversation, showActionNotice, showError }) 
       if (!isCurrentStatusBarMutation(requestToken, conversationId)) {
         return;
       }
-      statusBar.value = result;
+      applyStatusBarUpdate(result);
       showActionNotice('状态栏已保存');
     } catch (err) {
       if (!isCurrentStatusBarMutation(requestToken, conversationId)) {
@@ -575,6 +676,11 @@ export function useChatAccessory({ conversation, showActionNotice, showError }) 
     }
   }
 
+  function isCurrentSkillResult(data = {}) {
+    const eventConversationId = String(data?.conversationId || '').trim();
+    return Boolean(eventConversationId && eventConversationId === conversation.value?.id);
+  }
+
   async function deleteStatusBarAction() {
     const conversationId = conversation.value?.id;
     if (accessoryDisposed || !conversationId || statusBarSaving.value) return;
@@ -586,7 +692,7 @@ export function useChatAccessory({ conversation, showActionNotice, showError }) 
       if (!isCurrentStatusBarMutation(requestToken, conversationId)) {
         return;
       }
-      statusBar.value = null;
+      applyStatusBarUpdate(null, { syncForm: false });
       statusBarForm.name = '';
       statusBarForm.variables = [];
       statusBarForm.template = '';
@@ -656,12 +762,8 @@ export function useChatAccessory({ conversation, showActionNotice, showError }) 
     statusBarTemplateCfg.effects = parsed.effects || [];
     statusBarTemplateCfg.customCss = parsed.customCss || '';
     statusBarTemplateCfg.displayMode = parsed.displayMode || 'compact';
-    statusBarTemplateCfg.characters = Array.isArray(parsed.characters)
-      ? parsed.characters.map((c) => ({ ...c, variables: (c.variables || []).map((v) => ({ ...v })) }))
-      : [];
-    statusBarTemplateCfg.quickReplies = Array.isArray(parsed.quickReplies)
-      ? parsed.quickReplies.map((q) => ({ ...q }))
-      : [];
+    statusBarTemplateCfg.characters = cloneTemplateCharacters(parsed.characters);
+    statusBarTemplateCfg.quickReplies = cloneTemplateQuickReplies(parsed.quickReplies);
   }
 
   function syncTemplateCfgToForm() {
@@ -695,24 +797,31 @@ export function useChatAccessory({ conversation, showActionNotice, showError }) 
     if (!Array.isArray(variables)) {
       return [];
     }
-    return variables
-      .map((variable) => {
-        const hasMax = hasExplicitVariableMax(variable);
-        const value = normalizeStatusVariableValue(variable?.value, { emptyText: !hasMax });
-        const max = hasMax
-          ? Number(variable.max)
-          : typeof value === 'number'
-            ? 100
-            : undefined;
-        return {
-          name: String(variable?.name || '').trim(),
-          value,
-          ...(max !== undefined ? { max } : {}),
-          color: String(variable?.color || '').trim()
-        };
-      })
-      .filter((variable) => variable.name && !isCompositeStatusPlaceholderValue(variable.value, variable.name))
-      .slice(0, STATUS_BAR_VARIABLE_LIMIT);
+    const normalized = [];
+    for (let index = 0; index < variables.length && normalized.length < STATUS_BAR_VARIABLE_LIMIT; index += 1) {
+      const variable = variables[index];
+      const hasMax = hasExplicitVariableMax(variable);
+      const value = normalizeStatusVariableValue(variable?.value, { emptyText: !hasMax });
+      const name = String(variable?.name || '').trim();
+      if (!name || isCompositeStatusPlaceholderValue(value, name)) {
+        continue;
+      }
+      const max = hasMax
+        ? Number(variable.max)
+        : typeof value === 'number'
+          ? 100
+          : undefined;
+      const row = {
+        name,
+        value,
+        color: String(variable?.color || '').trim()
+      };
+      if (max !== undefined) {
+        row.max = max;
+      }
+      normalized.push(row);
+    }
+    return normalized;
   }
 
   function normalizeStatusVariableValue(value, options = {}) {
@@ -741,7 +850,7 @@ export function useChatAccessory({ conversation, showActionNotice, showError }) 
     let match;
     while ((match = placeholderPattern.exec(String(value || '')))) {
       const token = String(match[1] || match[2] || '').trim();
-      const [rawName, rawProperty = 'value'] = token.split('.').map((part) => part.trim());
+      const { rawName, rawProperty } = parseStatusPlaceholderToken(token);
       const key = normalizeStatusVariableKey(rawName);
       if (!key || key === labelKey || seen.has(key) || ['max', 'percent', 'percentage'].includes(rawProperty)) {
         continue;
@@ -756,6 +865,22 @@ export function useChatAccessory({ conversation, showActionNotice, showError }) 
 
   function normalizeStatusVariableKey(value = '') {
     return String(value || '').trim().toLowerCase();
+  }
+
+  function parseStatusPlaceholderToken(token = '') {
+    const text = String(token || '');
+    const separatorIndex = text.indexOf('.');
+    if (separatorIndex === -1) {
+      return { rawName: text.trim(), rawProperty: 'value' };
+    }
+    const nextSeparatorIndex = text.indexOf('.', separatorIndex + 1);
+    return {
+      rawName: text.slice(0, separatorIndex).trim(),
+      rawProperty: text.slice(
+        separatorIndex + 1,
+        nextSeparatorIndex === -1 ? text.length : nextSeparatorIndex
+      ).trim()
+    };
   }
 
   function setStatusBarTemplateMode(mode) {

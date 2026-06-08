@@ -42,13 +42,23 @@ function localAppSecret() {
 }
 
 function secretCandidates() {
-  const candidates = [appSecret()];
+  const candidates = [];
+  const seen = new Set();
+  addSecretCandidate(candidates, seen, appSecret());
   const savedLocalSecret = readLocalAppSecret();
   if (savedLocalSecret) {
-    candidates.push(savedLocalSecret);
+    addSecretCandidate(candidates, seen, savedLocalSecret);
   }
-  candidates.push(legacyDevSecret);
-  return [...new Set(candidates.filter(Boolean))];
+  addSecretCandidate(candidates, seen, legacyDevSecret);
+  return candidates;
+}
+
+function addSecretCandidate(candidates, seen, secret) {
+  if (!secret || seen.has(secret)) {
+    return;
+  }
+  seen.add(secret);
+  candidates.push(secret);
 }
 
 function readLocalAppSecret() {

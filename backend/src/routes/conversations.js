@@ -588,7 +588,7 @@ export function createConversationsRouter(ctx) {
       response.status(404).json({ error: '对话不存在' });
       return;
     }
-    if (!deleteNpcMemory(db, request.auth.user.id, request.params.id, request.params.memoryId)) {
+    if (!deleteNpcMemory(db, request.auth.user.id, request.params.id, request.params.memoryId, request.params.npc)) {
       response.status(404).json({ error: '记忆不存在' });
       return;
     }
@@ -620,7 +620,14 @@ export function createConversationsRouter(ctx) {
       response.status(404).json({ error: '对话不存在' });
       return;
     }
-    const behavior = updateNpcBehavior(db, request.auth.user.id, request.params.id, request.params.behaviorId, request.body || {});
+    const behavior = updateNpcBehavior(
+      db,
+      request.auth.user.id,
+      request.params.id,
+      request.params.behaviorId,
+      request.body || {},
+      request.params.npc
+    );
     if (!behavior) {
       response.status(404).json({ error: '行为规则不存在' });
       return;
@@ -634,7 +641,7 @@ export function createConversationsRouter(ctx) {
       response.status(404).json({ error: '对话不存在' });
       return;
     }
-    if (!deleteNpcBehavior(db, request.auth.user.id, request.params.id, request.params.behaviorId)) {
+    if (!deleteNpcBehavior(db, request.auth.user.id, request.params.id, request.params.behaviorId, request.params.npc)) {
       response.status(404).json({ error: '行为规则不存在' });
       return;
     }
@@ -1075,6 +1082,15 @@ export function createSavesRouter(ctx) {
   const { db, requireAuth } = ctx;
   const router = Router();
 
+  function readRequiredConversationId(request, response) {
+    const conversationId = String(request.body?.conversationId || '').trim();
+    if (!conversationId) {
+      response.status(400).json({ error: 'conversationId is required' });
+      return '';
+    }
+    return conversationId;
+  }
+
   router.get('/:saveId', requireAuth, (request, response) => {
     const save = getSave(db, request.auth.user.id, request.params.saveId);
     if (!save) {
@@ -1085,7 +1101,11 @@ export function createSavesRouter(ctx) {
   });
 
   router.post('/:saveId/load', requireAuth, (request, response) => {
-    const result = loadSave(db, request.auth.user.id, request.params.saveId);
+    const conversationId = readRequiredConversationId(request, response);
+    if (!conversationId) {
+      return;
+    }
+    const result = loadSave(db, request.auth.user.id, request.params.saveId, conversationId);
     if (!result) {
       response.status(404).json({ error: '存档不存在' });
       return;
@@ -1094,7 +1114,13 @@ export function createSavesRouter(ctx) {
   });
 
   router.put('/:saveId', requireAuth, validate(renameSaveSchema), (request, response) => {
-    const save = updateSave(db, request.auth.user.id, request.params.saveId, request.body || {});
+    const save = updateSave(
+      db,
+      request.auth.user.id,
+      request.params.saveId,
+      request.body || {},
+      request.body.conversationId
+    );
     if (!save) {
       response.status(404).json({ error: '存档不存在' });
       return;
@@ -1103,7 +1129,11 @@ export function createSavesRouter(ctx) {
   });
 
   router.delete('/:saveId', requireAuth, (request, response) => {
-    if (!deleteSave(db, request.auth.user.id, request.params.saveId)) {
+    const conversationId = readRequiredConversationId(request, response);
+    if (!conversationId) {
+      return;
+    }
+    if (!deleteSave(db, request.auth.user.id, request.params.saveId, conversationId)) {
       response.status(404).json({ error: '存档不存在' });
       return;
     }

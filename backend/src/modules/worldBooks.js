@@ -338,8 +338,10 @@ export function matchWorldBookEntries(database, characterId, texts, options = {}
     )
     .all(...allBookIds);
 
+  const { entryIds, entryById } = indexWorldBookEntries(entries);
+
   // Load or create state for all entries
-  const entryStates = getEntryStates(database, entries.map((e) => e.id));
+  const entryStates = getEntryStates(database, entryIds);
 
   // Ensure state rows exist for all entries
   for (const entry of entries) {
@@ -393,17 +395,13 @@ export function matchWorldBookEntries(database, characterId, texts, options = {}
   // Phase 2: Match by trigger keys (string or regex), with cooldown/delay filtering
   matchPassWithState(entries, lowerCombined, combinedScanText, matchedIds, matched, entryStates, messageCount);
 
-  const entryById = new Map(entries.map((e) => [e.id, e]));
   // Phase 2.5: Group inclusion - keep only one entry per group via weighted random
   applyGroupInclusion(entryById, matched, matchedIds);
 
   // Phase 3: Recursive activation
   let depth = 0;
   while (depth < RECURSIVE_MAX_DEPTH) {
-    const newContent = matched
-      .filter((m) => !m._recursiveScanned)
-      .map((m) => m.content)
-      .join('\n');
+    const newContent = collectUnscannedRecursiveContent(matched);
 
     for (const m of matched) {
       m._recursiveScanned = true;
@@ -464,6 +462,34 @@ export function matchWorldBookEntries(database, characterId, texts, options = {}
   return matched;
 }
 
+function collectUnscannedRecursiveContent(matched) {
+  let content = '';
+  let included = 0;
+  for (const item of matched) {
+    if (item._recursiveScanned) {
+      continue;
+    }
+    if (included > 0) {
+      content += '\n';
+    }
+    if (item.content != null) {
+      content += item.content;
+    }
+    included += 1;
+  }
+  return content;
+}
+
+function indexWorldBookEntries(entries) {
+  const entryIds = [];
+  const entryById = new Map();
+  for (const entry of entries) {
+    entryIds.push(entry.id);
+    entryById.set(entry.id, entry);
+  }
+  return { entryIds, entryById };
+}
+
 function matchPassWithState(entries, lowerText, rawText, matchedIds, matched, entryStates, messageCount) {
   for (const entry of entries) {
     if (matchedIds.has(entry.id)) {
@@ -494,62 +520,44 @@ function matchPassWithState(entries, lowerText, rawText, matchedIds, matched, en
       }
     }
 
-    const keys = String(entry.trigger_keys || '')
-      .split(',')
-      .map((k) => k.trim())
-      .filter(Boolean);
-
-    if (keys.length === 0) {
-      continue;
-    }
-
     let hit = false;
-
-    if (entry.regex_mode) {
-      for (const key of keys) {
+    const hasKeys = forEachEntryKey(entry.trigger_keys, (key) => {
+      if (entry.regex_mode) {
         try {
           const regex = new RegExp(key, 'i');
           if (regex.test(rawText)) {
             hit = true;
-            break;
+            return false;
           }
         } catch {
           // Invalid regex, skip this key
         }
+        return true;
       }
-    } else {
-      hit = keys.some((key) => {
-        const regexMatch = key.match(/^\/(.+)\/([gimsuy]*)$/);
-        if (regexMatch) {
-          try {
-            const regex = new RegExp(regexMatch[1], regexMatch[2]);
-            return regex.test(rawText);
-          } catch {
-            // Invalid regex, fall back to literal match
-          }
-        }
-        return lowerText.includes(key.toLowerCase());
-      });
+
+      if (matchesStringModeEntryKey(key, lowerText, rawText)) {
+        hit = true;
+        return false;
+      }
+      return true;
+    });
+
+    if (!hasKeys) {
+      continue;
     }
 
     // Selective filter: when primary keys hit, apply secondary key logic
     if (hit && entry.selective) {
-      const secondaryKeys = String(entry.keys_secondary || '')
-        .split(',')
-        .map((k) => k.trim())
-        .filter(Boolean);
-
-      if (secondaryKeys.length > 0) {
-        const secondaryHit = secondaryKeys.some((key) => lowerText.includes(key.toLowerCase()));
-        const allSecondaryHit = secondaryKeys.every((key) => lowerText.includes(key.toLowerCase()));
-        const logic = normalizeEntryEnumNumber(entry.selective_logic);
-
-        if (logic === 0) {
-          hit = secondaryHit;
-        } else if (logic === 1) {
-          hit = !secondaryHit;
-        } else if (logic === 2) {
-          hit = !allSecondaryHit;
+      const logic = normalizeEntryEnumNumber(entry.selective_logic);
+      if (logic === 2) {
+        const secondary = matchAllLiteralEntryKeys(entry.keys_secondary, lowerText);
+        if (secondary.hasKeys) {
+          hit = !secondary.hit;
+        }
+      } else {
+        const secondary = matchAnyLiteralEntryKey(entry.keys_secondary, lowerText);
+        if (secondary.hasKeys) {
+          hit = logic === 0 ? secondary.hit : !secondary.hit;
         }
       }
     }
@@ -567,9 +575,107 @@ function matchPassWithState(entries, lowerText, rawText, matchedIds, matched, en
   }
 }
 
+function forEachEntryKey(value, onKey) {
+  const text = String(value || '');
+  let hasKey = false;
+  let start = 0;
+  for (let index = 0; index <= text.length; index++) {
+    if (index !== text.length && text[index] !== ',') {
+      continue;
+    }
+
+    const key = text.slice(start, index).trim();
+    if (key) {
+      hasKey = true;
+      if (onKey(key) === false) {
+        break;
+      }
+    }
+    start = index + 1;
+  }
+  return hasKey;
+}
+
+function matchesStringModeEntryKey(key, lowerText, rawText) {
+  const regexKey = parseStringModeRegexKey(key);
+  if (regexKey) {
+    try {
+      const regex = new RegExp(regexKey.pattern, regexKey.flags);
+      return regex.test(rawText);
+    } catch {
+      // Invalid regex, fall back to literal match
+    }
+  }
+  return lowerText.includes(key.toLowerCase());
+}
+
+function parseStringModeRegexKey(key) {
+  if (!key || key[0] !== '/') {
+    return null;
+  }
+  const finalSlash = key.lastIndexOf('/');
+  if (finalSlash <= 1) {
+    return null;
+  }
+  const flags = key.slice(finalSlash + 1);
+  for (let index = 0; index < flags.length; index++) {
+    if (!'gimsuy'.includes(flags[index])) {
+      return null;
+    }
+  }
+  const pattern = key.slice(1, finalSlash);
+  if (containsRegexLineTerminator(pattern)) {
+    return null;
+  }
+  return { pattern, flags };
+}
+
+function containsRegexLineTerminator(value) {
+  for (let index = 0; index < value.length; index++) {
+    const code = value.charCodeAt(index);
+    if (code === 10 || code === 13 || code === 0x2028 || code === 0x2029) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function matchAnyLiteralEntryKey(value, lowerText) {
+  let hit = false;
+  const hasKeys = forEachEntryKey(value, (key) => {
+    if (lowerText.includes(key.toLowerCase())) {
+      hit = true;
+      return false;
+    }
+    return true;
+  });
+  return { hasKeys, hit };
+}
+
+function matchAllLiteralEntryKeys(value, lowerText) {
+  let hit = true;
+  const hasKeys = forEachEntryKey(value, (key) => {
+    if (!lowerText.includes(key.toLowerCase())) {
+      hit = false;
+      return false;
+    }
+    return true;
+  });
+  return { hasKeys, hit: hasKeys && hit };
+}
+
 function normalizeScanTexts(texts) {
-  const textArray = Array.isArray(texts) ? texts : [texts];
-  return textArray.filter((text) => typeof text === 'string' && text.length > 0);
+  if (!Array.isArray(texts)) {
+    return typeof texts === 'string' && texts.length > 0 ? [texts] : [];
+  }
+
+  const normalized = [];
+  for (const text of texts) {
+    if (typeof text === 'string' && text.length > 0) {
+      normalized.push(text);
+    }
+  }
+  return normalized;
 }
 
 function applyGroupInclusion(entryById, matched, matchedIds) {
@@ -589,15 +695,14 @@ function applyGroupInclusion(entryById, matched, matchedIds) {
       continue;
     }
 
-    const weights = groupMatches.map((m) => {
-      const src = entryById.get(m.id);
-      return Math.max(normalizeEntryGroupWeight(src?.group_weight), 1);
-    });
-    const totalWeight = weights.reduce((a, b) => a + b, 0);
+    let totalWeight = 0;
+    for (const match of groupMatches) {
+      totalWeight += getGroupMatchWeight(entryById, match);
+    }
     let roll = Math.random() * totalWeight;
     let winnerIdx = 0;
-    for (let i = 0; i < weights.length; i++) {
-      roll -= weights[i];
+    for (let i = 0; i < groupMatches.length; i++) {
+      roll -= getGroupMatchWeight(entryById, groupMatches[i]);
       if (roll <= 0) {
         winnerIdx = i;
         break;
@@ -617,8 +722,17 @@ function applyGroupInclusion(entryById, matched, matchedIds) {
   }
 }
 
+function getGroupMatchWeight(entryById, match) {
+  const src = entryById.get(match.id);
+  return Math.max(normalizeEntryGroupWeight(src?.group_weight), 1);
+}
+
 function toMatchedIdSet(matched) {
-  return new Set(matched.map((entry) => entry.id));
+  const ids = new Set();
+  for (const entry of matched) {
+    ids.add(entry.id);
+  }
+  return ids;
 }
 
 function toMatchedEntry(entry) {
@@ -769,30 +883,53 @@ export function buildWorldBookContext(entries = []) {
   if (beforeChar.length > 1) beforeChar.sort(byDepth);
   if (afterChar.length > 1) afterChar.sort(byDepth);
 
-  return [...atStart, ...beforeChar, ...afterChar].map((e) => e.content).join('\n\n');
+  let context = '';
+  let included = 0;
+  for (const entry of atStart) {
+    context = appendWorldBookContextContent(context, included, entry.content);
+    included += 1;
+  }
+  for (const entry of beforeChar) {
+    context = appendWorldBookContextContent(context, included, entry.content);
+    included += 1;
+  }
+  for (const entry of afterChar) {
+    context = appendWorldBookContextContent(context, included, entry.content);
+    included += 1;
+  }
+  return context;
+}
+
+function appendWorldBookContextContent(context, included, content) {
+  if (included > 0) {
+    context += '\n\n';
+  }
+  if (content != null) {
+    context += String(content);
+  }
+  return context;
 }
 
 const ROLE_MAP = { 0: 'system', 1: 'user', 2: 'assistant' };
 
 /**
  * Inject at_depth world book entries into a messages array.
- * Each entry is inserted as a message at the specified depth from the end.
- * depth=0 means right before the last message, depth=1 means before the second-to-last, etc.
+ * Each entry is inserted as a message at the specified depth from the tail.
+ * depth=0 appends after the final message, depth=1 inserts before the final message, etc.
  * @param {Array} messages - The messages array to inject into (will be mutated)
  * @param {Array} entries - Matched world book entries with position='at_depth'
  * @returns {Array} - The modified messages array
  */
 export function injectAtDepthEntries(messages, entries) {
-  entries = Array.isArray(entries) ? entries : [];
-  const atDepthEntries = entries.filter((e) => e.position === 'at_depth');
+  const atDepthEntries = collectAtDepthEntries(entries);
   if (!atDepthEntries.length) {
     return messages;
   }
 
   // Sort by depth descending so deeper entries are inserted first (preserving relative positions)
-  const sorted = [...atDepthEntries].sort((a, b) => (b.depth || 0) - (a.depth || 0));
+  atDepthEntries.sort((a, b) => (b.depth || 0) - (a.depth || 0));
 
-  for (const entry of sorted) {
+  for (const entry of atDepthEntries) {
     const depth = Math.max(0, Math.min(entry.depth || 0, messages.length));
     const insertIndex = messages.length - depth;
     const role = ROLE_MAP[entry.role] || 'system';
@@ -800,6 +937,24 @@ export function injectAtDepthEntries(messages, entries) {
   }
 
   return messages;
+}
+
+function collectAtDepthEntries(entries) {
+  if (!Array.isArray(entries)) {
+    return [];
+  }
+
+  const atDepthEntries = [];
+  for (let index = 0; index < entries.length; index += 1) {
+    if (!(index in entries)) {
+      continue;
+    }
+    const entry = entries[index];
+    if (entry.position === 'at_depth') {
+      atDepthEntries.push(entry);
+    }
+  }
+  return atDepthEntries;
 }
 
 // ── Internal Helpers ──

@@ -40,6 +40,213 @@ The autonomous loop should choose one small item per run. Add new findings here 
 
 ## Done
 
+- 2026-06-08: Scanned unreferenced Vue import suffixes without regex split allocations.
+- 2026-06-08: Bounded chat accessory skill-result lists and placeholder token parsing with direct helpers.
+- 2026-06-08: Compared chat conversation resource and render-plugin summaries with direct loops.
+- 2026-06-08: Parsed and cloned chat accessory status-bar template config with direct loops.
+- 2026-06-08: Compared chat accessory status-variable and economy-account summaries with direct loops.
+- 2026-06-08: Serialized ChatView accessory refresh fingerprints with length-prefixed fields instead of JSON snapshots.
+- 2026-06-08: Refreshed MarkdownContent render-cache hits with exact Map checks before returning cached HTML.
+- 2026-06-08: Appended MarkdownContent fold HTML directly and hoisted scan/default constants.
+- 2026-06-08: Rendered MarkdownContent fold segments with direct line scans and HTML part loops.
+- 2026-06-08: Built MarkdownContent render-plugin cache keys and fold plugin lists with direct loops.
+- 2026-06-08: Serialized ChatView accessory refresh snapshots with direct loops instead of map callbacks.
+- 2026-06-08: Cached chat message author and avatar identities for repeated message rendering.
+- 2026-06-08: Compared HomeView refreshed lists with direct loops instead of Array.every callbacks.
+- 2026-06-08: Cached ChatView active character render plugins instead of resolving them once per rendered message.
+- 2026-06-08: Compared HomeView character tag summaries with direct loops instead of mapped fallback arrays.
+- 2026-06-08: Counted HomeView virtual character rows without prebuilding every row slice.
+- 2026-06-08: Aligned the world-book at_depth injection depth documentation with the tested tail-position contract.
+- 2026-06-08: Built HomeView card tag previews with bounded direct loops instead of full tag map/slice allocations.
+- 2026-06-08: Collected world-book at_depth injection entries with a direct source-array scan instead of filter/spread-copy sorting.
+- 2026-06-08: Merged HomeView reaction completions through a no-op-aware id helper instead of remapping all characters.
+- 2026-06-08: Assembled world-book context content with direct bucket loops instead of spread/map/join.
+- 2026-06-08: Built HomeView hot-tag rail options with direct helper loops instead of filter/map chains.
+- 2026-06-08: Scanned world-book primary and secondary trigger keys without split/map/filter key arrays.
+- 2026-06-08: Routed SettingsView regex-rule reordering through a direct id-list move helper with rollback on save failure.
+- 2026-06-08: Normalized world-book scan text arrays with a direct loop instead of filter callbacks.
+- 2026-06-08: Routed SettingsView tag, preset, and mod single-row mutations through no-op-aware id-list helpers.
+- 2026-06-08: Selected world-book group inclusion weights with direct loops instead of map/reduce intermediates.
+- 2026-06-08: Routed NpcPanel memory and behavior detail mutations through no-op-aware direct-loop helpers.
+- 2026-06-08: Removed TalentRollDialog deleted talent rows with a no-op-aware direct loop instead of filter cleanup.
+- 2026-06-08: Routed SaveLoadPanel rename completions through a no-op-aware list update helper instead of direct array index assignment.
+- 2026-06-08: Removed SaveLoadPanel deleted save rows with a no-op-aware direct loop instead of filter cleanup.
+- 2026-06-08: Built world-book entry ids and lookup index in one direct loop for matching.
+- 2026-06-08: Aggregated HomeView dashboard character stats in one pass instead of repeated character-list filters.
+- 2026-06-08: Collected recursive world-book activation content with a direct loop instead of filter/map/join intermediates.
+- 2026-06-08: Refined MessageToasts pending-action cleanup to avoid id-array watcher allocation and spread/filter Set rebuilds.
+- 2026-06-08: Scanned save preview assistant messages from the tail without cloning and reversing the snapshot list.
+- 2026-06-08: Guarded chat NPC panel reopen after nextTick so stale route changes cannot reopen the wrong conversation panel.
+- 2026-06-08: Shared provider tool-completion message cloning through a direct-loop helper and covered non-streaming, streaming, and Anthropic paths.
+- 2026-06-08: Removed chat submit local draft messages with no-op-aware direct loops instead of filter replacements.
+- 2026-06-08: Matched persisted chat submit draft messages with direct scans instead of candidate arrays.
+- 2026-06-08: Streamed mock provider fallback chunks directly and removed the now-unused chunkText helper.
+- 2026-06-08: Found active chat submit streaming drafts with direct reverse scans and direct current-message lookup loops.
+- 2026-06-08: Read the mock provider's latest user message with a safe reverse index scan instead of cloning and reversing the source list.
+- 2026-06-08: Indexed current chat message list items once so action buttons and stale guards avoid repeated long-list scans.
+- 2026-06-08: Collapsed post-fetch chat swipe initialization guards to reuse a single current-message lookup.
+- 2026-06-08: Hardened Anthropic provider tool normalization to skip malformed tool schemas and tool_use blocks with direct loops.
+- 2026-06-08: Avoided repeated message-list scans while initializing assistant swipe state for long conversations.
+- 2026-06-08: Shared raw provider tool-call forwarding through a direct-loop helper and covered non-streaming and streaming raw copies.
+- 2026-06-08: Initialized chat message swipe state and scroll-anchor element lookup with direct loops instead of list clone helpers.
+- 2026-06-08: Normalized streaming provider tool-call deltas and pending calls with direct loops and covered chunked malformed rows.
+- 2026-06-08: Found ChatView's latest assistant message with a reverse index scan instead of cloning and reversing the full message list.
+- 2026-06-08: Normalized OpenAI-compatible provider tool calls with one direct loop and covered malformed upstream tool-call rows.
+- 2026-06-08: Summarized ChatSidebar visible selection state in one pass and replaced bulk selection cleanup allocations with direct loops.
+- 2026-06-08: Normalized provider model-cache extraBody keys with direct recursive loops and covered nested cache-key stability.
+- 2026-06-08: Cloned cached provider model-list rows with a direct loop and covered caller mutation isolation.
+- 2026-06-08: Filtered ChatModelSwitcher search results with a reference-preserving direct loop helper.
+- 2026-06-08: Normalized provider model-list rows with a direct loop instead of source map/filter intermediates.
+- 2026-06-08: Built ChatSettingsDrawer status bar editor rows without composite map/join intermediates.
+- 2026-06-08: Parsed provider content arrays with direct loops instead of filter/map intermediates.
+- 2026-06-08: Built CharacterFormView status blueprint editor rows without composite map/join intermediates.
+- 2026-06-08: Merged provider reasoning fragments with a direct loop instead of map/filter intermediates.
+- 2026-06-08: Filtered CharacterFormView tag search results with a one-pass helper while preserving empty-search list references.
+- 2026-06-08: Built secret decryption candidates with direct dedupe appends.
+- 2026-06-08: Counted CharacterFormView status blueprint variable stats in one pass.
+- 2026-06-08: Scanned random macro choices without split/map/filter allocations.
+- 2026-06-08: Required SaveLoadPanel load-save results to echo the active conversation id before emitting loaded UI updates.
+- 2026-06-08: Built SettingsView mod character option refreshes through a single-pass reference-preserving setter.
+- 2026-06-08: Normalized character payload tags in one pass with an early cap stop.
+- 2026-06-08: Aggregated WorldBookView current entry stats in one pass for detail header counts.
+- 2026-06-08: Normalized character tag names in one pass with an early cap stop.
+- 2026-06-08: Required current conversation ids for chat accessory skill results before UI/status updates.
+- 2026-06-08: Aggregated conversation usage rows without map/filter intermediates in route helpers.
+- 2026-06-08: Guarded chat branch navigation after sidebar refresh awaits with stale-route context checks.
+- 2026-06-08: Normalized bulk route id lists in one pass with an early cap stop.
+- 2026-06-08: Read encoding-check files directly as UTF-8 text instead of Buffer-plus-toString conversion.
+- 2026-06-08: Skipped stale-route chat swipe initialization before clearing current swipe state.
+- 2026-06-08: Extended source hygiene debugger and suppression guards to the frontend entry inline script.
+- 2026-06-08: Scoped chat appearance custom-script UI helpers to the active apply after route changes.
+- 2026-06-08: Removed service worker registration console noise from the frontend entry and guarded entry raw console output.
+- 2026-06-08: Guarded ChatView conversation-load appearance side effects after route-changing awaits.
+- 2026-06-08: Reused direct attribute helper loops in the Vue accessibility diagnostic.
+- 2026-06-08: Stopped interrupted chat submit stream reconciliation retries after the active conversation changes.
+- 2026-06-08: Built encoding checker suspicious character Set without a map intermediate.
+- 2026-06-08: Parsed Markdown report archive sections with a direct regex loop instead of matchAll.
+- 2026-06-08: Skipped redundant chat submit stream reconciliation fetches after replaced drafts are already finalized.
+- 2026-06-08: Reused range membership cursors for unreferenced Vue component import literal scans.
+- 2026-06-08: Scoped delayed chat submit accessory refresh timers to the submit conversation.
+- 2026-06-08: Reused an array-free aria-labelledby token scanner in the Vue accessibility diagnostic.
+- 2026-06-08: Scoped chat submit and accessory skill-result completions to the active conversation.
+- 2026-06-08: Reused unreferenced Vue component lookup names across tag and dynamic-is pattern builders.
+- 2026-06-08: Reused a non-whitespace text helper in the Vue accessibility scanner instead of stripping whitespace for text-presence checks.
+- 2026-06-08: Guarded chat message edit and delete completions against same-id message replacement.
+- 2026-06-08: Hoisted stateless Vue accessibility scanner regexes for repeated control and hidden-state checks.
+- 2026-06-08: Reused cached Vue accessibility closing-tag lookup for wrapping label scans.
+- 2026-06-08: Guarded chat swipe generation completions against same-id message and swipe-state replacement.
+- 2026-06-08: Cached Vue accessibility closing-tag regex patterns during element body scans.
+- 2026-06-08: Routed CharacterFormView and WorldBookView AI stream process/tool updates through reference-preserving setters.
+- 2026-06-08: Cached Vue accessibility static and bound attribute regex patterns during scans.
+- 2026-06-08: Shared Vue accessibility element body range lookup between referenced-name and button scans.
+- 2026-06-08: Routed CharacterFormView world-book selection toggles through the reference-preserving selected-id setter.
+- 2026-06-08: Skipped Vue accessibility line and name-index setup for files without scannable controls.
+- 2026-06-08: Stopped Vue accessibility referenced-name indexing once all static aria-labelledby ids are resolved.
+- 2026-06-08: Filtered Vue accessibility referenced-name indexing to static aria-labelledby ids before parsing referenced element bodies.
+- 2026-06-08: Indexed Vue accessibility aria-labelledby referenced names once per file instead of resolving each static id on demand.
+- 2026-06-08: Indexed Vue accessibility external labels once per file instead of scanning labels for every form control.
+- 2026-06-08: Routed NpcPanel memory and behavior creation through reference-preserving detail list setters.
+- 2026-06-08: Reused source text for Vue accessibility aria-labelledby reference close-tag lookup without extra slicing.
+- 2026-06-08: Guarded chat branch callbacks against stale completions after message UI reset.
+- 2026-06-08: Precomputed Vue accessibility diagnostic line starts before reporting violation line numbers.
+- 2026-06-08: Scoped SaveLoadPanel rename and delete requests to the active conversation before backend save mutations.
+- 2026-06-08: Formatted Markdown report archive file lists without a names.map intermediate array.
+- 2026-06-08: Scoped SaveLoadPanel save-load requests to the active conversation before backend restore.
+- 2026-06-08: Shared unreferenced Vue component lookup-name generation without Set/flatMap intermediates and fixed the save-load scoped load duplicate declaration.
+- 2026-06-08: Loaded reviewed unreferenced Vue component metadata without filter/map intermediates.
+- 2026-06-08: Guarded SettingsView tag and preset actions against stale list items.
+- 2026-06-08: Split unreferenced Vue component scanner reviewed/candidate output in one pass.
+- 2026-06-08: Returned Markdown report archiver new archived names without remapping new sections.
+- 2026-06-08: Guarded SettingsView regex toggle and reorder actions against stale rule ids and stale drag indexes.
+- 2026-06-08: Collected Markdown report archiver creation-date parts without Object.fromEntries/map intermediates.
+- 2026-06-08: Guarded SettingsView Mod edit, save, delete, toggle, and reorder actions against stale list items.
+- 2026-06-08: Realigned SettingsView mod source coverage with current stale mod item guards after review gate exposed the mismatch.
+- 2026-06-08: Built Markdown report archiver dry-run and archive-result group outputs without groups.map intermediate arrays.
+- 2026-06-08: Read Markdown report archive file lists without expanding matchAll results into an intermediate array.
+- 2026-06-08: Scoped NPC detail memory and behavior actions to current NPC items and route NPC names.
+- 2026-06-08: Scanned UTF-8 encoding checker lines without splitting each checked file into a full line array.
+- 2026-06-08: Avoided per-control prefix slice allocation in the Vue accessibility scanner wrapping-label lookup.
+- 2026-06-08: Scoped talent deletion to the route character and guarded stale TalentRollDialog pool/talent actions.
+- 2026-06-08: Avoided per-violation line-number slice/split allocation in the Vue accessibility scanner.
+- 2026-06-08: Guarded CharacterImagePanel stale image-item actions and reset edit/drag state on character changes.
+- 2026-06-08: Collected unreferenced Vue component scanner candidates in one loop to avoid intermediate component arrays.
+- 2026-06-08: Guarded SaveLoadPanel stale save-item actions and scoped save-loaded refreshes to the active route conversation.
+- 2026-06-08: Grouped Markdown report archiver validation source assertions through shared test helpers.
+- 2026-06-08: Grouped encoding checker validation source assertions through shared test helpers.
+- 2026-06-08: Grouped diagnostic file helper validation assertions through shared test helpers.
+- 2026-06-08: Scoped NPC panel loaded fingerprint updates to the active conversation payload.
+- 2026-06-08: Grouped review-gate validation source assertions through shared test helpers.
+- 2026-06-08: Kept failed NPC fingerprint syncs from clearing fingerprints after the active conversation changes.
+- 2026-06-08: Wrapped review-gate project-root location changes in one top-level cleanup path.
+- 2026-06-08: Kept final NPC accessory refresh cleanup scoped to the active conversation snapshot.
+- 2026-06-08: Routed review-gate Git status display through the shared captured command helper.
+- 2026-06-08: Anchored chat submit completion scrolling to the finalized current message-list item after same-id draft replacement.
+- 2026-06-08: Hardened review-gate native command helper exit-code handling against startup and null-status edge cases.
+- 2026-06-08: Routed chat submit stream flags and interrupted persisted-draft reconciliation through current message-list items.
+- 2026-06-08: Routed review-gate Node diagnostics through the shared logged command helper.
+- 2026-06-08: Refactored review-gate native command execution through one logged helper for npm and Git checks.
+- 2026-06-08: Routed chat submit draft finalization and stream text appends through current message-list items so stale same-id draft objects cannot miss UI updates.
+- 2026-06-08: Refactored review-gate Git diff checks through one helper and realigned the chat swipe source-test with the current list-item guard contract.
+- 2026-06-08: Routed chat swipe navigation and generation through current message-list items and restored original swipe content from a saved snapshot.
+- 2026-06-08: Guarded chat message edit, delete, and branch actions against stale events whose message id is no longer current or is still streaming.
+- 2026-06-08: Added working-tree and staged diff whitespace checks to the review gate.
+- 2026-06-08: Guarded ChatSidebar single-delete events so blank or stale row ids cannot confirm or delete no-longer-listed conversations.
+- 2026-06-08: Kept shared diagnostic JSON reads on the small-file path so oversized optional configs fall back safely.
+- 2026-06-08: Required Markdown report archiver excludes to name dated report files so typos cannot silently archive unintended reports.
+- 2026-06-08: Guarded ChatSidebar open-conversation events so blank or stale ids cannot navigate to invalid chat routes.
+- 2026-06-08: Guarded Markdown report archiver option parsing so flags cannot be swallowed as missing values.
+- 2026-06-08: Routed ChatSidebar manual reload through a busy-state guard to ignore duplicate or overlapping refresh clicks.
+- 2026-06-08: Avoided duplicate archive-file existence checks in the Markdown report archiver.
+- 2026-06-08: Ignored blank or unknown chat sidebar selection ids so stale selection events do not replace Set refs.
+- 2026-06-08: Normalized backslash paths in shared diagnostic POSIX path formatting.
+- 2026-06-08: Ignored blank chat reasoning state ids so malformed toggle events do not replace reasoning Set refs.
+- 2026-06-08: Locked chat copy actions with a visible busy state so duplicate clipboard writes are ignored.
+- 2026-06-08: Made shared diagnostic CLI option parsing single-pass while skipping missing values.
+- 2026-06-08: Reduced unreferenced Vue component scanner source-index allocations and repeated path resolution.
+- 2026-06-08: Locked chat message edit draft updates and cancellation while branch creation is pending.
+- 2026-06-08: Avoided per-line array allocation in the UTF-8 encoding checker mojibake scan.
+- 2026-06-08: Locked chat swipe navigation while message mutation or branch creation actions are pending.
+- 2026-06-08: Locked chat message edit and delete actions while branch creation is pending.
+- 2026-06-08: Disabled chat branch creation for local, streaming, missing-id, or busy messages before API work starts.
+- 2026-06-08: Made backend source and test hygiene scans read files in deterministic order.
+- 2026-06-08: Routed chat swipe content updates through a no-op-aware helper that triggers the message ref only when visible text changes.
+- 2026-06-08: Made the UTF-8 encoding checker traverse files deterministically for stable failure output.
+- 2026-06-08: Made Markdown report archiving deterministic and fixed fresh empty-archive list parsing.
+- 2026-06-08: Replaced chat swipe loading Set mutations with reference-updating helpers so pending swipe controls refresh promptly.
+- 2026-06-08: Made Vue diagnostic ordering locale-independent through a shared text comparator.
+- 2026-06-08: Skipped stale chat message delete list replacements when the message is already gone locally.
+- 2026-06-08: Kept shared diagnostic file walking from throwing on missing or non-directory roots.
+- 2026-06-08: Skipped unchanged chat message edit saves to avoid redundant API, sidebar, and message-list work.
+- 2026-06-08: Removed redundant diagnostic JSON existence checks so fallback reads avoid duplicate filesystem work.
+- 2026-06-08: Skipped redundant chat submit message-list triggers when assistant drafts are already settled.
+- 2026-06-08: Made shared diagnostic file walking deterministic to reduce platform-specific scanner output drift.
+- 2026-06-08: Kept diagnostic text reads from throwing on missing files, directories, or unreadable paths.
+- 2026-06-08: Skipped redundant ChatView NPC accessory refresh polls after the refresh fingerprint is synced.
+- 2026-06-08: Kept diagnostic JSON reads on fallback data when optional JSON files are malformed.
+- 2026-06-08: Preserved chat submit usage and provider metadata references when repeated completion payloads are unchanged.
+- 2026-06-08: Treated blank shared diagnostic CLI option values as missing so scanners keep their default paths and limits.
+- 2026-06-08: Preserved WorldBookView AI draft and process panel references when repeated AI results are unchanged.
+- 2026-06-08: Hardened shared diagnostic CLI option parsing when an option value is missing before another flag.
+- 2026-06-08: Preserved CharacterFormView AI process panel references when repeated AI results are unchanged.
+- 2026-06-08: Added oversized-file coverage for the shared diagnostic text reader.
+- 2026-06-08: Added behavior coverage for shared diagnostic helper utilities.
+- 2026-06-08: Preserved App user and provider references when session payloads are unchanged.
+- 2026-06-08: Shared regex escaping across Vue diagnostics.
+- 2026-06-08: Preserved Settings personal profile and balance references when refreshed data is unchanged.
+- 2026-06-08: Shared line-preserving text masking across Vue diagnostics.
+- 2026-06-08: Shared CLI option, file-walk, and POSIX path helpers across Vue diagnostics.
+- 2026-06-08: Preserved CharacterFormView tag and world-book option references when refreshed option data is unchanged.
+- 2026-06-08: Shared provided-attribute accessible-name checks in the Vue accessibility diagnostic, including dynamic referenced labels.
+- 2026-06-08: Preserved chat appearance world-book list references when refreshed lorebook options are unchanged.
+- 2026-06-08: Consolidated native input accessible-name rules in the Vue accessibility diagnostic after several focused edge-case patches.
+- 2026-06-08: Routed chat status-bar save, delete, and route-clear updates through the reference-preserving accessory helper.
+- 2026-06-08: Recognized image input alt text in the Vue accessibility diagnostic to avoid false form-control reports.
+- 2026-06-08: Skipped duplicate chat appearance syncs so route reloads preserve local appearance drafts and custom-script state.
+- 2026-06-08: Recognized named button-type input values in the Vue accessibility diagnostic to avoid false form-control reports.
+- 2026-06-08: Preserved Chat route message-list references when refreshed message payloads are unchanged.
+- 2026-06-08: Ignored quoted Vue attribute-value markup in the accessibility diagnostic so example snippets cannot report fake controls.
+- 2026-06-08: Routed chat appearance and accessory save conversation updates through the active conversation stable setter.
+- 2026-06-08: Ignored Vue attribute-value pseudo-tags in the unreferenced component diagnostic while preserving scoped `<component is>` reference matching.
 - 2026-06-08: Preserved active Chat route conversation references when refreshed payloads are unchanged.
 - 2026-06-08: Migrated Chat conversation source coverage to the shared Vue block reader after review gate exposed a direct SFC read.
 - 2026-06-08: Limited Vue dynamic `is` component reference matching to `<component>` tags in the unreferenced component diagnostic.
@@ -351,3 +558,6 @@ The autonomous loop should choose one small item per run. Add new findings here 
 - 2026-06-08: Preserved chat accessory status-bar references and editor drafts when refreshed data is unchanged.
 - 2026-06-08: Preserved chat accessory skill config references when synchronized data is unchanged.
 - 2026-06-08: Routed chat submit status-bar updates through the reference-preserving accessory helper.
+- 2026-06-08: Inserted chat submit local drafts through a message-list reference update so pending replies render promptly.
+- 2026-06-08: Let settled chat accessory refresh callbacks cancel remaining scheduled polling timers.
+- 2026-06-08: Refreshed the open NPC panel only when accessory polling detects changed NPC data.

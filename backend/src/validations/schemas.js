@@ -334,7 +334,8 @@ export const createSaveSchema = z.object({
 });
 
 export const renameSaveSchema = z.object({
-  name: z.string().max(100).trim()
+  name: z.string().max(100).trim(),
+  conversationId: z.string().trim().min(1)
 });
 
 // ── 验证中间件工厂 ──

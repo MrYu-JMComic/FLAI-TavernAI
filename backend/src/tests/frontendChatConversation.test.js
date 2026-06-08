@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { readVueBlocks } from './frontendSfcTestUtils.js';
+import { readRepoText, readVueBlocks } from './frontendSfcTestUtils.js';
 
 const { useChatConversation } = await import('../../../frontend/src/composables/chat/useChatConversation.js');
+const chatConversationSource = readRepoText('frontend/src/composables/chat/useChatConversation.js');
 const { script: chatViewScript } = readVueBlocks('frontend/src/views/ChatView.vue');
 
 function jsonResponse(data, status = 200) {
@@ -111,6 +112,35 @@ function createEquivalentActiveConversation() {
   };
 }
 
+function createMessage(overrides = {}) {
+  return {
+    id: 'msg-1',
+    role: 'assistant',
+    content: 'Hello',
+    reasoning: '',
+    usage: {
+      total_tokens: 3,
+      totalTokens: 3
+    },
+    createdAt: '2026-06-08T00:00:00.000Z',
+    ...overrides
+  };
+}
+
+function createEquivalentMessage() {
+  return {
+    createdAt: '2026-06-08T00:00:00.000Z',
+    usage: {
+      totalTokens: 3,
+      total_tokens: 3
+    },
+    reasoning: '',
+    content: 'Hello',
+    role: 'assistant',
+    id: 'msg-1'
+  };
+}
+
 test('active chat conversation setter preserves unchanged object references', () => {
   const chat = useChatConversation({
     route: { params: { id: 'conv-active' } },
@@ -156,6 +186,159 @@ test('ChatView routes active conversation refreshes through the stable setter', 
   assert.match(chatViewScript, /setActiveConversationIfChanged\(result\.conversation\);/);
   assert.doesNotMatch(chatViewScript, /conversation\.value\s*=\s*result\.conversation/);
   assert.doesNotMatch(chatViewScript, /conversation\.value\s*=\s*null/);
+});
+
+test('chat message setter preserves unchanged list references', () => {
+  const chat = useChatConversation({
+    route: { params: { id: 'conv-active' } },
+    emit() {},
+    showError() {}
+  });
+
+  assert.equal(chat.setMessagesIfChanged([
+    createMessage(),
+    createMessage({ id: 'msg-2', role: 'user', content: 'Hi', usage: null })
+  ]), true);
+  const messagesReference = chat.messages.value;
+
+  assert.equal(chat.setMessagesIfChanged([
+    createEquivalentMessage(),
+    {
+      createdAt: '2026-06-08T00:00:00.000Z',
+      usage: null,
+      reasoning: '',
+      content: 'Hi',
+      role: 'user',
+      id: 'msg-2'
+    }
+  ]), false);
+  assert.equal(chat.messages.value, messagesReference);
+
+  const changedMessageReference = chat.messages.value;
+  assert.equal(chat.setMessagesIfChanged([
+    createEquivalentMessage(),
+    {
+      createdAt: '2026-06-08T00:00:00.000Z',
+      usage: null,
+      reasoning: '',
+      content: 'Edited',
+      role: 'user',
+      id: 'msg-2'
+    }
+  ]), true);
+  assert.notEqual(chat.messages.value, changedMessageReference);
+  assert.equal(chat.messages.value[1].content, 'Edited');
+
+  assert.equal(chat.setMessagesIfChanged([]), true);
+  assert.equal(chat.messages.value.length, 0);
+  const emptyReference = chat.messages.value;
+  assert.equal(chat.setMessagesIfChanged([]), false);
+  assert.equal(chat.messages.value, emptyReference);
+});
+
+test('ChatView routes loaded message refreshes through the stable setter', () => {
+  assert.match(chatViewScript, /setActiveConversationIfChanged, setMessagesIfChanged,/);
+  assert.match(chatViewScript, /setMessagesIfChanged\(\[\]\);/);
+  assert.match(chatViewScript, /setMessagesIfChanged\(result\.messages\);/);
+  assert.doesNotMatch(chatViewScript, /messages\.value\s*=\s*result\.messages/);
+  assert.doesNotMatch(chatViewScript, /messages\.value\s*=\s*\[\]/);
+});
+
+test('ChatView accepts save-loaded events only for the active route conversation', () => {
+  assert.match(
+    chatViewScript,
+    /async function onSavesLoaded\(payload = \{\}\) \{[\s\S]*const eventConversationId = payload\?\.conversationId \|\| '';[\s\S]*if \(!eventConversationId \|\| eventConversationId !== props\.route\.params\.id\) \{\s*return;\s*\}[\s\S]*await loadConversation\(\);[\s\S]*if \(props\.route\.params\.id !== eventConversationId \|\| conversation\.value\?\.id !== eventConversationId\) \{\s*return;\s*\}[\s\S]*await loadSidebarData\(\);[\s\S]*}/
+  );
+  assert.doesNotMatch(
+    chatViewScript,
+    /async function onSavesLoaded\(\)\s*{\s*await loadConversation\(\);\s*await loadSidebarData\(\);/
+  );
+});
+
+test('ChatView guards conversation load side effects after route-changing awaits', () => {
+  assert.match(
+    chatViewScript,
+    /function isCurrentConversationLoad\(requestToken, conversationId\) \{\s*return !chatViewDisposed\s*&& requestToken === conversationLoadToken\s*&& props\.route\.params\.id === conversationId;\s*}/
+  );
+  assert.match(
+    chatViewScript,
+    /await nextTick\(\);\s*if \(!isCurrentConversationLoad\(requestToken, conversationId\)\) return;\s*loading\.value = false;\s*syncConversationAppearance/
+  );
+  assert.match(
+    chatViewScript,
+    /await applyConversationAppearance\(\);\s*if \(!isCurrentConversationLoad\(requestToken, conversationId\)\) return;\s*\/\/ Parallel: these 4 operations are independent of each other/
+  );
+  assert.match(
+    chatViewScript,
+    /catch \(err\) \{\s*if \(!isCurrentConversationLoad\(requestToken, conversationId\)\) return;\s*showError\(err\.message\);\s*} finally \{\s*if \(isCurrentConversationLoad\(requestToken, conversationId\)\) \{/
+  );
+  assert.doesNotMatch(chatViewScript, /requestToken !== conversationLoadToken \|\| props\.route\.params\.id !== conversationId/);
+});
+
+test('ChatView guards branch navigation after sidebar refresh awaits', () => {
+  assert.match(
+    chatViewScript,
+    /async function createBranchFromMessage\(message\) \{\s*const branchConversationId = props\.route\.params\.id;\s*await handleBranchMessage\(message, branchConversationId, async \(branchId, isCurrentBranchAction\) => \{\s*await loadSidebarData\(\);\s*if \(!isCurrentBranchAction\(\)\) \{\s*return;\s*\}\s*emit\('navigate', 'chat', \{ id: branchId \}\);\s*\}\);\s*}/
+  );
+});
+
+test('chat NPC panel reopen ignores stale route changes after next tick', async () => {
+  const route = { params: { id: 'conv-1' } };
+  const chat = useChatConversation({
+    route,
+    emit() {},
+    showError() {}
+  });
+
+  chat.setActiveConversationIfChanged(createActiveConversation({ id: 'conv-1' }));
+  chat.npcPanelOpen.value = true;
+
+  const openPromise = chat.openNpcPanel();
+  assert.equal(chat.npcPanelOpen.value, false);
+
+  route.params.id = 'conv-2';
+  chat.setActiveConversationIfChanged(createActiveConversation({ id: 'conv-2' }));
+  await openPromise;
+
+  assert.equal(chat.npcPanelOpen.value, false);
+});
+
+test('chat NPC panel reopen rechecks current conversation before reopening', () => {
+  assert.match(
+    chatConversationSource,
+    /async function openNpcPanel\(\) \{\s*const panelConversationId = conversation\.value\?\.id \|\| '';\s*if \(!isCurrentPanelConversation\(panelConversationId\)\) \{\s*return;\s*\}[\s\S]*await nextTick\(\);[\s\S]*if \(!isCurrentPanelConversation\(panelConversationId\)\) \{\s*return;\s*\}[\s\S]*npcPanelOpen\.value = true;/
+  );
+  assert.match(
+    chatConversationSource,
+    /function isCurrentPanelConversation\(conversationId\) \{\s*return !conversationDisposed\s*&& conversationReady\.value\s*&& conversation\.value\?\.id === conversationId\s*&& route\.params\.id === conversationId;\s*}/
+  );
+});
+
+test('chat sidebar visible selection state is summarized without filter allocations', () => {
+  assert.match(
+    chatConversationSource,
+    /const visibleConversationSelection = computed\(\(\) => \{\s*return summarizeVisibleConversationSelection\(visibleConversationIds\.value, selectedConversationIds\.value\);\s*}\);/
+  );
+  assert.match(
+    chatConversationSource,
+    /function summarizeVisibleConversationSelection\(visibleIds, selectedIds\) \{[\s\S]*for \(const id of visibleIds\) \{[\s\S]*selectedCount \+= 1;[\s\S]*allSelected: visibleIds\.length > 0 && selectedCount === visibleIds\.length/
+  );
+  assert.doesNotMatch(chatConversationSource, /visibleConversationIds\.value\.filter\(/);
+  assert.doesNotMatch(chatConversationSource, /\[\.\.\.selectedIds\]\.filter/);
+  assert.doesNotMatch(chatConversationSource, /conversations\.value\.map\(\(item\) => item\.id\)/);
+});
+
+test('chat conversation list summary comparisons use direct loops', () => {
+  assert.match(
+    chatConversationSource,
+    /function sameListItems\(currentItems, nextItems, sameItem\) \{[\s\S]*for \(let index = 0; index < currentItems\.length; index \+= 1\) \{[\s\S]*!sameItem\(currentItems\[index\], nextItems\[index\]\)[\s\S]*return true;[\s\S]*\}/
+  );
+  assert.match(
+    chatConversationSource,
+    /function sameRenderPluginList\(currentItems = \[\], nextItems = \[\]\) \{[\s\S]*for \(let index = 0; index < currentList\.length; index \+= 1\) \{[\s\S]*!sameRenderPlugin\(currentList\[index\], nextList\[index\]\)[\s\S]*return true;[\s\S]*\}/
+  );
+  assert.doesNotMatch(chatConversationSource, /currentItems\.every\(/);
+  assert.doesNotMatch(chatConversationSource, /currentList\.every\(/);
 });
 
 test('chat sidebar initial open state falls back to window width without matchMedia', () => {
@@ -610,6 +793,77 @@ test('chat sidebar data load keeps pending state when an older load settles firs
   }
 });
 
+test('chat sidebar manual reload ignores duplicate or busy reload events', async () => {
+  const originalFetch = globalThis.fetch;
+  const pendingHistory = createDeferred();
+  const requests = [];
+  let historyPending = true;
+
+  globalThis.fetch = async (url) => {
+    const requestUrl = String(url);
+    requests.push(requestUrl);
+
+    if (requestUrl === '/api/conversations?characterId=char-reload') {
+      if (historyPending) {
+        return pendingHistory.promise;
+      }
+      return jsonResponse([
+        {
+          id: 'conv-reload',
+          title: 'Reloaded story',
+          characterId: 'char-reload',
+          character: { name: 'Reload' },
+          usage: {}
+        }
+      ]);
+    }
+    if (requestUrl === '/api/characters') {
+      return jsonResponse([]);
+    }
+    if (requestUrl === '/api/presets') {
+      return jsonResponse([]);
+    }
+    throw new Error(`Unexpected request: ${requestUrl}`);
+  };
+
+  try {
+    const chat = useChatConversation({
+      route: { params: { id: 'conv-reload' } },
+      emit() {},
+      showError() {}
+    });
+    chat.conversation.value = { id: 'conv-reload', characterId: 'char-reload' };
+
+    const pendingLoad = chat.loadSidebarData();
+    assert.equal(chat.sidebarLoading.value, true);
+
+    await chat.reloadSidebarData();
+    assert.equal(requests.length, 3);
+
+    historyPending = false;
+    pendingHistory.resolve(jsonResponse([]));
+    await pendingLoad;
+    assert.equal(chat.sidebarLoading.value, false);
+
+    chat.conversationActionBusy.value = true;
+    await chat.reloadSidebarData();
+    assert.equal(requests.length, 3);
+
+    chat.conversationActionBusy.value = false;
+    chat.startConversationBusy.value = true;
+    await chat.reloadSidebarData();
+    assert.equal(requests.length, 3);
+
+    chat.startConversationBusy.value = false;
+    await chat.reloadSidebarData();
+    assert.equal(requests.length, 6);
+    assert.equal(chat.conversations.value[0].id, 'conv-reload');
+  } finally {
+    globalThis.fetch = originalFetch;
+    pendingHistory.resolve(jsonResponse([]));
+  }
+});
+
 test('chat sidebar selection controls freeze while conversation actions are busy', () => {
   const chat = useChatConversation({
     route: { params: { id: 'conv-a' } },
@@ -633,6 +887,99 @@ test('chat sidebar selection controls freeze while conversation actions are busy
   chat.conversationActionBusy.value = false;
   chat.toggleConversationSelection('conv-b');
   assert.deepEqual([...chat.selectedConversationIds.value].sort(), ['conv-a', 'conv-b']);
+});
+
+test('chat sidebar selection ignores blank or unknown conversation ids without replacing refs', () => {
+  const chat = useChatConversation({
+    route: { params: { id: 'conv-a' } },
+    emit() {},
+    showError() {}
+  });
+
+  chat.conversations.value = [
+    { id: 'conv-a', title: 'A', character: { name: 'A' }, usage: {} }
+  ];
+  chat.selectedConversationIds.value = new Set(['conv-a']);
+  const selectionReference = chat.selectedConversationIds.value;
+
+  chat.toggleConversationSelection('');
+  chat.toggleConversationSelection(null);
+  chat.toggleConversationSelection('conv-missing');
+
+  assert.equal(chat.selectedConversationIds.value, selectionReference);
+  assert.deepEqual([...chat.selectedConversationIds.value], ['conv-a']);
+
+  chat.selectedConversationIds.value = new Set(['conv-a', 'conv-stale']);
+  const staleSelectionReference = chat.selectedConversationIds.value;
+  chat.toggleConversationSelection('conv-stale');
+
+  assert.notEqual(chat.selectedConversationIds.value, staleSelectionReference);
+  assert.deepEqual([...chat.selectedConversationIds.value], ['conv-a']);
+});
+
+test('chat sidebar single delete ignores blank or stale row events before confirm', async () => {
+  const originalFetch = globalThis.fetch;
+  const originalWindow = globalThis.window;
+  const requests = [];
+  let confirmCount = 0;
+
+  globalThis.window = {
+    ...(originalWindow || {}),
+    confirm() {
+      confirmCount += 1;
+      return true;
+    }
+  };
+  globalThis.fetch = async (url, options = {}) => {
+    const requestUrl = String(url);
+    const method = String(options.method || 'GET').toUpperCase();
+    requests.push([requestUrl, method]);
+
+    if (requestUrl === '/api/csrf-token') {
+      return jsonResponse({ csrfToken: 'single-delete-token' });
+    }
+
+    if (requestUrl === '/api/conversations/conv-visible' && method === 'DELETE') {
+      return jsonResponse({ ok: true });
+    }
+
+    return jsonResponse({ message: `Unexpected request: ${requestUrl}` }, 500);
+  };
+
+  try {
+    const chat = useChatConversation({
+      route: { params: { id: 'conv-current' } },
+      emit() {},
+      showError() {}
+    });
+
+    chat.conversations.value = [
+      { id: 'conv-visible', title: 'Visible story', character: { name: 'Alice' }, usage: {} }
+    ];
+
+    await chat.deleteOneConversation({ id: '', title: 'Blank story' });
+    await chat.deleteOneConversation({ id: null, title: 'Null story' });
+    await chat.deleteOneConversation({ id: 'conv-stale', title: 'Stale story' });
+
+    assert.equal(confirmCount, 0);
+    assert.deepEqual(requests, []);
+
+    await chat.deleteOneConversation({ id: ' conv-visible ', title: 'Visible story' });
+
+    assert.equal(confirmCount, 1);
+    assert.deepEqual(
+      requests.filter(([, method]) => method === 'DELETE'),
+      [['/api/conversations/conv-visible', 'DELETE']]
+    );
+    assert.deepEqual(chat.conversations.value, []);
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (typeof originalWindow === 'undefined') {
+      delete globalThis.window;
+    } else {
+      globalThis.window = originalWindow;
+    }
+  }
 });
 
 test('chat sidebar bulk selection skips reactive updates when no conversations are visible', () => {

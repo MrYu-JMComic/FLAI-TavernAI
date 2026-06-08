@@ -46,10 +46,13 @@ export function createSave(database, userId, conversationId, payload) {
   );
 }
 
-export function updateSave(database, userId, saveId, payload) {
-  const existing = database
-    .prepare('SELECT * FROM saves WHERE id = ? AND user_id = ?')
-    .get(saveId, userId);
+export function updateSave(database, userId, saveId, payload, requestedConversationId = '') {
+  const scopedConversationId = String(requestedConversationId || '');
+  const existing = scopedConversationId
+    ? database.prepare('SELECT * FROM saves WHERE id = ? AND user_id = ? AND conversation_id = ?')
+      .get(saveId, userId, scopedConversationId)
+    : database.prepare('SELECT * FROM saves WHERE id = ? AND user_id = ?')
+      .get(saveId, userId);
   if (!existing) {
     return null;
   }
@@ -65,18 +68,25 @@ export function updateSave(database, userId, saveId, payload) {
   );
 }
 
-export function deleteSave(database, userId, saveId) {
-  const result = database
-    .prepare('DELETE FROM saves WHERE id = ? AND user_id = ?')
-    .run(saveId, userId);
+export function deleteSave(database, userId, saveId, requestedConversationId = '') {
+  const scopedConversationId = String(requestedConversationId || '');
+  const result = scopedConversationId
+    ? database.prepare('DELETE FROM saves WHERE id = ? AND user_id = ? AND conversation_id = ?')
+      .run(saveId, userId, scopedConversationId)
+    : database.prepare('DELETE FROM saves WHERE id = ? AND user_id = ?')
+      .run(saveId, userId);
   return result.changes > 0;
 }
 
-export function loadSave(database, userId, saveId) {
+export function loadSave(database, userId, saveId, requestedConversationId = '') {
   const row = database
     .prepare('SELECT * FROM saves WHERE id = ? AND user_id = ?')
     .get(saveId, userId);
   if (!row) {
+    return null;
+  }
+  const scopedConversationId = String(requestedConversationId || '');
+  if (scopedConversationId && row.conversation_id !== scopedConversationId) {
     return null;
   }
 
@@ -85,13 +95,13 @@ export function loadSave(database, userId, saveId) {
     return null;
   }
 
-  const conversationId = row.conversation_id;
+  const targetConversationId = row.conversation_id;
 
   withSavepoint(database, 'sp_load_save', () => {
     // Clear existing messages for this conversation
     database
       .prepare('DELETE FROM messages WHERE user_id = ? AND conversation_id = ?')
-      .run(userId, conversationId);
+      .run(userId, targetConversationId);
 
     // Restore messages from snapshot
     if (Array.isArray(snapshot.messages) && snapshot.messages.length > 0) {
@@ -103,7 +113,7 @@ export function loadSave(database, userId, saveId) {
         insert.run(
           msg.id || newId(),
           userId,
-          conversationId,
+          targetConversationId,
           msg.role,
           msg.content,
           msg.reasoning || '',
@@ -116,11 +126,11 @@ export function loadSave(database, userId, saveId) {
     // Update conversation timestamp
     database
       .prepare('UPDATE conversations SET updated_at = ? WHERE id = ? AND user_id = ?')
-      .run(nowIso(), conversationId, userId);
+      .run(nowIso(), targetConversationId, userId);
   });
 
   return {
-    conversationId,
+    conversationId: targetConversationId,
     messageCount: Array.isArray(snapshot.messages) ? snapshot.messages.length : 0
   };
 }
@@ -152,13 +162,23 @@ function buildSnapshot(database, userId, conversationId) {
 }
 
 function buildPreview(snapshot) {
-  const messages = snapshot.messages || [];
-  const last = [...messages].reverse().find((m) => m.role === 'assistant' && m.content);
+  const messages = Array.isArray(snapshot?.messages) ? snapshot.messages : [];
+  const last = findLastAssistantContentMessage(messages);
   if (!last) {
     return messages.length > 0 ? `${messages.length} 条消息` : '空会话';
   }
   const text = last.content.replace(/\s+/g, ' ').trim();
   return text.length > 120 ? `${text.slice(0, 120)}...` : text;
+}
+
+function findLastAssistantContentMessage(messages) {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (message?.role === 'assistant' && message.content) {
+      return message;
+    }
+  }
+  return null;
 }
 
 // ── Helpers ──

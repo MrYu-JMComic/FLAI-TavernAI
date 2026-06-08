@@ -114,7 +114,7 @@ function releaseSidebarFocus() {
       <button
         class="history-tool-button"
         type="button"
-        :disabled="sidebarLoading"
+        :disabled="sidebarLoading || conversationActionBusy || startConversationBusy"
         :aria-busy="sidebarLoading"
         @click="emit('reload-sidebar')"
       >

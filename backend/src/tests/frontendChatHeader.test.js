@@ -18,7 +18,11 @@ test('ChatHeader locks conversation panel actions until the conversation is read
   );
   assert.match(
     chatConversationSource,
-    /async function openNpcPanel\(\)\s*{\s*if \(conversationDisposed \|\| !conversationReady\.value\) {\s*return;\s*}/
+    /async function openNpcPanel\(\)\s*{\s*const panelConversationId = conversation\.value\?\.id \|\| '';\s*if \(!isCurrentPanelConversation\(panelConversationId\)\) {\s*return;\s*}/
+  );
+  assert.match(
+    chatConversationSource,
+    /function isCurrentPanelConversation\(conversationId\) \{[\s\S]*&& conversationReady\.value[\s\S]*&& route\.params\.id === conversationId;/
   );
   assert.match(
     chatConversationSource,

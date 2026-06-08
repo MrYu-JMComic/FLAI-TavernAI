@@ -70,10 +70,32 @@ const averageEntryCount = computed(() => {
   return Math.round(totalEntryCount.value / books.value.length);
 });
 const currentEntries = computed(() => currentBook.value?.entries || []);
-const enabledEntryCount = computed(() => currentEntries.value.filter((entry) => entry.enabled !== false).length);
-const disabledEntryCount = computed(() => Math.max(0, currentEntries.value.length - enabledEntryCount.value));
-const alwaysActiveEntryCount = computed(() => currentEntries.value.filter((entry) => entry.alwaysActive).length);
-const probabilityEntryCount = computed(() => currentEntries.value.filter((entry) => entry.useProbability).length);
+const currentEntryStats = computed(() => {
+  const stats = {
+    enabled: 0,
+    disabled: 0,
+    alwaysActive: 0,
+    probability: 0
+  };
+  const entries = Array.isArray(currentEntries.value) ? currentEntries.value : [];
+  for (const entry of entries) {
+    if (entry?.enabled !== false) {
+      stats.enabled += 1;
+    }
+    if (entry?.alwaysActive) {
+      stats.alwaysActive += 1;
+    }
+    if (entry?.useProbability) {
+      stats.probability += 1;
+    }
+  }
+  stats.disabled = Math.max(0, entries.length - stats.enabled);
+  return stats;
+});
+const enabledEntryCount = computed(() => currentEntryStats.value.enabled);
+const disabledEntryCount = computed(() => currentEntryStats.value.disabled);
+const alwaysActiveEntryCount = computed(() => currentEntryStats.value.alwaysActive);
+const probabilityEntryCount = computed(() => currentEntryStats.value.probability);
 
 const positionOptions = [
   { value: 'at_start', label: '最前面 (at_start)' },
@@ -212,6 +234,31 @@ function setCurrentBookIfChanged(nextBook) {
   return true;
 }
 
+function setAiDraftIfChanged(nextDraft) {
+  return setAiPlainRefIfChanged(aiDraft, nextDraft || null);
+}
+
+function setAiToolCallsIfChanged(nextToolCalls) {
+  return setAiPlainListIfChanged(aiToolCalls, nextToolCalls);
+}
+
+function setAiProcessIfChanged(nextProcess) {
+  return setAiPlainListIfChanged(aiProcess, nextProcess);
+}
+
+function setAiPlainListIfChanged(listRef, nextItems) {
+  const normalizedItems = Array.isArray(nextItems) ? nextItems : [];
+  return setAiPlainRefIfChanged(listRef, normalizedItems);
+}
+
+function setAiPlainRefIfChanged(valueRef, nextValue) {
+  if (samePlainValue(valueRef.value, nextValue)) {
+    return false;
+  }
+  valueRef.value = nextValue;
+  return true;
+}
+
 function sameBookList(currentBooks, nextBooks) {
   return Array.isArray(currentBooks)
     && Array.isArray(nextBooks)
@@ -263,6 +310,26 @@ function sameEntrySummary(currentEntry, nextEntry) {
     && currentEntry?.group === nextEntry?.group
     && Number(currentEntry?.groupWeight || 0) === Number(nextEntry?.groupWeight || 0)
     && Number(currentEntry?.orderIndex || 0) === Number(nextEntry?.orderIndex || 0);
+}
+
+function samePlainValue(current, next) {
+  if (Object.is(current, next)) {
+    return true;
+  }
+  if (!current || !next || typeof current !== 'object' || typeof next !== 'object') {
+    return false;
+  }
+  if (Array.isArray(current) || Array.isArray(next)) {
+    return Array.isArray(current)
+      && Array.isArray(next)
+      && current.length === next.length
+      && current.every((item, index) => samePlainValue(item, next[index]));
+  }
+  const currentKeys = Object.keys(current);
+  const nextKeys = Object.keys(next);
+  return currentKeys.length === nextKeys.length
+    && currentKeys.every((key) => Object.prototype.hasOwnProperty.call(next, key)
+      && samePlainValue(current[key], next[key]));
 }
 
 function nullableComparable(value) {
@@ -576,8 +643,8 @@ async function completeWorldBookWithAi() {
   const mutationToken = worldBookMutationToken;
   const abortController = new AbortController();
   aiLoading.value = true;
-  aiToolCalls.value = [];
-  aiProcess.value = [{ round: 1, reasoning: '等待模型响应...', content: '', tools: [] }];
+  setAiToolCallsIfChanged([]);
+  setAiProcessIfChanged([{ round: 1, reasoning: '等待模型响应...', content: '', tools: [] }]);
   aiReasoning.value = '';
   aiAbortController.value = abortController;
   try {
@@ -591,12 +658,12 @@ async function completeWorldBookWithAi() {
       notify.info('AI 世界书生成已暂停');
       return;
     }
-    aiDraft.value = result.worldBook;
-    aiToolCalls.value = result.toolCalls || [];
-    aiProcess.value = result.process || [];
+    setAiDraftIfChanged(result.worldBook);
+    setAiToolCallsIfChanged(result.toolCalls);
+    setAiProcessIfChanged(result.process);
     aiReasoning.value = result.reasoning || '';
     if (!aiDraftEntryCount.value) {
-      aiDraft.value = null;
+      setAiDraftIfChanged(null);
       notify.warning('AI 没有生成有效条目，请补充更具体的世界书主题后重试。');
       return;
     }
@@ -607,7 +674,7 @@ async function completeWorldBookWithAi() {
       notify.info('AI 世界书生成已暂停');
       return;
     }
-    aiProcess.value = [{ round: 1, reasoning: err.message, content: '', tools: [] }];
+    setAiProcessIfChanged([{ round: 1, reasoning: err.message, content: '', tools: [] }]);
     notify.error(err.message);
   } finally {
     if (isCurrentWorldBookRouteMutation(mutationToken, routeKey)) {
@@ -651,7 +718,7 @@ async function createBookFromAiDraft() {
     }
     if (!isCurrentWorldBookRouteMutation(mutationToken, routeKey)) return;
     notify.success(`世界书已创建，并写入 ${aiDraftEntryCount.value} 个条目`);
-    aiDraft.value = null;
+    setAiDraftIfChanged(null);
     emit('navigate', 'worldBookDetail', { id: createdBook.id });
   } catch (err) {
     if (createdBook?.id) {
@@ -736,54 +803,73 @@ function normalizeAiEntryForCreate(entry = {}) {
 
 function aiStreamHandlers(mutationToken, routeKey) {
   return {
-    step: (step) => {
+    step: (step = {}) => {
       if (!isCurrentWorldBookRouteMutation(mutationToken, routeKey)) return;
-      const target = ensureAiProcessStep(step.round || 1);
-      Object.assign(target, {
+      updateAiProcessStep(step.round || 1, (target) => ({
+        ...target,
         ...step,
         content: target.content || step.content || '',
         reasoning: target.reasoning === '等待模型响应...' ? step.reasoning || '' : target.reasoning || step.reasoning || '',
-        tools: target.tools?.length ? target.tools : step.tools || []
-      });
+        tools: target.tools?.length ? target.tools : Array.isArray(step.tools) ? [...step.tools] : []
+      }));
     },
     reasoning: ({ round = 1, text = '' } = {}) => {
       if (!isCurrentWorldBookRouteMutation(mutationToken, routeKey)) return;
-      const target = ensureAiProcessStep(round);
-      if (target.reasoning === '等待模型响应...') target.reasoning = '';
-      target.reasoning += text;
+      updateAiProcessStep(round, (target) => ({
+        ...target,
+        reasoning: `${target.reasoning === '等待模型响应...' ? '' : target.reasoning || ''}${text}`
+      }));
       aiReasoning.value += text;
     },
     content: ({ round = 1, text = '' } = {}) => {
       if (!isCurrentWorldBookRouteMutation(mutationToken, routeKey)) return;
-      const target = ensureAiProcessStep(round);
-      target.content += text;
+      updateAiProcessStep(round, (target) => ({
+        ...target,
+        content: `${target.content || ''}${text}`
+      }));
     },
     nudge: ({ round = 1, text = '' } = {}) => {
       if (!isCurrentWorldBookRouteMutation(mutationToken, routeKey)) return;
-      const target = ensureAiProcessStep(round);
-      target.content += `${target.content ? '\n\n' : ''}系统提醒：${text}`;
+      updateAiProcessStep(round, (target) => ({
+        ...target,
+        content: `${target.content || ''}${target.content ? '\n\n' : ''}系统提醒：${text}`
+      }));
     },
     tool: (call = {}) => {
       if (!isCurrentWorldBookRouteMutation(mutationToken, routeKey)) return;
-      const target = ensureAiProcessStep(call.round || 1);
       const log = {
         name: call.name,
         arguments: call.arguments,
         result: call.result
       };
-      target.tools.push(log);
-      aiToolCalls.value.push(log);
+      updateAiProcessStep(call.round || 1, (target) => ({
+        ...target,
+        tools: [...(Array.isArray(target.tools) ? target.tools : []), log]
+      }));
+      appendAiToolCall(log);
     }
   };
 }
 
-function ensureAiProcessStep(round = 1) {
-  let step = aiProcess.value.find((item) => item.round === round);
-  if (!step) {
-    step = { round, reasoning: '', content: '', tools: [] };
-    aiProcess.value.push(step);
-  }
-  return step;
+function updateAiProcessStep(round = 1, updateStep) {
+  const currentProcess = Array.isArray(aiProcess.value) ? aiProcess.value : [];
+  const stepIndex = currentProcess.findIndex((item) => item.round === round);
+  const currentStep = stepIndex >= 0
+    ? currentProcess[stepIndex]
+    : { round, reasoning: '', content: '', tools: [] };
+  const nextStep = updateStep({
+    ...currentStep,
+    tools: Array.isArray(currentStep.tools) ? [...currentStep.tools] : []
+  });
+  const nextProcess = stepIndex >= 0
+    ? currentProcess.map((item, index) => (index === stepIndex ? nextStep : item))
+    : [...currentProcess, nextStep];
+  setAiProcessIfChanged(nextProcess);
+}
+
+function appendAiToolCall(log) {
+  const currentToolCalls = Array.isArray(aiToolCalls.value) ? aiToolCalls.value : [];
+  setAiToolCallsIfChanged([...currentToolCalls, log]);
 }
 
 function formatAiValue(value) {

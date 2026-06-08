@@ -1,12 +1,22 @@
 #!/usr/bin/env node
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const reportsDir = path.join(projectRoot, 'automation', 'reports');
 const archiveDir = path.join(reportsDir, 'archive');
-const reportNamePattern = /^(\d{4}-\d{2}-\d{2})-.+\.md$/;
+const reportNamePattern = /^(\d{4}-\d{2}-\d{2})-[^\\/]+\.md$/;
+
+function compareReportText(left, right) {
+  if (left < right) {
+    return -1;
+  }
+  if (left > right) {
+    return 1;
+  }
+  return 0;
+}
 
 function usage() {
   return [
@@ -21,6 +31,14 @@ function usage() {
     '  --dry-run          Print candidates without writing or deleting files.',
     '  --exclude FILE     Leave this top-level report untouched. Can be repeated.'
   ].join('\n');
+}
+
+function readOptionValue(argv, index, optionName) {
+  const value = argv[index + 1];
+  if (!value || value.startsWith('--')) {
+    throw new Error(`${optionName} requires a value`);
+  }
+  return value;
 }
 
 function parseArgs(argv) {
@@ -38,16 +56,16 @@ function parseArgs(argv) {
     } else if (arg === '--dry-run') {
       options.dryRun = true;
     } else if (arg === '--date') {
-      const value = argv[index + 1];
-      if (!value || !/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+      const value = readOptionValue(argv, index, '--date');
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {
         throw new Error('--date requires a YYYY-MM-DD value');
       }
       options.dates.add(value);
       index += 1;
     } else if (arg === '--exclude') {
-      const value = argv[index + 1];
-      if (!value || value.includes('/') || value.includes('\\')) {
-        throw new Error('--exclude requires a top-level report filename');
+      const value = readOptionValue(argv, index, '--exclude');
+      if (!reportNamePattern.test(value)) {
+        throw new Error('--exclude requires a dated top-level report filename');
       }
       options.excludes.add(value);
       index += 1;
@@ -74,21 +92,26 @@ function assertInside(parent, child) {
 }
 
 function getCreatedDate() {
-  const parts = Object.fromEntries(
-    new Intl.DateTimeFormat('en', {
-      day: '2-digit',
-      month: '2-digit',
-      timeZone: 'Asia/Shanghai',
-      year: 'numeric'
-    }).formatToParts(new Date()).map((part) => [part.type, part.value])
-  );
+  const parts = {};
+  for (const part of new Intl.DateTimeFormat('en', {
+    day: '2-digit',
+    month: '2-digit',
+    timeZone: 'Asia/Shanghai',
+    year: 'numeric'
+  }).formatToParts(new Date())) {
+    parts[part.type] = part.value;
+  }
   return `${parts.year}-${parts.month}-${parts.day}`;
 }
 
 function readArchiveText(date) {
   const archivePath = path.join(archiveDir, `daily-reports-${date}.md`);
-  if (existsSync(archivePath)) {
+  try {
     return readFileSync(archivePath, 'utf8').replace(/\r\n/g, '\n');
+  } catch (error) {
+    if (error?.code !== 'ENOENT') {
+      throw error;
+    }
   }
 
   return [
@@ -106,30 +129,45 @@ function readArchiveText(date) {
 }
 
 function getArchiveList(text) {
-  const match = text.match(/## Archived Files\n\n([\s\S]*?)\n## Contents/);
+  const match = text.match(/## Archived Files\n\n([\s\S]*?)\n*## Contents/);
   if (!match) {
     throw new Error('Could not find archive file list');
   }
 
-  return [...match[1].matchAll(/^- `([^`]+)`$/gm)].map((item) => item[1]);
+  const names = [];
+  const listItemPattern = /^- `([^`]+)`$/gm;
+  let item;
+  while ((item = listItemPattern.exec(match[1]))) {
+    names.push(item[1]);
+  }
+  return names;
 }
 
 function getArchivedSections(text) {
   const sections = new Map();
   const sectionPattern = /(?:^|\n)---\n\n### `([^`]+)`\n\n([\s\S]*?)(?=\n\n---\n\n### `|\s*$)/g;
+  let section;
 
-  for (const match of text.matchAll(sectionPattern)) {
-    sections.set(match[1], match[2].trimEnd());
+  while ((section = sectionPattern.exec(text))) {
+    sections.set(section[1], section[2].trimEnd());
   }
 
   return sections;
 }
 
+function formatArchiveList(names) {
+  const listItems = [];
+  for (const name of names) {
+    listItems.push(`- \`${name}\``);
+  }
+  return listItems.join('\n');
+}
+
 function replaceArchiveList(text, names) {
-  const list = names.map((name) => `- \`${name}\``).join('\n');
+  const list = formatArchiveList(names);
   const withList = text.replace(
-    /(## Archived Files\n\n)([\s\S]*?)(\n## Contents)/,
-    (_match, start, _oldList, end) => `${start}${list}\n${end}`
+    /(## Archived Files\n\n)([\s\S]*?)(\n?## Contents)/,
+    (_match, start, _oldList, end) => `${start}${list}\n\n${end.replace(/^\n/, '')}`
   );
   return withList.replace(
     /consolidates \d+ top-level Markdown reports/,
@@ -167,7 +205,7 @@ function getCandidates(options) {
     });
   }
 
-  return candidates.sort((left, right) => left.name.localeCompare(right.name));
+  return candidates.sort((left, right) => compareReportText(left.name, right.name));
 }
 
 function groupByDate(candidates) {
@@ -178,7 +216,7 @@ function groupByDate(candidates) {
     }
     groups.get(candidate.date).push(candidate);
   }
-  return [...groups.entries()].sort(([left], [right]) => left.localeCompare(right));
+  return [...groups.entries()].sort(([left], [right]) => compareReportText(left, right));
 }
 
 function archiveGroup(date, files) {
@@ -189,6 +227,7 @@ function archiveGroup(date, files) {
   const existingNames = new Set(getArchiveList(archiveText));
   const existingSections = getArchivedSections(archiveText);
   const newSections = [];
+  const archivedNames = [];
   const deleted = [];
 
   for (const file of files) {
@@ -204,10 +243,11 @@ function archiveGroup(date, files) {
 
     existingNames.add(file.name);
     newSections.push({ name: file.name, text });
+    archivedNames.push(file.name);
     deleted.push(file);
   }
 
-  const names = [...existingNames].sort((left, right) => left.localeCompare(right));
+  const names = [...existingNames].sort((left, right) => compareReportText(left, right));
   let nextText = replaceArchiveList(archiveText, names);
   for (const section of newSections) {
     nextText += `\n\n---\n\n### \`${section.name}\`\n\n${section.text}\n`;
@@ -221,8 +261,8 @@ function archiveGroup(date, files) {
 
   return {
     archive: path.relative(projectRoot, archivePath).replaceAll(path.sep, '/'),
-    archived: newSections.map((section) => section.name),
-    removedDuplicateTopLevel: deleted.length - newSections.length,
+    archived: archivedNames,
+    removedDuplicateTopLevel: deleted.length - archivedNames.length,
     totalArchivedForDate: names.length
   };
 }
@@ -234,14 +274,25 @@ function main() {
     const groups = groupByDate(candidates);
 
     if (options.dryRun) {
+      const candidateOutput = {};
+      for (const [date, files] of groups) {
+        const names = [];
+        for (const file of files) {
+          names.push(file.name);
+        }
+        candidateOutput[date] = names;
+      }
       console.log(JSON.stringify({
         dryRun: true,
-        candidates: Object.fromEntries(groups.map(([date, files]) => [date, files.map((file) => file.name)]))
+        candidates: candidateOutput
       }, null, 2));
       return;
     }
 
-    const results = groups.map(([date, files]) => archiveGroup(date, files));
+    const results = [];
+    for (const [date, files] of groups) {
+      results.push(archiveGroup(date, files));
+    }
     console.log(JSON.stringify({ archivedDates: results }, null, 2));
   } catch (error) {
     console.error(error instanceof Error ? error.message : String(error));

@@ -250,6 +250,46 @@ test('NPC behaviors CRUD with priority and toggle', () => {
   assert.equal(listNpcBehaviors(database, userId, conversationId, '酒馆老板').length, 1);
 });
 
+test('NPC memory and behavior mutations respect optional NPC name scope', () => {
+  const { database, userId, conversationId } = setupDatabase();
+
+  const aliceMemory = addNpcMemory(database, userId, conversationId, 'Alice', {
+    content: 'Alice memory'
+  });
+  addNpcMemory(database, userId, conversationId, 'Bob', {
+    content: 'Bob memory'
+  });
+
+  assert.equal(deleteNpcMemory(database, userId, conversationId, aliceMemory.id, 'Bob'), false);
+  assert.equal(listNpcMemories(database, userId, conversationId, 'Alice').length, 1);
+  assert.equal(listNpcMemories(database, userId, conversationId, 'Bob').length, 1);
+
+  assert.equal(deleteNpcMemory(database, userId, conversationId, aliceMemory.id, 'Alice'), true);
+  assert.equal(listNpcMemories(database, userId, conversationId, 'Alice').length, 0);
+  assert.equal(listNpcMemories(database, userId, conversationId, 'Bob').length, 1);
+
+  const aliceBehavior = addNpcBehavior(database, userId, conversationId, 'Alice', {
+    action: 'Alice action',
+    enabled: true
+  });
+  const bobBehavior = addNpcBehavior(database, userId, conversationId, 'Bob', {
+    action: 'Bob action',
+    enabled: true
+  });
+
+  assert.equal(updateNpcBehavior(database, userId, conversationId, aliceBehavior.id, { enabled: false }, 'Bob'), null);
+  assert.equal(listNpcBehaviors(database, userId, conversationId, 'Alice')[0].enabled, true);
+
+  const updated = updateNpcBehavior(database, userId, conversationId, aliceBehavior.id, { enabled: false }, 'Alice');
+  assert.equal(updated.enabled, false);
+
+  assert.equal(deleteNpcBehavior(database, userId, conversationId, bobBehavior.id, 'Alice'), false);
+  assert.equal(listNpcBehaviors(database, userId, conversationId, 'Bob').length, 1);
+
+  assert.equal(deleteNpcBehavior(database, userId, conversationId, bobBehavior.id, 'Bob'), true);
+  assert.equal(listNpcBehaviors(database, userId, conversationId, 'Bob').length, 0);
+});
+
 test('scanNpcsFromMessages is disabled to avoid keyword false positives', () => {
   const messages = [
     { role: 'assistant', content: '【酒馆老板】欢迎来到月光酒馆！' },

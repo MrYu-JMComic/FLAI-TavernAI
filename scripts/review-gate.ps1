@@ -5,16 +5,67 @@
 $ErrorActionPreference = "Stop"
 $projectRoot = Split-Path -Parent $PSScriptRoot
 Push-Location $projectRoot
+try {
 
 $failures = @()
+
+function Invoke-CapturedNativeCommand {
+    param (
+        [string]$File,
+        [string]$WorkingDirectory = "",
+        [string[]]$Arguments
+    )
+
+    if ($WorkingDirectory) {
+        Push-Location $WorkingDirectory
+    }
+
+    $exitCode = 1
+    $prevEAP = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    try {
+        Get-Command $File -ErrorAction Stop | Out-Null
+        $output = & $File @Arguments 2>&1 | ForEach-Object { $_.ToString() }
+        if ($null -eq $LASTEXITCODE) {
+            $exitCode = 0
+        } else {
+            $exitCode = $LASTEXITCODE
+        }
+    } finally {
+        $ErrorActionPreference = $prevEAP
+        if ($WorkingDirectory) {
+            Pop-Location
+        }
+    }
+
+    return [pscustomobject]@{
+        ExitCode = $exitCode
+        Output = @($output)
+    }
+}
+
+function Invoke-LoggedNativeCommand {
+    param (
+        [string]$File,
+        [string]$WorkingDirectory = "",
+        [string[]]$Arguments
+    )
+
+    $result = Invoke-CapturedNativeCommand -File $File -WorkingDirectory $WorkingDirectory -Arguments $Arguments
+    if ($result.Output) {
+        $result.Output | Write-Host
+    }
+    return $result.ExitCode
+}
 
 Write-Host "=== 门下省审核 ===" -ForegroundColor Cyan
 
 # 1. 编码检查
 Write-Host "`n[1/6] 编码检查..." -ForegroundColor Yellow
 try {
-    node scripts/check-encoding.mjs 2>&1 | Write-Host
-    if ($LASTEXITCODE -ne 0) { $failures += "编码检查失败" }
+    if ((Invoke-LoggedNativeCommand -File "node" -Arguments @("scripts/check-encoding.mjs")) -ne 0) {
+        $failures += "编码检查失败"
+    }
 } catch {
     $failures += "编码检查脚本执行异常: $_"
 }
@@ -22,8 +73,7 @@ try {
 # 2. 未引用组件诊断（非阻断）
 Write-Host "`n[2/6] 未引用 Vue 组件诊断..." -ForegroundColor Yellow
 try {
-    node scripts/find-unreferenced-vue-components.mjs 2>&1 | Write-Host
-    if ($LASTEXITCODE -ne 0) {
+    if ((Invoke-LoggedNativeCommand -File "node" -Arguments @("scripts/find-unreferenced-vue-components.mjs")) -ne 0) {
         Write-Host "未引用组件诊断脚本返回非零状态，已作为非阻断提示处理。" -ForegroundColor DarkYellow
     }
 } catch {
@@ -33,8 +83,7 @@ try {
 # 3. Vue 控件可访问性诊断（非阻断）
 Write-Host "`n[3/6] Vue 控件可访问性诊断..." -ForegroundColor Yellow
 try {
-    node scripts/find-inaccessible-vue-controls.mjs 2>&1 | Write-Host
-    if ($LASTEXITCODE -ne 0) {
+    if ((Invoke-LoggedNativeCommand -File "node" -Arguments @("scripts/find-inaccessible-vue-controls.mjs")) -ne 0) {
         Write-Host "Vue 控件可访问性诊断脚本返回非零状态，已作为非阻断提示处理。" -ForegroundColor DarkYellow
     }
 } catch {
@@ -43,55 +92,58 @@ try {
 
 # 4. 后端测试
 Write-Host "`n[4/6] 后端测试..." -ForegroundColor Yellow
-Push-Location backend
 try {
-    $prevEAP = $ErrorActionPreference
-    $ErrorActionPreference = "Continue"
-    $testOutput = npm test 2>&1
-    $testOutput | Write-Host
-    $ErrorActionPreference = $prevEAP
-    if ($LASTEXITCODE -ne 0) { $failures += "后端测试失败" }
+    if ((Invoke-LoggedNativeCommand -File "npm" -WorkingDirectory "backend" -Arguments @("test")) -ne 0) {
+        $failures += "后端测试失败"
+    }
 } catch {
-    $ErrorActionPreference = $prevEAP
-    if ($LASTEXITCODE -ne 0) { $failures += "后端测试执行异常: $_" }
+    $failures += "后端测试执行异常: $_"
 }
-Pop-Location
 
 # 5. 前端构建
 Write-Host "`n[5/6] 前端构建..." -ForegroundColor Yellow
-Push-Location frontend
 try {
-    $prevEAP = $ErrorActionPreference
-    $ErrorActionPreference = "Continue"
-    $buildOutput = npm run build 2>&1
-    $buildOutput | Write-Host
-    $ErrorActionPreference = $prevEAP
-    if ($LASTEXITCODE -ne 0) { $failures += "前端构建失败" }
+    if ((Invoke-LoggedNativeCommand -File "npm" -WorkingDirectory "frontend" -Arguments @("run", "build")) -ne 0) {
+        $failures += "前端构建失败"
+    }
 } catch {
-    $ErrorActionPreference = $prevEAP
-    if ($LASTEXITCODE -ne 0) { $failures += "前端构建执行异常: $_" }
+    $failures += "前端构建执行异常: $_"
 }
-Pop-Location
 
 # 6. Git 状态检查
 Write-Host "`n[6/6] Git 状态检查..." -ForegroundColor Yellow
-$gitStatus = git status --short 2>&1
-if ($gitStatus) {
-    Write-Host "变更文件:" -ForegroundColor Gray
-    $gitStatus | Write-Host
+try {
+    if ((Invoke-LoggedNativeCommand -File "git" -Arguments @("diff", "--check")) -ne 0) {
+        $failures += "Git working tree diff whitespace check failed"
+    }
+
+    if ((Invoke-LoggedNativeCommand -File "git" -Arguments @("diff", "--cached", "--check")) -ne 0) {
+        $failures += "Git staged diff whitespace check failed"
+    }
+
+    $gitStatusResult = Invoke-CapturedNativeCommand -File "git" -Arguments @("status", "--short")
+    if ($gitStatusResult.ExitCode -ne 0) {
+        $failures += "Git status check failed"
+    } elseif ($gitStatusResult.Output) {
+        Write-Host "变更文件:" -ForegroundColor Gray
+        $gitStatusResult.Output | Write-Host
+    }
+} catch {
+    $failures += "Git status checks failed: $_"
 }
 
 # 输出结果
 Write-Host "`n=== 审核结果 ===" -ForegroundColor Cyan
 if ($failures.Count -eq 0) {
     Write-Host "PASS ✅" -ForegroundColor Green
-    Pop-Location
     exit 0
 } else {
     Write-Host "FAIL ❌" -ForegroundColor Red
     foreach ($f in $failures) {
         Write-Host "  - $f" -ForegroundColor Red
     }
-    Pop-Location
     exit 1
+}
+} finally {
+    Pop-Location
 }

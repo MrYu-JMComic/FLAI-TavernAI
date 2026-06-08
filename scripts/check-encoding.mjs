@@ -4,6 +4,16 @@ import { fileURLToPath } from 'node:url';
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
+function comparePathText(left, right) {
+  if (left < right) {
+    return -1;
+  }
+  if (left > right) {
+    return 1;
+  }
+  return 0;
+}
+
 const scannedExtensions = new Set([
   '.cjs',
   '.css',
@@ -45,7 +55,19 @@ const suspiciousCodePoints = [
   0x9358, 0x93c2
 ];
 
-const suspiciousChars = new Set(suspiciousCodePoints.map((point) => String.fromCodePoint(point)));
+const suspiciousChars = new Set();
+for (const point of suspiciousCodePoints) {
+  suspiciousChars.add(String.fromCodePoint(point));
+}
+
+function hasSuspiciousChar(text) {
+  for (const char of text) {
+    if (suspiciousChars.has(char)) {
+      return true;
+    }
+  }
+  return false;
+}
 
 function shouldSkipDirectory(dir) {
   const name = path.basename(dir);
@@ -61,7 +83,10 @@ function* walk(dir) {
     return;
   }
 
-  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+  const entries = readdirSync(dir, { withFileTypes: true })
+    .sort((left, right) => comparePathText(left.name, right.name));
+
+  for (const entry of entries) {
     const entryPath = path.join(dir, entry.name);
     if (entry.isDirectory()) {
       yield* walk(entryPath);
@@ -73,19 +98,35 @@ function* walk(dir) {
   }
 }
 
-function findSuspiciousLines(filePath) {
-  const buffer = readFileSync(filePath);
-  const text = buffer.toString('utf8');
-  const lines = text.split(/\r?\n/);
-  const hits = [];
+function getLineReportText(text, start, end) {
+  const normalizedEnd = end > start && text[end - 1] === '\r' ? end - 1 : end;
+  return text.slice(start, normalizedEnd).trim().slice(0, 180);
+}
 
-  for (let index = 0; index < lines.length; index += 1) {
-    const line = lines[index];
-    if ([...line].some((char) => suspiciousChars.has(char))) {
-      hits.push({
-        line: index + 1,
-        text: line.trim().slice(0, 180)
-      });
+function findSuspiciousLines(filePath) {
+  const text = readFileSync(filePath, 'utf8');
+  const hits = [];
+  let lineNumber = 1;
+  let lineStart = 0;
+  let lineHasSuspiciousChar = false;
+
+  for (let index = 0; index <= text.length; index += 1) {
+    const char = text[index];
+    if (char === '\n' || index === text.length) {
+      if (lineHasSuspiciousChar) {
+        hits.push({
+          line: lineNumber,
+          text: getLineReportText(text, lineStart, index)
+        });
+      }
+      lineNumber += 1;
+      lineStart = index + 1;
+      lineHasSuspiciousChar = false;
+      continue;
+    }
+
+    if (!lineHasSuspiciousChar && hasSuspiciousChar(char)) {
+      lineHasSuspiciousChar = true;
     }
   }
 

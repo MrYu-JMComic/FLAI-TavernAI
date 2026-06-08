@@ -30,6 +30,18 @@ test('ChatModelSwitcher locks model selection while saving', () => {
   assert.match(stylesSource, /\.chat-model-option:disabled/);
 });
 
+test('ChatModelSwitcher filters model search results without model-options filter callbacks', () => {
+  assert.match(
+    chatModelSwitcherScript,
+    /const filteredModels = computed\(\(\) => filterModelOptions\(modelOptions\.value, search\.value\)\);/
+  );
+  assert.match(
+    chatModelSwitcherScript,
+    /function filterModelOptions\(options, rawKeyword\) \{\s*const currentOptions = Array\.isArray\(options\) \? options : \[\];\s*const keyword = String\(rawKeyword \|\| ''\)\.trim\(\)\.toLowerCase\(\);[\s\S]*if \(!keyword\) \{\s*return currentOptions;\s*\}[\s\S]*const matches = \[\];\s*for \(const model of currentOptions\) \{[\s\S]*matches\.push\(model\);[\s\S]*\}\s*return matches;\s*\}/
+  );
+  assert.doesNotMatch(chatModelSwitcherScript, /modelOptions\.value\.filter\(/);
+});
+
 test('ChatView guards model switcher refresh and save handlers while work is pending', () => {
   assert.match(
     chatViewScript,

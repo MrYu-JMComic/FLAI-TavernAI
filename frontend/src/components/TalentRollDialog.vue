@@ -166,6 +166,33 @@ function sameTalentSummary(current = {}, next = {}) {
     && String(current?.talentEffect || '') === String(next?.talentEffect || '');
 }
 
+function isCurrentPoolId(poolId) {
+  const id = String(poolId || '');
+  return Boolean(id && pools.value.some((pool) => pool?.id === id));
+}
+
+function isCurrentTalentId(talentId) {
+  const id = String(talentId || '');
+  const characterId = props.characterId;
+  return Boolean(id && characterId && talents.value.some((talent) => talent?.id === id && talent?.characterId === characterId));
+}
+
+function removeTalentByIdIfPresent(talentId) {
+  const nextTalents = [];
+  let changed = false;
+  for (const talent of talents.value) {
+    if (talent?.id === talentId) {
+      changed = true;
+    } else {
+      nextTalents.push(talent);
+    }
+  }
+  if (changed) {
+    setTalentsIfChanged(nextTalents);
+  }
+  return changed;
+}
+
 function rarityClass(rarity) {
   return `rarity-${rarity || 'common'}`;
 }
@@ -183,7 +210,7 @@ async function doRoll() {
     notify.warning('只有角色拥有者可以 Roll 天赋');
     return;
   }
-  if (!selectedPoolId.value) {
+  if (!isCurrentPoolId(selectedPoolId.value)) {
     notify.warning('请先选择一个天赋池');
     return;
   }
@@ -196,7 +223,7 @@ async function doRoll() {
 
   // Artificial delay for animation
   await new Promise((r) => setTimeout(r, 1200));
-  if (!isCurrentDialogContext(context)) {
+  if (!isCurrentDialogContext(context) || selectedPoolId.value !== poolId || !isCurrentPoolId(poolId)) {
     return;
   }
 
@@ -221,7 +248,7 @@ async function doRoll() {
 }
 
 async function removeTalent(talentId) {
-  if (!props.canEdit || talentActionBusy.value) {
+  if (!props.canEdit || talentActionBusy.value || !isCurrentTalentId(talentId)) {
     return;
   }
   const context = getDialogContext();
@@ -231,7 +258,7 @@ async function removeTalent(talentId) {
     if (!isCurrentDialogContext(context)) {
       return;
     }
-    setTalentsIfChanged(talents.value.filter((t) => t.id !== talentId));
+    removeTalentByIdIfPresent(talentId);
     emit('updated');
     notify.success('天赋已移除');
   } catch (err) {
@@ -246,7 +273,9 @@ async function removeTalent(talentId) {
 }
 
 async function clearAll() {
-  if (!props.canEdit || talentActionBusy.value) return;
+  if (!props.canEdit || talentActionBusy.value) {
+    return;
+  }
   if (!talents.value.length) return;
   if (!window.confirm('确定清空这个角色的全部天赋吗？')) return;
   const context = getDialogContext();
@@ -322,7 +351,7 @@ function requestClose() {
             <button
               class="primary-button roll-button"
               type="button"
-              :disabled="talentActionBusy || !pools.length || !selectedPoolId"
+              :disabled="talentActionBusy || !pools.length || !selectedPool"
               :aria-busy="rolling"
               @click="doRoll"
             >

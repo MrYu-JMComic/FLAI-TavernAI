@@ -46,17 +46,23 @@ export function addNpcMemory(database, userId, conversationId, npcName, payload 
   return toNpcMemory(database.prepare('SELECT * FROM npc_memories WHERE id = ?').get(id));
 }
 
-export function deleteNpcMemory(database, userId, conversationId, memoryId) {
+export function deleteNpcMemory(database, userId, conversationId, memoryId, npcName = '') {
+  const scopedNpcName = String(npcName || '');
   const row = database
     .prepare(
       `SELECT npc_memories.id FROM npc_memories
        JOIN conversations ON conversations.id = npc_memories.conversation_id
-       WHERE npc_memories.id = ? AND npc_memories.conversation_id = ? AND conversations.user_id = ?`
+       WHERE npc_memories.id = ?
+         AND npc_memories.conversation_id = ?
+         AND conversations.user_id = ?
+         AND (? = '' OR npc_memories.npc_name = ?)`
     )
-    .get(memoryId, conversationId, userId);
+    .get(memoryId, conversationId, userId, scopedNpcName, scopedNpcName);
   if (!row) return false;
 
-  const result = database.prepare('DELETE FROM npc_memories WHERE id = ?').run(memoryId);
+  const result = database
+    .prepare('DELETE FROM npc_memories WHERE id = ? AND conversation_id = ? AND (? = \'\' OR npc_name = ?)')
+    .run(memoryId, conversationId, scopedNpcName, scopedNpcName);
   return result.changes > 0;
 }
 
@@ -95,18 +101,19 @@ export function addNpcBehavior(database, userId, conversationId, npcName, payloa
   return toNpcBehavior(database.prepare('SELECT * FROM npc_behaviors WHERE id = ?').get(id));
 }
 
-export function updateNpcBehavior(database, userId, conversationId, behaviorId, payload = {}) {
+export function updateNpcBehavior(database, userId, conversationId, behaviorId, payload = {}, npcName = '') {
   payload = normalizePayload(payload);
-  const row = database
+  const scopedNpcName = String(npcName || '');
+  const existing = database
     .prepare(
-      `SELECT npc_behaviors.id FROM npc_behaviors
+      `SELECT npc_behaviors.* FROM npc_behaviors
        JOIN conversations ON conversations.id = npc_behaviors.conversation_id
-       WHERE npc_behaviors.id = ? AND npc_behaviors.conversation_id = ? AND conversations.user_id = ?`
+       WHERE npc_behaviors.id = ?
+         AND npc_behaviors.conversation_id = ?
+         AND conversations.user_id = ?
+         AND (? = '' OR npc_behaviors.npc_name = ?)`
     )
-    .get(behaviorId, conversationId, userId);
-  if (!row) return null;
-
-  const existing = database.prepare('SELECT * FROM npc_behaviors WHERE id = ?').get(behaviorId);
+    .get(behaviorId, conversationId, userId, scopedNpcName, scopedNpcName);
   if (!existing) return null;
 
   const behaviorType = payload.behaviorType !== undefined ? normalizeBehaviorType(payload.behaviorType) : existing.behavior_type;
@@ -115,28 +122,37 @@ export function updateNpcBehavior(database, userId, conversationId, behaviorId, 
   const priority = payload.priority !== undefined ? clampInteger(payload.priority, 0, 100, existing.priority) : existing.priority;
   const enabled = payload.enabled !== undefined ? (normalizeBoolean(payload.enabled, existing.enabled) ? 1 : 0) : existing.enabled;
 
-  database
+  const result = database
     .prepare(
       `UPDATE npc_behaviors
        SET behavior_type = ?, trigger_condition = ?, action = ?, priority = ?, enabled = ?
-       WHERE id = ?`
+       WHERE id = ? AND conversation_id = ? AND (? = '' OR npc_name = ?)`
     )
-    .run(behaviorType, triggerCondition, action, priority, enabled, behaviorId);
+    .run(behaviorType, triggerCondition, action, priority, enabled, behaviorId, conversationId, scopedNpcName, scopedNpcName);
+  if (result.changes === 0) return null;
 
-  return toNpcBehavior(database.prepare('SELECT * FROM npc_behaviors WHERE id = ?').get(behaviorId));
+  return toNpcBehavior(database
+    .prepare('SELECT * FROM npc_behaviors WHERE id = ? AND conversation_id = ? AND (? = \'\' OR npc_name = ?)')
+    .get(behaviorId, conversationId, scopedNpcName, scopedNpcName));
 }
 
-export function deleteNpcBehavior(database, userId, conversationId, behaviorId) {
+export function deleteNpcBehavior(database, userId, conversationId, behaviorId, npcName = '') {
+  const scopedNpcName = String(npcName || '');
   const row = database
     .prepare(
       `SELECT npc_behaviors.id FROM npc_behaviors
        JOIN conversations ON conversations.id = npc_behaviors.conversation_id
-       WHERE npc_behaviors.id = ? AND npc_behaviors.conversation_id = ? AND conversations.user_id = ?`
+       WHERE npc_behaviors.id = ?
+         AND npc_behaviors.conversation_id = ?
+         AND conversations.user_id = ?
+         AND (? = '' OR npc_behaviors.npc_name = ?)`
     )
-    .get(behaviorId, conversationId, userId);
+    .get(behaviorId, conversationId, userId, scopedNpcName, scopedNpcName);
   if (!row) return false;
 
-  const result = database.prepare('DELETE FROM npc_behaviors WHERE id = ?').run(behaviorId);
+  const result = database
+    .prepare('DELETE FROM npc_behaviors WHERE id = ? AND conversation_id = ? AND (? = \'\' OR npc_name = ?)')
+    .run(behaviorId, conversationId, scopedNpcName, scopedNpcName);
   return result.changes > 0;
 }
 

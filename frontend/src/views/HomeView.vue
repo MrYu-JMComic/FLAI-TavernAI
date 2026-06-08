@@ -69,6 +69,7 @@ const CARD_ESTIMATED_HEIGHT = 372;
 const MOBILE_CARD_ESTIMATED_HEIGHT = 436;
 const GRID_GAP = 18;
 const HOT_TAG_RANDOM_POOL_LIMIT = 24;
+const CHARACTER_CARD_TAG_LIMIT = 5;
 const SEARCH_LOAD_DEBOUNCE_MS = 180;
 const hotTagSeed = ref('');
 
@@ -77,17 +78,10 @@ const columnsPerRow = computed(() => {
   return Math.max(1, Math.floor((width + GRID_GAP) / (CARD_MIN_WIDTH + GRID_GAP)));
 });
 
-const characterRows = computed(() => {
-  const cols = columnsPerRow.value;
-  const rows = [];
-  for (let index = 0; index < characters.value.length; index += cols) {
-    rows.push(characters.value.slice(index, index + cols));
-  }
-  return rows;
-});
+const characterRowCount = computed(() => Math.ceil(characters.value.length / columnsPerRow.value));
 
 const virtualizerOptions = computed(() => ({
-  count: characterRows.value.length,
+  count: characterRowCount.value,
   getScrollElement: () => scrollContainerRef.value,
   estimateSize: () => (containerWidth.value && containerWidth.value < 620 ? MOBILE_CARD_ESTIMATED_HEIGHT : CARD_ESTIMATED_HEIGHT) + GRID_GAP,
   measureElement,
@@ -97,9 +91,10 @@ const virtualizerOptions = computed(() => ({
 const rowVirtualizer = useVirtualizer(virtualizerOptions);
 
 const homeStats = computed(() => {
-  const total = characters.value.length;
-  const publicCount = characters.value.filter((item) => item.visibility === 'public').length;
-  const favoriteCount = characters.value.filter((item) => item.favoritedByMe).length;
+  const stats = countHomeCharacterStats(characters.value);
+  const total = stats.total;
+  const publicCount = stats.publicCount;
+  const favoriteCount = stats.favoriteCount;
   return [
     { label: '全部角色', value: total },
     { label: '公开角色', value: publicCount },
@@ -139,12 +134,7 @@ const hotTagDisplayLimit = computed(() => {
   return 12;
 });
 
-const popularTags = computed(() => (
-  tags.value
-    .filter((tag) => Number(tag?.usageCount || 0) > 0)
-    .slice()
-    .sort(compareTagPopularity)
-));
+const popularTags = computed(() => collectPopularTags(tags.value));
 
 const selectedHotTag = computed(() => {
   if (!selectedTag.value) {
@@ -159,16 +149,7 @@ const topTags = computed(() => {
   if (source.length <= limit) {
     return pinSelectedHotTag(source, selectedHotTag.value, limit);
   }
-  const pool = source.slice(0, Math.max(limit, HOT_TAG_RANDOM_POOL_LIMIT));
-  const randomizedTags = pool
-    .map((tag, index) => ({
-      tag,
-      score: hashHotTag(`${hotTagSeed.value}:${tag.id || tag.name}:${index}`)
-    }))
-    .sort((left, right) => left.score - right.score)
-    .slice(0, limit)
-    .map((item) => item.tag)
-    .sort(compareTagPopularity);
+  const randomizedTags = pickRandomizedHotTags(source, hotTagSeed.value, limit);
   return pinSelectedHotTag(randomizedTags, selectedHotTag.value, limit);
 });
 
@@ -201,6 +182,12 @@ function measureVirtualRow(element) {
   rowVirtualizer.value?.measureElement(element);
 }
 
+function getCharacterRowItems(rowIndex) {
+  const normalizedRowIndex = Math.max(0, Math.floor(Number(rowIndex) || 0));
+  const startIndex = normalizedRowIndex * columnsPerRow.value;
+  return characters.value.slice(startIndex, startIndex + columnsPerRow.value);
+}
+
 function refreshHotTagSeed() {
   hotTagSeed.value = `${Date.now()}:${Math.random()}`;
 }
@@ -211,6 +198,37 @@ function compareTagPopularity(left, right) {
     return usageDelta;
   }
   return String(left?.name || '').localeCompare(String(right?.name || ''), 'zh-Hans');
+}
+
+function collectPopularTags(sourceTags) {
+  const nextTags = [];
+  const list = Array.isArray(sourceTags) ? sourceTags : [];
+  for (const tag of list) {
+    if (Number(tag?.usageCount || 0) > 0) {
+      nextTags.push(tag);
+    }
+  }
+  return nextTags.sort(compareTagPopularity);
+}
+
+function pickRandomizedHotTags(sourceTags, seed, limit) {
+  const poolLimit = Math.max(limit, HOT_TAG_RANDOM_POOL_LIMIT);
+  const poolSize = Math.min(sourceTags.length, poolLimit);
+  const scoredTags = [];
+  for (let index = 0; index < poolSize; index += 1) {
+    const tag = sourceTags[index];
+    scoredTags.push({
+      tag,
+      score: hashHotTag(`${seed}:${tag.id || tag.name}:${index}`)
+    });
+  }
+  scoredTags.sort((left, right) => left.score - right.score);
+  const nextTags = [];
+  const count = Math.min(limit, scoredTags.length);
+  for (let index = 0; index < count; index += 1) {
+    nextTags.push(scoredTags[index].tag);
+  }
+  return nextTags.sort(compareTagPopularity);
 }
 
 function pinSelectedHotTag(list, selected, limit) {
@@ -227,6 +245,25 @@ function pinSelectedHotTag(list, selected, limit) {
 
 function isSameTag(left, right) {
   return Boolean(left?.id && right?.id && left.id === right.id) || left?.name === right?.name;
+}
+
+function countHomeCharacterStats(items) {
+  const stats = {
+    total: 0,
+    publicCount: 0,
+    favoriteCount: 0
+  };
+  const list = Array.isArray(items) ? items : [];
+  for (const item of list) {
+    stats.total += 1;
+    if (item?.visibility === 'public') {
+      stats.publicCount += 1;
+    }
+    if (item?.favoritedByMe) {
+      stats.favoriteCount += 1;
+    }
+  }
+  return stats;
 }
 
 function setCharactersIfChanged(nextCharacters) {
@@ -249,6 +286,26 @@ function setTagsIfChanged(nextTags) {
   return true;
 }
 
+function updateCharacterByIdIfChanged(nextCharacter) {
+  const targetId = String(nextCharacter?.id || '');
+  if (!targetId) {
+    return false;
+  }
+  const currentCharacters = Array.isArray(characters.value) ? characters.value : [];
+  for (let index = 0; index < currentCharacters.length; index += 1) {
+    const character = currentCharacters[index];
+    if (String(character?.id || '') !== targetId) continue;
+    const mergedCharacter = { ...character, ...nextCharacter };
+    if (sameCharacterSummary(character, mergedCharacter)) {
+      return false;
+    }
+    const nextCharacters = currentCharacters.slice();
+    nextCharacters[index] = mergedCharacter;
+    return setCharactersIfChanged(nextCharacters);
+  }
+  return false;
+}
+
 function sameListItems(currentItems, nextItems, sameItem) {
   if (currentItems === nextItems) {
     return true;
@@ -256,7 +313,12 @@ function sameListItems(currentItems, nextItems, sameItem) {
   if (currentItems.length !== nextItems.length) {
     return false;
   }
-  return currentItems.every((item, index) => sameItem(item, nextItems[index]));
+  for (let index = 0; index < currentItems.length; index += 1) {
+    if (!sameItem(currentItems[index], nextItems[index])) {
+      return false;
+    }
+  }
+  return true;
 }
 
 function sameCharacterSummary(current = {}, next = {}) {
@@ -273,7 +335,7 @@ function sameCharacterSummary(current = {}, next = {}) {
     && String(current?.age || '') === String(next?.age || '')
     && String(current?.persona || '') === String(next?.persona || '')
     && String(current?.background || '') === String(next?.background || '')
-    && sameListItems(normalizeCharacterTagList(current), normalizeCharacterTagList(next), sameTagSummary);
+    && sameCharacterTags(current, next);
 }
 
 function sameTagSummary(current = {}, next = {}) {
@@ -283,11 +345,37 @@ function sameTagSummary(current = {}, next = {}) {
     && Number(current?.usageCount || 0) === Number(next?.usageCount || 0);
 }
 
-function normalizeCharacterTagList(character = {}) {
-  if (Array.isArray(character.characterTags) && character.characterTags.length) {
-    return character.characterTags;
+function sameCharacterTags(current = {}, next = {}) {
+  const currentCharacterTags = Array.isArray(current?.characterTags) ? current.characterTags : [];
+  const currentUsesCharacterTags = currentCharacterTags.length > 0;
+  const currentTags = currentUsesCharacterTags ? currentCharacterTags : (Array.isArray(current?.tags) ? current.tags : []);
+  const nextCharacterTags = Array.isArray(next?.characterTags) ? next.characterTags : [];
+  const nextUsesCharacterTags = nextCharacterTags.length > 0;
+  const nextTags = nextUsesCharacterTags ? nextCharacterTags : (Array.isArray(next?.tags) ? next.tags : []);
+  if (currentTags.length !== nextTags.length) {
+    return false;
   }
-  return Array.isArray(character.tags) ? character.tags.map((name) => ({ name })) : [];
+  for (let index = 0; index < currentTags.length; index += 1) {
+    if (!sameCharacterTagSummary(currentTags[index], currentUsesCharacterTags, nextTags[index], nextUsesCharacterTags)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function sameCharacterTagSummary(currentTag, currentStructured, nextTag, nextStructured) {
+  const currentId = currentStructured ? currentTag?.id : '';
+  const nextId = nextStructured ? nextTag?.id : '';
+  const currentName = currentStructured ? currentTag?.name : currentTag;
+  const nextName = nextStructured ? nextTag?.name : nextTag;
+  const currentColor = currentStructured ? currentTag?.color : '';
+  const nextColor = nextStructured ? nextTag?.color : '';
+  const currentUsage = currentStructured ? currentTag?.usageCount : 0;
+  const nextUsage = nextStructured ? nextTag?.usageCount : 0;
+  return String(currentId || '') === String(nextId || '')
+    && String(currentName || '') === String(nextName || '')
+    && String(currentColor || '') === String(nextColor || '')
+    && Number(currentUsage || 0) === Number(nextUsage || 0);
 }
 
 function hashHotTag(value = '') {
@@ -578,9 +666,7 @@ function isReactionPending(character, type) {
 }
 
 function mergeCharacter(nextCharacter) {
-  setCharactersIfChanged(characters.value.map((character) => (
-    character.id === nextCharacter.id ? { ...character, ...nextCharacter } : character
-  )));
+  updateCharacterByIdIfChanged(nextCharacter);
 }
 
 async function handleImportFile(event) {
@@ -646,15 +732,31 @@ function visibilityLabel(character) {
 }
 
 function getCharacterTags(character) {
-  const source = (character.characterTags || []).length
-    ? character.characterTags
-    : (character.tags || []).map((name) => ({ name }));
-  return source.slice(0, 5);
+  const nextTags = [];
+  const characterTags = Array.isArray(character?.characterTags) ? character.characterTags : [];
+  if (characterTags.length) {
+    for (let index = 0; index < characterTags.length && nextTags.length < CHARACTER_CARD_TAG_LIMIT; index += 1) {
+      nextTags.push(characterTags[index]);
+    }
+    return nextTags;
+  }
+  const tagNames = Array.isArray(character?.tags) ? character.tags : [];
+  for (let index = 0; index < tagNames.length && nextTags.length < CHARACTER_CARD_TAG_LIMIT; index += 1) {
+    nextTags.push({ name: tagNames[index] });
+  }
+  return nextTags;
 }
 
 function getExtraTagCount(character) {
-  const count = (character.characterTags || character.tags || []).length;
-  return Math.max(0, count - 5);
+  return Math.max(0, countCharacterTags(character) - CHARACTER_CARD_TAG_LIMIT);
+}
+
+function countCharacterTags(character) {
+  const characterTags = Array.isArray(character?.characterTags) ? character.characterTags : [];
+  if (characterTags.length) {
+    return characterTags.length;
+  }
+  return Array.isArray(character?.tags) ? character.tags.length : 0;
 }
 
 function getInitial(name) {
@@ -921,7 +1023,7 @@ function formatCount(value) {
             paddingBottom: GRID_GAP + 'px'
           }"
         >
-          <article v-for="character in characterRows[virtualRow.index]" :key="character.id" class="home-character-card">
+          <article v-for="character in getCharacterRowItems(virtualRow.index)" :key="character.id" class="home-character-card">
             <div class="home-card-topline">
               <span class="home-visibility-badge" :class="character.visibility">{{ visibilityLabel(character) }}</span>
               <div class="home-reaction-group">

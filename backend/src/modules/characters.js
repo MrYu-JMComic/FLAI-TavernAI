@@ -20,6 +20,7 @@ const characterColumns = `characters.*,
   EXISTS(SELECT 1 FROM character_favorites WHERE user_id = ? AND character_id = characters.id) AS favorited_by_me`;
 const avatarAssetJoin =
   "LEFT JOIN avatar_assets ON avatar_assets.owner_type = 'character' AND avatar_assets.owner_id = characters.id";
+const MAX_CHARACTER_TAGS = 12;
 
 export function listCharacters(database, userId, options = {}) {
   const { search = '', sort = 'created', tag = '' } = options ?? {};
@@ -465,15 +466,37 @@ function normalizeVisibility(value) {
 }
 
 function normalizeTags(tags) {
+  const normalized = [];
   if (Array.isArray(tags)) {
-    return tags.map((tag) => String(tag).trim()).filter(Boolean).slice(0, 12);
+    for (const tag of tags) {
+      if (appendNormalizedTag(normalized, tag)) {
+        break;
+      }
+    }
+    return normalized;
   }
 
-  return String(tags || '')
-    .split(',')
-    .map((tag) => tag.trim())
-    .filter(Boolean)
-    .slice(0, 12);
+  const value = String(tags || '');
+  let start = 0;
+  for (let index = 0; index <= value.length; index += 1) {
+    if (index < value.length && value[index] !== ',') {
+      continue;
+    }
+    if (appendNormalizedTag(normalized, value.slice(start, index))) {
+      break;
+    }
+    start = index + 1;
+  }
+  return normalized;
+}
+
+function appendNormalizedTag(tags, value) {
+  const tag = String(value).trim();
+  if (!tag) {
+    return false;
+  }
+  tags.push(tag);
+  return tags.length >= MAX_CHARACTER_TAGS;
 }
 
 function normalizeRegexRules(rules = []) {

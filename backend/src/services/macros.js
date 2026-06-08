@@ -19,9 +19,45 @@ function pad2(n) {
   return String(n).padStart(2, '0');
 }
 
-function randomChoice(items) {
-  if (!items.length) return '';
-  return items[Math.floor(Math.random() * items.length)];
+function randomChoiceFromPipeList(value) {
+  const text = String(value || '');
+  let choiceCount = 0;
+  scanPipeChoices(text, (choice) => {
+    if (choice) {
+      choiceCount += 1;
+    }
+    return false;
+  });
+  if (!choiceCount) return '';
+
+  const targetIndex = Math.floor(Math.random() * choiceCount);
+  let currentIndex = 0;
+  let selected = '';
+  scanPipeChoices(text, (choice) => {
+    if (!choice) {
+      return false;
+    }
+    if (currentIndex === targetIndex) {
+      selected = choice;
+      return true;
+    }
+    currentIndex += 1;
+    return false;
+  });
+  return selected;
+}
+
+function scanPipeChoices(text, visitor) {
+  let start = 0;
+  for (let index = 0; index <= text.length; index += 1) {
+    if (index < text.length && text[index] !== '|') {
+      continue;
+    }
+    if (visitor(text.slice(start, index).trim())) {
+      return;
+    }
+    start = index + 1;
+  }
 }
 
 function rollDice(spec) {
@@ -74,7 +110,7 @@ export function expandMacros(text, context = {}) {
         return charName || '角色';
       case 'random':
         if (!arg) return '';
-        return randomChoice(arg.split('|').map(s => s.trim()).filter(Boolean));
+        return randomChoiceFromPipeList(arg);
       case 'roll':
         return rollDice(arg);
       case 'date':

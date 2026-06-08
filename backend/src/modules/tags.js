@@ -4,6 +4,7 @@ import { withSavepoint } from './savepoint.js';
 // ── Tag CRUD ──
 
 const MAX_TAG_LIST_LIMIT = 500;
+const MAX_CHARACTER_TAG_NAMES = 12;
 
 export function listTags(database, userId, options = {}) {
   const limit = normalizeTagListLimit(options.limit);
@@ -61,7 +62,19 @@ export function setCharacterTags(database, userId, characterId, tagNames) {
     database.prepare('DELETE FROM character_tags WHERE character_id = ?').run(characterId);
 
     if (Array.isArray(tagNames) && tagNames.length > 0) {
-      const names = [...new Set(tagNames.map((n) => String(n).trim()).filter(Boolean))].slice(0, 12);
+      const names = [];
+      const seenNames = new Set();
+      for (const tagName of tagNames) {
+        const name = String(tagName).trim();
+        if (!name || seenNames.has(name)) {
+          continue;
+        }
+        seenNames.add(name);
+        names.push(name);
+        if (names.length >= MAX_CHARACTER_TAG_NAMES) {
+          break;
+        }
+      }
       const insertTag = database.prepare(
         'INSERT OR IGNORE INTO tags (id, user_id, name, color, created_at) VALUES (?, ?, ?, ?, ?)'
       );

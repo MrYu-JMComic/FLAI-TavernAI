@@ -94,7 +94,7 @@ async function refreshSession() {
     if (!isCurrentAuthScope(authScope)) {
       return;
     }
-    user.value = result.user;
+    setUserIfChanged(result.user);
     if (user.value) {
       await refreshProvider(authScope);
       if (!isCurrentAuthScope(authScope)) {
@@ -111,8 +111,8 @@ async function refreshSession() {
     if (!isCurrentAuthScope(authScope)) {
       return;
     }
-    user.value = null;
-    provider.value = null;
+    setUserIfChanged(null);
+    setProviderIfChanged(null);
     clearNotifications();
     if (!isAuthRoute.value) {
       navigate('login');
@@ -131,15 +131,15 @@ async function refreshProvider(authScope = authScopeVersion) {
   if (requestId !== providerRequestId || !isCurrentAuthScope(authScope) || !user.value) {
     return false;
   }
-  provider.value = nextProvider;
+  setProviderIfChanged(nextProvider);
   return true;
 }
 
 async function handleAuthenticated(result) {
   const authScope = resetAuthScope();
   clearNotifications();
-  user.value = result.user;
-  provider.value = null;
+  setUserIfChanged(result.user);
+  setProviderIfChanged(null);
   await refreshProvider(authScope);
   if (!isCurrentAuthScope(authScope)) {
     return;
@@ -149,15 +149,15 @@ async function handleAuthenticated(result) {
 
 function handleProfileSaved(nextUser) {
   if (nextUser?.id && user.value?.id === nextUser.id) {
-    user.value = nextUser;
+    setUserIfChanged(nextUser);
   }
 }
 
 async function handleLogout() {
   const authScope = resetAuthScope();
   clearNotifications();
-  user.value = null;
-  provider.value = null;
+  setUserIfChanged(null);
+  setProviderIfChanged(null);
   navigate('login');
   await logoutRequest().catch(() => null);
   if (!isCurrentAuthScope(authScope)) {
@@ -173,6 +173,42 @@ function resetAuthScope() {
 
 function isCurrentAuthScope(authScope) {
   return authScope === authScopeVersion;
+}
+
+function setUserIfChanged(nextUser) {
+  return setRefIfPlainValueChanged(user, nextUser || null);
+}
+
+function setProviderIfChanged(nextProvider) {
+  return setRefIfPlainValueChanged(provider, nextProvider || null);
+}
+
+function setRefIfPlainValueChanged(valueRef, nextValue) {
+  if (samePlainValue(valueRef.value, nextValue)) {
+    return false;
+  }
+  valueRef.value = nextValue;
+  return true;
+}
+
+function samePlainValue(current, next) {
+  if (Object.is(current, next)) {
+    return true;
+  }
+  if (!current || !next || typeof current !== 'object' || typeof next !== 'object') {
+    return false;
+  }
+  if (Array.isArray(current) || Array.isArray(next)) {
+    return Array.isArray(current)
+      && Array.isArray(next)
+      && current.length === next.length
+      && current.every((item, index) => samePlainValue(item, next[index]));
+  }
+  const currentKeys = Object.keys(current);
+  const nextKeys = Object.keys(next);
+  return currentKeys.length === nextKeys.length
+    && currentKeys.every((key) => Object.prototype.hasOwnProperty.call(next, key)
+      && samePlainValue(current[key], next[key]));
 }
 
 function getRouteKey(value) {

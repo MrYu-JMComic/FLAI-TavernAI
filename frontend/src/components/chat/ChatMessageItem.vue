@@ -26,7 +26,9 @@ const props = defineProps({
   avatarUrl: { type: String, default: '' },
   canEdit: { type: Boolean, default: false },
   canDelete: { type: Boolean, default: false },
+  branchCan: { type: Boolean, default: true },
   messageActionBusy: { type: Boolean, default: false },
+  copyBusy: { type: Boolean, default: false },
   renderPlugins: { type: Array, default: () => [] },
   swipeDisplay: { type: String, default: '' },
   swipeCanPrev: { type: Boolean, default: false },
@@ -121,6 +123,8 @@ const emit = defineEmits([
           type="button"
           class="message-action-button"
           title="复制消息"
+          :disabled="copyBusy"
+          :aria-busy="copyBusy"
           @click="emit('copy', message)"
         >
           <Copy :size="14" />
@@ -175,7 +179,7 @@ const emit = defineEmits([
           class="message-action-button"
           type="button"
           aria-label="从此消息创建分支对话"
-          :disabled="branchBusy"
+          :disabled="!branchCan || branchBusy"
           title="从此消息创建分支对话"
           @click.stop="emit('branch', message)"
         >

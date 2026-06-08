@@ -395,7 +395,7 @@ async function checkBalance() {
   try {
     const nextBalance = await fetchDeepSeekBalance();
     if (!isCurrentBalanceLoadResult(requestToken)) return;
-    balance.value = nextBalance;
+    setBalanceIfChanged(nextBalance);
   } catch (err) {
     if (!isCurrentBalanceLoadResult(requestToken)) return;
     notify.error(err.message);
@@ -520,8 +520,8 @@ function resetSettingsAsyncScopes() {
 
 function applyProfile(result = {}) {
   applyProfileUser(result.user || {});
-  profileStats.value = result.stats || profileStats.value;
-  ownedCharacters.value = result.ownedCharacters || [];
+  setProfileStatsIfChanged(result.stats);
+  setOwnedCharactersIfChanged(result.ownedCharacters);
 }
 
 function applyProfileUser(user = {}) {
@@ -612,6 +612,22 @@ function sameListItems(currentList, nextList) {
     && currentList.every((item, index) => samePlainValue(item, nextList[index]));
 }
 
+function setPlainValueIfChanged(valueRef, nextValue) {
+  if (samePlainValue(valueRef.value, nextValue)) {
+    return false;
+  }
+  valueRef.value = nextValue;
+  return true;
+}
+
+function setBalanceIfChanged(nextBalance) {
+  return setPlainValueIfChanged(balance, nextBalance);
+}
+
+function setProfileStatsIfChanged(nextStats) {
+  return setPlainValueIfChanged(profileStats, nextStats || profileStats.value);
+}
+
 function setListIfChanged(listRef, nextList) {
   const normalizedNextList = Array.isArray(nextList) ? nextList : [];
   if (sameListItems(listRef.value, normalizedNextList)) {
@@ -619,6 +635,116 @@ function setListIfChanged(listRef, nextList) {
   }
   listRef.value = normalizedNextList;
   return true;
+}
+
+function prependListItemByIdWithLimit(listRef, nextItem, limit) {
+  const nextId = String(nextItem?.id || '');
+  const normalizedLimit = Math.max(0, Number(limit) || 0);
+  if (!nextId || normalizedLimit <= 0) {
+    return false;
+  }
+  const currentList = Array.isArray(listRef.value) ? listRef.value : [];
+  const nextList = [nextItem];
+  for (const item of currentList) {
+    if (item?.id === nextId) continue;
+    if (nextList.length >= normalizedLimit) break;
+    nextList.push(item);
+  }
+  return setListIfChanged(listRef, nextList);
+}
+
+function removeListItemByIdIfPresent(listRef, itemId) {
+  const targetId = String(itemId || '');
+  if (!targetId) {
+    return false;
+  }
+  const currentList = Array.isArray(listRef.value) ? listRef.value : [];
+  const nextList = [];
+  let changed = false;
+  for (const item of currentList) {
+    if (item?.id === targetId) {
+      changed = true;
+    } else {
+      nextList.push(item);
+    }
+  }
+  if (changed) {
+    setListIfChanged(listRef, nextList);
+  }
+  return changed;
+}
+
+function updateListItemByIdIfChanged(listRef, itemId, nextItem) {
+  const targetId = String(itemId || '');
+  if (!targetId) {
+    return false;
+  }
+  const currentList = Array.isArray(listRef.value) ? listRef.value : [];
+  const nextList = [];
+  let changed = false;
+  for (const item of currentList) {
+    if (item?.id === targetId) {
+      if (!samePlainValue(item, nextItem)) {
+        changed = true;
+        nextList.push(nextItem);
+      } else {
+        nextList.push(item);
+      }
+    } else {
+      nextList.push(item);
+    }
+  }
+  if (changed) {
+    setListIfChanged(listRef, nextList);
+  }
+  return changed;
+}
+
+function moveListItemToTargetIndexById(listRef, itemId, targetItemId) {
+  const sourceId = String(itemId || '');
+  const targetId = String(targetItemId || '');
+  if (!sourceId || !targetId || sourceId === targetId) {
+    return null;
+  }
+  const currentList = Array.isArray(listRef.value) ? listRef.value : [];
+  let fromIndex = -1;
+  let targetIndex = -1;
+  for (let index = 0; index < currentList.length; index += 1) {
+    const id = currentList[index]?.id;
+    if (id === sourceId) {
+      fromIndex = index;
+    } else if (id === targetId) {
+      targetIndex = index;
+    }
+  }
+  if (fromIndex === -1 || targetIndex === -1) {
+    return null;
+  }
+  const nextList = currentList.slice();
+  const [moved] = nextList.splice(fromIndex, 1);
+  nextList.splice(targetIndex, 0, moved);
+  const ids = [];
+  for (const item of nextList) {
+    ids.push(item.id);
+  }
+  setListIfChanged(listRef, nextList);
+  return { previousList: currentList, nextList, ids };
+}
+
+function setOwnedCharactersIfChanged(nextCharacters) {
+  return setListIfChanged(ownedCharacters, nextCharacters);
+}
+
+function setModCharacterOptionsIfChanged(characters) {
+  const nextOptions = [];
+  if (Array.isArray(characters)) {
+    for (const character of characters) {
+      if (character?.canUse !== false) {
+        nextOptions.push(character);
+      }
+    }
+  }
+  return setListIfChanged(modCharacterOptions, nextOptions);
 }
 
 function canUseNoAuthProvider() {
@@ -727,6 +853,11 @@ function isCurrentTagMutation(mutationToken) {
   return mutationToken === tagMutationToken && isExtensionsPage.value;
 }
 
+function getCurrentTag(id) {
+  const currentId = String(id || '');
+  return tagList.value.find((tag) => tag?.id === currentId) || null;
+}
+
 function updateTagLoadLimit() {
   if (tagControlsBusy.value) return;
   resetTagAsyncScope();
@@ -742,9 +873,7 @@ async function addTag() {
   try {
     const tag = await createTag({ name });
     if (!isCurrentTagMutation(mutationToken)) return;
-    const nextTags = [tag, ...tagList.value.filter((item) => item.id !== tag.id)]
-      .slice(0, normalizedTagLoadLimit.value);
-    setListIfChanged(tagList, nextTags);
+    prependListItemByIdWithLimit(tagList, tag, normalizedTagLoadLimit.value);
     newTagName.value = '';
     notify.success(`标签「${tag.name}」已创建`);
   } catch (err) {
@@ -779,17 +908,20 @@ function saveStoredTagLoadLimit(limit) {
 
 async function removeTag(id, name) {
   if (tagControlsBusy.value) return;
+  const currentTag = getCurrentTag(id);
+  if (!currentTag) return;
+  name = currentTag.name || name;
   if (!window.confirm(`确定删除标签「${name}」吗？关联的角色卡将失去此标签。`)) return;
-  const mutationToken = beginTagMutation(tagDeleteActionId(id));
+  const mutationToken = beginTagMutation(tagDeleteActionId(currentTag.id));
   try {
-    await deleteTag(id);
+    await deleteTag(currentTag.id);
     if (!isCurrentTagMutation(mutationToken)) return;
-    setListIfChanged(tagList, tagList.value.filter((t) => t.id !== id));
+    removeListItemByIdIfPresent(tagList, currentTag.id);
     notify.success(`标签「${name}」已删除`);
   } catch (err) {
     if (!isCurrentTagMutation(mutationToken)) return;
     if (/标签不存在/.test(err.message || '')) {
-      setListIfChanged(tagList, tagList.value.filter((t) => t.id !== id));
+      removeListItemByIdIfPresent(tagList, currentTag.id);
       notify.info(`标签「${name}」已从列表移除`);
       return;
     }
@@ -891,6 +1023,11 @@ function isCurrentPresetMutation(mutationToken) {
   return mutationToken === presetMutationToken && isExtensionsPage.value;
 }
 
+function getCurrentPreset(id) {
+  const currentId = String(id || '');
+  return presetList.value.find((preset) => preset?.id === currentId) || null;
+}
+
 function resetPresetForm() {
   Object.assign(presetForm, {
     name: '',
@@ -913,16 +1050,18 @@ function startNewPreset() {
 
 function startEditPreset(preset) {
   if (presetControlsBusy.value) return;
+  const currentPreset = getCurrentPreset(preset?.id);
+  if (!currentPreset) return;
   resetPresetMutationScope();
-  presetEditing.value = preset.id;
+  presetEditing.value = currentPreset.id;
   Object.assign(presetForm, {
-    name: preset.name,
-    systemPrompt: preset.systemPrompt,
-    temperature: preset.temperature,
-    maxTokens: preset.maxTokens,
-    topP: preset.topP,
-    frequencyPenalty: preset.frequencyPenalty,
-    presencePenalty: preset.presencePenalty
+    name: currentPreset.name,
+    systemPrompt: currentPreset.systemPrompt,
+    temperature: currentPreset.temperature,
+    maxTokens: currentPreset.maxTokens,
+    topP: currentPreset.topP,
+    frequencyPenalty: currentPreset.frequencyPenalty,
+    presencePenalty: currentPreset.presencePenalty
   });
   showPresetEditor.value = true;
 }
@@ -938,6 +1077,13 @@ function cancelPresetEdit() {
 async function savePreset() {
   if (presetControlsBusy.value) return;
   const editingId = presetEditing.value;
+  const editingPreset = editingId ? getCurrentPreset(editingId) : null;
+  if (editingId && !editingPreset) {
+    showPresetEditor.value = false;
+    presetEditing.value = null;
+    resetPresetForm();
+    return;
+  }
   const mutationToken = beginPresetMutation('preset-save');
   const payload = {
     name: presetForm.name,
@@ -950,7 +1096,7 @@ async function savePreset() {
   };
   try {
     if (editingId) {
-      await updatePreset(editingId, payload);
+      await updatePreset(editingPreset.id, payload);
       if (!isCurrentPresetMutation(mutationToken)) return;
       notify.success('预设已更新');
     } else {
@@ -973,13 +1119,16 @@ async function savePreset() {
 
 async function removePreset(id, name) {
   if (presetControlsBusy.value) return;
+  const currentPreset = getCurrentPreset(id);
+  if (!currentPreset) return;
+  name = currentPreset.name || name;
   if (!window.confirm(`确定删除预设「${name}」吗？`)) return;
-  const mutationToken = beginPresetMutation(presetDeleteActionId(id));
+  const mutationToken = beginPresetMutation(presetDeleteActionId(currentPreset.id));
   try {
-    await deletePreset(id);
+    await deletePreset(currentPreset.id);
     if (!isCurrentPresetMutation(mutationToken)) return;
-    setListIfChanged(presetList, presetList.value.filter((p) => p.id !== id));
-    if (presetEditing.value === id) {
+    removeListItemByIdIfPresent(presetList, currentPreset.id);
+    if (presetEditing.value === currentPreset.id) {
       showPresetEditor.value = false;
       presetEditing.value = null;
       resetPresetForm();
@@ -995,9 +1144,11 @@ async function removePreset(id, name) {
 
 async function makeDefaultPreset(id) {
   if (presetControlsBusy.value) return;
-  const mutationToken = beginPresetMutation(presetDefaultActionId(id));
+  const currentPreset = getCurrentPreset(id);
+  if (!currentPreset) return;
+  const mutationToken = beginPresetMutation(presetDefaultActionId(currentPreset.id));
   try {
-    await setDefaultPreset(id);
+    await setDefaultPreset(currentPreset.id);
     if (!isCurrentPresetMutation(mutationToken)) return;
     finishPresetMutation(mutationToken);
     await loadPresets();
@@ -1141,12 +1292,7 @@ async function loadModCharacterOptions() {
   try {
     const characters = await fetchCharacters({ sort: 'name' });
     if (!isCurrentModCharacterLoad(requestToken)) return;
-    setListIfChanged(
-      modCharacterOptions,
-      Array.isArray(characters)
-        ? characters.filter((character) => character?.canUse !== false)
-        : []
-    );
+    setModCharacterOptionsIfChanged(characters);
   } catch (err) {
     if (!isCurrentModCharacterLoad(requestToken)) return;
     modCharactersLoadError.value = loadFailureMessage(err, '角色加载失败');
@@ -1211,6 +1357,11 @@ function isCurrentModMutation(mutationToken) {
   return mutationToken === modMutationToken && isExtensionsPage.value;
 }
 
+function getCurrentMod(id) {
+  const currentId = String(id || '');
+  return modList.value.find((mod) => mod?.id === currentId) || null;
+}
+
 function resetModForm() {
   Object.assign(modForm, {
     name: '',
@@ -1239,16 +1390,18 @@ function startNewMod() {
 
 function startEditMod(mod) {
   if (modControlsBusy.value) return;
+  const currentMod = getCurrentMod(mod?.id);
+  if (!currentMod) return;
   resetModAsyncScope();
-  modEditing.value = mod.id;
+  modEditing.value = currentMod.id;
   Object.assign(modForm, {
-    name: mod.name,
-    description: mod.description,
-    type: mod.type,
-    content: mod.content,
-    enabled: mod.enabled,
-    scope: normalizeModScope(mod.scope, mod.characterIds),
-    characterIds: normalizeModCharacterIds(mod.characterIds)
+    name: currentMod.name,
+    description: currentMod.description,
+    type: currentMod.type,
+    content: currentMod.content,
+    enabled: currentMod.enabled,
+    scope: normalizeModScope(currentMod.scope, currentMod.characterIds),
+    characterIds: normalizeModCharacterIds(currentMod.characterIds)
   });
   showModEditor.value = true;
 }
@@ -1262,6 +1415,10 @@ function cancelModEdit() {
 async function saveMod() {
   if (modControlsBusy.value) return;
   const editingId = modEditing.value;
+  if (editingId && !getCurrentMod(editingId)) {
+    closeModEditor();
+    return;
+  }
   const scope = normalizeModScope(modForm.scope, modForm.characterIds);
   const characterIds = scope === 'characters' ? normalizeModCharacterIds(modForm.characterIds) : [];
   if (scope === 'characters' && !characterIds.length) {
@@ -1306,13 +1463,16 @@ async function saveMod() {
 
 async function removeMod(id, name) {
   if (modControlsBusy.value) return;
+  const currentMod = getCurrentMod(id);
+  if (!currentMod) return;
+  name = currentMod.name || name;
   if (!window.confirm(`确定删除 Mod「${name}」吗？`)) return;
-  const mutationToken = beginModMutation(modDeleteActionId(id));
+  const mutationToken = beginModMutation(modDeleteActionId(currentMod.id));
   try {
-    await deleteMod(id);
+    await deleteMod(currentMod.id);
     if (!isCurrentModMutation(mutationToken)) return;
-    setListIfChanged(modList, modList.value.filter((m) => m.id !== id));
-    if (modEditing.value === id) {
+    removeListItemByIdIfPresent(modList, currentMod.id);
+    if (modEditing.value === currentMod.id) {
       closeModEditor();
     }
     notify.success(`Mod「${name}」已删除`);
@@ -1326,15 +1486,17 @@ async function removeMod(id, name) {
 
 async function toggleMod(mod) {
   if (modControlsBusy.value) return;
-  const mutationToken = beginModMutation(modToggleActionId(mod.id));
-  const nextEnabled = !mod.enabled;
+  const currentMod = getCurrentMod(mod?.id);
+  if (!currentMod) return;
+  const mutationToken = beginModMutation(modToggleActionId(currentMod.id));
+  const nextEnabled = !currentMod.enabled;
   try {
-    await updateMod(mod.id, { enabled: nextEnabled });
+    const updated = await updateMod(currentMod.id, { enabled: nextEnabled });
     if (!isCurrentModMutation(mutationToken)) return;
-    const currentMod = modList.value.find((item) => item.id === mod.id);
-    if (!currentMod) return;
-    currentMod.enabled = nextEnabled;
-    notify.success(nextEnabled ? `Mod「${mod.name}」已启用` : `Mod「${mod.name}」已禁用`);
+    if (!getCurrentMod(currentMod.id)) return;
+    const nextMod = updated && typeof updated === 'object' ? updated : { ...currentMod, enabled: nextEnabled };
+    updateListItemByIdIfChanged(modList, currentMod.id, nextMod);
+    notify.success(nextEnabled ? `Mod「${nextMod.name}」已启用` : `Mod「${nextMod.name}」已禁用`);
   } catch (err) {
     if (!isCurrentModMutation(mutationToken)) return;
     notify.error(err.message);
@@ -1390,15 +1552,22 @@ function onModDragStart(event, mod) {
     event.preventDefault();
     return;
   }
-  draggingMod.value = mod.id;
+  const currentMod = getCurrentMod(mod?.id);
+  if (!currentMod) {
+    event.preventDefault();
+    return;
+  }
+  draggingMod.value = currentMod.id;
   event.dataTransfer.effectAllowed = 'move';
 }
 
 function onModDragOver(event, mod) {
   if (modControlsBusy.value) return;
+  const currentMod = getCurrentMod(mod?.id);
+  if (!currentMod) return;
   event.preventDefault();
-  if (dragOverMod.value !== mod.id) {
-    dragOverMod.value = mod.id;
+  if (dragOverMod.value !== currentMod.id) {
+    dragOverMod.value = currentMod.id;
   }
 }
 
@@ -1411,14 +1580,16 @@ async function onModDrop(event, targetMod) {
   event.preventDefault();
   if (modControlsBusy.value) return;
   const draggedId = draggingMod.value;
-  if (!draggedId || draggedId === targetMod.id) {
+  const currentDraggedMod = getCurrentMod(draggedId);
+  const currentTargetMod = getCurrentMod(targetMod?.id);
+  if (!currentDraggedMod || !currentTargetMod || currentDraggedMod.id === currentTargetMod.id) {
     dragOverMod.value = null;
     return;
   }
 
   const previousList = [...modList.value];
-  const fromIndex = modList.value.findIndex((m) => m.id === draggedId);
-  const toIndex = modList.value.findIndex((m) => m.id === targetMod.id);
+  const fromIndex = modList.value.findIndex((m) => m.id === currentDraggedMod.id);
+  const toIndex = modList.value.findIndex((m) => m.id === currentTargetMod.id);
   if (fromIndex === -1 || toIndex === -1) {
     dragOverMod.value = null;
     return;
@@ -1471,7 +1642,7 @@ const regexControlsBusy = computed(() => regexLoading.value || regexActionBusy.v
 const regexGroupFilter = ref('');
 const regexImportText = ref('');
 const showRegexImport = ref(false);
-const dragIndex = ref(-1);
+const draggingRegexRuleId = ref('');
 let regexLoadToken = 0;
 let regexMutationToken = 0;
 
@@ -1537,7 +1708,7 @@ function resetRegexAsyncScope() {
 
 function resetRegexMutationScope() {
   regexMutationToken += 1;
-  dragIndex.value = -1;
+  draggingRegexRuleId.value = '';
 }
 
 function regexToggleActionId(id) {
@@ -1566,6 +1737,11 @@ function isCurrentRegexMutation(mutationToken, groupFilter) {
     && regexGroupFilter.value === groupFilter;
 }
 
+function getCurrentRegexRule(ruleId) {
+  const currentRuleId = String(ruleId || '');
+  return regexRules.value.find((rule) => rule?.id === currentRuleId) || null;
+}
+
 function handleRegexGroupFilterChange() {
   if (regexControlsBusy.value) return;
   resetRegexMutationScope();
@@ -1574,10 +1750,12 @@ function handleRegexGroupFilterChange() {
 
 async function handleToggleRegexRule(ruleId) {
   if (regexControlsBusy.value) return;
+  const currentRule = getCurrentRegexRule(ruleId);
+  if (!currentRule) return;
   const groupFilter = regexGroupFilter.value;
-  const mutationToken = beginRegexMutation(regexToggleActionId(ruleId));
+  const mutationToken = beginRegexMutation(regexToggleActionId(currentRule.id));
   try {
-    await toggleRegexRule(ruleId);
+    await toggleRegexRule(currentRule.id);
     if (!isCurrentRegexMutation(mutationToken, groupFilter)) return;
     finishRegexMutation(mutationToken);
     await loadRegexRules();
@@ -1591,35 +1769,48 @@ async function handleToggleRegexRule(ruleId) {
   }
 }
 
-function onRegexDragStart(event, index) {
+function onRegexDragStart(event, ruleId) {
   if (regexControlsBusy.value) {
     event.preventDefault();
     return;
   }
-  dragIndex.value = index;
+  const currentRule = getCurrentRegexRule(ruleId);
+  if (!currentRule) {
+    event.preventDefault();
+    return;
+  }
+  draggingRegexRuleId.value = currentRule.id;
 }
 
-function onRegexDragOver(event) {
+function onRegexDragOver(event, ruleId) {
   if (regexControlsBusy.value) return;
+  if (!getCurrentRegexRule(ruleId)) return;
   event.preventDefault();
 }
 
-async function onRegexDrop(dropIndex) {
+async function onRegexDrop(targetRuleId) {
   if (regexControlsBusy.value) return;
-  if (dragIndex.value < 0 || dragIndex.value === dropIndex) return;
+  const currentDraggedRule = getCurrentRegexRule(draggingRegexRuleId.value);
+  const currentTargetRule = getCurrentRegexRule(targetRuleId);
+  if (!currentDraggedRule || !currentTargetRule || currentDraggedRule.id === currentTargetRule.id) {
+    draggingRegexRuleId.value = '';
+    return;
+  }
   const groupFilter = regexGroupFilter.value;
-  const items = [...regexRules.value];
-  const [moved] = items.splice(dragIndex.value, 1);
-  items.splice(dropIndex, 0, moved);
-  setListIfChanged(regexRules, items);
-  dragIndex.value = -1;
+  const moveResult = moveListItemToTargetIndexById(regexRules, currentDraggedRule.id, currentTargetRule.id);
+  if (!moveResult) {
+    draggingRegexRuleId.value = '';
+    return;
+  }
+  draggingRegexRuleId.value = '';
   const mutationToken = beginRegexMutation('regex-reorder');
   try {
-    await reorderRegexRules(items.map((r) => r.id), groupFilter);
+    await reorderRegexRules(moveResult.ids, groupFilter);
     if (!isCurrentRegexMutation(mutationToken, groupFilter)) return;
     notify.success('排序已保存');
   } catch (err) {
     if (!isCurrentRegexMutation(mutationToken, groupFilter)) return;
+    setListIfChanged(regexRules, moveResult.previousList);
     notify.error(err.message);
     finishRegexMutation(mutationToken);
     await loadRegexRules();
@@ -2347,9 +2538,9 @@ function scrollToSection(sectionId) {
           :class="{ disabled: !rule.enabled }"
           :draggable="!regexControlsBusy"
           :aria-busy="isRegexToggleBusy(rule.id) || regexActionBusyId === 'regex-reorder'"
-          @dragstart="onRegexDragStart($event, index)"
-          @dragover="onRegexDragOver"
-          @drop="onRegexDrop(index)"
+          @dragstart="onRegexDragStart($event, rule.id)"
+          @dragover="onRegexDragOver($event, rule.id)"
+          @drop="onRegexDrop(rule.id)"
         >
           <div class="regex-rule-grip">
             <GripVertical :size="16" />

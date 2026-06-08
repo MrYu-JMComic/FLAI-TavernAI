@@ -115,7 +115,8 @@ function previousNonEmptyLine(lines, index) {
 function testFileNames() {
   return fs
     .readdirSync(testDir)
-    .filter((name) => name.endsWith('.test.js') && path.join(testDir, name) !== currentFile);
+    .filter((name) => name.endsWith('.test.js') && path.join(testDir, name) !== currentFile)
+    .sort();
 }
 
 function readTestFiles() {
@@ -123,6 +124,10 @@ function readTestFiles() {
 }
 
 const testFiles = readTestFiles();
+
+test('test hygiene reads test files in deterministic order', () => {
+  assert.deepEqual(testFileNames(), [...testFileNames()].sort());
+});
 
 function nextTestStartIndex(lines, index) {
   for (let i = index + 1; i < lines.length; i += 1) {

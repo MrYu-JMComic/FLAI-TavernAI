@@ -521,7 +521,7 @@ export function createCharactersRouter({
       response.status(403).json({ error: '只有角色拥有者可以管理天赋' });
       return;
     }
-    if (!deleteCharacterTalent(db, request.params.talentId)) {
+    if (!deleteCharacterTalent(db, request.params.talentId, request.params.id)) {
       response.status(404).json({ error: '天赋不存在' });
       return;
     }

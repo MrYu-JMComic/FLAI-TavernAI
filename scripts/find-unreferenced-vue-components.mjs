@@ -1,48 +1,16 @@
-import { readdirSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { readJsonFile, readSmallTextFile } from './diagnostic-file-utils.mjs';
+import { compareDiagnosticText, escapeRegExp, getCliOptionValue, maskNonNewlineText, readJsonFile, readSmallTextFile, toPosixPath, walkFiles } from './diagnostic-file-utils.mjs';
 
 const rawArgs = process.argv.slice(2);
 const args = new Set(rawArgs);
 const defaultProjectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const projectRoot = path.resolve(getOptionValue('--project-root') ?? defaultProjectRoot);
-const reviewedFile = path.resolve(getOptionValue('--reviewed-file') ?? path.join(projectRoot, 'automation', 'reviewed-unreferenced-vue-components.json'));
+const projectRoot = path.resolve(getCliOptionValue(rawArgs, '--project-root') ?? defaultProjectRoot);
+const reviewedFile = path.resolve(getCliOptionValue(rawArgs, '--reviewed-file') ?? path.join(projectRoot, 'automation', 'reviewed-unreferenced-vue-components.json'));
 const frontendSrc = path.join(projectRoot, 'frontend', 'src');
 const componentsDir = path.join(frontendSrc, 'components');
 const sourceExtensions = new Set(['.js', '.mjs', '.ts', '.tsx', '.jsx', '.vue']);
 const regexSpecialChars = new Set(['\\', '^', '$', '+', '?', '.', '(', ')', '|', '{', '}', '[', ']']);
-
-function getOptionValue(name) {
-  const inlinePrefix = `${name}=`;
-  const inlineValue = rawArgs.find((arg) => arg.startsWith(inlinePrefix));
-  if (inlineValue) {
-    return inlineValue.slice(inlinePrefix.length);
-  }
-
-  const valueIndex = rawArgs.indexOf(name);
-  if (valueIndex === -1 || valueIndex === rawArgs.length - 1) {
-    return null;
-  }
-  return rawArgs[valueIndex + 1];
-}
-
-function* walk(dir) {
-  for (const entry of readdirSync(dir, { withFileTypes: true })) {
-    const entryPath = path.join(dir, entry.name);
-    if (entry.isDirectory()) {
-      yield* walk(entryPath);
-      continue;
-    }
-    if (entry.isFile()) {
-      yield entryPath;
-    }
-  }
-}
-
-function toPosixPath(filePath) {
-  return filePath.split(path.sep).join('/');
-}
 
 function toKebabCase(value) {
   return value
@@ -52,7 +20,14 @@ function toKebabCase(value) {
 }
 
 function stripImportSuffix(value) {
-  return value.split(/[?#]/, 1)[0];
+  const text = String(value ?? '');
+  for (let index = 0; index < text.length; index += 1) {
+    const char = text[index];
+    if (char === '?' || char === '#') {
+      return text.slice(0, index);
+    }
+  }
+  return text;
 }
 
 function maskSourceComments(text) {
@@ -184,8 +159,17 @@ function collectStringLiteralRanges(text) {
   return ranges;
 }
 
-function isInsideStringLiteral(index, ranges) {
-  return ranges.some(([start, end]) => index >= start && index < end);
+function createRangeMembershipChecker(ranges) {
+  let rangeIndex = 0;
+
+  return (index) => {
+    while (rangeIndex < ranges.length && ranges[rangeIndex][1] <= index) {
+      rangeIndex += 1;
+    }
+
+    const range = ranges[rangeIndex];
+    return Boolean(range && index >= range[0]);
+  };
 }
 
 function collectRegexLiteralRanges(text, stringLiteralRanges = []) {
@@ -250,10 +234,6 @@ function collectRegexLiteralRanges(text, stringLiteralRanges = []) {
 
 function unescapeQuotedLiteral(literal) {
   return literal.replace(/\\([\\'"`])/g, '$1');
-}
-
-function maskNonNewlineText(text) {
-  return text.replace(/[^\r\n]/g, ' ');
 }
 
 function maskStringLiterals(text) {
@@ -428,11 +408,13 @@ function collectComponentReferenceLiterals(text) {
   ];
 
   for (const pattern of referencePatterns) {
+    const isInsideStringLiteral = createRangeMembershipChecker(stringLiteralRanges);
+    const isInsideRegexLiteral = createRangeMembershipChecker(regexLiteralRanges);
     let match;
     while ((match = pattern.exec(text))) {
       if (
-        isInsideStringLiteral(match.index, stringLiteralRanges) ||
-        isInsideStringLiteral(match.index, regexLiteralRanges)
+        isInsideStringLiteral(match.index) ||
+        isInsideRegexLiteral(match.index)
       ) {
         continue;
       }
@@ -489,10 +471,6 @@ function escapeRegexChar(char) {
   return regexSpecialChars.has(char) ? `\\${char}` : char;
 }
 
-function escapeRegExp(value) {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
-
 function globToRegExp(pattern) {
   let source = '^';
   for (let index = 0; index < pattern.length; index += 1) {
@@ -547,102 +525,161 @@ function collectComponentReferences(filePath, text) {
 }
 
 function buildSourceIndex() {
-  return [...walk(frontendSrc)]
-    .filter((filePath) => sourceExtensions.has(path.extname(filePath).toLowerCase()))
-    .map((filePath) => {
-      const text = readSmallTextFile(filePath);
-      const searchText = maskSourceComments(text);
-      const tokenSearchText = maskComponentTokenSearchText(filePath, searchText);
-      return {
-        filePath,
-        relativePath: toPosixPath(path.relative(projectRoot, filePath)),
-        searchText,
-        tokenSearchText,
-        isAttributeSearchText: maskComponentIsAttributeSearchText(filePath, searchText),
-        ...collectComponentReferences(filePath, searchText)
-      };
+  const sources = [];
+
+  for (const filePath of walkFiles(frontendSrc)) {
+    if (!sourceExtensions.has(path.extname(filePath).toLowerCase())) {
+      continue;
+    }
+
+    const text = readSmallTextFile(filePath);
+    const searchText = maskSourceComments(text);
+    const tokenSearchText = maskComponentTokenSearchText(filePath, searchText);
+    sources.push({
+      resolvedPath: path.resolve(filePath),
+      relativePath: toPosixPath(path.relative(projectRoot, filePath)),
+      searchText,
+      tokenSearchText,
+      isAttributeSearchText: maskComponentIsAttributeSearchText(filePath, searchText),
+      ...collectComponentReferences(filePath, searchText)
     });
+  }
+
+  return sources;
 }
 
-function componentTagPatterns(componentPath) {
+function componentLookupNames(componentPath) {
   const basename = path.basename(componentPath, '.vue');
   const kebabName = toKebabCase(basename);
-  return [...new Set([basename, kebabName])].flatMap((name) => {
-    const escapedName = escapeRegExp(name);
-    return [
-      new RegExp(`<\\s*${escapedName}(?=$|[\\s>/])`),
-      new RegExp(`<\\/\\s*${escapedName}(?=$|[\\s>])`)
-    ];
-  });
+  return basename === kebabName ? [basename] : [basename, kebabName];
 }
 
-function componentIsAttributePatterns(componentPath) {
-  const basename = path.basename(componentPath, '.vue');
-  const names = [...new Set([basename, toKebabCase(basename)])];
+function componentTagPatterns(lookupNames) {
+  const patterns = [];
 
-  return names.flatMap((name) => {
+  for (const name of lookupNames) {
+    const escapedName = escapeRegExp(name);
+    patterns.push(
+      new RegExp(`<\\s*${escapedName}(?=$|[\\s>/])`),
+      new RegExp(`<\\/\\s*${escapedName}(?=$|[\\s>])`)
+    );
+  }
+
+  return patterns;
+}
+
+function componentIsAttributePatterns(lookupNames) {
+  const patterns = [];
+
+  for (const name of lookupNames) {
     const escapedName = escapeRegExp(name);
     const quotedName = `["']${escapedName}["']`;
     const staticValuePattern = `(?:${escapedName}|${quotedName}|"${quotedName}"|'${quotedName}')`;
     const boundStringValuePattern = `(?:"${quotedName}"|'${quotedName}')`;
     const componentTagPrefix = '<\\s*component(?=$|[\\s>/])[^>]*';
-    return [
+    patterns.push(
       new RegExp(`${componentTagPrefix}\\sis\\s*=\\s*${staticValuePattern}(?=$|[\\s>/])`),
       new RegExp(`${componentTagPrefix}\\s(?::is|v-bind:is)\\s*=\\s*${boundStringValuePattern}(?=$|[\\s>/])`)
-    ];
-  });
+    );
+  }
+
+  return patterns;
 }
 
 function findComponentReferences(componentPath, sourceIndex) {
   const ownPath = path.resolve(componentPath);
   const ownPosixPath = toPosixPath(ownPath);
-  const tagPatterns = componentTagPatterns(componentPath);
-  const isAttributePatterns = componentIsAttributePatterns(componentPath);
-  return sourceIndex
-    .filter((source) => path.resolve(source.filePath) !== ownPath)
-    .filter((source) => (
+  const lookupNames = componentLookupNames(componentPath);
+  const tagPatterns = componentTagPatterns(lookupNames);
+  const isAttributePatterns = componentIsAttributePatterns(lookupNames);
+
+  const references = [];
+  for (const source of sourceIndex) {
+    if (source.resolvedPath === ownPath) {
+      continue;
+    }
+
+    if (
       source.referencedComponentPaths.has(ownPath) ||
       source.referencedComponentGlobs.some((glob) => glob.test(ownPosixPath)) ||
       tagPatterns.some((pattern) => pattern.test(source.tokenSearchText)) ||
       isAttributePatterns.some((pattern) => pattern.test(source.isAttributeSearchText))
-    ))
-    .map((source) => source.relativePath);
+    ) {
+      references.push(source.relativePath);
+    }
+  }
+
+  return references;
 }
 
 function loadReviewedComponents() {
   const data = readJsonFile(reviewedFile, { reviewed: [] });
   const reviewed = Array.isArray(data.reviewed) ? data.reviewed : [];
-  return new Map(
-    reviewed
-      .filter((entry) => typeof entry?.file === 'string' && entry.file.trim())
-      .map((entry) => [toPosixPath(entry.file.trim()), {
-        file: toPosixPath(entry.file.trim()),
-        status: String(entry.status || 'reviewed').trim() || 'reviewed',
-        reason: String(entry.reason || '').trim(),
-        report: String(entry.report || '').trim()
-      }])
-  );
+  const reviewedComponents = new Map();
+
+  for (const entry of reviewed) {
+    if (typeof entry?.file !== 'string' || !entry.file.trim()) {
+      continue;
+    }
+
+    const file = toPosixPath(entry.file.trim());
+    reviewedComponents.set(file, {
+      file,
+      status: String(entry.status || 'reviewed').trim() || 'reviewed',
+      reason: String(entry.reason || '').trim(),
+      report: String(entry.report || '').trim()
+    });
+  }
+
+  return reviewedComponents;
+}
+
+function collectUnreferencedComponents(sourceIndex) {
+  const components = [];
+
+  for (const filePath of walkFiles(componentsDir)) {
+    if (path.extname(filePath).toLowerCase() !== '.vue') {
+      continue;
+    }
+
+    const references = findComponentReferences(filePath, sourceIndex);
+    if (references.length) {
+      continue;
+    }
+
+    components.push({
+      file: toPosixPath(path.relative(projectRoot, filePath)),
+      name: path.basename(filePath, '.vue'),
+      references
+    });
+  }
+
+  return components.sort((a, b) => compareDiagnosticText(a.file, b.file));
+}
+
+function splitReviewedComponents(components, reviewedComponents) {
+  const candidates = [];
+  const reviewed = [];
+
+  for (const component of components) {
+    if (reviewedComponents.has(component.file)) {
+      reviewed.push({
+        ...component,
+        review: reviewedComponents.get(component.file)
+      });
+      continue;
+    }
+
+    candidates.push(component);
+  }
+
+  return { candidates, reviewed };
 }
 
 const sourceIndex = buildSourceIndex();
 const reviewedComponents = loadReviewedComponents();
-const unreferencedComponents = [...walk(componentsDir)]
-  .filter((filePath) => path.extname(filePath).toLowerCase() === '.vue')
-  .map((filePath) => ({
-    file: toPosixPath(path.relative(projectRoot, filePath)),
-    name: path.basename(filePath, '.vue'),
-    references: findComponentReferences(filePath, sourceIndex)
-  }))
-  .filter((component) => component.references.length === 0)
-  .sort((a, b) => a.file.localeCompare(b.file));
-const candidates = unreferencedComponents
-  .filter((component) => !reviewedComponents.has(component.file));
-const reviewed = unreferencedComponents
-  .filter((component) => reviewedComponents.has(component.file))
-  .map((component) => ({
-    ...component,
-    review: reviewedComponents.get(component.file)
-  }));
+const unreferencedComponents = collectUnreferencedComponents(sourceIndex);
+const { candidates, reviewed } = splitReviewedComponents(unreferencedComponents, reviewedComponents);
 
 if (args.has('--json')) {
   console.log(JSON.stringify({ candidates, reviewed }, null, 2));

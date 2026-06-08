@@ -26,6 +26,7 @@ export function useChatAppearance({
   openSettings,
   closeSettings,
   scrollToBottom,
+  setActiveConversationIfChanged,
   showActionNotice,
   showError
 }) {
@@ -44,6 +45,7 @@ export function useChatAppearance({
   let appearanceApplyToken = 0;
   let worldBooksLoadToken = 0;
   let appearanceDisposed = false;
+  let lastAppearanceSyncSignature = '';
 
   const effectiveChatAppearance = computed(() => mergeChatAppearance(authorChatAppearance.value, chatAppearanceForm));
 
@@ -58,32 +60,55 @@ export function useChatAppearance({
     return `:where([data-chat-scope="${cssEscapeAttribute(id)}"])`;
   });
 
+  const activeCharacterValue = computed(() => {
+    const currentConversation = conversation.value || {};
+    if (currentConversation.character) {
+      return currentConversation.character;
+    }
+    const characterId = currentConversation.characterId;
+    const characterList = Array.isArray(characters.value) ? characters.value : [];
+    for (const item of characterList) {
+      if (item?.id === characterId) {
+        return item;
+      }
+    }
+    return null;
+  });
+
+  const activeRenderPluginList = computed(() => activeCharacterValue.value?.renderPlugins || []);
+
   function activeCharacter() {
-    return conversation.value?.character
-      || characters.value.find((item) => item.id === conversation.value?.characterId)
-      || null;
+    return activeCharacterValue.value;
   }
 
   function activeRenderPlugins() {
-    return activeCharacter()?.renderPlugins || [];
+    return activeRenderPluginList.value;
   }
 
   // isPhoneViewport is now imported from composables/useViewport.js
 
-  function syncConversationAppearance(settings = {}) {
-    const authorSettings = normalizeChatAppearance(settings?.authorSettings || conversation.value?.authorSettings || {});
-    const userSettings = normalizeChatAppearance(settings?.userSettings || conversation.value?.userSettings || settings);
+  function syncConversationAppearance(settings = {}, options = {}) {
+    const sourceSettings = settings || {};
+    const authorSettings = normalizeChatAppearance(sourceSettings?.authorSettings || conversation.value?.authorSettings || {});
+    const userSettings = normalizeChatAppearance(sourceSettings?.userSettings || conversation.value?.userSettings || sourceSettings);
+    const nextChatLorebookId = (sourceSettings?.chatLorebookId ?? conversation.value?.chatLorebookId ?? null) || null;
+    const nextSignature = serializeAppearanceSync(authorSettings, userSettings, nextChatLorebookId);
+    if (!options.force && nextSignature === lastAppearanceSyncSignature) {
+      return false;
+    }
+    lastAppearanceSyncSignature = nextSignature;
     authorChatAppearance.value = authorSettings;
     Object.assign(chatAppearanceForm, createDefaultChatAppearance(), userSettings);
     customAppearanceState.value = {};
-    chatLorebookId.value = settings?.chatLorebookId ?? conversation.value?.chatLorebookId ?? null;
+    chatLorebookId.value = nextChatLorebookId;
+    return true;
   }
 
   function resetConversationAppearance(settings = conversation.value?.settings) {
     if (appearanceDisposed || appearanceSaving.value) {
       return;
     }
-    syncConversationAppearance(settings);
+    syncConversationAppearance(settings, { force: true });
   }
 
   function setChatLorebookId(value) {
@@ -114,7 +139,7 @@ export function useChatAppearance({
         return;
       }
       syncConversationAppearance(saved);
-      conversation.value = {
+      updateActiveConversationIfChanged({
         ...conversation.value,
         chatLorebookId: saved.chatLorebookId ?? chatLorebookId.value,
         settings: {
@@ -124,7 +149,7 @@ export function useChatAppearance({
         },
         authorSettings: saved.authorSettings || authorChatAppearance.value,
         userSettings: saved.userSettings || normalizeChatAppearance(chatAppearanceForm)
-      };
+      });
       await applyConversationAppearance();
       if (!isCurrentAppearanceSave(requestToken, conversationId)) {
         return;
@@ -174,15 +199,15 @@ export function useChatAppearance({
         messages: messages.value,
         query: (selector, root = chatShellRef.value) => root?.querySelector?.(selector) || null,
         queryAll: (selector, root = chatShellRef.value) => root ? Array.from(root.querySelectorAll(selector)) : [],
-        notify,
-        openSidebar,
-        closeSidebar,
-        openSettings,
-        closeSettings,
-        scrollToBottom: () => scrollToBottom(true, true),
-        setCssVar: (name, value) => {
+        notify: scopedAppearanceNotify(applyToken, conversationId),
+        openSidebar: scopedAppearanceAction(applyToken, conversationId, openSidebar),
+        closeSidebar: scopedAppearanceAction(applyToken, conversationId, closeSidebar),
+        openSettings: scopedAppearanceAction(applyToken, conversationId, openSettings),
+        closeSettings: scopedAppearanceAction(applyToken, conversationId, closeSettings),
+        scrollToBottom: scopedAppearanceAction(applyToken, conversationId, () => scrollToBottom(true, true)),
+        setCssVar: scopedAppearanceAction(applyToken, conversationId, (name, value) => {
           chatShellRef.value?.style.setProperty(String(name || '').trim(), String(value || ''));
-        },
+        }),
         requestPaint: waitForFrame,
         wait: waitMs
       });
@@ -205,12 +230,60 @@ export function useChatAppearance({
     return !appearanceDisposed && requestToken === appearanceSaveToken && conversation.value?.id === conversationId;
   }
 
+  function updateActiveConversationIfChanged(nextConversation) {
+    if (typeof setActiveConversationIfChanged === 'function') {
+      return setActiveConversationIfChanged(nextConversation);
+    }
+    conversation.value = nextConversation || null;
+    return true;
+  }
+
+  function serializeAppearanceSync(authorSettings, userSettings, chatLorebookId) {
+    return JSON.stringify({
+      authorSettings,
+      userSettings,
+      chatLorebookId
+    });
+  }
+
   function isActiveAppearanceSave(requestToken) {
     return !appearanceDisposed && requestToken === appearanceSaveToken;
   }
 
   function isCurrentAppearanceApply(applyToken, conversationId) {
     return !appearanceDisposed && applyToken === appearanceApplyToken && conversation.value?.id === conversationId;
+  }
+
+  function scopedAppearanceAction(applyToken, conversationId, action) {
+    if (typeof action !== 'function') {
+      return action;
+    }
+    return (...args) => {
+      if (!isCurrentAppearanceApply(applyToken, conversationId)) {
+        return undefined;
+      }
+      return action(...args);
+    };
+  }
+
+  function scopedAppearanceNotify(applyToken, conversationId) {
+    if (!notify || typeof notify !== 'object') {
+      return notify;
+    }
+    return new Proxy(notify, {
+      get(target, key, receiver) {
+        const value = Reflect.get(target, key, receiver);
+        if (typeof value !== 'function') {
+          return value;
+        }
+        return (...args) => {
+          if (!isCurrentAppearanceApply(applyToken, conversationId)) {
+            return undefined;
+          }
+          return value.apply(target, args);
+        };
+      }
+    });
   }
 
   function formatCustomScriptErrorMessage(err) {
@@ -342,7 +415,7 @@ export function useChatAppearance({
       if (!isCurrentWorldBooksLoad(requestToken)) {
         return;
       }
-      worldBooks.value = books;
+      setWorldBooksIfChanged(books);
     } catch (err) {
       if (!isCurrentWorldBooksLoad(requestToken)) {
         return;
@@ -353,6 +426,32 @@ export function useChatAppearance({
         worldBooksLoading.value = false;
       }
     }
+  }
+
+  function setWorldBooksIfChanged(nextBooks) {
+    const normalizedNextBooks = Array.isArray(nextBooks) ? nextBooks : [];
+    if (sameWorldBookList(worldBooks.value, normalizedNextBooks)) {
+      return false;
+    }
+    worldBooks.value = normalizedNextBooks;
+    return true;
+  }
+
+  function sameWorldBookList(currentBooks, nextBooks) {
+    return Array.isArray(currentBooks)
+      && Array.isArray(nextBooks)
+      && currentBooks.length === nextBooks.length
+      && currentBooks.every((book, index) => sameWorldBookSummary(book, nextBooks[index]));
+  }
+
+  function sameWorldBookSummary(currentBook, nextBook) {
+    return currentBook?.id === nextBook?.id
+      && currentBook?.name === nextBook?.name
+      && currentBook?.description === nextBook?.description
+      && currentBook?.characterId === nextBook?.characterId
+      && Number(currentBook?.scanDepth || 4) === Number(nextBook?.scanDepth || 4)
+      && Number(currentBook?.lorebookContextPercent || 25) === Number(nextBook?.lorebookContextPercent || 25)
+      && Number(currentBook?.entryCount || 0) === Number(nextBook?.entryCount || 0);
   }
 
   function readFileAsDataUrl(file) {

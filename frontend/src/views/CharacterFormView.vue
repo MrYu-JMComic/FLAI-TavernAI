@@ -101,6 +101,10 @@ const aiOptions = reactive({
 const previewInput = ref('');
 const worldBooks = ref([]);
 const selectedWorldBookIds = ref([]);
+const showWorldBookDialog = ref(false);
+const worldBookSearch = ref('');
+const worldBookSort = ref('updatedDesc');
+const worldBookPage = ref(1);
 const availableTags = ref([]);
 const optionsLoading = ref(false);
 const optionsLoadError = ref('');
@@ -116,6 +120,12 @@ const backgroundUploading = reactive({
 const backgroundUploadTokens = {};
 let avatarUploadToken = 0;
 let sectionNavRafId = null;
+const WORLD_BOOK_SELECTOR_PAGE_SIZE = 8;
+const WORLD_BOOK_SORT_OPTIONS = [
+  { value: 'updatedDesc', label: '最近更新' },
+  { value: 'nameAsc', label: '名称 A-Z' },
+  { value: 'entryCountDesc', label: '条目多到少' }
+];
 
 const statusBarBlueprintPreview = computed(() => {
   const blueprint = normalizeStatusBarBlueprintForPayload(form.authorAdvancedSettings.statusBarBlueprint || {});
@@ -138,16 +148,12 @@ const statusBarBlueprintTemplateStats = computed(() => {
   const blueprint = form.authorAdvancedSettings.statusBarBlueprint || {};
   const normalized = normalizeStatusBarBlueprintForPayload(blueprint);
   const template = normalized.template;
-  const inferredKeys = new Set(
-    inferStatusVariablesFromTemplate(template, []).map((variable) => normalizeStatusVariableKey(variable.name))
-  );
-  const inferredCount = normalized.variables.filter((variable) => inferredKeys.has(normalizeStatusVariableKey(variable.name))).length;
-  const meterCount = normalized.variables.filter((variable) => shouldTreatStatusVariableAsMeter(variable, template)).length;
+  const variableStats = countStatusBlueprintVariableStats(normalized.variables, template);
   return {
     variables: normalized.variables.length,
-    inferred: inferredCount,
-    text: Math.max(0, normalized.variables.length - meterCount),
-    meter: meterCount,
+    inferred: variableStats.inferred,
+    text: Math.max(0, normalized.variables.length - variableStats.meter),
+    meter: variableStats.meter,
     placeholders: countStatusTemplatePlaceholders(template),
     actions: countStatusTemplateActions(template),
     lines: template ? template.split(/\r\n|\r|\n/).length : 0,
@@ -162,20 +168,26 @@ const statusBlueprintEditorRows = computed(() => {
   const compositeRows = extractStatusTemplateCompositeRows(template);
   const compositeChildKeys = new Set();
   const compositeLabelKeys = new Set();
-  const rows = compositeRows.map((row, index) => {
+  const rows = [];
+  for (let index = 0; index < compositeRows.length; index += 1) {
+    const row = compositeRows[index];
     compositeLabelKeys.add(normalizeStatusVariableKey(row.label));
-    for (const part of row.parts) {
+    let compositePartKey = '';
+    for (let partIndex = 0; partIndex < row.parts.length; partIndex += 1) {
+      const part = row.parts[partIndex];
       compositeChildKeys.add(normalizeStatusVariableKey(part.name));
+      compositePartKey += `${partIndex > 0 ? '|' : ''}${part?.name ?? ''}`;
     }
-    return {
+    rows.push({
       kind: 'composite',
-      key: `composite:${index}:${row.label}:${row.parts.map((part) => part.name).join('|')}`,
+      key: `composite:${index}:${row.label}:${compositePartKey}`,
       label: row.label,
       parts: row.parts
-    };
-  });
+    });
+  }
 
-  variables.forEach((variable, index) => {
+  for (let index = 0; index < variables.length; index += 1) {
+    const variable = variables[index];
     const key = normalizeStatusVariableKey(variable?.name);
     if (
       !key ||
@@ -183,7 +195,7 @@ const statusBlueprintEditorRows = computed(() => {
       compositeLabelKeys.has(key) ||
       isCompositeStatusPlaceholderValue(variable?.value, variable?.name)
     ) {
-      return;
+      continue;
     }
     rows.push({
       kind: 'variable',
@@ -191,7 +203,7 @@ const statusBlueprintEditorRows = computed(() => {
       variable,
       index
     });
-  });
+  }
 
   return rows;
 });
@@ -490,6 +502,7 @@ onBeforeUnmount(() => {
   characterExportToken += 1;
   tagCreateToken += 1;
   tagCreating.value = false;
+  showWorldBookDialog.value = false;
   suggestedModCreateToken += 1;
   avatarUploadToken += 1;
   for (const field of ADVANCED_BACKGROUND_FIELDS) {
@@ -692,10 +705,29 @@ const renderPluginPreviewText = computed(() => {
 const userVariableValue = computed(() => {
   return props.user?.displayName || props.user?.accountName || props.user?.username || '用户';
 });
-const filteredTags = computed(() => {
-  const search = tagSearch.value.trim().toLowerCase();
-  if (!search) return availableTags.value;
-  return availableTags.value.filter((t) => t.name.toLowerCase().includes(search));
+const filteredTags = computed(() => filterTagsBySearch(availableTags.value, tagSearch.value));
+const selectedWorldBooks = computed(() => getSelectedWorldBooks(worldBooks.value, selectedWorldBookIds.value));
+const selectedWorldBookPreview = computed(() => selectedWorldBooks.value.slice(0, 4));
+const hiddenSelectedWorldBookCount = computed(() => Math.max(0, selectedWorldBooks.value.length - selectedWorldBookPreview.value.length));
+const filteredWorldBooks = computed(() => filterAndSortWorldBooks(worldBooks.value, worldBookSearch.value, worldBookSort.value));
+const worldBookPageCount = computed(() => Math.max(1, Math.ceil(filteredWorldBooks.value.length / WORLD_BOOK_SELECTOR_PAGE_SIZE)));
+const pagedWorldBooks = computed(() => getWorldBookPageItems(filteredWorldBooks.value, worldBookPage.value, WORLD_BOOK_SELECTOR_PAGE_SIZE));
+const worldBookPageStart = computed(() => {
+  if (!filteredWorldBooks.value.length) {
+    return 0;
+  }
+  return ((worldBookPage.value - 1) * WORLD_BOOK_SELECTOR_PAGE_SIZE) + 1;
+});
+const worldBookPageEnd = computed(() => Math.min(filteredWorldBooks.value.length, worldBookPage.value * WORLD_BOOK_SELECTOR_PAGE_SIZE));
+
+watch([worldBookSearch, worldBookSort], () => {
+  setWorldBookPage(1);
+});
+
+watch(worldBookPageCount, (pageCount) => {
+  if (worldBookPage.value > pageCount) {
+    setWorldBookPage(pageCount);
+  }
 });
 
 function modelOverrideOptions(value = '') {
@@ -719,8 +751,8 @@ async function loadFormOptions() {
   try {
     const [nextWorldBooks, nextTags] = await Promise.all([fetchWorldBooks(), fetchTags()]);
     if (!isCurrentFormOptionsLoad(loadToken)) return;
-    worldBooks.value = nextWorldBooks;
-    availableTags.value = nextTags;
+    setWorldBooksIfChanged(nextWorldBooks);
+    setAvailableTagsIfChanged(nextTags);
   } catch (err) {
     if (!isCurrentFormOptionsLoad(loadToken)) return;
     optionsLoadError.value = err?.message || '标签和世界书选项加载失败';
@@ -748,7 +780,7 @@ async function loadEditingCharacter() {
     ]);
     if (!isCurrentEditingCharacterLoad(loadToken, characterId)) return;
     Object.assign(form, normalizeForForm(character));
-    selectedWorldBookIds.value = linkedBooks.map((book) => book.id);
+    setSelectedWorldBookIdsIfChanged(linkedBooks.map((book) => book.id));
   } catch (err) {
     if (!isCurrentEditingCharacterLoad(loadToken, characterId)) return;
     const message = err?.message || '加载角色失败';
@@ -769,6 +801,190 @@ function isCurrentEditingCharacterLoad(loadToken, characterId) {
   return !characterFormDisposed
     && loadToken === editingCharacterLoadToken
     && characterId === editingCharacterId.value;
+}
+
+function setWorldBooksIfChanged(nextBooks) {
+  const normalizedBooks = Array.isArray(nextBooks) ? nextBooks : [];
+  if (sameListItems(worldBooks.value, normalizedBooks, sameWorldBookOption)) {
+    return false;
+  }
+  worldBooks.value = normalizedBooks;
+  return true;
+}
+
+function setAvailableTagsIfChanged(nextTags) {
+  const normalizedTags = Array.isArray(nextTags) ? nextTags : [];
+  if (sameListItems(availableTags.value, normalizedTags, sameTagOption)) {
+    return false;
+  }
+  availableTags.value = normalizedTags;
+  return true;
+}
+
+function filterTagsBySearch(tags, rawSearch) {
+  const currentTags = Array.isArray(tags) ? tags : [];
+  const search = String(rawSearch || '').trim().toLowerCase();
+  if (!search) {
+    return currentTags;
+  }
+  const matches = [];
+  for (const tag of currentTags) {
+    if (String(tag?.name || '').toLowerCase().includes(search)) {
+      matches.push(tag);
+    }
+  }
+  return matches;
+}
+
+function getSelectedWorldBooks(books, selectedIds) {
+  const bookById = new Map();
+  for (const book of Array.isArray(books) ? books : []) {
+    const id = String(book?.id || '');
+    if (id) {
+      bookById.set(id, book);
+    }
+  }
+  const selected = [];
+  for (const rawId of Array.isArray(selectedIds) ? selectedIds : []) {
+    const id = String(rawId || '');
+    if (id) {
+      selected.push(bookById.get(id) || { id, name: id, entryCount: 0 });
+    }
+  }
+  return selected;
+}
+
+function filterAndSortWorldBooks(books, rawSearch, sortKey) {
+  const sourceBooks = Array.isArray(books) ? books : [];
+  const search = String(rawSearch || '').trim().toLowerCase();
+  const matches = [];
+  for (const book of sourceBooks) {
+    const haystack = `${book?.name || ''} ${book?.description || ''}`.toLowerCase();
+    if (!search || haystack.includes(search)) {
+      matches.push(book);
+    }
+  }
+  return sortWorldBooks(matches, sortKey);
+}
+
+function sortWorldBooks(books, sortKey) {
+  const sortedBooks = Array.isArray(books) ? [...books] : [];
+  if (sortKey === 'nameAsc') {
+    sortedBooks.sort(compareWorldBookNames);
+    return sortedBooks;
+  }
+  if (sortKey === 'entryCountDesc') {
+    sortedBooks.sort((current, next) => (
+      Number(next?.entryCount || 0) - Number(current?.entryCount || 0)
+    ) || compareWorldBookNames(current, next));
+    return sortedBooks;
+  }
+  sortedBooks.sort((current, next) => (
+    getWorldBookSortTime(next) - getWorldBookSortTime(current)
+  ) || compareWorldBookNames(current, next));
+  return sortedBooks;
+}
+
+function compareWorldBookNames(current = {}, next = {}) {
+  return String(current?.name || '').localeCompare(String(next?.name || ''), 'zh-Hans-CN');
+}
+
+function getWorldBookSortTime(book = {}) {
+  const timestamp = Date.parse(book?.updatedAt || book?.createdAt || '');
+  return Number.isFinite(timestamp) ? timestamp : 0;
+}
+
+function getWorldBookPageItems(books, page, pageSize) {
+  const currentBooks = Array.isArray(books) ? books : [];
+  const safePageSize = Math.max(1, Number(pageSize) || WORLD_BOOK_SELECTOR_PAGE_SIZE);
+  const start = (clampWorldBookPage(page, Math.max(1, Math.ceil(currentBooks.length / safePageSize))) - 1) * safePageSize;
+  return currentBooks.slice(start, start + safePageSize);
+}
+
+function clampWorldBookPage(page, pageCount) {
+  const safePageCount = Math.max(1, Number(pageCount) || 1);
+  const numericPage = Number(page);
+  const safePage = Number.isFinite(numericPage) ? Math.floor(numericPage) : 1;
+  return Math.max(1, Math.min(safePage, safePageCount));
+}
+
+function setSelectedWorldBookIdsIfChanged(nextIds) {
+  const normalizedIds = Array.isArray(nextIds) ? nextIds.map((id) => String(id || '')) : [];
+  if (sameListItems(selectedWorldBookIds.value, normalizedIds, Object.is)) {
+    return false;
+  }
+  selectedWorldBookIds.value = normalizedIds;
+  return true;
+}
+
+function setAiToolCallsIfChanged(nextToolCalls) {
+  return setAiPlainListIfChanged(aiToolCalls, nextToolCalls);
+}
+
+function setAiProcessIfChanged(nextProcess) {
+  return setAiPlainListIfChanged(aiProcess, nextProcess);
+}
+
+function setAiModSuggestionsIfChanged(nextSuggestions) {
+  return setAiPlainListIfChanged(aiModSuggestions, nextSuggestions);
+}
+
+function setAiPlainListIfChanged(listRef, nextItems) {
+  const normalizedItems = Array.isArray(nextItems) ? nextItems : [];
+  if (sameListItems(listRef.value, normalizedItems, samePlainValue)) {
+    return false;
+  }
+  listRef.value = normalizedItems;
+  return true;
+}
+
+function sameListItems(currentItems, nextItems, sameItem) {
+  const currentList = Array.isArray(currentItems) ? currentItems : [];
+  const nextList = Array.isArray(nextItems) ? nextItems : [];
+  if (currentList === nextList) {
+    return true;
+  }
+  if (currentList.length !== nextList.length) {
+    return false;
+  }
+  return currentList.every((item, index) => sameItem(item, nextList[index]));
+}
+
+function sameWorldBookOption(current = {}, next = {}) {
+  return String(current?.id || '') === String(next?.id || '')
+    && String(current?.name || '') === String(next?.name || '')
+    && String(current?.description || '') === String(next?.description || '')
+    && String(current?.characterId || '') === String(next?.characterId || '')
+    && Number(current?.scanDepth || 4) === Number(next?.scanDepth || 4)
+    && Number(current?.lorebookContextPercent || 25) === Number(next?.lorebookContextPercent || 25)
+    && Number(current?.entryCount || 0) === Number(next?.entryCount || 0);
+}
+
+function sameTagOption(current = {}, next = {}) {
+  return String(current?.id || '') === String(next?.id || '')
+    && String(current?.name || '') === String(next?.name || '')
+    && String(current?.color || '') === String(next?.color || '')
+    && Number(current?.usageCount || 0) === Number(next?.usageCount || 0);
+}
+
+function samePlainValue(current, next) {
+  if (Object.is(current, next)) {
+    return true;
+  }
+  if (!current || !next || typeof current !== 'object' || typeof next !== 'object') {
+    return false;
+  }
+  if (Array.isArray(current) || Array.isArray(next)) {
+    return Array.isArray(current)
+      && Array.isArray(next)
+      && current.length === next.length
+      && current.every((item, index) => samePlainValue(item, next[index]));
+  }
+  const currentKeys = Object.keys(current);
+  const nextKeys = Object.keys(next);
+  return currentKeys.length === nextKeys.length
+    && currentKeys.every((key) => Object.prototype.hasOwnProperty.call(next, key)
+      && samePlainValue(current[key], next[key]));
 }
 
 async function submit() {
@@ -841,10 +1057,10 @@ async function completeWithAi() {
   }
 
   aiLoading.value = true;
-  aiToolCalls.value = [];
-  aiProcess.value = [{ round: 1, reasoning: '等待模型响应...', content: '', tools: [] }];
+  setAiToolCallsIfChanged([]);
+  setAiProcessIfChanged([{ round: 1, reasoning: '等待模型响应...', content: '', tools: [] }]);
   aiReasoning.value = '';
-  aiModSuggestions.value = [];
+  setAiModSuggestionsIfChanged([]);
   const abortController = new AbortController();
   aiAbortController.value = abortController;
   try {
@@ -863,9 +1079,9 @@ async function completeWithAi() {
       enabledSections: { ...aiOptions },
       applyEmptyValues: aiUseCurrentDraft.value
     });
-    aiModSuggestions.value = result.character?.modSuggestions || [];
-    aiToolCalls.value = result.toolCalls || [];
-    aiProcess.value = result.process || [];
+    setAiModSuggestionsIfChanged(result.character?.modSuggestions);
+    setAiToolCallsIfChanged(result.toolCalls);
+    setAiProcessIfChanged(result.process);
     aiReasoning.value = result.reasoning || '';
     notify.success(`AI 已完善设定，调用 ${aiToolCalls.value.length} 次工具`);
   } catch (err) {
@@ -874,7 +1090,7 @@ async function completeWithAi() {
       notify.info('AI 生成已暂停');
       return;
     }
-    aiProcess.value = [{ round: 1, reasoning: err.message, content: '', tools: [] }];
+    setAiProcessIfChanged([{ round: 1, reasoning: err.message, content: '', tools: [] }]);
     notify.error(err.message);
   } finally {
     if (isCurrentCharacterAiRun(abortController)) {
@@ -1131,11 +1347,42 @@ function toggleTagSelection(name) {
 }
 
 function toggleWorldBook(bookId) {
-  const idx = selectedWorldBookIds.value.indexOf(bookId);
-  if (idx >= 0) {
-    selectedWorldBookIds.value.splice(idx, 1);
-  } else {
-    selectedWorldBookIds.value.push(bookId);
+  if (!canEdit.value) {
+    return;
+  }
+  const normalizedId = String(bookId || '');
+  if (!normalizedId) {
+    return;
+  }
+  const currentIds = selectedWorldBookIds.value;
+  const idx = currentIds.indexOf(normalizedId);
+  const nextIds = idx >= 0
+    ? currentIds.filter((id) => id !== normalizedId)
+    : [...currentIds, normalizedId];
+  setSelectedWorldBookIdsIfChanged(nextIds);
+}
+
+function openWorldBookDialog() {
+  if (!worldBooks.value.length) {
+    return;
+  }
+  showWorldBookDialog.value = true;
+  setWorldBookPage(worldBookPage.value);
+}
+
+function closeWorldBookDialog() {
+  showWorldBookDialog.value = false;
+}
+
+function clearWorldBookSearch() {
+  worldBookSearch.value = '';
+  setWorldBookPage(1);
+}
+
+function setWorldBookPage(page) {
+  const nextPage = clampWorldBookPage(page, worldBookPageCount.value);
+  if (worldBookPage.value !== nextPage) {
+    worldBookPage.value = nextPage;
   }
 }
 
@@ -1162,7 +1409,7 @@ async function createSuggestedMods() {
       if (!isCurrentSuggestedModCreate(createToken, sourceSuggestions)) return;
     }
     notify.success(`已创建 ${suggestions.length} 个 Mod`);
-    aiModSuggestions.value = [];
+    setAiModSuggestionsIfChanged([]);
   } catch (err) {
     if (!isCurrentSuggestedModCreate(createToken, sourceSuggestions)) return;
     notify.error(err.message);
@@ -1190,54 +1437,73 @@ function normalizeModType(type) {
 
 function aiStreamHandlers(isCurrent = () => !characterFormDisposed) {
   return {
-    step: (step) => {
+    step: (step = {}) => {
       if (!isCurrent()) return;
-      const target = ensureAiProcessStep(step.round || 1);
-      Object.assign(target, {
+      updateAiProcessStep(step.round || 1, (target) => ({
+        ...target,
         ...step,
         content: target.content || step.content || '',
         reasoning: target.reasoning === '等待模型响应...' ? step.reasoning || '' : target.reasoning || step.reasoning || '',
-        tools: target.tools?.length ? target.tools : step.tools || []
-      });
+        tools: target.tools?.length ? target.tools : Array.isArray(step.tools) ? [...step.tools] : []
+      }));
     },
     reasoning: ({ round = 1, text = '' } = {}) => {
       if (!isCurrent()) return;
-      const target = ensureAiProcessStep(round);
-      if (target.reasoning === '等待模型响应...') target.reasoning = '';
-      target.reasoning += text;
+      updateAiProcessStep(round, (target) => ({
+        ...target,
+        reasoning: `${target.reasoning === '等待模型响应...' ? '' : target.reasoning || ''}${text}`
+      }));
       aiReasoning.value += text;
     },
     content: ({ round = 1, text = '' } = {}) => {
       if (!isCurrent()) return;
-      const target = ensureAiProcessStep(round);
-      target.content += text;
+      updateAiProcessStep(round, (target) => ({
+        ...target,
+        content: `${target.content || ''}${text}`
+      }));
     },
     nudge: ({ round = 1, text = '' } = {}) => {
       if (!isCurrent()) return;
-      const target = ensureAiProcessStep(round);
-      target.content += `${target.content ? '\n\n' : ''}系统提醒：${text}`;
+      updateAiProcessStep(round, (target) => ({
+        ...target,
+        content: `${target.content || ''}${target.content ? '\n\n' : ''}系统提醒：${text}`
+      }));
     },
     tool: (call = {}) => {
       if (!isCurrent()) return;
-      const target = ensureAiProcessStep(call.round || 1);
       const log = {
         name: call.name,
         arguments: call.arguments,
         result: call.result
       };
-      target.tools.push(log);
-      aiToolCalls.value.push(log);
+      updateAiProcessStep(call.round || 1, (target) => ({
+        ...target,
+        tools: [...(Array.isArray(target.tools) ? target.tools : []), log]
+      }));
+      appendAiToolCall(log);
     }
   };
 }
 
-function ensureAiProcessStep(round = 1) {
-  let step = aiProcess.value.find((item) => item.round === round);
-  if (!step) {
-    step = { round, reasoning: '', content: '', tools: [] };
-    aiProcess.value.push(step);
-  }
-  return step;
+function updateAiProcessStep(round = 1, updateStep) {
+  const currentProcess = Array.isArray(aiProcess.value) ? aiProcess.value : [];
+  const stepIndex = currentProcess.findIndex((item) => item.round === round);
+  const currentStep = stepIndex >= 0
+    ? currentProcess[stepIndex]
+    : { round, reasoning: '', content: '', tools: [] };
+  const nextStep = updateStep({
+    ...currentStep,
+    tools: Array.isArray(currentStep.tools) ? [...currentStep.tools] : []
+  });
+  const nextProcess = stepIndex >= 0
+    ? currentProcess.map((item, index) => (index === stepIndex ? nextStep : item))
+    : [...currentProcess, nextStep];
+  setAiProcessIfChanged(nextProcess);
+}
+
+function appendAiToolCall(log) {
+  const currentToolCalls = Array.isArray(aiToolCalls.value) ? aiToolCalls.value : [];
+  setAiToolCallsIfChanged([...currentToolCalls, log]);
 }
 
 function formatAiValue(value) {
@@ -1266,9 +1532,9 @@ async function completeAdvancedSettingsWithAi() {
   }
 
   advancedAiLoading.value = true;
-  aiProcess.value = [{ round: 1, reasoning: '等待模型响应...', content: '', tools: [] }];
+  setAiProcessIfChanged([{ round: 1, reasoning: '等待模型响应...', content: '', tools: [] }]);
   aiReasoning.value = '';
-  aiToolCalls.value = [];
+  setAiToolCallsIfChanged([]);
   const abortController = new AbortController();
   advancedAiAbortController.value = abortController;
   try {
@@ -1312,8 +1578,8 @@ async function completeAdvancedSettingsWithAi() {
       },
       applyEmptyValues: aiUseCurrentDraft.value
     });
-    aiToolCalls.value = result.toolCalls || [];
-    aiProcess.value = result.process || [];
+    setAiToolCallsIfChanged(result.toolCalls);
+    setAiProcessIfChanged(result.process);
     aiReasoning.value = result.reasoning || '';
     notify.success('AI 已完善高阶设置');
   } catch (err) {
@@ -1322,7 +1588,7 @@ async function completeAdvancedSettingsWithAi() {
       notify.info('AI 高阶设置生成已暂停');
       return;
     }
-    aiProcess.value = [{ round: 1, reasoning: err.message, content: '', tools: [] }];
+    setAiProcessIfChanged([{ round: 1, reasoning: err.message, content: '', tools: [] }]);
     notify.error(err.message);
   } finally {
     if (isCurrentAdvancedAiRun(abortController)) {
@@ -1351,7 +1617,7 @@ async function createAndSelectTag() {
     const tag = await createTag({ name });
     if (!isCurrentTagCreate(createToken, name)) return;
     if (!availableTags.value.some((item) => item.name === tag.name)) {
-      availableTags.value = [...availableTags.value, tag];
+      setAvailableTagsIfChanged([...availableTags.value, tag]);
     }
     if (!form.selectedTags.includes(name)) {
       form.selectedTags.push(name);
@@ -1719,6 +1985,28 @@ function countStatusTemplatePlaceholders(template = '') {
 
 function countStatusTemplateActions(template = '') {
   return (String(template || '').match(/\bdata-sb-action\s*=/gi) || []).length;
+}
+
+function collectInferredStatusVariableKeys(template = '') {
+  const inferredKeys = new Set();
+  for (const variable of inferStatusVariablesFromTemplate(template, [])) {
+    inferredKeys.add(normalizeStatusVariableKey(variable.name));
+  }
+  return inferredKeys;
+}
+
+function countStatusBlueprintVariableStats(variables = [], template = '') {
+  const inferredKeys = collectInferredStatusVariableKeys(template);
+  const stats = { inferred: 0, meter: 0 };
+  for (const variable of Array.isArray(variables) ? variables : []) {
+    if (inferredKeys.has(normalizeStatusVariableKey(variable?.name))) {
+      stats.inferred += 1;
+    }
+    if (shouldTreatStatusVariableAsMeter(variable, template)) {
+      stats.meter += 1;
+    }
+  }
+  return stats;
 }
 
 function normalizeStatusTextVariableValue(value) {
@@ -2316,24 +2604,44 @@ function applyLocalRules(text, rules, phase) {
               <small v-if="!optionsLoadError" class="muted-text">选择已有标签或输入新标签名创建</small>
               <small v-else class="muted-text">选项加载失败时仍可输入新标签，重试后可查看已有标签和世界书。</small>
             </div>
-            <label class="field full-span">
-              <span>关联世界书</span>
-              <div v-if="worldBooks.length" class="world-book-selector">
-                <label v-for="wb in worldBooks" :key="wb.id" class="checkbox-line">
-                  <input
-                    type="checkbox"
-                    :checked="selectedWorldBookIds.includes(wb.id)"
-                    :disabled="!canEdit"
-                    @change="toggleWorldBook(wb.id)"
-                  />
-                  <span>{{ wb.name }}</span>
-                  <small class="muted-text">({{ wb.entryCount || 0 }} 条目)</small>
-                </label>
+            <div class="field full-span world-book-field">
+              <div class="field-heading compact">
+                <span>关联世界书</span>
+                <small v-if="worldBooks.length">{{ worldBooks.length }} 本可选</small>
               </div>
-              <small v-if="selectedWorldBookIds.length" class="muted-text">已关联 {{ selectedWorldBookIds.length }} 本世界书</small>
-              <small v-else-if="worldBooks.length" class="muted-text">选择世界书后，对话中触发词匹配时会自动注入设定</small>
-              <small v-else-if="!optionsLoading && !optionsLoadError" class="muted-text">还没有世界书，去 <a href="#/world-books">世界书管理</a> 创建</small>
-            </label>
+              <div class="world-book-picker">
+                <button
+                  class="world-book-picker-button"
+                  type="button"
+                  :disabled="optionsLoading || !worldBooks.length"
+                  @click="openWorldBookDialog"
+                >
+                  <ListChecks :size="17" />
+                  <span>{{ selectedWorldBookIds.length ? `已关联 ${selectedWorldBookIds.length} 本世界书` : '选择世界书' }}</span>
+                </button>
+                <div v-if="selectedWorldBookPreview.length" class="world-book-selected-preview" aria-live="polite">
+                  <button
+                    v-for="book in selectedWorldBookPreview"
+                    :key="book.id"
+                    class="world-book-selected-chip"
+                    type="button"
+                    :disabled="!canEdit"
+                    :title="canEdit ? `取消关联：${book.name}` : book.name"
+                    @click="toggleWorldBook(book.id)"
+                  >
+                    <span>{{ book.name }}</span>
+                    <small>{{ book.entryCount || 0 }} 条目</small>
+                    <X v-if="canEdit" :size="12" />
+                  </button>
+                  <span v-if="hiddenSelectedWorldBookCount" class="world-book-selected-more">
+                    +{{ hiddenSelectedWorldBookCount }}
+                  </span>
+                </div>
+                <small v-if="selectedWorldBookIds.length" class="muted-text">已选世界书会按角色绑定顺序注入。</small>
+                <small v-else-if="worldBooks.length" class="muted-text">选择世界书后，对话中触发词匹配时会自动注入设定。</small>
+                <small v-else-if="!optionsLoading && !optionsLoadError" class="muted-text">还没有世界书，去 <a href="#/world-books">世界书管理</a> 创建</small>
+              </div>
+            </div>
             <label class="field">
               <span>性别</span>
               <input v-model.trim="form.gender" maxlength="24" :disabled="!canEdit" />
@@ -3103,6 +3411,139 @@ function applyLocalRules(text, rules, phase) {
         </div>
       </div>
     </form>
+
+    <div
+      v-if="showWorldBookDialog"
+      class="world-book-dialog-overlay"
+      @click.self="closeWorldBookDialog"
+    >
+      <section
+        class="world-book-dialog form-panel"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="world-book-dialog-title"
+        tabindex="-1"
+        @keydown.esc.prevent="closeWorldBookDialog"
+      >
+        <div class="world-book-dialog-header">
+          <div>
+            <h2 id="world-book-dialog-title">关联世界书</h2>
+            <p>搜索、排序并勾选要随角色绑定的世界书。</p>
+          </div>
+          <button
+            class="icon-button"
+            type="button"
+            title="关闭"
+            aria-label="关闭关联世界书选择"
+            @click="closeWorldBookDialog"
+          >
+            <X :size="18" />
+          </button>
+        </div>
+
+        <div class="world-book-dialog-tools">
+          <label class="field compact world-book-dialog-search">
+            <span>搜索</span>
+            <input
+              v-model="worldBookSearch"
+              type="search"
+              placeholder="按名称或描述搜索"
+              aria-label="搜索世界书"
+            />
+          </label>
+          <label class="field compact world-book-dialog-sort">
+            <span>排序</span>
+            <select v-model="worldBookSort" aria-label="世界书排序">
+              <option
+                v-for="option in WORLD_BOOK_SORT_OPTIONS"
+                :key="option.value"
+                :value="option.value"
+              >
+                {{ option.label }}
+              </option>
+            </select>
+          </label>
+          <button
+            class="ghost-button world-book-clear-search"
+            type="button"
+            :disabled="!worldBookSearch.trim()"
+            @click="clearWorldBookSearch"
+          >
+            <X :size="15" />
+            <span>清空</span>
+          </button>
+        </div>
+
+        <div class="world-book-dialog-summary" aria-live="polite">
+          <span>已选 {{ selectedWorldBookIds.length }} 本</span>
+          <span>{{ filteredWorldBooks.length }} 个匹配结果</span>
+        </div>
+
+        <div v-if="optionsLoading" class="world-book-dialog-state">
+          正在加载世界书...
+        </div>
+        <div v-else-if="optionsLoadError" class="world-book-dialog-state error-text" role="alert">
+          {{ optionsLoadError }}
+        </div>
+        <div v-else-if="!filteredWorldBooks.length" class="world-book-dialog-state">
+          没有匹配的世界书。
+        </div>
+        <div v-else class="world-book-dialog-list">
+          <label
+            v-for="book in pagedWorldBooks"
+            :key="book.id"
+            class="world-book-dialog-option"
+            :class="{ selected: selectedWorldBookIds.includes(book.id) }"
+          >
+            <input
+              type="checkbox"
+              :checked="selectedWorldBookIds.includes(book.id)"
+              :disabled="!canEdit"
+              @change="toggleWorldBook(book.id)"
+            />
+            <span class="world-book-dialog-option-main">
+              <strong>{{ book.name }}</strong>
+              <small v-if="book.description">{{ book.description }}</small>
+              <small v-else class="muted-text">暂无描述</small>
+            </span>
+            <span class="world-book-dialog-meta">
+              <small>{{ book.entryCount || 0 }} 条目</small>
+              <small>深度 {{ book.scanDepth || 4 }}</small>
+              <small>预算 {{ book.lorebookContextPercent || 25 }}%</small>
+            </span>
+          </label>
+        </div>
+
+        <div class="world-book-dialog-footer">
+          <div class="world-book-pagination" aria-live="polite">
+            <button
+              class="icon-button"
+              type="button"
+              title="上一页"
+              aria-label="上一页"
+              :disabled="worldBookPage <= 1"
+              @click="setWorldBookPage(worldBookPage - 1)"
+            >
+              <ChevronLeft :size="17" />
+            </button>
+            <span>{{ worldBookPageStart }}-{{ worldBookPageEnd }} / {{ filteredWorldBooks.length }} · 第 {{ worldBookPage }} / {{ worldBookPageCount }} 页</span>
+            <button
+              class="icon-button"
+              type="button"
+              title="下一页"
+              aria-label="下一页"
+              :disabled="worldBookPage >= worldBookPageCount"
+              @click="setWorldBookPage(worldBookPage + 1)"
+            >
+              <ChevronRight :size="17" />
+            </button>
+          </div>
+          <button class="primary-button" type="button" @click="closeWorldBookDialog">
+            完成
+          </button>
+        </div>
+      </section>
+    </div>
 
     <div
       v-if="showStatusPreviewDialog"

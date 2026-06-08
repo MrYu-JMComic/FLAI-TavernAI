@@ -39,20 +39,39 @@ function isActionPending(item) {
 }
 
 function markActionPending(id) {
-  pendingActionIds.value = new Set(pendingActionIds.value).add(id);
+  const nextPendingIds = new Set(pendingActionIds.value);
+  nextPendingIds.add(id);
+  pendingActionIds.value = nextPendingIds;
 }
 
-function syncPendingActionIds(ids) {
+function syncPendingActionIds(items) {
   const pendingIds = pendingActionIds.value;
   if (!pendingIds.size) return;
 
-  const activeIds = new Set(ids);
+  const activeIds = collectToastIds(items);
+  const nextPendingIds = new Set();
+  let changed = false;
   for (const id of pendingIds) {
-    if (!activeIds.has(id)) {
-      pendingActionIds.value = new Set([...pendingIds].filter((pendingId) => activeIds.has(pendingId)));
-      return;
+    if (activeIds.has(id)) {
+      nextPendingIds.add(id);
+    } else {
+      changed = true;
     }
   }
+  if (changed) {
+    pendingActionIds.value = nextPendingIds;
+  }
+}
+
+function collectToastIds(items) {
+  const ids = new Set();
+  const list = Array.isArray(items) ? items : [];
+  for (const item of list) {
+    if (item?.id) {
+      ids.add(item.id);
+    }
+  }
+  return ids;
 }
 
 function runAction(item) {
@@ -63,7 +82,7 @@ function runAction(item) {
 }
 
 watch(
-  () => props.items.map((item) => item.id),
+  () => props.items,
   syncPendingActionIds
 );
 </script>

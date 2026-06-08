@@ -46,6 +46,81 @@ test('WorldBookView preserves unchanged book and entry references during refresh
   assert.equal(countMatches(worldBookViewScript, /currentBook\.value\s*=/g), 2);
 });
 
+test('WorldBookView preserves unchanged AI draft and process panel references', () => {
+  assert.match(
+    worldBookViewScript,
+    /function setAiDraftIfChanged\(nextDraft\) {\s*return setAiPlainRefIfChanged\(aiDraft, nextDraft \|\| null\);\s*}/
+  );
+  assert.match(
+    worldBookViewScript,
+    /function setAiToolCallsIfChanged\(nextToolCalls\) {\s*return setAiPlainListIfChanged\(aiToolCalls, nextToolCalls\);\s*}/
+  );
+  assert.match(
+    worldBookViewScript,
+    /function setAiProcessIfChanged\(nextProcess\) {\s*return setAiPlainListIfChanged\(aiProcess, nextProcess\);\s*}/
+  );
+  assert.match(
+    worldBookViewScript,
+    /function setAiPlainRefIfChanged\(valueRef, nextValue\) {[\s\S]*samePlainValue\(valueRef\.value, nextValue\)[\s\S]*valueRef\.value = nextValue;[\s\S]*return true;[\s\S]*}/
+  );
+  assert.match(
+    worldBookViewScript,
+    /function samePlainValue\(current, next\) {[\s\S]*Object\.is\(current, next\)[\s\S]*Array\.isArray\(current\)[\s\S]*Object\.keys\(current\)[\s\S]*samePlainValue\(current\[key\], next\[key\]\)[\s\S]*}/
+  );
+  assert.match(
+    worldBookViewScript,
+    /function updateAiProcessStep\(round = 1, updateStep\) {[\s\S]*const currentProcess = Array\.isArray\(aiProcess\.value\) \? aiProcess\.value : \[\];[\s\S]*const nextProcess = stepIndex >= 0[\s\S]*currentProcess\.map\(\(item, index\) => \(index === stepIndex \? nextStep : item\)\)[\s\S]*\[\.\.\.currentProcess, nextStep\][\s\S]*setAiProcessIfChanged\(nextProcess\);[\s\S]*}/
+  );
+  assert.match(
+    worldBookViewScript,
+    /function appendAiToolCall\(log\) {[\s\S]*const currentToolCalls = Array\.isArray\(aiToolCalls\.value\) \? aiToolCalls\.value : \[\];[\s\S]*setAiToolCallsIfChanged\(\[\.\.\.currentToolCalls, log\]\);[\s\S]*}/
+  );
+  assert.match(
+    worldBookViewScript,
+    /async function completeWorldBookWithAi\(\) {[\s\S]*setAiToolCallsIfChanged\(\[\]\);[\s\S]*setAiProcessIfChanged\(\[\{ round: 1, reasoning: '[^']+', content: '', tools: \[\] \}\]\);/
+  );
+  assert.match(
+    worldBookViewScript,
+    /setAiDraftIfChanged\(result\.worldBook\);[\s\S]*setAiToolCallsIfChanged\(result\.toolCalls\);[\s\S]*setAiProcessIfChanged\(result\.process\);/
+  );
+  assert.match(
+    worldBookViewScript,
+    /if \(!aiDraftEntryCount\.value\) {\s*setAiDraftIfChanged\(null\);/
+  );
+  assert.match(
+    worldBookViewScript,
+    /setAiProcessIfChanged\(\[\{ round: 1, reasoning: err\.message, content: '', tools: \[\] \}\]\);/
+  );
+  assert.match(
+    worldBookViewScript,
+    /notify\.success\(`[^`]*\$\{aiDraftEntryCount\.value\}[^`]*`\);\s*setAiDraftIfChanged\(null\);/
+  );
+  assert.match(
+    worldBookViewScript,
+    /function aiStreamHandlers\(mutationToken, routeKey\) {[\s\S]*step: \(step = \{\}\) => {[\s\S]*updateAiProcessStep\(step\.round \|\| 1, \(target\) => \({[\s\S]*content: target\.content \|\| step\.content \|\| ''[\s\S]*reasoning: target\.reasoning === '等待模型响应\.\.\.'[\s\S]*tools: target\.tools\?\.length \? target\.tools : Array\.isArray\(step\.tools\) \? \[\.\.\.step\.tools\] : \[\][\s\S]*tool: \(call = \{\}\) => {[\s\S]*updateAiProcessStep\(call\.round \|\| 1, \(target\) => \({[\s\S]*tools: \[\.\.\.\(Array\.isArray\(target\.tools\) \? target\.tools : \[\]\), log\][\s\S]*appendAiToolCall\(log\);/
+  );
+  assert.doesNotMatch(worldBookViewScript, /aiDraft\.value\s*=(?!=)/);
+  assert.doesNotMatch(worldBookViewScript, /aiToolCalls\.value\s*=(?!=)/);
+  assert.doesNotMatch(worldBookViewScript, /aiProcess\.value\s*=(?!=)/);
+  assert.doesNotMatch(worldBookViewScript, /(?:aiToolCalls|aiProcess)\.value\.(?:push|splice|unshift|shift|pop)\(/);
+  assert.doesNotMatch(worldBookViewScript, /target\.tools\.push\(/);
+  assert.doesNotMatch(worldBookViewScript, /function ensureAiProcessStep/);
+});
+
+test('WorldBookView aggregates current entry stats in one pass', () => {
+  assert.match(
+    worldBookViewScript,
+    /const currentEntryStats = computed\(\(\) => \{[\s\S]*const stats = \{[\s\S]*enabled: 0,[\s\S]*disabled: 0,[\s\S]*alwaysActive: 0,[\s\S]*probability: 0[\s\S]*\};[\s\S]*const entries = Array\.isArray\(currentEntries\.value\) \? currentEntries\.value : \[\];[\s\S]*for \(const entry of entries\) \{[\s\S]*stats\.enabled \+= 1;[\s\S]*stats\.alwaysActive \+= 1;[\s\S]*stats\.probability \+= 1;[\s\S]*\}[\s\S]*stats\.disabled = Math\.max\(0, entries\.length - stats\.enabled\);[\s\S]*return stats;[\s\S]*\}\);/
+  );
+  assert.match(worldBookViewScript, /const enabledEntryCount = computed\(\(\) => currentEntryStats\.value\.enabled\);/);
+  assert.match(worldBookViewScript, /const disabledEntryCount = computed\(\(\) => currentEntryStats\.value\.disabled\);/);
+  assert.match(worldBookViewScript, /const alwaysActiveEntryCount = computed\(\(\) => currentEntryStats\.value\.alwaysActive\);/);
+  assert.match(worldBookViewScript, /const probabilityEntryCount = computed\(\(\) => currentEntryStats\.value\.probability\);/);
+  assert.doesNotMatch(worldBookViewScript, /const enabledEntryCount = computed\(\(\) => currentEntries\.value\.filter/);
+  assert.doesNotMatch(worldBookViewScript, /const alwaysActiveEntryCount = computed\(\(\) => currentEntries\.value\.filter/);
+  assert.doesNotMatch(worldBookViewScript, /const probabilityEntryCount = computed\(\(\) => currentEntries\.value\.filter/);
+});
+
 test('WorldBookView locks world book mutations while saving is active', () => {
   [
     'openCreateBook',

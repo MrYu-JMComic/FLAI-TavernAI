@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
@@ -18,9 +19,20 @@ function isSourceFile(filePath) {
   return sourceExtensions.has(path.extname(filePath));
 }
 
+function comparePathText(left, right) {
+  if (left < right) {
+    return -1;
+  }
+  if (left > right) {
+    return 1;
+  }
+  return 0;
+}
+
 function listSourceFiles(rootDir) {
   const files = [];
-  const entries = fs.readdirSync(rootDir, { withFileTypes: true });
+  const entries = fs.readdirSync(rootDir, { withFileTypes: true })
+    .sort((left, right) => comparePathText(left.name, right.name));
 
   for (const entry of entries) {
     const entryPath = path.join(rootDir, entry.name);
@@ -678,6 +690,30 @@ function findDirectFrontendStyleReadViolations(sourceFiles) {
 
 const backendSourceFiles = readSourceFiles(path.join(repoRoot, 'backend/src'));
 const frontendSourceFiles = readSourceFiles(path.join(repoRoot, 'frontend/src'));
+const frontendEntryFiles = [
+  createSourceFile('frontend/index.html', fs.readFileSync(path.join(repoRoot, 'frontend/index.html'), 'utf8'))
+];
+const sourceAndEntryFiles = [...backendSourceFiles, ...frontendSourceFiles, ...frontendEntryFiles];
+const frontendConsoleCheckedFiles = [...frontendSourceFiles, ...frontendEntryFiles];
+
+test('source hygiene lists source files in deterministic order', () => {
+  const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'flai-source-hygiene-'));
+  try {
+    fs.mkdirSync(path.join(fixtureRoot, 'z-dir'), { recursive: true });
+    fs.mkdirSync(path.join(fixtureRoot, 'a-dir'), { recursive: true });
+    fs.writeFileSync(path.join(fixtureRoot, 'z-dir', 'z.js'), 'const z = 1;\n', 'utf8');
+    fs.writeFileSync(path.join(fixtureRoot, 'a-dir', 'b.js'), 'const b = 1;\n', 'utf8');
+    fs.writeFileSync(path.join(fixtureRoot, 'a-dir', 'a.js'), 'const a = 1;\n', 'utf8');
+    fs.writeFileSync(path.join(fixtureRoot, 'ignore.txt'), 'not source\n', 'utf8');
+
+    assert.deepEqual(
+      listSourceFiles(fixtureRoot).map((filePath) => path.relative(fixtureRoot, filePath).replaceAll(path.sep, '/')),
+      ['a-dir/a.js', 'a-dir/b.js', 'z-dir/z.js']
+    );
+  } finally {
+    fs.rmSync(fixtureRoot, { recursive: true, force: true });
+  }
+});
 
 test('source hygiene ignores comments and string literals', () => {
   const sample = [
@@ -775,6 +811,41 @@ test('source hygiene detects frontend raw console output', () => {
   assert.deepEqual(findTextLineViolations('sample.js', sample, frontendConsoleOutputPattern, 'contains raw console output'), [
     'sample.js:5 contains raw console output',
     'sample.js:6 contains raw console output'
+  ]);
+});
+
+test('source hygiene scans frontend entry inline scripts for console output', () => {
+  const sample = [
+    '<!doctype html>',
+    '<script>',
+    "console.log('entry debug');",
+    '</script>'
+  ].join('\n');
+
+  assert.deepEqual(findSourceViolations(
+    [createSourceFile('frontend/index.html', sample)],
+    frontendConsoleOutputPattern,
+    'contains raw console output'
+  ), [
+    'frontend/index.html:3 contains raw console output'
+  ]);
+});
+
+test('source hygiene scans frontend entry inline scripts for debugger statements and suppressions', () => {
+  const sample = [
+    '<!doctype html>',
+    '<script>',
+    'debugger;',
+    '// eslint-disable-next-line no-console',
+    '</script>'
+  ].join('\n');
+  const sourceFiles = [createSourceFile('frontend/index.html', sample)];
+
+  assert.deepEqual(findSourceViolations(sourceFiles, debuggerStatementPattern, 'contains a debugger statement'), [
+    'frontend/index.html:3 contains a debugger statement'
+  ]);
+  assert.deepEqual(findSourceCommentViolations(sourceFiles, qualitySuppressionCommentPattern, 'contains a quality-suppression comment'), [
+    'frontend/index.html:4 contains a quality-suppression comment'
   ]);
 });
 
@@ -1055,28 +1126,28 @@ test('source hygiene detects direct frontend style source reads', () => {
   ]);
 });
 
-test('source files do not contain debugger statements', () => {
+test('source and frontend entry files do not contain debugger statements', () => {
   assert.deepEqual(
-    findSourceViolations([...backendSourceFiles, ...frontendSourceFiles], debuggerStatementPattern, 'contains a debugger statement'),
+    findSourceViolations(sourceAndEntryFiles, debuggerStatementPattern, 'contains a debugger statement'),
     []
   );
 });
 
-test('frontend source does not contain console.log debug output', () => {
-  assert.deepEqual(findSourceViolations(frontendSourceFiles, frontendConsoleLogPattern, 'contains console.log debug output'), []);
+test('frontend source and entry files do not contain console.log debug output', () => {
+  assert.deepEqual(findSourceViolations(frontendConsoleCheckedFiles, frontendConsoleLogPattern, 'contains console.log debug output'), []);
 });
 
-test('frontend source does not contain debug-only console output', () => {
-  assert.deepEqual(findSourceViolations(frontendSourceFiles, frontendDebugConsolePattern, 'contains console debug output'), []);
+test('frontend source and entry files do not contain debug-only console output', () => {
+  assert.deepEqual(findSourceViolations(frontendConsoleCheckedFiles, frontendDebugConsolePattern, 'contains console debug output'), []);
 });
 
-test('frontend source does not contain raw console output', () => {
-  assert.deepEqual(findSourceViolations(frontendSourceFiles, frontendConsoleOutputPattern, 'contains raw console output'), []);
+test('frontend source and entry files do not contain raw console output', () => {
+  assert.deepEqual(findSourceViolations(frontendConsoleCheckedFiles, frontendConsoleOutputPattern, 'contains raw console output'), []);
 });
 
-test('source files do not contain quality-suppression comments', () => {
+test('source and frontend entry files do not contain quality-suppression comments', () => {
   assert.deepEqual(
-    findSourceCommentViolations([...backendSourceFiles, ...frontendSourceFiles], qualitySuppressionCommentPattern, 'contains a quality-suppression comment'),
+    findSourceCommentViolations(sourceAndEntryFiles, qualitySuppressionCommentPattern, 'contains a quality-suppression comment'),
     []
   );
 });

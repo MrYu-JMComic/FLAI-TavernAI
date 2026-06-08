@@ -45,11 +45,7 @@ const emotionOptions = ['开心', '悲伤', '愤怒', '惊讶', '害羞', '害�
 watch(
   () => props.characterId,
   () => {
-    imageLoadToken += 1;
-    imageUploadToken += 1;
-    imageMutationToken += 1;
-    uploading.value = false;
-    imageActionBusyId.value = '';
+    resetImagePanelState();
     loadImages();
   },
   { immediate: true }
@@ -66,6 +62,20 @@ onBeforeUnmount(() => {
   dragIndex.value = -1;
   dragOverIndex.value = -1;
 });
+
+function resetImagePanelState() {
+  imageLoadToken += 1;
+  imageUploadToken += 1;
+  imageMutationToken += 1;
+  setImagesIfChanged([]);
+  loadError.value = '';
+  uploading.value = false;
+  imageActionBusyId.value = '';
+  editingImageId.value = '';
+  editForm.value = { sceneTag: '', emotionTag: '' };
+  dragIndex.value = -1;
+  dragOverIndex.value = -1;
+}
 
 async function loadImages() {
   if (imagePanelDisposed) return;
@@ -186,6 +196,23 @@ function isCurrentImageMutation(mutationToken, characterId) {
   return !imagePanelDisposed && mutationToken === imageMutationToken && props.characterId === characterId;
 }
 
+function isCurrentImageId(imageId) {
+  const id = String(imageId || '');
+  const characterId = props.characterId;
+  if (!id || !characterId) {
+    return false;
+  }
+  return images.value.some((image) => image?.id === id && image?.characterId === characterId);
+}
+
+function isCurrentImageItem(image) {
+  return Boolean(image?.id && image?.characterId === props.characterId && isCurrentImageId(image.id));
+}
+
+function isCurrentImageIndex(index) {
+  return Number.isInteger(index) && index >= 0 && index < images.value.length && isCurrentImageItem(images.value[index]);
+}
+
 function startImageAction(actionId) {
   if (props.disabled || imageActionBusy.value) {
     return false;
@@ -209,7 +236,7 @@ function isImageActionDisabled() {
 }
 
 function startEdit(image) {
-  if (isImageActionDisabled()) return;
+  if (isImageActionDisabled() || !isCurrentImageItem(image)) return;
   editingImageId.value = image.id;
   editForm.value = {
     sceneTag: image.sceneTag || '',
@@ -224,7 +251,7 @@ function cancelEdit() {
 
 async function saveEdit(imageId) {
   const characterId = props.characterId;
-  if (!characterId || !startImageAction(imageId)) return;
+  if (!characterId || !isCurrentImageId(imageId) || !startImageAction(imageId)) return;
   const mutationToken = ++imageMutationToken;
 
   try {
@@ -247,7 +274,7 @@ async function saveEdit(imageId) {
 
 async function setDefault(imageId) {
   const characterId = props.characterId;
-  if (!characterId || !startImageAction(imageId)) return;
+  if (!characterId || !isCurrentImageId(imageId) || !startImageAction(imageId)) return;
   const mutationToken = ++imageMutationToken;
 
   try {
@@ -270,7 +297,7 @@ async function setDefault(imageId) {
 }
 
 async function removeImage(imageId) {
-  if (isImageActionDisabled() || !props.characterId) return;
+  if (isImageActionDisabled() || !props.characterId || !isCurrentImageId(imageId)) return;
   if (!window.confirm('确定删除这张立绘？')) return;
   const characterId = props.characterId;
   if (!startImageAction(imageId)) return;
@@ -290,12 +317,12 @@ async function removeImage(imageId) {
 }
 
 function onDragStart(index) {
-  if (isImageActionDisabled()) return;
+  if (isImageActionDisabled() || !isCurrentImageIndex(index)) return;
   dragIndex.value = index;
 }
 
 function onDragOver(index) {
-  if (isImageActionDisabled()) return;
+  if (isImageActionDisabled() || !isCurrentImageIndex(dragIndex.value) || !isCurrentImageIndex(index)) return;
   if (dragOverIndex.value !== index) {
     dragOverIndex.value = index;
   }
@@ -308,7 +335,11 @@ function onDragEnd() {
     return;
   }
 
-  if (dragIndex.value < 0 || dragOverIndex.value < 0 || dragIndex.value === dragOverIndex.value) {
+  if (
+    !isCurrentImageIndex(dragIndex.value) ||
+    !isCurrentImageIndex(dragOverIndex.value) ||
+    dragIndex.value === dragOverIndex.value
+  ) {
     dragIndex.value = -1;
     dragOverIndex.value = -1;
     return;

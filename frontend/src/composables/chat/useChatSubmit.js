@@ -99,7 +99,8 @@ export function useChatSubmit({
 
   async function submit() {
     const content = input.value.trim();
-    if (!content || sending.value || submitDisposed) {
+    const conversationId = normalizeConversationId(route.params.id);
+    if (!content || sending.value || submitDisposed || !conversationId) {
       return;
     }
     const submitId = ++submitRunId;
@@ -107,7 +108,7 @@ export function useChatSubmit({
 
     input.value = '';
     await nextTick();
-    if (!isCurrentSubmit(submitId)) {
+    if (!isCurrentSubmit(submitId, conversationId)) {
       return;
     }
 
@@ -128,13 +129,13 @@ export function useChatSubmit({
       reasoningStreaming: false,
       contentStreaming: false
     };
-    messages.value.push(localUserDraft, assistantDraft);
-    const localUser = messages.value[messages.value.length - 2];
-    const assistant = messages.value[messages.value.length - 1];
+    messages.value = [...messages.value, localUserDraft, assistantDraft];
+    const localUser = localUserDraft;
+    const assistant = assistantDraft;
     sending.value = true;
     await nextTick();
-    if (!isCurrentSubmit(submitId)) {
-      messages.value = messages.value.filter((message) => message !== localUser && message !== assistant);
+    if (!isCurrentSubmit(submitId, conversationId)) {
+      removeMessageItemsByReferenceIfPresent(localUser, assistant);
       sending.value = false;
       return;
     }
@@ -154,6 +155,7 @@ export function useChatSubmit({
     let streamFinished = false;
     let streamTimedOut = false;
     let streamTimer = null;
+    let streamController = null;
 
     const clearStreamTimer = () => {
       if (streamTimer) {
@@ -165,62 +167,66 @@ export function useChatSubmit({
       clearStreamTimer();
       streamTimer = window.setTimeout(() => {
         streamTimedOut = true;
-        controller.value?.abort();
+        streamController?.abort();
       }, streamIdleTimeoutMs);
     };
 
     try {
       if (useStream.value) {
-        controller.value = new AbortController();
+        streamController = new AbortController();
+        controller.value = streamController;
         refreshStreamTimer();
         const streamResult = await streamMessage(
-          route.params.id,
+          conversationId,
           requestPayload,
           {
             meta(data) {
-              if (!isCurrentSubmit(submitId)) return;
-              providerMeta.value = data;
+              if (!isCurrentSubmit(submitId, conversationId)) return;
+              setProviderMetaIfChanged(data);
               refreshStreamTimer();
             },
             user_message(data) {
-              if (!isCurrentSubmit(submitId)) return;
+              if (!isCurrentSubmit(submitId, conversationId)) return;
               finalizeUserDraft(localUser, data.userMessage);
             },
             async reasoning(data) {
-              if (!isCurrentSubmit(submitId)) return;
-              if (!assistant.reasoning) {
-                expandReasoning(assistant.id);
+              if (!isCurrentSubmit(submitId, conversationId)) return;
+              const currentAssistant = getMessageListItemOrDraft(assistant);
+              if (!currentAssistant.reasoning) {
+                expandReasoning(currentAssistant.id);
               }
-              assistant.reasoningStreaming = true;
+              setMessageStreamingState(assistant, { reasoningStreaming: true });
               refreshStreamTimer();
               await appendStreamText(assistant, 'reasoning', data.text, anchorAssistantReply);
-              if (!isCurrentSubmit(submitId)) return;
+              if (!isCurrentSubmit(submitId, conversationId)) return;
               await nextTick();
-              if (isCurrentSubmit(submitId)) {
-                followSubmitScroll(assistant, anchorAssistantReply);
+              if (isCurrentSubmit(submitId, conversationId)) {
+                followSubmitScroll(getMessageListItemOrDraft(assistant), anchorAssistantReply);
               }
             },
             async content(data) {
-              if (!isCurrentSubmit(submitId)) return;
-              assistant.reasoningStreaming = false;
-              assistant.contentStreaming = true;
+              if (!isCurrentSubmit(submitId, conversationId)) return;
+              setMessageStreamingState(assistant, {
+                reasoningStreaming: false,
+                contentStreaming: true
+              });
               refreshStreamTimer();
               await appendStreamText(assistant, 'content', data.text, anchorAssistantReply);
-              if (!isCurrentSubmit(submitId)) return;
+              if (!isCurrentSubmit(submitId, conversationId)) return;
               await nextTick();
-              if (isCurrentSubmit(submitId)) {
-                followSubmitScroll(assistant, anchorAssistantReply);
+              if (isCurrentSubmit(submitId, conversationId)) {
+                followSubmitScroll(getMessageListItemOrDraft(assistant), anchorAssistantReply);
               }
             },
             tool(data) {
-              if (!isCurrentSubmit(submitId)) return;
+              if (!isCurrentSubmit(submitId, conversationId)) return;
               if (data?.result?.statusBar) {
                 updateStatusBar(data.result.statusBar);
               }
             },
             skill_result(data) {
-              if (!isCurrentSubmit(submitId)) return;
-              handleSkillResult(data);
+              if (!isCurrentSubmit(submitId, conversationId)) return;
+              handleSkillResult(withConversationContext(data, conversationId));
             },
             skills_done(data) {
               if (Array.isArray(data?.results)) {
@@ -228,40 +234,41 @@ export function useChatSubmit({
               }
             },
             async done(data) {
-              if (!isCurrentSubmit(submitId)) return;
+              if (!isCurrentSubmit(submitId, conversationId)) return;
               streamFinished = true;
               clearStreamTimer();
-              if (stoppingByUser || !assistant.streaming) {
+              const currentAssistant = getMessageListItemOrDraft(assistant);
+              if (stoppingByUser || !currentAssistant.streaming) {
                 return;
               }
-              if (!data.assistantMessage && !hasMessagePayload(assistant)) {
+              if (!data.assistantMessage && !hasMessagePayload(currentAssistant)) {
                 finishAssistantDraft(assistant);
                 showError('模型没有返回正文，请重试或检查当前模型/网关是否支持该对话格式。');
                 return;
               }
               finalizeUserDraft(localUser, data.userMessage);
-              finalizeStreamedAssistant(assistant, data.assistantMessage);
-              await reconcilePersistedStreamDrafts(route.params.id, localUser, assistant);
-              usage.value = data.usage || data.assistantMessage?.usage || null;
-              providerMeta.value = {
+              const finalizedAssistant = finalizeStreamedAssistant(assistant, data.assistantMessage);
+              await reconcilePersistedStreamDrafts(conversationId, localUser, assistant);
+              setUsageIfChanged(data.usage || data.assistantMessage?.usage || null);
+              setProviderMetaIfChanged({
                 ...(providerMeta.value || {}),
                 provider: data.provider || providerMeta.value?.provider
-              };
+              });
               if (data.statusBar) {
                 updateStatusBar(data.statusBar);
               }
               if (data.accessoryBackground) {
-                scheduleAccessoryRefresh();
+                scheduleAccessoryRefresh(conversationId);
               }
               if (shouldAnchorAssistantReply(anchorAssistantReply)) {
                 await nextTick();
-                if (isCurrentSubmit(submitId)) {
-                  scrollToAssistantReply(assistant, false);
+                if (isCurrentSubmit(submitId, conversationId)) {
+                  scrollToAssistantReply(finalizedAssistant || getMessageListItemOrDraft(assistant), false);
                 }
               }
             },
             error(data) {
-              if (!isCurrentSubmit(submitId)) return;
+              if (!isCurrentSubmit(submitId, conversationId)) return;
               streamFinished = true;
               clearStreamTimer();
               finishAssistantDraft(assistant);
@@ -270,62 +277,62 @@ export function useChatSubmit({
               }
             }
           },
-          controller.value.signal
+          streamController.signal
         );
         clearStreamTimer();
-        if (!isCurrentSubmit(submitId)) {
+        if (!isCurrentSubmit(submitId, conversationId)) {
           return;
         }
         if (streamResult?.aborted || !streamFinished) {
-          const shouldReconcileInterruptedDraft = stoppingByUser && hasMessagePayload(assistant);
+          const shouldReconcileInterruptedDraft = stoppingByUser && hasCurrentMessagePayload(assistant);
           finishAssistantDraft(assistant);
           if (shouldReconcileInterruptedDraft) {
-            await reconcileInterruptedStreamDrafts(route.params.id, localUser, assistant);
+            await reconcileInterruptedStreamDrafts(conversationId, localUser, assistant);
           }
           if (streamTimedOut && !stoppingByUser) {
             showError('模型响应超时，请检查网络、余额或模型状态后重试。');
-          } else if (!stoppingByUser && !streamFinished && !assistant.content && !assistant.reasoning) {
+          } else if (!stoppingByUser && !streamFinished && !hasCurrentMessagePayload(assistant)) {
             showError('连接已结束，但没有收到模型回复。请检查 API Key、余额或网关状态后重试。');
           }
         }
         if (!streamResult?.aborted) {
-          if (stoppingByUser && hasMessagePayload(assistant)) {
-            await reconcileInterruptedStreamDrafts(route.params.id, localUser, assistant);
+          if (stoppingByUser && hasCurrentMessagePayload(assistant)) {
+            await reconcileInterruptedStreamDrafts(conversationId, localUser, assistant);
           } else if (!stoppingByUser) {
-            await reconcilePersistedStreamDrafts(route.params.id, localUser, assistant);
+            await reconcilePersistedStreamDrafts(conversationId, localUser, assistant);
           }
         }
       } else {
-        const result = await sendMessage(route.params.id, requestPayload);
-        if (!isCurrentSubmit(submitId)) {
+        const result = await sendMessage(conversationId, requestPayload);
+        if (!isCurrentSubmit(submitId, conversationId)) {
           return;
         }
-        Object.assign(localUser, result.userMessage);
-        Object.assign(assistant, result.assistantMessage, { streaming: false });
-        usage.value = result.usage || null;
-        providerMeta.value = { provider: result.provider };
+        finalizeUserDraft(localUser, result.userMessage);
+        const finalizedAssistant = finalizeStreamedAssistant(assistant, result.assistantMessage);
+        setUsageIfChanged(result.usage || null);
+        setProviderMetaIfChanged({ provider: result.provider });
         if (Array.isArray(result.skillResults)) {
-          result.skillResults.forEach((item) => handleSkillResult(item));
+          result.skillResults.forEach((item) => handleSkillResult(withConversationContext(item, conversationId)));
         }
         if (result.statusBar) {
           updateStatusBar(result.statusBar);
         }
         if (result.accessoryBackground) {
-          scheduleAccessoryRefresh();
+          scheduleAccessoryRefresh(conversationId);
         }
         if (shouldAnchorAssistantReply(anchorAssistantReply)) {
           await nextTick();
-          if (isCurrentSubmit(submitId)) {
-            scrollToAssistantReply(assistant, false);
+          if (isCurrentSubmit(submitId, conversationId)) {
+            scrollToAssistantReply(finalizedAssistant || getMessageListItemOrDraft(assistant), false);
           }
         }
       }
-      if (isCurrentSubmit(submitId)) {
+      if (isCurrentSubmit(submitId, conversationId)) {
         refreshConversationChrome();
       }
     } catch (err) {
       clearStreamTimer();
-      if (!isCurrentSubmit(submitId)) {
+      if (!isCurrentSubmit(submitId, conversationId)) {
         return;
       }
       if (streamTimedOut && !stoppingByUser) {
@@ -334,14 +341,16 @@ export function useChatSubmit({
         showError(err.message);
       }
       if (err.data?.accepted === false) {
-        messages.value = messages.value.filter((message) => message.id !== localUser.id);
+        removeMessageItemsByIdIfPresent(localUser.id);
       }
       finishAssistantDraft(assistant);
     } finally {
       clearStreamTimer();
-      if (isCurrentSubmit(submitId)) {
+      if (isActiveSubmit(submitId)) {
         sending.value = false;
-        controller.value = null;
+        if (!streamController || controller.value === streamController) {
+          controller.value = null;
+        }
         stoppingByUser = false;
       }
     }
@@ -362,8 +371,24 @@ export function useChatSubmit({
     clearAccessoryRefreshTimers();
   }
 
-  function isCurrentSubmit(submitId) {
+  function isActiveSubmit(submitId) {
     return !submitDisposed && submitId === submitRunId;
+  }
+
+  function isCurrentSubmit(submitId, conversationId = '') {
+    const targetConversationId = normalizeConversationId(conversationId);
+    return isActiveSubmit(submitId) &&
+      (!targetConversationId || normalizeConversationId(route.params.id) === targetConversationId);
+  }
+
+  function withConversationContext(data, conversationId) {
+    if (!data || typeof data !== 'object') {
+      return { conversationId };
+    }
+    if (data.conversationId === conversationId) {
+      return data;
+    }
+    return { ...data, conversationId };
   }
 
   function refreshConversationChrome() {
@@ -396,6 +421,45 @@ export function useChatSubmit({
     return true;
   }
 
+  function setUsageIfChanged(nextUsage) {
+    return setPlainRefIfChanged(usage, nextUsage || null);
+  }
+
+  function setProviderMetaIfChanged(nextMeta) {
+    return setPlainRefIfChanged(providerMeta, nextMeta || null);
+  }
+
+  function setPlainRefIfChanged(valueRef, nextValue) {
+    if (samePlainValue(valueRef.value, nextValue)) {
+      return false;
+    }
+    valueRef.value = nextValue;
+    return true;
+  }
+
+  function samePlainValue(current, next) {
+    if (Object.is(current, next)) {
+      return true;
+    }
+    if (typeof current !== typeof next || current === null || next === null) {
+      return false;
+    }
+    if (Array.isArray(current) || Array.isArray(next)) {
+      return Array.isArray(current)
+        && Array.isArray(next)
+        && current.length === next.length
+        && current.every((item, index) => samePlainValue(item, next[index]));
+    }
+    if (typeof current !== 'object') {
+      return false;
+    }
+    const currentKeys = Object.keys(current);
+    const nextKeys = Object.keys(next);
+    return currentKeys.length === nextKeys.length
+      && currentKeys.every((key) => Object.prototype.hasOwnProperty.call(next, key))
+      && currentKeys.every((key) => samePlainValue(current[key], next[key]));
+  }
+
   function followSubmitScroll(message, anchorAssistantReply, smooth = false) {
     if (shouldAnchorAssistantReply(anchorAssistantReply) && scrollToAssistantReply(message, smooth)) {
       return;
@@ -417,34 +481,53 @@ export function useChatSubmit({
     });
   }
 
-  function scheduleAccessoryRefresh() {
-    if (submitDisposed || typeof window === 'undefined') {
+  function scheduleAccessoryRefresh(conversationId) {
+    const targetConversationId = normalizeConversationId(conversationId);
+    if (submitDisposed || typeof window === 'undefined' || !targetConversationId) {
       return;
     }
     const runId = ++accessoryRefreshRun;
     clearAccessoryRefreshTimers();
     if (typeof onAccessoryRefreshStart === 'function') {
-      onAccessoryRefreshStart({ runId });
+      const shouldContinue = onAccessoryRefreshStart({ runId, conversationId: targetConversationId });
+      if (shouldContinue === false || !isCurrentAccessoryRefresh(runId, targetConversationId)) {
+        return;
+      }
     }
     for (const delay of accessoryRefreshDelays) {
       const isFinal = delay === accessoryRefreshDelays[accessoryRefreshDelays.length - 1];
       const timer = window.setTimeout(async () => {
-        if (submitDisposed || runId !== accessoryRefreshRun) {
+        if (!isCurrentAccessoryRefresh(runId, targetConversationId)) {
           return;
         }
         const results = await Promise.allSettled([
           createRefreshTask(loadStatusBar),
           createRefreshTask(loadEconomyBalance)
         ]);
-        if (submitDisposed || runId !== accessoryRefreshRun) {
+        if (!isCurrentAccessoryRefresh(runId, targetConversationId)) {
           return;
         }
         if (typeof onAccessoryRefresh === 'function') {
-          await onAccessoryRefresh({ runId, delay, isFinal, results });
+          const shouldContinue = await onAccessoryRefresh({
+            runId,
+            conversationId: targetConversationId,
+            delay,
+            isFinal,
+            results
+          });
+          if (shouldContinue === false && isCurrentAccessoryRefresh(runId, targetConversationId)) {
+            cancelAccessoryRefresh();
+          }
         }
       }, delay);
       accessoryRefreshTimers.push(timer);
     }
+  }
+
+  function isCurrentAccessoryRefresh(runId, conversationId) {
+    return !submitDisposed &&
+      runId === accessoryRefreshRun &&
+      normalizeConversationId(route.params.id) === normalizeConversationId(conversationId);
   }
 
   function stop() {
@@ -452,10 +535,21 @@ export function useChatSubmit({
     controller.value?.abort();
     sending.value = false;
     cancelAccessoryRefresh();
-    const last = [...messages.value].reverse().find((message) => message.streaming);
+    const last = findLastStreamingMessage();
     if (last) {
       finishAssistantDraft(last);
     }
+  }
+
+  function findLastStreamingMessage() {
+    const messageList = Array.isArray(messages.value) ? messages.value : [];
+    for (let index = messageList.length - 1; index >= 0; index -= 1) {
+      const message = messageList[index];
+      if (message?.streaming) {
+        return message;
+      }
+    }
+    return null;
   }
 
   function cleanup() {
@@ -469,14 +563,76 @@ export function useChatSubmit({
   }
 
   function finishAssistantDraft(message) {
-    if (submitDisposed) return;
-    message.streaming = false;
-    message.reasoningStreaming = false;
-    message.contentStreaming = false;
-    if (!message.content && !message.reasoning) {
-      messages.value = messages.value.filter((item) => item.id !== message.id);
+    if (submitDisposed || !message) return;
+    const currentMessage = findMessageListItem(message.id);
+    if (!currentMessage) return;
+    const stateChanged = Boolean(
+      currentMessage.streaming ||
+      currentMessage.reasoningStreaming ||
+      currentMessage.contentStreaming
+    );
+    if (stateChanged) {
+      currentMessage.streaming = false;
+      currentMessage.reasoningStreaming = false;
+      currentMessage.contentStreaming = false;
     }
-    triggerRef(messages);
+    if (!currentMessage.content && !currentMessage.reasoning) {
+      removeMessageItemsByIdIfPresent(currentMessage.id);
+      return;
+    }
+    if (stateChanged) {
+      triggerRef(messages);
+    }
+  }
+
+  function removeMessageItemsByReferenceIfPresent(...targets) {
+    const messageList = Array.isArray(messages.value) ? messages.value : [];
+    if (!messageList.length || !targets.length) {
+      return false;
+    }
+    const nextMessages = [];
+    let removed = false;
+    for (const item of messageList) {
+      let shouldRemove = false;
+      for (const target of targets) {
+        if (item === target) {
+          shouldRemove = true;
+          break;
+        }
+      }
+      if (shouldRemove) {
+        removed = true;
+      } else {
+        nextMessages.push(item);
+      }
+    }
+    if (!removed) {
+      return false;
+    }
+    messages.value = nextMessages;
+    return true;
+  }
+
+  function removeMessageItemsByIdIfPresent(messageId) {
+    const targetId = normalizeMessageId(messageId);
+    const messageList = Array.isArray(messages.value) ? messages.value : [];
+    if (!targetId || !messageList.length) {
+      return false;
+    }
+    const nextMessages = [];
+    let removed = false;
+    for (const item of messageList) {
+      if (normalizeMessageId(item?.id) === targetId) {
+        removed = true;
+      } else {
+        nextMessages.push(item);
+      }
+    }
+    if (!removed) {
+      return false;
+    }
+    messages.value = nextMessages;
+    return true;
   }
 
   function reconcileInterruptedStreamDrafts(conversationId, localUser, assistant) {
@@ -487,7 +643,7 @@ export function useChatSubmit({
   }
 
   async function reconcilePersistedStreamDrafts(conversationId, localUser, assistant, options = {}) {
-    if (submitDisposed) {
+    if (!isActiveConversation(conversationId)) {
       return;
     }
     if (!needsPersistedDraftReconcile(localUser, assistant)) {
@@ -497,8 +653,11 @@ export function useChatSubmit({
     const attempts = Math.max(1, Number(options.attempts) || 1);
     const delayMs = Math.max(0, Number(options.delayMs) || 0);
     for (let attempt = 1; attempt <= attempts; attempt += 1) {
+      if (!isActiveConversation(conversationId) || !needsPersistedDraftReconcile(localUser, assistant)) {
+        return;
+      }
       const reconciled = await tryReconcilePersistedStreamDrafts(conversationId, localUser, assistant);
-      if (reconciled || submitDisposed || !needsPersistedDraftReconcile(localUser, assistant)) {
+      if (reconciled || !isActiveConversation(conversationId) || !needsPersistedDraftReconcile(localUser, assistant)) {
         return;
       }
       if (attempt < attempts && delayMs) {
@@ -509,40 +668,54 @@ export function useChatSubmit({
 
   async function tryReconcilePersistedStreamDrafts(conversationId, localUser, assistant) {
     try {
+      if (!isActiveConversation(conversationId)) {
+        return false;
+      }
       const result = await fetchConversationMessages(conversationId);
-      if (submitDisposed || route.params.id !== conversationId || !Array.isArray(result?.messages)) {
+      if (!isActiveConversation(conversationId) || !Array.isArray(result?.messages)) {
         return false;
       }
 
       const persistedMessages = result.messages;
-      const userReplacement = isLocalDraft(localUser)
-        ? findPersistedUserMessage(persistedMessages, localUser)
-        : localUser;
-      const assistantReplacement = isLocalDraft(assistant)
-        ? findPersistedAssistantMessage(persistedMessages, assistant, userReplacement)
+      const currentLocalUser = findMessageListItem(localUser?.id);
+      const currentAssistant = findMessageListItem(assistant?.id);
+      const userDraft = currentLocalUser || localUser;
+      const assistantDraft = currentAssistant || assistant;
+      const userNeedsReplacement = isLocalDraft(userDraft);
+      const assistantNeedsReplacement = isLocalDraft(assistantDraft);
+      const userReplacement = userNeedsReplacement
+        ? findPersistedUserMessage(persistedMessages, userDraft)
+        : userDraft;
+      const assistantReplacement = assistantNeedsReplacement
+        ? findPersistedAssistantMessage(persistedMessages, assistantDraft, userReplacement)
         : null;
+      let updatedMessages = false;
 
-      if (userReplacement && isLocalDraft(localUser)) {
-        const localContent = localUser.content;
-        Object.assign(localUser, userReplacement, {
+      if (userReplacement && userNeedsReplacement && currentLocalUser) {
+        const localContent = currentLocalUser.content;
+        Object.assign(currentLocalUser, userReplacement, {
           content: userReplacement.content || localContent || ''
         });
+        updatedMessages = true;
       }
-      if (assistantReplacement) {
-        const streamedContent = assistant.content;
-        const streamedReasoning = assistant.reasoning;
-        Object.assign(assistant, assistantReplacement, {
+      if (assistantReplacement && currentAssistant) {
+        const streamedContent = currentAssistant.content;
+        const streamedReasoning = currentAssistant.reasoning;
+        Object.assign(currentAssistant, assistantReplacement, {
           content: streamedContent || assistantReplacement.content || '',
           reasoning: streamedReasoning || assistantReplacement.reasoning || '',
           streaming: false,
           reasoningStreaming: false,
           contentStreaming: false
         });
+        updatedMessages = true;
       }
-      triggerRef(messages);
+      if (updatedMessages) {
+        triggerRef(messages);
+      }
       return Boolean(
-        (!isLocalDraft(localUser) || userReplacement) &&
-        (!isLocalDraft(assistant) || assistantReplacement)
+        (!userNeedsReplacement || userReplacement) &&
+        (!assistantNeedsReplacement || assistantReplacement)
       );
     } catch {
       // Keep the visible streamed draft if the follow-up refresh is unavailable.
@@ -558,63 +731,106 @@ export function useChatSubmit({
   }
 
   function needsPersistedDraftReconcile(...items) {
-    return items.some((item) => isLocalDraft(item) && !item.streaming);
+    return items.some((item) => {
+      const currentItem = findMessageListItem(item?.id);
+      return isLocalDraft(currentItem) && !currentItem.streaming;
+    });
   }
 
   function isLocalDraft(message) {
     return Boolean(message?.id) && String(message.id).startsWith('local-');
   }
 
+  function isActiveConversation(conversationId) {
+    const targetConversationId = normalizeConversationId(conversationId);
+    return !submitDisposed &&
+      targetConversationId &&
+      normalizeConversationId(route.params.id) === targetConversationId;
+  }
+
   function findPersistedUserMessage(messages, draft) {
+    const messageList = Array.isArray(messages) ? messages : [];
     const draftContent = normalizeMessageText(draft?.content);
-    return [...messages].reverse().find((message) => (
-      message.role === 'user' &&
-      !isLocalDraft(message) &&
-      (!draftContent || normalizeMessageText(message.content) === draftContent)
-    )) || null;
+    for (let index = messageList.length - 1; index >= 0; index -= 1) {
+      const message = messageList[index];
+      if (
+        message?.role === 'user' &&
+        !isLocalDraft(message) &&
+        (!draftContent || normalizeMessageText(message.content) === draftContent)
+      ) {
+        return message;
+      }
+    }
+    return null;
   }
 
   function findPersistedAssistantMessage(messages, draft, userMessage = null) {
-    const candidates = messages.filter((message) => message.role === 'assistant' && !isLocalDraft(message));
-    if (!candidates.length) {
+    const messageList = Array.isArray(messages) ? messages : [];
+    let lastPersistedAssistant = null;
+    for (const message of messageList) {
+      if (isPersistedAssistantMessage(message)) {
+        lastPersistedAssistant = message;
+      }
+    }
+    if (!lastPersistedAssistant) {
       return null;
     }
 
-    const userIndex = userMessage?.id
-      ? messages.findIndex((message) => message.id === userMessage.id)
-      : -1;
-    if (userIndex >= 0) {
-      const afterUser = messages
-        .slice(userIndex + 1)
-        .filter((message) => message.role === 'assistant' && !isLocalDraft(message));
-      return afterUser.length ? afterUser[afterUser.length - 1] : null;
+    const userId = normalizeMessageId(userMessage?.id);
+    if (userId) {
+      let sawUser = false;
+      let afterUser = null;
+      for (const message of messageList) {
+        if (!sawUser) {
+          if (normalizeMessageId(message?.id) === userId) {
+            sawUser = true;
+          }
+          continue;
+        }
+        if (isPersistedAssistantMessage(message)) {
+          afterUser = message;
+        }
+      }
+      if (sawUser) {
+        return afterUser;
+      }
     }
 
     const userTime = messageTimeValue(userMessage);
     if (userTime) {
-      const afterUser = candidates.filter((message) => {
+      let afterUser = null;
+      for (const message of messageList) {
+        if (!isPersistedAssistantMessage(message)) {
+          continue;
+        }
         const messageTime = messageTimeValue(message);
-        return !messageTime || messageTime >= userTime;
-      });
-      if (afterUser.length) {
-        return afterUser[afterUser.length - 1];
+        if (!messageTime || messageTime >= userTime) {
+          afterUser = message;
+        }
       }
-      return null;
+      return afterUser;
     }
 
     const draftContent = normalizeMessageText(draft?.content);
     const draftReasoning = normalizeMessageText(draft?.reasoning);
     if (draftContent || draftReasoning) {
-      const exact = [...candidates].reverse().find((message) => (
-        (!draftContent || normalizeMessageText(message.content) === draftContent) &&
-        (!draftReasoning || normalizeMessageText(message.reasoning) === draftReasoning)
-      ));
-      if (exact) {
-        return exact;
+      for (let index = messageList.length - 1; index >= 0; index -= 1) {
+        const message = messageList[index];
+        if (
+          isPersistedAssistantMessage(message) &&
+          (!draftContent || normalizeMessageText(message.content) === draftContent) &&
+          (!draftReasoning || normalizeMessageText(message.reasoning) === draftReasoning)
+        ) {
+          return message;
+        }
       }
     }
 
-    return candidates[candidates.length - 1];
+    return lastPersistedAssistant;
+  }
+
+  function isPersistedAssistantMessage(message) {
+    return message?.role === 'assistant' && !isLocalDraft(message);
   }
 
   function normalizeMessageText(value) {
@@ -628,50 +844,104 @@ export function useChatSubmit({
 
   function finalizeUserDraft(message, serverMessage = {}) {
     if (submitDisposed) return;
-    if (!message || !serverMessage?.id) {
-      return;
+    const currentMessage = findMessageListItem(message?.id);
+    if (!currentMessage || !serverMessage?.id) {
+      return null;
     }
-    const localContent = message.content;
-    Object.assign(message, serverMessage, {
+    const localContent = currentMessage.content;
+    Object.assign(currentMessage, serverMessage, {
       content: serverMessage.content || localContent || ''
     });
     triggerRef(messages);
+    return currentMessage;
   }
 
   function finalizeStreamedAssistant(message, serverMessage = {}) {
     if (submitDisposed) return;
+    const currentMessage = findMessageListItem(message?.id);
+    if (!currentMessage) return null;
     const finalServerMessage = serverMessage && typeof serverMessage === 'object' ? serverMessage : {};
-    const streamedContent = message.content;
-    const streamedReasoning = message.reasoning;
-    Object.assign(message, finalServerMessage, {
+    const streamedContent = currentMessage.content;
+    const streamedReasoning = currentMessage.reasoning;
+    Object.assign(currentMessage, finalServerMessage, {
       content: streamedContent || finalServerMessage.content || '',
       reasoning: streamedReasoning || finalServerMessage.reasoning || '',
       streaming: false,
       reasoningStreaming: false,
       contentStreaming: false
     });
-    if (!hasMessagePayload(message)) {
-      finishAssistantDraft(message);
-      return;
+    if (!hasMessagePayload(currentMessage)) {
+      finishAssistantDraft(currentMessage);
+      return null;
     }
     triggerRef(messages);
+    return currentMessage;
   }
 
   function hasMessagePayload(message = {}) {
     return Boolean(String(message.content || '').trim() || String(message.reasoning || '').trim());
   }
 
+  function hasCurrentMessagePayload(message = {}) {
+    return hasMessagePayload(getMessageListItemOrDraft(message));
+  }
+
   async function appendStreamText(message, field, text, anchorAssistantReply = false) {
     if (submitDisposed) return;
+    const currentMessage = findMessageListItem(message?.id);
+    if (!currentMessage) return;
     const value = String(text || '');
-    if (!value || !message.streaming) {
+    if (!value || !currentMessage.streaming) {
       return;
     }
 
-    message[field] += value;
+    currentMessage[field] += value;
     triggerRef(messages);
     await nextTick();
-    followSubmitScroll(message, anchorAssistantReply, false);
+    followSubmitScroll(currentMessage, anchorAssistantReply, false);
+  }
+
+  function setMessageStreamingState(message, nextState = {}) {
+    if (submitDisposed) return null;
+    const currentMessage = findMessageListItem(message?.id);
+    if (!currentMessage) return null;
+    let changed = false;
+    for (const [key, value] of Object.entries(nextState)) {
+      if (currentMessage[key] !== value) {
+        currentMessage[key] = value;
+        changed = true;
+      }
+    }
+    if (changed) {
+      triggerRef(messages);
+    }
+    return currentMessage;
+  }
+
+  function getMessageListItemOrDraft(message) {
+    return findMessageListItem(message?.id) || message || {};
+  }
+
+  function findMessageListItem(messageId) {
+    const targetId = normalizeMessageId(messageId);
+    const messageList = Array.isArray(messages.value) ? messages.value : [];
+    if (!targetId) {
+      return null;
+    }
+    for (const item of messageList) {
+      if (normalizeMessageId(item?.id) === targetId) {
+        return item;
+      }
+    }
+    return null;
+  }
+
+  function normalizeConversationId(conversationId) {
+    return String(conversationId ?? '').trim();
+  }
+
+  function normalizeMessageId(messageId) {
+    return String(messageId ?? '').trim();
   }
 
   return {
