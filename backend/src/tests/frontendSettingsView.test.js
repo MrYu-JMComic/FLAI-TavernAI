@@ -353,6 +353,26 @@ test('SettingsView import file handlers tolerate missing event targets', () => {
   assert.doesNotMatch(regexHandler, /event\.target\.value/);
 });
 
+test('SettingsView import file handlers settle busy state when reads throw synchronously', () => {
+  const presetStart = settingsViewScript.indexOf('function handlePresetImportFile(event) {');
+  const presetEnd = settingsViewScript.indexOf('const modList = ref([]);', presetStart);
+  const presetHandler = settingsViewScript.slice(presetStart, presetEnd);
+  const regexStart = settingsViewScript.indexOf('function handleRegexImportFile(event) {');
+  const regexEnd = settingsViewScript.indexOf('function setActiveExtensionSection', regexStart);
+  const regexHandler = settingsViewScript.slice(regexStart, regexEnd);
+
+  assert.match(
+    presetHandler,
+    /try \{\s*reader\.readAsText\(file\);\s*\} catch \{\s*reader\.onerror\?\.\(\);\s*\}/
+  );
+  assert.match(
+    regexHandler,
+    /try \{\s*reader\.readAsText\(file\);\s*\} catch \{\s*reader\.onerror\?\.\(\);\s*\}/
+  );
+  assert.doesNotMatch(presetHandler, /reader\.onerror[\s\S]*;\s*reader\.readAsText\(file\);\s*$/);
+  assert.doesNotMatch(regexHandler, /reader\.onerror[\s\S]*;\s*reader\.readAsText\(file\);\s*$/);
+});
+
 test('SettingsView export downloads revoke object URLs when link clicks throw', () => {
   assert.match(
     settingsViewScript,

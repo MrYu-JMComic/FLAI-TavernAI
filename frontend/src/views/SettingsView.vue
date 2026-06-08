@@ -1221,7 +1221,11 @@ function handlePresetImportFile(event) {
     notify.error('导入失败：文件读取失败');
     finishPresetMutation(mutationToken);
   };
-  reader.readAsText(file);
+  try {
+    reader.readAsText(file);
+  } catch {
+    reader.onerror?.();
+  }
 }
 
 // ── Mod Management ──
@@ -1918,7 +1922,11 @@ function handleRegexImportFile(event) {
     notify.error('导入失败：文件读取失败');
     finishRegexMutation(mutationToken);
   };
-  reader.readAsText(file);
+  try {
+    reader.readAsText(file);
+  } catch {
+    reader.onerror?.();
+  }
 }
 
 function setActiveExtensionSection(sectionId) {
