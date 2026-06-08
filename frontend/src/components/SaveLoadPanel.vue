@@ -374,6 +374,7 @@ function isSaveActionDisabled() {
 
 function requestClose() {
   if (saveActionBusy.value) return;
+  cancelSavePanelLoad();
   emit('close');
 }
 </script>

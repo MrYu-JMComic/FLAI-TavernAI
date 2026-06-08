@@ -29,7 +29,7 @@ test('SaveLoadPanel disables all item actions while one save item mutation is bu
   );
   assert.match(
     saveLoadPanelScript,
-    /function requestClose\(\)\s*{\s*if \(saveActionBusy\.value\) return;\s*emit\('close'\);/
+    /function requestClose\(\)\s*{\s*if \(saveActionBusy\.value\) return;\s*cancelSavePanelLoad\(\);\s*emit\('close'\);/
   );
   assert.match(
     saveLoadPanelScript,
@@ -155,6 +155,10 @@ test('SaveLoadPanel clears rename drafts when refreshed save rows disappear', ()
 });
 
 test('SaveLoadPanel cancels pending list loads when the panel closes', () => {
+  assert.match(
+    saveLoadPanelScript,
+    /function requestClose\(\)\s*{\s*if \(saveActionBusy\.value\) return;\s*cancelSavePanelLoad\(\);\s*emit\('close'\);\s*}/
+  );
   assert.match(
     saveLoadPanelScript,
     /watch\(\(\) => props\.open, \(isOpen\) => \{\s*if \(isOpen\) \{\s*loadSaves\(\);\s*\} else \{\s*cancelSavePanelLoad\(\);\s*\}\s*}\);/
