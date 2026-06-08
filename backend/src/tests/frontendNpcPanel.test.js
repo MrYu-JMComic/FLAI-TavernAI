@@ -169,6 +169,10 @@ test('NpcPanel preserves unchanged NPC and detail list references during refresh
   );
   assert.match(
     npcPanelScript,
+    /function sameListItems\(currentItems, nextItems, sameItem\)\s*{[\s\S]*if \(currentItems === nextItems\) {[\s\S]*return true;[\s\S]*if \(currentItems\.length !== nextItems\.length\) {[\s\S]*return false;[\s\S]*for \(let index = 0; index < currentItems\.length; index \+= 1\) {[\s\S]*sameItem\(currentItems\[index\], nextItems\[index\]\)[\s\S]*return false;[\s\S]*return true;[\s\S]*}/
+  );
+  assert.match(
+    npcPanelScript,
     /function sameNpcSummary\(current = {}, next = {}\)\s*{[\s\S]*current\?\.name === next\?\.name[\s\S]*Number\(current\?\.memoryCount \|\| 0\) === Number\(next\?\.memoryCount \|\| 0\)[\s\S]*String\(current\?\.source \|\| ''\) === String\(next\?\.source \|\| ''\)[\s\S]*sameListItems\(normalizeStringList\(current\?\.aliases\), normalizeStringList\(next\?\.aliases\), Object\.is\);[\s\S]*}/
   );
   assert.match(
@@ -214,6 +218,7 @@ test('NpcPanel preserves unchanged NPC and detail list references during refresh
   assert.doesNotMatch(npcPanelScript, /setMemoriesIfChanged\(memories\.value\.filter/);
   assert.doesNotMatch(npcPanelScript, /setBehaviorsIfChanged\(behaviors\.value\.filter/);
   assert.doesNotMatch(npcPanelScript, /setNpcsIfChanged\(npcs\.value\.map/);
+  assert.doesNotMatch(npcPanelScript, /currentItems\.every\(/);
   assert.doesNotMatch(npcPanelScript, /setMemoriesIfChanged\(\[mem, \.\.\.memories\.value\]\);/);
   assert.doesNotMatch(npcPanelScript, /setBehaviorsIfChanged\(\[\.\.\.behaviors\.value, beh\]\);/);
   assert.doesNotMatch(npcPanelScript, /setBehaviorsIfChanged\(behaviors\.value\.map\(\(item\) => \(item\.id === behaviorId \? updated : item\)\)\);/);

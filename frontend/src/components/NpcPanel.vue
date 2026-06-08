@@ -334,7 +334,12 @@ function sameListItems(currentItems, nextItems, sameItem) {
   if (currentItems.length !== nextItems.length) {
     return false;
   }
-  return currentItems.every((item, index) => sameItem(item, nextItems[index]));
+  for (let index = 0; index < currentItems.length; index += 1) {
+    if (!sameItem(currentItems[index], nextItems[index])) {
+      return false;
+    }
+  }
+  return true;
 }
 
 function sameNpcSummary(current = {}, next = {}) {
