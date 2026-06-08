@@ -15,12 +15,12 @@ VariableEditor now ignores malformed input events that do not include a usable t
 
 ## Validation
 
-- Pass: `node --test src/tests/frontendVariableEditor.test.js` in `backend` (2 tests)
-- Pass: `node scripts/check-encoding.mjs` (scanned 540 files)
-- Pass: `git diff --check` (CRLF conversion warnings only)
-- Pass: `npm.cmd test` in `backend` (837 tests)
-- Pass: `npm.cmd run build` in `frontend`
-- Pass: `powershell -ExecutionPolicy Bypass -File scripts/review-gate.ps1`
+- PASS: `node --test src/tests/frontendVariableEditor.test.js` in `backend` (2 tests)
+- PASS: `node scripts/check-encoding.mjs` (scanned 540 files)
+- PASS: `git diff --check` (line-ending warnings only)
+- PASS: `npm.cmd test` in `backend` (837 tests)
+- PASS: `npm.cmd run build` in `frontend`
+- PASS: `powershell -ExecutionPolicy Bypass -File scripts/review-gate.ps1`
 
 ## Next Recommended Task
 
