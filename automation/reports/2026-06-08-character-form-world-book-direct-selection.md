@@ -17,7 +17,11 @@
 ## Validation
 
 - `node --test backend\src\tests\frontendCharacterFormView.test.js` passed: 13 tests.
-- Full validation pending.
+- `node scripts/check-encoding.mjs` passed: 432 files scanned.
+- `npm.cmd run build` passed in `frontend`.
+- `npm.cmd test` passed in `backend`: 766 tests.
+- `git diff --check` passed with CRLF normalization warnings only.
+- `powershell -ExecutionPolicy Bypass -File scripts\review-gate.ps1` passed.
 
 ## Next Recommended Task
 
