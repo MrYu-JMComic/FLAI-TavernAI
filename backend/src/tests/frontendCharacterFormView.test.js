@@ -359,12 +359,27 @@ test('CharacterFormView preserves unchanged AI process panel references', () => 
   assert.doesNotMatch(characterFormScript, /currentKeys\.every\(/);
   assert.match(
     characterFormScript,
-    /function updateAiProcessStep\(round = 1, updateStep\) \{[\s\S]*const currentProcess = Array\.isArray\(aiProcess\.value\) \? aiProcess\.value : \[\];[\s\S]*const nextProcess = stepIndex >= 0[\s\S]*currentProcess\.map\(\(item, index\) => \(index === stepIndex \? nextStep : item\)\)[\s\S]*\[\.\.\.currentProcess, nextStep\][\s\S]*setAiProcessIfChanged\(nextProcess\);[\s\S]*\}/
+    /function updateAiProcessStep\(round = 1, updateStep\) \{[\s\S]*const currentProcess = Array\.isArray\(aiProcess\.value\) \? aiProcess\.value : \[\];[\s\S]*let stepIndex = -1;[\s\S]*for \(let index = 0; index < currentProcess\.length; index \+= 1\) \{[\s\S]*currentProcess\[index\]\?\.round === round[\s\S]*break;[\s\S]*const nextProcess = \[\];[\s\S]*for \(let index = 0; index < currentProcess\.length; index \+= 1\) \{[\s\S]*nextProcess\.push\(index === stepIndex \? nextStep : currentProcess\[index\]\);[\s\S]*if \(stepIndex < 0\) \{[\s\S]*nextProcess\.push\(nextStep\);[\s\S]*setAiProcessIfChanged\(nextProcess\);[\s\S]*\}/
   );
   assert.match(
     characterFormScript,
-    /function appendAiToolCall\(log\) \{[\s\S]*const currentToolCalls = Array\.isArray\(aiToolCalls\.value\) \? aiToolCalls\.value : \[\];[\s\S]*setAiToolCallsIfChanged\(\[\.\.\.currentToolCalls, log\]\);[\s\S]*\}/
+    /function appendAiToolCall\(log\) \{[\s\S]*const currentToolCalls = Array\.isArray\(aiToolCalls\.value\) \? aiToolCalls\.value : \[\];[\s\S]*const nextToolCalls = \[\];[\s\S]*for \(const toolCall of currentToolCalls\) \{[\s\S]*nextToolCalls\.push\(toolCall\);[\s\S]*nextToolCalls\.push\(log\);[\s\S]*setAiToolCallsIfChanged\(nextToolCalls\);[\s\S]*\}/
   );
+  assert.match(
+    characterFormScript,
+    /function cloneAiToolList\(tools = \[\]\) \{[\s\S]*const clonedTools = \[\];[\s\S]*for \(const tool of Array\.isArray\(tools\) \? tools : \[\]\) \{[\s\S]*clonedTools\.push\(tool\);[\s\S]*return clonedTools;[\s\S]*\}/
+  );
+  assert.match(
+    characterFormScript,
+    /function appendAiToolList\(tools = \[\], log\) \{[\s\S]*const nextTools = cloneAiToolList\(tools\);[\s\S]*nextTools\.push\(log\);[\s\S]*return nextTools;[\s\S]*\}/
+  );
+  assert.doesNotMatch(characterFormScript, /currentProcess\.findIndex\(/);
+  assert.doesNotMatch(characterFormScript, /currentProcess\.map\(\(item, index\) => \(index === stepIndex \? nextStep : item\)\)/);
+  assert.doesNotMatch(characterFormScript, /\[\.\.\.currentProcess, nextStep\]/);
+  assert.doesNotMatch(characterFormScript, /setAiToolCallsIfChanged\(\[\.\.\.currentToolCalls, log\]\);/);
+  assert.doesNotMatch(characterFormScript, /Array\.isArray\(currentStep\.tools\) \? \[\.\.\.currentStep\.tools\] : \[\]/);
+  assert.doesNotMatch(characterFormScript, /Array\.isArray\(step\.tools\) \? \[\.\.\.step\.tools\] : \[\]/);
+  assert.doesNotMatch(characterFormScript, /\[\.\.\.\(Array\.isArray\(target\.tools\) \? target\.tools : \[\]\), log\]/);
   assert.match(
     characterFormScript,
     /async function completeWithAi\(\) \{[\s\S]*setAiToolCallsIfChanged\(\[\]\);[\s\S]*setAiProcessIfChanged\(\[\{ round: 1, reasoning: '等待模型响应\.\.\.', content: '', tools: \[\] \}\]\);[\s\S]*setAiModSuggestionsIfChanged\(\[\]\);/
@@ -383,7 +398,7 @@ test('CharacterFormView preserves unchanged AI process panel references', () => 
   );
   assert.match(
     characterFormScript,
-    /function aiStreamHandlers\(isCurrent = \(\) => !characterFormDisposed\) \{[\s\S]*step: \(step = \{\}\) => \{[\s\S]*updateAiProcessStep\(step\.round \|\| 1, \(target\) => \(\{[\s\S]*content: target\.content \|\| step\.content \|\| ''[\s\S]*reasoning: target\.reasoning === '等待模型响应\.\.\.'[\s\S]*tools: target\.tools\?\.length \? target\.tools : Array\.isArray\(step\.tools\) \? \[\.\.\.step\.tools\] : \[\][\s\S]*tool: \(call = \{\}\) => \{[\s\S]*updateAiProcessStep\(call\.round \|\| 1, \(target\) => \(\{[\s\S]*tools: \[\.\.\.\(Array\.isArray\(target\.tools\) \? target\.tools : \[\]\), log\][\s\S]*appendAiToolCall\(log\);/
+    /function aiStreamHandlers\(isCurrent = \(\) => !characterFormDisposed\) \{[\s\S]*step: \(step = \{\}\) => \{[\s\S]*updateAiProcessStep\(step\.round \|\| 1, \(target\) => \(\{[\s\S]*tools: target\.tools\?\.length \? target\.tools : cloneAiToolList\(step\.tools\)[\s\S]*tool: \(call = \{\}\) => \{[\s\S]*updateAiProcessStep\(call\.round \|\| 1, \(target\) => \(\{[\s\S]*tools: appendAiToolList\(target\.tools, log\)[\s\S]*appendAiToolCall\(log\);/
   );
   assert.ok(countMatches(characterFormScript, /setAiProcessIfChanged\(\[\{ round: 1, reasoning: err\.message, content: '', tools: \[\] \}\]\);/g) >= 2);
   assert.doesNotMatch(characterFormScript, /aiToolCalls\.value\s*=(?!=)/);

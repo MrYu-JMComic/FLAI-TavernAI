@@ -1492,7 +1492,7 @@ function aiStreamHandlers(isCurrent = () => !characterFormDisposed) {
         ...step,
         content: target.content || step.content || '',
         reasoning: target.reasoning === '等待模型响应...' ? step.reasoning || '' : target.reasoning || step.reasoning || '',
-        tools: target.tools?.length ? target.tools : Array.isArray(step.tools) ? [...step.tools] : []
+        tools: target.tools?.length ? target.tools : cloneAiToolList(step.tools)
       }));
     },
     reasoning: ({ round = 1, text = '' } = {}) => {
@@ -1526,7 +1526,7 @@ function aiStreamHandlers(isCurrent = () => !characterFormDisposed) {
       };
       updateAiProcessStep(call.round || 1, (target) => ({
         ...target,
-        tools: [...(Array.isArray(target.tools) ? target.tools : []), log]
+        tools: appendAiToolList(target.tools, log)
       }));
       appendAiToolCall(log);
     }
@@ -1535,23 +1535,52 @@ function aiStreamHandlers(isCurrent = () => !characterFormDisposed) {
 
 function updateAiProcessStep(round = 1, updateStep) {
   const currentProcess = Array.isArray(aiProcess.value) ? aiProcess.value : [];
-  const stepIndex = currentProcess.findIndex((item) => item.round === round);
+  let stepIndex = -1;
+  for (let index = 0; index < currentProcess.length; index += 1) {
+    if (currentProcess[index]?.round === round) {
+      stepIndex = index;
+      break;
+    }
+  }
   const currentStep = stepIndex >= 0
     ? currentProcess[stepIndex]
     : { round, reasoning: '', content: '', tools: [] };
   const nextStep = updateStep({
     ...currentStep,
-    tools: Array.isArray(currentStep.tools) ? [...currentStep.tools] : []
+    tools: cloneAiToolList(currentStep.tools)
   });
-  const nextProcess = stepIndex >= 0
-    ? currentProcess.map((item, index) => (index === stepIndex ? nextStep : item))
-    : [...currentProcess, nextStep];
+  const nextProcess = [];
+  for (let index = 0; index < currentProcess.length; index += 1) {
+    nextProcess.push(index === stepIndex ? nextStep : currentProcess[index]);
+  }
+  if (stepIndex < 0) {
+    nextProcess.push(nextStep);
+  }
   setAiProcessIfChanged(nextProcess);
 }
 
 function appendAiToolCall(log) {
   const currentToolCalls = Array.isArray(aiToolCalls.value) ? aiToolCalls.value : [];
-  setAiToolCallsIfChanged([...currentToolCalls, log]);
+  const nextToolCalls = [];
+  for (const toolCall of currentToolCalls) {
+    nextToolCalls.push(toolCall);
+  }
+  nextToolCalls.push(log);
+  setAiToolCallsIfChanged(nextToolCalls);
+}
+
+function cloneAiToolList(tools = []) {
+  const clonedTools = [];
+  for (const tool of Array.isArray(tools) ? tools : []) {
+    clonedTools.push(tool);
+  }
+  return clonedTools;
+}
+
+function appendAiToolList(tools = [], log) {
+  const nextTools = cloneAiToolList(tools);
+  nextTools.push(log);
+  return nextTools;
 }
 
 function formatAiValue(value) {
