@@ -362,6 +362,13 @@ test('CharacterFormView normalizes accessory skill payloads with a direct defaul
 });
 
 test('CharacterFormView preserves unchanged AI process panel references', () => {
+  assert.match(characterFormScript, /import \{ countOwnObjectKeys \} from '\.\.\/utils\/objectKeys';/);
+  assert.match(
+    characterFormScript,
+    /function toolResultLabel\(result = \{\}\) \{[\s\S]*result\?\.applied && typeof result\.applied === 'object'[\s\S]*countOwnObjectKeys\(result\.applied\)[\s\S]*\}/
+  );
+  assert.doesNotMatch(characterFormScript, /function countOwnObjectKeys\(value\)/);
+  assert.doesNotMatch(characterFormScript, /Object\.keys\(result\.applied\)\.length/);
   assert.match(
     characterFormScript,
     /function setAiToolCallsIfChanged\(nextToolCalls\) \{\s*return setAiPlainListIfChanged\(aiToolCalls, nextToolCalls\);\s*\}/

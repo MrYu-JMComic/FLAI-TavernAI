@@ -62,6 +62,13 @@ test('WorldBookView preserves unchanged book and entry references during refresh
 });
 
 test('WorldBookView preserves unchanged AI draft and process panel references', () => {
+  assert.match(worldBookViewScript, /import \{ countOwnObjectKeys \} from '\.\.\/utils\/objectKeys';/);
+  assert.match(
+    worldBookViewScript,
+    /function toolResultLabel\(result = \{\}\) \{[\s\S]*result\?\.applied\?\.entries && Array\.isArray\(result\.applied\.entries\)[\s\S]*result\?\.applied && typeof result\.applied === 'object'[\s\S]*countOwnObjectKeys\(result\.applied\)[\s\S]*\}/
+  );
+  assert.doesNotMatch(worldBookViewScript, /function countOwnObjectKeys\(value\)/);
+  assert.doesNotMatch(worldBookViewScript, /Object\.keys\(result\.applied\)\.length/);
   assert.match(
     worldBookViewScript,
     /function setAiDraftIfChanged\(nextDraft\) {\s*return setAiPlainRefIfChanged\(aiDraft, nextDraft \|\| null\);\s*}/

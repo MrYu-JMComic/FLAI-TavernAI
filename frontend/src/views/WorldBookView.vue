@@ -28,6 +28,7 @@ import {
 import { useNotify } from '../composables/useNotify';
 import { useProviderModels } from '../composables/useProviderModels';
 import { appendAiToolList, cloneAiToolList } from '../utils/aiToolLists';
+import { countOwnObjectKeys } from '../utils/objectKeys';
 
 const props = defineProps({
   route: { type: Object, required: true },
@@ -964,7 +965,7 @@ function toolResultLabel(result = {}) {
   if (result?.ok === false) return result.error || '失败';
   if (typeof result?.count === 'number') return `写入 ${result.count} 项`;
   if (result?.applied?.entries && Array.isArray(result.applied.entries)) return `写入 ${result.applied.entries.length} 个条目`;
-  if (result?.applied && typeof result.applied === 'object') return `更新 ${Object.keys(result.applied).length} 项`;
+  if (result?.applied && typeof result.applied === 'object') return `更新 ${countOwnObjectKeys(result.applied)} 项`;
   return result?.ok === true ? '成功' : '已返回';
 }
 </script>

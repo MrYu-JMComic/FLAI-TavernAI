@@ -10,6 +10,7 @@ import VariableEditor from '../components/VariableEditor.vue';
 import { useNotify } from '../composables/useNotify';
 import { useProviderModels } from '../composables/useProviderModels';
 import { appendAiToolList, cloneAiToolList } from '../utils/aiToolLists';
+import { countOwnObjectKeys } from '../utils/objectKeys';
 
 const props = defineProps({
   route: {
@@ -1609,7 +1610,7 @@ function formatAiValue(value) {
 function toolResultLabel(result = {}) {
   if (result?.ok === false) return result.error || '失败';
   if (typeof result?.count === 'number') return `写入 ${result.count} 项`;
-  if (result?.applied && typeof result.applied === 'object') return `更新 ${Object.keys(result.applied).length} 项`;
+  if (result?.applied && typeof result.applied === 'object') return `更新 ${countOwnObjectKeys(result.applied)} 项`;
   if (result?.rule?.label) return `规则：${result.rule.label}`;
   return result?.ok === true ? '成功' : '已返回';
 }
