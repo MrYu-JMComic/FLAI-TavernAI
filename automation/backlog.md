@@ -40,6 +40,7 @@ The autonomous loop should choose one small item per run. Add new findings here 
 
 ## Done
 
+- 2026-06-08: Collected status-bar custom-template validation issues with a direct capped dedupe loop.
 - 2026-06-08: Normalized status-bar variable rows with a capped direct loop.
 - 2026-06-08: Routed StatusBar template option parsing through direct scans instead of includes/filter callbacks.
 - 2026-06-08: Built status-bar text label stop patterns with direct loops instead of map/filter arrays.

@@ -3,7 +3,7 @@ import test from 'node:test';
 import { readRepoText, readVueBlocks } from './frontendSfcTestUtils.js';
 
 const { useChatConversation } = await import('../../../frontend/src/composables/chat/useChatConversation.js');
-const { parseTemplateConfig, useChatAccessory } = await import('../../../frontend/src/composables/chat/useChatAccessory.js');
+const { parseTemplateConfig, useChatAccessory, validateStatusBarCustomTemplate } = await import('../../../frontend/src/composables/chat/useChatAccessory.js');
 const chatAccessorySource = readRepoText('frontend/src/composables/chat/useChatAccessory.js');
 const { script: chatViewScript } = readVueBlocks('frontend/src/views/ChatView.vue');
 
@@ -363,6 +363,30 @@ test('useChatAccessory parses and clones status bar template config with direct 
   assert.doesNotMatch(chatAccessorySource, /data\.variables\.map/);
   assert.doesNotMatch(chatAccessorySource, /return variables\s*\.\s*map/);
   assert.doesNotMatch(chatAccessorySource, /token\.split\('\.'\)\.map/);
+});
+
+test('status bar custom template issues dedupe and cap with direct loops', () => {
+  const issues = validateStatusBarCustomTemplate(
+    '<iframe></iframe><iframe></iframe><object></object><embed></embed><link><meta><base><form></form><input>{{}}'
+  );
+
+  assert.equal(issues.length, 5);
+  let iframeIssueCount = 0;
+  for (const issue of issues) {
+    if (String(issue).includes('<iframe>')) {
+      iframeIssueCount += 1;
+    }
+  }
+  assert.equal(iframeIssueCount, 1);
+  assert.match(
+    chatAccessorySource,
+    /function collectStatusBarTemplateIssues\(issues\) \{\s*const collected = \[\];\s*const sourceIssues = Array\.isArray\(issues\) \? issues : \[\];\s*for \(let index = 0; index < sourceIssues\.length && collected\.length < STATUS_BAR_TEMPLATE_ISSUE_LIMIT; index \+= 1\) \{[\s\S]*hasStatusBarTemplateIssue\(collected, issue\)[\s\S]*collected\.push\(issue\);[\s\S]*return collected;[\s\S]*\}/
+  );
+  assert.match(
+    chatAccessorySource,
+    /function hasStatusBarTemplateIssue\(issues, issue\) \{\s*for \(let index = 0; index < issues\.length; index \+= 1\) \{[\s\S]*if \(issues\[index\] === issue\) \{[\s\S]*return true;[\s\S]*return false;[\s\S]*\}/
+  );
+  assert.doesNotMatch(chatAccessorySource, /\[\.\.\.new Set\(issues\)\]\.slice\(0, 5\)/);
 });
 
 test('accessory skill save preserves active conversation references for unchanged settings', async () => {

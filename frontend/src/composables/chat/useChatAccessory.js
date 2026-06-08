@@ -19,6 +19,7 @@ const VALID_EFFECTS = ['glow', 'striped', 'pulse'];
 const VALID_DISPLAY_MODES = ['immersive', 'compact'];
 const VALID_CHAR_STATUSES = ['active', 'dead', 'forgotten', 'left', 'hidden'];
 const STATUS_BAR_VARIABLE_LIMIT = 60;
+const STATUS_BAR_TEMPLATE_ISSUE_LIMIT = 5;
 const ACCESSORY_SKILL_RESULT_LIMIT = 8;
 
 function parseCharacter(raw) {
@@ -247,7 +248,7 @@ function validateStatusBarCustomTemplate(template) {
     issues.push(`标签未闭合：<${stack[stack.length - 1]}>。`);
   }
 
-  return [...new Set(issues)].slice(0, 5);
+  return collectStatusBarTemplateIssues(issues);
 }
 
 function hasBalancedCssBraces(css) {
@@ -258,6 +259,28 @@ function hasBalancedCssBraces(css) {
     if (depth < 0) return false;
   }
   return depth === 0;
+}
+
+function collectStatusBarTemplateIssues(issues) {
+  const collected = [];
+  const sourceIssues = Array.isArray(issues) ? issues : [];
+  for (let index = 0; index < sourceIssues.length && collected.length < STATUS_BAR_TEMPLATE_ISSUE_LIMIT; index += 1) {
+    const issue = sourceIssues[index];
+    if (!issue || hasStatusBarTemplateIssue(collected, issue)) {
+      continue;
+    }
+    collected.push(issue);
+  }
+  return collected;
+}
+
+function hasStatusBarTemplateIssue(issues, issue) {
+  for (let index = 0; index < issues.length; index += 1) {
+    if (issues[index] === issue) {
+      return true;
+    }
+  }
+  return false;
 }
 
 export { parseTemplateConfig, validateStatusBarCustomTemplate };
