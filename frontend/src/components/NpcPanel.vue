@@ -268,19 +268,33 @@ function behaviorDeleteActionId(behaviorId) {
 }
 
 function getCurrentMemory(memoryId) {
-  return memories.value.find((memory) => (
-    memory?.id === memoryId
+  const sourceMemories = Array.isArray(memories.value) ? memories.value : [];
+  for (let index = 0; index < sourceMemories.length; index += 1) {
+    const memory = sourceMemories[index];
+    if (
+      memory?.id === memoryId
       && memory?.conversationId === props.conversationId
       && memory?.npcName === selectedNpc.value
-  )) || null;
+    ) {
+      return memory;
+    }
+  }
+  return null;
 }
 
 function getCurrentBehavior(behaviorId) {
-  return behaviors.value.find((behavior) => (
-    behavior?.id === behaviorId
+  const sourceBehaviors = Array.isArray(behaviors.value) ? behaviors.value : [];
+  for (let index = 0; index < sourceBehaviors.length; index += 1) {
+    const behavior = sourceBehaviors[index];
+    if (
+      behavior?.id === behaviorId
       && behavior?.conversationId === props.conversationId
       && behavior?.npcName === selectedNpc.value
-  )) || null;
+    ) {
+      return behavior;
+    }
+  }
+  return null;
 }
 
 function setNpcsIfChanged(nextNpcs) {
@@ -802,11 +816,11 @@ async function removeEmptyNpcs() {
 }
 
 function memoryTypeLabel(type) {
-  return memoryTypeOptions.find((o) => o.value === type)?.label || type;
+  return optionLabel(memoryTypeOptions, type);
 }
 
 function behaviorTypeLabel(type) {
-  return behaviorTypeOptions.find((o) => o.value === type)?.label || type;
+  return optionLabel(behaviorTypeOptions, type);
 }
 
 function npcStatusLabel(npc) {
@@ -814,7 +828,18 @@ function npcStatusLabel(npc) {
   if (status === 'custom') {
     return npc?.customStatus || '自定义';
   }
-  return npcStatusOptions.find((o) => o.value === status)?.label || status;
+  return optionLabel(npcStatusOptions, status);
+}
+
+function optionLabel(options, value) {
+  const source = Array.isArray(options) ? options : [];
+  for (let index = 0; index < source.length; index += 1) {
+    const option = source[index];
+    if (option?.value === value) {
+      return option?.label || value;
+    }
+  }
+  return value;
 }
 
 function shouldShowNpcStatus(npc) {

@@ -115,11 +115,11 @@ test('NpcPanel selected NPC lookup scans current list directly', () => {
 test('NpcPanel ignores stale NPC detail item actions', () => {
   assert.match(
     npcPanelScript,
-    /function getCurrentMemory\(memoryId\)\s*{[\s\S]*memory\?\.id === memoryId[\s\S]*memory\?\.conversationId === props\.conversationId[\s\S]*memory\?\.npcName === selectedNpc\.value[\s\S]*}/
+    /function getCurrentMemory\(memoryId\)\s*{[\s\S]*const sourceMemories = Array\.isArray\(memories\.value\) \? memories\.value : \[\];[\s\S]*for \(let index = 0; index < sourceMemories\.length; index \+= 1\) \{[\s\S]*memory\?\.id === memoryId[\s\S]*memory\?\.conversationId === props\.conversationId[\s\S]*memory\?\.npcName === selectedNpc\.value[\s\S]*return memory;[\s\S]*return null;\s*}/
   );
   assert.match(
     npcPanelScript,
-    /function getCurrentBehavior\(behaviorId\)\s*{[\s\S]*behavior\?\.id === behaviorId[\s\S]*behavior\?\.conversationId === props\.conversationId[\s\S]*behavior\?\.npcName === selectedNpc\.value[\s\S]*}/
+    /function getCurrentBehavior\(behaviorId\)\s*{[\s\S]*const sourceBehaviors = Array\.isArray\(behaviors\.value\) \? behaviors\.value : \[\];[\s\S]*for \(let index = 0; index < sourceBehaviors\.length; index \+= 1\) \{[\s\S]*behavior\?\.id === behaviorId[\s\S]*behavior\?\.conversationId === props\.conversationId[\s\S]*behavior\?\.npcName === selectedNpc\.value[\s\S]*return behavior;[\s\S]*return null;\s*}/
   );
   assert.match(
     npcPanelScript,
@@ -134,6 +134,24 @@ test('NpcPanel ignores stale NPC detail item actions', () => {
     /async function removeBehavior\(behaviorId\)[\s\S]*const currentBehavior = getCurrentBehavior\(behaviorId\);[\s\S]*if \(!conversationId \|\| !npcName \|\| !currentBehavior\) return;[\s\S]*deleteNpcBehavior\(conversationId, npcName, currentBehavior\.id\)[\s\S]*removeBehaviorByIdIfPresent\(currentBehavior\.id\);/
   );
   assert.doesNotMatch(npcPanelScript, /Object\.assign\(behavior, updated\)/);
+  assert.doesNotMatch(npcPanelScript, /memories\.value\.find\(/);
+  assert.doesNotMatch(npcPanelScript, /behaviors\.value\.find\(/);
+});
+
+test('NpcPanel option labels use a shared direct lookup helper', () => {
+  assert.match(npcPanelScript, /function memoryTypeLabel\(type\) \{\s*return optionLabel\(memoryTypeOptions, type\);\s*}/);
+  assert.match(npcPanelScript, /function behaviorTypeLabel\(type\) \{\s*return optionLabel\(behaviorTypeOptions, type\);\s*}/);
+  assert.match(
+    npcPanelScript,
+    /function npcStatusLabel\(npc\) \{[\s\S]*if \(status === 'custom'\) \{[\s\S]*return optionLabel\(npcStatusOptions, status\);[\s\S]*}/
+  );
+  assert.match(
+    npcPanelScript,
+    /function optionLabel\(options, value\) \{[\s\S]*const source = Array\.isArray\(options\) \? options : \[\];[\s\S]*for \(let index = 0; index < source\.length; index \+= 1\) \{[\s\S]*if \(option\?\.value === value\) \{[\s\S]*return option\?\.label \|\| value;[\s\S]*return value;[\s\S]*}/
+  );
+  assert.doesNotMatch(npcPanelScript, /memoryTypeOptions\.find\(/);
+  assert.doesNotMatch(npcPanelScript, /behaviorTypeOptions\.find\(/);
+  assert.doesNotMatch(npcPanelScript, /npcStatusOptions\.find\(/);
 });
 
 test('NpcPanel preserves unchanged NPC and detail list references during refreshes', () => {
