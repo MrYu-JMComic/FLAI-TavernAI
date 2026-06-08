@@ -153,3 +153,18 @@ test('SaveLoadPanel clears rename drafts when refreshed save rows disappear', ()
     /saves\.value = normalizedSaves;\s*syncRenameDraftWithSaveList\(normalizedSaves\);/
   );
 });
+
+test('SaveLoadPanel cancels pending list loads when the panel closes', () => {
+  assert.match(
+    saveLoadPanelScript,
+    /watch\(\(\) => props\.open, \(isOpen\) => \{\s*if \(isOpen\) \{\s*loadSaves\(\);\s*\} else \{\s*cancelSavePanelLoad\(\);\s*\}\s*}\);/
+  );
+  assert.match(
+    saveLoadPanelScript,
+    /function cancelSavePanelLoad\(\)\s*{\s*savesLoadToken \+= 1;\s*loading\.value = false;\s*loadError\.value = '';\s*}/
+  );
+  assert.match(
+    saveLoadPanelScript,
+    /const nextSaves = await fetchSaves\(conversationId\);[\s\S]*if \(!isCurrentSaveLoad\(requestToken, conversationId\)\) return;[\s\S]*setSavesIfChanged\(nextSaves\);/
+  );
+});

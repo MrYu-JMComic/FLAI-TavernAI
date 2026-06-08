@@ -51,6 +51,8 @@ const savePanelBusy = computed(() => loading.value || saveActionBusy.value);
 watch(() => props.open, (isOpen) => {
   if (isOpen) {
     loadSaves();
+  } else {
+    cancelSavePanelLoad();
   }
 });
 
@@ -84,6 +86,12 @@ function resetSavePanelState() {
   busyId.value = '';
   loading.value = false;
   saving.value = false;
+}
+
+function cancelSavePanelLoad() {
+  savesLoadToken += 1;
+  loading.value = false;
+  loadError.value = '';
 }
 
 async function loadSaves() {
