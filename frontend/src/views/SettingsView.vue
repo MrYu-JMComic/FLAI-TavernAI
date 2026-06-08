@@ -1235,8 +1235,11 @@ async function importPresets(mutationToken = beginPresetMutation('preset-import'
 }
 
 function handlePresetImportFile(event) {
-  const file = event.target.files?.[0];
-  event.target.value = '';
+  const input = event?.target;
+  const file = input?.files?.[0];
+  if (input) {
+    input.value = '';
+  }
   if (!file || presetControlsBusy.value) return;
   const reader = new FileReader();
   const mutationToken = beginPresetMutation('preset-import');
@@ -1880,8 +1883,11 @@ async function importRegexRules(mutationToken = beginRegexMutation('regex-import
 }
 
 function handleRegexImportFile(event) {
-  const file = event.target.files?.[0];
-  event.target.value = '';
+  const input = event?.target;
+  const file = input?.files?.[0];
+  if (input) {
+    input.value = '';
+  }
   if (!file || regexControlsBusy.value) return;
   const reader = new FileReader();
   const groupFilter = regexGroupFilter.value;

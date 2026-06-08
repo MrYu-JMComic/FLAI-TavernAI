@@ -322,6 +322,29 @@ test('SettingsView preset mutations expose visible busy guards for edit, import,
   assert.match(settingsViewTemplate, /:disabled="presetControlsBusy"[\s\S]*:aria-busy="isPresetDeleteBusy\(preset\.id\)"[\s\S]*@click="removePreset\(preset\.id, preset\.name\)"/);
 });
 
+test('SettingsView import file handlers tolerate missing event targets', () => {
+  const presetStart = settingsViewScript.indexOf('function handlePresetImportFile(event) {');
+  const presetEnd = settingsViewScript.indexOf('\n// 鈹€鈹€ Mod Management', presetStart);
+  const presetHandler = settingsViewScript.slice(presetStart, presetEnd);
+  const regexStart = settingsViewScript.indexOf('function handleRegexImportFile(event) {');
+  const regexEnd = settingsViewScript.indexOf('\nfunction setActiveExtensionSection', regexStart);
+  const regexHandler = settingsViewScript.slice(regexStart, regexEnd);
+
+  assert.match(
+    presetHandler,
+    /const input = event\?\.target;\s*const file = input\?\.files\?\.\[0\];\s*if \(input\) \{\s*input\.value = '';\s*\}\s*if \(!file \|\| presetControlsBusy\.value\) return;/
+  );
+  assert.doesNotMatch(presetHandler, /event\.target\.files/);
+  assert.doesNotMatch(presetHandler, /event\.target\.value/);
+
+  assert.match(
+    regexHandler,
+    /const input = event\?\.target;\s*const file = input\?\.files\?\.\[0\];\s*if \(input\) \{\s*input\.value = '';\s*\}\s*if \(!file \|\| regexControlsBusy\.value\) return;/
+  );
+  assert.doesNotMatch(regexHandler, /event\.target\.files/);
+  assert.doesNotMatch(regexHandler, /event\.target\.value/);
+});
+
 test('SettingsView mod mutations expose visible busy guards for editor, toggle, delete, and reorder actions', () => {
   assert.match(settingsViewScript, /const modActionBusyId = ref\(''\);/);
   assert.match(settingsViewScript, /const modActionBusy = computed\(\(\) => Boolean\(modActionBusyId\.value\)\);/);
