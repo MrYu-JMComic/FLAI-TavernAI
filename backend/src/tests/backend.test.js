@@ -1803,6 +1803,19 @@ test('world book assistant normalizes entry lists without map/filter chains', ()
   );
 });
 
+test('world book assistant collects process reasoning without array joins', () => {
+  const assistantSource = fs.readFileSync(new URL('../services/worldBookAssistant.js', import.meta.url), 'utf8');
+
+  assert.match(
+    assistantSource,
+    /function collectReasoning\(process = \[\]\) \{\s*let merged = '';\s*for \(const step of Array\.isArray\(process\) \? process : \[\]\) \{/
+  );
+  assert.match(assistantSource, /if \(merged\.length >= 8000\) \{\s*return merged\.slice\(0, 8000\);/);
+  assert.doesNotMatch(assistantSource, /\.map\(\(step\) => String\(step\.reasoning \|\| ''\)\.trim\(\)\)/);
+  assert.doesNotMatch(assistantSource, /\.filter\(Boolean\)/);
+  assert.doesNotMatch(assistantSource, /\.join\('\\n\\n'\)/);
+});
+
 test('world book assistant treats null request as defaults', async () => {
   const originalFetch = globalThis.fetch;
   let calls = 0;
