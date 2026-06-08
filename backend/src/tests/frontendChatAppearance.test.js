@@ -128,7 +128,7 @@ test('chat appearance scopes selector lists with a direct comma scanner', () => 
   assert.doesNotMatch(chatAppearanceUtilsSource, /\.filter\(Boolean\)\s*\.join\(', '\)/);
 });
 
-test('chat appearance background mutations ignore saving events before invalidating upload tokens', () => {
+test('chat appearance background mutations validate before invalidating upload tokens', () => {
   const uploadHandler = sourceBetween(
     'async function handleAppearanceBackgroundUpload',
     'function clearAppearanceField'
@@ -140,16 +140,79 @@ test('chat appearance background mutations ignore saving events before invalidat
 
   assert.match(
     uploadHandler,
-    /if \(input\) \{\s*input\.value = '';\s*\}\s*if \(appearanceDisposed \|\| appearanceSaving\.value \|\| !file\) \{\s*return;\s*\}\s*const uploadToken = nextBackgroundUploadToken\(field\);/
+    /if \(input\) \{\s*input\.value = '';\s*\}\s*if \(appearanceDisposed \|\| appearanceSaving\.value \|\| !file\) \{\s*return;\s*\}\s*if \(!\['image\/png', 'image\/jpeg', 'image\/webp', 'image\/gif'\]\.includes\(file\.type\)\) \{/
   );
   assert.doesNotMatch(
     uploadHandler,
-    /const uploadToken = nextBackgroundUploadToken\(field\);\s*if \(appearanceDisposed \|\| appearanceSaving\.value \|\| !file\)/
+    /if \(appearanceDisposed \|\| appearanceSaving\.value \|\| !file\) \{\s*return;\s*\}\s*const uploadToken = nextBackgroundUploadToken\(field\);/
+  );
+  assert.match(
+    uploadHandler,
+    /if \(file\.size > 4 \* 1024 \* 1024\) \{[\s\S]*return;\s*\}\s*try \{\s*const uploadToken = nextBackgroundUploadToken\(field\);\s*const result = await readFileAsDataUrl\(file\);/
   );
   assert.match(
     clearHandler,
     /if \(appearanceDisposed \|\| appearanceSaving\.value\) \{\s*return;\s*\}\s*nextBackgroundUploadToken\(field\);/
   );
+});
+
+test('invalid background uploads do not cancel a pending valid upload', async () => {
+  const originalFileReader = globalThis.FileReader;
+  const readers = [];
+  const warnings = [];
+
+  class MockFileReader {
+    constructor() {
+      this.result = '';
+      this.onload = null;
+      this.onerror = null;
+      readers.push(this);
+    }
+
+    readAsDataURL(file) {
+      this.file = file;
+    }
+  }
+
+  globalThis.FileReader = MockFileReader;
+
+  try {
+    const chat = createAppearance({
+      notify: {
+        warning(message) {
+          warnings.push(message);
+        }
+      }
+    });
+    const validUpload = chat.handleAppearanceBackgroundUpload({
+      target: {
+        files: [{ type: 'image/png', size: 1024 }],
+        value: 'valid-file'
+      }
+    }, 'desktopBackgroundUrl');
+
+    assert.equal(readers.length, 1);
+
+    await chat.handleAppearanceBackgroundUpload({
+      target: {
+        files: [{ type: 'text/plain', size: 12 }],
+        value: 'invalid-file'
+      }
+    }, 'desktopBackgroundUrl');
+
+    readers[0].result = 'data:image/png;base64,valid';
+    readers[0].onload();
+    await validUpload;
+
+    assert.equal(chat.chatAppearanceForm.desktopBackgroundUrl, 'data:image/png;base64,valid');
+    assert.equal(warnings.length, 1);
+  } finally {
+    if (originalFileReader === undefined) {
+      delete globalThis.FileReader;
+    } else {
+      globalThis.FileReader = originalFileReader;
+    }
+  }
 });
 
 test('chat lorebook updates ignore saving events through the composable entry point', () => {

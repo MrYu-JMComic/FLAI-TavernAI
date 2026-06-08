@@ -372,11 +372,15 @@ function isCurrentConversationLoad(requestToken, conversationId) {
 
 async function onSavesLoaded(payload = {}) {
   const eventConversationId = payload?.conversationId || '';
-  if (!eventConversationId || eventConversationId !== props.route.params.id) {
+  if (chatViewDisposed || !eventConversationId || eventConversationId !== props.route.params.id) {
     return;
   }
   await loadConversation();
-  if (props.route.params.id !== eventConversationId || conversation.value?.id !== eventConversationId) {
+  if (
+    chatViewDisposed ||
+    props.route.params.id !== eventConversationId ||
+    conversation.value?.id !== eventConversationId
+  ) {
     return;
   }
   await loadSidebarData();

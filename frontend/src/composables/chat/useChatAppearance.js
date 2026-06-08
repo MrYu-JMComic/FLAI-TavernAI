@@ -363,8 +363,6 @@ export function useChatAppearance({
     if (appearanceDisposed || appearanceSaving.value || !file) {
       return;
     }
-    const uploadToken = nextBackgroundUploadToken(field);
-
     if (!['image/png', 'image/jpeg', 'image/webp', 'image/gif'].includes(file.type)) {
       notify.warning('背景图片仅支持 PNG、JPG、WebP、GIF');
       return;
@@ -376,6 +374,7 @@ export function useChatAppearance({
     }
 
     try {
+      const uploadToken = nextBackgroundUploadToken(field);
       const result = await readFileAsDataUrl(file);
       if (!isCurrentBackgroundUpload(field, uploadToken)) {
         return;

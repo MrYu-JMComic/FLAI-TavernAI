@@ -247,7 +247,7 @@ test('ChatView routes loaded message refreshes through the stable setter', () =>
 test('ChatView accepts save-loaded events only for the active route conversation', () => {
   assert.match(
     chatViewScript,
-    /async function onSavesLoaded\(payload = \{\}\) \{[\s\S]*const eventConversationId = payload\?\.conversationId \|\| '';[\s\S]*if \(!eventConversationId \|\| eventConversationId !== props\.route\.params\.id\) \{\s*return;\s*\}[\s\S]*await loadConversation\(\);[\s\S]*if \(props\.route\.params\.id !== eventConversationId \|\| conversation\.value\?\.id !== eventConversationId\) \{\s*return;\s*\}[\s\S]*await loadSidebarData\(\);[\s\S]*}/
+    /async function onSavesLoaded\(payload = \{\}\) \{[\s\S]*const eventConversationId = payload\?\.conversationId \|\| '';[\s\S]*if \(chatViewDisposed \|\| !eventConversationId \|\| eventConversationId !== props\.route\.params\.id\) \{\s*return;\s*\}[\s\S]*await loadConversation\(\);[\s\S]*if \(\s*chatViewDisposed \|\|[\s\S]*props\.route\.params\.id !== eventConversationId \|\|[\s\S]*conversation\.value\?\.id !== eventConversationId\s*\) \{\s*return;\s*\}[\s\S]*await loadSidebarData\(\);[\s\S]*}/
   );
   assert.doesNotMatch(
     chatViewScript,

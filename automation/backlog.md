@@ -40,6 +40,8 @@ The autonomous loop should choose one small item per run. Add new findings here 
 
 ## Done
 
+- 2026-06-08: Delayed chat appearance background upload token invalidation until selected files pass validation.
+- 2026-06-08: Guarded ChatView save-loaded sidebar refreshes against unmounted chat views.
 - 2026-06-08: Skipped stale ChatView branch sidebar refreshes before navigating branched conversations.
 - 2026-06-08: Guarded ChatView NPC accessory refresh completions and fingerprint sync against unmounted chat views.
 - 2026-06-08: Guarded ChatView quick-model refresh completions against unmounted chat views.
