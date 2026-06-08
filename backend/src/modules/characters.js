@@ -22,6 +22,8 @@ const characterColumns = `characters.*,
 const avatarAssetJoin =
   "LEFT JOIN avatar_assets ON avatar_assets.owner_type = 'character' AND avatar_assets.owner_id = characters.id";
 const MAX_CHARACTER_TAGS = 12;
+const MAX_REGEX_RULES = 40;
+const MAX_RENDER_PLUGINS = 20;
 
 export function listCharacters(database, userId, options = {}) {
   const { search = '', sort = 'created', tag = '' } = options ?? {};
@@ -505,16 +507,20 @@ function normalizeRegexRules(rules = []) {
     return [];
   }
 
-  return rules.slice(0, 40).filter((rule) => rule && typeof rule === 'object').map((rule, index) => {
+  const normalized = [];
+  for (const rule of rules) {
+    if (!rule || typeof rule !== 'object') {
+      continue;
+    }
     const flags = normalizeRegexFlags(rule.flags);
     const pattern = String(rule.pattern || '').trim();
     if (pattern) {
       new RegExp(pattern, flags);
     }
 
-    return {
+    normalized.push({
       id: rule.id,
-      label: String(rule.label || `规则 ${index + 1}`).trim().slice(0, 60),
+      label: String(rule.label || `规则 ${normalized.length + 1}`).trim().slice(0, 60),
       pattern,
       replacement: String(rule.replacement || '').slice(0, 1000),
       flags,
@@ -524,8 +530,12 @@ function normalizeRegexRules(rules = []) {
       priority: Math.max(0, Math.round(normalizeFiniteNumber(rule.priority))),
       scriptMode: normalizeBoolean(rule.scriptMode),
       jsScript: String(rule.jsScript || '').slice(0, 10000)
-    };
-  });
+    });
+    if (normalized.length >= MAX_REGEX_RULES) {
+      break;
+    }
+  }
+  return normalized;
 }
 
 function normalizeRenderPlugins(plugins = []) {
@@ -533,23 +543,32 @@ function normalizeRenderPlugins(plugins = []) {
     return [];
   }
 
-  return plugins.slice(0, 20).filter((plugin) => plugin && typeof plugin === 'object').map((plugin, index) => {
+  const normalized = [];
+  for (const plugin of plugins) {
+    if (!plugin || typeof plugin !== 'object') {
+      continue;
+    }
     const flags = normalizeRegexFlags(plugin.flags || 'u').replace(/[gy]/g, '') || 'u';
     const pattern = String(plugin.pattern || '').trim().slice(0, 260);
-    if (pattern) {
-      new RegExp(pattern, flags);
+    if (!pattern) {
+      continue;
     }
+    new RegExp(pattern, flags);
 
-    return {
+    normalized.push({
       id: plugin.id,
-      label: String(plugin.label || `渲染插件 ${index + 1}`).trim().slice(0, 60),
+      label: String(plugin.label || `渲染插件 ${normalized.length + 1}`).trim().slice(0, 60),
       type: 'fold',
       pattern,
       flags,
       titleTemplate: String(plugin.titleTemplate || '$1').trim().slice(0, 120) || '$1',
       enabled: normalizeBoolean(plugin.enabled, true)
-    };
-  }).filter((plugin) => plugin.pattern);
+    });
+    if (normalized.length >= MAX_RENDER_PLUGINS) {
+      break;
+    }
+  }
+  return normalized;
 }
 
 function scopeApplies(scope, phase) {

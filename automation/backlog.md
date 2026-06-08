@@ -40,6 +40,7 @@ The autonomous loop should choose one small item per run. Add new findings here 
 
 ## Done
 
+- 2026-06-08: Counted character regex rules and render plugins toward caps only after they normalize into usable rows.
 - 2026-06-08: Routed App notification queue pruning and dismissal through direct loop helpers.
 - 2026-06-08: Routed chat submit local draft appends through a direct helper that tolerates empty message refs.
 - 2026-06-08: Routed CharacterFormView created-tag list appends through a direct no-op-aware helper.
