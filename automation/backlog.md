@@ -40,6 +40,7 @@ The autonomous loop should choose one small item per run. Add new findings here 
 
 ## Done
 
+- 2026-06-08: Read frontend CSRF cookies by exact name with a direct scanner instead of a broad regex match.
 - 2026-06-08: Checked SettingsView refreshed model containment with a direct helper instead of an inline some callback.
 - 2026-06-08: Listed chat messages with a direct displayable-row loop instead of filter/map arrays.
 - 2026-06-08: Routed CharacterFormView tag-create visibility through a computed direct scan.

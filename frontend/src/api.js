@@ -12,13 +12,30 @@ let csrfToken = '';
 function getCsrfToken() {
   if (csrfToken) return csrfToken;
   if (typeof document === 'undefined' || !document.cookie) return csrfToken;
-  // 从 cookie 中读取
-  const match = document.cookie.match(/flai_csrf=([^;]+)/);
-  if (match) {
-    const decoded = safeDecodeCookieValue(match[1]);
-    if (decoded) csrfToken = decoded;
-  }
+  const decoded = readCookieValue(document.cookie, 'flai_csrf');
+  if (decoded) csrfToken = decoded;
   return csrfToken;
+}
+
+function readCookieValue(cookieText, cookieName) {
+  const target = `${cookieName}=`;
+  const text = String(cookieText || '');
+  let start = 0;
+  while (start < text.length) {
+    let end = text.indexOf(';', start);
+    if (end === -1) {
+      end = text.length;
+    }
+    let pairStart = start;
+    while (pairStart < end && text.charCodeAt(pairStart) <= 32) {
+      pairStart += 1;
+    }
+    if (text.startsWith(target, pairStart)) {
+      return safeDecodeCookieValue(text.slice(pairStart + target.length, end).trim());
+    }
+    start = end + 1;
+  }
+  return '';
 }
 
 function safeDecodeCookieValue(value) {

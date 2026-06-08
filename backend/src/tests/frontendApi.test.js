@@ -913,6 +913,53 @@ test('frontend assistant SSE 404 errors outside dev fallback do not require resp
   }
 });
 
+test('frontend API reads CSRF token from the exact cookie name only', async () => {
+  const originalFetch = globalThis.fetch;
+  const originalWindow = globalThis.window;
+  const originalDocument = globalThis.document;
+  const requests = [];
+
+  delete globalThis.window;
+  globalThis.document = {
+    cookie: 'not_flai_csrf=wrong-token; flai_csrf=csrf%20exact; flai_csrf_backup=wrong-backup'
+  };
+  const { updateCharacter: updateCharacterWithCookie } = await import(
+    new URL('../../../frontend/src/api.js?csrf-cookie-exact-name-test', import.meta.url)
+  );
+
+  globalThis.fetch = async (url, request = {}) => {
+    requests.push({ url: String(url), request });
+    if (String(url).endsWith('/api/csrf-token')) {
+      return jsonResponse({ error: 'CSRF token endpoint should not be needed when exact cookie exists' }, 500);
+    }
+    return jsonResponse({ id: 'cookie-target', name: 'Cookie Target' });
+  };
+
+  try {
+    const result = await updateCharacterWithCookie('cookie-target', { name: 'Cookie Target' });
+
+    assert.deepEqual(result, { id: 'cookie-target', name: 'Cookie Target' });
+    assert.deepEqual(requests.map(({ url }) => url), ['/api/characters/cookie-target']);
+    assert.equal(requests[0].request.headers['X-CSRF-Token'], 'csrf exact');
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalWindow === undefined) {
+      delete globalThis.window;
+    } else {
+      globalThis.window = originalWindow;
+    }
+    if (originalDocument === undefined) {
+      delete globalThis.document;
+    } else {
+      globalThis.document = originalDocument;
+    }
+  }
+
+  assert.match(frontendApiSource, /function readCookieValue\(cookieText, cookieName\) \{/);
+  assert.match(frontendApiSource, /text\.startsWith\(target, pairStart\)/);
+  assert.doesNotMatch(frontendApiSource, /document\.cookie\.match\(/);
+});
+
 test('frontend JSON mutations retry nested CSRF errors', async () => {
   const originalFetch = globalThis.fetch;
   const csrfTokens = [];
