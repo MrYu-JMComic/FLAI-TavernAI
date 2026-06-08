@@ -313,8 +313,20 @@ export function useChatMessageActions({
 
   function removeMessageFromListIfPresent(messageId) {
     const targetId = normalizeMessageUiId(messageId);
-    const nextMessages = messages.value.filter((item) => normalizeMessageUiId(item?.id) !== targetId);
-    if (nextMessages.length === messages.value.length) {
+    if (!targetId) {
+      return false;
+    }
+    const messageList = Array.isArray(messages.value) ? messages.value : [];
+    const nextMessages = [];
+    let removed = false;
+    for (const item of messageList) {
+      if (normalizeMessageUiId(item?.id) === targetId) {
+        removed = true;
+      } else {
+        nextMessages.push(item);
+      }
+    }
+    if (!removed) {
       return false;
     }
     messages.value = nextMessages;

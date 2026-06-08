@@ -40,6 +40,7 @@ The autonomous loop should choose one small item per run. Add new findings here 
 
 ## Done
 
+- 2026-06-08: Removed Chat message delete no-op filter allocations with a direct list removal helper.
 - 2026-06-08: Routed NpcPanel profile, memory, and behavior detail list updates through direct helper loops.
 - 2026-06-08: Routed WorldBookView AI stream tool-list copies through local direct-loop helpers.
 - 2026-06-08: Built WorldBookView AI process and tool-call updates with direct list scans.

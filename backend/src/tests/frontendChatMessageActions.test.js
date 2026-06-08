@@ -491,6 +491,73 @@ test('stale message delete ignores missing current-list items before confirm or 
   assert.equal(actions.messageActionBusy.value, '');
 });
 
+test('message delete removes current list items without filter allocations', async () => {
+  const originalFetch = globalThis.fetch;
+  const originalWindow = globalThis.window;
+  const firstMessage = { id: 'msg-1', role: 'assistant', content: 'Delete me' };
+  const secondMessage = { id: 'msg-2', role: 'user', content: 'Keep me' };
+  const messagesRef = shallowRef([firstMessage, secondMessage]);
+  let messageListTriggers = 0;
+  let sidebarLoads = 0;
+  const notices = [];
+  const stopWatch = watch(messagesRef, () => {
+    messageListTriggers += 1;
+  });
+  const actions = createMessageActions({
+    messagesRef,
+    loadSidebarData() {
+      sidebarLoads += 1;
+    },
+    showActionNotice(messageText, type) {
+      notices.push([messageText, type]);
+    }
+  });
+  actions.editingMessageId.value = 'msg-1';
+  actions.editingMessageContent.value = 'Draft';
+
+  globalThis.window = {
+    confirm: () => true,
+    requestAnimationFrame(callback) {
+      callback();
+      return 1;
+    },
+    cancelAnimationFrame() {}
+  };
+  globalThis.fetch = async (url, options = {}) => {
+    const requestUrl = String(url);
+    const method = String(options.method || 'GET').toUpperCase();
+
+    if (requestUrl === '/api/csrf-token') {
+      return jsonResponse({ csrfToken: 'delete-token' });
+    }
+    if (requestUrl === '/api/conversations/conv-1/messages/msg-1' && method === 'DELETE') {
+      return jsonResponse({ deletedReasoning: false });
+    }
+    throw new Error(`Unexpected request: ${requestUrl}`);
+  };
+
+  try {
+    await actions.removeMessage(firstMessage);
+    await nextTick();
+  } finally {
+    globalThis.fetch = originalFetch;
+    stopWatch();
+    if (originalWindow === undefined) {
+      delete globalThis.window;
+    } else {
+      globalThis.window = originalWindow;
+    }
+  }
+
+  assert.deepEqual(messagesRef.value, [secondMessage]);
+  assert.equal(messageListTriggers, 1);
+  assert.equal(actions.editingMessageId.value, '');
+  assert.equal(actions.editingMessageContent.value, '');
+  assert.equal(actions.messageActionBusy.value, '');
+  assert.equal(sidebarLoads, 1);
+  assert.equal(notices.length, 1);
+});
+
 test('message delete ignores completions after the same-id list item is replaced', async () => {
   const originalFetch = globalThis.fetch;
   const originalWindow = globalThis.window;
@@ -1145,6 +1212,10 @@ test('message scroll lookup and swipe initialization avoid list clone helpers', 
   );
   assert.match(
     chatMessageActionsSource,
+    /function removeMessageFromListIfPresent\(messageId\) \{[\s\S]*const targetId = normalizeMessageUiId\(messageId\);[\s\S]*const nextMessages = \[\];[\s\S]*let removed = false;[\s\S]*for \(const item of messageList\) \{[\s\S]*if \(normalizeMessageUiId\(item\?\.id\) === targetId\) \{[\s\S]*removed = true;[\s\S]*nextMessages\.push\(item\);[\s\S]*if \(!removed\) \{[\s\S]*return false;[\s\S]*messages\.value = nextMessages;[\s\S]*return true;[\s\S]*\}/
+  );
+  assert.match(
+    chatMessageActionsSource,
     /const swipeLoads = \[\];[\s\S]*for \(const message of messages\.value\) \{[\s\S]*const messageId = getPersistedMessageListItemId\(message\);[\s\S]*swipeLoads\.push\(initMessageSwipe\(conversationId, messageId, requestToken\)\);[\s\S]*await Promise\.all\(swipeLoads\);/
   );
   assert.match(
@@ -1153,6 +1224,7 @@ test('message scroll lookup and swipe initialization avoid list clone helpers', 
   );
   assert.doesNotMatch(chatMessageActionsSource, /\[\.\.\.messageScroller\.value\.querySelectorAll/);
   assert.doesNotMatch(chatMessageActionsSource, /const assistantMessages = messages\.value\.filter/);
+  assert.doesNotMatch(chatMessageActionsSource, /messages\.value\.filter/);
   assert.doesNotMatch(chatMessageActionsSource, /assistantMessages\.map/);
   assert.doesNotMatch(chatMessageActionsSource, /messages\.value\.find/);
   assert.doesNotMatch(chatMessageActionsSource, /for \(const message of messages\.value\) \{[\s\S]{0,200}getPersistedMessageActionId\(message\)/);
