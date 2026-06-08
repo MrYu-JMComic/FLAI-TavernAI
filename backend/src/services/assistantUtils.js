@@ -6,6 +6,20 @@ export function nullToEmptyObject(value) {
   return value ?? {};
 }
 
+export function cloneToolCalls(toolCalls = []) {
+  const cloned = [];
+  const source = Array.isArray(toolCalls) ? toolCalls : [];
+  for (let index = 0; index < source.length; index += 1) {
+    const call = source[index];
+    cloned.push({
+      name: call.name,
+      arguments: call.arguments,
+      result: call.result
+    });
+  }
+  return cloned;
+}
+
 export function parseLooseJsonObject(text) {
   const value = String(text || '').trim();
   if (!value) {

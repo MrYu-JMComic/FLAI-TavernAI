@@ -1,5 +1,5 @@
 import { runToolCompletion, streamToolCompletion } from './providers.js';
-import { nullToEmptyObject, objectOrEmpty, parseLooseJsonObject } from './assistantUtils.js';
+import { cloneToolCalls, nullToEmptyObject, objectOrEmpty, parseLooseJsonObject } from './assistantUtils.js';
 
 const positionValues = ['at_start', 'before_char', 'after_char', 'at_depth'];
 
@@ -117,11 +117,7 @@ export async function completeWorldBookDraft(settings, request = {}) {
 
   return {
     worldBook: normalized,
-    toolCalls: result.toolCalls.map((call) => ({
-      name: call.name,
-      arguments: call.arguments,
-      result: call.result
-    })),
+    toolCalls: cloneToolCalls(result.toolCalls),
     process: result.process || [],
     reasoning: collectReasoning(result.process),
     summary: result.content || `Generated ${normalized.entries.length} world book entries.`,
@@ -183,11 +179,7 @@ export async function streamWorldBookDraft(settings, request = {}) {
 
   return {
     worldBook: normalized,
-    toolCalls: result.toolCalls.map((call) => ({
-      name: call.name,
-      arguments: call.arguments,
-      result: call.result
-    })),
+    toolCalls: cloneToolCalls(result.toolCalls),
     process: result.process || [],
     reasoning: collectReasoning(result.process),
     summary: result.content || `Generated ${normalized.entries.length} world book entries.`,

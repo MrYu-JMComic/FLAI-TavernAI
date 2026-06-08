@@ -40,6 +40,7 @@ The autonomous loop should choose one small item per run. Add new findings here 
 
 ## Done
 
+- 2026-06-08: Shared backend assistant tool-call cloning through one direct helper.
 - 2026-06-08: Shared AI tool-result applied-key counting through a direct own-key helper.
 - 2026-06-08: Checked CharacterFormView non-default accessory skills with a direct defaults loop instead of Object.keys/some.
 - 2026-06-08: Unregistered extension hooks with a no-op-aware direct loop instead of filter allocation.

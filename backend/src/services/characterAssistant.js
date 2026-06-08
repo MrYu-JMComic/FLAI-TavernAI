@@ -1,7 +1,7 @@
 import { runToolCompletion, streamToolCompletion } from './providers.js';
 import { resolvePromptUserName, userVariableToken } from './promptVariables.js';
 import { normalizeAdvancedSettings, normalizeAccessorySkills } from '../modules/advancedSettings.js';
-import { nullToEmptyObject, objectOrEmpty, parseLooseJsonObject } from './assistantUtils.js';
+import { cloneToolCalls, nullToEmptyObject, objectOrEmpty, parseLooseJsonObject } from './assistantUtils.js';
 import { normalizeRegexFlags } from '../../../shared/regexFlags.js';
 
 const characterTools = [
@@ -279,11 +279,7 @@ export async function completeCharacterDraft(settings, request = {}) {
 
   return {
     character: normalizeDraft(draft),
-    toolCalls: result.toolCalls.map((call) => ({
-      name: call.name,
-      arguments: call.arguments,
-      result: call.result
-    })),
+    toolCalls: cloneToolCalls(result.toolCalls),
     process: result.process || [],
     reasoning: collectReasoning(result.process),
     summary,
@@ -351,11 +347,7 @@ export async function streamCharacterDraft(settings, request = {}) {
 
   return {
     character: normalizeDraft(draft),
-    toolCalls: result.toolCalls.map((call) => ({
-      name: call.name,
-      arguments: call.arguments,
-      result: call.result
-    })),
+    toolCalls: cloneToolCalls(result.toolCalls),
     process: result.process || [],
     reasoning: collectReasoning(result.process),
     summary,

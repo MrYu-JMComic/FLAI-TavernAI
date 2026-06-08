@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 const {
+  cloneToolCalls,
   nullToEmptyObject,
   objectOrEmpty,
   parseLooseJsonObject
@@ -18,6 +19,24 @@ test('assistant utility object guards preserve object-like values', () => {
   assert.deepEqual(nullToEmptyObject(null), {});
   assert.deepEqual(nullToEmptyObject(undefined), {});
   assert.equal(nullToEmptyObject('text'), 'text');
+});
+
+test('assistant utility clones tool-call summaries with stable shallow fields', () => {
+  const args = { value: 42 };
+  const result = { ok: true };
+  const source = [
+    { name: 'set_value', arguments: args, result, ignored: true }
+  ];
+
+  const cloned = cloneToolCalls(source);
+
+  assert.notEqual(cloned, source);
+  assert.deepEqual(cloned, [
+    { name: 'set_value', arguments: args, result }
+  ]);
+  assert.equal(cloned[0].arguments, args);
+  assert.equal(cloned[0].result, result);
+  assert.deepEqual(cloneToolCalls(null), []);
 });
 
 test('assistant utility loose JSON parser extracts usable objects only', () => {
