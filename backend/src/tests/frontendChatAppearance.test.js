@@ -148,7 +148,7 @@ test('chat appearance background mutations validate before invalidating upload t
   );
   assert.match(
     uploadHandler,
-    /if \(file\.size > 4 \* 1024 \* 1024\) \{[\s\S]*return;\s*\}\s*try \{\s*const uploadToken = nextBackgroundUploadToken\(field\);\s*const result = await readFileAsDataUrl\(file\);/
+    /if \(file\.size > 4 \* 1024 \* 1024\) \{[\s\S]*return;\s*\}\s*let uploadToken = 0;\s*try \{\s*uploadToken = nextBackgroundUploadToken\(field\);\s*const result = await readFileAsDataUrl\(file\);/
   );
   assert.match(
     clearHandler,
@@ -205,6 +205,57 @@ test('invalid background uploads do not cancel a pending valid upload', async ()
     await validUpload;
 
     assert.equal(chat.chatAppearanceForm.desktopBackgroundUrl, 'data:image/png;base64,valid');
+    assert.equal(warnings.length, 1);
+  } finally {
+    if (originalFileReader === undefined) {
+      delete globalThis.FileReader;
+    } else {
+      globalThis.FileReader = originalFileReader;
+    }
+  }
+});
+
+test('background upload read failures keep scoped warning handling', async () => {
+  const originalFileReader = globalThis.FileReader;
+  const readers = [];
+  const warnings = [];
+  const input = {
+    files: [{ type: 'image/png', size: 1024 }],
+    value: 'selected-file'
+  };
+
+  class MockFileReader {
+    constructor() {
+      this.result = '';
+      this.onload = null;
+      this.onerror = null;
+      readers.push(this);
+    }
+
+    readAsDataURL(file) {
+      this.file = file;
+    }
+  }
+
+  globalThis.FileReader = MockFileReader;
+
+  try {
+    const chat = createAppearance({
+      notify: {
+        warning(message) {
+          warnings.push(message);
+        }
+      }
+    });
+    const upload = chat.handleAppearanceBackgroundUpload({ target: input }, 'desktopBackgroundUrl');
+
+    assert.equal(input.value, '');
+    assert.equal(readers.length, 1);
+
+    readers[0].onerror();
+    await upload;
+
+    assert.equal(chat.chatAppearanceForm.desktopBackgroundUrl, '');
     assert.equal(warnings.length, 1);
   } finally {
     if (originalFileReader === undefined) {

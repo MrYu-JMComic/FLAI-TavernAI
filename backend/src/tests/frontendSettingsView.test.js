@@ -353,6 +353,21 @@ test('SettingsView import file handlers tolerate missing event targets', () => {
   assert.doesNotMatch(regexHandler, /event\.target\.value/);
 });
 
+test('SettingsView export downloads revoke object URLs when link clicks throw', () => {
+  assert.match(
+    settingsViewScript,
+    /function exportPresets\(\) \{[\s\S]*const url = URL\.createObjectURL\(blob\);[\s\S]*a\.download = `flai-presets-\$\{new Date\(\)\.toISOString\(\)\.slice\(0, 10\)\}\.json`;[\s\S]*try \{\s*a\.click\(\);[\s\S]*\} finally \{\s*URL\.revokeObjectURL\(url\);[\s\S]*\}/
+  );
+  assert.match(
+    settingsViewScript,
+    /function exportRegexRules\(\) \{[\s\S]*const url = URL\.createObjectURL\(blob\);[\s\S]*a\.download = `flai-regex-rules-\$\{new Date\(\)\.toISOString\(\)\.slice\(0, 10\)\}\.json`;[\s\S]*try \{\s*a\.click\(\);[\s\S]*\} finally \{\s*URL\.revokeObjectURL\(url\);[\s\S]*\}/
+  );
+  assert.doesNotMatch(
+    settingsViewScript,
+    /a\.click\(\);\s*URL\.revokeObjectURL\(url\);/
+  );
+});
+
 test('SettingsView mod mutations expose visible busy guards for editor, toggle, delete, and reorder actions', () => {
   assert.match(settingsViewScript, /const modActionBusyId = ref\(''\);/);
   assert.match(settingsViewScript, /const modActionBusy = computed\(\(\) => Boolean\(modActionBusyId\.value\)\);/);

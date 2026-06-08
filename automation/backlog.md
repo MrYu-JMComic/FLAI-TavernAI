@@ -40,6 +40,7 @@ The autonomous loop should choose one small item per run. Add new findings here 
 
 ## Done
 
+- 2026-06-09: Cleaned up SettingsView export object URLs and chat background upload read-failure warnings.
 - 2026-06-09: Guarded CharacterFormView AI panel pointer coordinates against malformed drag and resize events.
 - 2026-06-09: Cleaned up StatusBar custom-template copy fallback textareas when selection throws.
 - 2026-06-09: Cleaned up chat message copy fallback textareas when clipboard copy throws.

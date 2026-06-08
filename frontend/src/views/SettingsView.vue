@@ -1161,8 +1161,11 @@ function exportPresets() {
   const a = document.createElement('a');
   a.href = url;
   a.download = `flai-presets-${new Date().toISOString().slice(0, 10)}.json`;
-  a.click();
-  URL.revokeObjectURL(url);
+  try {
+    a.click();
+  } finally {
+    URL.revokeObjectURL(url);
+  }
   notify.success('预设已导出');
 }
 
@@ -1864,8 +1867,11 @@ function exportRegexRules() {
   const a = document.createElement('a');
   a.href = url;
   a.download = `flai-regex-rules-${new Date().toISOString().slice(0, 10)}.json`;
-  a.click();
-  URL.revokeObjectURL(url);
+  try {
+    a.click();
+  } finally {
+    URL.revokeObjectURL(url);
+  }
   notify.success('正则规则已导出');
 }
 

@@ -373,8 +373,9 @@ export function useChatAppearance({
       return;
     }
 
+    let uploadToken = 0;
     try {
-      const uploadToken = nextBackgroundUploadToken(field);
+      uploadToken = nextBackgroundUploadToken(field);
       const result = await readFileAsDataUrl(file);
       if (!isCurrentBackgroundUpload(field, uploadToken)) {
         return;
