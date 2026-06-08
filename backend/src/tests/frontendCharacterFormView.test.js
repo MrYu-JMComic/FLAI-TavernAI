@@ -367,8 +367,9 @@ test('CharacterFormView preserves unchanged AI process panel references', () => 
   );
   assert.match(
     characterFormScript,
-    /function samePlainValue\(current, next\) \{[\s\S]*Object\.is\(current, next\)[\s\S]*Array\.isArray\(current\)[\s\S]*Object\.keys\(current\)[\s\S]*samePlainValue\(current\[key\], next\[key\]\)[\s\S]*\}/
+    /function samePlainValue\(current, next\) \{[\s\S]*Object\.is\(current, next\)[\s\S]*Array\.isArray\(current\)[\s\S]*let currentKeyCount = 0;[\s\S]*for \(const key in current\) \{[\s\S]*currentKeyCount \+= 1;[\s\S]*samePlainValue\(current\[key\], next\[key\]\)[\s\S]*let nextKeyCount = 0;[\s\S]*for \(const key in next\) \{[\s\S]*nextKeyCount \+= 1;[\s\S]*return currentKeyCount === nextKeyCount;[\s\S]*\}/
   );
+  assert.doesNotMatch(characterFormScript, /Object\.keys\(current\)/);
   assert.doesNotMatch(characterFormScript, /currentList\.every\(/);
   assert.doesNotMatch(characterFormScript, /current\.every\(/);
   assert.doesNotMatch(characterFormScript, /currentKeys\.every\(/);

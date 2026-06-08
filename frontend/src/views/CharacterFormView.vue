@@ -1027,17 +1027,23 @@ function samePlainValue(current, next) {
     }
     return true;
   }
-  const currentKeys = Object.keys(current);
-  const nextKeys = Object.keys(next);
-  if (currentKeys.length !== nextKeys.length) {
-    return false;
-  }
-  for (const key of currentKeys) {
+  let currentKeyCount = 0;
+  for (const key in current) {
+    if (!Object.prototype.hasOwnProperty.call(current, key)) {
+      continue;
+    }
+    currentKeyCount += 1;
     if (!Object.prototype.hasOwnProperty.call(next, key) || !samePlainValue(current[key], next[key])) {
       return false;
     }
   }
-  return true;
+  let nextKeyCount = 0;
+  for (const key in next) {
+    if (Object.prototype.hasOwnProperty.call(next, key)) {
+      nextKeyCount += 1;
+    }
+  }
+  return currentKeyCount === nextKeyCount;
 }
 
 async function submit() {
