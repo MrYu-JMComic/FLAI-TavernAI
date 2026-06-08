@@ -62,3 +62,25 @@ test('StatusBar builds custom template CSS and style text without array pipeline
   assert.doesNotMatch(statusBarScript, /const segments = css\.split\(';'\)/);
   assert.doesNotMatch(statusBarScript, /rawProp\.replace\(/);
 });
+
+test('StatusBar scans custom template DOM collections without cloning node lists', () => {
+  assert.match(
+    statusBarScript,
+    /function sanitizeTemplateHtml\(html, styleBlocks = \[\]\) \{[\s\S]*const nodes = doc\.body\.querySelectorAll\('\*'\);[\s\S]*for \(let nodeIndex = 0; nodeIndex < nodes\.length; nodeIndex \+= 1\) \{[\s\S]*const attrs = node\.attributes;[\s\S]*for \(let attrIndex = attrs\.length - 1; attrIndex >= 0; attrIndex -= 1\) \{/
+  );
+  assert.match(
+    statusBarScript,
+    /function normalizeTemplateValueText\(root\) \{[\s\S]*const values = root\.querySelectorAll\('\.sb-val'\);[\s\S]*for \(let index = 0; index < values\.length; index \+= 1\) \{/
+  );
+  assert.match(
+    statusBarScript,
+    /function findTemplateValuePairs\(root\) \{[\s\S]*const labels = root\.querySelectorAll\('\.sb-label'\);[\s\S]*for \(let labelIndex = 0; labelIndex < labels\.length; labelIndex \+= 1\) \{[\s\S]*const values = root\.querySelectorAll\('\.sb-val'\);[\s\S]*for \(let valueIndex = 0; valueIndex < values\.length; valueIndex \+= 1\) \{/
+  );
+  assert.match(
+    statusBarScript,
+    /const parentValues = label\.parentElement\?\.querySelectorAll\?\.\('\.sb-val'\);[\s\S]*for \(let index = 0; index < parentValues\.length; index \+= 1\) \{[\s\S]*return value;[\s\S]*return null;/
+  );
+  assert.doesNotMatch(statusBarScript, /\[\.\.\.[^\]]*querySelectorAll/);
+  assert.doesNotMatch(statusBarScript, /\[\.\.\.node\.attributes\]/);
+  assert.doesNotMatch(statusBarScript, /parentValues\.find\(/);
+});

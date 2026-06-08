@@ -466,7 +466,9 @@ function sanitizeTemplateHtml(html, styleBlocks = []) {
   const parser = new window.DOMParser();
   const doc = parser.parseFromString(String(html || ''), 'text/html');
   const allowedAttrs = new Set(['aria-label', 'class', 'data-sb-action', 'data-sb-copy', 'data-sb-reply', 'data-sb-text', 'role', 'style', 'title', 'type']);
-  for (const node of [...doc.body.querySelectorAll('*')]) {
+  const nodes = doc.body.querySelectorAll('*');
+  for (let nodeIndex = 0; nodeIndex < nodes.length; nodeIndex += 1) {
+    const node = nodes[nodeIndex];
     const tag = node.tagName.toLowerCase();
     if (tag === 'style') {
       const safeCss = sanitizeStyleBlock(node.textContent);
@@ -480,7 +482,9 @@ function sanitizeTemplateHtml(html, styleBlocks = []) {
       node.replaceWith(...node.childNodes);
       continue;
     }
-    for (const attr of [...node.attributes]) {
+    const attrs = node.attributes;
+    for (let attrIndex = attrs.length - 1; attrIndex >= 0; attrIndex -= 1) {
+      const attr = attrs[attrIndex];
       const name = attr.name.toLowerCase();
       if (name.startsWith('on') || !allowedAttrs.has(name)) {
         node.removeAttribute(attr.name);
@@ -601,7 +605,9 @@ function normalizeTemplateValueText(root) {
   if (!root?.querySelectorAll) {
     return;
   }
-  for (const value of [...root.querySelectorAll('.sb-val')]) {
+  const values = root.querySelectorAll('.sb-val');
+  for (let index = 0; index < values.length; index += 1) {
+    const value = values[index];
     value.textContent = cleanResolvedTemplateText(value.textContent);
   }
 }
@@ -630,7 +636,9 @@ function cleanResolvedTemplateText(value) {
 function findTemplateValuePairs(root) {
   const pairs = [];
   const usedValues = new Set();
-  for (const label of [...root.querySelectorAll('.sb-label')]) {
+  const labels = root.querySelectorAll('.sb-label');
+  for (let labelIndex = 0; labelIndex < labels.length; labelIndex += 1) {
+    const label = labels[labelIndex];
     const value = findValueForTemplateLabel(label);
     if (!value || usedValues.has(value)) {
       continue;
@@ -638,7 +646,9 @@ function findTemplateValuePairs(root) {
     pairs.push({ label: templateLabelText(label.textContent), value });
     usedValues.add(value);
   }
-  for (const value of [...root.querySelectorAll('.sb-val')]) {
+  const values = root.querySelectorAll('.sb-val');
+  for (let valueIndex = 0; valueIndex < values.length; valueIndex += 1) {
+    const value = values[valueIndex];
     if (usedValues.has(value)) {
       continue;
     }
@@ -667,8 +677,17 @@ function findValueForTemplateLabel(label) {
       }
     }
   }
-  const parentValues = [...(label.parentElement?.querySelectorAll?.('.sb-val') || [])];
-  return parentValues.find((value) => label.compareDocumentPosition(value) & Node.DOCUMENT_POSITION_FOLLOWING) || null;
+  const parentValues = label.parentElement?.querySelectorAll?.('.sb-val');
+  if (!parentValues) {
+    return null;
+  }
+  for (let index = 0; index < parentValues.length; index += 1) {
+    const value = parentValues[index];
+    if (label.compareDocumentPosition(value) & Node.DOCUMENT_POSITION_FOLLOWING) {
+      return value;
+    }
+  }
+  return null;
 }
 
 function findInlineLabelBeforeValue(value) {
