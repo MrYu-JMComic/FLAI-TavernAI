@@ -21,6 +21,13 @@ const VALID_CHAR_STATUSES = ['active', 'dead', 'forgotten', 'left', 'hidden'];
 const STATUS_BAR_VARIABLE_LIMIT = 60;
 const STATUS_BAR_TEMPLATE_ISSUE_LIMIT = 5;
 const ACCESSORY_SKILL_RESULT_LIMIT = 8;
+const ACCESSORY_SKILL_DEFAULTS = [
+  { key: 'npcAgent', enabled: false, modelOverride: '' },
+  { key: 'statusBarAgent', enabled: 'auto', modelOverride: '' },
+  { key: 'economyAgent', enabled: false, modelOverride: '' },
+  { key: 'talentPrompt', enabled: false, modelOverride: '' },
+  { key: 'cgScene', enabled: false, modelOverride: '' }
+];
 
 function parseCharacter(raw) {
   if (!raw || typeof raw !== 'object') return null;
@@ -525,21 +532,24 @@ export function useChatAccessory({ conversation, setActiveConversationIfChanged,
   }
 
   function createDefaultAccessorySkills() {
-    return {
-      npcAgent: { enabled: false, modelOverride: '' },
-      statusBarAgent: { enabled: 'auto', modelOverride: '' },
-      economyAgent: { enabled: false, modelOverride: '' },
-      talentPrompt: { enabled: false, modelOverride: '' },
-      cgScene: { enabled: false, modelOverride: '' }
-    };
+    const skills = {};
+    for (let index = 0; index < ACCESSORY_SKILL_DEFAULTS.length; index += 1) {
+      const defaultSkill = ACCESSORY_SKILL_DEFAULTS[index];
+      skills[defaultSkill.key] = {
+        enabled: defaultSkill.enabled,
+        modelOverride: defaultSkill.modelOverride
+      };
+    }
+    return skills;
   }
 
   function syncAccessorySkills(next = {}) {
-    const defaults = createDefaultAccessorySkills();
-    for (const key of Object.keys(defaults)) {
+    for (let index = 0; index < ACCESSORY_SKILL_DEFAULTS.length; index += 1) {
+      const defaultSkill = ACCESSORY_SKILL_DEFAULTS[index];
+      const key = defaultSkill.key;
       const source = next?.[key] || {};
       const normalizedSkill = {
-        enabled: normalizeSkillEnabled(source.enabled, defaults[key].enabled),
+        enabled: normalizeSkillEnabled(source.enabled, defaultSkill.enabled),
         modelOverride: String(source.modelOverride || source.model_override || '').trim()
       };
       if (!sameAccessorySkillConfig(accessorySkills[key], normalizedSkill)) {

@@ -283,6 +283,20 @@ test('accessory skill sync preserves unchanged nested config references', () => 
   assert.notEqual(accessory.accessorySkills.npcAgent, npcAgent);
   assert.equal(accessory.accessorySkills.economyAgent, economyAgent);
   assert.deepEqual(accessory.accessorySkills.npcAgent, { enabled: true, modelOverride: 'model-c' });
+  assert.match(
+    chatAccessorySource,
+    /const ACCESSORY_SKILL_DEFAULTS = \[[\s\S]*\{ key: 'npcAgent', enabled: false, modelOverride: '' \},[\s\S]*\{ key: 'statusBarAgent', enabled: 'auto', modelOverride: '' \},[\s\S]*\{ key: 'cgScene', enabled: false, modelOverride: '' \}[\s\S]*\];/
+  );
+  assert.match(
+    chatAccessorySource,
+    /function createDefaultAccessorySkills\(\) \{[\s\S]*const skills = \{\};[\s\S]*for \(let index = 0; index < ACCESSORY_SKILL_DEFAULTS\.length; index \+= 1\) \{[\s\S]*skills\[defaultSkill\.key\] = \{[\s\S]*enabled: defaultSkill\.enabled,[\s\S]*modelOverride: defaultSkill\.modelOverride[\s\S]*return skills;[\s\S]*\}/
+  );
+  assert.match(
+    chatAccessorySource,
+    /function syncAccessorySkills\(next = \{\}\) \{[\s\S]*for \(let index = 0; index < ACCESSORY_SKILL_DEFAULTS\.length; index \+= 1\) \{[\s\S]*const defaultSkill = ACCESSORY_SKILL_DEFAULTS\[index\];[\s\S]*const key = defaultSkill\.key;[\s\S]*normalizeSkillEnabled\(source\.enabled, defaultSkill\.enabled\)[\s\S]*sameAccessorySkillConfig\(accessorySkills\[key\], normalizedSkill\)[\s\S]*accessorySkills\[key\] = normalizedSkill;[\s\S]*\}/
+  );
+  assert.doesNotMatch(chatAccessorySource, /Object\.keys\(defaults\)/);
+  assert.doesNotMatch(chatAccessorySource, /ACCESSORY_SKILL_KEYS/);
 });
 
 test('status bar template config parsing keeps valid items while skipping malformed rows', () => {
