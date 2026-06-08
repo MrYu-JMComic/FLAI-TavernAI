@@ -845,7 +845,7 @@ function aiStreamHandlers(mutationToken, routeKey) {
         ...step,
         content: target.content || step.content || '',
         reasoning: target.reasoning === '等待模型响应...' ? step.reasoning || '' : target.reasoning || step.reasoning || '',
-        tools: target.tools?.length ? target.tools : Array.isArray(step.tools) ? [...step.tools] : []
+        tools: target.tools?.length ? target.tools : cloneAiToolList(step.tools)
       }));
     },
     reasoning: ({ round = 1, text = '' } = {}) => {
@@ -879,7 +879,7 @@ function aiStreamHandlers(mutationToken, routeKey) {
       };
       updateAiProcessStep(call.round || 1, (target) => ({
         ...target,
-        tools: [...(Array.isArray(target.tools) ? target.tools : []), log]
+        tools: appendAiToolList(target.tools, log)
       }));
       appendAiToolCall(log);
     }
@@ -900,7 +900,7 @@ function updateAiProcessStep(round = 1, updateStep) {
     : { round, reasoning: '', content: '', tools: [] };
   const nextStep = updateStep({
     ...currentStep,
-    tools: Array.isArray(currentStep.tools) ? [...currentStep.tools] : []
+    tools: cloneAiToolList(currentStep.tools)
   });
   const nextProcess = [];
   for (let index = 0; index < currentProcess.length; index += 1) {
@@ -920,6 +920,20 @@ function appendAiToolCall(log) {
   }
   nextToolCalls.push(log);
   setAiToolCallsIfChanged(nextToolCalls);
+}
+
+function cloneAiToolList(tools = []) {
+  const clonedTools = [];
+  for (const tool of Array.isArray(tools) ? tools : []) {
+    clonedTools.push(tool);
+  }
+  return clonedTools;
+}
+
+function appendAiToolList(tools = [], log) {
+  const nextTools = cloneAiToolList(tools);
+  nextTools.push(log);
+  return nextTools;
 }
 
 function formatAiValue(value) {

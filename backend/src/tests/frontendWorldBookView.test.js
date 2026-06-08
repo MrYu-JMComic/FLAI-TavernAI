@@ -84,10 +84,21 @@ test('WorldBookView preserves unchanged AI draft and process panel references', 
     worldBookViewScript,
     /function appendAiToolCall\(log\) {[\s\S]*const currentToolCalls = Array\.isArray\(aiToolCalls\.value\) \? aiToolCalls\.value : \[\];[\s\S]*const nextToolCalls = \[\];[\s\S]*for \(const toolCall of currentToolCalls\) {[\s\S]*nextToolCalls\.push\(toolCall\);[\s\S]*nextToolCalls\.push\(log\);[\s\S]*setAiToolCallsIfChanged\(nextToolCalls\);[\s\S]*}/
   );
+  assert.match(
+    worldBookViewScript,
+    /function cloneAiToolList\(tools = \[\]\) \{[\s\S]*const clonedTools = \[\];[\s\S]*for \(const tool of Array\.isArray\(tools\) \? tools : \[\]\) \{[\s\S]*clonedTools\.push\(tool\);[\s\S]*return clonedTools;[\s\S]*\}/
+  );
+  assert.match(
+    worldBookViewScript,
+    /function appendAiToolList\(tools = \[\], log\) \{[\s\S]*const nextTools = cloneAiToolList\(tools\);[\s\S]*nextTools\.push\(log\);[\s\S]*return nextTools;[\s\S]*\}/
+  );
   assert.doesNotMatch(worldBookViewScript, /currentProcess\.findIndex\(/);
   assert.doesNotMatch(worldBookViewScript, /currentProcess\.map\(\(item, index\) => \(index === stepIndex \? nextStep : item\)\)/);
   assert.doesNotMatch(worldBookViewScript, /\[\.\.\.currentProcess, nextStep\]/);
   assert.doesNotMatch(worldBookViewScript, /setAiToolCallsIfChanged\(\[\.\.\.currentToolCalls, log\]\);/);
+  assert.doesNotMatch(worldBookViewScript, /Array\.isArray\(step\.tools\) \? \[\.\.\.step\.tools\] : \[\]/);
+  assert.doesNotMatch(worldBookViewScript, /\[\.\.\.\(Array\.isArray\(target\.tools\) \? target\.tools : \[\]\), log\]/);
+  assert.doesNotMatch(worldBookViewScript, /Array\.isArray\(currentStep\.tools\) \? \[\.\.\.currentStep\.tools\] : \[\]/);
   assert.match(
     worldBookViewScript,
     /async function completeWorldBookWithAi\(\) {[\s\S]*setAiToolCallsIfChanged\(\[\]\);[\s\S]*setAiProcessIfChanged\(\[\{ round: 1, reasoning: '[^']+', content: '', tools: \[\] \}\]\);/
@@ -110,7 +121,7 @@ test('WorldBookView preserves unchanged AI draft and process panel references', 
   );
   assert.match(
     worldBookViewScript,
-    /function aiStreamHandlers\(mutationToken, routeKey\) {[\s\S]*step: \(step = \{\}\) => {[\s\S]*updateAiProcessStep\(step\.round \|\| 1, \(target\) => \({[\s\S]*content: target\.content \|\| step\.content \|\| ''[\s\S]*reasoning: target\.reasoning === '等待模型响应\.\.\.'[\s\S]*tools: target\.tools\?\.length \? target\.tools : Array\.isArray\(step\.tools\) \? \[\.\.\.step\.tools\] : \[\][\s\S]*tool: \(call = \{\}\) => {[\s\S]*updateAiProcessStep\(call\.round \|\| 1, \(target\) => \({[\s\S]*tools: \[\.\.\.\(Array\.isArray\(target\.tools\) \? target\.tools : \[\]\), log\][\s\S]*appendAiToolCall\(log\);/
+    /function aiStreamHandlers\(mutationToken, routeKey\) {[\s\S]*step: \(step = \{\}\) => {[\s\S]*updateAiProcessStep\(step\.round \|\| 1, \(target\) => \({[\s\S]*content: target\.content \|\| step\.content \|\| ''[\s\S]*reasoning: target\.reasoning === '等待模型响应\.\.\.'[\s\S]*tools: target\.tools\?\.length \? target\.tools : cloneAiToolList\(step\.tools\)[\s\S]*tool: \(call = \{\}\) => {[\s\S]*updateAiProcessStep\(call\.round \|\| 1, \(target\) => \({[\s\S]*tools: appendAiToolList\(target\.tools, log\)[\s\S]*appendAiToolCall\(log\);/
   );
   assert.doesNotMatch(worldBookViewScript, /aiDraft\.value\s*=(?!=)/);
   assert.doesNotMatch(worldBookViewScript, /aiToolCalls\.value\s*=(?!=)/);
