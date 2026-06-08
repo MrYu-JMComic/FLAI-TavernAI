@@ -45,7 +45,7 @@ test('accessory agents stay inactive when skills are disabled', async () => {
   assert.equal(getStatusBar(env.db, env.userId, env.conversation.id).variables[0].value, 100);
 });
 
-test('accessory skill payloads build active flags without Object.fromEntries map allocation', () => {
+test('accessory skill payloads build active flags with direct own-key loops', () => {
   const env = setupConversation({
     npcAgent: skill(false),
     statusBarAgent: skill('auto'),
@@ -67,11 +67,15 @@ test('accessory skill payloads build active flags without Object.fromEntries map
   assert.equal(payload.active.economyAgent, true);
   assert.equal(payload.active.talentPrompt, false);
   assert.equal(payload.active.cgScene, false);
-  assert.match(advancedSettingsSource, /const normalized = \{\};\r?\n  for \(const key of Object\.keys\(defaults\)\) \{/);
+  assert.match(advancedSettingsSource, /const normalized = \{\};\r?\n  for \(const key in defaults\) \{/);
+  assert.match(advancedSettingsSource, /Object\.prototype\.hasOwnProperty\.call\(defaults, key\)/);
   assert.match(accessoryAgentsSource, /const activeContext = \{/);
-  assert.match(accessoryAgentsSource, /const active = \{\};\r?\n  for \(const key of Object\.keys\(skills\)\) \{/);
+  assert.match(accessoryAgentsSource, /const active = \{\};\r?\n  for \(const key in skills\) \{/);
+  assert.match(accessoryAgentsSource, /Object\.prototype\.hasOwnProperty\.call\(skills, key\)/);
   assert.doesNotMatch(advancedSettingsSource, /Object\.fromEntries\(\s*Object\.entries\(createDefaultAccessorySkills\(\)\)\.map/);
+  assert.doesNotMatch(advancedSettingsSource, /Object\.keys\(defaults\)/);
   assert.doesNotMatch(accessoryAgentsSource, /Object\.fromEntries\(\s*Object\.keys\(skills\)\.map/);
+  assert.doesNotMatch(accessoryAgentsSource, /Object\.keys\(skills\)/);
 });
 
 test('advanced settings text fields merge without filter join arrays', () => {
@@ -245,6 +249,46 @@ test('status bar agent updates text variables and inferred template rows', async
   } finally {
     globalThis.fetch = originalFetch;
   }
+});
+
+test('status bar agent skips unchanged variable writes and update badges', async () => {
+  const env = setupConversation({ statusBarAgent: skill('auto') });
+  const statusBar = upsertStatusBar(env.db, env.userId, env.conversation.id, {
+    name: 'State',
+    variables: [{ name: 'HP', value: 100, max: 100, color: '#ff0000' }],
+    template: ''
+  });
+
+  const results = await runAccessoryAgents({
+    db: env.db,
+    userId: env.userId,
+    conversation: env.conversation,
+    character: env.character,
+    assistantMessage: { content: 'HP: 100/100. Nothing changes.' },
+    settings: {},
+    statusBar
+  });
+
+  assert.equal(results[0].ok, true);
+  assert.equal(results[0].result.statusBar, statusBar);
+  assert.deepEqual(results[0].result.updates, []);
+  assert.equal(getStatusBar(env.db, env.userId, env.conversation.id).variables[0].value, 100);
+  assert.match(
+    accessoryAgentsSource,
+    /const nextVariables = mergeStatusVariables\(currentStatusBar\.variables, updates\);[\s\S]*if \(nextVariables === currentStatusBar\.variables\) \{[\s\S]*return \{ statusBar, updates: \[\] \};/
+  );
+
+  const normalizeUpdatesHelper = accessoryAgentsSource.match(/function normalizeStatusUpdates[\s\S]*?\n}\n\nfunction mergeStatusVariables/);
+  assert.ok(normalizeUpdatesHelper);
+  assert.match(normalizeUpdatesHelper[0], /const normalized = \[\];/);
+  assert.match(normalizeUpdatesHelper[0], /normalized\.length < STATUS_BAR_VARIABLE_LIMIT/);
+  assert.doesNotMatch(normalizeUpdatesHelper[0], /\.map\(|\.filter\(|\.slice\(/);
+
+  const mergeHelper = accessoryAgentsSource.match(/function mergeStatusVariables[\s\S]*?\n}\n\nfunction statusVariableKey/);
+  assert.ok(mergeHelper);
+  assert.match(mergeHelper[0], /const current = applyVariableUpdates\(sourceVariables, updates\);/);
+  assert.match(mergeHelper[0], /if \(nextVariables === current\) \{[\s\S]*nextVariables = current\.slice\(\);/);
+  assert.doesNotMatch(mergeHelper[0], /current\.map|updates\s*\.\s*filter|updates\s*\.\s*map|\[\.\.\.current/);
 });
 
 test('status bar templates infer composite placeholder child variables', () => {

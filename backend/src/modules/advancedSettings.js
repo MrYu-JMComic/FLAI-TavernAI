@@ -75,7 +75,10 @@ export function normalizeAccessorySkills(input = {}, fallback = createDefaultAcc
   const source = input && typeof input === 'object' ? input : {};
   const defaults = createDefaultAccessorySkills();
   const normalized = {};
-  for (const key of Object.keys(defaults)) {
+  for (const key in defaults) {
+    if (!Object.prototype.hasOwnProperty.call(defaults, key)) {
+      continue;
+    }
     normalized[key] = normalizeSkillConfig(source[key], fallback[key] || defaults[key]);
   }
   return normalized;

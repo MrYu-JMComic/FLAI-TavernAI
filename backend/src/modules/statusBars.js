@@ -176,17 +176,33 @@ export function applyVariableUpdates(variables, updates) {
     updateMap.set(normalizeVariableKey(update.name), update);
   }
 
-  return variables.map((variable) => {
+  let changed = false;
+  const nextVariables = [];
+  for (const variable of variables) {
     const update = updateMap.get(normalizeVariableKey(variable.name));
     if (!update) {
-      return variable;
+      nextVariables.push(variable);
+      continue;
     }
-    return {
+
+    const hasMax = hasExplicitMax(update);
+    const nextMax = hasMax ? Number(update.max) : undefined;
+    if (
+      Object.is(variable?.value, update.value) &&
+      (!hasMax || Object.is(variable?.max, nextMax))
+    ) {
+      nextVariables.push(variable);
+      continue;
+    }
+
+    changed = true;
+    nextVariables.push({
       ...variable,
       value: update.value,
-      ...(hasExplicitMax(update) ? { max: Number(update.max) } : {})
-    };
-  });
+      ...(hasMax ? { max: nextMax } : {})
+    });
+  }
+  return changed ? nextVariables : variables;
 }
 
 // ── Helpers ──

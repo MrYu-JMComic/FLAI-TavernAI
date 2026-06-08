@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import { createAppDatabase } from '../db.js';
-import { upsertStatusBar } from '../modules/statusBars.js';
+import { applyVariableUpdates, upsertStatusBar } from '../modules/statusBars.js';
 
 const statusBarsSource = readFileSync(new URL('../modules/statusBars.js', import.meta.url), 'utf8');
 
@@ -99,4 +99,34 @@ test('status bar variables normalize with a capped direct loop', () => {
   assert.match(normalizeHelper[0], /for \(let index = 0; index < sourceVariables\.length; index \+= 1\)/);
   assert.match(normalizeHelper[0], /normalized\.length >= STATUS_BAR_VARIABLE_LIMIT/);
   assert.doesNotMatch(normalizeHelper[0], /\.map\(|\.filter\(/);
+});
+
+test('status bar variable updates preserve unchanged list references', () => {
+  const variables = [
+    { name: 'HP', value: 100, max: 100, color: '#ff0000' },
+    { name: 'Mood', value: 'Calm', color: '' }
+  ];
+
+  const unchanged = applyVariableUpdates(variables, [
+    { name: 'HP', value: 100, max: 100 },
+    { name: 'Mood', value: 'Calm' }
+  ]);
+  assert.equal(unchanged, variables);
+  assert.equal(unchanged[0], variables[0]);
+  assert.equal(unchanged[1], variables[1]);
+
+  const changed = applyVariableUpdates(variables, [{ name: 'HP', value: 80, max: 100 }]);
+  assert.notEqual(changed, variables);
+  assert.notEqual(changed[0], variables[0]);
+  assert.equal(changed[0].value, 80);
+  assert.equal(changed[0].max, 100);
+  assert.equal(changed[1], variables[1]);
+
+  const updateStart = statusBarsSource.indexOf('export function applyVariableUpdates');
+  const updateEnd = statusBarsSource.indexOf('function escapeRegex', updateStart);
+  assert.ok(updateStart >= 0 && updateEnd > updateStart);
+  const updateHelper = statusBarsSource.slice(updateStart, updateEnd);
+  assert.match(updateHelper, /let changed = false;/);
+  assert.match(updateHelper, /return changed \? nextVariables : variables;/);
+  assert.doesNotMatch(updateHelper, /variables\.map\(/);
 });

@@ -40,6 +40,8 @@ The autonomous loop should choose one small item per run. Add new findings here 
 
 ## Done
 
+- 2026-06-08: Preserved unchanged status-bar variable update references and skipped no-op accessory status writes.
+- 2026-06-08: Built accessory skill defaults and active payload flags with direct own-key loops.
 - 2026-06-08: Shared CharacterFormView and accessory-agent status template token parsing through the root helper.
 - 2026-06-08: Normalized provider model-cache extra body sorting with direct recursive loops.
 - 2026-06-08: Merged chat appearance layered text fields with a direct helper instead of filter/join arrays.

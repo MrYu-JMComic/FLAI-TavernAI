@@ -17,7 +17,10 @@ export function getAccessorySkillsPayload(conversation, statusBar = null) {
     statusBarBlueprint: advancedSettings.statusBarBlueprint
   };
   const active = {};
-  for (const key of Object.keys(skills)) {
+  for (const key in skills) {
+    if (!Object.prototype.hasOwnProperty.call(skills, key)) {
+      continue;
+    }
     active[key] = isAccessorySkillActive(skills, key, activeContext);
   }
   return {
@@ -125,9 +128,14 @@ async function runStatusBarAgent({ db, userId, conversation, assistantMessage, s
     return { statusBar, updates: [] };
   }
 
+  const nextVariables = mergeStatusVariables(currentStatusBar.variables, updates);
+  if (nextVariables === currentStatusBar.variables) {
+    return { statusBar, updates: [] };
+  }
+
   const nextStatusBar = upsertStatusBar(db, userId, conversation.id, {
     name: currentStatusBar.name,
-    variables: mergeStatusVariables(currentStatusBar.variables, updates),
+    variables: nextVariables,
     template: currentStatusBar.template
   });
   return { statusBar: nextStatusBar, updates };
@@ -524,29 +532,47 @@ function economyTool() {
 }
 
 function normalizeStatusUpdates(args = {}) {
-  return (Array.isArray(args.variables) ? args.variables : [])
-    .map((item) => {
-      const value = normalizeStatusValue(item?.value);
-      return {
-        name: String(item?.name || '').trim(),
-        value,
-        ...(Number.isFinite(Number(item?.max)) ? { max: Number(item.max) } : {}),
-        ...(typeof item?.color === 'string' && item.color.trim() ? { color: item.color.trim() } : {})
-      };
-    })
-    .filter((item) => item.name && item.value !== '')
-    .slice(0, STATUS_BAR_VARIABLE_LIMIT);
+  const normalized = [];
+  const sourceVariables = Array.isArray(args.variables) ? args.variables : [];
+  for (let index = 0; index < sourceVariables.length && normalized.length < STATUS_BAR_VARIABLE_LIMIT; index += 1) {
+    const item = sourceVariables[index];
+    const value = normalizeStatusValue(item?.value);
+    const name = String(item?.name || '').trim();
+    if (!name || value === '') {
+      continue;
+    }
+    normalized.push({
+      name,
+      value,
+      ...(Number.isFinite(Number(item?.max)) ? { max: Number(item.max) } : {}),
+      ...(typeof item?.color === 'string' && item.color.trim() ? { color: item.color.trim() } : {})
+    });
+  }
+  return normalized;
 }
 
 function mergeStatusVariables(variables = [], updates = []) {
   if (!Array.isArray(updates) || updates.length === 0) {
     return variables;
   }
-  const current = applyVariableUpdates(Array.isArray(variables) ? variables : [], updates);
-  const seen = new Set(current.map((item) => statusVariableKey(item.name)));
-  const additions = updates
-    .filter((item) => item.name && !seen.has(statusVariableKey(item.name)))
-    .map((item) => ({
+  const sourceVariables = Array.isArray(variables) ? variables : [];
+  const current = applyVariableUpdates(sourceVariables, updates);
+  const seen = new Set();
+  for (const item of current) {
+    seen.add(statusVariableKey(item?.name));
+  }
+
+  let nextVariables = current;
+  for (let index = 0; index < updates.length && nextVariables.length < STATUS_BAR_VARIABLE_LIMIT; index += 1) {
+    const item = updates[index];
+    const key = statusVariableKey(item?.name);
+    if (!item?.name || !key || seen.has(key)) {
+      continue;
+    }
+    if (nextVariables === current) {
+      nextVariables = current.slice();
+    }
+    nextVariables.push({
       name: item.name,
       value: item.value,
       ...(Number.isFinite(Number(item.max))
@@ -555,8 +581,10 @@ function mergeStatusVariables(variables = [], updates = []) {
           ? { max: 100 }
           : {}),
       color: item.color || ''
-    }));
-  return [...current, ...additions].slice(0, STATUS_BAR_VARIABLE_LIMIT);
+    });
+    seen.add(key);
+  }
+  return nextVariables;
 }
 
 function statusVariableKey(value) {
