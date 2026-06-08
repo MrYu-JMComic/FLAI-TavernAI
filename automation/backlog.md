@@ -40,6 +40,7 @@ The autonomous loop should choose one small item per run. Add new findings here 
 
 ## Done
 
+- 2026-06-09: Added ChatView composer layout animation-frame fallbacks for textarea and dock updates.
 - 2026-06-09: Added chat scroll animation-frame fallbacks so scroll state still updates when RAF APIs are unavailable.
 - 2026-06-09: Settled SettingsView preset and regex import busy state when FileReader reads throw synchronously.
 - 2026-06-09: Cleaned up SettingsView export object URLs and chat background upload read-failure warnings.

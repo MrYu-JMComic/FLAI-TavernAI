@@ -723,12 +723,12 @@ function resizeComposerTextarea() {
   const targetHeight = Math.min(Math.max(scrollH, minHeight), maxHeight);
   isAutoSizingTextarea = true;
   autoSizingTextareaHeight = targetHeight;
-  if (autoSizingTextareaRafId) {
-    cancelAnimationFrame(autoSizingTextareaRafId);
+  if (autoSizingTextareaRafId !== null) {
+    cancelChatFrame(autoSizingTextareaRafId);
   }
   el.style.height = `${targetHeight}px`;
   el.style.overflowY = scrollH > maxHeight ? 'auto' : 'hidden';
-  autoSizingTextareaRafId = requestAnimationFrame(() => {
+  autoSizingTextareaRafId = scheduleChatFrame(() => {
     autoSizingTextareaRafId = null;
     if (chatViewDisposed) return;
     isAutoSizingTextarea = false;
@@ -755,10 +755,10 @@ function handleTextareaResize() {
 
 function scheduleTextareaResizeUpdate() {
   if (chatViewDisposed) return;
-  if (textareaResizeRafId) {
+  if (textareaResizeRafId !== null) {
     return;
   }
-  textareaResizeRafId = requestAnimationFrame(() => {
+  textareaResizeRafId = scheduleChatFrame(() => {
     textareaResizeRafId = null;
     handleTextareaResize();
   });
@@ -788,10 +788,10 @@ function handleViewportResize() {
 
 function scheduleViewportLayoutUpdate() {
   if (chatViewDisposed) return;
-  if (viewportLayoutRafId) {
+  if (viewportLayoutRafId !== null) {
     return;
   }
-  viewportLayoutRafId = requestAnimationFrame(() => {
+  viewportLayoutRafId = scheduleChatFrame(() => {
     viewportLayoutRafId = null;
     handleViewportResize();
   });
@@ -803,10 +803,10 @@ let textareaResizeObserver = null;
 
 function updateComposerDock() {
   if (chatViewDisposed) return;
-  if (composerDockRafId) {
-    cancelAnimationFrame(composerDockRafId);
+  if (composerDockRafId !== null) {
+    cancelChatFrame(composerDockRafId);
   }
-  composerDockRafId = requestAnimationFrame(() => {
+  composerDockRafId = scheduleChatFrame(() => {
     composerDockRafId = null;
     if (chatViewDisposed) {
       return;
@@ -833,6 +833,20 @@ function updateComposerDock() {
     shell.style.setProperty('--chat-visual-viewport-height', `${Math.round(viewport.height)}px`);
     shell.style.setProperty('--chat-keyboard-inset', `${Math.round(keyboardInset)}px`);
   });
+}
+
+function scheduleChatFrame(callback) {
+  if (typeof requestAnimationFrame !== 'function') {
+    callback();
+    return null;
+  }
+  return requestAnimationFrame(callback);
+}
+
+function cancelChatFrame(frameId) {
+  if (frameId !== null && typeof cancelAnimationFrame === 'function') {
+    cancelAnimationFrame(frameId);
+  }
 }
 
 function scheduleComposerLayoutUpdate(options = {}) {
@@ -863,20 +877,20 @@ function cancelComposerLayoutWork() {
   composerLayoutTickId += 1;
   composerLayoutTickPending = false;
   composerFocusPending = false;
-  if (composerDockRafId) {
-    cancelAnimationFrame(composerDockRafId);
+  if (composerDockRafId !== null) {
+    cancelChatFrame(composerDockRafId);
     composerDockRafId = null;
   }
-  if (autoSizingTextareaRafId) {
-    cancelAnimationFrame(autoSizingTextareaRafId);
+  if (autoSizingTextareaRafId !== null) {
+    cancelChatFrame(autoSizingTextareaRafId);
     autoSizingTextareaRafId = null;
   }
-  if (viewportLayoutRafId) {
-    cancelAnimationFrame(viewportLayoutRafId);
+  if (viewportLayoutRafId !== null) {
+    cancelChatFrame(viewportLayoutRafId);
     viewportLayoutRafId = null;
   }
-  if (textareaResizeRafId) {
-    cancelAnimationFrame(textareaResizeRafId);
+  if (textareaResizeRafId !== null) {
+    cancelChatFrame(textareaResizeRafId);
     textareaResizeRafId = null;
   }
 }

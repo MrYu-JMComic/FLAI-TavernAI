@@ -79,6 +79,23 @@ test('ChatView routes preset selection through the guarded submit setter', () =>
   assert.doesNotMatch(chatViewTemplate, /@update:selected-preset-id="\([^"]+\) => selectedPresetId =/);
 });
 
+test('ChatView composer layout work falls back when animation frames are unavailable', () => {
+  assert.match(
+    chatViewScript,
+    /function scheduleChatFrame\(callback\) \{\s*if \(typeof requestAnimationFrame !== 'function'\) \{\s*callback\(\);\s*return null;\s*\}\s*return requestAnimationFrame\(callback\);\s*\}/
+  );
+  assert.match(
+    chatViewScript,
+    /function cancelChatFrame\(frameId\) \{\s*if \(frameId !== null && typeof cancelAnimationFrame === 'function'\) \{\s*cancelAnimationFrame\(frameId\);\s*\}\s*\}/
+  );
+  assert.match(chatViewScript, /autoSizingTextareaRafId = scheduleChatFrame\(\(\) =>/);
+  assert.match(chatViewScript, /textareaResizeRafId = scheduleChatFrame\(\(\) =>/);
+  assert.match(chatViewScript, /viewportLayoutRafId = scheduleChatFrame\(\(\) =>/);
+  assert.match(chatViewScript, /composerDockRafId = scheduleChatFrame\(\(\) =>/);
+  assert.doesNotMatch(chatViewScript, /= requestAnimationFrame\(\(\) =>/);
+  assert.doesNotMatch(chatViewScript, /cancelAnimationFrame\((composerDockRafId|autoSizingTextareaRafId|viewportLayoutRafId|textareaResizeRafId)\)/);
+});
+
 test('ChatView requests mobile status bar collapse before assistant-reply anchoring', () => {
   assert.match(chatViewScript, /const statusBarCollapseRequest = ref\(0\)/);
   assert.match(chatViewScript, /function prepareExpandedStatusBarForSubmit\(\) {[\s\S]*aria-expanded'[\s\S]*statusBarExpanded && chatViewportIsPhone\.value[\s\S]*statusBarCollapseRequest\.value \+= 1;[\s\S]*return statusBarExpanded;/);
