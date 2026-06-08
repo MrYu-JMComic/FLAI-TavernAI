@@ -116,8 +116,14 @@ test('CharacterFormView preserves unchanged option-list references during loads'
   );
   assert.match(
     characterFormScript,
-    /setAvailableTagsIfChanged\(\[\.\.\.availableTags\.value, tag\]\);/
+    /const tag = await createTag\(\{ name \}\);[\s\S]*if \(!isCurrentTagCreate\(createToken, name\)\) return;[\s\S]*appendAvailableTagIfMissing\(tag\);/
   );
+  assert.match(
+    characterFormScript,
+    /function appendAvailableTagIfMissing\(tag\) \{[\s\S]*if \(!tag\?\.name\) \{[\s\S]*return false;[\s\S]*const currentTags = Array\.isArray\(availableTags\.value\) \? availableTags\.value : \[\];[\s\S]*const nextTags = \[\];[\s\S]*let tagExists = false;[\s\S]*for \(const currentTag of currentTags\) \{[\s\S]*currentTag\?\.name === tag\?\.name[\s\S]*tagExists = true;[\s\S]*nextTags\.push\(currentTag\);[\s\S]*if \(tagExists\) \{[\s\S]*return false;[\s\S]*nextTags\.push\(tag\);[\s\S]*return setAvailableTagsIfChanged\(nextTags\);[\s\S]*\}/
+  );
+  assert.doesNotMatch(characterFormScript, /availableTags\.value\.some\(/);
+  assert.doesNotMatch(characterFormScript, /setAvailableTagsIfChanged\(\[\.\.\.availableTags\.value, tag\]\);/);
   assert.match(
     characterFormScript,
     /function setWorldBooksIfChanged\(nextBooks\) \{[\s\S]*sameListItems\(worldBooks\.value, normalizedBooks, sameWorldBookOption\)[\s\S]*worldBooks\.value = normalizedBooks;[\s\S]*return true;[\s\S]*\}/

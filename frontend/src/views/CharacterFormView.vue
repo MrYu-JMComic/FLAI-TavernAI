@@ -822,6 +822,26 @@ function setAvailableTagsIfChanged(nextTags) {
   return true;
 }
 
+function appendAvailableTagIfMissing(tag) {
+  if (!tag?.name) {
+    return false;
+  }
+  const currentTags = Array.isArray(availableTags.value) ? availableTags.value : [];
+  const nextTags = [];
+  let tagExists = false;
+  for (const currentTag of currentTags) {
+    if (currentTag?.name === tag?.name) {
+      tagExists = true;
+    }
+    nextTags.push(currentTag);
+  }
+  if (tagExists) {
+    return false;
+  }
+  nextTags.push(tag);
+  return setAvailableTagsIfChanged(nextTags);
+}
+
 function filterTagsBySearch(tags, rawSearch) {
   const currentTags = Array.isArray(tags) ? tags : [];
   const search = String(rawSearch || '').trim().toLowerCase();
@@ -1680,9 +1700,7 @@ async function createAndSelectTag() {
   try {
     const tag = await createTag({ name });
     if (!isCurrentTagCreate(createToken, name)) return;
-    if (!availableTags.value.some((item) => item.name === tag.name)) {
-      setAvailableTagsIfChanged([...availableTags.value, tag]);
-    }
+    appendAvailableTagIfMissing(tag);
     if (!form.selectedTags.includes(name)) {
       form.selectedTags.push(name);
     }
