@@ -82,6 +82,10 @@ test('EconomyPanel preserves unchanged account and transaction list references',
 test('EconomyPanel cancels pending loads when the panel closes', () => {
   assert.match(
     economyPanelScript,
+    /function requestClose\(\)\s*{\s*cancelEconomyPanelLoad\(\);\s*emit\('close'\);\s*}/
+  );
+  assert.match(
+    economyPanelScript,
     /watch\(\(\) => props\.open, \(isOpen\) => \{\s*if \(isOpen\) \{\s*loadEconomy\(\);\s*\} else \{\s*cancelEconomyPanelLoad\(\);\s*\}\s*}\);/
   );
   assert.match(
@@ -96,4 +100,7 @@ test('EconomyPanel cancels pending loads when the panel closes', () => {
     economyPanelScript,
     /const result = await fetchEconomyHistory\(conversationId, params\);[\s\S]*if \(economyPanelDisposed \|\| requestToken !== historyLoadToken \|\| conversationId !== props\.conversationId\) return;[\s\S]*setTransactionsIfChanged\(result\.transactions\);/
   );
+  assert.match(economyPanelTemplate, /@click\.self="requestClose"/);
+  assert.match(economyPanelTemplate, /@click="requestClose"/);
+  assert.doesNotMatch(economyPanelTemplate, /emit\('close'\)/);
 });

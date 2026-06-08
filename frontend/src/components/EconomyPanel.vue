@@ -90,6 +90,11 @@ onBeforeUnmount(() => {
   resetEconomyState();
 });
 
+function requestClose() {
+  cancelEconomyPanelLoad();
+  emit('close');
+}
+
 function resetEconomyState() {
   economyLoadToken += 1;
   historyLoadToken += 1;
@@ -326,14 +331,14 @@ function getTransactionAmountClass(tx) {
 
 <template>
   <Transition name="economy-panel">
-    <div v-if="open" class="economy-panel-overlay" @click.self="emit('close')">
+    <div v-if="open" class="economy-panel-overlay" @click.self="requestClose">
       <aside class="economy-panel" aria-label="经济系统">
         <header class="economy-panel-header">
           <div class="economy-panel-title">
             <Coins :size="20" />
             <h2>经济系统</h2>
           </div>
-          <button class="economy-close-btn" type="button" aria-label="关闭经济系统" title="关闭" @click="emit('close')">
+          <button class="economy-close-btn" type="button" aria-label="关闭经济系统" title="关闭" @click="requestClose">
             <X :size="18" />
           </button>
         </header>
