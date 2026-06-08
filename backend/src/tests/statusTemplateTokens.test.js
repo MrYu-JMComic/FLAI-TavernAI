@@ -40,5 +40,14 @@ test('advanced settings status blueprint placeholders use the shared token parse
     ]
   );
   assert.match(advancedSettingsSource, /from '..\/..\/..\/shared\/statusTemplateTokens\.js'/);
+  assert.match(
+    advancedSettingsSource,
+    /function inferStatusVariablesFromTemplate\(template, variables = \[\]\) \{[\s\S]*const inferred = dedupeStatusVariables\(variables\);[\s\S]*const seen = collectStatusVariableKeys\(inferred\);/
+  );
+  assert.match(
+    advancedSettingsSource,
+    /function collectStatusVariableKeys\(variables = \[\]\) \{\s*const keys = new Set\(\);\s*for \(const item of Array\.isArray\(variables\) \? variables : \[\]\) \{\s*keys\.add\(normalizeStatusVariableKey\(item\?\.name\)\);\s*\}\s*return keys;\s*\}/
+  );
   assert.doesNotMatch(advancedSettingsSource, /token\.split\('\.'\)/);
+  assert.doesNotMatch(advancedSettingsSource, /new Set\(inferred\.map/);
 });

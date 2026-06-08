@@ -151,7 +151,7 @@ function normalizeColor(value) {
 
 function inferStatusVariablesFromTemplate(template, variables = []) {
   const inferred = dedupeStatusVariables(variables);
-  const seen = new Set(inferred.map((item) => normalizeStatusVariableKey(item.name)));
+  const seen = collectStatusVariableKeys(inferred);
   const raw = String(template || '');
   if (!raw) {
     return inferred;
@@ -185,6 +185,14 @@ function inferStatusVariablesFromTemplate(template, variables = []) {
   }
 
   return inferred;
+}
+
+function collectStatusVariableKeys(variables = []) {
+  const keys = new Set();
+  for (const item of Array.isArray(variables) ? variables : []) {
+    keys.add(normalizeStatusVariableKey(item?.name));
+  }
+  return keys;
 }
 
 function extractTemplateRowVariables(template) {

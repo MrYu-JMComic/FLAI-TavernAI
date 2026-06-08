@@ -2128,7 +2128,7 @@ function normalizeStatusVariableValue(value) {
 
 function inferStatusVariablesFromTemplate(template, variables = []) {
   const inferred = dedupeStatusVariables(variables, template);
-  const seen = new Set(inferred.map((item) => normalizeStatusVariableKey(item.name)));
+  const seen = collectStatusVariableKeys(inferred);
   for (const item of extractTemplateRowVariables(template)) {
     const key = normalizeStatusVariableKey(item.name);
     if (!seen.has(key)) {
@@ -2156,6 +2156,14 @@ function inferStatusVariablesFromTemplate(template, variables = []) {
     }
   }
   return inferred.slice(0, STATUS_BLUEPRINT_VARIABLE_LIMIT);
+}
+
+function collectStatusVariableKeys(variables = []) {
+  const keys = new Set();
+  for (const item of Array.isArray(variables) ? variables : []) {
+    keys.add(normalizeStatusVariableKey(item?.name));
+  }
+  return keys;
 }
 
 function extractTemplateRowVariables(template) {

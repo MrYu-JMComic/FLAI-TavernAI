@@ -291,6 +291,14 @@ test('CharacterFormView normalizes status blueprint variables with direct loops'
   );
   assert.match(
     characterFormScript,
+    /function inferStatusVariablesFromTemplate\(template, variables = \[\]\) \{[\s\S]*const inferred = dedupeStatusVariables\(variables, template\);[\s\S]*const seen = collectStatusVariableKeys\(inferred\);/
+  );
+  assert.match(
+    characterFormScript,
+    /function collectStatusVariableKeys\(variables = \[\]\) \{\s*const keys = new Set\(\);\s*for \(const item of Array\.isArray\(variables\) \? variables : \[\]\) \{\s*keys\.add\(normalizeStatusVariableKey\(item\?\.name\)\);\s*\}\s*return keys;\s*\}/
+  );
+  assert.match(
+    characterFormScript,
     /function normalizeStatusVariableListForPayload\(variables = \[\], template = ''\) \{[\s\S]*const normalizedVariables = \[\];[\s\S]*for \(const variable of Array\.isArray\(variables\) \? variables : \[\]\) \{[\s\S]*const normalized = normalizeStatusVariableForPayload\(variable, template\);[\s\S]*normalizedVariables\.push\(normalized\);[\s\S]*return normalizedVariables;[\s\S]*\}/
   );
   assert.match(
@@ -309,6 +317,7 @@ test('CharacterFormView normalizes status blueprint variables with direct loops'
   assert.doesNotMatch(normalizeSnippet, /\.filter\(/);
   assert.doesNotMatch(sameSnippet, /\.every\(/);
   assert.doesNotMatch(sameSnippet, /JSON\.stringify/);
+  assert.doesNotMatch(characterFormScript, /new Set\(inferred\.map/);
   assert.doesNotMatch(characterFormScript, /normalized\.variables\.map\(\(variable\) => \(\{ \.\.\.variable \}\)\)/);
 });
 
