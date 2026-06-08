@@ -40,6 +40,7 @@ The autonomous loop should choose one small item per run. Add new findings here 
 
 ## Done
 
+- 2026-06-08: Canceled pending EconomyPanel account and history loads when the panel closes so hidden responses cannot rewrite loading or error state.
 - 2026-06-08: Canceled pending SaveLoadPanel list loads when the panel closes so stale responses cannot write closed-panel state.
 - 2026-06-08: Included provider API-key availability in chat quick-model context keys so auth changes reset stale model switcher state.
 - 2026-06-08: Read frontend CSRF cookies by exact name with a direct scanner instead of a broad regex match.

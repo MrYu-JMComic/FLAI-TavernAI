@@ -78,3 +78,22 @@ test('EconomyPanel preserves unchanged account and transaction list references',
   assert.doesNotMatch(economyPanelScript, /\n\s+transactions\.value = result\.transactions/);
   assert.doesNotMatch(economyPanelScript, /currentItems\.every/);
 });
+
+test('EconomyPanel cancels pending loads when the panel closes', () => {
+  assert.match(
+    economyPanelScript,
+    /watch\(\(\) => props\.open, \(isOpen\) => \{\s*if \(isOpen\) \{\s*loadEconomy\(\);\s*\} else \{\s*cancelEconomyPanelLoad\(\);\s*\}\s*}\);/
+  );
+  assert.match(
+    economyPanelScript,
+    /function cancelEconomyPanelLoad\(\)\s*{\s*economyLoadToken \+= 1;\s*historyLoadToken \+= 1;\s*loading\.value = false;\s*historyLoading\.value = false;\s*loadError\.value = '';\s*historyError\.value = '';\s*}/
+  );
+  assert.match(
+    economyPanelScript,
+    /const result = await fetchConversationEconomy\(conversationId\);[\s\S]*if \(economyPanelDisposed \|\| requestToken !== economyLoadToken \|\| conversationId !== props\.conversationId\) return;[\s\S]*setAccountsIfChanged\(result\.accounts\);/
+  );
+  assert.match(
+    economyPanelScript,
+    /const result = await fetchEconomyHistory\(conversationId, params\);[\s\S]*if \(economyPanelDisposed \|\| requestToken !== historyLoadToken \|\| conversationId !== props\.conversationId\) return;[\s\S]*setTransactionsIfChanged\(result\.transactions\);/
+  );
+});

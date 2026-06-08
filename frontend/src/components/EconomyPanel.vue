@@ -70,8 +70,12 @@ const hasPrevPage = computed(() => historyOffset.value > 0);
 const hasNextPage = computed(() => historyOffset.value + historyLimit < historyTotal.value);
 const historyActionDisabled = computed(() => loading.value || historyLoading.value);
 
-watch(() => props.open, async (isOpen) => {
-  if (isOpen) await loadEconomy();
+watch(() => props.open, (isOpen) => {
+  if (isOpen) {
+    loadEconomy();
+  } else {
+    cancelEconomyPanelLoad();
+  }
 });
 
 watch(() => props.conversationId, () => {
@@ -98,6 +102,15 @@ function resetEconomyState() {
   historyError.value = '';
   loading.value = false;
   historyLoading.value = false;
+}
+
+function cancelEconomyPanelLoad() {
+  economyLoadToken += 1;
+  historyLoadToken += 1;
+  loading.value = false;
+  historyLoading.value = false;
+  loadError.value = '';
+  historyError.value = '';
 }
 
 async function loadEconomy() {
