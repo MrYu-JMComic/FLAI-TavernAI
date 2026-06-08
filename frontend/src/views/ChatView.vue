@@ -257,7 +257,9 @@ async function refreshQuickModels() {
 }
 
 function isCurrentModelRefresh(requestToken, refreshKey) {
-  return requestToken === modelRefreshToken && refreshKey === providerRefreshKey(props.provider || {});
+  return !chatViewDisposed
+    && requestToken === modelRefreshToken
+    && refreshKey === providerRefreshKey(props.provider || {});
 }
 
 function isCurrentModelSave(requestToken, saveKey) {

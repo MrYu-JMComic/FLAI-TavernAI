@@ -69,6 +69,10 @@ test('ChatView guards model switcher refresh and save handlers while work is pen
   );
   assert.match(
     chatViewScript,
+    /function isCurrentModelRefresh\(requestToken, refreshKey\)\s*{\s*return !chatViewDisposed[\s\S]*&& requestToken === modelRefreshToken[\s\S]*&& refreshKey === providerRefreshKey\(props\.provider \|\| \{\}\);[\s\S]*}/
+  );
+  assert.match(
+    chatViewScript,
     /async function saveQuickModel\(model\)\s*{\s*if \(modelSwitcherSaving\.value\)\s*{\s*return;\s*}/
   );
 });
