@@ -262,8 +262,15 @@ export function useChatScroll({ messageScroller, conversationId }) {
     if (!el) {
       return null;
     }
-    return [...el.querySelectorAll('.deep-message')]
-      .find((element) => element.dataset.messageId === String(messageId)) || null;
+    const targetId = String(messageId);
+    const elements = el.querySelectorAll('.deep-message');
+    for (let index = 0; index < elements.length; index += 1) {
+      const element = elements[index];
+      if (element?.dataset?.messageId === targetId) {
+        return element;
+      }
+    }
+    return null;
   }
 
   function restoreMessageScrollPosition(messages) {

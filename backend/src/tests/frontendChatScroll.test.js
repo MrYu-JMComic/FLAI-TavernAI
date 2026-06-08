@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { readRepoText } from './frontendSfcTestUtils.js';
 
 const { useChatScroll } = await import('../../../frontend/src/composables/chat/useChatScroll.js');
+const chatScrollSource = readRepoText('frontend/src/composables/chat/useChatScroll.js');
 
 function refValue(value) {
   return { value };
@@ -112,6 +114,15 @@ test('chat scroll can anchor a sent message above the composer padding', () => {
 
     scroll.cleanup();
   });
+});
+
+test('chat scroll message lookup scans DOM nodes without cloning the node list', () => {
+  assert.match(
+    chatScrollSource,
+    /function findMessageElement\(messageId\) \{[\s\S]*const targetId = String\(messageId\);[\s\S]*const elements = el\.querySelectorAll\('\.deep-message'\);[\s\S]*for \(let index = 0; index < elements\.length; index \+= 1\) \{[\s\S]*if \(element\?\.dataset\?\.messageId === targetId\) \{[\s\S]*return element;[\s\S]*return null;\s*\}/
+  );
+  assert.doesNotMatch(chatScrollSource, /\[\.\.\.el\.querySelectorAll\('\.deep-message'\)\]/);
+  assert.doesNotMatch(chatScrollSource, /querySelectorAll\('\.deep-message'\)\][\s\S]*\.find\(/);
 });
 
 test('chat scroll coalesces passive scroll state updates into one animation frame', () => {
