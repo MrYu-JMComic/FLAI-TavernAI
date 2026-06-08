@@ -49,6 +49,14 @@ const emit = defineEmits([
   'swipe-next',
   'branch'
 ]);
+
+function onEditingMessageInput(event) {
+  const target = event?.target;
+  if (!target || target.value === undefined) {
+    return;
+  }
+  emit('update:editingMessageContent', target.value);
+}
 </script>
 
 <template>
@@ -97,7 +105,7 @@ const emit = defineEmits([
             aria-label="编辑消息内容"
             rows="4"
             :disabled="messageActionBusy"
-            @input="emit('update:editingMessageContent', $event.target.value)"
+            @input="onEditingMessageInput"
             @keydown.esc.prevent="emit('cancel-edit', message)"
           />
           <div class="message-edit-actions">
