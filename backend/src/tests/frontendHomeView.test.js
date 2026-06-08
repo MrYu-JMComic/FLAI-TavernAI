@@ -67,6 +67,18 @@ test('HomeView debounces search reloads while keeping sort and tag changes immed
   assert.match(homeViewTemplate, /<select v-model="sort" aria-label="[^"]+">/);
 });
 
+test('HomeView formats provider labels without filter join arrays', () => {
+  assert.match(
+    homeViewScript,
+    /const providerLabel = computed\(\(\) => \{[\s\S]*return formatProviderLabel\(props\.provider\);[\s\S]*\}\);/
+  );
+  assert.match(
+    homeViewScript,
+    /function formatProviderLabel\(provider = \{\}\) \{[\s\S]*const gatewayName = provider\?\.gatewayName;[\s\S]*const model = provider\?\.model;[\s\S]*if \(gatewayName && model\) \{[\s\S]*return `\$\{gatewayName\} · \$\{model\}`;[\s\S]*return gatewayName \|\| model \|\| '';[\s\S]*}/
+  );
+  assert.doesNotMatch(homeViewScript, /\[props\.provider\.gatewayName, props\.provider\.model\]\.filter\(Boolean\)\.join/);
+});
+
 test('HomeView coalesces character-list width measurements into animation frames', () => {
   assert.match(homeViewScript, /let containerMeasureRafId = null;/);
   assert.match(
@@ -174,6 +186,7 @@ test('HomeView aggregates dashboard character stats in one pass', () => {
 
 test('HomeView builds hot tag rail options with direct helper loops', () => {
   assert.match(homeViewScript, /const popularTags = computed\(\(\) => collectPopularTags\(tags\.value\)\);/);
+  assert.match(homeViewScript, /const selectedOutsidePopular = selected && !tagListContains\(popularTags\.value, selected\);/);
   assert.match(
     homeViewScript,
     /function collectPopularTags\(sourceTags\) \{\s*const nextTags = \[\];\s*const list = Array\.isArray\(sourceTags\) \? sourceTags : \[\];[\s\S]*for \(const tag of list\) \{[\s\S]*if \(Number\(tag\?\.usageCount \|\| 0\) > 0\) \{[\s\S]*nextTags\.push\(tag\);[\s\S]*return nextTags\.sort\(compareTagPopularity\);[\s\S]*\}/
@@ -186,8 +199,14 @@ test('HomeView builds hot tag rail options with direct helper loops', () => {
     homeViewScript,
     /function pickRandomizedHotTags\(sourceTags, seed, limit\) \{\s*const poolLimit = Math\.max\(limit, HOT_TAG_RANDOM_POOL_LIMIT\);[\s\S]*for \(let index = 0; index < poolSize; index \+= 1\) \{[\s\S]*scoredTags\.push\(\{[\s\S]*score: hashHotTag\(`\$\{seed\}:\$\{tag\.id \|\| tag\.name\}:\$\{index\}`\)[\s\S]*scoredTags\.sort\(\(left, right\) => left\.score - right\.score\);[\s\S]*for \(let index = 0; index < count; index \+= 1\) \{[\s\S]*nextTags\.push\(scoredTags\[index\]\.tag\);[\s\S]*return nextTags\.sort\(compareTagPopularity\);[\s\S]*\}/
   );
+  assert.match(
+    homeViewScript,
+    /function tagListContains\(list, selected\) \{\s*const tags = Array\.isArray\(list\) \? list : \[\];[\s\S]*for \(const tag of tags\) \{[\s\S]*if \(isSameTag\(tag, selected\)\) \{[\s\S]*return true;[\s\S]*return false;[\s\S]*}/
+  );
   assert.doesNotMatch(homeViewScript, /tags\.value\s*\.\s*filter/);
   assert.doesNotMatch(homeViewScript, /pool\s*\.\s*map/);
+  assert.doesNotMatch(homeViewScript, /popularTags\.value\.some/);
+  assert.doesNotMatch(homeViewScript, /list\.some\(\(tag\) => isSameTag/);
 });
 
 test('HomeView builds card tag previews with bounded direct loops', () => {

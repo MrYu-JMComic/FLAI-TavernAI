@@ -299,47 +299,64 @@ export function scanNpcsFromMessages(messages, mainCharacterName = '') {
 export function listConversationNpcs(database, userId, conversationId, mainCharacterName = '') {
   assertConversationAccess(database, userId, conversationId);
 
-  const memoryNpcs = database
-    .prepare(`SELECT DISTINCT npc_name FROM npc_memories WHERE conversation_id = ?`)
-    .all(conversationId)
-    .map((r) => r.npc_name);
+  const memoryRows = database
+    .prepare(`SELECT npc_name, COUNT(*) AS count FROM npc_memories WHERE conversation_id = ? GROUP BY npc_name`)
+    .all(conversationId);
 
-  const behaviorNpcs = database
-    .prepare(`SELECT DISTINCT npc_name FROM npc_behaviors WHERE conversation_id = ?`)
-    .all(conversationId)
-    .map((r) => r.npc_name);
+  const behaviorRows = database
+    .prepare(`SELECT npc_name, COUNT(*) AS count FROM npc_behaviors WHERE conversation_id = ? GROUP BY npc_name`)
+    .all(conversationId);
 
   const registryRows = database
     .prepare(`SELECT * FROM npc_registry WHERE conversation_id = ?`)
     .all(conversationId);
-  const hiddenNames = new Set(
-    registryRows
-      .filter((row) => row.hidden)
-      .map((row) => normalizeNpcName(row.npc_name).toLowerCase())
-  );
-  const registryNpcs = registryRows
-    .filter((row) => !row.hidden)
-    .map((row) => row.npc_name);
-  const registryMeta = new Map(
-    registryRows.map((row) => [normalizeNpcName(row.npc_name).toLowerCase(), toNpcRegistry(row)])
-  );
 
-  const allNpcNames = new Set([...memoryNpcs, ...behaviorNpcs, ...registryNpcs]);
+  const hiddenNames = new Set();
+  const npcSummaries = new Map();
 
-  return [...allNpcNames].sort().map((npcName) => {
-    const normalizedName = normalizeNpcName(npcName);
-    if (!normalizedName || hiddenNames.has(normalizedName.toLowerCase())) {
-      return null;
+  for (const row of registryRows) {
+    const normalizedName = normalizeNpcName(row.npc_name);
+    if (!normalizedName) {
+      continue;
     }
-    const registry = registryMeta.get(normalizedName.toLowerCase());
-    const memoryCount = database
-      .prepare(`SELECT COUNT(*) AS count FROM npc_memories WHERE conversation_id = ? AND npc_name = ?`)
-      .get(conversationId, normalizedName)?.count || 0;
-    const behaviorCount = database
-      .prepare(`SELECT COUNT(*) AS count FROM npc_behaviors WHERE conversation_id = ? AND npc_name = ?`)
-      .get(conversationId, normalizedName)?.count || 0;
-    return {
-      name: normalizedName,
+    const key = normalizedName.toLowerCase();
+    if (row.hidden) {
+      hiddenNames.add(key);
+      continue;
+    }
+    ensureNpcSummary(npcSummaries, normalizedName).registry = toNpcRegistry(row);
+  }
+
+  for (const row of memoryRows) {
+    const summary = ensureNpcSummary(npcSummaries, row.npc_name);
+    if (summary) {
+      summary.memoryCount = Number(row.count || 0);
+    }
+  }
+
+  for (const row of behaviorRows) {
+    const summary = ensureNpcSummary(npcSummaries, row.npc_name);
+    if (summary) {
+      summary.behaviorCount = Number(row.count || 0);
+    }
+  }
+
+  const visibleNames = [];
+  for (const summary of npcSummaries.values()) {
+    if (!hiddenNames.has(summary.key)) {
+      visibleNames.push(summary.name);
+    }
+  }
+  visibleNames.sort();
+
+  const result = [];
+  for (const npcName of visibleNames) {
+    const summary = npcSummaries.get(npcName.toLowerCase());
+    const registry = summary.registry;
+    const memoryCount = summary.memoryCount;
+    const behaviorCount = summary.behaviorCount;
+    result.push({
+      name: summary.name,
       memoryCount: Number(memoryCount),
       behaviorCount: Number(behaviorCount),
       source: registry?.source || (Number(memoryCount) > 0 ? 'memory' : Number(behaviorCount) > 0 ? 'behavior' : 'scan'),
@@ -350,8 +367,30 @@ export function listConversationNpcs(database, userId, conversationId, mainChara
       aliases: registry?.aliases || [],
       memorySealed: Boolean(registry?.memorySealed),
       memorySealActive: Boolean(registry?.memorySealActive)
+    });
+  }
+
+  return result;
+}
+
+function ensureNpcSummary(summaries, npcName) {
+  const normalizedName = normalizeNpcName(npcName);
+  if (!normalizedName) {
+    return null;
+  }
+  const key = normalizedName.toLowerCase();
+  let summary = summaries.get(key);
+  if (!summary) {
+    summary = {
+      key,
+      name: normalizedName,
+      registry: null,
+      memoryCount: 0,
+      behaviorCount: 0
     };
-  }).filter(Boolean);
+    summaries.set(key, summary);
+  }
+  return summary;
 }
 
 // ── NPC Behavior Prompt Builder ──

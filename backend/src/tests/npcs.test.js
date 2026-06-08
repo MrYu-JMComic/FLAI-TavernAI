@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
 process.env.FLAI_DB_PATH = ':memory:';
@@ -22,6 +23,8 @@ const {
   updateConversationNpc,
   updateNpcBehavior
 } = await import('../modules/npcs.js');
+
+const npcsSource = readFileSync(new URL('../modules/npcs.js', import.meta.url), 'utf8');
 
 function setupDatabase() {
   const database = createAppDatabase(':memory:');
@@ -359,6 +362,46 @@ test('listConversationNpcs includes registry NPCs and hides removed NPCs', () =>
   assert.ok(!names.includes('老板娘'));
   assert.ok(!names.includes('误判标题'));
   assert.equal(npcs.find((npc) => npc.name === '巡逻队长').confidence, 88);
+});
+
+test('listConversationNpcs aggregates memory and behavior counts without per-row count queries', () => {
+  const { database, userId, conversationId } = setupDatabase();
+
+  addNpcMemory(database, userId, conversationId, 'Counter Npc', { content: 'first memory' });
+  addNpcMemory(database, userId, conversationId, 'Counter Npc', { content: 'second memory' });
+  addNpcBehavior(database, userId, conversationId, 'Counter Npc', {
+    behaviorType: 'speech',
+    triggerCondition: 'when greeted',
+    action: 'answer briefly'
+  });
+  addNpcBehavior(database, userId, conversationId, 'Counter Npc', {
+    behaviorType: 'movement',
+    triggerCondition: 'when leaving',
+    action: 'step aside'
+  });
+
+  const npcs = listConversationNpcs(database, userId, conversationId, '');
+  const counterNpc = npcs.find((npc) => npc.name === 'Counter Npc');
+  assert.equal(counterNpc.memoryCount, 2);
+  assert.equal(counterNpc.behaviorCount, 2);
+
+  const functionStart = npcsSource.indexOf('export function listConversationNpcs');
+  const helperStart = npcsSource.indexOf('function ensureNpcSummary', functionStart);
+  assert.notEqual(functionStart, -1);
+  assert.notEqual(helperStart, -1);
+  const listSource = npcsSource.slice(functionStart, helperStart);
+  assert.match(listSource, /SELECT npc_name, COUNT\(\*\) AS count FROM npc_memories[\s\S]*GROUP BY npc_name/);
+  assert.match(listSource, /SELECT npc_name, COUNT\(\*\) AS count FROM npc_behaviors[\s\S]*GROUP BY npc_name/);
+  assert.match(listSource, /const npcSummaries = new Map\(\);/);
+  assert.match(listSource, /for \(const row of memoryRows\) \{/);
+  assert.match(listSource, /for \(const row of behaviorRows\) \{/);
+  assert.match(listSource, /visibleNames\.sort\(\);/);
+  assert.match(listSource, /const result = \[\];/);
+  assert.doesNotMatch(listSource, /SELECT DISTINCT npc_name/);
+  assert.doesNotMatch(listSource, /SELECT COUNT\(\*\) AS count FROM npc_memories WHERE conversation_id = \? AND npc_name = \?/);
+  assert.doesNotMatch(listSource, /SELECT COUNT\(\*\) AS count FROM npc_behaviors WHERE conversation_id = \? AND npc_name = \?/);
+  assert.doesNotMatch(listSource, /\.map\(\(r\) => r\.npc_name\)/);
+  assert.doesNotMatch(listSource, /\.filter\(Boolean\)/);
 });
 
 test('NPC status aliases and memory seal affect prompt memory injection', () => {

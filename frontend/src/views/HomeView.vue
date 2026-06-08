@@ -120,7 +120,7 @@ const providerLabel = computed(() => {
   if (!props.provider?.model && !props.provider?.gatewayName) {
     return '未配置模型';
   }
-  return [props.provider.gatewayName, props.provider.model].filter(Boolean).join(' · ');
+  return formatProviderLabel(props.provider);
 });
 
 const providerReady = computed(() => Boolean(props.provider?.model || props.provider?.gatewayName));
@@ -155,7 +155,7 @@ const topTags = computed(() => {
 
 const hotTagTotalCount = computed(() => {
   const selected = selectedHotTag.value;
-  const selectedOutsidePopular = selected && !popularTags.value.some((tag) => isSameTag(tag, selected));
+  const selectedOutsidePopular = selected && !tagListContains(popularTags.value, selected);
   return popularTags.value.length + (selectedOutsidePopular ? 1 : 0);
 });
 
@@ -232,7 +232,7 @@ function pickRandomizedHotTags(sourceTags, seed, limit) {
 }
 
 function pinSelectedHotTag(list, selected, limit) {
-  if (!selected || list.some((tag) => isSameTag(tag, selected))) {
+  if (!selected || tagListContains(list, selected)) {
     return list;
   }
   const next = list.slice(0, Math.max(0, limit));
@@ -241,6 +241,25 @@ function pinSelectedHotTag(list, selected, limit) {
   }
   next.push(selected);
   return next.sort(compareTagPopularity);
+}
+
+function formatProviderLabel(provider = {}) {
+  const gatewayName = provider?.gatewayName;
+  const model = provider?.model;
+  if (gatewayName && model) {
+    return `${gatewayName} · ${model}`;
+  }
+  return gatewayName || model || '';
+}
+
+function tagListContains(list, selected) {
+  const tags = Array.isArray(list) ? list : [];
+  for (const tag of tags) {
+    if (isSameTag(tag, selected)) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function isSameTag(left, right) {
