@@ -11,6 +11,7 @@ import { useNotify } from '../composables/useNotify';
 import { useProviderModels } from '../composables/useProviderModels';
 import { appendAiToolList, cloneAiToolList } from '../utils/aiToolLists';
 import { callEventMethod } from '../utils/eventMethods';
+import { readFileAsDataUrl } from '../utils/fileReaders';
 import { countOwnObjectKeys } from '../utils/objectKeys';
 import { samePlainValue } from '../utils/plainValues';
 import { parseStatusTemplateToken } from '../../../shared/statusTemplateTokens.js';
@@ -1287,7 +1288,7 @@ async function handleAvatar(event) {
 
   const uploadToken = ++avatarUploadToken;
   try {
-    const result = await readAsDataUrl(file);
+    const result = await readFileAsDataUrl(file, '头像读取失败');
     if (!isCurrentAvatarUpload(uploadToken)) {
       return;
     }
@@ -1331,7 +1332,7 @@ async function handleAdvancedBackground(event, field) {
   backgroundUploading[field] = true;
   const uploadToken = nextBackgroundUploadToken(field);
   try {
-    const result = await readAsDataUrl(file, '背景图片读取失败');
+    const result = await readFileAsDataUrl(file, '背景图片读取失败');
     if (!isCurrentBackgroundUpload(field, uploadToken)) {
       return;
     }
@@ -2567,15 +2568,6 @@ function removeStatusBlueprintVariable(index) {
     return;
   }
   form.authorAdvancedSettings.statusBarBlueprint.variables.splice(index, 1);
-}
-
-function readAsDataUrl(file, errorMessage = '头像读取失败') {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result || ''));
-    reader.onerror = () => reject(new Error(errorMessage));
-    reader.readAsDataURL(file);
-  });
 }
 
 async function handleExport() {

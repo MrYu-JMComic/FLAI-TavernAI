@@ -1,6 +1,7 @@
 import { computed, reactive, ref } from 'vue';
 import { fetchWorldBooks, saveConversationSettings } from '../../api.js';
 import { isPhoneViewport } from '../useViewport.js';
+import { readFileAsDataUrl } from '../../utils/fileReaders.js';
 import {
   buildScopedChatCss,
   createDefaultChatAppearance,
@@ -376,7 +377,7 @@ export function useChatAppearance({
     let uploadToken = 0;
     try {
       uploadToken = nextBackgroundUploadToken(field);
-      const result = await readFileAsDataUrl(file);
+      const result = await readFileAsDataUrl(file, '背景图片读取失败');
       if (!isCurrentBackgroundUpload(field, uploadToken)) {
         return;
       }
@@ -458,15 +459,6 @@ export function useChatAppearance({
       && Number(currentBook?.scanDepth || 4) === Number(nextBook?.scanDepth || 4)
       && Number(currentBook?.lorebookContextPercent || 25) === Number(nextBook?.lorebookContextPercent || 25)
       && Number(currentBook?.entryCount || 0) === Number(nextBook?.entryCount || 0);
-  }
-
-  function readFileAsDataUrl(file) {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onerror = () => reject(new Error('背景图片读取失败'));
-      reader.onload = () => resolve(String(reader.result || ''));
-      reader.readAsDataURL(file);
-    });
   }
 
   function nextBackgroundUploadToken(field) {

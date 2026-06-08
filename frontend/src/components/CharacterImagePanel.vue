@@ -9,6 +9,7 @@ import {
   updateCharacterImage
 } from '../api';
 import { useNotify } from '../composables/useNotify';
+import { readFileAsDataUrl } from '../utils/fileReaders';
 
 const props = defineProps({
   characterId: {
@@ -171,7 +172,7 @@ async function handleUpload(event) {
     if (!isCurrentImageUpload(uploadToken, characterId)) return;
 
     try {
-      const dataUrl = await readAsDataUrl(file);
+      const dataUrl = await readFileAsDataUrl(file, '图片读取失败');
       if (!isCurrentImageUpload(uploadToken, characterId)) return;
       await createCharacterImage(characterId, {
         imageUrl: dataUrl,
@@ -438,15 +439,6 @@ async function saveOrder(orderedIds, characterId, mutationToken) {
   } finally {
     finishImageAction(mutationToken, characterId);
   }
-}
-
-function readAsDataUrl(file) {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(reader.result);
-    reader.onerror = () => reject(new Error('图片读取失败'));
-    reader.readAsDataURL(file);
-  });
 }
 
 function sceneLabel(tag) {

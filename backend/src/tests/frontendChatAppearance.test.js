@@ -148,7 +148,7 @@ test('chat appearance background mutations validate before invalidating upload t
   );
   assert.match(
     uploadHandler,
-    /if \(file\.size > 4 \* 1024 \* 1024\) \{[\s\S]*return;\s*\}\s*let uploadToken = 0;\s*try \{\s*uploadToken = nextBackgroundUploadToken\(field\);\s*const result = await readFileAsDataUrl\(file\);/
+    /if \(file\.size > 4 \* 1024 \* 1024\) \{[\s\S]*return;\s*\}\s*let uploadToken = 0;\s*try \{\s*uploadToken = nextBackgroundUploadToken\(field\);\s*const result = await readFileAsDataUrl\(file, '背景图片读取失败'\);/
   );
   assert.match(
     clearHandler,

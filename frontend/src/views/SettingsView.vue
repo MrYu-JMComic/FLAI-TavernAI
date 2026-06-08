@@ -35,6 +35,7 @@ import {
   refreshProviderModels
 } from '../services/modelCatalog';
 import { callEventMethod } from '../utils/eventMethods';
+import { readFileAsDataUrl } from '../utils/fileReaders';
 import { samePlainValue } from '../utils/plainValues';
 import { isLocalOrPrivateBaseUrl } from '../../../shared/privateNetwork.js';
 
@@ -347,7 +348,7 @@ async function handleUserAvatar(event) {
   avatarSaving.value = true;
   const mutationToken = ++avatarSaveToken;
   try {
-    const avatarDataUrl = await readAsDataUrl(file);
+    const avatarDataUrl = await readFileAsDataUrl(file, '头像读取失败');
     if (!isCurrentAvatarSave(mutationToken)) return;
     const result = await saveUserAvatar({ avatarDataUrl });
     if (!isCurrentAvatarSave(mutationToken)) return;
@@ -577,15 +578,6 @@ function hasProviderModelOption(options, modelId) {
     }
   }
   return false;
-}
-
-function readAsDataUrl(file) {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(reader.result);
-    reader.onerror = () => reject(new Error('头像读取失败'));
-    reader.readAsDataURL(file);
-  });
 }
 
 function formatNumber(value) {
