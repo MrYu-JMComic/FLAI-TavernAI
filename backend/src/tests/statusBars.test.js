@@ -58,3 +58,15 @@ test('status bar template placeholders parse property suffixes without split arr
   assert.doesNotMatch(statusBarsSource, /token\.split\('\.'\)/);
   assert.doesNotMatch(statusBarsSource, /new Set\(inferred\.map/);
 });
+
+test('status bar text value label patterns build without array pipelines', () => {
+  const textPatternHelper = statusBarsSource.match(/function textValuePatternsSafe[\s\S]*?\n}\n\nfunction normalizeName/);
+  assert.ok(textPatternHelper);
+  assert.match(textPatternHelper[0], /for \(let index = 0; index < sourceVariables\.length; index \+= 1\)/);
+  assert.doesNotMatch(textPatternHelper[0], /\.map\(|\.filter\(/);
+
+  const variablePatternHelper = statusBarsSource.match(/function variableNamePattern[\s\S]*?\n}\n\nfunction hasExplicitMax/);
+  assert.ok(variablePatternHelper);
+  assert.match(variablePatternHelper[0], /for \(const char of name\)/);
+  assert.doesNotMatch(variablePatternHelper[0], /Array\.from\(name\)|\.map\(/);
+});

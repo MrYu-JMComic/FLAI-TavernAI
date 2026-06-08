@@ -40,6 +40,7 @@ The autonomous loop should choose one small item per run. Add new findings here 
 
 ## Done
 
+- 2026-06-08: Built status-bar text label stop patterns with direct loops instead of map/filter arrays.
 - 2026-06-08: Routed NpcPanel current-row and option-label lookups through direct loops.
 - 2026-06-08: Applied character regex rules with direct loops instead of spread/filter/reduce pipelines.
 - 2026-06-08: Scanned StatusBar custom-template DOM collections directly instead of spread-cloning them.

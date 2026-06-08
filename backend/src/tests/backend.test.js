@@ -8040,6 +8040,21 @@ test('extractVariablesFromText finds HP and MP patterns', () => {
   assert.deepEqual(extractVariablesFromText('test', []), []);
 });
 
+test('extractVariablesFromText stops text values before the next status label', () => {
+  const variables = [
+    { name: 'Location', value: '' },
+    { name: 'Mood', value: '' }
+  ];
+
+  assert.deepEqual(
+    extractVariablesFromText('Location: Old Town Mood: tense', variables),
+    [
+      { name: 'Location', value: 'Old Town' },
+      { name: 'Mood', value: 'tense' }
+    ]
+  );
+});
+
 test('applyVariableUpdates merges changes correctly', () => {
   const variables = [
     { name: 'HP', value: 100, max: 100, color: '#ff0000' },

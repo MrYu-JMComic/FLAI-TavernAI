@@ -201,11 +201,18 @@ function isTextVariable(variable) {
 
 function textValuePatternsSafe(varName, variables = [], currentName = '') {
   const currentKey = normalizeVariableKey(currentName);
-  const nextNames = variables
-    .map((variable) => normalizeTemplateVariableName(variable?.name))
-    .filter((name) => name && normalizeVariableKey(name) !== currentKey)
-    .map((name) => variableNamePattern(name))
-    .filter(Boolean);
+  const nextNames = [];
+  const sourceVariables = Array.isArray(variables) ? variables : [];
+  for (let index = 0; index < sourceVariables.length; index += 1) {
+    const name = normalizeTemplateVariableName(sourceVariables[index]?.name);
+    if (!name || normalizeVariableKey(name) === currentKey) {
+      continue;
+    }
+    const pattern = variableNamePattern(name);
+    if (pattern) {
+      nextNames.push(pattern);
+    }
+  }
   const stopBeforeNextLabel = nextNames.length
     ? `\\s*(?:${nextNames.join('|')})\\s*[:\\uFF1A]|`
     : '';
@@ -386,7 +393,11 @@ function normalizeVariableKey(value) {
 
 function variableNamePattern(value) {
   const name = normalizeTemplateVariableName(value);
-  return Array.from(name).map((char) => escapeRegex(char)).join('\\s*');
+  let pattern = '';
+  for (const char of name) {
+    pattern += pattern ? `\\s*${escapeRegex(char)}` : escapeRegex(char);
+  }
+  return pattern;
 }
 
 function hasExplicitMax(variable) {
