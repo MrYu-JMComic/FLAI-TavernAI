@@ -710,6 +710,7 @@ const userVariableValue = computed(() => {
   return props.user?.displayName || props.user?.accountName || props.user?.username || '用户';
 });
 const filteredTags = computed(() => filterTagsBySearch(availableTags.value, tagSearch.value));
+const canCreateSearchedTag = computed(() => canCreateTagFromSearch(availableTags.value, tagSearch.value));
 const selectedWorldBooks = computed(() => getSelectedWorldBooks(worldBooks.value, selectedWorldBookIds.value));
 const selectedWorldBookPreview = computed(() => selectedWorldBooks.value.slice(0, 4));
 const hiddenSelectedWorldBookCount = computed(() => Math.max(0, selectedWorldBooks.value.length - selectedWorldBookPreview.value.length));
@@ -858,6 +859,19 @@ function filterTagsBySearch(tags, rawSearch) {
     }
   }
   return matches;
+}
+
+function canCreateTagFromSearch(tags, rawSearch) {
+  const name = String(rawSearch || '').trim();
+  if (!name) {
+    return false;
+  }
+  for (const tag of Array.isArray(tags) ? tags : []) {
+    if (tag?.name === name) {
+      return false;
+    }
+  }
+  return true;
 }
 
 function getSelectedWorldBooks(books, selectedIds) {
@@ -2736,7 +2750,7 @@ function applyLocalRules(text, rules, phase) {
                 <div v-if="canEdit" class="tag-input-row">
                   <input v-model="tagSearch" placeholder="搜索或创建标签..." class="tag-search-input" aria-label="搜索或创建角色标签" :disabled="tagCreating" :aria-busy="tagCreating" />
                   <button
-                    v-if="tagSearch.trim() && !availableTags.some((t) => t.name === tagSearch.trim())"
+                    v-if="canCreateSearchedTag"
                     class="ghost-button tag-create-btn"
                     type="button"
                     :disabled="tagCreating"

@@ -254,9 +254,19 @@ test('CharacterFormView filters tag search results in one pass', () => {
   );
   assert.match(
     characterFormScript,
+    /const canCreateSearchedTag = computed\(\(\) => canCreateTagFromSearch\(availableTags\.value, tagSearch\.value\)\);/
+  );
+  assert.match(
+    characterFormScript,
     /function filterTagsBySearch\(tags, rawSearch\) \{\s*const currentTags = Array\.isArray\(tags\) \? tags : \[\];\s*const search = String\(rawSearch \|\| ''\)\.trim\(\)\.toLowerCase\(\);[\s\S]*if \(!search\) \{\s*return currentTags;\s*\}[\s\S]*const matches = \[\];\s*for \(const tag of currentTags\) \{[\s\S]*matches\.push\(tag\);[\s\S]*\}\s*return matches;\s*\}/
   );
+  assert.match(
+    characterFormScript,
+    /function canCreateTagFromSearch\(tags, rawSearch\) \{\s*const name = String\(rawSearch \|\| ''\)\.trim\(\);[\s\S]*if \(!name\) \{[\s\S]*return false;[\s\S]*for \(const tag of Array\.isArray\(tags\) \? tags : \[\]\) \{[\s\S]*if \(tag\?\.name === name\) \{[\s\S]*return false;[\s\S]*return true;[\s\S]*\}/
+  );
+  assert.match(characterFormTemplate, /v-if="canCreateSearchedTag"[\s\S]*class="ghost-button tag-create-btn"/);
   assert.doesNotMatch(characterFormScript, /availableTags\.value\.filter\(/);
+  assert.doesNotMatch(characterFormTemplate, /availableTags\.some\(/);
 });
 
 test('CharacterFormView counts status blueprint variable stats in one pass', () => {
