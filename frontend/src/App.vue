@@ -427,8 +427,7 @@ function clearNotifications() {
 }
 
 function parseRoute() {
-  const path = window.location.hash.replace(/^#\/?/, '').replace(/\/$/, '');
-  const parts = path.split('/').filter(Boolean);
+  const parts = readRoutePathSegments(window.location.hash);
 
   if (!parts.length) {
     return { name: 'home', params: {} };
@@ -465,6 +464,25 @@ function parseRoute() {
   }
 
   return { name: 'home', params: {} };
+}
+
+function readRoutePathSegments(hashValue = '') {
+  const path = String(hashValue || '').replace(/^#\/?/, '').replace(/\/$/, '');
+  const parts = [];
+  let segmentStart = -1;
+  for (let index = 0; index <= path.length; index += 1) {
+    if (index < path.length && path[index] !== '/') {
+      if (segmentStart < 0) {
+        segmentStart = index;
+      }
+      continue;
+    }
+    if (segmentStart >= 0) {
+      parts.push(path.slice(segmentStart, index));
+      segmentStart = -1;
+    }
+  }
+  return parts;
 }
 
 function routeToHash(name, params = {}) {
