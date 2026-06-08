@@ -341,6 +341,23 @@ test('chat conversation list summary comparisons use direct loops', () => {
   assert.doesNotMatch(chatConversationSource, /currentList\.every\(/);
 });
 
+test('chat conversation stable serialization uses direct loops', () => {
+  assert.match(
+    chatConversationSource,
+    /function stableSerialize\(value\) \{[\s\S]*if \(Array\.isArray\(value\)\) \{\s*return stableSerializeArray\(value\);[\s\S]*return stableSerializeObject\(value\);[\s\S]*\}/
+  );
+  assert.match(
+    chatConversationSource,
+    /function stableSerializeArray\(items\) \{\s*let serialized = '\[';[\s\S]*for \(let index = 0; index < items\.length; index \+= 1\) \{[\s\S]*Object\.prototype\.hasOwnProperty\.call\(items, index\)[\s\S]*const serializedItem = stableSerialize\(items\[index\]\);[\s\S]*if \(typeof serializedItem !== 'undefined'\) \{[\s\S]*serialized \+= serializedItem;[\s\S]*return `\$\{serialized\}\]`;[\s\S]*\}/
+  );
+  assert.match(
+    chatConversationSource,
+    /function stableSerializeObject\(value\) \{\s*const keys = Object\.keys\(value\)\.sort\(\);[\s\S]*for \(let index = 0; index < keys\.length; index \+= 1\) \{[\s\S]*const key = keys\[index\];[\s\S]*serialized \+= `\$\{JSON\.stringify\(key\)\}:\$\{stableSerialize\(value\[key\]\)\}`;[\s\S]*return `\$\{serialized\}\}`;[\s\S]*\}/
+  );
+  assert.doesNotMatch(chatConversationSource, /value\.map\(\(item\) => stableSerialize\(item\)\)\.join/);
+  assert.doesNotMatch(chatConversationSource, /\.map\(\(key\) => `\$\{JSON\.stringify\(key\)\}:\$\{stableSerialize\(value\[key\]\)\}`\)/);
+});
+
 test('chat sidebar initial open state falls back to window width without matchMedia', () => {
   const originalWindow = globalThis.window;
 

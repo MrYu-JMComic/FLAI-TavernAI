@@ -261,12 +261,38 @@ export function useChatConversation({ route, emit, showError }) {
       return JSON.stringify(value);
     }
     if (Array.isArray(value)) {
-      return `[${value.map((item) => stableSerialize(item)).join(',')}]`;
+      return stableSerializeArray(value);
     }
-    return `{${Object.keys(value)
-      .sort()
-      .map((key) => `${JSON.stringify(key)}:${stableSerialize(value[key])}`)
-      .join(',')}}`;
+    return stableSerializeObject(value);
+  }
+
+  function stableSerializeArray(items) {
+    let serialized = '[';
+    for (let index = 0; index < items.length; index += 1) {
+      if (index > 0) {
+        serialized += ',';
+      }
+      if (Object.prototype.hasOwnProperty.call(items, index)) {
+        const serializedItem = stableSerialize(items[index]);
+        if (typeof serializedItem !== 'undefined') {
+          serialized += serializedItem;
+        }
+      }
+    }
+    return `${serialized}]`;
+  }
+
+  function stableSerializeObject(value) {
+    const keys = Object.keys(value).sort();
+    let serialized = '{';
+    for (let index = 0; index < keys.length; index += 1) {
+      if (index > 0) {
+        serialized += ',';
+      }
+      const key = keys[index];
+      serialized += `${JSON.stringify(key)}:${stableSerialize(value[key])}`;
+    }
+    return `${serialized}}`;
   }
 
   function formatSidebarLoadError(failures) {
