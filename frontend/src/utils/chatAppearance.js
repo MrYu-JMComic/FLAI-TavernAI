@@ -32,10 +32,17 @@ export function mergeChatAppearance(author = {}, user = {}) {
   return {
     desktopBackgroundUrl: userSettings.desktopBackgroundUrl || authorSettings.desktopBackgroundUrl,
     mobileBackgroundUrl: userSettings.mobileBackgroundUrl || authorSettings.mobileBackgroundUrl,
-    customCss: [authorSettings.customCss, userSettings.customCss].filter(Boolean).join('\n\n'),
-    customJs: [authorSettings.customJs, userSettings.customJs].filter(Boolean).join('\n\n'),
-    statusBarPrompt: [authorSettings.statusBarPrompt, userSettings.statusBarPrompt].filter(Boolean).join('\n\n')
+    customCss: mergeAppearanceText(authorSettings.customCss, userSettings.customCss),
+    customJs: mergeAppearanceText(authorSettings.customJs, userSettings.customJs),
+    statusBarPrompt: mergeAppearanceText(authorSettings.statusBarPrompt, userSettings.statusBarPrompt)
   };
+}
+
+function mergeAppearanceText(authorText, userText) {
+  if (authorText && userText) {
+    return `${authorText}\n\n${userText}`;
+  }
+  return authorText || userText || '';
 }
 
 export function resolveChatBackgroundUrl(settings = {}, isMobile = false) {

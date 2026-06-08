@@ -4,7 +4,7 @@ import { readRepoText, readVueBlocks } from './frontendSfcTestUtils.js';
 
 const { useChatAppearance } = await import('../../../frontend/src/composables/chat/useChatAppearance.js');
 const { useChatConversation } = await import('../../../frontend/src/composables/chat/useChatConversation.js');
-const { runChatCustomScript } = await import('../../../frontend/src/utils/chatAppearance.js');
+const { mergeChatAppearance, runChatCustomScript } = await import('../../../frontend/src/utils/chatAppearance.js');
 
 const chatAppearanceSource = readRepoText('frontend/src/composables/chat/useChatAppearance.js');
 const chatAppearanceUtilsSource = readRepoText('frontend/src/utils/chatAppearance.js');
@@ -81,6 +81,37 @@ test('chat appearance caches active character and render plugin lookups', () => 
 
   assert.equal(inlineChat.activeCharacter(), inlineConversation.value.character);
   assert.equal(inlineChat.activeRenderPlugins(), inlineConversation.value.character.renderPlugins);
+});
+
+test('chat appearance merges layered text fields without filter arrays', () => {
+  assert.deepEqual(
+    mergeChatAppearance(
+      {
+        desktopBackgroundUrl: '/author.png',
+        customCss: '.author {}',
+        customJs: 'author();',
+        statusBarPrompt: 'Author prompt'
+      },
+      {
+        mobileBackgroundUrl: '/user-mobile.png',
+        customCss: '.user {}',
+        customJs: '',
+        statusBarPrompt: 'User prompt'
+      }
+    ),
+    {
+      desktopBackgroundUrl: '/author.png',
+      mobileBackgroundUrl: '/user-mobile.png',
+      customCss: '.author {}\n\n.user {}',
+      customJs: 'author();',
+      statusBarPrompt: 'Author prompt\n\nUser prompt'
+    }
+  );
+  assert.match(
+    chatAppearanceUtilsSource,
+    /function mergeAppearanceText\(authorText, userText\) \{[\s\S]*if \(authorText && userText\) \{[\s\S]*return `\$\{authorText\}\\n\\n\$\{userText\}`;[\s\S]*return authorText \|\| userText \|\| '';[\s\S]*\}/
+  );
+  assert.doesNotMatch(chatAppearanceUtilsSource, /\[authorSettings\.(?:customCss|customJs|statusBarPrompt), userSettings\.(?:customCss|customJs|statusBarPrompt)\]\.filter\(Boolean\)\.join/);
 });
 
 test('chat appearance background mutations ignore saving events before invalidating upload tokens', () => {
