@@ -162,6 +162,7 @@ onBeforeUnmount(() => {
 
 function requestClose() {
   if (npcActionBusy.value) return;
+  cancelNpcPanelLoad();
   emit('update:open', false);
   emit('close');
 }

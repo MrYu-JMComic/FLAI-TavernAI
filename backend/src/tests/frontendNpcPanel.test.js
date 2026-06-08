@@ -43,7 +43,7 @@ test('NpcPanel disables NPC mutations while one action is busy', () => {
 test('NpcPanel locks close actions while an NPC mutation is busy', () => {
   assert.match(
     npcPanelScript,
-    /function requestClose\(\)\s*{\s*if \(npcActionBusy\.value\) return;\s*emit\('update:open', false\);\s*emit\('close'\);\s*}/
+    /function requestClose\(\)\s*{\s*if \(npcActionBusy\.value\) return;\s*cancelNpcPanelLoad\(\);\s*emit\('update:open', false\);\s*emit\('close'\);\s*}/
   );
   assert.match(
     npcPanelTemplate,
@@ -261,6 +261,10 @@ test('NpcPanel preserves unchanged NPC and detail list references during refresh
 });
 
 test('NpcPanel cancels pending list and detail loads when the panel closes', () => {
+  assert.match(
+    npcPanelScript,
+    /function requestClose\(\)\s*{\s*if \(npcActionBusy\.value\) return;\s*cancelNpcPanelLoad\(\);\s*emit\('update:open', false\);\s*emit\('close'\);\s*}/
+  );
   assert.match(
     npcPanelScript,
     /watch\(\(\) => props\.open, \(isOpen\) => \{\s*if \(isOpen\) \{\s*loadNpcs\(\);\s*\} else \{\s*cancelNpcPanelLoad\(\);\s*\}\s*}, \{ immediate: true \}\);/
