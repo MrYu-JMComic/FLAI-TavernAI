@@ -160,19 +160,15 @@ async function handleUpload(event) {
   if (props.disabled || imagePanelBusy.value || !characterId || !files.length) {
     return;
   }
+  const validFiles = collectValidUploadFiles(files);
+  if (!validFiles.length) {
+    return;
+  }
   const uploadToken = ++imageUploadToken;
 
   uploading.value = true;
-  for (const file of files) {
+  for (const file of validFiles) {
     if (!isCurrentImageUpload(uploadToken, characterId)) return;
-    if (!isSupportedImageFileType(file?.type)) {
-      notify.warning(`${file.name} 不是支持的图片格式`);
-      continue;
-    }
-    if (file.size > 4 * 1024 * 1024) {
-      notify.warning(`${file.name} 超过 4MB 限制`);
-      continue;
-    }
 
     try {
       const dataUrl = await readAsDataUrl(file);
@@ -205,6 +201,22 @@ function collectUploadFiles(fileList) {
     }
   }
   return files;
+}
+
+function collectValidUploadFiles(files) {
+  const validFiles = [];
+  for (const file of files) {
+    if (!isSupportedImageFileType(file?.type)) {
+      notify.warning(`${file.name} 不是支持的图片格式`);
+      continue;
+    }
+    if (file.size > 4 * 1024 * 1024) {
+      notify.warning(`${file.name} 超过 4MB 限制`);
+      continue;
+    }
+    validFiles.push(file);
+  }
+  return validFiles;
 }
 
 function isSupportedImageFileType(type) {

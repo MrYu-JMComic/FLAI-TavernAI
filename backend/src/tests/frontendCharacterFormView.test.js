@@ -105,6 +105,37 @@ test('CharacterFormView tag creation freezes tag controls while pending', () => 
   );
 });
 
+test('CharacterFormView validates image uploads before invalidating upload tokens', () => {
+  const avatarStart = characterFormScript.indexOf('async function handleAvatar(event) {');
+  const avatarEnd = characterFormScript.indexOf('\nfunction isCurrentAvatarUpload', avatarStart);
+  const avatarHandler = characterFormScript.slice(avatarStart, avatarEnd);
+  const backgroundStart = characterFormScript.indexOf('async function handleAdvancedBackground(event, field) {');
+  const backgroundEnd = characterFormScript.indexOf('\nfunction clearAdvancedBackground', backgroundStart);
+  const backgroundHandler = characterFormScript.slice(backgroundStart, backgroundEnd);
+
+  assert.match(
+    avatarHandler,
+    /if \(!file\) \{\s*return;\s*\}[\s\S]*if \(!\['image\/png', 'image\/jpeg', 'image\/webp'\]\.includes\(file\.type\)\) \{[\s\S]*return;\s*\}[\s\S]*if \(file\.size > 2 \* 1024 \* 1024\) \{[\s\S]*return;\s*\}\s*const uploadToken = \+\+avatarUploadToken;\s*try \{/
+  );
+  assert.doesNotMatch(
+    avatarHandler,
+    /const uploadToken = \+\+avatarUploadToken;\s*if \(!file\)/
+  );
+
+  assert.match(
+    backgroundHandler,
+    /if \(!file\) \{\s*return;\s*\}[\s\S]*if \(!\['image\/png', 'image\/jpeg', 'image\/webp', 'image\/gif'\]\.includes\(file\.type\)\) \{[\s\S]*return;\s*\}[\s\S]*if \(file\.size > 4 \* 1024 \* 1024\) \{[\s\S]*return;\s*\}\s*backgroundUploading\[field\] = true;\s*const uploadToken = nextBackgroundUploadToken\(field\);\s*try \{/
+  );
+  assert.doesNotMatch(
+    backgroundHandler,
+    /const uploadToken = nextBackgroundUploadToken\(field\);\s*if \(!file\)/
+  );
+  assert.doesNotMatch(
+    backgroundHandler,
+    /if \(!file\) \{\s*backgroundUploading\[field\] = false;/
+  );
+});
+
 test('CharacterFormView preserves unchanged option-list references during loads', () => {
   assert.match(
     characterFormScript,

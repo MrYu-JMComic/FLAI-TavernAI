@@ -1290,7 +1290,6 @@ async function handleAvatar(event) {
   if (input) {
     input.value = '';
   }
-  const uploadToken = ++avatarUploadToken;
   if (!file) {
     return;
   }
@@ -1305,6 +1304,7 @@ async function handleAvatar(event) {
     return;
   }
 
+  const uploadToken = ++avatarUploadToken;
   try {
     const result = await readAsDataUrl(file);
     if (!isCurrentAvatarUpload(uploadToken)) {
@@ -1333,25 +1333,22 @@ async function handleAdvancedBackground(event, field) {
   if (input) {
     input.value = '';
   }
-  const uploadToken = nextBackgroundUploadToken(field);
   if (!file) {
-    backgroundUploading[field] = false;
     return;
   }
 
   if (!['image/png', 'image/jpeg', 'image/webp', 'image/gif'].includes(file.type)) {
-    backgroundUploading[field] = false;
     notify.warning('背景图片仅支持 PNG、JPG、WebP 或 GIF');
     return;
   }
 
   if (file.size > 4 * 1024 * 1024) {
-    backgroundUploading[field] = false;
     notify.warning('背景图片不能超过 4MB');
     return;
   }
 
   backgroundUploading[field] = true;
+  const uploadToken = nextBackgroundUploadToken(field);
   try {
     const result = await readAsDataUrl(file, '背景图片读取失败');
     if (!isCurrentBackgroundUpload(field, uploadToken)) {

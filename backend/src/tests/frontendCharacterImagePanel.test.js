@@ -22,7 +22,7 @@ test('CharacterImagePanel disables image actions while one image mutation is bus
   assert.match(characterImagePanelScript, /const imagePanelBusy = computed\(\(\) => uploading\.value \|\| imageActionBusy\.value\)/);
   assert.match(
     characterImagePanelScript,
-    /if \(props\.disabled \|\| imagePanelBusy\.value \|\| !characterId \|\| !files\.length\)\s*{\s*return;\s*}\s*const uploadToken = \+\+imageUploadToken;/
+    /if \(props\.disabled \|\| imagePanelBusy\.value \|\| !characterId \|\| !files\.length\)\s*{\s*return;\s*}\s*const validFiles = collectValidUploadFiles\(files\);/
   );
   assert.match(characterImagePanelScript, /function startImageAction\(actionId\)/);
   assert.match(characterImagePanelScript, /function finishImageAction\(mutationToken, characterId\)/);
@@ -59,6 +59,21 @@ test('CharacterImagePanel scans selected upload files directly', () => {
   assert.match(characterImagePanelScript, /if \(!isSupportedImageFileType\(file\?\.type\)\) {/);
   assert.doesNotMatch(characterImagePanelScript, /Array\.from\(input\?\.files/);
   assert.doesNotMatch(characterImagePanelScript, /\['image\/png', 'image\/jpeg', 'image\/webp'\]\.includes/);
+});
+
+test('CharacterImagePanel validates upload files before starting upload state', () => {
+  assert.match(
+    characterImagePanelScript,
+    /const validFiles = collectValidUploadFiles\(files\);\s*if \(!validFiles\.length\) {\s*return;\s*}\s*const uploadToken = \+\+imageUploadToken;\s*uploading\.value = true;\s*for \(const file of validFiles\) {/
+  );
+  assert.match(
+    characterImagePanelScript,
+    /function collectValidUploadFiles\(files\)\s*{\s*const validFiles = \[\];[\s\S]*if \(!isSupportedImageFileType\(file\?\.type\)\) {[\s\S]*continue;[\s\S]*if \(file\.size > 4 \* 1024 \* 1024\) {[\s\S]*continue;[\s\S]*validFiles\.push\(file\);[\s\S]*return validFiles;[\s\S]*}/
+  );
+  assert.doesNotMatch(
+    characterImagePanelScript,
+    /const uploadToken = \+\+imageUploadToken;\s*uploading\.value = true;\s*for \(const file of files\) {/
+  );
 });
 
 test('CharacterImagePanel ignores stale image item events before mutations', () => {
