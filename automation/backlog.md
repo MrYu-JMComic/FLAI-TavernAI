@@ -40,6 +40,7 @@ The autonomous loop should choose one small item per run. Add new findings here 
 
 ## Done
 
+- 2026-06-08: Scanned chat accessory status-bar automation setting sources and blueprint variables directly instead of filter/some arrays.
 - 2026-06-08: Scanned chat appearance custom-script query results and upload tokens with direct helper loops.
 - 2026-06-08: Compared chat appearance world-book refresh lists with direct loops instead of every callbacks.
 - 2026-06-08: Serialized chat conversation stable comparison values with direct loops instead of nested map/join callbacks.

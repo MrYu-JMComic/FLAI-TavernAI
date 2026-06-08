@@ -345,10 +345,9 @@ export function useChatAccessory({ conversation, setActiveConversationIfChanged,
 
   const hasStatusBarAutomationContext = computed(() => {
     if (hasStatusBarContent.value) return true;
-    return getStatusBarSettingSources().some((settings) => (
-      String(settings.statusBarPrompt || '').trim() ||
-        hasStatusBarBlueprintContent(settings.statusBarBlueprint)
-    ));
+    return hasStatusBarAutomationSettingSource(conversation.value?.settings)
+      || hasStatusBarAutomationSettingSource(conversation.value?.authorSettings)
+      || hasStatusBarAutomationSettingSource(conversation.value?.userSettings);
   });
 
   const statusBarTemplateConfig = computed(() => cloneTemplateConfig(statusBarTemplateCfg));
@@ -932,19 +931,25 @@ export function useChatAccessory({ conversation, setActiveConversationIfChanged,
   function hasStatusBarBlueprintContent(input = {}) {
     if (!input || typeof input !== 'object') return false;
     const variables = Array.isArray(input.variables) ? input.variables : [];
-    return Boolean(
-      String(input.name || '').trim() ||
-        String(input.template || '').trim() ||
-        variables.some((item) => String(item?.name || '').trim())
-    );
+    if (String(input.name || '').trim() || String(input.template || '').trim()) {
+      return true;
+    }
+    for (let index = 0; index < variables.length; index += 1) {
+      if (String(variables[index]?.name || '').trim()) {
+        return true;
+      }
+    }
+    return false;
   }
 
-  function getStatusBarSettingSources() {
-    return [
-      conversation.value?.settings,
-      conversation.value?.authorSettings,
-      conversation.value?.userSettings
-    ].filter((item) => item && typeof item === 'object');
+  function hasStatusBarAutomationSettingSource(settings) {
+    if (!settings || typeof settings !== 'object') {
+      return false;
+    }
+    return Boolean(
+      String(settings.statusBarPrompt || '').trim() ||
+        hasStatusBarBlueprintContent(settings.statusBarBlueprint)
+    );
   }
 
   function closeStatusBarEditor() {

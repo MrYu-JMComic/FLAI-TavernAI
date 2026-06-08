@@ -389,6 +389,57 @@ test('status bar custom template issues dedupe and cap with direct loops', () =>
   assert.doesNotMatch(chatAccessorySource, /\[\.\.\.new Set\(issues\)\]\.slice\(0, 5\)/);
 });
 
+test('status bar automation context scans settings sources directly', () => {
+  const emptyContext = createAccessory({
+    conversation: {
+      value: {
+        id: 'conv-empty',
+        settings: {},
+        authorSettings: { statusBarBlueprint: { variables: [{ name: ' ' }] } },
+        userSettings: {}
+      }
+    }
+  });
+  assert.equal(emptyContext.hasStatusBarAutomationContext.value, false);
+
+  const promptContext = createAccessory({
+    conversation: {
+      value: {
+        id: 'conv-prompt',
+        settings: { statusBarPrompt: ' Track HP changes ' },
+        authorSettings: {},
+        userSettings: {}
+      }
+    }
+  });
+  assert.equal(promptContext.hasStatusBarAutomationContext.value, true);
+
+  const blueprintContext = createAccessory({
+    conversation: {
+      value: {
+        id: 'conv-blueprint',
+        settings: {},
+        authorSettings: {},
+        userSettings: { statusBarBlueprint: { variables: [{ name: 'HP' }] } }
+      }
+    }
+  });
+  assert.equal(blueprintContext.hasStatusBarAutomationContext.value, true);
+
+  assert.match(
+    chatAccessorySource,
+    /const hasStatusBarAutomationContext = computed\(\(\) => \{[\s\S]*return hasStatusBarAutomationSettingSource\(conversation\.value\?\.settings\)[\s\S]*hasStatusBarAutomationSettingSource\(conversation\.value\?\.authorSettings\)[\s\S]*hasStatusBarAutomationSettingSource\(conversation\.value\?\.userSettings\);[\s\S]*\}\);/
+  );
+  assert.match(
+    chatAccessorySource,
+    /function hasStatusBarBlueprintContent\(input = \{\}\) \{[\s\S]*const variables = Array\.isArray\(input\.variables\) \? input\.variables : \[\];[\s\S]*for \(let index = 0; index < variables\.length; index \+= 1\) \{[\s\S]*String\(variables\[index\]\?\.name \|\| ''\)\.trim\(\)[\s\S]*return false;[\s\S]*\}/
+  );
+  assert.doesNotMatch(chatAccessorySource, /getStatusBarSettingSources/);
+  assert.doesNotMatch(chatAccessorySource, /getStatusBarSettingSources\(\)\.some/);
+  assert.doesNotMatch(chatAccessorySource, /\]\.filter\(\(item\) => item && typeof item === 'object'\)/);
+  assert.doesNotMatch(chatAccessorySource, /variables\s*\.\s*some\(\(item\)\s*=>\s*String\(item\?\.name/);
+});
+
 test('accessory skill save preserves active conversation references for unchanged settings', async () => {
   const originalFetch = globalThis.fetch;
   const savedSkills = {
