@@ -392,6 +392,38 @@ function removeMemoryByIdIfPresent(memoryId) {
   return changed;
 }
 
+function prependMemoryIfChanged(memory) {
+  if (!memory) return false;
+  const nextMemories = [memory];
+  const currentMemories = Array.isArray(memories.value) ? memories.value : [];
+  for (const currentMemory of currentMemories) {
+    nextMemories.push(currentMemory);
+  }
+  return setMemoriesIfChanged(nextMemories);
+}
+
+function updateNpcByNameIfChanged(npcName, nextNpc) {
+  const nextNpcs = [];
+  let changed = false;
+  for (const npc of npcs.value) {
+    if (npc?.name === npcName) {
+      const mergedNpc = { ...npc, ...nextNpc };
+      if (!sameNpcSummary(npc, mergedNpc)) {
+        changed = true;
+        nextNpcs.push(mergedNpc);
+      } else {
+        nextNpcs.push(npc);
+      }
+    } else {
+      nextNpcs.push(npc);
+    }
+  }
+  if (changed) {
+    setNpcsIfChanged(nextNpcs);
+  }
+  return changed;
+}
+
 function updateBehaviorByIdIfChanged(behaviorId, nextBehavior) {
   const nextBehaviors = [];
   let changed = false;
@@ -411,6 +443,17 @@ function updateBehaviorByIdIfChanged(behaviorId, nextBehavior) {
     setBehaviorsIfChanged(nextBehaviors);
   }
   return changed;
+}
+
+function appendBehaviorIfChanged(behavior) {
+  if (!behavior) return false;
+  const nextBehaviors = [];
+  const currentBehaviors = Array.isArray(behaviors.value) ? behaviors.value : [];
+  for (const currentBehavior of currentBehaviors) {
+    nextBehaviors.push(currentBehavior);
+  }
+  nextBehaviors.push(behavior);
+  return setBehaviorsIfChanged(nextBehaviors);
 }
 
 function removeBehaviorByIdIfPresent(behaviorId) {
@@ -542,7 +585,7 @@ async function submitNpcMeta() {
       memorySealed: npcMetaForm.memorySealed
     });
     if (!isCurrentNpcMutation(mutationToken, conversationId, npcName)) return;
-    setNpcsIfChanged(npcs.value.map((npc) => (npc.name === npcName ? { ...npc, ...updated } : npc)));
+    updateNpcByNameIfChanged(npcName, updated);
     syncNpcMetaForm(updated);
     await loadNpcs({ allowWhileBusy: true });
     if (!isCurrentNpcMutation(mutationToken, conversationId, npcName)) return;
@@ -573,7 +616,7 @@ async function submitMemory() {
       content: memoryForm.content.trim()
     });
     if (!isCurrentNpcMutation(mutationToken, conversationId, npcName)) return;
-    setMemoriesIfChanged([mem, ...memories.value]);
+    prependMemoryIfChanged(mem);
     memoryForm.content = '';
     addMemoryOpen.value = false;
     await loadNpcs({ allowWhileBusy: true });
@@ -632,7 +675,7 @@ async function submitBehavior() {
       enabled: behaviorForm.enabled
     });
     if (!isCurrentNpcMutation(mutationToken, conversationId, npcName)) return;
-    setBehaviorsIfChanged([...behaviors.value, beh]);
+    appendBehaviorIfChanged(beh);
     behaviorForm.triggerCondition = '';
     behaviorForm.action = '';
     behaviorForm.priority = 0;
