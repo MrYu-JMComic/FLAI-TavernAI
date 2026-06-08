@@ -99,6 +99,21 @@ const statusBarEditorRows = computed(() => {
   return rows;
 });
 
+const chatLorebookBindingLabel = computed(() => {
+  const selectedId = props.chatLorebookId;
+  if (!selectedId) {
+    return '';
+  }
+  const books = Array.isArray(props.worldBooks) ? props.worldBooks : [];
+  for (let index = 0; index < books.length; index += 1) {
+    const book = books[index];
+    if (book?.id === selectedId) {
+      return book?.name || selectedId;
+    }
+  }
+  return selectedId;
+});
+
 function getStatusBarVariableValue(name = '') {
   const variable = findStatusBarVariable(name);
   return variable ? String(variable.value ?? '') : '';
@@ -430,8 +445,8 @@ function requestClose() {
           </select>
         </label>
         <p v-if="worldBooksLoading" class="chat-lorebook-hint">加载世界书列表中...</p>
-        <p v-else-if="chatLorebookId" class="chat-lorebook-hint">
-          已绑定：{{ worldBooks.find((book) => book.id === chatLorebookId)?.name || chatLorebookId }}
+        <p v-else-if="chatLorebookBindingLabel" class="chat-lorebook-hint">
+          已绑定：{{ chatLorebookBindingLabel }}
         </p>
       </section>
 

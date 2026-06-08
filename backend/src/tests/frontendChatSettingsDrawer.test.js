@@ -38,6 +38,15 @@ test('ChatSettingsDrawer locks appearance controls while saving appearance', () 
   assert.match(stylesSource, /\.chat-setting-upload\.is-disabled input/);
 });
 
+test('ChatSettingsDrawer resolves chat lorebook binding labels without template list scans', () => {
+  assert.match(
+    chatSettingsDrawerScript,
+    /const chatLorebookBindingLabel = computed\(\(\) => \{[\s\S]*const books = Array\.isArray\(props\.worldBooks\) \? props\.worldBooks : \[\];[\s\S]*for \(let index = 0; index < books\.length; index \+= 1\) \{[\s\S]*if \(book\?\.id === selectedId\) \{[\s\S]*return book\?\.name \|\| selectedId;[\s\S]*return selectedId;[\s\S]*\}\);/
+  );
+  assert.match(chatSettingsDrawerTemplate, /v-else-if="chatLorebookBindingLabel"[\s\S]*已绑定：\{\{ chatLorebookBindingLabel \}\}/);
+  assert.doesNotMatch(chatSettingsDrawerTemplate, /worldBooks\.find\(/);
+});
+
 test('ChatSettingsDrawer freezes status bar editor fields while saving status bar', () => {
   assert.match(
     chatSettingsDrawerTemplate,
