@@ -160,39 +160,31 @@ export function reorderCharacterImages(database, characterId, orderedIds) {
 
 export function detectSceneAndEmotion(text) {
   const normalizedText = String(text || '').toLowerCase();
-  const result = { sceneTag: '', emotionTag: '' };
+  return {
+    sceneTag: findBestKeywordTag(normalizedText, sceneKeywords),
+    emotionTag: findBestKeywordTag(normalizedText, emotionKeywords)
+  };
+}
 
-  // Find scene
-  let bestSceneScore = 0;
-  for (const [tag, keywords] of Object.entries(sceneKeywords)) {
+function findBestKeywordTag(normalizedText, keywordMap) {
+  let bestTag = '';
+  let bestScore = 0;
+  for (const tag in keywordMap) {
+    if (!Object.prototype.hasOwnProperty.call(keywordMap, tag)) {
+      continue;
+    }
     let score = 0;
-    for (const kw of keywords) {
-      if (normalizedText.includes(kw)) {
-        score++;
+    for (const keyword of keywordMap[tag]) {
+      if (normalizedText.includes(keyword)) {
+        score += 1;
       }
     }
-    if (score > bestSceneScore) {
-      bestSceneScore = score;
-      result.sceneTag = tag;
+    if (score > bestScore) {
+      bestScore = score;
+      bestTag = tag;
     }
   }
-
-  // Find emotion
-  let bestEmotionScore = 0;
-  for (const [tag, keywords] of Object.entries(emotionKeywords)) {
-    let score = 0;
-    for (const kw of keywords) {
-      if (normalizedText.includes(kw)) {
-        score++;
-      }
-    }
-    if (score > bestEmotionScore) {
-      bestEmotionScore = score;
-      result.emotionTag = tag;
-    }
-  }
-
-  return result;
+  return bestTag;
 }
 
 export function findBestMatch(images, sceneTag, emotionTag) {

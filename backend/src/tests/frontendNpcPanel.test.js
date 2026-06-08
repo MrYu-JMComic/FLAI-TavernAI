@@ -56,7 +56,15 @@ test('NpcPanel exposes NPC status aliases and memory seal metadata controls', ()
   assert.match(npcPanelScript, /const npcMetaForm = reactive\(\{/);
   assert.match(npcPanelScript, /const npcStatusOptions = \[/);
   assert.match(npcPanelScript, /function syncNpcMetaForm\(npc\)/);
-  assert.match(npcPanelScript, /function parseNpcAliasesText\(value\)/);
+  assert.match(
+    npcPanelScript,
+    /function parseNpcAliasesText\(value\) \{[\s\S]*const aliases = \[\];[\s\S]*const seen = new Set\(\);[\s\S]*const source = String\(value \|\| ''\);[\s\S]*for \(let index = 0; index <= source\.length && aliases\.length < 20; index \+= 1\) \{[\s\S]*isNpcAliasSeparator\(source\[index\]\)[\s\S]*aliases\.push\(alias\.slice\(0, 80\)\);[\s\S]*return aliases;[\s\S]*\}/
+  );
+  assert.match(
+    npcPanelScript,
+    /function isNpcAliasSeparator\(char = ''\) \{\s*return char === '\\n' \|\| char === ',' \|\| char === ';' \|\| char === '\|';\s*\}/
+  );
+  assert.doesNotMatch(npcPanelScript, /String\(value \|\| ''\)\.split\(\//);
   assert.match(npcPanelScript, /function updateNpcByNameIfChanged\(npcName, nextNpc\)/);
   assert.match(npcPanelScript, /async function submitNpcMeta\(\)/);
   assert.match(npcPanelScript, /const actionId = 'npc-meta-save'/);
@@ -173,8 +181,14 @@ test('NpcPanel preserves unchanged NPC and detail list references during refresh
   );
   assert.match(
     npcPanelScript,
-    /function sameNpcSummary\(current = {}, next = {}\)\s*{[\s\S]*current\?\.name === next\?\.name[\s\S]*Number\(current\?\.memoryCount \|\| 0\) === Number\(next\?\.memoryCount \|\| 0\)[\s\S]*String\(current\?\.source \|\| ''\) === String\(next\?\.source \|\| ''\)[\s\S]*sameListItems\(normalizeStringList\(current\?\.aliases\), normalizeStringList\(next\?\.aliases\), Object\.is\);[\s\S]*}/
+    /function sameNpcSummary\(current = {}, next = {}\)\s*{[\s\S]*current\?\.name === next\?\.name[\s\S]*Number\(current\?\.memoryCount \|\| 0\) === Number\(next\?\.memoryCount \|\| 0\)[\s\S]*String\(current\?\.source \|\| ''\) === String\(next\?\.source \|\| ''\)[\s\S]*sameStringList\(current\?\.aliases, next\?\.aliases\);[\s\S]*}/
   );
+  assert.match(
+    npcPanelScript,
+    /function sameStringList\(currentItems, nextItems\) \{[\s\S]*const currentList = Array\.isArray\(currentItems\) \? currentItems : \[\];[\s\S]*const nextList = Array\.isArray\(nextItems\) \? nextItems : \[\];[\s\S]*for \(let index = 0; index < currentList\.length; index \+= 1\) \{[\s\S]*String\(currentList\[index\]\) !== String\(nextList\[index\]\)[\s\S]*return true;[\s\S]*\}/
+  );
+  assert.doesNotMatch(npcPanelScript, /function normalizeStringList/);
+  assert.doesNotMatch(npcPanelScript, /\.map\(\(item\) => String\(item\)\)/);
   assert.match(
     npcPanelScript,
     /function sameMemorySummary\(current = {}, next = {}\)\s*{[\s\S]*current\?\.id === next\?\.id[\s\S]*current\?\.conversationId === next\?\.conversationId[\s\S]*current\?\.npcName === next\?\.npcName[\s\S]*current\?\.memoryType === next\?\.memoryType[\s\S]*current\?\.content === next\?\.content[\s\S]*current\?\.createdAt === next\?\.createdAt;[\s\S]*}/

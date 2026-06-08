@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
 process.env.FLAI_DB_PATH = ':memory:';
@@ -15,6 +16,8 @@ const {
   reorderCharacterImages,
   updateCharacterImage
 } = await import('../modules/characterImages.js');
+
+const characterImagesSource = readFileSync(new URL('../modules/characterImages.js', import.meta.url), 'utf8');
 
 function setupDatabase() {
   const database = createAppDatabase(':memory:');
@@ -278,6 +281,13 @@ test('scene and emotion detection from text', () => {
   const r10 = detectSceneAndEmotion('');
   assert.equal(r10.sceneTag, '');
   assert.equal(r10.emotionTag, '');
+
+  assert.match(
+    characterImagesSource,
+    /function findBestKeywordTag\(normalizedText, keywordMap\) \{[\s\S]*for \(const tag in keywordMap\) \{[\s\S]*Object\.prototype\.hasOwnProperty\.call\(keywordMap, tag\)[\s\S]*for \(const keyword of keywordMap\[tag\]\) \{[\s\S]*score \+= 1;[\s\S]*return bestTag;[\s\S]*\}/
+  );
+  assert.doesNotMatch(characterImagesSource, /Object\.entries\(sceneKeywords\)/);
+  assert.doesNotMatch(characterImagesSource, /Object\.entries\(emotionKeywords\)/);
 });
 
 test('findBestMatch selects by scene, emotion, default, or first', () => {

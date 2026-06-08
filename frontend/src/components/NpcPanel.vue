@@ -221,15 +221,25 @@ function syncNpcMetaForm(npc) {
 function parseNpcAliasesText(value) {
   const aliases = [];
   const seen = new Set();
-  for (const raw of String(value || '').split(/[\n,;|]+/)) {
-    const alias = raw.trim();
+  const source = String(value || '');
+  let start = 0;
+  for (let index = 0; index <= source.length && aliases.length < 20; index += 1) {
+    if (index < source.length && !isNpcAliasSeparator(source[index])) {
+      continue;
+    }
+    const alias = source.slice(start, index).trim();
     const key = alias.toLowerCase();
-    if (!alias || seen.has(key)) continue;
-    aliases.push(alias.slice(0, 80));
-    seen.add(key);
-    if (aliases.length >= 20) break;
+    if (alias && !seen.has(key)) {
+      aliases.push(alias.slice(0, 80));
+      seen.add(key);
+    }
+    start = index + 1;
   }
   return aliases;
+}
+
+function isNpcAliasSeparator(char = '') {
+  return char === '\n' || char === ',' || char === ';' || char === '|';
 }
 
 function isCurrentNpcMutation(mutationToken, conversationId, npcName = null) {
@@ -353,7 +363,7 @@ function sameNpcSummary(current = {}, next = {}) {
     && String(current?.customStatus || '') === String(next?.customStatus || '')
     && Boolean(current?.memorySealed) === Boolean(next?.memorySealed)
     && Boolean(current?.memorySealActive) === Boolean(next?.memorySealActive)
-    && sameListItems(normalizeStringList(current?.aliases), normalizeStringList(next?.aliases), Object.is);
+    && sameStringList(current?.aliases, next?.aliases);
 }
 
 function sameMemorySummary(current = {}, next = {}) {
@@ -377,8 +387,21 @@ function sameBehaviorSummary(current = {}, next = {}) {
     && current?.createdAt === next?.createdAt;
 }
 
-function normalizeStringList(value) {
-  return Array.isArray(value) ? value.map((item) => String(item)) : [];
+function sameStringList(currentItems, nextItems) {
+  const currentList = Array.isArray(currentItems) ? currentItems : [];
+  const nextList = Array.isArray(nextItems) ? nextItems : [];
+  if (currentList === nextList) {
+    return true;
+  }
+  if (currentList.length !== nextList.length) {
+    return false;
+  }
+  for (let index = 0; index < currentList.length; index += 1) {
+    if (String(currentList[index]) !== String(nextList[index])) {
+      return false;
+    }
+  }
+  return true;
 }
 
 function getCurrentNpcByName(name, sourceNpcs = npcs.value) {
