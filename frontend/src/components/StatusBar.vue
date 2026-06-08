@@ -1,6 +1,7 @@
 <script setup>
 import { computed, onBeforeUnmount, ref, watch } from 'vue';
 import { ChevronDown } from '@lucide/vue';
+import { parseStatusTemplateToken } from '../../../shared/statusTemplateTokens.js';
 import { buildScopedChatCss } from '../utils/chatAppearance';
 import {
   STATUS_BAR_TEMPLATE_ALLOWED_TAGS,
@@ -81,8 +82,11 @@ const hasImmersiveContent = computed(() => {
 });
 
 const displayVariables = computed(() => {
-  if (!props.statusBar?.variables) return [];
-  return props.statusBar.variables.map(normalizeDisplayVariable);
+  return normalizeDisplayVariables(props.statusBar?.variables);
+});
+
+const displayCharacters = computed(() => {
+  return normalizeDisplayCharacters(cfg.value.characters);
 });
 
 const customTemplate = computed(() => {
@@ -248,11 +252,6 @@ function charStyle(ch) {
   return style;
 }
 
-function charVariables(ch) {
-  if (!ch.variables || !Array.isArray(ch.variables)) return [];
-  return ch.variables.map((v) => normalizeDisplayVariable(v, '#6c757d'));
-}
-
 function statusLabel(status) {
   return STATUS_LABELS[status] || status;
 }
@@ -367,7 +366,9 @@ function resolveTemplateText(value, options = {}) {
 }
 
 function resolveTemplateToken(token, depth = 0) {
-  const [rawName, rawProp = 'value'] = String(token || '').split('.').map((part) => part.trim());
+  const parsed = parseStatusTemplateToken(token);
+  const rawName = parsed.rawName.trim();
+  const rawProp = parsed.rawProperty.trim() || 'value';
   if (!rawName) return '';
   const variable = findDisplayVariable(rawName);
   if (!variable) return '';
@@ -486,6 +487,28 @@ function normalizeDisplayVariable(variable, fallbackColor) {
   };
 }
 
+function normalizeDisplayVariables(variables, fallbackColor) {
+  const rows = [];
+  for (const variable of Array.isArray(variables) ? variables : []) {
+    rows.push(normalizeDisplayVariable(variable, fallbackColor));
+  }
+  return rows;
+}
+
+function normalizeDisplayCharacters(characters) {
+  const rows = [];
+  const source = Array.isArray(characters) ? characters : [];
+  for (let index = 0; index < source.length; index += 1) {
+    const character = source[index] && typeof source[index] === 'object' ? source[index] : {};
+    rows.push({
+      key: character.id || index,
+      character,
+      variables: normalizeDisplayVariables(character.variables, '#6c757d')
+    });
+  }
+  return rows;
+}
+
 function isNumericLike(value) {
   if (typeof value === 'number') {
     return Number.isFinite(value);
@@ -500,7 +523,14 @@ function formatStatusNumber(value) {
 
 function findDisplayVariable(name) {
   const key = normalizeVariableKey(name);
-  return displayVariables.value.find((item) => normalizeVariableKey(item.name) === key);
+  const variables = displayVariables.value;
+  for (let index = 0; index < variables.length; index += 1) {
+    const item = variables[index];
+    if (normalizeVariableKey(item.name) === key) {
+      return item;
+    }
+  }
+  return null;
 }
 
 function normalizeVariableKey(value) {
@@ -727,21 +757,21 @@ function templateLabelText(value) {
 
           <div v-if="hasImmersiveContent" class="sb-characters-section">
             <div
-              v-for="ch in cfg.characters"
-              :key="ch.id"
+              v-for="entry in displayCharacters"
+              :key="entry.key"
               class="sb-char-card"
-              :class="statusClass(ch.status)"
-              :style="charStyle(ch)"
+              :class="statusClass(entry.character.status)"
+              :style="charStyle(entry.character)"
             >
               <div class="sb-char-header">
-                <span class="sb-char-name">{{ ch.name }}</span>
-                <span v-if="ch.role" class="sb-char-role">{{ ch.role }}</span>
-                <span class="sb-char-status" :class="statusClass(ch.status)">{{ statusLabel(ch.status) }}</span>
+                <span class="sb-char-name">{{ entry.character.name }}</span>
+                <span v-if="entry.character.role" class="sb-char-role">{{ entry.character.role }}</span>
+                <span class="sb-char-status" :class="statusClass(entry.character.status)">{{ statusLabel(entry.character.status) }}</span>
               </div>
-              <p v-if="ch.note" class="sb-char-note">{{ ch.note }}</p>
-              <div v-if="charVariables(ch).length" class="sb-char-variables">
+              <p v-if="entry.character.note" class="sb-char-note">{{ entry.character.note }}</p>
+              <div v-if="entry.variables.length" class="sb-char-variables">
                 <div
-                  v-for="(v, vi) in charVariables(ch)"
+                  v-for="(v, vi) in entry.variables"
                   :key="vi"
                   class="sb-char-variable"
                 >
