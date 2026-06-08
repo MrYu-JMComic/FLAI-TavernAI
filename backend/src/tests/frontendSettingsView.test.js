@@ -403,8 +403,25 @@ test('SettingsView regex mutations expose visible busy guards for filter, import
   assert.match(settingsViewScript, /const regexActionBusyId = ref\(''\);/);
   assert.match(settingsViewScript, /const regexActionBusy = computed\(\(\) => Boolean\(regexActionBusyId\.value\)\);/);
   assert.match(settingsViewScript, /const regexControlsBusy = computed\(\(\) => regexLoading\.value \|\| regexActionBusy\.value\);/);
+  assert.match(settingsViewScript, /const regexGroupOptions = ref\(\[\]\);/);
   assert.match(settingsViewScript, /const draggingRegexRuleId = ref\(''\);/);
   assert.match(settingsViewScript, /function getCurrentRegexRule\(ruleId\) {\s*return getListItemById\(regexRules, ruleId\);\s*}/);
+  assert.match(settingsViewScript, /setListIfChanged\(regexRules, nextRules\);\s*setRegexGroupOptionsFromRules\(nextRules, groupFilter\);/);
+  assert.match(settingsViewScript, /const regexGroups = computed\(\(\) => regexGroupOptions\.value\);/);
+  assert.match(
+    settingsViewScript,
+    /function setRegexGroupOptionsFromRules\(rules, selectedGroup = ''\) {[\s\S]*const replacingAllGroups = !selectedGroup;[\s\S]*if \(!replacingAllGroups\) {[\s\S]*appendKnownRegexGroups\(nextGroups, regexGroupOptions\.value\);[\s\S]*appendRegexGroupIfMissing\(nextGroups, selectedGroup\);[\s\S]*appendKnownRegexGroups\(nextGroups, normalizeRegexGroupNamesFromRules\(rules\)\);[\s\S]*nextGroups\.sort\(\);[\s\S]*return setListIfChanged\(regexGroupOptions, nextGroups\);[\s\S]*}/
+  );
+  assert.match(
+    settingsViewScript,
+    /function normalizeRegexGroupNamesFromRules\(rules\) {[\s\S]*const groups = \[\];[\s\S]*for \(const rule of Array\.isArray\(rules\) \? rules : \[\]\) {[\s\S]*appendRegexGroupIfMissing\(groups, normalizeRegexGroupName\(rule\?\.groupName\)\);[\s\S]*return groups;[\s\S]*}/
+  );
+  assert.match(
+    settingsViewScript,
+    /function appendRegexGroupIfMissing\(groups, groupName\) {[\s\S]*for \(const group of groups\) {[\s\S]*if \(group === normalizedName\) {[\s\S]*return false;[\s\S]*groups\.push\(normalizedName\);[\s\S]*return true;[\s\S]*}/
+  );
+  assert.doesNotMatch(settingsViewScript, /regexRules\.value\.forEach\(\(r\) => groups\.add/);
+  assert.doesNotMatch(settingsViewScript, /return \[\.\.\.groups\]\.sort\(\)/);
   assert.match(settingsViewScript, /function handleRegexGroupFilterChange\(\) {\s*if \(regexControlsBusy\.value\) return;/);
   assert.match(
     settingsViewScript,

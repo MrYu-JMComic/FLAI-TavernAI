@@ -1662,6 +1662,7 @@ const regexActionBusyId = ref('');
 const regexActionBusy = computed(() => Boolean(regexActionBusyId.value));
 const regexControlsBusy = computed(() => regexLoading.value || regexActionBusy.value);
 const regexGroupFilter = ref('');
+const regexGroupOptions = ref([]);
 const regexImportText = ref('');
 const showRegexImport = ref(false);
 const draggingRegexRuleId = ref('');
@@ -1705,6 +1706,7 @@ async function loadRegexRules() {
     const nextRules = await fetchRegexRules(groupFilter);
     if (!isCurrentRegexLoad(requestToken, groupFilter)) return;
     setListIfChanged(regexRules, nextRules);
+    setRegexGroupOptionsFromRules(nextRules, groupFilter);
   } catch (err) {
     if (!isCurrentRegexLoad(requestToken, groupFilter)) return;
     regexLoadError.value = loadFailureMessage(err, '正则规则加载失败');
@@ -1840,11 +1842,51 @@ async function onRegexDrop(targetRuleId) {
   }
 }
 
-const regexGroups = computed(() => {
-  const groups = new Set();
-  regexRules.value.forEach((r) => groups.add(r.groupName || '全局'));
-  return [...groups].sort();
-});
+const regexGroups = computed(() => regexGroupOptions.value);
+
+function setRegexGroupOptionsFromRules(rules, selectedGroup = '') {
+  const nextGroups = [];
+  const replacingAllGroups = !selectedGroup;
+  if (!replacingAllGroups) {
+    appendKnownRegexGroups(nextGroups, regexGroupOptions.value);
+    appendRegexGroupIfMissing(nextGroups, selectedGroup);
+  }
+  appendKnownRegexGroups(nextGroups, normalizeRegexGroupNamesFromRules(rules));
+  nextGroups.sort();
+  return setListIfChanged(regexGroupOptions, nextGroups);
+}
+
+function normalizeRegexGroupNamesFromRules(rules) {
+  const groups = [];
+  for (const rule of Array.isArray(rules) ? rules : []) {
+    appendRegexGroupIfMissing(groups, normalizeRegexGroupName(rule?.groupName));
+  }
+  return groups;
+}
+
+function appendKnownRegexGroups(targetGroups, sourceGroups) {
+  for (const group of Array.isArray(sourceGroups) ? sourceGroups : []) {
+    appendRegexGroupIfMissing(targetGroups, normalizeRegexGroupName(group));
+  }
+}
+
+function appendRegexGroupIfMissing(groups, groupName) {
+  const normalizedName = normalizeRegexGroupName(groupName);
+  if (!normalizedName) {
+    return false;
+  }
+  for (const group of groups) {
+    if (group === normalizedName) {
+      return false;
+    }
+  }
+  groups.push(normalizedName);
+  return true;
+}
+
+function normalizeRegexGroupName(groupName) {
+  return String(groupName || '').trim() || '全局';
+}
 
 function exportRegexRules() {
   if (regexControlsBusy.value) return;
