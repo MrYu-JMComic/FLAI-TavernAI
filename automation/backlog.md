@@ -40,6 +40,7 @@ The autonomous loop should choose one small item per run. Add new findings here 
 
 ## Done
 
+- 2026-06-08: Built WorldBookView AI process and tool-call updates with direct list scans.
 - 2026-06-08: Built CharacterFormView AI process and tool-call updates with direct list scans and helper-based tool copies.
 - 2026-06-08: Shared backend status template token parsing between status bars and advanced settings.
 - 2026-06-08: Normalized and compared CharacterFormView status blueprint variables with direct loops instead of map/filter/stringify paths.

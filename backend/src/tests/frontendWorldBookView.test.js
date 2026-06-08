@@ -78,12 +78,16 @@ test('WorldBookView preserves unchanged AI draft and process panel references', 
   assert.doesNotMatch(worldBookViewScript, /(?:currentBooks|currentEntries|current|currentKeys)\.every\(/);
   assert.match(
     worldBookViewScript,
-    /function updateAiProcessStep\(round = 1, updateStep\) {[\s\S]*const currentProcess = Array\.isArray\(aiProcess\.value\) \? aiProcess\.value : \[\];[\s\S]*const nextProcess = stepIndex >= 0[\s\S]*currentProcess\.map\(\(item, index\) => \(index === stepIndex \? nextStep : item\)\)[\s\S]*\[\.\.\.currentProcess, nextStep\][\s\S]*setAiProcessIfChanged\(nextProcess\);[\s\S]*}/
+    /function updateAiProcessStep\(round = 1, updateStep\) {[\s\S]*const currentProcess = Array\.isArray\(aiProcess\.value\) \? aiProcess\.value : \[\];[\s\S]*let stepIndex = -1;[\s\S]*for \(let index = 0; index < currentProcess\.length; index \+= 1\) {[\s\S]*currentProcess\[index\]\?\.round === round[\s\S]*break;[\s\S]*const nextProcess = \[\];[\s\S]*for \(let index = 0; index < currentProcess\.length; index \+= 1\) {[\s\S]*nextProcess\.push\(index === stepIndex \? nextStep : currentProcess\[index\]\);[\s\S]*if \(stepIndex < 0\) {[\s\S]*nextProcess\.push\(nextStep\);[\s\S]*setAiProcessIfChanged\(nextProcess\);[\s\S]*}/
   );
   assert.match(
     worldBookViewScript,
-    /function appendAiToolCall\(log\) {[\s\S]*const currentToolCalls = Array\.isArray\(aiToolCalls\.value\) \? aiToolCalls\.value : \[\];[\s\S]*setAiToolCallsIfChanged\(\[\.\.\.currentToolCalls, log\]\);[\s\S]*}/
+    /function appendAiToolCall\(log\) {[\s\S]*const currentToolCalls = Array\.isArray\(aiToolCalls\.value\) \? aiToolCalls\.value : \[\];[\s\S]*const nextToolCalls = \[\];[\s\S]*for \(const toolCall of currentToolCalls\) {[\s\S]*nextToolCalls\.push\(toolCall\);[\s\S]*nextToolCalls\.push\(log\);[\s\S]*setAiToolCallsIfChanged\(nextToolCalls\);[\s\S]*}/
   );
+  assert.doesNotMatch(worldBookViewScript, /currentProcess\.findIndex\(/);
+  assert.doesNotMatch(worldBookViewScript, /currentProcess\.map\(\(item, index\) => \(index === stepIndex \? nextStep : item\)\)/);
+  assert.doesNotMatch(worldBookViewScript, /\[\.\.\.currentProcess, nextStep\]/);
+  assert.doesNotMatch(worldBookViewScript, /setAiToolCallsIfChanged\(\[\.\.\.currentToolCalls, log\]\);/);
   assert.match(
     worldBookViewScript,
     /async function completeWorldBookWithAi\(\) {[\s\S]*setAiToolCallsIfChanged\(\[\]\);[\s\S]*setAiProcessIfChanged\(\[\{ round: 1, reasoning: '[^']+', content: '', tools: \[\] \}\]\);/

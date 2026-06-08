@@ -888,7 +888,13 @@ function aiStreamHandlers(mutationToken, routeKey) {
 
 function updateAiProcessStep(round = 1, updateStep) {
   const currentProcess = Array.isArray(aiProcess.value) ? aiProcess.value : [];
-  const stepIndex = currentProcess.findIndex((item) => item.round === round);
+  let stepIndex = -1;
+  for (let index = 0; index < currentProcess.length; index += 1) {
+    if (currentProcess[index]?.round === round) {
+      stepIndex = index;
+      break;
+    }
+  }
   const currentStep = stepIndex >= 0
     ? currentProcess[stepIndex]
     : { round, reasoning: '', content: '', tools: [] };
@@ -896,15 +902,24 @@ function updateAiProcessStep(round = 1, updateStep) {
     ...currentStep,
     tools: Array.isArray(currentStep.tools) ? [...currentStep.tools] : []
   });
-  const nextProcess = stepIndex >= 0
-    ? currentProcess.map((item, index) => (index === stepIndex ? nextStep : item))
-    : [...currentProcess, nextStep];
+  const nextProcess = [];
+  for (let index = 0; index < currentProcess.length; index += 1) {
+    nextProcess.push(index === stepIndex ? nextStep : currentProcess[index]);
+  }
+  if (stepIndex < 0) {
+    nextProcess.push(nextStep);
+  }
   setAiProcessIfChanged(nextProcess);
 }
 
 function appendAiToolCall(log) {
   const currentToolCalls = Array.isArray(aiToolCalls.value) ? aiToolCalls.value : [];
-  setAiToolCallsIfChanged([...currentToolCalls, log]);
+  const nextToolCalls = [];
+  for (const toolCall of currentToolCalls) {
+    nextToolCalls.push(toolCall);
+  }
+  nextToolCalls.push(log);
+  setAiToolCallsIfChanged(nextToolCalls);
 }
 
 function formatAiValue(value) {
