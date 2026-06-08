@@ -40,6 +40,7 @@ The autonomous loop should choose one small item per run. Add new findings here 
 
 ## Done
 
+- 2026-06-08: Serialized chat accessory template config with a direct has-config flag instead of Object.keys.
 - 2026-06-08: Synced chat accessory skill defaults with a stable key loop instead of Object.keys allocations.
 - 2026-06-08: Scanned chat accessory status-bar automation setting sources and blueprint variables directly instead of filter/some arrays.
 - 2026-06-08: Scanned chat appearance custom-script query results and upload tokens with direct helper loops.

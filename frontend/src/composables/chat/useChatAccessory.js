@@ -803,15 +803,40 @@ export function useChatAccessory({ conversation, setActiveConversationIfChanged,
       return;
     }
     const cfg = {};
-    if (statusBarTemplateCfg.variant !== 'default') cfg.variant = statusBarTemplateCfg.variant;
-    if (statusBarTemplateCfg.density !== 'default') cfg.density = statusBarTemplateCfg.density;
-    if (statusBarTemplateCfg.accentColor) cfg.accentColor = statusBarTemplateCfg.accentColor;
-    if (statusBarTemplateCfg.effects.length) cfg.effects = statusBarTemplateCfg.effects;
-    if (statusBarTemplateCfg.customCss) cfg.customCss = statusBarTemplateCfg.customCss;
-    if (statusBarTemplateCfg.displayMode !== 'compact') cfg.displayMode = statusBarTemplateCfg.displayMode;
-    if (statusBarTemplateCfg.characters.length) cfg.characters = statusBarTemplateCfg.characters;
-    if (statusBarTemplateCfg.quickReplies.length) cfg.quickReplies = statusBarTemplateCfg.quickReplies;
-    statusBarForm.template = Object.keys(cfg).length ? JSON.stringify(cfg) : '';
+    let hasConfig = false;
+    if (statusBarTemplateCfg.variant !== 'default') {
+      cfg.variant = statusBarTemplateCfg.variant;
+      hasConfig = true;
+    }
+    if (statusBarTemplateCfg.density !== 'default') {
+      cfg.density = statusBarTemplateCfg.density;
+      hasConfig = true;
+    }
+    if (statusBarTemplateCfg.accentColor) {
+      cfg.accentColor = statusBarTemplateCfg.accentColor;
+      hasConfig = true;
+    }
+    if (statusBarTemplateCfg.effects.length) {
+      cfg.effects = statusBarTemplateCfg.effects;
+      hasConfig = true;
+    }
+    if (statusBarTemplateCfg.customCss) {
+      cfg.customCss = statusBarTemplateCfg.customCss;
+      hasConfig = true;
+    }
+    if (statusBarTemplateCfg.displayMode !== 'compact') {
+      cfg.displayMode = statusBarTemplateCfg.displayMode;
+      hasConfig = true;
+    }
+    if (statusBarTemplateCfg.characters.length) {
+      cfg.characters = statusBarTemplateCfg.characters;
+      hasConfig = true;
+    }
+    if (statusBarTemplateCfg.quickReplies.length) {
+      cfg.quickReplies = statusBarTemplateCfg.quickReplies;
+      hasConfig = true;
+    }
+    statusBarForm.template = hasConfig ? JSON.stringify(cfg) : '';
   }
 
   function resetTemplateCfg() {

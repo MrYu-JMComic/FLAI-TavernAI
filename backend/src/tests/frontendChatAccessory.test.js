@@ -254,6 +254,85 @@ test('status bar save preserves unchanged object references', async () => {
   }
 });
 
+test('status bar builtin template save serializes config without key scans', async () => {
+  const originalFetch = globalThis.fetch;
+  const requestBodies = [];
+
+  globalThis.fetch = async (url, options = {}) => {
+    const requestUrl = String(url);
+    const method = String(options.method || 'GET').toUpperCase();
+
+    if (requestUrl === '/api/csrf-token') {
+      return jsonResponse({ csrfToken: 'status-config-token' });
+    }
+
+    if (requestUrl === '/api/conversations/conv-1/status-bar' && method === 'PUT') {
+      const body = JSON.parse(String(options.body || '{}'));
+      requestBodies.push(body);
+      return jsonResponse({
+        id: 'status-config',
+        conversationId: 'conv-1',
+        name: body.name,
+        template: body.template,
+        variables: [],
+        createdAt: '2026-06-08T00:00:00.000Z',
+        updatedAt: '2026-06-08T00:00:00.000Z'
+      });
+    }
+
+    return jsonResponse({ message: `Unexpected request: ${requestUrl}` }, 500);
+  };
+
+  try {
+    const accessory = createAccessory();
+    accessory.statusBarTemplateMode.value = 'builtin';
+    accessory.statusBarForm.name = 'Config';
+    accessory.statusBarTemplateCfg.variant = 'neon';
+    accessory.statusBarTemplateCfg.effects = ['glow', 'pulse'];
+    accessory.statusBarTemplateCfg.displayMode = 'immersive';
+    accessory.statusBarTemplateCfg.characters = [
+      {
+        id: 'hero',
+        name: 'Hero',
+        role: 'lead',
+        status: 'active',
+        note: '',
+        accentColor: '',
+        customCss: '',
+        variables: []
+      }
+    ];
+
+    await accessory.saveStatusBarChanges();
+
+    assert.equal(requestBodies.length, 1);
+    assert.deepEqual(JSON.parse(requestBodies[0].template), {
+      variant: 'neon',
+      effects: ['glow', 'pulse'],
+      displayMode: 'immersive',
+      characters: [
+        {
+          id: 'hero',
+          name: 'Hero',
+          role: 'lead',
+          status: 'active',
+          note: '',
+          accentColor: '',
+          customCss: '',
+          variables: []
+        }
+      ]
+    });
+    assert.match(
+      chatAccessorySource,
+      /function syncTemplateCfgToForm\(\) \{[\s\S]*const cfg = \{\};[\s\S]*let hasConfig = false;[\s\S]*hasConfig = true;[\s\S]*statusBarForm\.template = hasConfig \? JSON\.stringify\(cfg\) : '';[\s\S]*\}/
+    );
+    assert.doesNotMatch(chatAccessorySource, /Object\.keys\(cfg\)\.length/);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test('accessory skill sync preserves unchanged nested config references', () => {
   const accessory = createAccessory();
   const initialStatusBarAgent = accessory.accessorySkills.statusBarAgent;
@@ -367,6 +446,10 @@ test('useChatAccessory parses and clones status bar template config with direct 
   );
   assert.match(
     chatAccessorySource,
+    /function syncTemplateCfgToForm\(\) \{[\s\S]*const cfg = \{\};[\s\S]*let hasConfig = false;[\s\S]*cfg\.variant = statusBarTemplateCfg\.variant;[\s\S]*hasConfig = true;[\s\S]*statusBarForm\.template = hasConfig \? JSON\.stringify\(cfg\) : '';[\s\S]*\}/
+  );
+  assert.match(
+    chatAccessorySource,
     /function parseStatusPlaceholderToken\(token = ''\) \{[\s\S]*const separatorIndex = text\.indexOf\('\.'\);[\s\S]*const nextSeparatorIndex = text\.indexOf\('\.', separatorIndex \+ 1\);[\s\S]*rawName: text\.slice\(0, separatorIndex\)\.trim\(\),[\s\S]*rawProperty: text\.slice\([\s\S]*\)\.trim\(\)[\s\S]*\}/
   );
   assert.doesNotMatch(chatAccessorySource, /raw\.variables\s*\.\s*filter/);
@@ -377,6 +460,7 @@ test('useChatAccessory parses and clones status bar template config with direct 
   assert.doesNotMatch(chatAccessorySource, /data\.variables\.map/);
   assert.doesNotMatch(chatAccessorySource, /return variables\s*\.\s*map/);
   assert.doesNotMatch(chatAccessorySource, /token\.split\('\.'\)\.map/);
+  assert.doesNotMatch(chatAccessorySource, /Object\.keys\(cfg\)\.length/);
 });
 
 test('status bar custom template issues dedupe and cap with direct loops', () => {
