@@ -311,8 +311,8 @@ function onQuickReply(text) {
 }
 
 function onCustomTemplateClick(event) {
-  const target = event.target?.closest?.('[data-sb-action]');
-  if (!target || !event.currentTarget?.contains(target)) {
+  const target = event?.target?.closest?.('[data-sb-action]');
+  if (!target || !event?.currentTarget?.contains?.(target)) {
     return;
   }
   const action = String(target.getAttribute('data-sb-action') || '').trim().toLowerCase();

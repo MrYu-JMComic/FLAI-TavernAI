@@ -113,3 +113,12 @@ test('StatusBar scans custom template DOM collections without cloning node lists
   assert.doesNotMatch(statusBarScript, /\[\.\.\.node\.attributes\]/);
   assert.doesNotMatch(statusBarScript, /parentValues\.find\(/);
 });
+
+test('StatusBar custom template click handler tolerates missing event targets', () => {
+  assert.match(
+    statusBarScript,
+    /function onCustomTemplateClick\(event\) \{\s*const target = event\?\.target\?\.closest\?\.\('\[data-sb-action\]'\);\s*if \(!target \|\| !event\?\.currentTarget\?\.contains\?\.\(target\)\) \{\s*return;\s*\}/
+  );
+  assert.doesNotMatch(statusBarScript, /event\.target\?\.closest/);
+  assert.doesNotMatch(statusBarScript, /event\.currentTarget\?\.contains\(target\)/);
+});
