@@ -111,3 +111,28 @@ test('character assistant normalizes generation options with direct defaults loo
     globalThis.fetch = originalFetch;
   }
 });
+
+test('character assistant normalizes generated extension arrays with direct list helpers', () => {
+  const source = fs.readFileSync(new URL('../services/characterAssistant.js', import.meta.url), 'utf8');
+
+  assert.match(
+    source,
+    /function normalizeTags\(tags = \[\]\) \{[\s\S]*const sourceTags = Array\.isArray\(tags\) \? tags : \[\];[\s\S]*for \(const tag of sourceTags\) \{[\s\S]*normalized\.push\(value\);[\s\S]*return normalized;[\s\S]*\}/
+  );
+  assert.match(
+    source,
+    /function normalizeRegexRuleList\(rules = \[\]\) \{[\s\S]*const sourceRules = Array\.isArray\(rules\) \? rules : \[\];[\s\S]*for \(let index = 0; index < sourceRules\.length; index \+= 1\) \{[\s\S]*normalizeRegexRule\(sourceRules\[index\], index\);[\s\S]*normalized\.push\(rule\);[\s\S]*return normalized;[\s\S]*\}/
+  );
+  assert.match(
+    source,
+    /function normalizeRenderPluginList\(plugins = \[\], limit = Infinity\) \{[\s\S]*const sourcePlugins = Array\.isArray\(plugins\) \? plugins : \[\];[\s\S]*normalizeRenderPlugin\(sourcePlugins\[index\], index\);[\s\S]*normalized\.push\(plugin\);[\s\S]*if \(normalized\.length >= limit\) \{[\s\S]*return normalized;[\s\S]*\}/
+  );
+  assert.match(
+    source,
+    /function normalizeModSuggestionList\(mods = \[\], limit = Infinity\) \{[\s\S]*const sourceMods = Array\.isArray\(mods\) \? mods : \[\];[\s\S]*normalizeModSuggestion\(sourceMods\[index\], index\);[\s\S]*normalized\.push\(mod\);[\s\S]*if \(normalized\.length >= limit\) \{[\s\S]*return normalized;[\s\S]*\}/
+  );
+  assert.doesNotMatch(source, /tags\.map\(\(tag\) => String\(tag \|\| ''\)\.trim\(\)\)\.filter\(Boolean\)\.slice\(0, 8\)/);
+  assert.doesNotMatch(source, /regexRules\.map\(\(rule, index\) => normalizeRegexRule\(rule, index\)\)\.filter/);
+  assert.doesNotMatch(source, /renderPlugins[\s\S]{0,120}\.map\(\(plugin, index\) => normalizeRenderPlugin\(plugin, index\)\)[\s\S]{0,120}\.filter/);
+  assert.doesNotMatch(source, /modSuggestions[\s\S]{0,120}\.map\(\(mod, index\) => normalizeModSuggestion\(mod, index\)\)[\s\S]{0,120}\.filter/);
+});

@@ -377,9 +377,7 @@ function executeCharacterTool(name, args, draft) {
     return { ok: true, rule };
   }
   if (name === 'replace_regex_rules') {
-    draft.regexRules = Array.isArray(toolArgs.rules)
-      ? toolArgs.rules.map((rule, index) => normalizeRegexRule(rule, index)).filter((rule) => rule.pattern)
-      : [];
+    draft.regexRules = normalizeRegexRuleList(toolArgs.rules);
     return { ok: true, count: draft.regexRules.length };
   }
   if (name === 'set_character_extensions') {
@@ -407,7 +405,7 @@ function mergeProfile(draft, args = {}) {
     applied.tags = draft.tags;
   }
   if (Array.isArray(args.regexRules)) {
-    draft.regexRules = args.regexRules.map((rule, index) => normalizeRegexRule(rule, index)).filter((rule) => rule.pattern);
+    draft.regexRules = normalizeRegexRuleList(args.regexRules);
     applied.regexRules = draft.regexRules;
   }
   Object.assign(applied, mergeExtensions(draft, args));
@@ -418,10 +416,7 @@ function mergeExtensions(draft, args = {}) {
   args = objectOrEmpty(args);
   const applied = {};
   if (Array.isArray(args.renderPlugins)) {
-    draft.renderPlugins = args.renderPlugins
-      .map((plugin, index) => normalizeRenderPlugin(plugin, index))
-      .filter((plugin) => plugin.pattern)
-      .slice(0, 12);
+    draft.renderPlugins = normalizeRenderPluginList(args.renderPlugins, 12);
     applied.renderPlugins = draft.renderPlugins;
   }
   const accessorySkills = args.accessorySkills || args.accessory_skills;
@@ -451,10 +446,7 @@ function mergeExtensions(draft, args = {}) {
     applied.worldBookSuggestion = draft.worldBookSuggestion;
   }
   if (Array.isArray(args.modSuggestions)) {
-    draft.modSuggestions = args.modSuggestions
-      .map((mod, index) => normalizeModSuggestion(mod, index))
-      .filter((mod) => mod.name && mod.content)
-      .slice(0, 8);
+    draft.modSuggestions = normalizeModSuggestionList(args.modSuggestions, 8);
     applied.modSuggestions = draft.modSuggestions;
   }
   return applied;
@@ -472,17 +464,11 @@ function normalizeDraft(value = {}) {
     openingMessage: limitText(value.openingMessage, 'openingMessage'),
     visibility: value.visibility === 'public' ? 'public' : 'private',
     tags: normalizeTags(value.tags),
-    regexRules: Array.isArray(value.regexRules)
-      ? value.regexRules.map((rule, index) => normalizeRegexRule(rule, index)).filter((rule) => rule.pattern)
-      : [],
-    renderPlugins: Array.isArray(value.renderPlugins)
-      ? value.renderPlugins.map((plugin, index) => normalizeRenderPlugin(plugin, index)).filter((plugin) => plugin.pattern)
-      : [],
+    regexRules: normalizeRegexRuleList(value.regexRules),
+    renderPlugins: normalizeRenderPluginList(value.renderPlugins),
     authorAdvancedSettings: normalizeAdvancedSettings(value.authorAdvancedSettings || value.advancedSettings || {}),
     worldBookSuggestion: limitText(value.worldBookSuggestion, 'worldBookSuggestion'),
-    modSuggestions: Array.isArray(value.modSuggestions)
-      ? value.modSuggestions.map((mod, index) => normalizeModSuggestion(mod, index)).filter((mod) => mod.name && mod.content)
-      : []
+    modSuggestions: normalizeModSuggestionList(value.modSuggestions)
   };
 }
 
@@ -572,8 +558,19 @@ function normalizeModType(type) {
 }
 
 function normalizeTags(tags = []) {
-  tags = Array.isArray(tags) ? tags : [];
-  return tags.map((tag) => String(tag || '').trim()).filter(Boolean).slice(0, 8);
+  const normalized = [];
+  const sourceTags = Array.isArray(tags) ? tags : [];
+  for (const tag of sourceTags) {
+    const value = String(tag || '').trim();
+    if (!value) {
+      continue;
+    }
+    normalized.push(value);
+    if (normalized.length >= 8) {
+      break;
+    }
+  }
+  return normalized;
 }
 
 function normalizeRegexRule(rule = {}, index = 0) {
@@ -604,6 +601,19 @@ function normalizeRegexRule(rule = {}, index = 0) {
   };
 }
 
+function normalizeRegexRuleList(rules = []) {
+  const normalized = [];
+  const sourceRules = Array.isArray(rules) ? rules : [];
+  for (let index = 0; index < sourceRules.length; index += 1) {
+    const rule = normalizeRegexRule(sourceRules[index], index);
+    if (!rule.pattern) {
+      continue;
+    }
+    normalized.push(rule);
+  }
+  return normalized;
+}
+
 function normalizeRenderPlugin(plugin = {}, index = 0) {
   plugin = objectOrEmpty(plugin);
   const flags = normalizeRegexFlags(plugin.flags || 'u').replace(/g/g, '') || 'u';
@@ -630,6 +640,38 @@ function normalizeRenderPlugin(plugin = {}, index = 0) {
     titleTemplate: String(plugin.titleTemplate || plugin.title_template || '$1').slice(0, 120),
     enabled: plugin.enabled !== false
   };
+}
+
+function normalizeRenderPluginList(plugins = [], limit = Infinity) {
+  const normalized = [];
+  const sourcePlugins = Array.isArray(plugins) ? plugins : [];
+  for (let index = 0; index < sourcePlugins.length; index += 1) {
+    const plugin = normalizeRenderPlugin(sourcePlugins[index], index);
+    if (!plugin.pattern) {
+      continue;
+    }
+    normalized.push(plugin);
+    if (normalized.length >= limit) {
+      break;
+    }
+  }
+  return normalized;
+}
+
+function normalizeModSuggestionList(mods = [], limit = Infinity) {
+  const normalized = [];
+  const sourceMods = Array.isArray(mods) ? mods : [];
+  for (let index = 0; index < sourceMods.length; index += 1) {
+    const mod = normalizeModSuggestion(sourceMods[index], index);
+    if (!mod.name || !mod.content) {
+      continue;
+    }
+    normalized.push(mod);
+    if (normalized.length >= limit) {
+      break;
+    }
+  }
+  return normalized;
 }
 
 function skillConfigSchema() {

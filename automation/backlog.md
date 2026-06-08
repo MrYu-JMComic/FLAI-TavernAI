@@ -40,6 +40,7 @@ The autonomous loop should choose one small item per run. Add new findings here 
 
 ## Done
 
+- 2026-06-08: Shared CharacterAssistant generated array normalization through direct list helpers.
 - 2026-06-08: Scanned status blueprint inferred variable keys directly in frontend and backend helpers.
 - 2026-06-08: Counted character regex rules and render plugins toward caps only after they normalize into usable rows.
 - 2026-06-08: Routed App notification queue pruning and dismissal through direct loop helpers.
