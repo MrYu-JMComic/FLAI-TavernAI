@@ -3,7 +3,10 @@ import test from 'node:test';
 import { readRepoText } from './frontendSfcTestUtils.js';
 
 const { useProviderModels } = await import('../../../frontend/src/composables/useProviderModels.js');
-const { areProviderModelListsEqual } = await import('../../../frontend/src/services/modelCatalog.js');
+const {
+  areProviderModelListsEqual,
+  readCachedProviderModels
+} = await import('../../../frontend/src/services/modelCatalog.js');
 const modelCatalogSource = readRepoText('frontend/src/services/modelCatalog.js');
 
 function refValue(value) {
@@ -48,7 +51,7 @@ function silenceVueLifecycleWarnings(callback) {
   }
 }
 
-function providerCacheKey(settings) {
+function providerCacheKey(settings, extraBody = '{}') {
   const normalizedBaseUrl = String(settings.baseUrl || '').trim().replace(/\/+$/, '').toLowerCase();
   const key = [
     String(settings.providerType || '').trim().toLowerCase(),
@@ -56,7 +59,7 @@ function providerCacheKey(settings) {
     normalizedBaseUrl,
     String(Boolean(settings.apiKey || settings.apiKeySet)),
     String(Boolean(settings.supportsReasoning)),
-    '{}'
+    extraBody
   ].join('|');
   return `flai-provider-models:v1:${encodeURIComponent(key)}`;
 }
@@ -131,4 +134,52 @@ test('provider model list equality scans model rows directly', () => {
     /export function areProviderModelListsEqual\(currentModels, nextModels\) \{[\s\S]*if \(currentModels === nextModels\) \{[\s\S]*return true;[\s\S]*for \(let index = 0; index < currentModels\.length; index \+= 1\) \{[\s\S]*const model = currentModels\[index\];[\s\S]*const nextModel = nextModels\[index\];[\s\S]*model\?\.id !== nextModel\?\.id[\s\S]*return false;[\s\S]*return true;[\s\S]*\}/
   );
   assert.doesNotMatch(modelCatalogSource, /currentModels\.every\(/);
+});
+
+test('provider model cache keys normalize nested extra body with direct recursive loops', () => {
+  withFakeLocalStorage((store) => {
+    const sortedExtraBody = '{"a":{"alpha":[{"x":2,"y":1}],"beta":2},"z":1}';
+    const provider = {
+      providerType: 'openai',
+      gatewayName: 'Gateway',
+      baseUrl: 'https://api.example.test/v1/',
+      apiKeySet: true,
+      supportsReasoning: true,
+      extraBody: JSON.stringify({
+        z: 1,
+        a: {
+          beta: 2,
+          alpha: [{ y: 1, x: 2 }]
+        }
+      })
+    };
+    store.set(providerCacheKey(provider, sortedExtraBody), JSON.stringify({
+      savedAt: Date.now(),
+      models: [{ id: 'nested-model', label: 'Nested Model', ownedBy: 'team' }]
+    }));
+
+    const cached = readCachedProviderModels({
+      ...provider,
+      extraBody: {
+        a: {
+          alpha: [{ x: 2, y: 1 }],
+          beta: 2
+        },
+        z: 1
+      }
+    });
+
+    assert.deepEqual(cached, [{ id: 'nested-model', label: 'Nested Model', ownedBy: 'team' }]);
+  });
+
+  assert.match(
+    modelCatalogSource,
+    /function sortObject\(value\) \{[\s\S]*if \(Array\.isArray\(value\)\) \{[\s\S]*const sortedItems = \[\];[\s\S]*for \(let index = 0; index < value\.length; index \+= 1\) \{[\s\S]*sortedItems\.push\(sortObject\(value\[index\]\)\);[\s\S]*return sortedItems;[\s\S]*const keys = collectSortedObjectKeys\(value\);[\s\S]*for \(let index = 0; index < keys\.length; index \+= 1\) \{[\s\S]*result\[key\] = sortObject\(value\[key\]\);[\s\S]*return result;[\s\S]*\}/
+  );
+  assert.match(
+    modelCatalogSource,
+    /function collectSortedObjectKeys\(value\) \{[\s\S]*const keys = \[\];[\s\S]*for \(const key in value\) \{[\s\S]*Object\.prototype\.hasOwnProperty\.call\(value, key\)[\s\S]*keys\.push\(key\);[\s\S]*return keys\.sort\(\);[\s\S]*\}/
+  );
+  assert.doesNotMatch(modelCatalogSource, /value\.map\(sortObject\)/);
+  assert.doesNotMatch(modelCatalogSource, /Object\.keys\(value\)[\s\S]*\.reduce\(/);
 });

@@ -174,15 +174,30 @@ function stableStringifyExtraBody(value) {
 
 function sortObject(value) {
   if (Array.isArray(value)) {
-    return value.map(sortObject);
+    const sortedItems = [];
+    for (let index = 0; index < value.length; index += 1) {
+      sortedItems.push(sortObject(value[index]));
+    }
+    return sortedItems;
   }
   if (!value || typeof value !== 'object') {
     return value;
   }
-  return Object.keys(value)
-    .sort()
-    .reduce((result, key) => {
-      result[key] = sortObject(value[key]);
-      return result;
-    }, {});
+  const keys = collectSortedObjectKeys(value);
+  const result = {};
+  for (let index = 0; index < keys.length; index += 1) {
+    const key = keys[index];
+    result[key] = sortObject(value[key]);
+  }
+  return result;
+}
+
+function collectSortedObjectKeys(value) {
+  const keys = [];
+  for (const key in value) {
+    if (Object.prototype.hasOwnProperty.call(value, key)) {
+      keys.push(key);
+    }
+  }
+  return keys.sort();
 }
