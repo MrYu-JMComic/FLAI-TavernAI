@@ -278,7 +278,7 @@ test('ChatView guards conversation load side effects after route-changing awaits
 test('ChatView guards branch navigation after sidebar refresh awaits', () => {
   assert.match(
     chatViewScript,
-    /async function createBranchFromMessage\(message\) \{\s*const branchConversationId = props\.route\.params\.id;\s*await handleBranchMessage\(message, branchConversationId, async \(branchId, isCurrentBranchAction\) => \{\s*await loadSidebarData\(\);\s*if \(!isCurrentBranchAction\(\)\) \{\s*return;\s*\}\s*emit\('navigate', 'chat', \{ id: branchId \}\);\s*\}\);\s*}/
+    /async function createBranchFromMessage\(message\) \{\s*const branchConversationId = props\.route\.params\.id;\s*await handleBranchMessage\(message, branchConversationId, async \(branchId, isCurrentBranchAction\) => \{\s*if \(!isCurrentBranchAction\(\)\) \{\s*return;\s*\}\s*await loadSidebarData\(\);\s*if \(!isCurrentBranchAction\(\)\) \{\s*return;\s*\}\s*emit\('navigate', 'chat', \{ id: branchId \}\);\s*\}\);\s*}/
   );
 });
 

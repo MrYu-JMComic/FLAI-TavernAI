@@ -40,6 +40,7 @@ The autonomous loop should choose one small item per run. Add new findings here 
 
 ## Done
 
+- 2026-06-08: Skipped stale ChatView branch sidebar refreshes before navigating branched conversations.
 - 2026-06-08: Guarded ChatView NPC accessory refresh completions and fingerprint sync against unmounted chat views.
 - 2026-06-08: Guarded ChatView quick-model refresh completions against unmounted chat views.
 - 2026-06-08: Hardened frontend SFC test `countMatches()` so source tests can count non-global regular expressions without throwing.

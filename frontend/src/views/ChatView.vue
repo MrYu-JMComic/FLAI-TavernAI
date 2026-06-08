@@ -622,6 +622,9 @@ function appendSnapshotField(snapshot, value) {
 async function createBranchFromMessage(message) {
   const branchConversationId = props.route.params.id;
   await handleBranchMessage(message, branchConversationId, async (branchId, isCurrentBranchAction) => {
+    if (!isCurrentBranchAction()) {
+      return;
+    }
     await loadSidebarData();
     if (!isCurrentBranchAction()) {
       return;
