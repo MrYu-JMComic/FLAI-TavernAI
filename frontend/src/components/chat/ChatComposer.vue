@@ -32,6 +32,28 @@ const emit = defineEmits([
 const wrapRef = ref(null);
 const textareaRef = ref(null);
 
+function readEventTargetValue(event) {
+  const target = event?.target;
+  return target && target.value !== undefined ? target.value : undefined;
+}
+
+function onComposerInput(event) {
+  const value = readEventTargetValue(event);
+  if (value === undefined) {
+    return;
+  }
+  emit('update:input', value);
+  emit('composer-input', event);
+}
+
+function onPresetChange(event) {
+  const value = readEventTargetValue(event);
+  if (value === undefined) {
+    return;
+  }
+  emit('update:selectedPresetId', value);
+}
+
 defineExpose({ wrapRef, textareaRef });
 </script>
 
@@ -54,7 +76,7 @@ defineExpose({ wrapRef, textareaRef });
         aria-label="聊天消息输入"
         placeholder="给 AI 发送消息"
         :rows="chatViewportIsPhone ? 1 : 2"
-        @input="emit('update:input', $event.target.value); emit('composer-input', $event)"
+        @input="onComposerInput"
         @keydown.enter.exact="emit('submit', { isEnter: true, event: $event })"
       />
       <div class="composer-actions" :class="{ 'has-preset': presetList.length }">
@@ -65,7 +87,7 @@ defineExpose({ wrapRef, textareaRef });
           aria-label="选择对话预设"
           title="选择对话预设"
           :disabled="sending"
-          @change="emit('update:selectedPresetId', $event.target.value)"
+          @change="onPresetChange"
         >
           <option value="">无预设</option>
           <option v-for="p in presetList" :key="p.id" :value="p.id">

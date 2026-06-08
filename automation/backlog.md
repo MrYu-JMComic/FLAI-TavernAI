@@ -40,6 +40,7 @@ The autonomous loop should choose one small item per run. Add new findings here 
 
 ## Done
 
+- 2026-06-08: Guarded ChatComposer and ChatSidebar input events against missing targets.
 - 2026-06-08: Preserved SettingsView regex group filter options across filtered rule refreshes.
 - 2026-06-08: Guarded VariableEditor input handling against malformed input events.
 - 2026-06-08: Locked HomeView character import file inputs while import confirmation is pending and cleared stale file selections before early returns.

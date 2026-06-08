@@ -2,9 +2,8 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { readFrontendStyles, readRepoText, readVueBlocks } from './frontendSfcTestUtils.js';
 
-const { template: chatSidebarTemplate } = readVueBlocks(
-  'frontend/src/components/chat/ChatSidebar.vue',
-  ['template']
+const { script: chatSidebarScript, template: chatSidebarTemplate } = readVueBlocks(
+  'frontend/src/components/chat/ChatSidebar.vue'
 );
 const { script: chatViewScript, template: chatViewTemplate } = readVueBlocks('frontend/src/views/ChatView.vue');
 const chatConversationSource = readRepoText('frontend/src/composables/chat/useChatConversation.js');
@@ -21,6 +20,15 @@ test('ChatSidebar locks conversation open rows while conversation actions are bu
     /function openConversation\(conversationId\) {\s*if \(conversationDisposed \|\| conversationActionBusy\.value\) {\s*return;\s*}/
   );
   assert.match(stylesSource, /\.history-item:disabled\s*{\s*cursor: not-allowed;\s*opacity: 0\.55;\s*}/);
+});
+
+test('ChatSidebar search input tolerates missing event targets', () => {
+  assert.match(
+    chatSidebarScript,
+    /function onHistorySearchInput\(event\) {\s*const target = event\?\.target;\s*if \(!target \|\| target\.value === undefined\) {\s*return;\s*}\s*emit\('update:historySearch', target\.value\);\s*}/
+  );
+  assert.match(chatSidebarTemplate, /@input="onHistorySearchInput"/);
+  assert.doesNotMatch(chatSidebarTemplate, /\$event\.target\.value/);
 });
 
 test('ChatSidebar open conversation handler guards blank or stale ids', () => {

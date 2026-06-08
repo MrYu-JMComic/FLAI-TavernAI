@@ -2,9 +2,8 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { readFrontendStyles, readRepoText, readVueBlocks } from './frontendSfcTestUtils.js';
 
-const { template: chatComposerTemplate } = readVueBlocks(
-  'frontend/src/components/chat/ChatComposer.vue',
-  ['template']
+const { script: chatComposerScript, template: chatComposerTemplate } = readVueBlocks(
+  'frontend/src/components/chat/ChatComposer.vue'
 );
 const stylesSource = readFrontendStyles();
 const chatSubmitSource = readRepoText('frontend/src/composables/chat/useChatSubmit.js');
@@ -21,13 +20,31 @@ function readStyleRange(startMarker, endMarker, fromIndex = 0) {
 
 test('ChatComposer locks configuration controls while sending', () => {
   assert.match(chatComposerTemplate, /<form class="deep-composer" :aria-busy="sending" @submit\.prevent="emit\('submit', \{ isEnter: false \}\)">/);
-  assert.match(chatComposerTemplate, /class="preset-select"[\s\S]*:disabled="sending"[\s\S]*@change="emit\('update:selectedPresetId', \$event\.target\.value\)"/);
+  assert.match(chatComposerTemplate, /class="preset-select"[\s\S]*:disabled="sending"[\s\S]*@change="onPresetChange"/);
   assert.match(chatComposerTemplate, /class="mode-pill model-switch-pill"[\s\S]*:disabled="sending"[\s\S]*:aria-busy="sending"[\s\S]*@click="emit\('open-model-switcher'\)"/);
   assert.match(chatComposerTemplate, /:aria-pressed="String\(useStream\)"[\s\S]*:disabled="sending"[\s\S]*:aria-busy="sending"[\s\S]*@click="emit\('toggle-stream'\)"/);
   assert.match(chatComposerTemplate, /:disabled="sending \|\| !canToggleThinking"[\s\S]*:aria-busy="sending"[\s\S]*@click="emit\('toggle-thinking'\)"/);
 
   assert.match(chatSubmitSource, /function toggleUseStream\(\)\s*{\s*if \(sending\.value\) {\s*return;\s*}/);
   assert.match(chatSubmitSource, /function toggleThinking\(\)\s*{\s*if \(sending\.value \|\| !canToggleThinking\.value\) {\s*return;\s*}/);
+});
+
+test('ChatComposer input handlers tolerate missing event targets', () => {
+  assert.match(
+    chatComposerScript,
+    /function readEventTargetValue\(event\) {\s*const target = event\?\.target;\s*return target && target\.value !== undefined \? target\.value : undefined;\s*}/
+  );
+  assert.match(
+    chatComposerScript,
+    /function onComposerInput\(event\) {\s*const value = readEventTargetValue\(event\);\s*if \(value === undefined\) {\s*return;\s*}\s*emit\('update:input', value\);\s*emit\('composer-input', event\);\s*}/
+  );
+  assert.match(
+    chatComposerScript,
+    /function onPresetChange\(event\) {\s*const value = readEventTargetValue\(event\);\s*if \(value === undefined\) {\s*return;\s*}\s*emit\('update:selectedPresetId', value\);\s*}/
+  );
+  assert.match(chatComposerTemplate, /@input="onComposerInput"/);
+  assert.match(chatComposerTemplate, /@change="onPresetChange"/);
+  assert.doesNotMatch(chatComposerTemplate, /\$event\.target\.value/);
 });
 
 test('ChatComposer follows readable width when desktop sidebar is collapsed', () => {

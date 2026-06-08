@@ -64,6 +64,14 @@ function releaseSidebarFocus() {
     active.blur?.();
   }
 }
+
+function onHistorySearchInput(event) {
+  const target = event?.target;
+  if (!target || target.value === undefined) {
+    return;
+  }
+  emit('update:historySearch', target.value);
+}
 </script>
 
 <template>
@@ -105,7 +113,7 @@ function releaseSidebarFocus() {
         :value="historySearch"
         placeholder="搜索当前角色的对话"
         aria-label="搜索当前角色的对话"
-        @input="emit('update:historySearch', $event.target.value)"
+        @input="onHistorySearchInput"
       />
     </label>
 
