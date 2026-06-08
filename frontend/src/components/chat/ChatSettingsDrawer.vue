@@ -1,6 +1,7 @@
 <script setup>
 import { computed } from 'vue';
 import { ChevronDown, Save, Upload, X } from '@lucide/vue';
+import { parseStatusTemplateToken } from '../../../../shared/statusTemplateTokens.js';
 import { buildModelSelectOptions } from '../../services/modelCatalog';
 
 const props = defineProps({
@@ -125,7 +126,13 @@ function setStatusBarVariableValue(name = '', value = '') {
 function findStatusBarVariable(name = '') {
   const key = normalizeStatusVariableKey(name);
   const variables = Array.isArray(props.statusBarForm?.variables) ? props.statusBarForm.variables : [];
-  return variables.find((variable) => normalizeStatusVariableKey(variable?.name) === key) || null;
+  for (let index = 0; index < variables.length; index += 1) {
+    const variable = variables[index];
+    if (normalizeStatusVariableKey(variable?.name) === key) {
+      return variable;
+    }
+  }
+  return null;
 }
 
 function extractStatusTemplateCompositeRows(template = '') {
@@ -171,8 +178,9 @@ function extractCompositePlaceholderParts(value = '', label = '') {
   let match;
   while ((match = placeholderPattern.exec(normalizeHtmlText(value)))) {
     const token = String(match[1] || match[2] || '').trim();
-    const [rawName, rawProperty = 'value'] = token.split('.').map((part) => part.trim());
-    const name = normalizeTemplateVariableName(rawName);
+    const parsed = parseStatusTemplateToken(token);
+    const rawProperty = parsed.rawProperty.trim() || 'value';
+    const name = normalizeTemplateVariableName(parsed.rawName.trim());
     const key = normalizeStatusVariableKey(name);
     if (!name || !key || key === labelKey || seen.has(key) || isMeterTemplateProperty(rawProperty)) {
       continue;

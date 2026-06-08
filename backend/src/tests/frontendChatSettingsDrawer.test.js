@@ -69,13 +69,24 @@ test('ChatSettingsDrawer freezes status bar editor fields while saving status ba
 });
 
 test('ChatSettingsDrawer builds status bar editor rows without intermediate mapping arrays', () => {
+  assert.match(chatSettingsDrawerScript, /from '..\/..\/..\/..\/shared\/statusTemplateTokens\.js'/);
   assert.match(
     chatSettingsDrawerScript,
     /const statusBarEditorRows = computed\(\(\) => \{[\s\S]*const rows = \[\];\s*for \(let index = 0; index < compositeRows\.length; index \+= 1\) \{[\s\S]*let compositePartKey = '';[\s\S]*for \(let partIndex = 0; partIndex < row\.parts\.length; partIndex \+= 1\) \{[\s\S]*compositePartKey \+= `\$\{partIndex > 0 \? '\|' : ''\}\$\{part\?\.name \?\? ''\}`;[\s\S]*key: `composite:\$\{index\}:\$\{row\.label\}:\$\{compositePartKey\}`,[\s\S]*for \(let index = 0; index < variables\.length; index \+= 1\) \{[\s\S]*const variable = variables\[index\];[\s\S]*continue;[\s\S]*key: `variable:\$\{index\}:\$\{key\}`,/
   );
+  assert.match(
+    chatSettingsDrawerScript,
+    /function findStatusBarVariable\(name = ''\) \{[\s\S]*for \(let index = 0; index < variables\.length; index \+= 1\) \{[\s\S]*return variable;[\s\S]*return null;[\s\S]*\}/
+  );
+  assert.match(
+    chatSettingsDrawerScript,
+    /const parsed = parseStatusTemplateToken\(token\);\s*const rawProperty = parsed\.rawProperty\.trim\(\) \|\| 'value';\s*const name = normalizeTemplateVariableName\(parsed\.rawName\.trim\(\)\);/
+  );
   assert.doesNotMatch(chatSettingsDrawerScript, /compositeRows\.map\(/);
   assert.doesNotMatch(chatSettingsDrawerScript, /row\.parts\.map\(/);
   assert.doesNotMatch(chatSettingsDrawerScript, /variables\.forEach\(/);
+  assert.doesNotMatch(chatSettingsDrawerScript, /variables\.find\(/);
+  assert.doesNotMatch(chatSettingsDrawerScript, /token\.split\('\.'\)\.map/);
 });
 
 test('ChatSettingsDrawer freezes accessory skill fields while saving accessory settings', () => {

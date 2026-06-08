@@ -247,7 +247,7 @@ export async function completeCharacterDraft(settings, request = {}) {
           '正则 pattern 必须是 JavaScript 可用正则，避免过宽、灾难性回溯或破坏正常中文内容。',
           'You may call set_character_extensions to suggest world book notes, markdown fold render plugins, opening accessory skill defaults, status bar prompt, initial statusBarBlueprint variables/template, and built-in CSS/JS.',
           ...statusBarBlueprintInstructions,
-          `Only modify these enabled sections: ${Object.entries(enabledSections).filter(([, value]) => value).map(([key]) => key).join(', ') || 'none'}.`,
+          `Only modify these enabled sections: ${formatEnabledSectionList(enabledSections)}.`,
           'If a section is not enabled, do not call tools for it and do not include it in arguments.',
           'Do not enable economyAgent, talentPrompt, or cgScene unless the user explicitly asks for economy, talents, CG, portraits, or scene art.',
           'Prefer statusBarAgent:auto only when the character has clear status variables; keep npcAgent off unless side-character memory is important.'
@@ -317,7 +317,7 @@ export async function streamCharacterDraft(settings, request = {}) {
           '正则 pattern 必须是 JavaScript 可用正则，避免过宽、灾难性回溯或破坏正常中文内容。',
           'You may call set_character_extensions to suggest world book notes, markdown fold render plugins, opening accessory skill defaults, status bar prompt, initial statusBarBlueprint variables/template, and built-in CSS/JS.',
           ...statusBarBlueprintInstructions,
-          `Only modify these enabled sections: ${Object.entries(enabledSections).filter(([, value]) => value).map(([key]) => key).join(', ') || 'none'}.`,
+          `Only modify these enabled sections: ${formatEnabledSectionList(enabledSections)}.`,
           'If a section is not enabled, do not call tools for it and do not include it in arguments.',
           'Do not enable economyAgent, talentPrompt, or cgScene unless the user explicitly asks for economy, talents, CG, portraits, or scene art.',
           'Prefer statusBarAgent:auto only when the character has clear status variables; keep npcAgent off unless side-character memory is important.'
@@ -470,6 +470,17 @@ function normalizeDraft(value = {}) {
     worldBookSuggestion: limitText(value.worldBookSuggestion, 'worldBookSuggestion'),
     modSuggestions: normalizeModSuggestionList(value.modSuggestions)
   };
+}
+
+function formatEnabledSectionList(enabledSections = {}) {
+  let sections = '';
+  for (const key in enabledSections) {
+    if (!enabledSections[key]) {
+      continue;
+    }
+    sections = sections ? `${sections}, ${key}` : key;
+  }
+  return sections || 'none';
 }
 
 function normalizeGenerationOptions(options = {}) {

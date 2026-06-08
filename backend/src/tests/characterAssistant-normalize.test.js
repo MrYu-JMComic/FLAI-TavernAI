@@ -112,6 +112,20 @@ test('character assistant normalizes generation options with direct defaults loo
   }
 });
 
+test('character assistant formats enabled sections without Object.entries pipelines', () => {
+  const source = fs.readFileSync(new URL('../services/characterAssistant.js', import.meta.url), 'utf8');
+
+  assert.match(
+    source,
+    /function formatEnabledSectionList\(enabledSections = \{\}\) \{\s*let sections = '';\s*for \(const key in enabledSections\) \{[\s\S]*sections = sections \? `\$\{sections\}, \$\{key\}` : key;[\s\S]*return sections \|\| 'none';\s*\}/
+  );
+  assert.equal(
+    source.match(/Only modify these enabled sections: \$\{formatEnabledSectionList\(enabledSections\)\}\./g)?.length,
+    2
+  );
+  assert.doesNotMatch(source, /Object\.entries\(enabledSections\)\.filter\(\(\[, value\]\) => value\)\.map\(\(\[key\]\) => key\)\.join\(', '\)/);
+});
+
 test('character assistant normalizes generated extension arrays with direct list helpers', () => {
   const source = fs.readFileSync(new URL('../services/characterAssistant.js', import.meta.url), 'utf8');
 
