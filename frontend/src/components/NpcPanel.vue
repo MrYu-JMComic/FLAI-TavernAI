@@ -133,6 +133,8 @@ const npcStatusOptions = [
 watch(() => props.open, (isOpen) => {
   if (isOpen) {
     loadNpcs();
+  } else {
+    cancelNpcPanelLoad();
   }
 }, { immediate: true });
 
@@ -179,6 +181,15 @@ function resetNpcState() {
   resetNpcForms();
   loading.value = false;
   detailLoading.value = false;
+}
+
+function cancelNpcPanelLoad() {
+  npcLoadToken += 1;
+  npcDetailToken += 1;
+  loading.value = false;
+  detailLoading.value = false;
+  loadError.value = '';
+  detailError.value = '';
 }
 
 function setSelectedNpc(name) {

@@ -246,3 +246,22 @@ test('NpcPanel preserves unchanged NPC and detail list references during refresh
   assert.doesNotMatch(npcPanelScript, /\n\s+behaviors\.value = beh;/);
   assert.doesNotMatch(npcPanelScript, /detailLoading\.value = true;\s*detailError\.value = '';\s*setMemoriesIfChanged\(\[\]\);/);
 });
+
+test('NpcPanel cancels pending list and detail loads when the panel closes', () => {
+  assert.match(
+    npcPanelScript,
+    /watch\(\(\) => props\.open, \(isOpen\) => \{\s*if \(isOpen\) \{\s*loadNpcs\(\);\s*\} else \{\s*cancelNpcPanelLoad\(\);\s*\}\s*}, \{ immediate: true \}\);/
+  );
+  assert.match(
+    npcPanelScript,
+    /function cancelNpcPanelLoad\(\)\s*{\s*npcLoadToken \+= 1;\s*npcDetailToken \+= 1;\s*loading\.value = false;\s*detailLoading\.value = false;\s*loadError\.value = '';\s*detailError\.value = '';\s*}/
+  );
+  assert.match(
+    npcPanelScript,
+    /const nextNpcs = await fetchConversationNpcs\(conversationId\);[\s\S]*if \(npcPanelDisposed \|\| requestToken !== npcLoadToken \|\| conversationId !== props\.conversationId\) return;[\s\S]*setNpcsIfChanged\(nextNpcs\);/
+  );
+  assert.match(
+    npcPanelScript,
+    /const \[mem, beh\] = await Promise\.all\(\[[\s\S]*fetchNpcMemories\(conversationId, npcName\),[\s\S]*fetchNpcBehaviors\(conversationId, npcName\)[\s\S]*\]\);[\s\S]*if \(npcPanelDisposed \|\| requestToken !== npcDetailToken \|\| conversationId !== props\.conversationId \|\| npcName !== selectedNpc\.value\) return;[\s\S]*setMemoriesIfChanged\(mem\);[\s\S]*setBehaviorsIfChanged\(beh\);/
+  );
+});
