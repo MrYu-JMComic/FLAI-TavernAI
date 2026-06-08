@@ -75,7 +75,7 @@ test('chat submit preset selection ignores updates while sending', () => {
 
 test('chat submit inserts local drafts with a message-list ref update', async () => {
   const originalFetch = globalThis.fetch;
-  const messages = shallowRef([]);
+  const messages = shallowRef(null);
   let fetchStarted = false;
   let resolveFetch = null;
   let fetchResolved = false;
@@ -304,12 +304,17 @@ test('chat submit finishAssistantDraft settles current list items for stale same
 test('chat submit current-message lookup avoids cloned message-list scans', () => {
   assert.match(
     chatSubmitSource,
+    /function appendMessageItems\(\.\.\.items\) \{[\s\S]*const messageList = Array\.isArray\(messages\.value\) \? messages\.value : \[\];[\s\S]*const nextMessages = \[\];[\s\S]*for \(const item of messageList\) \{[\s\S]*nextMessages\.push\(item\);[\s\S]*for \(const item of items\) \{[\s\S]*if \(!item\) \{[\s\S]*continue;[\s\S]*nextMessages\.push\(item\);[\s\S]*messages\.value = nextMessages;[\s\S]*return true;[\s\S]*\}/
+  );
+  assert.match(
+    chatSubmitSource,
     /function findLastStreamingMessage\(\) \{[\s\S]*for \(let index = messageList\.length - 1; index >= 0; index -= 1\) \{[\s\S]*if \(message\?\.streaming\) \{[\s\S]*return message;[\s\S]*return null;\s*\}/
   );
   assert.match(
     chatSubmitSource,
     /function findMessageListItem\(messageId\) \{[\s\S]*const messageList = Array\.isArray\(messages\.value\) \? messages\.value : \[\];[\s\S]*for \(const item of messageList\) \{[\s\S]*if \(normalizeMessageId\(item\?\.id\) === targetId\) \{[\s\S]*return item;[\s\S]*return null;\s*\}/
   );
+  assert.doesNotMatch(chatSubmitSource, /messages\.value = \[\.\.\.messages\.value/);
   assert.doesNotMatch(chatSubmitSource, /\[\.\.\.messages\.value\]\.reverse\(\)\.find/);
   assert.doesNotMatch(chatSubmitSource, /messages\.value\.find/);
 });

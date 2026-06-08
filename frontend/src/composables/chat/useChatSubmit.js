@@ -129,7 +129,7 @@ export function useChatSubmit({
       reasoningStreaming: false,
       contentStreaming: false
     };
-    messages.value = [...messages.value, localUserDraft, assistantDraft];
+    appendMessageItems(localUserDraft, assistantDraft);
     const localUser = localUserDraft;
     const assistant = assistantDraft;
     sending.value = true;
@@ -566,6 +566,27 @@ export function useChatSubmit({
       }
     }
     return null;
+  }
+
+  function appendMessageItems(...items) {
+    const messageList = Array.isArray(messages.value) ? messages.value : [];
+    const nextMessages = [];
+    for (const item of messageList) {
+      nextMessages.push(item);
+    }
+    let appended = false;
+    for (const item of items) {
+      if (!item) {
+        continue;
+      }
+      nextMessages.push(item);
+      appended = true;
+    }
+    if (!appended) {
+      return false;
+    }
+    messages.value = nextMessages;
+    return true;
   }
 
   function cleanup() {

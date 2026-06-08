@@ -40,6 +40,7 @@ The autonomous loop should choose one small item per run. Add new findings here 
 
 ## Done
 
+- 2026-06-08: Routed chat submit local draft appends through a direct helper that tolerates empty message refs.
 - 2026-06-08: Routed CharacterFormView created-tag list appends through a direct no-op-aware helper.
 - 2026-06-08: Removed Chat message delete no-op filter allocations with a direct list removal helper.
 - 2026-06-08: Routed NpcPanel profile, memory, and behavior detail list updates through direct helper loops.
