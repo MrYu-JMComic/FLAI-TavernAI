@@ -192,23 +192,37 @@ export function apiKeyHint(apiKey) {
 }
 
 export function parseCookies(cookieHeader = '') {
-  return String(cookieHeader)
-    .split(';')
-    .map((part) => part.trim())
-    .filter(Boolean)
-    .reduce((cookies, part) => {
-      const index = part.indexOf('=');
-      if (index === -1) {
-        return cookies;
-      }
-      const key = safeDecodeCookiePart(part.slice(0, index));
-      const value = safeDecodeCookiePart(part.slice(index + 1));
-      if (!key || value === null) {
-        return cookies;
-      }
-      cookies[key] = value;
-      return cookies;
-    }, {});
+  const cookies = {};
+  const header = String(cookieHeader);
+  let start = 0;
+
+  for (let index = 0; index <= header.length; index += 1) {
+    if (index < header.length && header[index] !== ';') {
+      continue;
+    }
+
+    const part = header.slice(start, index).trim();
+    start = index + 1;
+
+    if (!part) {
+      continue;
+    }
+
+    const separatorIndex = part.indexOf('=');
+    if (separatorIndex === -1) {
+      continue;
+    }
+
+    const key = safeDecodeCookiePart(part.slice(0, separatorIndex));
+    const value = safeDecodeCookiePart(part.slice(separatorIndex + 1));
+    if (!key || value === null) {
+      continue;
+    }
+
+    cookies[key] = value;
+  }
+
+  return cookies;
 }
 
 function safeDecodeCookiePart(value) {

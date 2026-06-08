@@ -180,6 +180,14 @@ test('parseCookies skips malformed percent-encoded pairs', () => {
   );
 });
 
+test('parseCookies scans cookie pairs without array pipelines', () => {
+  const source = fs.readFileSync(new URL('../security.js', import.meta.url), 'utf8');
+  const match = source.match(/export function parseCookies[\s\S]*?\n}\n\nfunction safeDecodeCookiePart/);
+  assert.ok(match);
+  assert.match(match[0], /for \(let index = 0; index <= header\.length; index \+= 1\)/);
+  assert.doesNotMatch(match[0], /\.split\(|\.map\(|\.filter\(|\.reduce\(/);
+});
+
 test('user root admin flags normalize string false values', () => {
   const database = createAppDatabase(':memory:');
   const userId = 'string-false-root-user';

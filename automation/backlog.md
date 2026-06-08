@@ -41,6 +41,7 @@ The autonomous loop should choose one small item per run. Add new findings here 
 ## Done
 
 - 2026-06-08: Scanned chat scroll message DOM nodes directly instead of cloning query results.
+- 2026-06-08: Parsed backend cookies with a direct scanner instead of split/map/filter/reduce arrays.
 - 2026-06-08: Resolved ChatSettingsDrawer lorebook binding labels through a computed direct scan.
 - 2026-06-08: Shared advanced settings text-field merging through a direct helper.
 - 2026-06-08: Shared ChatSettingsDrawer status template token parsing and direct variable lookup.
