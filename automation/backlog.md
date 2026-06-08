@@ -40,6 +40,8 @@ The autonomous loop should choose one small item per run. Add new findings here 
 
 ## Done
 
+- 2026-06-08: Compared WorldBookView AI plain-object refresh values with own-key loops instead of Object.keys arrays.
+- 2026-06-08: Collected chat conversation stable-serialization object keys with a direct sorted own-key loop.
 - 2026-06-08: Cleared chat message swipe state with an own-key loop instead of Object.keys allocations.
 - 2026-06-08: Rechecked persisted chat draft reconcile state with an arguments loop instead of rest-array/some allocations.
 - 2026-06-08: Compared chat message branch refresh rows with direct loops instead of every callbacks.

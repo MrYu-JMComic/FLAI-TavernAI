@@ -283,7 +283,7 @@ export function useChatConversation({ route, emit, showError }) {
   }
 
   function stableSerializeObject(value) {
-    const keys = Object.keys(value).sort();
+    const keys = collectStableObjectKeys(value);
     let serialized = '{';
     for (let index = 0; index < keys.length; index += 1) {
       if (index > 0) {
@@ -293,6 +293,17 @@ export function useChatConversation({ route, emit, showError }) {
       serialized += `${JSON.stringify(key)}:${stableSerialize(value[key])}`;
     }
     return `${serialized}}`;
+  }
+
+  function collectStableObjectKeys(value) {
+    const keys = [];
+    for (const key in value) {
+      if (!Object.prototype.hasOwnProperty.call(value, key)) {
+        continue;
+      }
+      keys.push(key);
+    }
+    return keys.sort();
   }
 
   function formatSidebarLoadError(failures) {

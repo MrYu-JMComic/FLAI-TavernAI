@@ -352,10 +352,15 @@ test('chat conversation stable serialization uses direct loops', () => {
   );
   assert.match(
     chatConversationSource,
-    /function stableSerializeObject\(value\) \{\s*const keys = Object\.keys\(value\)\.sort\(\);[\s\S]*for \(let index = 0; index < keys\.length; index \+= 1\) \{[\s\S]*const key = keys\[index\];[\s\S]*serialized \+= `\$\{JSON\.stringify\(key\)\}:\$\{stableSerialize\(value\[key\]\)\}`;[\s\S]*return `\$\{serialized\}\}`;[\s\S]*\}/
+    /function stableSerializeObject\(value\) \{\s*const keys = collectStableObjectKeys\(value\);[\s\S]*for \(let index = 0; index < keys\.length; index \+= 1\) \{[\s\S]*const key = keys\[index\];[\s\S]*serialized \+= `\$\{JSON\.stringify\(key\)\}:\$\{stableSerialize\(value\[key\]\)\}`;[\s\S]*return `\$\{serialized\}\}`;[\s\S]*\}/
+  );
+  assert.match(
+    chatConversationSource,
+    /function collectStableObjectKeys\(value\) \{\s*const keys = \[\];[\s\S]*for \(const key in value\) \{[\s\S]*Object\.prototype\.hasOwnProperty\.call\(value, key\)[\s\S]*keys\.push\(key\);[\s\S]*return keys\.sort\(\);[\s\S]*\}/
   );
   assert.doesNotMatch(chatConversationSource, /value\.map\(\(item\) => stableSerialize\(item\)\)\.join/);
   assert.doesNotMatch(chatConversationSource, /\.map\(\(key\) => `\$\{JSON\.stringify\(key\)\}:\$\{stableSerialize\(value\[key\]\)\}`\)/);
+  assert.doesNotMatch(chatConversationSource, /Object\.keys\(value\)\.sort\(\)/);
 });
 
 test('chat sidebar initial open state falls back to window width without matchMedia', () => {
