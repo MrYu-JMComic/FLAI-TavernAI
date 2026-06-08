@@ -428,13 +428,20 @@ function buildNpcBehaviorPromptFromRows(database, conversationId, behaviors, mem
        WHERE conversation_id = ?`
     )
     .all(conversationId);
-  const hiddenNames = new Set(registryRows
-    .filter((row) => row.hidden)
-    .map((row) => normalizeNpcName(row.npc_name).toLowerCase())
-    .filter(Boolean));
-  const registryMeta = new Map(
-    registryRows.map((row) => [normalizeNpcName(row.npc_name).toLowerCase(), toNpcRegistry(row)])
-  );
+  const hiddenNames = new Set();
+  const registryMeta = new Map();
+  for (const row of registryRows) {
+    const normalizedName = normalizeNpcName(row.npc_name);
+    if (!normalizedName) {
+      continue;
+    }
+    const key = normalizedName.toLowerCase();
+    const registry = toNpcRegistry(row);
+    registryMeta.set(key, registry);
+    if (registry.hidden) {
+      hiddenNames.add(key);
+    }
+  }
   const npcMap = new Map();
 
   const ensureNpcSection = (npcName) => {

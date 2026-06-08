@@ -442,6 +442,17 @@ test('NPC status aliases and memory seal affect prompt memory injection', () => 
   const unsealedPrompt = buildNpcBehaviorPrompt(database, conversationId);
   assert.ok(unsealedPrompt.includes('Status: following'));
   assert.ok(unsealedPrompt.includes('SEALED_MEMORY_SENTINEL'));
+
+  const functionStart = npcsSource.indexOf('function buildNpcBehaviorPromptFromRows');
+  const helperStart = npcsSource.indexOf('function buildNpcMetadataPromptLines', functionStart);
+  assert.notEqual(functionStart, -1);
+  assert.notEqual(helperStart, -1);
+  const promptSource = npcsSource.slice(functionStart, helperStart);
+  assert.match(promptSource, /const hiddenNames = new Set\(\);[\s\S]*const registryMeta = new Map\(\);/);
+  assert.match(promptSource, /for \(const row of registryRows\) \{[\s\S]*const normalizedName = normalizeNpcName\(row\.npc_name\);/);
+  assert.match(promptSource, /registryMeta\.set\(key, registry\);[\s\S]*hiddenNames\.add\(key\);/);
+  assert.doesNotMatch(promptSource, /registryRows\s*\.\s*filter/);
+  assert.doesNotMatch(promptSource, /registryRows\.map/);
 });
 
 test('hideEmptyConversationNpcs hides NPCs without memories or behaviors only', () => {
