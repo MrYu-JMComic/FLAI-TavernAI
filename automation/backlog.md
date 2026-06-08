@@ -40,6 +40,7 @@ The autonomous loop should choose one small item per run. Add new findings here 
 
 ## Done
 
+- 2026-06-08: Compared provider model cache rows with a direct index loop instead of every callbacks.
 - 2026-06-08: Compared NpcPanel unchanged NPC and detail lists with a direct index loop instead of every callbacks.
 - 2026-06-08: Compared App and SettingsView plain refresh values with direct loops instead of Object.keys/every callbacks.
 - 2026-06-08: Compared CharacterFormView AI plain-object refresh values with own-key loops instead of Object.keys arrays.

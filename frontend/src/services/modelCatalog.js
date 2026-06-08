@@ -107,12 +107,14 @@ export function areProviderModelListsEqual(currentModels, nextModels) {
   if (!Array.isArray(currentModels) || !Array.isArray(nextModels) || currentModels.length !== nextModels.length) {
     return false;
   }
-  return currentModels.every((model, index) => {
+  for (let index = 0; index < currentModels.length; index += 1) {
+    const model = currentModels[index];
     const nextModel = nextModels[index];
-    return model?.id === nextModel?.id
-      && model?.label === nextModel?.label
-      && model?.ownedBy === nextModel?.ownedBy;
-  });
+    if (model?.id !== nextModel?.id || model?.label !== nextModel?.label || model?.ownedBy !== nextModel?.ownedBy) {
+      return false;
+    }
+  }
+  return true;
 }
 
 function writeCachedProviderModels(settings = {}, models = []) {

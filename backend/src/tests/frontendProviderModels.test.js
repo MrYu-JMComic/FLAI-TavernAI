@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { readRepoText } from './frontendSfcTestUtils.js';
 
 const { useProviderModels } = await import('../../../frontend/src/composables/useProviderModels.js');
 const { areProviderModelListsEqual } = await import('../../../frontend/src/services/modelCatalog.js');
+const modelCatalogSource = readRepoText('frontend/src/services/modelCatalog.js');
 
 function refValue(value) {
   return { __v_isRef: true, value };
@@ -121,4 +123,12 @@ test('provider model list equality compares the UI-visible model fields', () => 
     { id: 'model-b', label: 'Model B', ownedBy: '' },
     { id: 'model-a', label: 'Model A', ownedBy: 'team' }
   ]), false);
+});
+
+test('provider model list equality scans model rows directly', () => {
+  assert.match(
+    modelCatalogSource,
+    /export function areProviderModelListsEqual\(currentModels, nextModels\) \{[\s\S]*if \(currentModels === nextModels\) \{[\s\S]*return true;[\s\S]*for \(let index = 0; index < currentModels\.length; index \+= 1\) \{[\s\S]*const model = currentModels\[index\];[\s\S]*const nextModel = nextModels\[index\];[\s\S]*model\?\.id !== nextModel\?\.id[\s\S]*return false;[\s\S]*return true;[\s\S]*\}/
+  );
+  assert.doesNotMatch(modelCatalogSource, /currentModels\.every\(/);
 });
