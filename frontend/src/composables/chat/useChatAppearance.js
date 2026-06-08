@@ -438,10 +438,18 @@ export function useChatAppearance({
   }
 
   function sameWorldBookList(currentBooks, nextBooks) {
-    return Array.isArray(currentBooks)
-      && Array.isArray(nextBooks)
-      && currentBooks.length === nextBooks.length
-      && currentBooks.every((book, index) => sameWorldBookSummary(book, nextBooks[index]));
+    if (!Array.isArray(currentBooks) || !Array.isArray(nextBooks)) {
+      return false;
+    }
+    if (currentBooks.length !== nextBooks.length) {
+      return false;
+    }
+    for (let index = 0; index < currentBooks.length; index += 1) {
+      if (!sameWorldBookSummary(currentBooks[index], nextBooks[index])) {
+        return false;
+      }
+    }
+    return true;
   }
 
   function sameWorldBookSummary(currentBook, nextBook) {

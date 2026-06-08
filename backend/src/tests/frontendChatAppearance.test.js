@@ -404,7 +404,12 @@ test('chat appearance world-book refreshes use stable list updates', () => {
     chatAppearanceSource,
     /function setWorldBooksIfChanged\(nextBooks\) \{[\s\S]*sameWorldBookList\(worldBooks\.value, normalizedNextBooks\)[\s\S]*worldBooks\.value = normalizedNextBooks;[\s\S]*return true;[\s\S]*\}/
   );
+  assert.match(
+    chatAppearanceSource,
+    /function sameWorldBookList\(currentBooks, nextBooks\) \{[\s\S]*if \(!Array\.isArray\(currentBooks\) \|\| !Array\.isArray\(nextBooks\)\) \{[\s\S]*return false;[\s\S]*for \(let index = 0; index < currentBooks\.length; index \+= 1\) \{[\s\S]*!sameWorldBookSummary\(currentBooks\[index\], nextBooks\[index\]\)[\s\S]*return true;[\s\S]*\}/
+  );
   assert.doesNotMatch(chatAppearanceSource, /worldBooks\.value\s*=\s*books/);
+  assert.doesNotMatch(chatAppearanceSource, /currentBooks\.every/);
 });
 
 test('chat custom script helpers are scoped to the active appearance apply', () => {
