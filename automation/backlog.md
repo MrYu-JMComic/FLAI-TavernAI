@@ -41,6 +41,7 @@ The autonomous loop should choose one small item per run. Add new findings here 
 ## Done
 
 - 2026-06-08: Applied character regex rules with direct loops instead of spread/filter/reduce pipelines.
+- 2026-06-08: Scanned StatusBar custom-template DOM collections directly instead of spread-cloning them.
 - 2026-06-08: Scanned chat scroll message DOM nodes directly instead of cloning query results.
 - 2026-06-08: Parsed backend cookies with a direct scanner instead of split/map/filter/reduce arrays.
 - 2026-06-08: Resolved ChatSettingsDrawer lorebook binding labels through a computed direct scan.
