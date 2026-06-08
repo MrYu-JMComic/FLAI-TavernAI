@@ -1013,6 +1013,16 @@ test('branch list load preserves references for unchanged branch data', async ()
 
     assert.equal(actions.conversationBranches.value, loadedBranches);
     assert.equal(calls, 2);
+    assert.match(
+      chatMessageActionsSource,
+      /function sameConversationBranches\(currentBranches, nextBranches\) \{[\s\S]*for \(let index = 0; index < currentBranches\.length; index \+= 1\) \{[\s\S]*!sameConversationBranch\(currentBranches\[index\], nextBranches\[index\]\)[\s\S]*return true;[\s\S]*\}/
+    );
+    assert.match(
+      chatMessageActionsSource,
+      /function sameConversationBranch\(currentBranch = \{\}, nextBranch = \{\}\) \{[\s\S]*for \(let index = 0; index < branchComparisonFields\.length; index \+= 1\) \{[\s\S]*const field = branchComparisonFields\[index\];[\s\S]*currentBranch\?\.\[field\] !== nextBranch\?\.\[field\][\s\S]*return true;[\s\S]*\}/
+    );
+    assert.doesNotMatch(chatMessageActionsSource, /currentBranches\.every\(\(branch, index\) => sameConversationBranch/);
+    assert.doesNotMatch(chatMessageActionsSource, /branchComparisonFields\.every\(\(field\) =>/);
   } finally {
     globalThis.fetch = originalFetch;
   }

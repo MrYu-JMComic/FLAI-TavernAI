@@ -741,11 +741,22 @@ export function useChatMessageActions({
     if (currentBranches.length !== nextBranches.length) {
       return false;
     }
-    return currentBranches.every((branch, index) => sameConversationBranch(branch, nextBranches[index]));
+    for (let index = 0; index < currentBranches.length; index += 1) {
+      if (!sameConversationBranch(currentBranches[index], nextBranches[index])) {
+        return false;
+      }
+    }
+    return true;
   }
 
   function sameConversationBranch(currentBranch = {}, nextBranch = {}) {
-    return branchComparisonFields.every((field) => currentBranch?.[field] === nextBranch?.[field]);
+    for (let index = 0; index < branchComparisonFields.length; index += 1) {
+      const field = branchComparisonFields[index];
+      if (currentBranch?.[field] !== nextBranch?.[field]) {
+        return false;
+      }
+    }
+    return true;
   }
 
   async function loadConversationBranches(conversationId) {

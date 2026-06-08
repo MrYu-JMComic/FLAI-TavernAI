@@ -463,17 +463,23 @@ export function useChatSubmit({
     if (typeof current !== 'object') {
       return false;
     }
-    const currentKeys = Object.keys(current);
-    const nextKeys = Object.keys(next);
-    if (currentKeys.length !== nextKeys.length) {
-      return false;
-    }
-    for (const key of currentKeys) {
+    let currentKeyCount = 0;
+    for (const key in current) {
+      if (!Object.prototype.hasOwnProperty.call(current, key)) {
+        continue;
+      }
+      currentKeyCount += 1;
       if (!Object.prototype.hasOwnProperty.call(next, key) || !samePlainValue(current[key], next[key])) {
         return false;
       }
     }
-    return true;
+    let nextKeyCount = 0;
+    for (const key in next) {
+      if (Object.prototype.hasOwnProperty.call(next, key)) {
+        nextKeyCount += 1;
+      }
+    }
+    return currentKeyCount === nextKeyCount;
   }
 
   function followSubmitScroll(message, anchorAssistantReply, smooth = false) {
@@ -943,7 +949,11 @@ export function useChatSubmit({
     const currentMessage = findMessageListItem(message?.id);
     if (!currentMessage) return null;
     let changed = false;
-    for (const [key, value] of Object.entries(nextState)) {
+    for (const key in nextState) {
+      if (!Object.prototype.hasOwnProperty.call(nextState, key)) {
+        continue;
+      }
+      const value = nextState[key];
       if (currentMessage[key] !== value) {
         currentMessage[key] = value;
         changed = true;

@@ -354,11 +354,17 @@ test('chat submit refresh and plain metadata comparisons avoid callback allocati
   );
   assert.match(
     chatSubmitSource,
-    /function samePlainValue\(current, next\) \{[\s\S]*for \(let index = 0; index < current\.length; index \+= 1\) \{[\s\S]*samePlainValue\(current\[index\], next\[index\]\)[\s\S]*for \(const key of currentKeys\) \{[\s\S]*samePlainValue\(current\[key\], next\[key\]\)[\s\S]*return true;[\s\S]*\}/
+    /function samePlainValue\(current, next\) \{[\s\S]*for \(let index = 0; index < current\.length; index \+= 1\) \{[\s\S]*samePlainValue\(current\[index\], next\[index\]\)[\s\S]*let currentKeyCount = 0;[\s\S]*for \(const key in current\) \{[\s\S]*currentKeyCount \+= 1;[\s\S]*samePlainValue\(current\[key\], next\[key\]\)[\s\S]*let nextKeyCount = 0;[\s\S]*for \(const key in next\) \{[\s\S]*nextKeyCount \+= 1;[\s\S]*return currentKeyCount === nextKeyCount;[\s\S]*\}/
+  );
+  assert.match(
+    chatSubmitSource,
+    /function setMessageStreamingState\(message, nextState = \{\}\) \{[\s\S]*let changed = false;[\s\S]*for \(const key in nextState\) \{[\s\S]*Object\.prototype\.hasOwnProperty\.call\(nextState, key\)[\s\S]*const value = nextState\[key\];[\s\S]*currentMessage\[key\] = value;[\s\S]*triggerRef\(messages\);[\s\S]*return currentMessage;[\s\S]*\}/
   );
   assert.doesNotMatch(chatSubmitSource, /\.filter\(Boolean\)/);
   assert.doesNotMatch(chatSubmitSource, /current\.every\(/);
   assert.doesNotMatch(chatSubmitSource, /currentKeys\.every\(/);
+  assert.doesNotMatch(chatSubmitSource, /Object\.keys\(current\)/);
+  assert.doesNotMatch(chatSubmitSource, /Object\.entries\(nextState\)/);
 });
 
 test('chat submit anchors the assistant reply when an expanded status bar is already pinned', async () => {
