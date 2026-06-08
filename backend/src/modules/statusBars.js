@@ -233,24 +233,32 @@ function normalizeName(name) {
 
 function normalizeVariables(variables, template = '') {
   const sourceVariables = Array.isArray(variables) ? variables : [];
-  const normalized = sourceVariables
-    .map((v) => {
-      const hasMax = hasExplicitMax(v);
-      const value = normalizeVariableValue(v?.value, { emptyText: !hasMax });
-      const max = hasMax
-        ? Number(v.max)
-        : typeof value === 'number'
-          ? 100
-          : undefined;
-      return {
-        name: String(v?.name || '').trim(),
-        value,
-        ...(max !== undefined ? { max } : {}),
-        color: normalizeColor(v?.color)
-      };
-    })
-    .filter((v) => v.name)
-    .slice(0, STATUS_BAR_VARIABLE_LIMIT);
+  const normalized = [];
+  for (let index = 0; index < sourceVariables.length; index += 1) {
+    const variable = sourceVariables[index];
+    const name = String(variable?.name || '').trim();
+    if (!name) {
+      continue;
+    }
+
+    const hasMax = hasExplicitMax(variable);
+    const value = normalizeVariableValue(variable?.value, { emptyText: !hasMax });
+    const max = hasMax
+      ? Number(variable.max)
+      : typeof value === 'number'
+        ? 100
+        : undefined;
+    normalized.push({
+      name,
+      value,
+      ...(max !== undefined ? { max } : {}),
+      color: normalizeColor(variable?.color)
+    });
+
+    if (normalized.length >= STATUS_BAR_VARIABLE_LIMIT) {
+      break;
+    }
+  }
   return inferTemplateVariables(template, normalized).slice(0, STATUS_BAR_VARIABLE_LIMIT);
 }
 

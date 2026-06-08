@@ -70,3 +70,33 @@ test('status bar text value label patterns build without array pipelines', () =>
   assert.match(variablePatternHelper[0], /for \(const char of name\)/);
   assert.doesNotMatch(variablePatternHelper[0], /Array\.from\(name\)|\.map\(/);
 });
+
+test('status bar variables normalize with a capped direct loop', () => {
+  const database = createAppDatabase(':memory:');
+  setupConversation(database);
+
+  const variables = [{ name: '', value: 'ignored' }];
+  for (let index = 0; index < 65; index += 1) {
+    variables.push({ name: `Var ${index}`, value: String(index), color: index === 0 ? '#abc' : 'bad' });
+  }
+
+  const statusBar = upsertStatusBar(database, 'status-user-1', 'status-conversation-1', {
+    name: 'Many Variables',
+    variables,
+    template: '{{ LateTemplateVar }}'
+  });
+
+  assert.equal(statusBar.variables.length, 60);
+  assert.equal(statusBar.variables[0].name, 'Var 0');
+  assert.equal(statusBar.variables[0].value, 0);
+  assert.equal(statusBar.variables[0].max, 100);
+  assert.equal(statusBar.variables[0].color, '#abc');
+  assert.equal(statusBar.variables.at(-1).name, 'Var 59');
+  assert.equal(statusBar.variables.some((variable) => variable.name === 'LateTemplateVar'), false);
+
+  const normalizeHelper = statusBarsSource.match(/function normalizeVariables[\s\S]*?\n}\n\nfunction normalizeVariableValue/);
+  assert.ok(normalizeHelper);
+  assert.match(normalizeHelper[0], /for \(let index = 0; index < sourceVariables\.length; index \+= 1\)/);
+  assert.match(normalizeHelper[0], /normalized\.length >= STATUS_BAR_VARIABLE_LIMIT/);
+  assert.doesNotMatch(normalizeHelper[0], /\.map\(|\.filter\(/);
+});
