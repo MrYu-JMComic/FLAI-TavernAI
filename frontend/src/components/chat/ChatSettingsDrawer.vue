@@ -257,6 +257,43 @@ function setColorValue(target, key, value) {
   target[key] = String(value || '').trim();
 }
 
+function readEventTargetValue(event) {
+  const target = event?.target;
+  return target && target.value !== undefined ? target.value : undefined;
+}
+
+function onChatLorebookChange(event) {
+  const value = readEventTargetValue(event);
+  if (value === undefined) {
+    return;
+  }
+  emit('update:chatLorebookId', value || null);
+}
+
+function onStatusBarTemplateModeChange(event) {
+  const value = readEventTargetValue(event);
+  if (value === undefined) {
+    return;
+  }
+  emit('update:statusBarTemplateMode', value);
+}
+
+function setColorValueFromEvent(target, key, event) {
+  const value = readEventTargetValue(event);
+  if (value === undefined) {
+    return;
+  }
+  setColorValue(target, key, value);
+}
+
+function setStatusBarVariableValueFromEvent(name, event) {
+  const value = readEventTargetValue(event);
+  if (value === undefined) {
+    return;
+  }
+  setStatusBarVariableValue(name, value);
+}
+
 function modelOverrideOptions(value = '') {
   return buildModelSelectOptions(props.providerModelOptions, value, '使用当前模型');
 }
@@ -432,7 +469,7 @@ function requestClose() {
           <select
             :value="chatLorebookId || ''"
             :disabled="worldBooksLoading || appearanceSaving"
-            @change="emit('update:chatLorebookId', $event.target.value || null)"
+            @change="onChatLorebookChange"
           >
             <option value="">无（不绑定）</option>
             <option
@@ -529,7 +566,7 @@ function requestClose() {
               <span>模板模式</span>
               <select
                 :value="statusBarTemplateMode"
-                @change="emit('update:statusBarTemplateMode', $event.target.value)"
+                @change="onStatusBarTemplateModeChange"
               >
                 <option value="builtin">内置样式</option>
                 <option value="custom">完全自定义</option>
@@ -591,7 +628,7 @@ function requestClose() {
                   type="color"
                   class="sb-accent-picker"
                   title="选择颜色"
-                  @input="setColorValue(statusBarTemplateCfg, 'accentColor', $event.target.value)"
+                  @input="setColorValueFromEvent(statusBarTemplateCfg, 'accentColor', $event)"
                 />
               </div>
             </label>
@@ -673,7 +710,7 @@ function requestClose() {
                 </label>
                 <label class="chat-setting-field compact">
                   <span>强调色</span>
-                  <input :value="colorInputValue(ch.accentColor)" type="color" class="variable-input color" title="角色强调色" @input="setColorValue(ch, 'accentColor', $event.target.value)" />
+                  <input :value="colorInputValue(ch.accentColor)" type="color" class="variable-input color" title="角色强调色" @input="setColorValueFromEvent(ch, 'accentColor', $event)" />
                 </label>
                 <label class="chat-setting-field compact sb-char-css-field">
                   <span>自定义 CSS</span>
@@ -691,7 +728,7 @@ function requestClose() {
                   <input v-model.number="v.value" class="variable-input num" type="number" :aria-label="`角色变量 ${vi + 1} 当前值`" placeholder="值" />
                   <span class="variable-separator">/</span>
                   <input v-model.number="v.max" class="variable-input num" type="number" :aria-label="`角色变量 ${vi + 1} 最大值`" placeholder="最大" />
-                  <input :value="colorInputValue(v.color)" class="variable-input color" type="color" title="颜色" @input="setColorValue(v, 'color', $event.target.value)" />
+                  <input :value="colorInputValue(v.color)" class="variable-input color" type="color" title="颜色" @input="setColorValueFromEvent(v, 'color', $event)" />
                   <button class="variable-remove" type="button" title="删除变量" @click="emit('remove-character-variable', ci, vi)">x</button>
                 </div>
                 <button class="chat-setting-inline-button small" type="button" @click="emit('add-character-variable', ci)">+ 添加变量</button>
@@ -751,7 +788,7 @@ function requestClose() {
                       :value="getStatusBarVariableValue(part.name)"
                       placeholder="当前值"
                       :aria-label="`状态栏 ${row.label} 的 ${part.name}`"
-                      @input="setStatusBarVariableValue(part.name, $event.target.value)"
+                      @input="setStatusBarVariableValueFromEvent(part.name, $event)"
                     />
                   </label>
                 </div>
@@ -785,7 +822,7 @@ function requestClose() {
                 class="variable-input color"
                 type="color"
                 title="颜色"
-                @input="setColorValue(row.variable, 'color', $event.target.value)"
+                @input="setColorValueFromEvent(row.variable, 'color', $event)"
               />
               <button
                 class="variable-remove"

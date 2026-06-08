@@ -40,6 +40,7 @@ The autonomous loop should choose one small item per run. Add new findings here 
 
 ## Done
 
+- 2026-06-09: Guarded ChatSettingsDrawer select and status/color input events against missing targets.
 - 2026-06-08: Guarded ChatMessageItem edit input events against missing targets.
 - 2026-06-08: Guarded ChatComposer and ChatSidebar input events against missing targets.
 - 2026-06-08: Preserved SettingsView regex group filter options across filtered rule refreshes.

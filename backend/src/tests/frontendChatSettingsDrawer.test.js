@@ -47,6 +47,34 @@ test('ChatSettingsDrawer resolves chat lorebook binding labels without template 
   assert.doesNotMatch(chatSettingsDrawerTemplate, /worldBooks\.find\(/);
 });
 
+test('ChatSettingsDrawer input handlers tolerate missing event targets', () => {
+  assert.match(
+    chatSettingsDrawerScript,
+    /function readEventTargetValue\(event\) {\s*const target = event\?\.target;\s*return target && target\.value !== undefined \? target\.value : undefined;\s*}/
+  );
+  assert.match(
+    chatSettingsDrawerScript,
+    /function onChatLorebookChange\(event\) {\s*const value = readEventTargetValue\(event\);\s*if \(value === undefined\) {\s*return;\s*}\s*emit\('update:chatLorebookId', value \|\| null\);\s*}/
+  );
+  assert.match(
+    chatSettingsDrawerScript,
+    /function onStatusBarTemplateModeChange\(event\) {\s*const value = readEventTargetValue\(event\);\s*if \(value === undefined\) {\s*return;\s*}\s*emit\('update:statusBarTemplateMode', value\);\s*}/
+  );
+  assert.match(
+    chatSettingsDrawerScript,
+    /function setColorValueFromEvent\(target, key, event\) {\s*const value = readEventTargetValue\(event\);\s*if \(value === undefined\) {\s*return;\s*}\s*setColorValue\(target, key, value\);\s*}/
+  );
+  assert.match(
+    chatSettingsDrawerScript,
+    /function setStatusBarVariableValueFromEvent\(name, event\) {\s*const value = readEventTargetValue\(event\);\s*if \(value === undefined\) {\s*return;\s*}\s*setStatusBarVariableValue\(name, value\);\s*}/
+  );
+  assert.match(chatSettingsDrawerTemplate, /@change="onChatLorebookChange"/);
+  assert.match(chatSettingsDrawerTemplate, /@change="onStatusBarTemplateModeChange"/);
+  assert.equal(countMatches(chatSettingsDrawerTemplate, /setColorValueFromEvent\(/g), 4);
+  assert.match(chatSettingsDrawerTemplate, /@input="setStatusBarVariableValueFromEvent\(part\.name, \$event\)"/);
+  assert.doesNotMatch(chatSettingsDrawerTemplate, /\$event\.target\.value/);
+});
+
 test('ChatSettingsDrawer freezes status bar editor fields while saving status bar', () => {
   assert.match(
     chatSettingsDrawerTemplate,
