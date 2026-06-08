@@ -15,14 +15,12 @@ Aligned the quick chat model switcher's provider context key with provider model
 
 ## Validation
 
-- `node --test src/tests/frontendChatModelSwitcher.test.js` in `backend` passed.
-- `node ..\scripts\check-encoding.mjs` in `backend` passed.
-- `npm test` in `backend` passed.
-- `npm run build` in `frontend` passed.
-
-## Notes
-
-- Existing unrelated working-tree changes were preserved and not edited: `frontend/src/api.js`, `backend/src/tests/frontendApi.test.js`, `automation/backlog.md`, and `automation/reports/2026-06-08-frontend-csrf-cookie-exact-scan.md`.
+- PASS: `node --test src\tests\frontendChatModelSwitcher.test.js` in `backend` (5 tests passed)
+- PASS: `node scripts\check-encoding.mjs`
+- PASS: `git diff --check`
+- PASS: `npm.cmd test` in `backend` (826 tests passed)
+- PASS: `npm.cmd run build` in `frontend`
+- PASS: `powershell -ExecutionPolicy Bypass -File scripts\review-gate.ps1`
 
 ## Next Recommended Task
 
