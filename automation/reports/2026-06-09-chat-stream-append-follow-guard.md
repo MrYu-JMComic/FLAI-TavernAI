@@ -15,9 +15,9 @@
 ## Validation
 
 - PASS: `node --test src/tests/frontendChatSubmit.test.js` in `backend` (27 tests)
-- PASS: `node scripts/check-encoding.mjs` (scanned 557 files)
+- PASS: `node scripts/check-encoding.mjs` (scanned 560 files)
 - PASS: `git diff --check` (line-ending warnings only)
-- PASS: `npm.cmd test` in `backend` (849 tests)
+- PASS: `npm.cmd test` in `backend` (853 tests)
 - PASS: `npm.cmd run build` in `frontend`
 - PASS: `powershell -ExecutionPolicy Bypass -File scripts/review-gate.ps1`
 

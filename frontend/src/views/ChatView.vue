@@ -21,6 +21,7 @@ import { useChatSubmit } from '../composables/chat/useChatSubmit';
 import { useProviderModels } from '../composables/useProviderModels';
 import { isPhoneViewport } from '../composables/useViewport';
 import { refreshProviderModels } from '../services/modelCatalog';
+import { callEventMethod } from '../utils/eventMethods';
 
 const props = defineProps({
   route: { type: Object, required: true },
@@ -672,8 +673,8 @@ function handleGlobalPointerDown(event) {
   }
   suppressNpcPanelClick = true;
   closeNpcPanel();
-  event?.preventDefault?.();
-  event?.stopPropagation?.();
+  callEventMethod(event, 'preventDefault');
+  callEventMethod(event, 'stopPropagation');
 }
 
 function handleGlobalClick(event) {
@@ -681,8 +682,8 @@ function handleGlobalClick(event) {
     return;
   }
   suppressNpcPanelClick = false;
-  event?.preventDefault?.();
-  event?.stopPropagation?.();
+  callEventMethod(event, 'preventDefault');
+  callEventMethod(event, 'stopPropagation');
 }
 
 function handleComposerEnter(payload) {
@@ -690,10 +691,7 @@ function handleComposerEnter(payload) {
   if (isEnter && isPhoneViewport()) {
     return;
   }
-  const event = payload?.event;
-  if (event?.preventDefault) {
-    event.preventDefault();
-  }
+  callEventMethod(payload?.event, 'preventDefault');
   submit();
 }
 

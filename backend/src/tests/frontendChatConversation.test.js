@@ -189,15 +189,24 @@ test('ChatView routes active conversation refreshes through the stable setter', 
 });
 
 test('ChatView NPC panel global event handlers tolerate missing event targets', () => {
+  assert.match(chatViewScript, /import \{ callEventMethod \} from '\.\.\/utils\/eventMethods';/);
   assert.match(
     chatViewScript,
-    /function handleGlobalPointerDown\(event\) \{[\s\S]*const target = event\?\.target;[\s\S]*target\?\.closest\?\.\('\.npc-close'\) \|\| target\?\.classList\?\.contains\('npc-panel-overlay'\)[\s\S]*event\?\.preventDefault\?\.\(\);[\s\S]*event\?\.stopPropagation\?\.\(\);[\s\S]*\}/
+    /function handleGlobalPointerDown\(event\) \{[\s\S]*const target = event\?\.target;[\s\S]*target\?\.closest\?\.\('\.npc-close'\) \|\| target\?\.classList\?\.contains\('npc-panel-overlay'\)[\s\S]*callEventMethod\(event, 'preventDefault'\);[\s\S]*callEventMethod\(event, 'stopPropagation'\);[\s\S]*\}/
   );
   assert.match(
     chatViewScript,
-    /function handleGlobalClick\(event\) \{[\s\S]*suppressNpcPanelClick = false;[\s\S]*event\?\.preventDefault\?\.\(\);[\s\S]*event\?\.stopPropagation\?\.\(\);[\s\S]*\}/
+    /function handleGlobalClick\(event\) \{[\s\S]*suppressNpcPanelClick = false;[\s\S]*callEventMethod\(event, 'preventDefault'\);[\s\S]*callEventMethod\(event, 'stopPropagation'\);[\s\S]*\}/
   );
   assert.doesNotMatch(chatViewScript, /const target = event\.target/);
+});
+
+test('ChatView composer enter uses the safe event method helper', () => {
+  assert.match(
+    chatViewScript,
+    /function handleComposerEnter\(payload\) \{[\s\S]*if \(isEnter && isPhoneViewport\(\)\) \{[\s\S]*return;[\s\S]*\}[\s\S]*callEventMethod\(payload\?\.event, 'preventDefault'\);[\s\S]*submit\(\);[\s\S]*\}/
+  );
+  assert.doesNotMatch(chatViewScript, /if \(event\?\.preventDefault\)/);
 });
 
 test('chat message setter preserves unchanged list references', () => {
