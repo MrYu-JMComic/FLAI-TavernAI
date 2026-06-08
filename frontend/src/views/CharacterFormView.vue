@@ -1399,8 +1399,25 @@ function toPayload() {
     renderPlugins: form.renderPlugins,
     regexRules: form.regexRules,
     worldBookId: form.worldBookId || '',
-    tags: form.selectedTags.length ? form.selectedTags : form.tagsText.split(',').map((tag) => tag.trim()).filter(Boolean)
+    tags: form.selectedTags.length ? form.selectedTags : parseTagsTextForPayload(form.tagsText)
   };
+}
+
+function parseTagsTextForPayload(value = '') {
+  const tags = [];
+  const source = String(value || '');
+  let start = 0;
+  for (let index = 0; index <= source.length; index += 1) {
+    if (index < source.length && source[index] !== ',') {
+      continue;
+    }
+    const tag = source.slice(start, index).trim();
+    if (tag) {
+      tags.push(tag);
+    }
+    start = index + 1;
+  }
+  return tags;
 }
 
 function toggleTagSelection(name) {

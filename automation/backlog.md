@@ -40,6 +40,7 @@ The autonomous loop should choose one small item per run. Add new findings here 
 
 ## Done
 
+- 2026-06-08: Parsed CharacterFormView manual tag text with a direct scanner instead of split/map/filter arrays.
 - 2026-06-08: Preserved unchanged status-bar variable update references and skipped no-op accessory status writes.
 - 2026-06-08: Built accessory skill defaults and active payload flags with direct own-key loops.
 - 2026-06-08: Shared CharacterFormView and accessory-agent status template token parsing through the root helper.

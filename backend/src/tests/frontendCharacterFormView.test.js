@@ -240,6 +240,16 @@ test('CharacterFormView uses a searchable paged dialog for world book linking', 
 test('CharacterFormView filters tag search results in one pass', () => {
   assert.match(
     characterFormScript,
+    /tags: form\.selectedTags\.length \? form\.selectedTags : parseTagsTextForPayload\(form\.tagsText\)/
+  );
+  assert.match(
+    characterFormScript,
+    /function parseTagsTextForPayload\(value = ''\) \{[\s\S]*const tags = \[\];[\s\S]*const source = String\(value \|\| ''\);[\s\S]*for \(let index = 0; index <= source\.length; index \+= 1\) \{[\s\S]*source\[index\] !== ','[\s\S]*const tag = source\.slice\(start, index\)\.trim\(\);[\s\S]*tags\.push\(tag\);[\s\S]*return tags;[\s\S]*\}/
+  );
+  assert.doesNotMatch(characterFormScript, /form\.tagsText\.split\(','\)\.map/);
+
+  assert.match(
+    characterFormScript,
     /const filteredTags = computed\(\(\) => filterTagsBySearch\(availableTags\.value, tagSearch\.value\)\);/
   );
   assert.match(
