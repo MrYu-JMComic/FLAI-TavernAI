@@ -821,7 +821,7 @@ export function useChatMessageActions({
         await onBranched(result.id, isCurrentBranchContext, invalidateBranchContext);
       }
     } finally {
-      if (!disposed && requestToken === branchActionToken) {
+      if (isCurrentBranchAction(requestToken, conversationId)) {
         branchBusy.value = false;
       }
     }

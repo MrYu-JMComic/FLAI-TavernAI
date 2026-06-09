@@ -610,7 +610,7 @@ export function useChatAccessory({ conversation, setActiveConversationIfChanged,
       }
       showError(err.message);
     } finally {
-      if (isActiveAccessorySave(requestToken)) {
+      if (isCurrentAccessorySave(requestToken, conversationId)) {
         accessorySaving.value = false;
       }
     }
@@ -702,7 +702,7 @@ export function useChatAccessory({ conversation, setActiveConversationIfChanged,
       }
       showError(err.message);
     } finally {
-      if (isActiveStatusBarMutation(requestToken)) {
+      if (isCurrentStatusBarMutation(requestToken, conversationId)) {
         statusBarSaving.value = false;
       }
     }
@@ -736,7 +736,7 @@ export function useChatAccessory({ conversation, setActiveConversationIfChanged,
       }
       showError(err.message);
     } finally {
-      if (isActiveStatusBarMutation(requestToken)) {
+      if (isCurrentStatusBarMutation(requestToken, conversationId)) {
         statusBarSaving.value = false;
       }
     }

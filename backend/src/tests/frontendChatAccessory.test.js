@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { readRepoText, readVueBlocks } from './frontendSfcTestUtils.js';
+import { countMatches, readRepoText, readVueBlocks } from './frontendSfcTestUtils.js';
 
 const { useChatConversation } = await import('../../../frontend/src/composables/chat/useChatConversation.js');
 const { parseTemplateConfig, useChatAccessory, validateStatusBarCustomTemplate } = await import('../../../frontend/src/composables/chat/useChatAccessory.js');
@@ -12,6 +12,14 @@ function jsonResponse(data, status = 200) {
     status,
     headers: { 'Content-Type': 'application/json' }
   });
+}
+
+function deferredJsonResponse(data, status = 200) {
+  let resolve;
+  const promise = new Promise((promiseResolve) => {
+    resolve = () => promiseResolve(jsonResponse(data, status));
+  });
+  return { promise, resolve };
 }
 
 function createAccessory(options = {}) {
@@ -254,6 +262,67 @@ test('status bar save preserves unchanged object references', async () => {
   }
 });
 
+test('status bar save keeps stale conversation saving locked until cleanup', async () => {
+  const originalFetch = globalThis.fetch;
+  const conversation = { value: { id: 'conv-1', character: { name: 'Hero' } } };
+  const requests = [];
+  let resolveStatusSaveStarted;
+  const statusSaveStarted = new Promise((resolve) => {
+    resolveStatusSaveStarted = resolve;
+  });
+  const saveResponse = deferredJsonResponse({
+    id: 'status-route-save',
+    conversationId: 'conv-1',
+    name: 'Vitals',
+    template: '',
+    variables: [{ name: 'HP', value: 8, max: 10, color: '#ff0000' }]
+  });
+
+  globalThis.fetch = async (url, options = {}) => {
+    const requestUrl = String(url);
+    const method = String(options.method || 'GET').toUpperCase();
+    requests.push([requestUrl, method]);
+
+    if (requestUrl === '/api/csrf-token') {
+      return jsonResponse({ csrfToken: 'status-route-save-token' });
+    }
+
+    if (requestUrl === '/api/conversations/conv-1/status-bar' && method === 'PUT') {
+      resolveStatusSaveStarted();
+      return saveResponse.promise;
+    }
+
+    return jsonResponse({ message: `Unexpected request: ${requestUrl}` }, 500);
+  };
+
+  try {
+    const accessory = createAccessory({ conversation });
+    accessory.statusBarForm.name = 'Vitals';
+    accessory.statusBarForm.variables = [{ name: 'HP', value: 8, max: 10, color: '#ff0000' }];
+
+    const savePromise = accessory.saveStatusBarChanges();
+    await statusSaveStarted;
+
+    assert.equal(accessory.statusBarSaving.value, true);
+    conversation.value = { id: 'conv-2', character: { name: 'Next' } };
+
+    saveResponse.resolve();
+    await savePromise;
+
+    assert.equal(accessory.statusBar.value, null);
+    assert.equal(accessory.statusBarSaving.value, true);
+    assert.deepEqual(requests.filter(([url]) => url !== '/api/csrf-token'), [
+      ['/api/conversations/conv-1/status-bar', 'PUT']
+    ]);
+
+    accessory.cleanupAccessory();
+    assert.equal(accessory.statusBarSaving.value, false);
+  } finally {
+    globalThis.fetch = originalFetch;
+    saveResponse.resolve();
+  }
+});
+
 test('status bar builtin template save serializes config without key scans', async () => {
   const originalFetch = globalThis.fetch;
   const requestBodies = [];
@@ -330,6 +399,72 @@ test('status bar builtin template save serializes config without key scans', asy
     assert.doesNotMatch(chatAccessorySource, /Object\.keys\(cfg\)\.length/);
   } finally {
     globalThis.fetch = originalFetch;
+  }
+});
+
+test('status bar delete keeps saving locked after conversation changes until cleanup', async () => {
+  const originalFetch = globalThis.fetch;
+  const originalWindow = globalThis.window;
+  const conversation = { value: { id: 'conv-1', character: { name: 'Hero' } } };
+  const deleteResponse = deferredJsonResponse({ ok: true });
+  const requests = [];
+  const existingStatusBar = {
+    id: 'status-delete',
+    conversationId: 'conv-1',
+    name: 'Vitals',
+    template: '',
+    variables: [{ name: 'HP', value: 10, max: 10, color: '#ff0000' }]
+  };
+
+  globalThis.window = {
+    confirm: () => true
+  };
+  globalThis.fetch = async (url, options = {}) => {
+    const requestUrl = String(url);
+    const method = String(options.method || 'GET').toUpperCase();
+    requests.push([requestUrl, method]);
+
+    if (requestUrl === '/api/csrf-token') {
+      return jsonResponse({ csrfToken: 'status-route-delete-token' });
+    }
+
+    if (requestUrl === '/api/conversations/conv-1/status-bar' && method === 'DELETE') {
+      return deleteResponse.promise;
+    }
+
+    return jsonResponse({ message: `Unexpected request: ${requestUrl}` }, 500);
+  };
+
+  try {
+    const accessory = createAccessory({ conversation });
+    accessory.applyStatusBarUpdate(existingStatusBar);
+    const initialStatusBar = accessory.statusBar.value;
+
+    const deletePromise = accessory.deleteStatusBarAction();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    assert.equal(accessory.statusBarSaving.value, true);
+    conversation.value = { id: 'conv-2', character: { name: 'Next' } };
+
+    deleteResponse.resolve();
+    await deletePromise;
+
+    assert.equal(accessory.statusBar.value, initialStatusBar);
+    assert.equal(accessory.statusBarSaving.value, true);
+    assert.deepEqual(requests.filter(([url]) => url !== '/api/csrf-token'), [
+      ['/api/conversations/conv-1/status-bar', 'DELETE']
+    ]);
+
+    accessory.cleanupAccessory();
+    assert.equal(accessory.statusBarSaving.value, false);
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalWindow === undefined) {
+      delete globalThis.window;
+    } else {
+      globalThis.window = originalWindow;
+    }
   }
 });
 
@@ -599,6 +734,84 @@ test('accessory skill save preserves active conversation references for unchange
   } finally {
     globalThis.fetch = originalFetch;
   }
+});
+
+test('accessory skill save keeps stale conversation saving locked until cleanup', async () => {
+  const originalFetch = globalThis.fetch;
+  const conversation = { value: { id: 'conv-1', character: { name: 'Hero' } } };
+  const requests = [];
+  let resolveAccessorySaveStarted;
+  const accessorySaveStarted = new Promise((resolve) => {
+    resolveAccessorySaveStarted = resolve;
+  });
+  const saveResponse = deferredJsonResponse({
+    skills: {
+      npcAgent: { enabled: true, modelOverride: '' },
+      statusBarAgent: { enabled: 'auto', modelOverride: '' }
+    },
+    active: {},
+    source: {}
+  });
+
+  globalThis.fetch = async (url, options = {}) => {
+    const requestUrl = String(url);
+    const method = String(options.method || 'GET').toUpperCase();
+    requests.push([requestUrl, method]);
+
+    if (requestUrl === '/api/csrf-token') {
+      return jsonResponse({ csrfToken: 'accessory-route-save-token' });
+    }
+
+    if (requestUrl === '/api/conversations/conv-1/accessory-skills' && method === 'PUT') {
+      resolveAccessorySaveStarted();
+      return saveResponse.promise;
+    }
+
+    return jsonResponse({ message: `Unexpected request: ${requestUrl}` }, 500);
+  };
+
+  try {
+    const accessory = createAccessory({ conversation });
+    accessory.accessorySkills.npcAgent.enabled = true;
+
+    const savePromise = accessory.saveAccessorySkillChanges();
+    await accessorySaveStarted;
+
+    assert.equal(accessory.accessorySaving.value, true);
+    conversation.value = { id: 'conv-2', character: { name: 'Next' } };
+
+    saveResponse.resolve();
+    await savePromise;
+
+    assert.equal(accessory.accessorySaving.value, true);
+    assert.deepEqual(requests.filter(([url]) => url !== '/api/csrf-token'), [
+      ['/api/conversations/conv-1/accessory-skills', 'PUT']
+    ]);
+
+    accessory.cleanupAccessory();
+    assert.equal(accessory.accessorySaving.value, false);
+  } finally {
+    globalThis.fetch = originalFetch;
+    saveResponse.resolve();
+  }
+});
+
+test('chat accessory mutation cleanup uses current conversation guards', () => {
+  assert.match(
+    chatAccessorySource,
+    /finally \{\s*if \(isCurrentAccessorySave\(requestToken, conversationId\)\) \{\s*accessorySaving\.value = false;/
+  );
+  assert.equal(
+    countMatches(
+      chatAccessorySource,
+      /if \(isCurrentStatusBarMutation\(requestToken, conversationId\)\) \{\s*statusBarSaving\.value = false;/g
+    ),
+    2
+  );
+  assert.doesNotMatch(
+    chatAccessorySource,
+    /finally \{\s*if \(isActive(?:AccessorySave|StatusBarMutation)\(requestToken\)\) \{/
+  );
 });
 
 test('accessory skill results require the current conversation id', () => {

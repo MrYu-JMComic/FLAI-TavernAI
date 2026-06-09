@@ -1432,9 +1432,66 @@ test('branch callbacks receive a stale-route context guard', async () => {
     assert.equal(callbackRuns, 1);
     assert.equal(guardWasCurrent, true);
     assert.equal(guardWasStale, true);
+    assert.equal(actions.branchBusy.value, true);
+
+    actions.cleanup();
     assert.equal(actions.branchBusy.value, false);
   } finally {
     globalThis.fetch = originalFetch;
+  }
+});
+
+test('branch action keeps busy state locked after route changes until cleanup', async () => {
+  const originalFetch = globalThis.fetch;
+  const route = { params: { id: 'conv-1' } };
+  const actions = createMessageActions({
+    route,
+    messages: [{ id: 'msg-1', role: 'assistant', content: 'Ready' }]
+  });
+  let callbackRuns = 0;
+  let resolveBranchStarted;
+  const branchStarted = new Promise((resolve) => {
+    resolveBranchStarted = resolve;
+  });
+  const branchResponse = deferredResponse({ id: 'branch-route-change' });
+
+  globalThis.fetch = async (url, options = {}) => {
+    const requestUrl = String(url);
+    const method = String(options.method || 'GET').toUpperCase();
+    if (requestUrl === '/api/csrf-token') {
+      return jsonResponse({ csrfToken: 'branch-route-token' });
+    }
+    if (requestUrl === '/api/conversations/conv-1/branch' && method === 'POST') {
+      resolveBranchStarted();
+      return branchResponse.promise;
+    }
+    throw new Error(`Unexpected request: ${requestUrl}`);
+  };
+
+  try {
+    const branchPromise = actions.handleBranchMessage(
+      { id: 'msg-1', role: 'assistant', content: 'Ready' },
+      'conv-1',
+      async () => {
+        callbackRuns += 1;
+      }
+    );
+    await branchStarted;
+
+    assert.equal(actions.branchBusy.value, true);
+    route.params.id = 'conv-2';
+
+    branchResponse.resolve();
+    await branchPromise;
+
+    assert.equal(callbackRuns, 0);
+    assert.equal(actions.branchBusy.value, true);
+
+    actions.cleanup();
+    assert.equal(actions.branchBusy.value, false);
+  } finally {
+    globalThis.fetch = originalFetch;
+    branchResponse.resolve();
   }
 });
 
@@ -1478,6 +1535,14 @@ test('branch navigation callbacks can keep busy state locked until cleanup', asy
   } finally {
     globalThis.fetch = originalFetch;
   }
+});
+
+test('branch action cleanup uses the route-aware action guard', () => {
+  assert.match(
+    chatMessageActionsSource,
+    /finally \{\s*if \(isCurrentBranchAction\(requestToken, conversationId\)\) \{\s*branchBusy\.value = false;/
+  );
+  assert.doesNotMatch(chatMessageActionsSource, /if \(!disposed && requestToken === branchActionToken\)/);
 });
 
 test('message edit and delete actions stay locked while a branch action is busy', async () => {
