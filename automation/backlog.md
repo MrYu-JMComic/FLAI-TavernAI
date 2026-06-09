@@ -40,6 +40,7 @@ The autonomous loop should choose one small item per run. Add new findings here 
 
 ## Done
 
+- 2026-06-09: Collected provider model catalog Map values with a direct helper and shared id comparator instead of spread plus inline sort.
 - 2026-06-09: Collected ChatModelSwitcher deduped model options with a direct Map values loop instead of spread-cloning values.
 - 2026-06-09: Built talent system prompt lines with direct string accumulation instead of `map`/`join` intermediate arrays.
 - 2026-06-09: Normalized CharacterFormView advanced effects and selected tag names with direct loops instead of `filter/includes` and `map` callbacks.

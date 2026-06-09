@@ -6,6 +6,7 @@ const { useProviderModels } = await import('../../../frontend/src/composables/us
 const {
   areProviderModelListsEqual,
   buildModelSelectOptions,
+  normalizeModelList,
   readCachedProviderModels
 } = await import('../../../frontend/src/services/modelCatalog.js');
 const modelCatalogSource = readRepoText('frontend/src/services/modelCatalog.js');
@@ -118,6 +119,35 @@ test('provider model select options preserve missing current model before normal
   assert.deepEqual(options.map((model) => model.id), ['', 'model-c', 'model-a', 'model-b']);
   assert.equal(options[0].empty, true);
   assert.equal(options[1].current, true);
+});
+
+test('provider model list normalization preserves dedupe and id sort order', () => {
+  const models = normalizeModelList([
+    { id: 'model-b', label: 'Model B', ownedBy: 'team-b' },
+    { id: 'model-a', display_name: 'Model A', owned_by: 'team-a' },
+    { id: 'model-b', label: 'Duplicate B', ownedBy: 'other-team' }
+  ]);
+
+  assert.deepEqual(models, [
+    { id: 'model-a', label: 'Model A', ownedBy: 'team-a' },
+    { id: 'model-b', label: 'Model B', ownedBy: 'team-b' }
+  ]);
+});
+
+test('provider model list normalization collects Map values without spread', () => {
+  assert.match(
+    modelCatalogSource,
+    /export function normalizeModelList\(models = \[\]\) \{[\s\S]*const byId = new Map\(\);[\s\S]*return collectSortedModelValues\(byId\);[\s\S]*\}/
+  );
+  assert.match(
+    modelCatalogSource,
+    /function collectSortedModelValues\(byId\) \{\s*const models = \[\];\s*for \(const model of byId\.values\(\)\) \{\s*models\.push\(model\);[\s\S]*return models\.sort\(compareModelById\);[\s\S]*\}/
+  );
+  assert.match(
+    modelCatalogSource,
+    /function compareModelById\(a, b\) \{\s*return a\.id\.localeCompare\(b\.id\);[\s\S]*\}/
+  );
+  assert.doesNotMatch(modelCatalogSource, /return\s+\[\.\.\.byId\.values\(\)\]\.sort\(/);
 });
 
 test('provider model select options scan normalized rows directly', () => {

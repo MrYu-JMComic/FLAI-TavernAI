@@ -109,7 +109,19 @@ export function normalizeModelList(models = []) {
       ownedBy: String(item?.ownedBy || item?.owned_by || item?.publisher || '').trim()
     });
   }
-  return [...byId.values()].sort((a, b) => a.id.localeCompare(b.id));
+  return collectSortedModelValues(byId);
+}
+
+function collectSortedModelValues(byId) {
+  const models = [];
+  for (const model of byId.values()) {
+    models.push(model);
+  }
+  return models.sort(compareModelById);
+}
+
+function compareModelById(a, b) {
+  return a.id.localeCompare(b.id);
 }
 
 export function areProviderModelListsEqual(currentModels, nextModels) {
