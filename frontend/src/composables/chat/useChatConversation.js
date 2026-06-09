@@ -346,7 +346,7 @@ export function useChatConversation({ route, emit, showError }) {
         return;
       }
       closeSidebar();
-      emit('navigate', 'chat', { id: created.id });
+      navigateFromStartConversation('chat', { id: created.id });
     } catch (err) {
       if (isCurrentStartConversation(requestToken)) {
         showError(err.message);
@@ -356,6 +356,11 @@ export function useChatConversation({ route, emit, showError }) {
         startConversationBusy.value = false;
       }
     }
+  }
+
+  function navigateFromStartConversation(page, params) {
+    startConversationToken += 1;
+    emit('navigate', page, params);
   }
 
   function openConversation(conversationId) {

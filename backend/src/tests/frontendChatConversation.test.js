@@ -1343,13 +1343,27 @@ test('starting a new chat blocks duplicate create requests while pending', async
     await Promise.all([firstStart, duplicateStart]);
 
     assert.equal(createRequests, 1);
-    assert.equal(chat.startConversationBusy.value, false);
+    assert.equal(chat.startConversationBusy.value, true);
     assert.deepEqual(errors, []);
     assert.deepEqual(emissions, [['navigate', 'chat', { id: 'conv-created' }]]);
+    chat.cleanup();
+    assert.equal(chat.startConversationBusy.value, false);
   } finally {
     globalThis.fetch = originalFetch;
     slowCreate.resolve(jsonResponse({ id: 'conv-created' }));
   }
+});
+
+test('starting a new chat invalidates its action token before route navigation', () => {
+  assert.match(
+    chatConversationSource,
+    /async function startNewConversation\(\) \{[\s\S]*const requestToken = \+\+startConversationToken;[\s\S]*closeSidebar\(\);\s*navigateFromStartConversation\('chat', \{ id: created\.id \}\);[\s\S]*finally \{[\s\S]*if \(isCurrentStartConversation\(requestToken\)\) \{[\s\S]*startConversationBusy\.value = false;/
+  );
+  assert.match(
+    chatConversationSource,
+    /function navigateFromStartConversation\(page, params\) \{\s*startConversationToken \+= 1;\s*emit\('navigate', page, params\);\s*\}/
+  );
+  assert.doesNotMatch(chatConversationSource, /emit\('navigate', 'chat', \{ id: created\.id \}\);/);
 });
 
 test('starting a new chat ignores completions after cleanup', async () => {

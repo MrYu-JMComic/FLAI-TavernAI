@@ -40,6 +40,7 @@ The autonomous loop should choose one small item per run. Add new findings here 
 
 ## Done
 
+- 2026-06-09: Invalidated chat new-conversation action tokens before created-chat navigation so old ChatView instances stay locked until cleanup.
 - 2026-06-09: Guarded chat sidebar active-conversation deletion navigation so stale route-replacement cleanup cannot unlock old sidebar actions.
 - 2026-06-09: Invalidated chat branch action tokens before branch-created route navigation so old ChatView instances stay locked until cleanup.
 - 2026-06-09: Scanned CharacterFormView sticky section targets directly during scroll sync instead of building transient map/filter arrays.
