@@ -1,5 +1,5 @@
 <script setup>
-import { ref } from 'vue';
+import { onBeforeUnmount, ref } from 'vue';
 import { LogIn } from '@lucide/vue';
 import { login } from '../api';
 import { useNotify } from '../composables/useNotify';
@@ -9,16 +9,33 @@ const notify = useNotify();
 const username = ref('');
 const password = ref('');
 const loading = ref(false);
+let submitToken = 0;
+let disposed = false;
+
+onBeforeUnmount(() => {
+  disposed = true;
+  submitToken += 1;
+});
+
+function isCurrentSubmit(token) {
+  return !disposed && token === submitToken;
+}
 
 async function submit() {
   if (loading.value) return;
+  const requestToken = ++submitToken;
   loading.value = true;
   try {
-    emit('authenticated', await login({ username: username.value, password: password.value }));
+    const result = await login({ username: username.value, password: password.value });
+    if (!isCurrentSubmit(requestToken)) return;
+    emit('authenticated', result);
   } catch (err) {
+    if (!isCurrentSubmit(requestToken)) return;
     notify.error(err.message);
   } finally {
-    loading.value = false;
+    if (isCurrentSubmit(requestToken)) {
+      loading.value = false;
+    }
   }
 }
 </script>
