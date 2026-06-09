@@ -75,6 +75,11 @@ test('ChatView guards model switcher refresh and save handlers while work is pen
     chatViewScript,
     /async function saveQuickModel\(model\)\s*{\s*if \(modelSwitcherSaving\.value\)\s*{\s*return;\s*}/
   );
+  assert.match(
+    chatViewScript,
+    /finally \{\s*if \(isCurrentModelSave\(requestToken, saveKey\)\) \{\s*modelSwitcherSaving\.value = false;\s*\}\s*\}/
+  );
+  assert.doesNotMatch(chatViewScript, /if \(!chatViewDisposed && requestToken === modelSaveToken\)/);
 });
 
 test('Chat quick model contexts include provider auth availability', () => {

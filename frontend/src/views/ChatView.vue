@@ -310,7 +310,7 @@ async function saveQuickModel(model) {
       showError(err.message);
     }
   } finally {
-    if (!chatViewDisposed && requestToken === modelSaveToken) {
+    if (isCurrentModelSave(requestToken, saveKey)) {
       modelSwitcherSaving.value = false;
     }
   }
