@@ -215,6 +215,26 @@ test('WorldBookView locks world book mutations while saving is active', () => {
   assert.match(worldBookViewTemplate, /:disabled="!aiDraft \|\| !aiDraftEntryCount \|\| aiLoading \|\| saving"/);
 });
 
+test('WorldBookView invalidates mutation tokens before mutation-triggered navigation', () => {
+  assert.match(
+    worldBookViewScript,
+    /function navigateFromWorldBookMutation\(page, params\) \{\s*worldBookMutationToken \+= 1;\s*emit\('navigate', page, params\);\s*\}/
+  );
+  assert.match(
+    worldBookViewScript,
+    /const book = await createWorldBook\(payload\);[\s\S]*?navigateFromWorldBookMutation\('worldBookDetail', \{ id: book\.id \}\);/
+  );
+  assert.match(
+    worldBookViewScript,
+    /if \(isDetailView\.value\) \{\s*navigateFromWorldBookMutation\('worldBooks'\);\s*\} else \{/
+  );
+  assert.match(
+    worldBookViewScript,
+    /setAiDraftIfChanged\(null\);\s*navigateFromWorldBookMutation\('worldBookDetail', \{ id: createdBook\.id \}\);/
+  );
+  assert.equal(countMatches(worldBookViewScript, /emit\('navigate'/g), 1);
+});
+
 test('WorldBookView freezes book and entry forms while saving is active', () => {
   ['closeBookForm', 'closeEntryForm'].forEach((functionName) => assertSavingGuard(worldBookViewScript, functionName));
 

@@ -380,6 +380,11 @@ function isCurrentWorldBookRouteMutation(mutationToken, routeKey) {
   return mutationToken === worldBookMutationToken && currentWorldBookRouteKey() === routeKey;
 }
 
+function navigateFromWorldBookMutation(page, params) {
+  worldBookMutationToken += 1;
+  emit('navigate', page, params);
+}
+
 function openCreateBook() {
   if (saving.value) return;
   Object.assign(editingBook, createEmptyBook());
@@ -445,7 +450,7 @@ async function saveBook() {
       if (!isCurrentWorldBookRouteMutation(mutationToken, routeKey)) return;
       resetBookFormState();
       notify.success('世界书已创建');
-      emit('navigate', 'worldBookDetail', { id: book.id });
+      navigateFromWorldBookMutation('worldBookDetail', { id: book.id });
     }
   } catch (err) {
     if (!isCurrentWorldBookRouteMutation(mutationToken, routeKey)) return;
@@ -472,7 +477,7 @@ async function removeBook(id) {
     }
     notify.success('世界书已删除');
     if (isDetailView.value) {
-      emit('navigate', 'worldBooks');
+      navigateFromWorldBookMutation('worldBooks');
     } else {
       await loadBooks();
     }
@@ -756,7 +761,7 @@ async function createBookFromAiDraft() {
     if (!isCurrentWorldBookRouteMutation(mutationToken, routeKey)) return;
     notify.success(`世界书已创建，并写入 ${aiDraftEntryCount.value} 个条目`);
     setAiDraftIfChanged(null);
-    emit('navigate', 'worldBookDetail', { id: createdBook.id });
+    navigateFromWorldBookMutation('worldBookDetail', { id: createdBook.id });
   } catch (err) {
     if (createdBook?.id) {
       await deleteWorldBook(createdBook.id).catch(() => null);
