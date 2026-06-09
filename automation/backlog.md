@@ -40,6 +40,7 @@ The autonomous loop should choose one small item per run. Add new findings here 
 
 ## Done
 
+- 2026-06-09: Scoped chat appearance save cleanup to the active conversation so stale save completions stay locked until cleanup.
 - 2026-06-09: Scoped chat branch, accessory skill, and status-bar mutation cleanup to the active route/conversation guards so stale completions stay locked until cleanup.
 - 2026-06-09: Scoped chat message edit/delete busy cleanup to the active route so stale route completions stay locked until cleanup.
 - 2026-06-09: Scanned CharacterFormView visible section membership directly instead of filter/some callback paths.

@@ -27,6 +27,14 @@ function jsonResponse(data, status = 200) {
   });
 }
 
+function deferredJsonResponse(data, status = 200) {
+  let resolve;
+  const promise = new Promise((promiseResolve) => {
+    resolve = () => promiseResolve(jsonResponse(data, status));
+  });
+  return { promise, resolve };
+}
+
 function createAppearance(options = {}) {
   return useChatAppearance({
     conversation: options.conversation || { value: { id: 'conv-1', chatLorebookId: 'book-original' } },
@@ -390,6 +398,87 @@ test('chat appearance save preserves active conversation references for unchange
   } finally {
     globalThis.fetch = originalFetch;
   }
+});
+
+test('chat appearance save keeps stale conversation saving locked until cleanup', async () => {
+  const originalFetch = globalThis.fetch;
+  const conversation = { value: { id: 'conv-1', chatLorebookId: 'book-original' } };
+  const requests = [];
+  let resolveSaveStarted;
+  const saveStarted = new Promise((resolve) => {
+    resolveSaveStarted = resolve;
+  });
+  const saveResponse = deferredJsonResponse({
+    desktopBackgroundUrl: '',
+    mobileBackgroundUrl: '',
+    customCss: '.saved {}',
+    customJs: '',
+    statusBarPrompt: '',
+    chatLorebookId: 'book-next'
+  });
+  let conversationUpdates = 0;
+
+  globalThis.fetch = async (url, options = {}) => {
+    const requestUrl = String(url);
+    const method = String(options.method || 'GET').toUpperCase();
+    requests.push([requestUrl, method]);
+
+    if (requestUrl === '/api/csrf-token') {
+      return jsonResponse({ csrfToken: 'appearance-route-token' });
+    }
+
+    if (requestUrl === '/api/conversations/conv-1/settings' && method === 'PUT') {
+      resolveSaveStarted();
+      return saveResponse.promise;
+    }
+
+    return jsonResponse({ message: `Unexpected request: ${requestUrl}` }, 500);
+  };
+
+  try {
+    const appearance = createAppearance({
+      conversation,
+      setActiveConversationIfChanged(nextConversation) {
+        conversationUpdates += 1;
+        conversation.value = nextConversation;
+      }
+    });
+    appearance.chatAppearanceForm.customCss = '.draft {}';
+
+    const savePromise = appearance.saveConversationAppearanceChanges();
+    await saveStarted;
+
+    assert.equal(appearance.appearanceSaving.value, true);
+    conversation.value = { id: 'conv-2', chatLorebookId: 'book-other' };
+
+    saveResponse.resolve();
+    await savePromise;
+
+    assert.equal(conversationUpdates, 0);
+    assert.equal(appearance.chatAppearanceForm.customCss, '.draft {}');
+    assert.equal(appearance.appearanceSaving.value, true);
+    assert.deepEqual(requests.filter(([url]) => url !== '/api/csrf-token'), [
+      ['/api/conversations/conv-1/settings', 'PUT']
+    ]);
+
+    appearance.disposeConversationAppearance();
+    assert.equal(appearance.appearanceSaving.value, false);
+  } finally {
+    globalThis.fetch = originalFetch;
+    saveResponse.resolve();
+  }
+});
+
+test('chat appearance save cleanup uses the current conversation guard', () => {
+  assert.match(
+    chatAppearanceSource,
+    /finally \{\s*if \(isCurrentAppearanceSave\(requestToken, conversationId\)\) \{\s*appearanceSaving\.value = false;/
+  );
+  assert.doesNotMatch(
+    chatAppearanceSource,
+    /finally \{\s*if \(isActiveAppearanceSave\(requestToken\)\) \{/
+  );
+  assert.doesNotMatch(chatAppearanceSource, /function isActiveAppearanceSave/);
 });
 
 test('chat custom script UI helpers ignore stale resumes after the active conversation changes', async () => {

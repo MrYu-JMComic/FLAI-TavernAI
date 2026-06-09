@@ -162,7 +162,7 @@ export function useChatAppearance({
       }
       showError(err.message);
     } finally {
-      if (isActiveAppearanceSave(requestToken)) {
+      if (isCurrentAppearanceSave(requestToken, conversationId)) {
         appearanceSaving.value = false;
       }
     }
@@ -243,10 +243,6 @@ export function useChatAppearance({
       userSettings,
       chatLorebookId
     });
-  }
-
-  function isActiveAppearanceSave(requestToken) {
-    return !appearanceDisposed && requestToken === appearanceSaveToken;
   }
 
   function isCurrentAppearanceApply(applyToken, conversationId) {
