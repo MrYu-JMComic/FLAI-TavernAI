@@ -508,29 +508,39 @@ function buildNpcBehaviorPromptFromRows(database, conversationId, behaviors, mem
     }
   }
 
-  const sections = [];
+  let promptBody = '';
   for (const npc of npcMap.values()) {
     const metadataLines = buildNpcMetadataPromptLines(npc.registry);
-    const ruleLines = npc.behaviors.map((rule) => {
-      const trigger = rule.trigger_condition ? `Trigger: ${rule.trigger_condition}` : 'Trigger: always/contextual';
-      return `  - [${rule.behavior_type}] ${trigger}; Action: ${rule.action}`;
-    });
     const memorySealActive = isNpcRegistryMemorySealActive(npc.registry);
-    const memoryLines = npc.memories.map((memory) => `  - [${memory.memory_type}] ${memory.content}`);
-    const metadataSection = metadataLines.length ? `\n${metadataLines.join('\n')}` : '';
-    const behaviorSection = ruleLines.length ? `\n  Behavior rules:\n${ruleLines.join('\n')}` : '';
-    const memorySection = memorySealActive
-      ? '\n  Memories: sealed for this status; stored memories are intentionally omitted until the status changes.'
-      : memoryLines.length
-        ? `\n  Memories:\n${memoryLines.join('\n')}`
-        : '';
-    sections.push(`NPC "${npc.name}" context:${metadataSection}${behaviorSection}${memorySection}`);
+    let section = `NPC "${npc.name}" context:`;
+    for (const line of metadataLines) {
+      section += `\n${line}`;
+    }
+    if (npc.behaviors.length > 0) {
+      section += '\n  Behavior rules:';
+      for (const rule of npc.behaviors) {
+        const trigger = rule.trigger_condition ? `Trigger: ${rule.trigger_condition}` : 'Trigger: always/contextual';
+        section += `\n  - [${rule.behavior_type}] ${trigger}; Action: ${rule.action}`;
+      }
+    }
+    if (memorySealActive) {
+      section += '\n  Memories: sealed for this status; stored memories are intentionally omitted until the status changes.';
+    } else if (npc.memories.length > 0) {
+      section += '\n  Memories:';
+      for (const memory of npc.memories) {
+        section += `\n  - [${memory.memory_type}] ${memory.content}`;
+      }
+    }
+    if (promptBody) {
+      promptBody += '\n\n';
+    }
+    promptBody += section;
   }
 
-  if (sections.length === 0) {
+  if (!promptBody) {
     return '';
   }
-  return `\n[NPC 自主行为引擎 / NPC autonomous behavior engine]\n${sections.join('\n\n')}\nUse the NPC status, exact aliases, behavior rules, and available memories to keep side characters consistent. Exact aliases identify the same NPC; stable nicknames or titles count only when they uniquely name this NPC. Generic roles, vague references, pronouns, and group labels are not aliases. If an NPC is dead or permanently_left, do not portray them as present or active unless the story explicitly changes that status. Do not invent memories that are not provided.\n`;
+  return `\n[NPC 自主行为引擎 / NPC autonomous behavior engine]\n${promptBody}\nUse the NPC status, exact aliases, behavior rules, and available memories to keep side characters consistent. Exact aliases identify the same NPC; stable nicknames or titles count only when they uniquely name this NPC. Generic roles, vague references, pronouns, and group labels are not aliases. If an NPC is dead or permanently_left, do not portray them as present or active unless the story explicitly changes that status. Do not invent memories that are not provided.\n`;
 }
 
 function buildNpcMetadataPromptLines(registry) {

@@ -464,8 +464,16 @@ test('NPC status aliases and memory seal affect prompt memory injection', () => 
   assert.match(promptSource, /const hiddenNames = new Set\(\);[\s\S]*const registryMeta = new Map\(\);/);
   assert.match(promptSource, /for \(const row of registryRows\) \{[\s\S]*const normalizedName = normalizeNpcName\(row\.npc_name\);/);
   assert.match(promptSource, /registryMeta\.set\(key, registry\);[\s\S]*hiddenNames\.add\(key\);/);
+  assert.match(promptSource, /let promptBody = '';/);
+  assert.match(promptSource, /for \(const rule of npc\.behaviors\) \{/);
+  assert.match(promptSource, /for \(const memory of npc\.memories\) \{/);
   assert.doesNotMatch(promptSource, /registryRows\s*\.\s*filter/);
   assert.doesNotMatch(promptSource, /registryRows\.map/);
+  assert.doesNotMatch(promptSource, /npc\.behaviors\.map/);
+  assert.doesNotMatch(promptSource, /npc\.memories\.map/);
+  assert.doesNotMatch(promptSource, /ruleLines/);
+  assert.doesNotMatch(promptSource, /memoryLines/);
+  assert.doesNotMatch(promptSource, /sections\.join/);
 });
 
 test('hideEmptyConversationNpcs hides NPCs without memories or behaviors only', () => {
