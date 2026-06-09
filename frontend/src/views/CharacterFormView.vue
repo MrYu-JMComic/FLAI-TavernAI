@@ -810,13 +810,36 @@ const regexPreview = computed(() => {
   }
   return applyLocalRules(previewInput.value, form.regexRules, 'input');
 });
-const enabledRenderPlugins = computed(() => form.renderPlugins.filter((plugin) => plugin.enabled !== false && plugin.pattern));
-const renderPluginPreviewText = computed(() => {
-  return [form.background, form.worldview, form.persona, form.openingMessage]
-    .map((value) => String(value || '').trim())
-    .filter(Boolean)
-    .join('\n\n');
-});
+const enabledRenderPlugins = computed(() => collectEnabledRenderPlugins(form.renderPlugins));
+const renderPluginPreviewText = computed(() => buildRenderPluginPreviewText(
+  form.background,
+  form.worldview,
+  form.persona,
+  form.openingMessage
+));
+
+function collectEnabledRenderPlugins(plugins = []) {
+  const currentPlugins = Array.isArray(plugins) ? plugins : [];
+  const enabledPlugins = [];
+  for (const plugin of currentPlugins) {
+    if (plugin?.enabled !== false && plugin?.pattern) {
+      enabledPlugins.push(plugin);
+    }
+  }
+  return enabledPlugins;
+}
+
+function buildRenderPluginPreviewText() {
+  let previewText = '';
+  for (let index = 0; index < arguments.length; index += 1) {
+    const value = String(arguments[index] || '').trim();
+    if (!value) {
+      continue;
+    }
+    previewText = previewText ? `${previewText}\n\n${value}` : value;
+  }
+  return previewText;
+}
 const userVariableValue = computed(() => {
   return props.user?.displayName || props.user?.accountName || props.user?.username || '用户';
 });

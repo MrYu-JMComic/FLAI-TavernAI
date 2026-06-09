@@ -485,6 +485,32 @@ test('CharacterFormView scans AI draft seed fields without key-array callbacks',
   assert.doesNotMatch(characterFormScript, /Object\.keys\(payload\)\.some/);
 });
 
+test('CharacterFormView builds render plugin previews with direct loops', () => {
+  const start = characterFormScript.indexOf('const enabledRenderPlugins = computed');
+  const end = characterFormScript.indexOf('\nconst userVariableValue = computed', start);
+  assert.notEqual(start, -1);
+  assert.notEqual(end, -1);
+  const snippet = characterFormScript.slice(start, end);
+
+  assert.match(snippet, /const enabledRenderPlugins = computed\(\(\) => collectEnabledRenderPlugins\(form\.renderPlugins\)\);/);
+  assert.match(
+    snippet,
+    /const renderPluginPreviewText = computed\(\(\) => buildRenderPluginPreviewText\(\s*form\.background,\s*form\.worldview,\s*form\.persona,\s*form\.openingMessage\s*\)\);/
+  );
+  assert.match(
+    snippet,
+    /function collectEnabledRenderPlugins\(plugins = \[\]\) \{\s*const currentPlugins = Array\.isArray\(plugins\) \? plugins : \[\];\s*const enabledPlugins = \[\];\s*for \(const plugin of currentPlugins\) \{[\s\S]*enabledPlugins\.push\(plugin\);[\s\S]*return enabledPlugins;\s*\}/
+  );
+  assert.match(
+    snippet,
+    /function buildRenderPluginPreviewText\(\) \{\s*let previewText = '';[\s\S]*for \(let index = 0; index < arguments\.length; index \+= 1\) \{[\s\S]*const value = String\(arguments\[index\] \|\| ''\)\.trim\(\);[\s\S]*previewText = previewText \? `\$\{previewText\}\\n\\n\$\{value\}` : value;[\s\S]*return previewText;\s*\}/
+  );
+  assert.doesNotMatch(snippet, /form\.renderPlugins\.filter/);
+  assert.doesNotMatch(snippet, /\.map\(/);
+  assert.doesNotMatch(snippet, /\.filter\(/);
+  assert.doesNotMatch(snippet, /\.join\(/);
+});
+
 test('CharacterFormView preserves unchanged AI process panel references', () => {
   assert.match(characterFormScript, /import \{ countOwnObjectKeys \} from '\.\.\/utils\/objectKeys';/);
   assert.match(characterFormScript, /import \{ samePlainValue \} from '\.\.\/utils\/plainValues';/);

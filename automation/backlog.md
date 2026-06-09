@@ -40,6 +40,7 @@ The autonomous loop should choose one small item per run. Add new findings here 
 
 ## Done
 
+- 2026-06-09: Built CharacterFormView render-plugin preview text and enabled-plugin lists with direct loops instead of filter/map/join callback chains.
 - 2026-06-09: Clarified encoding checker replacement-character coverage and added fixture coverage for Unicode replacement markers.
 - 2026-06-09: Scoped chat quick-model save cleanup to the active provider context so stale save completions cannot unlock the model switcher after provider changes.
 - 2026-06-09: Scoped chat appearance save cleanup to the active conversation so stale save completions stay locked until cleanup.
