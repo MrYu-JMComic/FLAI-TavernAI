@@ -53,7 +53,7 @@ const modelOptions = computed(() => {
       current: id === current
     });
   }
-  return [...byId.values()];
+  return collectModelOptionValues(byId);
 });
 const filteredModels = computed(() => filterModelOptions(modelOptions.value, search.value));
 const canSave = computed(() => {
@@ -103,6 +103,14 @@ function filterModelOptions(options, rawKeyword) {
     }
   }
   return matches;
+}
+
+function collectModelOptionValues(byId) {
+  const options = [];
+  for (const option of byId.values()) {
+    options.push(option);
+  }
+  return options;
 }
 
 function hasModelOption(options, modelId) {

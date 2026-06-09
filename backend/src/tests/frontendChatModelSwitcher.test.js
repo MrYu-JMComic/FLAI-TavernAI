@@ -42,6 +42,18 @@ test('ChatModelSwitcher filters model search results without model-options filte
   assert.doesNotMatch(chatModelSwitcherScript, /modelOptions\.value\.filter\(/);
 });
 
+test('ChatModelSwitcher collects deduped model options without values spread', () => {
+  assert.match(
+    chatModelSwitcherScript,
+    /return collectModelOptionValues\(byId\);/
+  );
+  assert.match(
+    chatModelSwitcherScript,
+    /function collectModelOptionValues\(byId\) \{\s*const options = \[\];\s*for \(const option of byId\.values\(\)\) \{\s*options\.push\(option\);[\s\S]*return options;\s*\}/
+  );
+  assert.doesNotMatch(chatModelSwitcherScript, /return\s+\[\.\.\.byId\.values\(\)\];/);
+});
+
 test('ChatModelSwitcher keeps draft model scoped to refreshed options', () => {
   assert.match(
     chatModelSwitcherScript,
