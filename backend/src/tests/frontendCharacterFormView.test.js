@@ -57,6 +57,25 @@ test('CharacterFormView footer actions share one busy state', () => {
   assert.doesNotMatch(characterFormTemplate, /type="submit" :disabled="saving"/);
 });
 
+test('CharacterFormView invalidates route-replacing action tokens before navigation', () => {
+  assert.match(
+    characterFormScript,
+    /function navigateFromCharacterSubmit\(page, params\) \{\s*formSubmitToken \+= 1;\s*emit\('navigate', page, params\);\s*\}/
+  );
+  assert.match(
+    characterFormScript,
+    /if \(editing\) \{\s*emit\('navigate', 'characterEdit', \{ id: saved\.id \}\);\s*\} else \{\s*navigateFromCharacterSubmit\('characterEdit', \{ id: saved\.id \}\);\s*\}/
+  );
+  assert.match(
+    characterFormScript,
+    /function navigateFromCharacterDelete\(page, params\) \{\s*characterDeleteToken \+= 1;\s*emit\('navigate', page, params\);\s*\}/
+  );
+  assert.match(
+    characterFormScript,
+    /await deleteCharacter\(characterId\);[\s\S]*?if \(!isCurrentCharacterDelete\(deleteToken, characterId\)\) return;[\s\S]*?navigateFromCharacterDelete\('home'\);/
+  );
+});
+
 test('CharacterFormView tag creation freezes tag controls while pending', () => {
   assert.match(characterFormScript, /const tagCreating = ref\(false\);/);
   assert.match(

@@ -1133,7 +1133,11 @@ async function submit() {
     await syncCharacterWorldBooks(saved.id, { editing, selectedIds: worldBookIds });
     if (!isCurrentFormSubmit(submitToken, { editing, characterId })) return;
     notify.success(editing ? '角色已保存' : '角色已创建');
-    emit('navigate', 'characterEdit', { id: saved.id });
+    if (editing) {
+      emit('navigate', 'characterEdit', { id: saved.id });
+    } else {
+      navigateFromCharacterSubmit('characterEdit', { id: saved.id });
+    }
   } catch (err) {
     if (!isCurrentFormSubmit(submitToken, { editing, characterId })) return;
     notify.error(err.message);
@@ -1183,6 +1187,11 @@ function isCurrentFormSubmit(submitToken, { editing, characterId } = {}) {
 
 function isActiveFormSubmit(submitToken) {
   return !characterFormDisposed && submitToken === formSubmitToken;
+}
+
+function navigateFromCharacterSubmit(page, params) {
+  formSubmitToken += 1;
+  emit('navigate', page, params);
 }
 
 async function completeWithAi() {
@@ -1259,7 +1268,7 @@ async function removeCharacter() {
     await deleteCharacter(characterId);
     if (!isCurrentCharacterDelete(deleteToken, characterId)) return;
     notify.success('角色已删除');
-    emit('navigate', 'home');
+    navigateFromCharacterDelete('home');
   } catch (err) {
     if (!isCurrentCharacterDelete(deleteToken, characterId)) return;
     notify.error(err.message);
@@ -1278,6 +1287,11 @@ function isCurrentCharacterDelete(deleteToken, characterId) {
 
 function isActiveCharacterDelete(deleteToken) {
   return !characterFormDisposed && deleteToken === characterDeleteToken;
+}
+
+function navigateFromCharacterDelete(page, params) {
+  characterDeleteToken += 1;
+  emit('navigate', page, params);
 }
 
 function addRule() {
