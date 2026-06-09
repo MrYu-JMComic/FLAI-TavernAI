@@ -41,6 +41,7 @@ The autonomous loop should choose one small item per run. Add new findings here 
 ## Done
 
 - 2026-06-09: Parsed CharacterFormView status template tokens through the shared single-scan helper instead of `split('.')` arrays.
+- 2026-06-09: Reordered character image ids with direct loops instead of transient id arrays and `forEach` callbacks.
 - 2026-06-09: Scanned CharacterFormView status blueprint variable lookups directly instead of a callback `find` path.
 - 2026-06-09: Scanned HomeView sort options and selected hot tags directly instead of `find`/`findIndex` lookup callbacks.
 - 2026-06-09: Built NPC behavior prompt sections with direct string accumulation instead of behavior/memory map and section join intermediates.

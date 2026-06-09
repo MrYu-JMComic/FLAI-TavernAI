@@ -126,7 +126,10 @@ export function reorderCharacterImages(database, characterId, orderedIds) {
   const current = database
     .prepare('SELECT id FROM character_images WHERE character_id = ? ORDER BY order_index ASC, created_at ASC, rowid ASC')
     .all(characterId);
-  const existingIds = new Set(current.map((row) => row.id));
+  const existingIds = new Set();
+  for (const row of current) {
+    existingIds.add(row.id);
+  }
   const seen = new Set();
   const nextIds = [];
 
@@ -149,10 +152,12 @@ export function reorderCharacterImages(database, characterId, orderedIds) {
     'UPDATE character_images SET order_index = ? WHERE id = ? AND character_id = ?'
   );
   let changed = 0;
-  nextIds.forEach((id, index) => {
+  let index = 0;
+  for (const id of nextIds) {
     const result = update.run(index, id, characterId);
     changed += result.changes;
-  });
+    index += 1;
+  }
   return changed;
 }
 
@@ -235,7 +240,11 @@ function reorderAfterDelete(database, characterId) {
     .prepare('SELECT id FROM character_images WHERE character_id = ? ORDER BY order_index ASC, created_at ASC, rowid ASC')
     .all(characterId);
   const update = database.prepare('UPDATE character_images SET order_index = ? WHERE id = ?');
-  rows.forEach((row, index) => update.run(index, row.id));
+  let index = 0;
+  for (const row of rows) {
+    update.run(index, row.id);
+    index += 1;
+  }
 }
 
 function toCharacterImage(row) {

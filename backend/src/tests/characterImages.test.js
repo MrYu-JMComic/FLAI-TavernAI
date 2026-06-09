@@ -184,6 +184,26 @@ test('character images partial reorder keeps indexes unique', () => {
   assert.deepEqual(ordered.map((image) => image.orderIndex), [0, 1, 2]);
 });
 
+test('character image reorder paths scan ids directly without transient arrays', () => {
+  const reorderStart = characterImagesSource.indexOf('export function reorderCharacterImages');
+  const reorderEnd = characterImagesSource.indexOf('\nexport function detectSceneAndEmotion', reorderStart);
+  const deleteReorderStart = characterImagesSource.indexOf('function reorderAfterDelete');
+  const deleteReorderEnd = characterImagesSource.indexOf('\nfunction toCharacterImage', deleteReorderStart);
+  assert.notEqual(reorderStart, -1);
+  assert.notEqual(reorderEnd, -1);
+  assert.notEqual(deleteReorderStart, -1);
+  assert.notEqual(deleteReorderEnd, -1);
+
+  const reorderSnippet = characterImagesSource.slice(reorderStart, reorderEnd);
+  const deleteReorderSnippet = characterImagesSource.slice(deleteReorderStart, deleteReorderEnd);
+  assert.match(reorderSnippet, /const existingIds = new Set\(\);\s*for \(const row of current\) \{\s*existingIds\.add\(row\.id\);/);
+  assert.match(reorderSnippet, /let index = 0;\s*for \(const id of nextIds\) \{[\s\S]*changed \+= result\.changes;[\s\S]*index \+= 1;/);
+  assert.match(deleteReorderSnippet, /let index = 0;\s*for \(const row of rows\) \{[\s\S]*update\.run\(index, row\.id\);[\s\S]*index \+= 1;/);
+  assert.doesNotMatch(reorderSnippet, /current\.map\(\(row\) => row\.id\)/);
+  assert.doesNotMatch(reorderSnippet, /nextIds\.forEach/);
+  assert.doesNotMatch(deleteReorderSnippet, /rows\.forEach/);
+});
+
 test('character images preserve deterministic order when order indexes tie', () => {
   const { database, character } = setupDatabase();
   const timestamp = '2026-01-01T00:00:00.000Z';
