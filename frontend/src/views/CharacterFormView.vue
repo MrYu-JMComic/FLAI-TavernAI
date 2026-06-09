@@ -2548,7 +2548,7 @@ function parseStatusBarTemplateConfig(raw) {
     if (typeof parsed.accentColor === 'string' && parsed.accentColor.trim()) cfg.accentColor = parsed.accentColor.trim();
     if (typeof parsed.customCss === 'string' && parsed.customCss.trim()) cfg.customCss = parsed.customCss.trim();
     if (Array.isArray(parsed.effects)) {
-      cfg.effects = parsed.effects.filter((effect) => ['glow', 'striped', 'pulse'].includes(effect));
+      cfg.effects = collectAllowedStatusEffects(parsed.effects);
     }
     if (Array.isArray(parsed.characters)) {
       cfg.characters = parsed.characters;
@@ -2560,6 +2560,21 @@ function parseStatusBarTemplateConfig(raw) {
   } catch {
     return {};
   }
+}
+
+function collectAllowedStatusEffects(effects = []) {
+  const currentEffects = Array.isArray(effects) ? effects : [];
+  const allowedEffects = [];
+  for (const effect of currentEffects) {
+    if (isAllowedStatusEffect(effect)) {
+      allowedEffects.push(effect);
+    }
+  }
+  return allowedEffects;
+}
+
+function isAllowedStatusEffect(effect) {
+  return effect === 'glow' || effect === 'striped' || effect === 'pulse';
 }
 
 function normalizeAdvancedSettingsForForm(input = {}) {
@@ -2672,13 +2687,22 @@ function normalizeForForm(character) {
     canUse: character.canUse !== false,
     isOwner: character.isOwner === true,
     tagsText: (character.tags || []).join(', '),
-    selectedTags: (character.characterTags || []).map((t) => t.name),
+    selectedTags: collectCharacterTagNames(character.characterTags),
     renderPlugins: character.renderPlugins || [],
     authorAdvancedSettings: {
       ...normalizeAdvancedSettingsForForm(character.authorAdvancedSettings || character.advancedSettings || {})
     },
     regexRules: character.regexRules || []
   };
+}
+
+function collectCharacterTagNames(tags = []) {
+  const currentTags = Array.isArray(tags) ? tags : [];
+  const tagNames = [];
+  for (const tag of currentTags) {
+    tagNames.push(tag.name);
+  }
+  return tagNames;
 }
 
 function addStatusBlueprintVariable() {

@@ -526,6 +526,32 @@ test('CharacterFormView applies local regex preview rules with a direct loop', (
   assert.doesNotMatch(snippet, /rules\.reduce/);
 });
 
+test('CharacterFormView normalizes advanced effects and tag names with direct loops', () => {
+  assert.match(
+    characterFormScript,
+    /if \(Array\.isArray\(parsed\.effects\)\) \{\s*cfg\.effects = collectAllowedStatusEffects\(parsed\.effects\);\s*\}/
+  );
+  assert.match(
+    characterFormScript,
+    /function collectAllowedStatusEffects\(effects = \[\]\) \{\s*const currentEffects = Array\.isArray\(effects\) \? effects : \[\];\s*const allowedEffects = \[\];\s*for \(const effect of currentEffects\) \{\s*if \(isAllowedStatusEffect\(effect\)\) \{\s*allowedEffects\.push\(effect\);\s*\}\s*\}\s*return allowedEffects;\s*\}/
+  );
+  assert.match(
+    characterFormScript,
+    /function isAllowedStatusEffect\(effect\) \{\s*return effect === 'glow' \|\| effect === 'striped' \|\| effect === 'pulse';\s*\}/
+  );
+  assert.match(
+    characterFormScript,
+    /selectedTags: collectCharacterTagNames\(character\.characterTags\),/
+  );
+  assert.match(
+    characterFormScript,
+    /function collectCharacterTagNames\(tags = \[\]\) \{\s*const currentTags = Array\.isArray\(tags\) \? tags : \[\];\s*const tagNames = \[\];\s*for \(const tag of currentTags\) \{\s*tagNames\.push\(tag\.name\);\s*\}\s*return tagNames;\s*\}/
+  );
+  assert.doesNotMatch(characterFormScript, /parsed\.effects\.filter/);
+  assert.doesNotMatch(characterFormScript, /\['glow', 'striped', 'pulse'\]\.includes/);
+  assert.doesNotMatch(characterFormScript, /\(character\.characterTags \|\| \[\]\)\.map/);
+});
+
 test('CharacterFormView preserves unchanged AI process panel references', () => {
   assert.match(characterFormScript, /import \{ countOwnObjectKeys \} from '\.\.\/utils\/objectKeys';/);
   assert.match(characterFormScript, /import \{ samePlainValue \} from '\.\.\/utils\/plainValues';/);

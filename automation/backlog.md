@@ -40,6 +40,7 @@ The autonomous loop should choose one small item per run. Add new findings here 
 
 ## Done
 
+- 2026-06-09: Normalized CharacterFormView advanced effects and selected tag names with direct loops instead of `filter/includes` and `map` callbacks.
 - 2026-06-09: Scanned WorldBookView position options directly for entry labels and AI draft normalization instead of `find` and `some` callbacks.
 - 2026-06-09: Scanned SettingsView Mod select-all character ids and extension sections directly instead of `map` and `some` callbacks.
 - 2026-06-09: Applied CharacterFormView regex preview rules with a direct loop and non-array fallback instead of reduce callbacks.
