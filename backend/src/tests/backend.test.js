@@ -3726,6 +3726,40 @@ test('provider model list preserves non-JSON upstream error text', async () => {
   }
 });
 
+test('Gemini native API base URL is normalized to the OpenAI-compatible endpoint', async () => {
+  const originalFetch = globalThis.fetch;
+  let requestedUrl = '';
+  let requestedBody = null;
+  try {
+    globalThis.fetch = async (url, request = {}) => {
+      requestedUrl = String(url);
+      requestedBody = JSON.parse(request.body);
+      return jsonResponse({ choices: [{ message: { content: 'ok' } }] });
+    };
+
+    const result = await generateCompletion(
+      {
+        providerType: 'gemini',
+        gatewayName: 'Gemini',
+        baseUrl: 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent',
+        model: 'gemini-2.5-flash',
+        apiKey: 'sk-test',
+        supportsReasoning: true,
+        extraBody: {}
+      },
+      [{ role: 'user', content: 'hi' }],
+      { thinkingEnabled: false }
+    );
+
+    assert.equal(result.content, 'ok');
+    assert.equal(requestedUrl, 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions');
+    assert.deepEqual(requestedBody.messages, [{ role: 'user', content: 'hi' }]);
+    assert.equal(requestedBody.contents, undefined);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test('custom local proxy can be used without an API key', async () => {
   const settings = {
     providerType: 'custom',
@@ -3997,6 +4031,44 @@ test('Gemini thinking switch uses OpenAI-compatible native reasoning effort', ()
   assert.equal(enabled.reasoning_effort, 'high');
   assert.equal(disabled.reasoning_effort, 'none');
   assert.equal(enabled.thinking, undefined);
+});
+
+test('Gemini OpenAI-compatible body ignores native request envelope fields', () => {
+  const messages = [{ role: 'user', content: 'hi' }];
+  const body = buildProviderBody(
+    {
+      providerType: 'gemini',
+      model: 'gemini-2.5-flash',
+      supportsReasoning: true,
+      extraBody: {
+        contents: [{ role: 'user', parts: [{ text: 'native prompt' }] }],
+        systemInstruction: { parts: [{ text: 'native system' }] },
+        safetySettings: [{ category: 'HARM_CATEGORY_HARASSMENT', threshold: 'BLOCK_NONE' }],
+        generationConfig: { temperature: 0.1 },
+        cachedContent: 'cachedContents/test',
+        custom_flag: 'kept',
+        extra_body: {
+          google: {
+            thinking_config: {
+              include_thoughts: true
+            }
+          }
+        }
+      }
+    },
+    messages,
+    false,
+    { thinkingEnabled: true }
+  );
+
+  assert.equal(body.contents, undefined);
+  assert.equal(body.systemInstruction, undefined);
+  assert.equal(body.safetySettings, undefined);
+  assert.equal(body.generationConfig, undefined);
+  assert.equal(body.cachedContent, undefined);
+  assert.equal(body.custom_flag, 'kept');
+  assert.deepEqual(body.messages, messages);
+  assert.deepEqual(body.extra_body.google.thinking_config, { include_thoughts: true });
 });
 
 test('Mistral thinking switch uses native reasoning effort', () => {

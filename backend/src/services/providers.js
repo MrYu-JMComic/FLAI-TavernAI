@@ -156,7 +156,7 @@ export function providerWithSecret(row) {
 
 export function buildProviderBody(settings, messages, stream, options = {}) {
   options = options ?? {};
-  const extraBody = normalizeProviderExtraBody(settings.extraBody);
+  const extraBody = normalizeProviderRequestExtraBody(settings.providerType, settings.extraBody);
   const body = {
     ...extraBody,
     model: resolveProviderModel(settings, options),
@@ -474,6 +474,88 @@ export function normalizeProviderExtraBody(value) {
     return {};
   }
   return value;
+}
+
+export function normalizeProviderRequestExtraBody(providerType, value) {
+  const extraBody = normalizeProviderExtraBody(value);
+  if (providerType !== 'gemini') {
+    return extraBody;
+  }
+  return omitGeminiNativeRequestFields(extraBody);
+}
+
+function omitGeminiNativeRequestFields(extraBody) {
+  let sanitized = extraBody;
+  for (const key in extraBody) {
+    if (!Object.prototype.hasOwnProperty.call(extraBody, key) || !isGeminiNativeRequestField(key)) {
+      continue;
+    }
+    if (sanitized === extraBody) {
+      sanitized = { ...extraBody };
+    }
+    delete sanitized[key];
+  }
+  return sanitized;
+}
+
+function isGeminiNativeRequestField(key) {
+  switch (key) {
+    case 'contents':
+    case 'systemInstruction':
+    case 'system_instruction':
+    case 'safetySettings':
+    case 'safety_settings':
+    case 'generationConfig':
+    case 'generation_config':
+    case 'toolConfig':
+    case 'tool_config':
+    case 'cachedContent':
+    case 'cached_content':
+      return true;
+    default:
+      return false;
+  }
+}
+
+export function normalizeProviderBaseUrl(providerType, baseUrl) {
+  const value = String(baseUrl || '').trim();
+  if (providerType !== 'gemini' || !value) {
+    return value;
+  }
+  return normalizeGeminiOpenAiBaseUrl(value);
+}
+
+function normalizeGeminiOpenAiBaseUrl(value) {
+  let url;
+  try {
+    url = new URL(value);
+  } catch {
+    return value;
+  }
+
+  if (url.hostname !== 'generativelanguage.googleapis.com') {
+    return value;
+  }
+
+  const trimmedPath = url.pathname.replace(/\/+$/, '');
+  if (trimmedPath.includes('/openai')) {
+    url.pathname = trimmedPath;
+    url.search = '';
+    url.hash = '';
+    return url.toString().replace(/\/+$/, '');
+  }
+
+  const version = resolveGeminiApiVersion(trimmedPath);
+  url.pathname = `/${version}/openai`;
+  url.search = '';
+  url.hash = '';
+  return url.toString().replace(/\/+$/, '');
+}
+
+function resolveGeminiApiVersion(pathname) {
+  const match = /^\/([^/]+)/.exec(pathname);
+  const segment = match?.[1] || '';
+  return /^v\d+(?:[a-z]+)?$/i.test(segment) ? segment : 'v1beta';
 }
 
 function stableStringifyExtraBody(value) {
@@ -1494,7 +1576,8 @@ async function streamMockCompletion(messages, emit, settings = {}) {
 }
 
 async function providerFetch(settings, endpoint, options = {}) {
-  const url = `${trimSlash(settings.baseUrl)}${endpoint.startsWith('/') ? endpoint : `/${endpoint}`}`;
+  const baseUrl = normalizeProviderBaseUrl(settings.providerType, settings.baseUrl);
+  const url = `${trimSlash(baseUrl)}${endpoint.startsWith('/') ? endpoint : `/${endpoint}`}`;
   const request = {
     ...options,
     headers: requestHeaders(settings, options.headers)

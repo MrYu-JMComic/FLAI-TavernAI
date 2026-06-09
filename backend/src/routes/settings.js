@@ -3,7 +3,9 @@ import {
   defaultProviderSettings,
   fetchDeepSeekBalance,
   listProviderModels,
+  normalizeProviderBaseUrl,
   normalizeProviderExtraBody,
+  normalizeProviderRequestExtraBody,
   normalizeProviderRow,
   providerPresets,
   providerWithSecret
@@ -145,10 +147,10 @@ export function createSettingsRouter(ctx) {
     const settings = {
       providerType: preset.providerType,
       gatewayName: String(payload.gatewayName || preset.gatewayName).trim() || preset.gatewayName,
-      baseUrl: String(payload.baseUrl ?? preset.baseUrl).trim(),
+      baseUrl: normalizeProviderBaseUrl(preset.providerType, payload.baseUrl ?? preset.baseUrl),
       model: String(payload.model ?? preset.model).trim(),
       supportsReasoning: normalizeBoolean(payload.supportsReasoning),
-      extraBody: parseExtraBody(payload.extraBody ?? preset.extraBody),
+      extraBody: parseProviderExtraBody(preset.providerType, payload.extraBody ?? preset.extraBody),
       encryptedApiKey,
       apiKeyHint: apiKey
         ? apiKeyHint(apiKey)
@@ -202,13 +204,17 @@ export function createSettingsRouter(ctx) {
     return {
       providerType: preset.providerType,
       gatewayName: String(payload.gatewayName || saved.gatewayName || preset.gatewayName).trim() || preset.gatewayName,
-      baseUrl: String(payload.baseUrl ?? saved.baseUrl ?? preset.baseUrl).trim(),
+      baseUrl: normalizeProviderBaseUrl(preset.providerType, payload.baseUrl ?? saved.baseUrl ?? preset.baseUrl),
       model: String(payload.model ?? saved.model ?? preset.model).trim(),
       supportsReasoning: normalizeBoolean(payload.supportsReasoning, saved.supportsReasoning ?? preset.supportsReasoning),
-      extraBody: parseExtraBody(payload.extraBody ?? saved.extraBody ?? preset.extraBody),
+      extraBody: parseProviderExtraBody(preset.providerType, payload.extraBody ?? saved.extraBody ?? preset.extraBody),
       apiKey,
       apiKeyError: apiKey ? null : saved.apiKeyError || null
     };
+  }
+
+  function parseProviderExtraBody(providerType, value) {
+    return normalizeProviderRequestExtraBody(providerType, parseExtraBody(value));
   }
 
   function parseExtraBody(value) {

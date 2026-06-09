@@ -87,6 +87,47 @@ test('provider settings route clears encrypted API key when requested', async ()
   });
 });
 
+test('provider settings route normalizes Gemini OpenAI-compatible settings', async () => {
+  const database = createAppDatabase(':memory:');
+  const userId = 'provider-route-gemini-normalize-user';
+  insertUser(database, userId);
+
+  const app = createProviderSettingsApp(database, userId);
+
+  await withServer(app, async (baseUrl) => {
+    const saved = await putProviderSettings(baseUrl, {
+      providerType: 'gemini',
+      gatewayName: 'Gemini',
+      baseUrl: 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent',
+      model: 'gemini-2.5-flash',
+      supportsReasoning: true,
+      extraBody: {
+        contents: [{ role: 'user', parts: [{ text: 'native prompt' }] }],
+        generation_config: { temperature: 0.1 },
+        toolConfig: { functionCallingConfig: { mode: 'AUTO' } },
+        custom_flag: 'kept',
+        extra_body: {
+          google: {
+            thinking_config: { include_thoughts: true }
+          }
+        }
+      }
+    });
+
+    const row = getProviderRow(database, userId);
+    const savedExtraBody = JSON.parse(row.extra_body);
+
+    assert.equal(saved.baseUrl, 'https://generativelanguage.googleapis.com/v1beta/openai');
+    assert.equal(row.base_url, 'https://generativelanguage.googleapis.com/v1beta/openai');
+    assert.equal(saved.extraBody.contents, undefined);
+    assert.equal(saved.extraBody.generation_config, undefined);
+    assert.equal(saved.extraBody.toolConfig, undefined);
+    assert.equal(saved.extraBody.custom_flag, 'kept');
+    assert.deepEqual(saved.extraBody.extra_body.google.thinking_config, { include_thoughts: true });
+    assert.deepEqual(savedExtraBody, saved.extraBody);
+  });
+});
+
 function createProviderSettingsApp(database, userId) {
   const app = express();
   app.use(express.json());
