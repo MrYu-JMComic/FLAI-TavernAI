@@ -211,6 +211,30 @@ test('NpcPanel supports editing NPC memories and behavior rules without reusing 
   assert.doesNotMatch(npcPanelScript, /Object\.assign\(behaviorForm/);
 });
 
+test('NpcPanel clears stale NPC detail edit drafts after list refreshes', () => {
+  assert.match(
+    npcPanelScript,
+    /function setMemoriesIfChanged\(nextMemories\)\s*{[\s\S]*pruneMemoryEditIfMissing\(normalizedMemories\);[\s\S]*sameListItems\(currentMemories, normalizedMemories, sameMemorySummary\)/
+  );
+  assert.match(
+    npcPanelScript,
+    /function setBehaviorsIfChanged\(nextBehaviors\)\s*{[\s\S]*pruneBehaviorEditIfMissing\(normalizedBehaviors\);[\s\S]*sameListItems\(currentBehaviors, normalizedBehaviors, sameBehaviorSummary\)/
+  );
+  assert.match(
+    npcPanelScript,
+    /function pruneMemoryEditIfMissing\(nextMemories\)\s*{\s*const memoryId = editingMemoryId\.value;[\s\S]*listHasItemId\(nextMemories, memoryId\)[\s\S]*cancelMemoryEdit\(\);[\s\S]*}/
+  );
+  assert.match(
+    npcPanelScript,
+    /function pruneBehaviorEditIfMissing\(nextBehaviors\)\s*{\s*const behaviorId = editingBehaviorId\.value;[\s\S]*listHasItemId\(nextBehaviors, behaviorId\)[\s\S]*cancelBehaviorEdit\(\);[\s\S]*}/
+  );
+  assert.match(
+    npcPanelScript,
+    /function listHasItemId\(items, itemId\)\s*{[\s\S]*const sourceItems = Array\.isArray\(items\) \? items : \[\];[\s\S]*for \(let index = 0; index < sourceItems\.length; index \+= 1\)[\s\S]*sourceItems\[index\]\?\.id === itemId[\s\S]*return true;[\s\S]*return false;[\s\S]*}/
+  );
+  assert.doesNotMatch(npcPanelScript, /\.find\(\(item\) => item\?\.id/);
+});
+
 test('NpcPanel option labels use a shared direct lookup helper', () => {
   assert.match(npcPanelScript, /function memoryTypeLabel\(type\) \{\s*return optionLabel\(memoryTypeOptions, type\);\s*}/);
   assert.match(npcPanelScript, /function behaviorTypeLabel\(type\) \{\s*return optionLabel\(behaviorTypeOptions, type\);\s*}/);

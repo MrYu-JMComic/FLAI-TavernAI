@@ -373,6 +373,7 @@ function setNpcsIfChanged(nextNpcs) {
 function setMemoriesIfChanged(nextMemories) {
   const normalizedMemories = Array.isArray(nextMemories) ? nextMemories : [];
   const currentMemories = Array.isArray(memories.value) ? memories.value : [];
+  pruneMemoryEditIfMissing(normalizedMemories);
   if (sameListItems(currentMemories, normalizedMemories, sameMemorySummary)) {
     return false;
   }
@@ -383,6 +384,7 @@ function setMemoriesIfChanged(nextMemories) {
 function setBehaviorsIfChanged(nextBehaviors) {
   const normalizedBehaviors = Array.isArray(nextBehaviors) ? nextBehaviors : [];
   const currentBehaviors = Array.isArray(behaviors.value) ? behaviors.value : [];
+  pruneBehaviorEditIfMissing(normalizedBehaviors);
   if (sameListItems(currentBehaviors, normalizedBehaviors, sameBehaviorSummary)) {
     return false;
   }
@@ -455,6 +457,32 @@ function sameStringList(currentItems, nextItems) {
     }
   }
   return true;
+}
+
+function pruneMemoryEditIfMissing(nextMemories) {
+  const memoryId = editingMemoryId.value;
+  if (!memoryId || listHasItemId(nextMemories, memoryId)) {
+    return;
+  }
+  cancelMemoryEdit();
+}
+
+function pruneBehaviorEditIfMissing(nextBehaviors) {
+  const behaviorId = editingBehaviorId.value;
+  if (!behaviorId || listHasItemId(nextBehaviors, behaviorId)) {
+    return;
+  }
+  cancelBehaviorEdit();
+}
+
+function listHasItemId(items, itemId) {
+  const sourceItems = Array.isArray(items) ? items : [];
+  for (let index = 0; index < sourceItems.length; index += 1) {
+    if (sourceItems[index]?.id === itemId) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function getCurrentNpcByName(name, sourceNpcs = npcs.value) {
