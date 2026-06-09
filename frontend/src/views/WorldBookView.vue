@@ -402,6 +402,10 @@ function openEditBook(book) {
 
 function closeBookForm() {
   if (saving.value) return;
+  resetBookFormState();
+}
+
+function resetBookFormState() {
   showBookForm.value = false;
   editingBookId.value = null;
 }
@@ -434,11 +438,12 @@ async function saveBook() {
         await loadBooks();
       }
       if (!isCurrentWorldBookRouteMutation(mutationToken, routeKey)) return;
+      resetBookFormState();
       notify.success('世界书已更新');
     } else {
       const book = await createWorldBook(payload);
       if (!isCurrentWorldBookRouteMutation(mutationToken, routeKey)) return;
-      closeBookForm();
+      resetBookFormState();
       notify.success('世界书已创建');
       emit('navigate', 'worldBookDetail', { id: book.id });
     }
@@ -518,6 +523,10 @@ function openEditEntry(entry) {
 
 function closeEntryForm() {
   if (saving.value) return;
+  resetEntryFormState();
+}
+
+function resetEntryFormState() {
   showEntryForm.value = false;
   editingEntryId.value = null;
 }
@@ -557,7 +566,7 @@ async function saveEntry() {
       await createWorldBookEntry(targetBookId, payload);
     }
     if (!isCurrentWorldBookMutation(mutationToken, targetBookId)) return;
-    closeEntryForm();
+    resetEntryFormState();
     await loadBook(targetBookId);
     if (!isCurrentWorldBookMutation(mutationToken, targetBookId)) return;
     notify.success(targetEntryId ? '条目已更新' : '条目已添加');

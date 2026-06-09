@@ -242,3 +242,38 @@ test('WorldBookView freezes book and entry forms while saving is active', () => 
   assert.match(worldBookViewTemplate, /<button class="ghost-button" :disabled="saving" @click="closeEntryForm">/);
   assert.match(worldBookViewTemplate, /<button class="primary-button" :disabled="saving" :aria-busy="saving" @click="saveEntry">/);
 });
+
+test('WorldBookView closes saved forms from internal save completions', () => {
+  assert.match(
+    worldBookViewScript,
+    /function closeBookForm\(\) \{\s*if \(saving\.value\) return;\s*resetBookFormState\(\);\s*\}/
+  );
+  assert.match(
+    worldBookViewScript,
+    /function resetBookFormState\(\) \{\s*showBookForm\.value = false;\s*editingBookId\.value = null;\s*\}/
+  );
+  assert.match(
+    worldBookViewScript,
+    /if \(targetBookId\) \{[\s\S]*?if \(!isCurrentWorldBookRouteMutation\(mutationToken, routeKey\)\) return;\s*resetBookFormState\(\);\s*notify\.success/
+  );
+  assert.match(
+    worldBookViewScript,
+    /const book = await createWorldBook\(payload\);[\s\S]*?if \(!isCurrentWorldBookRouteMutation\(mutationToken, routeKey\)\) return;\s*resetBookFormState\(\);\s*notify\.success/
+  );
+  assert.match(
+    worldBookViewScript,
+    /function closeEntryForm\(\) \{\s*if \(saving\.value\) return;\s*resetEntryFormState\(\);\s*\}/
+  );
+  assert.match(
+    worldBookViewScript,
+    /function resetEntryFormState\(\) \{\s*showEntryForm\.value = false;\s*editingEntryId\.value = null;\s*\}/
+  );
+  assert.match(
+    worldBookViewScript,
+    /if \(!isCurrentWorldBookMutation\(mutationToken, targetBookId\)\) return;\s*resetEntryFormState\(\);\s*await loadBook\(targetBookId\);/
+  );
+  assert.doesNotMatch(
+    worldBookViewScript,
+    /if \(!isCurrentWorldBookMutation\(mutationToken, targetBookId\)\) return;\s*closeEntryForm\(\);\s*await loadBook\(targetBookId\);/
+  );
+});
