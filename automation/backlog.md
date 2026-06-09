@@ -40,6 +40,7 @@ The autonomous loop should choose one small item per run. Add new findings here 
 
 ## Done
 
+- 2026-06-09: Scanned SettingsView Mod select-all character ids and extension sections directly instead of `map` and `some` callbacks.
 - 2026-06-09: Applied CharacterFormView regex preview rules with a direct loop and non-array fallback instead of reduce callbacks.
 - 2026-06-09: Built provider model select options with direct normalized-row scans instead of `some` and spread-array merging.
 - 2026-06-09: Built CharacterFormView render-plugin preview text and enabled-plugin lists with direct loops instead of filter/map/join callback chains.

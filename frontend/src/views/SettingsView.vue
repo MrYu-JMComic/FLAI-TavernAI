@@ -1519,7 +1519,11 @@ function normalizeModCharacterIds(ids = []) {
 
 function selectAllModCharacters() {
   if (modActionBusy.value) return;
-  modForm.characterIds = modCharacterOptions.value.map((character) => character.id);
+  const characterIds = [];
+  for (const character of modCharacterOptions.value) {
+    characterIds.push(character.id);
+  }
+  modForm.characterIds = characterIds;
 }
 
 function clearModCharacters() {
@@ -1922,10 +1926,19 @@ function handleRegexImportFile(event) {
 }
 
 function setActiveExtensionSection(sectionId) {
-  if (!extensionSections.some((section) => section.id === sectionId)) {
+  if (!hasExtensionSection(sectionId)) {
     return;
   }
   activeExtensionSection.value = sectionId;
+}
+
+function hasExtensionSection(sectionId) {
+  for (const section of extensionSections) {
+    if (section.id === sectionId) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function scrollActiveExtensionTab(sectionId) {

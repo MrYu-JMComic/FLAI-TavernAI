@@ -158,6 +158,30 @@ test('SettingsView extension retry handlers ignore events while already loading'
   );
 });
 
+test('SettingsView direct-scans Mod select-all and extension sections', () => {
+  const selectAllStart = settingsViewScript.indexOf('function selectAllModCharacters() {');
+  const selectAllEnd = settingsViewScript.indexOf('\nfunction clearModCharacters()', selectAllStart);
+  assert.notEqual(selectAllStart, -1);
+  assert.notEqual(selectAllEnd, -1);
+  const selectAllSnippet = settingsViewScript.slice(selectAllStart, selectAllEnd);
+
+  assert.match(
+    selectAllSnippet,
+    /function selectAllModCharacters\(\) \{\s*if \(modActionBusy\.value\) return;\s*const characterIds = \[\];\s*for \(const character of modCharacterOptions\.value\) \{\s*characterIds\.push\(character\.id\);\s*\}\s*modForm\.characterIds = characterIds;\s*\}/
+  );
+  assert.doesNotMatch(selectAllSnippet, /modCharacterOptions\.value\.map/);
+
+  assert.match(
+    settingsViewScript,
+    /function setActiveExtensionSection\(sectionId\) \{\s*if \(!hasExtensionSection\(sectionId\)\) \{\s*return;\s*\}\s*activeExtensionSection\.value = sectionId;\s*\}/
+  );
+  assert.match(
+    settingsViewScript,
+    /function hasExtensionSection\(sectionId\) \{\s*for \(const section of extensionSections\) \{\s*if \(section\.id === sectionId\) \{\s*return true;\s*\}\s*\}\s*return false;\s*\}/
+  );
+  assert.doesNotMatch(settingsViewScript, /extensionSections\.some/);
+});
+
 test('SettingsView preserves unchanged extension list references during refreshes', () => {
   assert.match(
     settingsViewScript,
