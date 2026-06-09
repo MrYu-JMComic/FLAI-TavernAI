@@ -1283,6 +1283,15 @@ test('swipes preserve insertion order when timestamps tie', () => {
   assert.equal(setActiveSwipe(database, 'swipe-owner', 'swipe-message', 'swipe-second').activeIndex, 2);
 });
 
+test('swipe helpers scan active rows directly', () => {
+  const source = fs.readFileSync(new URL('../modules/swipes.js', import.meta.url), 'utf8');
+  assert.match(source, /const rows = db[\s\S]*const swipes = \[\];\s*for \(const row of rows\) \{[\s\S]*swipes\.push\(\{/);
+  assert.match(source, /export function getSwipeIndex[\s\S]*for \(let index = 0; index < rows\.length; index \+= 1\) \{[\s\S]*return \{ index, total: rows\.length \};/);
+  assert.match(source, /SELECT COUNT\(\*\) AS count FROM message_swipes WHERE message_id = \? AND user_id = \?/);
+  assert.match(source, /export function setActiveSwipe[\s\S]*let activeIdx = -1;\s*for \(let index = 0; index < rows\.length; index \+= 1\) \{[\s\S]*activeIdx = index;[\s\S]*break;/);
+  assert.doesNotMatch(source, /\.map\(\(row\) => \(\{|\.findIndex\(/);
+});
+
 test('character assistant completes drafts through multiple tool rounds', async () => {
   const originalFetch = globalThis.fetch;
   let calls = 0;

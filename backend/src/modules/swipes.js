@@ -3,19 +3,23 @@ import { parseJson } from '../utils/json.js';
 import { withSavepoint } from './savepoint.js';
 
 export function listSwipes(db, userId, messageId) {
-  return db
+  const rows = db
     .prepare(
       'SELECT id, message_id, content, reasoning, usage_json, created_at FROM message_swipes WHERE message_id = ? AND user_id = ? ORDER BY created_at ASC, rowid ASC'
     )
-    .all(messageId, userId)
-    .map((row) => ({
+    .all(messageId, userId);
+  const swipes = [];
+  for (const row of rows) {
+    swipes.push({
       id: row.id,
       messageId: row.message_id,
       content: row.content,
       reasoning: row.reasoning || '',
       usage: parseJson(row.usage_json, null),
       createdAt: row.created_at
-    }));
+    });
+  }
+  return swipes;
 }
 
 export function createSwipe(db, userId, messageId, { content, reasoning = '', usage = null }) {
@@ -41,8 +45,12 @@ export function getSwipeIndex(db, messageId, swipeId) {
   const rows = db
     .prepare('SELECT id FROM message_swipes WHERE message_id = ? ORDER BY created_at ASC, rowid ASC')
     .all(messageId);
-  const index = rows.findIndex((row) => row.id === swipeId);
-  return index >= 0 ? { index, total: rows.length } : null;
+  for (let index = 0; index < rows.length; index += 1) {
+    if (rows[index].id === swipeId) {
+      return { index, total: rows.length };
+    }
+  }
+  return null;
 }
 
 export function getActiveSwipe(db, userId, messageId) {
@@ -50,13 +58,14 @@ export function getActiveSwipe(db, userId, messageId) {
     .prepare('SELECT content, reasoning, usage_json, created_at FROM messages WHERE id = ? AND user_id = ?')
     .get(messageId, userId);
   if (!message) return null;
-  const swipes = db.prepare('SELECT id, created_at FROM message_swipes WHERE message_id = ? AND user_id = ? ORDER BY created_at ASC, rowid ASC').all(messageId, userId);
+  const row = db.prepare('SELECT COUNT(*) AS count FROM message_swipes WHERE message_id = ? AND user_id = ?').get(messageId, userId);
+  const swipeCount = Number(row?.count) || 0;
   return {
     content: message.content,
     reasoning: message.reasoning || '',
     usage: parseJson(message.usage_json, null),
     createdAt: message.created_at,
-    swipeCount: swipes.length + 1,
+    swipeCount: swipeCount + 1,
     activeIndex: 0
   };
 }
@@ -88,14 +97,22 @@ export function setActiveSwipe(db, userId, messageId, swipeId) {
   });
 
   // Return updated state
-  const allSwipes = listSwipes(db, userId, messageId);
-  const activeIdx = allSwipes.findIndex((s) => s.id === swipeId);
+  const rows = db
+    .prepare('SELECT id FROM message_swipes WHERE message_id = ? AND user_id = ? ORDER BY created_at ASC, rowid ASC')
+    .all(messageId, userId);
+  let activeIdx = -1;
+  for (let index = 0; index < rows.length; index += 1) {
+    if (rows[index].id === swipeId) {
+      activeIdx = index;
+      break;
+    }
+  }
   return {
     content: swipe.content,
     reasoning: swipe.reasoning || '',
     usage: parseJson(swipe.usage_json, null),
     createdAt: swipe.created_at,
-    swipeCount: allSwipes.length + 1,
+    swipeCount: rows.length + 1,
     activeIndex: activeIdx >= 0 ? activeIdx + 1 : 0
   };
 }
