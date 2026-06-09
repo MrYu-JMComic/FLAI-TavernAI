@@ -511,6 +511,21 @@ test('CharacterFormView builds render plugin previews with direct loops', () => 
   assert.doesNotMatch(snippet, /\.join\(/);
 });
 
+test('CharacterFormView applies local regex preview rules with a direct loop', () => {
+  const start = characterFormScript.indexOf('function applyLocalRules(text, rules, phase) {');
+  assert.notEqual(start, -1);
+  const snippet = characterFormScript.slice(start);
+
+  assert.match(snippet, /const currentRules = Array\.isArray\(rules\) \? rules : \[\];/);
+  assert.match(snippet, /let value = text;/);
+  assert.match(snippet, /for \(const rule of currentRules\) \{/);
+  assert.match(snippet, /if \(!rule\.enabled \|\| !rule\.pattern \|\| !\(rule\.scope === phase \|\| rule\.scope === 'both'\)\) \{\s*continue;\s*\}/);
+  assert.match(snippet, /value = value\.replace\(new RegExp\(rule\.pattern, rule\.flags \|\| 'g'\), rule\.replacement \|\| ''\);/);
+  assert.match(snippet, /catch \{\s*continue;\s*\}/);
+  assert.match(snippet, /return value;/);
+  assert.doesNotMatch(snippet, /rules\.reduce/);
+});
+
 test('CharacterFormView preserves unchanged AI process panel references', () => {
   assert.match(characterFormScript, /import \{ countOwnObjectKeys \} from '\.\.\/utils\/objectKeys';/);
   assert.match(characterFormScript, /import \{ samePlainValue \} from '\.\.\/utils\/plainValues';/);

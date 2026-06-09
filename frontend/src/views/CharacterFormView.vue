@@ -2742,16 +2742,19 @@ function isActiveCharacterExport(exportToken) {
 }
 
 function applyLocalRules(text, rules, phase) {
-  return rules.reduce((value, rule) => {
+  const currentRules = Array.isArray(rules) ? rules : [];
+  let value = text;
+  for (const rule of currentRules) {
     if (!rule.enabled || !rule.pattern || !(rule.scope === phase || rule.scope === 'both')) {
-      return value;
+      continue;
     }
     try {
-      return value.replace(new RegExp(rule.pattern, rule.flags || 'g'), rule.replacement || '');
+      value = value.replace(new RegExp(rule.pattern, rule.flags || 'g'), rule.replacement || '');
     } catch {
-      return value;
+      continue;
     }
-  }, text);
+  }
+  return value;
 }
 
 </script>
