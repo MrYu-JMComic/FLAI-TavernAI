@@ -75,6 +75,27 @@ test('HomeView debounces search reloads while keeping sort and tag changes immed
   assert.match(homeViewTemplate, /<select v-model="sort" aria-label="[^"]+">/);
 });
 
+test('HomeView keeps chat-open pending state guarded during route navigation', () => {
+  assert.match(homeViewScript, /let chatOpenNavigationToken = 0;/);
+  assert.match(
+    homeViewScript,
+    /function resetHomeAsyncScope\(\) \{[\s\S]*chatOpenNavigationToken \+= 1;[\s\S]*chatOpenPending\.reset\(\);/
+  );
+  assert.match(
+    homeViewScript,
+    /async function openChat\(character\) \{[\s\S]*const navigationToken = chatOpenNavigationToken;[\s\S]*if \(!isCurrentChatOpenNavigation\(navigationToken\)\) return;[\s\S]*navigateFromChatOpen\('chat', \{ id: conversation\.id \}\);[\s\S]*finally \{[\s\S]*if \(!isCurrentChatOpenNavigation\(navigationToken\)\) return;[\s\S]*chatOpenPending\.finish\(key\);/
+  );
+  assert.match(
+    homeViewScript,
+    /function isCurrentChatOpenNavigation\(navigationToken\) \{\s*return isHomeActive\(\) && navigationToken === chatOpenNavigationToken;\s*\}/
+  );
+  assert.match(
+    homeViewScript,
+    /function navigateFromChatOpen\(page, params\) \{\s*chatOpenNavigationToken \+= 1;\s*emit\('navigate', page, params\);\s*\}/
+  );
+  assert.doesNotMatch(homeViewScript, /emit\('navigate', 'chat', \{ id: conversation\.id \}\);/);
+});
+
 test('HomeView formats provider labels without filter join arrays', () => {
   assert.match(
     homeViewScript,

@@ -40,6 +40,8 @@ The autonomous loop should choose one small item per run. Add new findings here 
 
 ## Done
 
+- 2026-06-09: Scanned CharacterFormView sticky section targets directly during scroll sync instead of building transient map/filter arrays.
+- 2026-06-09: Guarded HomeView chat-open navigation completions against stale route replacement cleanup.
 - 2026-06-09: Invalidated CharacterFormView create/delete action tokens before route-replacing navigations while preserving same-route edit-save cleanup.
 - 2026-06-09: Invalidated WorldBookView mutation tokens before mutation-triggered navigations to avoid stale completion cleanup unlocking replaced route views.
 - 2026-06-09: Guarded LoginView and RegisterView submit completions against stale route-unmount state writes.

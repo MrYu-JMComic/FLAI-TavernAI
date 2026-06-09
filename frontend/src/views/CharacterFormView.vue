@@ -706,20 +706,20 @@ function getCharacterSectionActivationOffset() {
 }
 
 function syncActiveSectionFromScroll() {
-  const sections = visibleFormSections.value
-    .map((section) => ({
-      id: section.id,
-      target: getCharacterSectionTarget(section.id)
-    }))
-    .filter((section) => section.target);
-  if (!sections.length) {
-    return;
-  }
   const activationOffset = getCharacterSectionActivationOffset();
-  let nextSectionId = sections[0].id;
+  let nextSectionId = '';
   let nextDistance = Number.POSITIVE_INFINITY;
-  for (const section of sections) {
-    const top = section.target.getBoundingClientRect().top;
+  let lastSectionId = '';
+  for (const section of visibleFormSections.value) {
+    const target = getCharacterSectionTarget(section.id);
+    if (!target) {
+      continue;
+    }
+    if (!nextSectionId) {
+      nextSectionId = section.id;
+    }
+    lastSectionId = section.id;
+    const top = target.getBoundingClientRect().top;
     if (top <= activationOffset) {
       const distance = Math.abs(activationOffset - top);
       if (distance <= nextDistance) {
@@ -728,12 +728,15 @@ function syncActiveSectionFromScroll() {
       }
     }
   }
+  if (!nextSectionId) {
+    return;
+  }
   const scrollHeight = Math.max(
     document.documentElement?.scrollHeight || 0,
     document.body?.scrollHeight || 0
   );
-  if (window.innerHeight + window.scrollY >= scrollHeight - 2) {
-    nextSectionId = sections[sections.length - 1].id;
+  if (lastSectionId && window.innerHeight + window.scrollY >= scrollHeight - 2) {
+    nextSectionId = lastSectionId;
   }
   setActiveCharacterSection(nextSectionId);
 }

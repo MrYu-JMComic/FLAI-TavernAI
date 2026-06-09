@@ -599,6 +599,12 @@ test('CharacterFormView uses granular sticky section navigation', () => {
   );
   assert.match(
     characterFormScript,
+    /function syncActiveSectionFromScroll\(\) \{[\s\S]*for \(const section of visibleFormSections\.value\) \{[\s\S]*const target = getCharacterSectionTarget\(section\.id\);[\s\S]*lastSectionId = section\.id;[\s\S]*if \(lastSectionId && window\.innerHeight \+ window\.scrollY >= scrollHeight - 2\) \{[\s\S]*nextSectionId = lastSectionId;/
+  );
+  assert.doesNotMatch(characterFormScript, /visibleFormSections\.value\s*\.\s*map/);
+  assert.doesNotMatch(characterFormScript, /visibleFormSections\.value[\s\S]{0,120}\.filter/);
+  assert.match(
+    characterFormScript,
     /tab\.scrollIntoView\(\{ behavior: 'auto', block: 'nearest', inline: 'center' \}\);/
   );
 

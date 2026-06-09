@@ -418,6 +418,7 @@ let mobileLayoutQuery = null;
 let characterLoadToken = 0;
 let tagLoadToken = 0;
 let importFileReadToken = 0;
+let chatOpenNavigationToken = 0;
 let searchLoadTimer = null;
 let homeActive = true;
 let filterClearInProgress = false;
@@ -523,6 +524,7 @@ function resetHomeAsyncScope() {
   characterLoadToken += 1;
   tagLoadToken += 1;
   importFileReadToken += 1;
+  chatOpenNavigationToken += 1;
   clearSearchLoadTimer();
   loading.value = false;
   tagLoading.value = false;
@@ -636,19 +638,29 @@ async function openChat(character) {
     return;
   }
 
+  const navigationToken = chatOpenNavigationToken;
   try {
     const existing = await fetchConversations({ characterId: character.id });
-    if (!isHomeActive()) return;
+    if (!isCurrentChatOpenNavigation(navigationToken)) return;
     const conversation = existing[0] || (await createConversation(character.id));
-    if (!isHomeActive()) return;
-    emit('navigate', 'chat', { id: conversation.id });
+    if (!isCurrentChatOpenNavigation(navigationToken)) return;
+    navigateFromChatOpen('chat', { id: conversation.id });
   } catch (err) {
-    if (!isHomeActive()) return;
+    if (!isCurrentChatOpenNavigation(navigationToken)) return;
     notify.error(err.message);
   } finally {
-    if (!isHomeActive()) return;
+    if (!isCurrentChatOpenNavigation(navigationToken)) return;
     chatOpenPending.finish(key);
   }
+}
+
+function isCurrentChatOpenNavigation(navigationToken) {
+  return isHomeActive() && navigationToken === chatOpenNavigationToken;
+}
+
+function navigateFromChatOpen(page, params) {
+  chatOpenNavigationToken += 1;
+  emit('navigate', page, params);
 }
 
 function isChatOpenPending(character) {
