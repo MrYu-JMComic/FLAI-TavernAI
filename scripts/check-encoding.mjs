@@ -153,7 +153,7 @@ for (const filePath of walk(projectRoot)) {
 }
 
 if (failures.length) {
-  console.error('Possible Chinese encoding corruption found. Save files as UTF-8 and repair these lines:');
+  console.error('Possible Chinese encoding corruption or replacement-character markers found. Save files as UTF-8 and repair these lines:');
   for (const failure of failures) {
     console.error(`\n${failure.file}`);
     for (const hit of failure.hits.slice(0, 12)) {
@@ -166,4 +166,4 @@ if (failures.length) {
   process.exit(1);
 }
 
-console.log(`Encoding check passed: scanned ${scannedFileCount} files; no common Chinese mojibake markers found.`);
+console.log(`Encoding check passed: scanned ${scannedFileCount} files; no common Chinese mojibake or replacement-character markers found.`);

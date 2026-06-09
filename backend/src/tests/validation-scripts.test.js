@@ -184,7 +184,8 @@ test('encoding checker keeps reports in scope and reports scan coverage', () => 
     /let lineStart = 0;/,
     /if \(!lineHasSuspiciousChar && hasSuspiciousChar\(char\)\)/,
     /scannedFileCount\s*\+=\s*1/,
-    /scanned\s+\$\{scannedFileCount\}\s+files/
+    /scanned\s+\$\{scannedFileCount\}\s+files/,
+    /mojibake or replacement-character markers/
   ]);
   assertTextDoesNotMatch(encodingCheck, [
     /path\.normalize\(['"]automation\/reports['"]\)/,
@@ -209,9 +210,28 @@ test('encoding checker flags common UTF-8-as-GBK mojibake markers', () => {
     });
 
     assert.notEqual(result.status, 0);
-    assert.match(result.stderr, /Possible Chinese encoding corruption found/);
+    assert.match(result.stderr, /Possible Chinese encoding corruption or replacement-character markers found/);
     assert.ok(result.stderr.indexOf('B-bad.md') < result.stderr.indexOf('a-bad.md'), result.stderr);
     assert.match(result.stderr, /a-bad\.md\r?\n\s+2: #/);
+  } finally {
+    fs.rmSync(fixtureRoot, { recursive: true, force: true });
+  }
+});
+
+test('encoding checker flags Unicode replacement characters', () => {
+  const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'flai-encoding-check-'));
+  try {
+    writeFixtureFile(fixtureRoot, 'scripts/check-encoding.mjs', readText('scripts/check-encoding.mjs'));
+    writeFixtureFile(fixtureRoot, 'bad-replacement.md', `ok\n# replacement ${String.fromCodePoint(0xfffd)} marker\n`);
+
+    const result = spawnSync(process.execPath, [path.join(fixtureRoot, 'scripts', 'check-encoding.mjs')], {
+      cwd: fixtureRoot,
+      encoding: 'utf8'
+    });
+
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /replacement-character markers/);
+    assert.match(result.stderr, /bad-replacement\.md\r?\n\s+2: # replacement/);
   } finally {
     fs.rmSync(fixtureRoot, { recursive: true, force: true });
   }
