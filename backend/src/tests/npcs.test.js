@@ -119,6 +119,32 @@ test('NPC behaviors preserve insertion order when priority and timestamps tie', 
   assert.ok(prompt.indexOf('first action') < prompt.indexOf('second action'));
 });
 
+test('NPC detail list helpers scan rows and empty hides directly', () => {
+  const memoriesStart = npcsSource.indexOf('export function listNpcMemories');
+  const memoriesEnd = npcsSource.indexOf('\n\nexport function addNpcMemory', memoriesStart);
+  const behaviorsStart = npcsSource.indexOf('export function listNpcBehaviors');
+  const behaviorsEnd = npcsSource.indexOf('\n\nexport function addNpcBehavior', behaviorsStart);
+  const hideStart = npcsSource.indexOf('export function hideEmptyConversationNpcs');
+  const hideEnd = npcsSource.indexOf('\n\nexport function isConversationNpcHidden', hideStart);
+  assert.notEqual(memoriesStart, -1);
+  assert.notEqual(memoriesEnd, -1);
+  assert.notEqual(behaviorsStart, -1);
+  assert.notEqual(behaviorsEnd, -1);
+  assert.notEqual(hideStart, -1);
+  assert.notEqual(hideEnd, -1);
+
+  const memoriesSource = npcsSource.slice(memoriesStart, memoriesEnd);
+  const behaviorsSource = npcsSource.slice(behaviorsStart, behaviorsEnd);
+  const hideSource = npcsSource.slice(hideStart, hideEnd);
+  assert.match(memoriesSource, /const rows = database[\s\S]*const memories = \[\];\s*for \(const row of rows\) \{\s*memories\.push\(toNpcMemory\(row\)\);/);
+  assert.match(behaviorsSource, /const rows = database[\s\S]*const behaviors = \[\];\s*for \(const row of rows\) \{\s*behaviors\.push\(toNpcBehavior\(row\)\);/);
+  assert.match(hideSource, /const npcs = listConversationNpcs[\s\S]*const hidden = \[\];\s*for \(const npc of npcs\) \{/);
+  assert.match(hideSource, /Number\(npc\.memoryCount \|\| 0\) !== 0 \|\| Number\(npc\.behaviorCount \|\| 0\) !== 0/);
+  assert.doesNotMatch(memoriesSource, /\.map\(/);
+  assert.doesNotMatch(behaviorsSource, /\.map\(/);
+  assert.doesNotMatch(hideSource, /\.filter\(/);
+});
+
 test('NPC behavior prompt uses newest tied memories first', () => {
   const { database, conversationId } = setupDatabase();
   const tiedTimestamp = '2026-01-01T00:00:00.000Z';

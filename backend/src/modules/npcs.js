@@ -18,14 +18,18 @@ const NPC_ALIAS_LIMIT = 20;
 
 export function listNpcMemories(database, userId, conversationId, npcName) {
   assertConversationAccess(database, userId, conversationId);
-  return database
+  const rows = database
     .prepare(
       `SELECT * FROM npc_memories
        WHERE conversation_id = ? AND npc_name = ?
        ORDER BY created_at DESC, rowid DESC`
     )
-    .all(conversationId, npcName)
-    .map(toNpcMemory);
+    .all(conversationId, npcName);
+  const memories = [];
+  for (const row of rows) {
+    memories.push(toNpcMemory(row));
+  }
+  return memories;
 }
 
 export function addNpcMemory(database, userId, conversationId, npcName, payload = {}) {
@@ -102,14 +106,18 @@ export function updateNpcMemory(database, userId, conversationId, memoryId, payl
 
 export function listNpcBehaviors(database, userId, conversationId, npcName) {
   assertConversationAccess(database, userId, conversationId);
-  return database
+  const rows = database
     .prepare(
       `SELECT * FROM npc_behaviors
        WHERE conversation_id = ? AND npc_name = ?
        ORDER BY priority DESC, created_at ASC, rowid ASC`
     )
-    .all(conversationId, npcName)
-    .map(toNpcBehavior);
+    .all(conversationId, npcName);
+  const behaviors = [];
+  for (const row of rows) {
+    behaviors.push(toNpcBehavior(row));
+  }
+  return behaviors;
 }
 
 export function addNpcBehavior(database, userId, conversationId, npcName, payload = {}) {
@@ -288,10 +296,12 @@ export function hideConversationNpc(database, userId, conversationId, npcName) {
 }
 
 export function hideEmptyConversationNpcs(database, userId, conversationId, mainCharacterName = '') {
-  const emptyNpcs = listConversationNpcs(database, userId, conversationId, mainCharacterName)
-    .filter((npc) => Number(npc.memoryCount || 0) === 0 && Number(npc.behaviorCount || 0) === 0);
+  const npcs = listConversationNpcs(database, userId, conversationId, mainCharacterName);
   const hidden = [];
-  for (const npc of emptyNpcs) {
+  for (const npc of npcs) {
+    if (Number(npc.memoryCount || 0) !== 0 || Number(npc.behaviorCount || 0) !== 0) {
+      continue;
+    }
     const hiddenNpc = hideConversationNpc(database, userId, conversationId, npc.name);
     if (hiddenNpc) {
       hidden.push(hiddenNpc);

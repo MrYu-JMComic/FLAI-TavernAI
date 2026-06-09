@@ -40,6 +40,7 @@ The autonomous loop should choose one small item per run. Add new findings here 
 
 ## Done
 
+- 2026-06-09: Built NPC memory/behavior detail lists and empty-NPC hiding with direct scans instead of map/filter intermediates.
 - 2026-06-09: Normalized backend talent pools and talent rows with direct loops and capped valid talent scans.
 - 2026-06-09: Scanned backend swipe rows directly and counted active swipe state without loading full alternate rows.
 - 2026-06-09: Reordered backend regex rule ids with direct scans instead of transient id arrays and update callbacks.
