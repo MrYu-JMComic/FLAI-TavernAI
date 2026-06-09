@@ -811,13 +811,18 @@ export function useChatMessageActions({
       messageId,
       currentMessage
     );
+    const invalidateBranchContext = () => {
+      if (isCurrentBranchContext()) {
+        branchActionToken += 1;
+      }
+    };
     try {
       const result = await branchConversation(conversationId, messageId);
       if (!isCurrentBranchContext()) {
         return;
       }
       if (result?.id && onBranched) {
-        await onBranched(result.id, isCurrentBranchContext);
+        await onBranched(result.id, isCurrentBranchContext, invalidateBranchContext);
       }
     } finally {
       if (!disposed && requestToken === branchActionToken) {

@@ -626,7 +626,7 @@ function appendSnapshotField(snapshot, value) {
 
 async function createBranchFromMessage(message) {
   const branchConversationId = props.route.params.id;
-  await handleBranchMessage(message, branchConversationId, async (branchId, isCurrentBranchAction) => {
+  await handleBranchMessage(message, branchConversationId, async (branchId, isCurrentBranchAction, invalidateBranchAction) => {
     if (!isCurrentBranchAction()) {
       return;
     }
@@ -634,8 +634,13 @@ async function createBranchFromMessage(message) {
     if (!isCurrentBranchAction()) {
       return;
     }
-    emit('navigate', 'chat', { id: branchId });
+    navigateFromBranchCreation(branchId, invalidateBranchAction);
   });
+}
+
+function navigateFromBranchCreation(branchId, invalidateBranchAction) {
+  invalidateBranchAction?.();
+  emit('navigate', 'chat', { id: branchId });
 }
 
 function canSwipePrev(message) {

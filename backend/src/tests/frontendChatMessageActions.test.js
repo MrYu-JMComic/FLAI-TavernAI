@@ -1302,6 +1302,48 @@ test('branch callbacks receive a stale-route context guard', async () => {
   }
 });
 
+test('branch navigation callbacks can keep busy state locked until cleanup', async () => {
+  const originalFetch = globalThis.fetch;
+  const actions = createMessageActions({
+    messages: [{ id: 'msg-1', role: 'assistant', content: 'Ready' }]
+  });
+  let callbackRuns = 0;
+
+  globalThis.fetch = async (url, options = {}) => {
+    const requestUrl = String(url);
+    const method = String(options.method || 'GET').toUpperCase();
+    if (requestUrl === '/api/csrf-token') {
+      return jsonResponse({ csrfToken: 'branch-navigate-token' });
+    }
+    if (requestUrl === '/api/conversations/conv-1/branch' && method === 'POST') {
+      return jsonResponse({ id: 'branch-navigate' });
+    }
+    throw new Error(`Unexpected request: ${requestUrl}`);
+  };
+
+  try {
+    await actions.handleBranchMessage(
+      { id: 'msg-1', role: 'assistant', content: 'Ready' },
+      'conv-1',
+      async (branchId, isCurrentBranchAction, invalidateBranchAction) => {
+        callbackRuns += 1;
+        assert.equal(branchId, 'branch-navigate');
+        assert.equal(isCurrentBranchAction(), true);
+        invalidateBranchAction();
+        assert.equal(isCurrentBranchAction(), false);
+      }
+    );
+
+    assert.equal(callbackRuns, 1);
+    assert.equal(actions.branchBusy.value, true);
+
+    actions.cleanup();
+    assert.equal(actions.branchBusy.value, false);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test('message edit and delete actions stay locked while a branch action is busy', async () => {
   const originalFetch = globalThis.fetch;
   const originalWindow = globalThis.window;
