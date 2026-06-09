@@ -6831,6 +6831,25 @@ test('enabled mods filter by loading scope and character bindings', () => {
   );
 });
 
+test('mod reorder and enabled loading scan rows directly', () => {
+  const source = fs.readFileSync(new URL('../modules/mods.js', import.meta.url), 'utf8');
+  const reorderMatch = source.match(/export function reorderMods[\s\S]*?\nexport function getEnabledModsForUser/);
+  const enabledMatch = source.match(/export function getEnabledModsForUser[\s\S]*?\nexport function buildModSystemPrompt/);
+  assert.ok(reorderMatch);
+  assert.ok(enabledMatch);
+
+  assert.match(
+    reorderMatch[0],
+    /const existingIds = new Set\(\);\s*for \(const row of current\) \{\s*existingIds\.add\(row\.id\);/
+  );
+  assert.match(
+    enabledMatch[0],
+    /const rows = database[\s\S]*\.all\(userId\);\s*const mods = \[\];\s*for \(const row of rows\) \{\s*const mod = toMod\(row\);[\s\S]*mods\.push\(mod\);[\s\S]*return mods;/
+  );
+  assert.doesNotMatch(reorderMatch[0], /current\.map\(\(row\) => row\.id\)/);
+  assert.doesNotMatch(enabledMatch[0], /\.map\(toMod\)\s*\.filter/);
+});
+
 test('mod schemas preserve snake case character bindings', () => {
   const result = createModSchema.safeParse({
     name: 'Snake case binding',

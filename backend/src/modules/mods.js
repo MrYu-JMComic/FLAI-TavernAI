@@ -106,7 +106,10 @@ export function reorderMods(database, userId, orderedIds) {
        ORDER BY order_index ASC, created_at DESC, rowid DESC`
     )
     .all(userId);
-  const existingIds = new Set(current.map((row) => row.id));
+  const existingIds = new Set();
+  for (const row of current) {
+    existingIds.add(row.id);
+  }
   const seen = new Set();
   const nextIds = [];
 
@@ -138,16 +141,22 @@ export function getEnabledModsForUser(database, userId, options = {}) {
   const characterId = typeof options === 'string'
     ? options
     : String(options?.characterId || '').trim();
-  return database
+  const rows = database
     .prepare(
       `SELECT id, user_id, name, description, type, content, enabled, scope, character_ids, order_index, created_at
        FROM mods
        WHERE user_id = ? AND enabled = 1
        ORDER BY order_index ASC, created_at DESC, rowid DESC`
     )
-    .all(userId)
-    .map(toMod)
-    .filter((mod) => modAppliesToCharacter(mod, characterId));
+    .all(userId);
+  const mods = [];
+  for (const row of rows) {
+    const mod = toMod(row);
+    if (modAppliesToCharacter(mod, characterId)) {
+      mods.push(mod);
+    }
+  }
+  return mods;
 }
 
 export function buildModSystemPrompt(mods) {

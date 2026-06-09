@@ -40,6 +40,7 @@ The autonomous loop should choose one small item per run. Add new findings here 
 
 ## Done
 
+- 2026-06-09: Loaded and reordered backend Mods with direct row scans instead of transient `map`/`filter` arrays.
 - 2026-06-09: Selected character images for scene/emotion context with one direct scan instead of repeated `find` passes.
 - 2026-06-09: Parsed CharacterFormView status template tokens through the shared single-scan helper instead of `split('.')` arrays.
 - 2026-06-09: Reordered character image ids with direct loops instead of transient id arrays and `forEach` callbacks.
