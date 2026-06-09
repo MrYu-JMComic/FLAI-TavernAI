@@ -174,6 +174,23 @@ test('WorldBookView aggregates book list stats in one pass', () => {
   assert.doesNotMatch(worldBookViewScript, /const booksWithEntriesCount = computed\(\(\) => books\.value\.filter/);
 });
 
+test('WorldBookView scans position options directly for labels and AI entries', () => {
+  assert.match(
+    worldBookViewScript,
+    /function positionLabel\(value\) \{\s*return getPositionOptionByValue\(value\)\?\.label \|\| value;\s*\}/
+  );
+  assert.match(
+    worldBookViewScript,
+    /function getPositionOptionByValue\(value\) \{\s*for \(const option of positionOptions\) \{\s*if \(option\.value === value\) \{\s*return option;\s*\}\s*\}\s*return null;\s*\}/
+  );
+  assert.match(
+    worldBookViewScript,
+    /function normalizeAiEntryForCreate\(entry = \{\}\) \{[\s\S]*position: getPositionOptionByValue\(entry\.position\) \? entry\.position : 'before_char'/
+  );
+  assert.doesNotMatch(worldBookViewScript, /positionOptions\.find/);
+  assert.doesNotMatch(worldBookViewScript, /positionOptions\.some/);
+});
+
 test('WorldBookView locks world book mutations while saving is active', () => {
   [
     'openCreateBook',

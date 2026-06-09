@@ -659,7 +659,16 @@ async function moveEntry(index, direction) {
 }
 
 function positionLabel(value) {
-  return positionOptions.find((o) => o.value === value)?.label || value;
+  return getPositionOptionByValue(value)?.label || value;
+}
+
+function getPositionOptionByValue(value) {
+  for (const option of positionOptions) {
+    if (option.value === value) {
+      return option;
+    }
+  }
+  return null;
 }
 
 function currentWorldBookDraft() {
@@ -832,7 +841,7 @@ function nullableNumber(value) {
 function normalizeAiEntryForCreate(entry = {}) {
   return {
     ...entry,
-    position: positionOptions.some((option) => option.value === entry.position) ? entry.position : 'before_char',
+    position: getPositionOptionByValue(entry.position) ? entry.position : 'before_char',
     depth: clampNumber(entry.depth, 0, 10, 0),
     role: clampNumber(entry.role, 0, 2, 0),
     probability: clampNumber(entry.probability, 0, 100, 100),
