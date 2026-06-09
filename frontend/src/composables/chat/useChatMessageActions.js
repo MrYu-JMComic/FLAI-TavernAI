@@ -261,7 +261,7 @@ export function useChatMessageActions({
         showError(err.message);
       }
     } finally {
-      if (isLatestMessageAction(actionToken)) {
+      if (isCurrentMessageAction(actionToken, conversationId)) {
         messageActionBusy.value = '';
       }
     }
@@ -309,7 +309,7 @@ export function useChatMessageActions({
         showError(err.message);
       }
     } finally {
-      if (isLatestMessageAction(actionToken)) {
+      if (isCurrentMessageAction(actionToken, conversationId)) {
         messageActionBusy.value = '';
       }
     }
@@ -522,10 +522,6 @@ export function useChatMessageActions({
   function isCurrentMessageActionTarget(actionToken, conversationId, messageId, currentMessage) {
     return isCurrentMessageAction(actionToken, conversationId)
       && findMessageListItem(messageId) === currentMessage;
-  }
-
-  function isLatestMessageAction(actionToken) {
-    return !disposed && actionToken === messageActionToken;
   }
 
   // ── Swipe ──

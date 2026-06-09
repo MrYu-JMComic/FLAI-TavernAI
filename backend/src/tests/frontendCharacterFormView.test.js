@@ -575,7 +575,15 @@ test('CharacterFormView uses granular sticky section navigation', () => {
     characterFormScript,
     /const formSections = \[[\s\S]*id: 'basic'[\s\S]*id: 'settings'[\s\S]*id: 'ai'[\s\S]*id: 'status-blueprint'[\s\S]*id: 'render-plugins'[\s\S]*id: 'regex'[\s\S]*\];/
   );
-  assert.match(characterFormScript, /const visibleFormSections = computed\(\(\) => formSections\.filter\(isSectionVisible\)\);/);
+  assert.match(characterFormScript, /const visibleFormSections = computed\(getVisibleFormSections\);/);
+  assert.match(
+    characterFormScript,
+    /function getVisibleFormSections\(\) \{[\s\S]*const sections = \[\];[\s\S]*for \(const section of formSections\) \{[\s\S]*if \(isSectionVisible\(section\)\) \{[\s\S]*sections\.push\(section\);[\s\S]*return sections;/
+  );
+  assert.match(
+    characterFormScript,
+    /function hasVisibleFormSection\(sectionId, sections = visibleFormSections\.value\) \{[\s\S]*for \(const section of sections\) \{[\s\S]*if \(section\.id === sectionId\) \{[\s\S]*return true;[\s\S]*return false;/
+  );
   assert.match(characterFormScript, /window\.addEventListener\('scroll', onWindowScroll, \{ passive: true \}\);/);
   assert.match(
     characterFormScript,
@@ -603,6 +611,9 @@ test('CharacterFormView uses granular sticky section navigation', () => {
   );
   assert.doesNotMatch(characterFormScript, /visibleFormSections\.value\s*\.\s*map/);
   assert.doesNotMatch(characterFormScript, /visibleFormSections\.value[\s\S]{0,120}\.filter/);
+  assert.doesNotMatch(characterFormScript, /formSections\.filter\(isSectionVisible\)/);
+  assert.doesNotMatch(characterFormScript, /visibleFormSections\.value\s*\.\s*some/);
+  assert.doesNotMatch(characterFormScript, /sections\.some\(\(section\) => section\.id === activeSection\.value\)/);
   assert.match(
     characterFormScript,
     /tab\.scrollIntoView\(\{ behavior: 'auto', block: 'nearest', inline: 'center' \}\);/

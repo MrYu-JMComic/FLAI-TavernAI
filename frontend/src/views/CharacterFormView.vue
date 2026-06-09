@@ -625,12 +625,12 @@ const formSections = [
   { id: 'render-plugins', label: '渲染插件' },
   { id: 'regex', label: '正则规则' }
 ];
-const visibleFormSections = computed(() => formSections.filter(isSectionVisible));
+const visibleFormSections = computed(getVisibleFormSections);
 
 watch(
   visibleFormSections,
   (sections) => {
-    if (!sections.some((section) => section.id === activeSection.value)) {
+    if (!hasVisibleFormSection(activeSection.value, sections)) {
       activeSection.value = sections[0]?.id || 'basic';
     }
     scheduleCharacterSectionNavSync();
@@ -653,6 +653,25 @@ function isSectionVisible(section) {
   return typeof section.visible !== 'function' || section.visible();
 }
 
+function getVisibleFormSections() {
+  const sections = [];
+  for (const section of formSections) {
+    if (isSectionVisible(section)) {
+      sections.push(section);
+    }
+  }
+  return sections;
+}
+
+function hasVisibleFormSection(sectionId, sections = visibleFormSections.value) {
+  for (const section of sections) {
+    if (section.id === sectionId) {
+      return true;
+    }
+  }
+  return false;
+}
+
 function getCharacterSectionTarget(id) {
   if (typeof document === 'undefined') {
     return null;
@@ -667,7 +686,7 @@ function getCharacterSectionTarget(id) {
 }
 
 function setActiveCharacterSection(sectionId) {
-  if (!visibleFormSections.value.some((section) => section.id === sectionId)) {
+  if (!hasVisibleFormSection(sectionId)) {
     return;
   }
   if (activeSection.value !== sectionId) {

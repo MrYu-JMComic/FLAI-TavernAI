@@ -518,6 +518,69 @@ test('message edit save ignores completions after the same-id list item is repla
   assert.deepEqual(notices, []);
 });
 
+test('message edit save keeps action locked after route changes until cleanup', async () => {
+  const originalFetch = globalThis.fetch;
+  const route = { params: { id: 'conv-1' } };
+  const originalMessage = { id: 'msg-1', role: 'user', content: 'Original content' };
+  const messagesRef = shallowRef([originalMessage]);
+  const notices = [];
+  let sidebarLoads = 0;
+  let resolvePatchStarted;
+  const patchStarted = new Promise((resolve) => {
+    resolvePatchStarted = resolve;
+  });
+  const patchResponse = deferredResponse({ id: 'msg-1', role: 'user', content: 'Updated content' });
+  const actions = createMessageActions({
+    route,
+    messagesRef,
+    loadSidebarData() {
+      sidebarLoads += 1;
+    },
+    showActionNotice(messageText, type) {
+      notices.push([messageText, type]);
+    }
+  });
+  actions.editingMessageId.value = 'msg-1';
+  actions.editingMessageContent.value = 'Updated content';
+
+  globalThis.fetch = async (url, options = {}) => {
+    const requestUrl = String(url);
+    const method = String(options.method || 'GET').toUpperCase();
+
+    if (requestUrl === '/api/csrf-token') {
+      return jsonResponse({ csrfToken: 'edit-route-token' });
+    }
+    if (requestUrl === '/api/conversations/conv-1/messages/msg-1' && method === 'PATCH') {
+      resolvePatchStarted();
+      return patchResponse.promise;
+    }
+    throw new Error(`Unexpected request: ${requestUrl}`);
+  };
+
+  try {
+    const savePromise = actions.saveMessageEdit(originalMessage);
+    await patchStarted;
+
+    assert.equal(actions.messageActionBusy.value, 'msg-1');
+    route.params.id = 'conv-2';
+
+    patchResponse.resolve();
+    await savePromise;
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+
+  assert.equal(originalMessage.content, 'Original content');
+  assert.equal(actions.editingMessageId.value, 'msg-1');
+  assert.equal(actions.editingMessageContent.value, 'Updated content');
+  assert.equal(actions.messageActionBusy.value, 'msg-1');
+  assert.equal(sidebarLoads, 0);
+  assert.deepEqual(notices, []);
+
+  actions.cleanup();
+  assert.equal(actions.messageActionBusy.value, '');
+});
+
 test('message mutation guards use current list streaming state for stale same-id events', async () => {
   const originalFetch = globalThis.fetch;
   const originalWindow = globalThis.window;
@@ -766,6 +829,79 @@ test('message delete ignores completions after the same-id list item is replaced
   assert.equal(actions.messageActionBusy.value, '');
   assert.equal(sidebarLoads, 0);
   assert.deepEqual(notices, []);
+});
+
+test('message delete keeps action locked after route changes until cleanup', async () => {
+  const originalFetch = globalThis.fetch;
+  const originalWindow = globalThis.window;
+  const route = { params: { id: 'conv-1' } };
+  const originalMessage = { id: 'msg-1', role: 'assistant', content: 'Original content' };
+  const messagesRef = shallowRef([originalMessage]);
+  const notices = [];
+  let sidebarLoads = 0;
+  let confirmCount = 0;
+  let resolveDeleteStarted;
+  const deleteStarted = new Promise((resolve) => {
+    resolveDeleteStarted = resolve;
+  });
+  const deleteResponse = deferredResponse({ deletedReasoning: false });
+  const actions = createMessageActions({
+    route,
+    messagesRef,
+    loadSidebarData() {
+      sidebarLoads += 1;
+    },
+    showActionNotice(messageText, type) {
+      notices.push([messageText, type]);
+    }
+  });
+
+  globalThis.window = {
+    confirm: () => {
+      confirmCount += 1;
+      return true;
+    }
+  };
+  globalThis.fetch = async (url, options = {}) => {
+    const requestUrl = String(url);
+    const method = String(options.method || 'GET').toUpperCase();
+
+    if (requestUrl === '/api/csrf-token') {
+      return jsonResponse({ csrfToken: 'delete-route-token' });
+    }
+    if (requestUrl === '/api/conversations/conv-1/messages/msg-1' && method === 'DELETE') {
+      resolveDeleteStarted();
+      return deleteResponse.promise;
+    }
+    throw new Error(`Unexpected request: ${requestUrl}`);
+  };
+
+  try {
+    const deletePromise = actions.removeMessage(originalMessage);
+    await deleteStarted;
+
+    assert.equal(actions.messageActionBusy.value, 'msg-1');
+    route.params.id = 'conv-2';
+
+    deleteResponse.resolve();
+    await deletePromise;
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalWindow === undefined) {
+      delete globalThis.window;
+    } else {
+      globalThis.window = originalWindow;
+    }
+  }
+
+  assert.equal(confirmCount, 1);
+  assert.deepEqual(messagesRef.value, [originalMessage]);
+  assert.equal(actions.messageActionBusy.value, 'msg-1');
+  assert.equal(sidebarLoads, 0);
+  assert.deepEqual(notices, []);
+
+  actions.cleanup();
+  assert.equal(actions.messageActionBusy.value, '');
 });
 
 test('message UI reset preserves empty collection references', () => {
