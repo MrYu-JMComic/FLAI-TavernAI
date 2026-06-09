@@ -321,6 +321,13 @@ test('findBestMatch selects by scene, emotion, default, or first', () => {
   // Exact match (scene + emotion)
   assert.equal(findBestMatch(images, '学校', '开心').id, '2');
 
+  // Exact match still wins when a scene-only match appears first
+  const exactAfterSceneOnly = [
+    { id: 'scene-only', sceneTag: '学校', emotionTag: '', isDefault: false },
+    { id: 'exact-later', sceneTag: '学校', emotionTag: '开心', isDefault: false }
+  ];
+  assert.equal(findBestMatch(exactAfterSceneOnly, '学校', '开心').id, 'exact-later');
+
   // Scene match only
   assert.equal(findBestMatch(images, '日常', '').id, '1');
 
@@ -342,6 +349,12 @@ test('findBestMatch selects by scene, emotion, default, or first', () => {
 
   // Returns null for null list
   assert.equal(findBestMatch(null, '', ''), null);
+
+  assert.match(
+    characterImagesSource,
+    /export function findBestMatch\(images, sceneTag, emotionTag\) \{[\s\S]*const list = Array\.isArray\(images\) \? images : \[\];[\s\S]*const wantsScene = Boolean\(sceneTag\);[\s\S]*let sceneMatch = null;[\s\S]*for \(const image of list\) \{[\s\S]*if \(sceneMatches && emotionMatches\) \{[\s\S]*return image;[\s\S]*return sceneMatch \|\| emotionMatch \|\| defaultImage \|\| firstImage;[\s\S]*\}/
+  );
+  assert.doesNotMatch(characterImagesSource, /\.find\(/);
 });
 
 test('delete reorders remaining images', () => {

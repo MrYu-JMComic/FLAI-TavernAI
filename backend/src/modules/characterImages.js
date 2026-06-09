@@ -193,34 +193,42 @@ function findBestKeywordTag(normalizedText, keywordMap) {
 }
 
 export function findBestMatch(images, sceneTag, emotionTag) {
-  if (!images || !images.length) {
+  const list = Array.isArray(images) ? images : [];
+  if (list.length === 0) {
     return null;
   }
 
-  // Exact match: both scene and emotion
-  if (sceneTag && emotionTag) {
-    const exact = images.find((img) => img.sceneTag === sceneTag && img.emotionTag === emotionTag);
-    if (exact) return exact;
+  const wantsScene = Boolean(sceneTag);
+  const wantsEmotion = Boolean(emotionTag);
+  const firstImage = list[0] || null;
+  let sceneMatch = null;
+  let emotionMatch = null;
+  let defaultImage = null;
+
+  for (const image of list) {
+    const sceneMatches = wantsScene && image?.sceneTag === sceneTag;
+    const emotionMatches = wantsEmotion && image?.emotionTag === emotionTag;
+    if (sceneMatches && emotionMatches) {
+      return image;
+    }
+    if (sceneMatches && !sceneMatch) {
+      if (!wantsEmotion) {
+        return image;
+      }
+      sceneMatch = image;
+    }
+    if (emotionMatches && !emotionMatch) {
+      if (!wantsScene) {
+        return image;
+      }
+      emotionMatch = image;
+    }
+    if (!defaultImage && image?.isDefault) {
+      defaultImage = image;
+    }
   }
 
-  // Scene match only
-  if (sceneTag) {
-    const sceneMatch = images.find((img) => img.sceneTag === sceneTag);
-    if (sceneMatch) return sceneMatch;
-  }
-
-  // Emotion match only
-  if (emotionTag) {
-    const emotionMatch = images.find((img) => img.emotionTag === emotionTag);
-    if (emotionMatch) return emotionMatch;
-  }
-
-  // Default image
-  const defaultImg = images.find((img) => img.isDefault);
-  if (defaultImg) return defaultImg;
-
-  // First image as fallback
-  return images[0] || null;
+  return sceneMatch || emotionMatch || defaultImage || firstImage;
 }
 
 // ── Helpers ──
