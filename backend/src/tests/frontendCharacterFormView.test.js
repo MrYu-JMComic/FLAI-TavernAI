@@ -402,6 +402,26 @@ test('CharacterFormView scans status blueprint variables directly by key', () =>
   );
 });
 
+test('CharacterFormView parses status template tokens without split arrays', () => {
+  const usageStart = characterFormScript.indexOf('function getStatusVariableTemplateUsage(template = \'\', name = \'\') {');
+  const usageEnd = characterFormScript.indexOf('\nfunction isStatusMeterPlaceholderProperty', usageStart);
+  const inferStart = characterFormScript.indexOf('function inferStatusVariablesFromTemplate(template, variables = []) {');
+  const inferEnd = characterFormScript.indexOf('\nfunction collectStatusVariableKeys', inferStart);
+  assert.notEqual(usageStart, -1);
+  assert.notEqual(usageEnd, -1);
+  assert.notEqual(inferStart, -1);
+  assert.notEqual(inferEnd, -1);
+  const usageSnippet = characterFormScript.slice(usageStart, usageEnd);
+  const inferSnippet = characterFormScript.slice(inferStart, inferEnd);
+
+  assert.match(usageSnippet, /const parsed = parseStatusTemplateToken\(token\);/);
+  assert.match(usageSnippet, /normalizeStatusVariableKey\(parsed\.rawName\) !== target/);
+  assert.match(usageSnippet, /const property = parsed\.rawProperty\.trim\(\);/);
+  assert.match(inferSnippet, /const parsed = parseStatusTemplateToken\(token\);\s*const name = normalizeTemplateVariableName\(parsed\.rawName\);/);
+  assert.doesNotMatch(characterFormScript, /token\.split\('\.'\)/);
+  assert.doesNotMatch(characterFormScript, /propertyParts/);
+});
+
 test('CharacterFormView builds status blueprint editor rows without intermediate mapping arrays', () => {
   assert.match(
     characterFormScript,

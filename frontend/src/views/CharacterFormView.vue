@@ -2214,11 +2214,11 @@ function getStatusVariableTemplateUsage(template = '', name = '') {
   let match;
   while ((match = placeholderPattern.exec(String(template || '')))) {
     const token = String(match[1] || match[2] || '').trim();
-    const [tokenName, ...propertyParts] = token.split('.');
-    if (normalizeStatusVariableKey(tokenName) !== target) {
+    const parsed = parseStatusTemplateToken(token);
+    if (normalizeStatusVariableKey(parsed.rawName) !== target) {
       continue;
     }
-    const property = propertyParts.join('.').trim();
+    const property = parsed.rawProperty.trim();
     if (isStatusMeterPlaceholderProperty(property)) {
       usage.meter = true;
     } else {
@@ -2306,7 +2306,8 @@ function inferStatusVariablesFromTemplate(template, variables = []) {
   let match;
   while ((match = placeholderPattern.exec(String(template || '')))) {
     const token = String(match[1] || match[2] || '').trim();
-    const name = normalizeTemplateVariableName(token.split('.')[0]);
+    const parsed = parseStatusTemplateToken(token);
+    const name = normalizeTemplateVariableName(parsed.rawName);
     const key = normalizeStatusVariableKey(name);
     if (!name || seen.has(key)) {
       continue;
