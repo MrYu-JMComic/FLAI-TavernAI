@@ -40,6 +40,7 @@ The autonomous loop should choose one small item per run. Add new findings here 
 
 ## Done
 
+- 2026-06-09: Guarded chat sidebar active-conversation deletion navigation so stale route-replacement cleanup cannot unlock old sidebar actions.
 - 2026-06-09: Scanned CharacterFormView sticky section targets directly during scroll sync instead of building transient map/filter arrays.
 - 2026-06-09: Guarded HomeView chat-open navigation completions against stale route replacement cleanup.
 - 2026-06-09: Invalidated CharacterFormView create/delete action tokens before route-replacing navigations while preserving same-route edit-save cleanup.

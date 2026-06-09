@@ -1094,6 +1094,62 @@ test('chat sidebar single delete ignores blank or stale row events before confir
   }
 });
 
+test('chat sidebar active conversation delete keeps action busy through route navigation', async () => {
+  const originalFetch = globalThis.fetch;
+  const originalWindow = globalThis.window;
+  const emissions = [];
+
+  globalThis.window = {
+    ...(originalWindow || {}),
+    confirm: () => true
+  };
+  globalThis.fetch = async (url, options = {}) => {
+    const requestUrl = String(url);
+    const method = String(options.method || 'GET').toUpperCase();
+
+    if (requestUrl === '/api/csrf-token') {
+      return jsonResponse({ csrfToken: 'active-delete-token' });
+    }
+
+    if (requestUrl === '/api/conversations/conv-active' && method === 'DELETE') {
+      return jsonResponse({ ok: true });
+    }
+
+    return jsonResponse({ message: `Unexpected request: ${requestUrl}` }, 500);
+  };
+
+  try {
+    const chat = useChatConversation({
+      route: { params: { id: 'conv-active' } },
+      emit(...args) {
+        emissions.push(args);
+      },
+      showError() {}
+    });
+
+    chat.conversations.value = [
+      { id: 'conv-active', title: 'Active story', character: { name: 'Alice' }, usage: {} },
+      { id: 'conv-next', title: 'Next story', character: { name: 'Bob' }, usage: {} }
+    ];
+
+    await chat.deleteOneConversation({ id: 'conv-active', title: 'Active story' });
+
+    assert.deepEqual(chat.conversations.value.map((item) => item.id), ['conv-next']);
+    assert.deepEqual(emissions, [['navigate', 'chat', { id: 'conv-next' }]]);
+    assert.equal(chat.conversationActionBusy.value, true);
+
+    chat.cleanup();
+    assert.equal(chat.conversationActionBusy.value, false);
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (typeof originalWindow === 'undefined') {
+      delete globalThis.window;
+    } else {
+      globalThis.window = originalWindow;
+    }
+  }
+});
+
 test('chat sidebar bulk selection skips reactive updates when no conversations are visible', () => {
   const chat = useChatConversation({
     route: { params: { id: 'conv-a' } },

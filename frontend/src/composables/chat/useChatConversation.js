@@ -579,11 +579,16 @@ export function useChatConversation({ route, emit, showError }) {
     if (deleted.has(route.params.id)) {
       const nextConversation = conversations.value[0];
       if (nextConversation) {
-        emit('navigate', 'chat', { id: nextConversation.id });
+        navigateFromConversationDeletion('chat', { id: nextConversation.id });
       } else {
-        emit('navigate', 'home');
+        navigateFromConversationDeletion('home');
       }
     }
+  }
+
+  function navigateFromConversationDeletion(page, params) {
+    conversationActionToken += 1;
+    emit('navigate', page, params);
   }
 
   function pruneSelectedConversations() {
