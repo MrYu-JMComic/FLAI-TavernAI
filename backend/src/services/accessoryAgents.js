@@ -7,6 +7,7 @@ import { hasUsableProvider, runToolCompletion } from './providers.js';
 import { parseStatusTemplateToken } from '../../../shared/statusTemplateTokens.js';
 
 const agentTimeoutMs = 20000;
+const AUTO_NPC_BEHAVIOR_LIMIT = 8;
 
 export function getAccessorySkillsPayload(conversation, statusBar = null) {
   const skills = normalizeAccessorySkills(conversation?.settings?.accessorySkills || {});
@@ -378,7 +379,10 @@ function buildNpcMessages(character, content) {
         'Update status when the reply clearly says an NPC left, permanently left, died, is on a mission, follows, or has another stable custom state.',
         'Aliases are exact alternate ways this same individual is called. Stable nicknames or titles count only when they uniquely identify this NPC. Generic roles, vague references, pronouns, and group labels do not count.',
         'Call record_npc_memory only when there is a concise useful memory about that side character.',
-        'Call record_npc_behavior only when the reply establishes a reusable future behavior rule, not for a one-time action.',
+        'Prefer record_npc_memory for observations, facts, relationship changes, opinions, emotions, and events.',
+        'Call record_npc_behavior only for explicit, stable, reusable future rules with a clear trigger condition.',
+        'Do not create behavior rules for ordinary dialogue, one-time actions, temporary moods, scene movement, or details already covered by memory.',
+        'When unsure, skip record_npc_behavior because too many behavior rules can over-constrain the character.',
         'Skip the main character, user/player, generic section titles, status panels, and markdown headings.',
         'Do not report narrative fragments, pronouns, or UI labels as NPCs.'
       ].join('\n')
@@ -426,7 +430,7 @@ function npcBehaviorTool() {
     type: 'function',
     function: {
       name: 'record_npc_behavior',
-      description: 'Record a reusable future behavior rule for an NPC side character.',
+      description: 'Record a rare explicit, stable reusable future behavior rule with a clear trigger for an NPC side character.',
       parameters: {
         type: 'object',
         additionalProperties: false,
@@ -638,10 +642,13 @@ function addNpcBehaviorIfNew(db, userId, conversationId, npcName, payload) {
   const name = String(npcName || '').trim().slice(0, 80);
   const action = String(payload?.action || '').trim();
   const triggerCondition = String(payload?.triggerCondition || '').trim();
-  if (!name || !action) {
+  if (!name || !action || !triggerCondition) {
     return null;
   }
   if (isConversationNpcHidden(db, conversationId, name)) {
+    return null;
+  }
+  if (countNpcBehaviors(db, conversationId, name) >= AUTO_NPC_BEHAVIOR_LIMIT) {
     return null;
   }
   const existing = db
@@ -661,6 +668,16 @@ function addNpcBehaviorIfNew(db, userId, conversationId, npcName, payload) {
     priority: payload.priority ?? 0,
     enabled: payload.enabled ?? true
   });
+}
+
+function countNpcBehaviors(db, conversationId, npcName) {
+  const row = db
+    .prepare(
+      `SELECT COUNT(*) AS count FROM npc_behaviors
+       WHERE conversation_id = ? AND npc_name = ?`
+    )
+    .get(conversationId, npcName);
+  return Number(row?.count || 0);
 }
 
 function upsertNpcFromAgent(db, userId, conversationId, args = {}) {

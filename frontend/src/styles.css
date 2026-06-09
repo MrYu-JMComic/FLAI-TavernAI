@@ -2282,7 +2282,9 @@ section[id^="extension-section-"] {
     max-width: calc(100vw - var(--ai-panel-x, 0px));
     height: min(var(--ai-panel-h, 640px), calc(100dvh - var(--ai-panel-y, 0px)));
     max-height: calc(100dvh - var(--ai-panel-y, 0px));
-    min-height: 120px;
+    min-width: 320px;
+    min-height: 180px;
+    resize: both;
     overflow-x: hidden;
     overflow-y: auto;
     scrollbar-gutter: stable;

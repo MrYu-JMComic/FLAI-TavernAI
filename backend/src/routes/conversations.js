@@ -48,6 +48,7 @@ import {
   listNpcBehaviors,
   listNpcMemories,
   updateConversationNpc,
+  updateNpcMemory,
   updateNpcBehavior
 } from '../modules/npcs.js';
 import {
@@ -68,7 +69,7 @@ import {
   normalizeIdList,
   writeSse
 } from './helpers.js';
-import { sendMessageSchema, updateMessageSchema, saveConversationSettingsSchema, saveStatusBarSchema, economyTransactionSchema, addNpcMemorySchema, addNpcBehaviorSchema, updateNpcBehaviorSchema, updateNpcSchema, createSaveSchema, renameSaveSchema, createConversationSchema, bulkDeleteSchema, validate } from '../validations/schemas.js';
+import { sendMessageSchema, updateMessageSchema, saveConversationSettingsSchema, saveStatusBarSchema, economyTransactionSchema, addNpcMemorySchema, updateNpcMemorySchema, addNpcBehaviorSchema, updateNpcBehaviorSchema, updateNpcSchema, createSaveSchema, renameSaveSchema, createConversationSchema, bulkDeleteSchema, validate } from '../validations/schemas.js';
 
 export function createConversationsRouter(ctx) {
   const { db, requireAuth, asyncRoute, newId, nowIso, withEtag, withListCache } = ctx;
@@ -580,6 +581,27 @@ export function createConversationsRouter(ctx) {
     }
     const memory = addNpcMemory(db, request.auth.user.id, request.params.id, request.params.npc, request.body || {});
     response.status(201).json(memory);
+  });
+
+  router.put('/:id/npcs/:npc/memories/:memoryId', requireAuth, validate(updateNpcMemorySchema), (request, response) => {
+    const conversation = getConversation(request.auth.user.id, request.params.id);
+    if (!conversation) {
+      response.status(404).json({ error: '对话不存在' });
+      return;
+    }
+    const memory = updateNpcMemory(
+      db,
+      request.auth.user.id,
+      request.params.id,
+      request.params.memoryId,
+      request.body || {},
+      request.params.npc
+    );
+    if (!memory) {
+      response.status(404).json({ error: '记忆不存在' });
+      return;
+    }
+    response.json(memory);
   });
 
   router.delete('/:id/npcs/:npc/memories/:memoryId', requireAuth, (request, response) => {

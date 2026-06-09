@@ -243,6 +243,9 @@ const aiPanelDragging = ref(false);
 let aiPanelDragTracking = false;
 let aiPanelResizing = false;
 let aiPanelLayoutRafId = null;
+let aiPanelResizeObserver = null;
+let pendingAiPanelSizeSync = false;
+let skipFirstAiPanelResize = true;
 let dragStartX = 0;
 let dragStartY = 0;
 let dragOffsetX = 0;
@@ -471,6 +474,30 @@ function resetAiPanel() {
   saveAiPanelState();
 }
 
+function syncAiPanelSizeAndPosition() {
+  if (window.innerWidth <= 760 || aiPanelResizing) return;
+  const panel = aiPanelRef.value;
+  if (!panel) return;
+  const rect = panel.getBoundingClientRect();
+  if (!(rect.width > 0 && rect.height > 0)) return;
+  const nextSize = {
+    w: Math.max(AI_PANEL_MIN_WIDTH, Math.round(rect.width)),
+    h: Math.max(AI_PANEL_MIN_HEIGHT, Math.round(rect.height))
+  };
+  const sizeChanged = nextSize.w !== aiPanelSize.value.w || nextSize.h !== aiPanelSize.value.h;
+  if (sizeChanged) {
+    aiPanelSize.value = nextSize;
+  }
+  const clamped = clampAiPanelPos(aiPanelPos.value.x, aiPanelPos.value.y, nextSize);
+  const posChanged = clamped.x !== aiPanelPos.value.x || clamped.y !== aiPanelPos.value.y;
+  if (posChanged) {
+    aiPanelPos.value = clamped;
+  }
+  if (sizeChanged || posChanged) {
+    saveAiPanelState();
+  }
+}
+
 function syncAiPanelPosition() {
   if (window.innerWidth <= 760) return;
   const clamped = clampAiPanelPos(aiPanelPos.value.x, aiPanelPos.value.y);
@@ -481,11 +508,20 @@ function syncAiPanelPosition() {
 }
 
 function flushScheduledAiPanelLayout() {
+  const includeSize = pendingAiPanelSizeSync;
   aiPanelLayoutRafId = null;
+  pendingAiPanelSizeSync = false;
+  if (includeSize) {
+    syncAiPanelSizeAndPosition();
+    return;
+  }
   syncAiPanelPosition();
 }
 
-function scheduleAiPanelLayoutSync() {
+function scheduleAiPanelLayoutSync({ includeSize = false } = {}) {
+  if (includeSize) {
+    pendingAiPanelSizeSync = true;
+  }
   if (aiPanelLayoutRafId !== null) return;
   if (typeof requestAnimationFrame === 'function') {
     aiPanelLayoutRafId = requestAnimationFrame(flushScheduledAiPanelLayout);
@@ -499,9 +535,37 @@ function cancelAiPanelLayoutSync() {
     cancelAnimationFrame(aiPanelLayoutRafId);
   }
   aiPanelLayoutRafId = null;
+  pendingAiPanelSizeSync = false;
+}
+
+function onObservedAiPanelResize() {
+  if (skipFirstAiPanelResize) {
+    skipFirstAiPanelResize = false;
+    return;
+  }
+  scheduleAiPanelLayoutSync({ includeSize: true });
+}
+
+function stopAiPanelResizeObserver() {
+  if (aiPanelResizeObserver) {
+    aiPanelResizeObserver.disconnect();
+    aiPanelResizeObserver = null;
+  }
+}
+
+function syncAiPanelResizeObserver(el = aiPanelRef.value) {
+  if (window.innerWidth <= 760 || !el || typeof window.ResizeObserver !== 'function') {
+    stopAiPanelResizeObserver();
+    return;
+  }
+  if (aiPanelResizeObserver) return;
+  skipFirstAiPanelResize = true;
+  aiPanelResizeObserver = new window.ResizeObserver(onObservedAiPanelResize);
+  aiPanelResizeObserver.observe(el);
 }
 
 function onWindowResize() {
+  syncAiPanelResizeObserver();
   scheduleAiPanelLayoutSync();
   scheduleCharacterSectionNavSync();
 }
@@ -509,6 +573,11 @@ function onWindowResize() {
 function onWindowScroll() {
   scheduleCharacterSectionNavSync();
 }
+
+watch(aiPanelRef, (el) => {
+  stopAiPanelResizeObserver();
+  syncAiPanelResizeObserver(el);
+});
 
 onMounted(() => {
   window.addEventListener('resize', onWindowResize);
@@ -536,6 +605,7 @@ onBeforeUnmount(() => {
   advancedAiAbortController.value?.abort();
   onAiPanelDragEnd();
   onAiPanelResizeEnd();
+  stopAiPanelResizeObserver();
   cancelAiPanelLayoutSync();
   cancelCharacterSectionNavSync();
   window.removeEventListener('resize', onWindowResize);

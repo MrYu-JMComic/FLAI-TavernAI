@@ -159,6 +159,58 @@ test('NpcPanel ignores stale NPC detail item actions', () => {
   assert.doesNotMatch(npcPanelScript, /behaviors\.value\.find\(/);
 });
 
+test('NpcPanel supports editing NPC memories and behavior rules without reusing create drafts', () => {
+  assert.match(npcPanelScript, /updateNpcMemory,/);
+  assert.match(npcPanelScript, /const editingMemoryId = ref\(''\);/);
+  assert.match(npcPanelScript, /const editingBehaviorId = ref\(''\);/);
+  assert.match(npcPanelScript, /const memoryEditForm = reactive\(\{ memoryType: 'event', content: '' \}\);/);
+  assert.match(npcPanelScript, /const behaviorEditForm = reactive\(\{/);
+  assert.match(npcPanelScript, /function memoryEditActionId\(memoryId\)/);
+  assert.match(npcPanelScript, /function behaviorEditActionId\(behaviorId\)/);
+  assert.match(
+    npcPanelScript,
+    /function openAddMemoryForm\(\) \{[\s\S]*editingMemoryId\.value = '';[\s\S]*resetMemoryEditForm\(\);[\s\S]*addMemoryOpen\.value = true;[\s\S]*}/
+  );
+  assert.match(
+    npcPanelScript,
+    /function startEditMemory\(memory\) \{[\s\S]*const currentMemory = getCurrentMemory\(memory\?\.id\);[\s\S]*addMemoryOpen\.value = false;[\s\S]*memoryEditForm\.content = currentMemory\.content \|\| '';[\s\S]*}/
+  );
+  assert.match(
+    npcPanelScript,
+    /async function submitMemoryEdit\(\) \{[\s\S]*const updated = await updateNpcMemory\(conversationId, npcName, currentMemory\.id,[\s\S]*updateMemoryByIdIfChanged\(currentMemory\.id, updated\);[\s\S]*cancelMemoryEdit\(\);/
+  );
+  assert.match(
+    npcPanelScript,
+    /function openAddBehaviorForm\(\) \{[\s\S]*editingBehaviorId\.value = '';[\s\S]*resetBehaviorEditForm\(\);[\s\S]*addBehaviorOpen\.value = true;[\s\S]*}/
+  );
+  assert.match(
+    npcPanelScript,
+    /function startEditBehavior\(behavior\) \{[\s\S]*const currentBehavior = getCurrentBehavior\(behavior\?\.id\);[\s\S]*addBehaviorOpen\.value = false;[\s\S]*behaviorEditForm\.action = currentBehavior\.action \|\| '';[\s\S]*}/
+  );
+  assert.match(
+    npcPanelScript,
+    /async function submitBehaviorEdit\(\) \{[\s\S]*const updated = await updateNpcBehavior\(conversationId, npcName, behaviorId,[\s\S]*updateBehaviorByIdIfChanged\(behaviorId, updated\);[\s\S]*await loadNpcDetail\(\{ allowWhileBusy: true \}\);/
+  );
+  assert.match(
+    npcPanelTemplate,
+    /class="npc-card-edit"[\s\S]*aria-label="编辑记忆"[\s\S]*@click="startEditMemory\(mem\)"/
+  );
+  assert.match(npcPanelTemplate, /v-if="editingMemoryId === mem\.id" class="npc-form npc-edit-form"/);
+  assert.match(npcPanelTemplate, /@click="submitMemoryEdit"/);
+  assert.match(
+    npcPanelTemplate,
+    /class="npc-card-edit"[\s\S]*aria-label="编辑行为规则"[\s\S]*@click="startEditBehavior\(beh\)"/
+  );
+  assert.match(npcPanelTemplate, /v-if="editingBehaviorId === beh\.id" class="npc-form npc-edit-form"/);
+  assert.match(npcPanelTemplate, /@click="submitBehaviorEdit"/);
+  assert.match(npcPanelTemplate, /@click="openAddMemoryForm"/);
+  assert.match(npcPanelTemplate, /@click="openAddBehaviorForm"/);
+  assert.match(npcPanelStyle, /\.npc-edit-form\s*{[\s\S]*margin:\s*8px 0 0;/);
+  assert.match(npcPanelStyle, /\.npc-card-edit,/);
+  assert.doesNotMatch(npcPanelScript, /Object\.assign\(memoryForm/);
+  assert.doesNotMatch(npcPanelScript, /Object\.assign\(behaviorForm/);
+});
+
 test('NpcPanel option labels use a shared direct lookup helper', () => {
   assert.match(npcPanelScript, /function memoryTypeLabel\(type\) \{\s*return optionLabel\(memoryTypeOptions, type\);\s*}/);
   assert.match(npcPanelScript, /function behaviorTypeLabel\(type\) \{\s*return optionLabel\(behaviorTypeOptions, type\);\s*}/);

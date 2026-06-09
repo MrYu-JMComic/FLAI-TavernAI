@@ -639,6 +639,8 @@ test('CharacterFormView keeps the floating AI draft panel layout stable on focus
   assert.match(characterFormScript, /const AI_PANEL_MIN_WIDTH = 320;/);
   assert.match(characterFormScript, /const AI_PANEL_MIN_HEIGHT = 180;/);
   assert.match(characterFormScript, /let aiPanelLayoutRafId = null;/);
+  assert.match(characterFormScript, /let aiPanelResizeObserver = null;/);
+  assert.match(characterFormScript, /let pendingAiPanelSizeSync = false;/);
   assert.match(
     characterFormScript,
     /function readAiPanelPointerPoint\(event\) \{[\s\S]*const source = event\?\.touches\?\.\[0\] \|\| event;[\s\S]*Number\.isFinite\(clientX\)[\s\S]*Number\.isFinite\(clientY\)[\s\S]*return \{ clientX, clientY \};[\s\S]*\}/
@@ -659,11 +661,19 @@ test('CharacterFormView keeps the floating AI draft panel layout stable on focus
     characterFormScript,
     /function onAiPanelResizeMove\(e\) \{[\s\S]*callEventMethod\(e, 'preventDefault'\);[\s\S]*const point = readAiPanelPointerPoint\(e\);[\s\S]*Math\.round\(resizeStartWidth \+ point\.clientX - resizeStartX\)/
   );
-  assert.match(characterFormScript, /function scheduleAiPanelLayoutSync\(\) \{[\s\S]*requestAnimationFrame\(flushScheduledAiPanelLayout\);/);
+  assert.match(
+    characterFormScript,
+    /function syncAiPanelSizeAndPosition\(\) \{[\s\S]*Math\.max\(AI_PANEL_MIN_WIDTH, Math\.round\(rect\.width\)\)[\s\S]*Math\.max\(AI_PANEL_MIN_HEIGHT, Math\.round\(rect\.height\)\)[\s\S]*saveAiPanelState\(\);/
+  );
+  assert.match(characterFormScript, /function scheduleAiPanelLayoutSync\(\{ includeSize = false \} = \{\}\) \{[\s\S]*requestAnimationFrame\(flushScheduledAiPanelLayout\);/);
+  assert.match(characterFormScript, /function onObservedAiPanelResize\(\) \{[\s\S]*scheduleAiPanelLayoutSync\(\{ includeSize: true \}\);/);
+  assert.match(
+    characterFormScript,
+    /function syncAiPanelResizeObserver\(el = aiPanelRef\.value\) \{[\s\S]*typeof window\.ResizeObserver !== 'function'[\s\S]*new window\.ResizeObserver\(onObservedAiPanelResize\)/
+  );
   assert.match(characterFormScript, /function onAiPanelResizeStart\(e\) \{[\s\S]*document\.addEventListener\('pointermove', onAiPanelResizeMove/);
   assert.match(characterFormScript, /function onAiPanelResizeEnd\(\) \{[\s\S]*saveAiPanelState\(\);/);
   assert.doesNotMatch(characterFormScript, /e\.preventDefault\(\);/);
-  assert.doesNotMatch(characterFormScript, /ResizeObserver|pendingAiPanelSizeSync|syncAiPanelSizeAndPosition/);
 
   assert.match(characterFormTemplate, /ref="aiPanelRef"/);
   assert.match(characterFormTemplate, /:class="\{ 'ai-panel-dragging': aiPanelDragging \}"/);
@@ -674,7 +684,7 @@ test('CharacterFormView keeps the floating AI draft panel layout stable on focus
 
   assert.match(
     stylesSource,
-    /@media \(min-width: 761px\) \{[\s\S]*\.ai-draft-panel\s*\{[\s\S]*position:\s*fixed;[\s\S]*height:\s*min\(var\(--ai-panel-h, 640px\), calc\(100dvh - var\(--ai-panel-y, 0px\)\)\);[\s\S]*scrollbar-gutter:\s*stable;/
+    /@media \(min-width: 761px\) \{[\s\S]*\.ai-draft-panel\s*\{[\s\S]*position:\s*fixed;[\s\S]*height:\s*min\(var\(--ai-panel-h, 640px\), calc\(100dvh - var\(--ai-panel-y, 0px\)\)\);[\s\S]*min-width:\s*320px;[\s\S]*min-height:\s*180px;[\s\S]*resize:\s*both;[\s\S]*scrollbar-gutter:\s*stable;/
   );
   assert.match(stylesSource, /\.ai-draft-panel \.field textarea\s*\{[^}]*height:\s*124px;[^}]*resize:\s*vertical;/);
   assert.doesNotMatch(stylesSource, /\.ai-draft-panel \.field textarea\s*\{[^}]*resize:\s*none;/);
@@ -695,5 +705,4 @@ test('CharacterFormView keeps the floating AI draft panel layout stable on focus
     /\.ai-draft-panel \.ai-panel-resize-handle\s*\{[\s\S]*display:\s*block;[\s\S]*position:\s*fixed;[\s\S]*right:\s*auto;[\s\S]*bottom:\s*auto;/
   );
   assert.match(stylesSource, /\.ai-panel-resize-handle\s*\{[\s\S]*cursor:\s*nwse-resize;[\s\S]*touch-action:\s*none;/);
-  assert.doesNotMatch(stylesSource, /resize:\s*both/);
 });

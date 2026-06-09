@@ -68,6 +68,38 @@ export function deleteNpcMemory(database, userId, conversationId, memoryId, npcN
 
 // ── NPC Behaviors ──
 
+export function updateNpcMemory(database, userId, conversationId, memoryId, payload = {}, npcName = '') {
+  payload = normalizePayload(payload);
+  const scopedNpcName = String(npcName || '');
+  const existing = database
+    .prepare(
+      `SELECT npc_memories.* FROM npc_memories
+       JOIN conversations ON conversations.id = npc_memories.conversation_id
+       WHERE npc_memories.id = ?
+         AND npc_memories.conversation_id = ?
+         AND conversations.user_id = ?
+         AND (? = '' OR npc_memories.npc_name = ?)`
+    )
+    .get(memoryId, conversationId, userId, scopedNpcName, scopedNpcName);
+  if (!existing) return null;
+
+  const memoryType = payload.memoryType !== undefined ? normalizeMemoryType(payload.memoryType) : existing.memory_type;
+  const content = payload.content !== undefined ? normalizeContent(payload.content) : existing.content;
+
+  const result = database
+    .prepare(
+      `UPDATE npc_memories
+       SET memory_type = ?, content = ?
+       WHERE id = ? AND conversation_id = ? AND (? = '' OR npc_name = ?)`
+    )
+    .run(memoryType, content, memoryId, conversationId, scopedNpcName, scopedNpcName);
+  if (result.changes === 0) return null;
+
+  return toNpcMemory(database
+    .prepare('SELECT * FROM npc_memories WHERE id = ? AND conversation_id = ? AND (? = \'\' OR npc_name = ?)')
+    .get(memoryId, conversationId, scopedNpcName, scopedNpcName));
+}
+
 export function listNpcBehaviors(database, userId, conversationId, npcName) {
   assertConversationAccess(database, userId, conversationId);
   return database

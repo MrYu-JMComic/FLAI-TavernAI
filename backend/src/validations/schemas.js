@@ -9,6 +9,8 @@ const STATUS_BLUEPRINT_VARIABLE_LIMIT = 60;
 const BACKGROUND_IMAGE_INPUT_MAX_LENGTH = 6_000_000;
 const BOOLEAN_STRING_VALUES = new Set(['true', 'false', '1', '0']);
 const MOD_CHARACTER_BINDING_LIMIT = 100;
+const npcMemoryTypeSchema = z.enum(['event', 'relationship', 'opinion', 'knowledge', 'emotion']);
+const npcBehaviorTypeSchema = z.enum(['reaction', 'dialogue', 'action', 'emotion', 'movement']);
 
 const booleanLikeSchema = z.preprocess((value) => {
   if (typeof value !== 'string') {
@@ -305,19 +307,30 @@ export const updateTalentPoolSchema = createTalentPoolSchema.partial();
 // ── NPC 相关 ──
 
 export const addNpcMemorySchema = z.object({
-  memoryType: z.enum(['event', 'preference', 'relationship', 'custom']).optional().default('event'),
+  memoryType: npcMemoryTypeSchema.optional().default('event'),
   content: z.string().min(1).max(5000).trim()
 });
 
+export const updateNpcMemorySchema = z.object({
+  memoryType: npcMemoryTypeSchema.optional(),
+  content: z.string().min(1).max(5000).trim().optional()
+});
+
 export const addNpcBehaviorSchema = z.object({
-  behaviorType: z.enum(['reaction', 'routine', 'dialogue', 'custom']).optional().default('reaction'),
+  behaviorType: npcBehaviorTypeSchema.optional().default('reaction'),
   triggerCondition: z.string().max(2000).trim().optional().default(''),
   action: z.string().max(5000).trim().optional().default(''),
   priority: z.number().int().min(0).max(100).optional().default(0),
   enabled: z.boolean().optional().default(true)
 });
 
-export const updateNpcBehaviorSchema = addNpcBehaviorSchema.partial();
+export const updateNpcBehaviorSchema = z.object({
+  behaviorType: npcBehaviorTypeSchema.optional(),
+  triggerCondition: z.string().max(2000).trim().optional(),
+  action: z.string().max(5000).trim().optional(),
+  priority: z.number().int().min(0).max(100).optional(),
+  enabled: z.boolean().optional()
+});
 
 export const updateNpcSchema = z.object({
   status: z.enum(['active', 'left', 'permanently_left', 'dead', 'on_mission', 'following', 'custom']).optional(),

@@ -9,7 +9,7 @@ const { createAppDatabase } = await import('../db.js');
 const { mergeAdvancedSettings, normalizeAdvancedSettings } = await import('../modules/advancedSettings.js');
 const { createCharacter } = await import('../modules/characters.js');
 const { getConversationEconomyState, getTransactionHistory } = await import('../modules/economy.js');
-const { hideConversationNpc, listConversationNpcs } = await import('../modules/npcs.js');
+const { hideConversationNpc, listConversationNpcs, listNpcBehaviors } = await import('../modules/npcs.js');
 const { getStatusBar, upsertStatusBar } = await import('../modules/statusBars.js');
 const { getAccessorySkillsPayload, runAccessoryAgents } = await import('../services/accessoryAgents.js');
 const accessoryAgentsSource = readFileSync(new URL('../services/accessoryAgents.js', import.meta.url), 'utf8');
@@ -611,6 +611,103 @@ test('npc agent upserts structured NPCs and respects hidden names', async () => 
     const npcs = listConversationNpcs(env.db, env.userId, env.conversation.id, env.character.name);
     assert.ok(npcs.some((npc) => npc.name === 'Gate Captain' && npc.source === 'agent' && npc.confidence === 92));
     assert.ok(!npcs.some((npc) => npc.name === 'FakeTitle'));
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('npc agent skips loose or excessive automatic behavior rules', async () => {
+  const env = setupConversation({ npcAgent: skill(true), statusBarAgent: skill(false) });
+  const timestamp = '2026-01-01T00:00:00.000Z';
+  for (let index = 0; index < 8; index += 1) {
+    env.db.prepare(
+      'INSERT INTO npc_behaviors (id, conversation_id, npc_name, behavior_type, trigger_condition, action, priority, enabled, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
+    ).run(
+      `npc-agent-seeded-${index}`,
+      env.conversation.id,
+      'Full Guard',
+      'reaction',
+      `seed trigger ${index}`,
+      `seed action ${index}`,
+      0,
+      1,
+      timestamp
+    );
+  }
+
+  const originalFetch = globalThis.fetch;
+  let calls = 0;
+  globalThis.fetch = async () => {
+    calls += 1;
+    if (calls === 1) {
+      return jsonResponse({
+        choices: [
+          {
+            message: {
+              role: 'assistant',
+              content: null,
+              tool_calls: [
+                {
+                  id: 'loose-behavior',
+                  type: 'function',
+                  function: {
+                    name: 'record_npc_behavior',
+                    arguments: JSON.stringify({
+                      npcName: 'Loose Guard',
+                      action: 'Always smiles politely.',
+                      priority: 3
+                    })
+                  }
+                },
+                {
+                  id: 'explicit-behavior',
+                  type: 'function',
+                  function: {
+                    name: 'record_npc_behavior',
+                    arguments: JSON.stringify({
+                      npcName: 'Explicit Guard',
+                      triggerCondition: 'When the alarm bell rings',
+                      action: 'Blocks the gate and calls for backup.',
+                      priority: 7
+                    })
+                  }
+                },
+                {
+                  id: 'capped-behavior',
+                  type: 'function',
+                  function: {
+                    name: 'record_npc_behavior',
+                    arguments: JSON.stringify({
+                      npcName: 'Full Guard',
+                      triggerCondition: 'When anyone approaches',
+                      action: 'Adds one more automatic rule.',
+                      priority: 1
+                    })
+                  }
+                }
+              ]
+            }
+          }
+        ]
+      });
+    }
+    return jsonResponse({ choices: [{ message: { role: 'assistant', content: 'done' } }] });
+  };
+
+  try {
+    await runAccessoryAgents({
+      db: env.db,
+      userId: env.userId,
+      conversation: env.conversation,
+      character: env.character,
+      assistantMessage: { content: 'The guards react.' },
+      settings: providerSettings(),
+      statusBar: null
+    });
+
+    assert.equal(listNpcBehaviors(env.db, env.userId, env.conversation.id, 'Loose Guard').length, 0);
+    assert.equal(listNpcBehaviors(env.db, env.userId, env.conversation.id, 'Explicit Guard').length, 1);
+    assert.equal(listNpcBehaviors(env.db, env.userId, env.conversation.id, 'Full Guard').length, 8);
   } finally {
     globalThis.fetch = originalFetch;
   }

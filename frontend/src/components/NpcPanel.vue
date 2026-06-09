@@ -2,6 +2,8 @@
 import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue';
 import {
   Brain,
+  Check,
+  Pencil,
   Plus,
   RefreshCw,
   SlidersHorizontal,
@@ -21,6 +23,7 @@ import {
   hideConversationNpc,
   hideEmptyConversationNpcs,
   updateConversationNpc,
+  updateNpcMemory,
   updateNpcBehavior
 } from '../api';
 import { useNotify } from '../composables/useNotify';
@@ -45,13 +48,23 @@ const detailLoading = ref(false);
 const detailError = ref('');
 const addMemoryOpen = ref(false);
 const addBehaviorOpen = ref(false);
+const editingMemoryId = ref('');
+const editingBehaviorId = ref('');
 const npcActionBusyId = ref('');
 let npcLoadToken = 0;
 let npcDetailToken = 0;
 let npcMutationToken = 0;
 let npcPanelDisposed = false;
 const memoryForm = reactive({ memoryType: 'event', content: '' });
+const memoryEditForm = reactive({ memoryType: 'event', content: '' });
 const behaviorForm = reactive({
+  behaviorType: 'reaction',
+  triggerCondition: '',
+  action: '',
+  priority: 0,
+  enabled: true
+});
+const behaviorEditForm = reactive({
   behaviorType: 'reaction',
   triggerCondition: '',
   action: '',
@@ -179,6 +192,8 @@ function resetNpcState() {
   detailError.value = '';
   addMemoryOpen.value = false;
   addBehaviorOpen.value = false;
+  editingMemoryId.value = '';
+  editingBehaviorId.value = '';
   npcActionBusyId.value = '';
   resetNpcForms();
   loading.value = false;
@@ -203,6 +218,8 @@ function setSelectedNpc(name) {
 }
 
 function resetNpcForms() {
+  editingMemoryId.value = '';
+  editingBehaviorId.value = '';
   memoryForm.memoryType = 'event';
   memoryForm.content = '';
   behaviorForm.behaviorType = 'reaction';
@@ -210,7 +227,22 @@ function resetNpcForms() {
   behaviorForm.action = '';
   behaviorForm.priority = 0;
   behaviorForm.enabled = true;
+  resetMemoryEditForm();
+  resetBehaviorEditForm();
   resetNpcMetaForm();
+}
+
+function resetMemoryEditForm() {
+  memoryEditForm.memoryType = 'event';
+  memoryEditForm.content = '';
+}
+
+function resetBehaviorEditForm() {
+  behaviorEditForm.behaviorType = 'reaction';
+  behaviorEditForm.triggerCondition = '';
+  behaviorEditForm.action = '';
+  behaviorEditForm.priority = 0;
+  behaviorEditForm.enabled = true;
 }
 
 function resetNpcMetaForm() {
@@ -282,8 +314,16 @@ function memoryActionId(memoryId) {
   return `memory-delete:${memoryId}`;
 }
 
+function memoryEditActionId(memoryId) {
+  return `memory-edit:${memoryId}`;
+}
+
 function behaviorToggleActionId(behaviorId) {
   return `behavior-toggle:${behaviorId}`;
+}
+
+function behaviorEditActionId(behaviorId) {
+  return `behavior-edit:${behaviorId}`;
 }
 
 function behaviorDeleteActionId(behaviorId) {
@@ -455,6 +495,27 @@ function prependMemoryIfChanged(memory) {
     nextMemories.push(currentMemory);
   }
   return setMemoriesIfChanged(nextMemories);
+}
+
+function updateMemoryByIdIfChanged(memoryId, nextMemory) {
+  const nextMemories = [];
+  let changed = false;
+  for (const memory of memories.value) {
+    if (memory?.id === memoryId) {
+      if (!sameMemorySummary(memory, nextMemory)) {
+        changed = true;
+        nextMemories.push(nextMemory);
+      } else {
+        nextMemories.push(memory);
+      }
+    } else {
+      nextMemories.push(memory);
+    }
+  }
+  if (changed) {
+    setMemoriesIfChanged(nextMemories);
+  }
+  return changed;
 }
 
 function updateNpcByNameIfChanged(npcName, nextNpc) {
@@ -685,6 +746,62 @@ async function submitMemory() {
   }
 }
 
+function openAddMemoryForm() {
+  if (npcActionBusy.value) return;
+  editingMemoryId.value = '';
+  resetMemoryEditForm();
+  addMemoryOpen.value = true;
+}
+
+function startEditMemory(memory) {
+  if (npcPanelDisposed || npcActionBusy.value) return;
+  const currentMemory = getCurrentMemory(memory?.id);
+  if (!currentMemory) return;
+  addMemoryOpen.value = false;
+  editingMemoryId.value = currentMemory.id;
+  memoryEditForm.memoryType = currentMemory.memoryType || 'event';
+  memoryEditForm.content = currentMemory.content || '';
+}
+
+function cancelMemoryEdit() {
+  editingMemoryId.value = '';
+  resetMemoryEditForm();
+}
+
+async function submitMemoryEdit() {
+  if (npcPanelDisposed) return;
+  if (!memoryEditForm.content.trim()) {
+    notify.warning('请输入记忆内容');
+    return;
+  }
+  const conversationId = props.conversationId;
+  const npcName = selectedNpc.value;
+  const currentMemory = getCurrentMemory(editingMemoryId.value);
+  if (!conversationId || !npcName || !currentMemory) {
+    cancelMemoryEdit();
+    return;
+  }
+  const actionId = memoryEditActionId(currentMemory.id);
+  if (!startNpcAction(actionId)) return;
+  const mutationToken = npcMutationToken;
+  try {
+    const updated = await updateNpcMemory(conversationId, npcName, currentMemory.id, {
+      memoryType: memoryEditForm.memoryType,
+      content: memoryEditForm.content.trim()
+    });
+    if (!isCurrentNpcMutation(mutationToken, conversationId, npcName)) return;
+    if (!getCurrentMemory(currentMemory.id)) return;
+    updateMemoryByIdIfChanged(currentMemory.id, updated);
+    cancelMemoryEdit();
+    notify.success('记忆已保存');
+  } catch (err) {
+    if (!isCurrentNpcMutation(mutationToken, conversationId, npcName)) return;
+    notify.error(err.message || '保存记忆失败');
+  } finally {
+    finishNpcAction(actionId, mutationToken, conversationId, npcName);
+  }
+}
+
 async function removeMemory(memoryId) {
   if (npcPanelDisposed) return;
   const conversationId = props.conversationId;
@@ -741,6 +858,71 @@ async function submitBehavior() {
   } catch (err) {
     if (!isCurrentNpcMutation(mutationToken, conversationId, npcName)) return;
     notify.error(err.message || '添加行为规则失败');
+  } finally {
+    finishNpcAction(actionId, mutationToken, conversationId, npcName);
+  }
+}
+
+function openAddBehaviorForm() {
+  if (npcActionBusy.value) return;
+  editingBehaviorId.value = '';
+  resetBehaviorEditForm();
+  addBehaviorOpen.value = true;
+}
+
+function startEditBehavior(behavior) {
+  if (npcPanelDisposed || npcActionBusy.value) return;
+  const currentBehavior = getCurrentBehavior(behavior?.id);
+  if (!currentBehavior) return;
+  addBehaviorOpen.value = false;
+  editingBehaviorId.value = currentBehavior.id;
+  behaviorEditForm.behaviorType = currentBehavior.behaviorType || 'reaction';
+  behaviorEditForm.triggerCondition = currentBehavior.triggerCondition || '';
+  behaviorEditForm.action = currentBehavior.action || '';
+  behaviorEditForm.priority = Number(currentBehavior.priority || 0);
+  behaviorEditForm.enabled = Boolean(currentBehavior.enabled);
+}
+
+function cancelBehaviorEdit() {
+  editingBehaviorId.value = '';
+  resetBehaviorEditForm();
+}
+
+async function submitBehaviorEdit() {
+  if (npcPanelDisposed) return;
+  if (!behaviorEditForm.action.trim()) {
+    notify.warning('请输入行为动作');
+    return;
+  }
+  const conversationId = props.conversationId;
+  const npcName = selectedNpc.value;
+  const currentBehavior = getCurrentBehavior(editingBehaviorId.value);
+  if (!conversationId || !npcName || !currentBehavior) {
+    cancelBehaviorEdit();
+    return;
+  }
+  const behaviorId = currentBehavior.id;
+  const actionId = behaviorEditActionId(behaviorId);
+  if (!startNpcAction(actionId)) return;
+  const mutationToken = npcMutationToken;
+  try {
+    const updated = await updateNpcBehavior(conversationId, npcName, behaviorId, {
+      behaviorType: behaviorEditForm.behaviorType,
+      triggerCondition: behaviorEditForm.triggerCondition.trim(),
+      action: behaviorEditForm.action.trim(),
+      priority: behaviorEditForm.priority,
+      enabled: behaviorEditForm.enabled
+    });
+    if (!isCurrentNpcMutation(mutationToken, conversationId, npcName)) return;
+    if (!getCurrentBehavior(behaviorId)) return;
+    updateBehaviorByIdIfChanged(behaviorId, updated);
+    cancelBehaviorEdit();
+    await loadNpcDetail({ allowWhileBusy: true });
+    if (!isCurrentNpcMutation(mutationToken, conversationId, npcName)) return;
+    notify.success('行为规则已保存');
+  } catch (err) {
+    if (!isCurrentNpcMutation(mutationToken, conversationId, npcName)) return;
+    notify.error(err.message || '保存行为规则失败');
   } finally {
     finishNpcAction(actionId, mutationToken, conversationId, npcName);
   }
@@ -1150,7 +1332,7 @@ function formatTime(iso) {
                   class="npc-add-button"
                   type="button"
                   :disabled="npcActionBusy"
-                  @click="addMemoryOpen = true"
+                  @click="openAddMemoryForm"
                 >
                   <Plus :size="15" />
                   <span>添加记忆</span>
@@ -1191,6 +1373,17 @@ function formatTime(iso) {
                       <span class="npc-card-type">{{ memoryTypeLabel(mem.memoryType) }}</span>
                       <span class="npc-card-time">{{ formatTime(mem.createdAt) }}</span>
                       <button
+                        class="npc-card-edit"
+                        type="button"
+                        title="编辑"
+                        aria-label="编辑记忆"
+                        :disabled="npcActionBusy"
+                        :aria-busy="isNpcActionBusy(memoryEditActionId(mem.id))"
+                        @click="startEditMemory(mem)"
+                      >
+                        <Pencil :size="14" />
+                      </button>
+                      <button
                         class="npc-card-delete"
                         type="button"
                         title="删除"
@@ -1202,7 +1395,34 @@ function formatTime(iso) {
                         <Trash2 :size="14" />
                       </button>
                     </div>
-                    <p class="npc-card-content">{{ mem.content }}</p>
+                    <div v-if="editingMemoryId === mem.id" class="npc-form npc-edit-form">
+                      <select v-model="memoryEditForm.memoryType" class="npc-select" aria-label="编辑记忆类型" :disabled="npcActionBusy">
+                        <option v-for="opt in memoryTypeOptions" :key="opt.value" :value="opt.value">
+                          {{ opt.label }}
+                        </option>
+                      </select>
+                      <textarea
+                        v-model="memoryEditForm.content"
+                        class="npc-textarea"
+                        rows="3"
+                        aria-label="编辑 NPC 记忆内容"
+                        :disabled="npcActionBusy"
+                      />
+                      <div class="npc-form-actions">
+                        <button
+                          class="npc-save"
+                          type="button"
+                          :disabled="npcActionBusy"
+                          :aria-busy="isNpcActionBusy(memoryEditActionId(mem.id))"
+                          @click="submitMemoryEdit"
+                        >
+                          <Check :size="14" />
+                          <span>保存</span>
+                        </button>
+                        <button class="npc-cancel" type="button" :disabled="npcActionBusy" @click="cancelMemoryEdit">取消</button>
+                      </div>
+                    </div>
+                    <p v-else class="npc-card-content">{{ mem.content }}</p>
                   </div>
                 </div>
               </template>
@@ -1214,7 +1434,7 @@ function formatTime(iso) {
                   class="npc-add-button"
                   type="button"
                   :disabled="npcActionBusy"
-                  @click="addBehaviorOpen = true"
+                  @click="openAddBehaviorForm"
                 >
                   <Plus :size="15" />
                   <span>添加行为规则</span>
@@ -1283,6 +1503,17 @@ function formatTime(iso) {
                       <span class="npc-card-type">{{ behaviorTypeLabel(beh.behaviorType) }}</span>
                       <span class="npc-card-priority" title="优先级">P{{ beh.priority }}</span>
                       <button
+                        class="npc-card-edit"
+                        type="button"
+                        title="编辑"
+                        aria-label="编辑行为规则"
+                        :disabled="npcActionBusy"
+                        :aria-busy="isNpcActionBusy(behaviorEditActionId(beh.id))"
+                        @click="startEditBehavior(beh)"
+                      >
+                        <Pencil :size="14" />
+                      </button>
+                      <button
                         class="npc-card-toggle"
                         type="button"
                         :title="beh.enabled ? '点击禁用' : '点击启用'"
@@ -1305,10 +1536,60 @@ function formatTime(iso) {
                         <Trash2 :size="14" />
                       </button>
                     </div>
-                    <p v-if="beh.triggerCondition" class="npc-card-trigger">
+                    <div v-if="editingBehaviorId === beh.id" class="npc-form npc-edit-form">
+                      <select v-model="behaviorEditForm.behaviorType" class="npc-select" aria-label="编辑行为类型" :disabled="npcActionBusy">
+                        <option v-for="opt in behaviorTypeOptions" :key="opt.value" :value="opt.value">
+                          {{ opt.label }}
+                        </option>
+                      </select>
+                      <input
+                        v-model="behaviorEditForm.triggerCondition"
+                        class="npc-input"
+                        placeholder="触发条件（可选）"
+                        aria-label="编辑行为触发条件"
+                        :disabled="npcActionBusy"
+                      />
+                      <textarea
+                        v-model="behaviorEditForm.action"
+                        class="npc-textarea"
+                        rows="3"
+                        aria-label="编辑行为动作描述"
+                        :disabled="npcActionBusy"
+                      />
+                      <label class="npc-priority-label">
+                        优先级
+                        <input
+                          v-model.number="behaviorEditForm.priority"
+                          type="range"
+                          min="0"
+                          max="100"
+                          class="npc-range"
+                          :disabled="npcActionBusy"
+                        />
+                        <span>{{ behaviorEditForm.priority }}</span>
+                      </label>
+                      <label class="npc-checkbox-label">
+                        <input v-model="behaviorEditForm.enabled" type="checkbox" :disabled="npcActionBusy" />
+                        <span>启用</span>
+                      </label>
+                      <div class="npc-form-actions">
+                        <button
+                          class="npc-save"
+                          type="button"
+                          :disabled="npcActionBusy"
+                          :aria-busy="isNpcActionBusy(behaviorEditActionId(beh.id))"
+                          @click="submitBehaviorEdit"
+                        >
+                          <Check :size="14" />
+                          <span>保存</span>
+                        </button>
+                        <button class="npc-cancel" type="button" :disabled="npcActionBusy" @click="cancelBehaviorEdit">取消</button>
+                      </div>
+                    </div>
+                    <p v-if="editingBehaviorId !== beh.id && beh.triggerCondition" class="npc-card-trigger">
                       触发：{{ beh.triggerCondition }}
                     </p>
-                    <p class="npc-card-content">{{ beh.action }}</p>
+                    <p v-if="editingBehaviorId !== beh.id" class="npc-card-content">{{ beh.action }}</p>
                   </div>
                 </div>
               </template>
@@ -1733,6 +2014,11 @@ function formatTime(iso) {
   box-shadow: 0 10px 24px color-mix(in srgb, var(--text, #20241f) 10%, transparent);
 }
 
+.npc-edit-form {
+  margin: 8px 0 0;
+  box-shadow: none;
+}
+
 .npc-select,
 .npc-input,
 .npc-textarea {
@@ -1913,6 +2199,10 @@ function formatTime(iso) {
 
 .npc-save,
 .npc-cancel {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
   padding: 6px 16px;
   border: none;
   border-radius: 6px;
@@ -2056,6 +2346,7 @@ function formatTime(iso) {
   margin-left: auto;
 }
 
+.npc-card-edit,
 .npc-card-toggle,
 .npc-card-delete {
   background: none;
@@ -2075,10 +2366,14 @@ function formatTime(iso) {
 .npc-save:disabled,
 .npc-cancel:disabled,
 .npc-close:disabled,
+.npc-card-edit:disabled,
 .npc-card-toggle:disabled,
 .npc-card-delete:disabled {
   opacity: 0.48;
   cursor: not-allowed;
+}
+.npc-card-edit:hover:not(:disabled) {
+  color: var(--accent, #818cf8);
 }
 .npc-card-toggle:hover:not(:disabled) {
   color: var(--accent, #818cf8);

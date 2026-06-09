@@ -7807,6 +7807,17 @@ test('NPC detail mutation routes are scoped to the route NPC name', async () => 
     const alicePath = `${baseUrl}/api/conversations/${conversationId}/npcs/Alice`;
     const bobPath = `${baseUrl}/api/conversations/${conversationId}/npcs/Bob`;
 
+    const wrongMemoryUpdate = await fetch(`${bobPath}/memories/npc-route-alice-memory`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ content: 'wrong memory update' })
+    });
+    assert.equal(wrongMemoryUpdate.status, 404);
+    assert.equal(
+      database.prepare('SELECT content FROM npc_memories WHERE id = ? AND npc_name = ?').get('npc-route-alice-memory', 'Alice').content,
+      'Alice memory'
+    );
+
     const wrongMemoryDelete = await fetch(`${bobPath}/memories/npc-route-alice-memory`, { method: 'DELETE' });
     assert.equal(wrongMemoryDelete.status, 404);
     assert.equal(
@@ -7824,6 +7835,31 @@ test('NPC detail mutation routes are scoped to the route NPC name', async () => 
       database.prepare('SELECT enabled FROM npc_behaviors WHERE id = ? AND npc_name = ?').get('npc-route-alice-behavior', 'Alice').enabled,
       1
     );
+
+    const ownerMemoryUpdate = await fetch(`${alicePath}/memories/npc-route-alice-memory`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ memoryType: 'knowledge', content: 'Alice updated memory' })
+    });
+    assert.equal(ownerMemoryUpdate.status, 200);
+    const ownerMemoryRow = database
+      .prepare('SELECT memory_type, content FROM npc_memories WHERE id = ?')
+      .get('npc-route-alice-memory');
+    assert.equal(ownerMemoryRow.memory_type, 'knowledge');
+    assert.equal(ownerMemoryRow.content, 'Alice updated memory');
+
+    const ownerBehaviorToggle = await fetch(`${alicePath}/behaviors/npc-route-alice-behavior`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ enabled: false })
+    });
+    assert.equal(ownerBehaviorToggle.status, 200);
+    const ownerBehaviorRow = database
+      .prepare('SELECT enabled, trigger_condition, action FROM npc_behaviors WHERE id = ?')
+      .get('npc-route-alice-behavior');
+    assert.equal(ownerBehaviorRow.enabled, 0);
+    assert.equal(ownerBehaviorRow.trigger_condition, '');
+    assert.equal(ownerBehaviorRow.action, 'Alice action');
 
     const wrongBehaviorDelete = await fetch(`${bobPath}/behaviors/npc-route-alice-behavior`, { method: 'DELETE' });
     assert.equal(wrongBehaviorDelete.status, 404);

@@ -21,6 +21,7 @@ const {
   scanNpcsFromMessages,
   upsertConversationNpc,
   updateConversationNpc,
+  updateNpcMemory,
   updateNpcBehavior
 } = await import('../modules/npcs.js');
 
@@ -57,6 +58,14 @@ test('NPC memories CRUD', () => {
   assert.equal(mem1.content, '玩家第一次来到酒馆');
   assert.ok(mem1.id);
   assert.ok(mem1.createdAt);
+
+  const updatedMem1 = updateNpcMemory(database, userId, conversationId, mem1.id, {
+    memoryType: 'knowledge',
+    content: 'updated memory'
+  });
+  assert.equal(updatedMem1.memoryType, 'knowledge');
+  assert.equal(updatedMem1.content, 'updated memory');
+  assert.equal(updatedMem1.createdAt, mem1.createdAt);
 
   // Add second memory
   const mem2 = addNpcMemory(database, userId, conversationId, '酒馆老板', {
@@ -153,6 +162,10 @@ test('NPC mutators treat null payloads as empty input', () => {
   const memory = addNpcMemory(database, userId, conversationId, 'NPC', null);
   assert.equal(memory.memoryType, 'event');
   assert.equal(memory.content, '');
+
+  const updatedMemory = updateNpcMemory(database, userId, conversationId, memory.id, null);
+  assert.equal(updatedMemory.memoryType, memory.memoryType);
+  assert.equal(updatedMemory.content, memory.content);
 
   const behavior = addNpcBehavior(database, userId, conversationId, 'NPC', null);
   assert.equal(behavior.behaviorType, 'reaction');

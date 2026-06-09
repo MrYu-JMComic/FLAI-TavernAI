@@ -735,6 +735,13 @@ export function addNpcMemory(conversationId, npcName, payload) {
   });
 }
 
+export function updateNpcMemory(conversationId, npcName, memoryId, payload) {
+  return apiRequest(`/api/conversations/${conversationId}/npcs/${encodeURIComponent(npcName)}/memories/${memoryId}`, {
+    method: 'PUT',
+    body: JSON.stringify(payload)
+  });
+}
+
 export function deleteNpcMemory(conversationId, npcName, memoryId) {
   return apiRequest(`/api/conversations/${conversationId}/npcs/${encodeURIComponent(npcName)}/memories/${memoryId}`, {
     method: 'DELETE'
