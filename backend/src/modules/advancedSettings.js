@@ -118,24 +118,30 @@ function normalizeText(value) {
 
 function normalizeStatusVariables(value, template = '') {
   const sourceVariables = Array.isArray(value) ? value : [];
-  const normalized = sourceVariables
-    .map((item) => {
-      const hasMax = hasExplicitStatusMax(item);
-      const variableValue = normalizeStatusVariableValue(item?.value, { emptyText: !hasMax });
-      const max = hasMax
-        ? Number(item.max)
-        : typeof variableValue === 'number'
-          ? 100
-          : undefined;
-      return {
-        name: normalizeText(item?.name).slice(0, 40),
-        value: variableValue,
-        ...(max !== undefined ? { max } : {}),
-        color: normalizeColor(item?.color)
-      };
-    })
-    .filter((item) => item.name)
-    .slice(0, STATUS_BLUEPRINT_VARIABLE_LIMIT);
+  const normalized = [];
+  for (let index = 0; index < sourceVariables.length; index += 1) {
+    if (normalized.length >= STATUS_BLUEPRINT_VARIABLE_LIMIT) {
+      break;
+    }
+    const item = sourceVariables[index];
+    const name = normalizeText(item?.name).slice(0, 40);
+    if (!name) {
+      continue;
+    }
+    const hasMax = hasExplicitStatusMax(item);
+    const variableValue = normalizeStatusVariableValue(item?.value, { emptyText: !hasMax });
+    const max = hasMax
+      ? Number(item.max)
+      : typeof variableValue === 'number'
+        ? 100
+        : undefined;
+    normalized.push({
+      name,
+      value: variableValue,
+      ...(max !== undefined ? { max } : {}),
+      color: normalizeColor(item?.color)
+    });
+  }
   return inferStatusVariablesFromTemplate(template, normalized).slice(0, STATUS_BLUEPRINT_VARIABLE_LIMIT);
 }
 
