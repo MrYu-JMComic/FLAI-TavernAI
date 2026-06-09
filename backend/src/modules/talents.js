@@ -175,19 +175,23 @@ export function buildTalentSystemPrompt(database, characterId) {
     return '';
   }
 
-  const lines = talents.map((t) => {
-    const rarityLabel = RARITY_LABELS[t.talentRarity] || t.talentRarity;
-    const parts = [`「${t.talentName}」(${rarityLabel})`];
-    if (t.talentDescription) {
-      parts.push(t.talentDescription);
-    }
-    if (t.talentEffect) {
-      parts.push(`效果：${t.talentEffect}`);
-    }
-    return parts.join(' — ');
-  });
+  let prompt = '[角色天赋]\n该角色拥有以下天赋，请在扮演时自然融入这些天赋特质：';
+  for (const talent of talents) {
+    prompt += `\n- ${formatTalentPromptLine(talent)}`;
+  }
+  return prompt;
+}
 
-  return `[角色天赋]\n该角色拥有以下天赋，请在扮演时自然融入这些天赋特质：\n${lines.map((l) => `- ${l}`).join('\n')}`;
+function formatTalentPromptLine(talent) {
+  const rarityLabel = RARITY_LABELS[talent.talentRarity] || talent.talentRarity;
+  let line = `「${talent.talentName}」(${rarityLabel})`;
+  if (talent.talentDescription) {
+    line += ` — ${talent.talentDescription}`;
+  }
+  if (talent.talentEffect) {
+    line += ` — 效果：${talent.talentEffect}`;
+  }
+  return line;
 }
 
 // ── Roll engine: weighted random ──
