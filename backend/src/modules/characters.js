@@ -324,7 +324,10 @@ export function reorderRegexRules(database, userId, orderedIds, options = {}) {
   sql += ' ORDER BY priority ASC, order_index ASC, rowid ASC';
 
   const current = database.prepare(sql).all(...params);
-  const existingIds = new Set(current.map((row) => row.id));
+  const existingIds = new Set();
+  for (const row of current) {
+    existingIds.add(row.id);
+  }
   const seen = new Set();
   const nextIds = [];
 
@@ -346,10 +349,12 @@ export function reorderRegexRules(database, userId, orderedIds, options = {}) {
   return withSavepoint(database, 'sp_reorder_regex', () => {
     const update = database.prepare('UPDATE regex_rules SET priority = ? WHERE id = ? AND user_id = ?');
     let changed = 0;
-    nextIds.forEach((id, index) => {
+    let index = 0;
+    for (const id of nextIds) {
       const result = update.run(index, id, userId);
       changed += result.changes;
-    });
+      index += 1;
+    }
     return changed;
   });
 }

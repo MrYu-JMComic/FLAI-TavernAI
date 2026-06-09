@@ -461,6 +461,15 @@ test('regex partial reorder keeps priorities unique', () => {
   assert.deepEqual(nullOptionsOrdered.map((rule) => rule.priority), [0, 1, 2]);
 });
 
+test('regex reorder scans ids directly without transient arrays', () => {
+  const source = fs.readFileSync(new URL('../modules/characters.js', import.meta.url), 'utf8');
+  const match = source.match(/export function reorderRegexRules[\s\S]*?\n}\n\nexport function testRegexRule/);
+  assert.ok(match);
+  assert.match(match[0], /const existingIds = new Set\(\);\s*for \(const row of current\) \{\s*existingIds\.add\(row\.id\);/);
+  assert.match(match[0], /let index = 0;\s*for \(const id of nextIds\) \{[\s\S]*changed \+= result\.changes;[\s\S]*index \+= 1;/);
+  assert.doesNotMatch(match[0], /current\.map\(\(row\) => row\.id\)|nextIds\.forEach/);
+});
+
 test('regex group reorder only updates that group', () => {
   const database = createAppDatabase(':memory:');
   const userId = 'regex-group-user';
