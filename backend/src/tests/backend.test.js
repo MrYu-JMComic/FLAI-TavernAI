@@ -8316,6 +8316,24 @@ test('talent pool name validation', () => {
   assert.equal(pool.name, '正常名称');
 });
 
+test('talent pool normalization stops reading after valid cap', () => {
+  const database = createAppDatabase(':memory:');
+  const talents = [];
+  for (let index = 0; index < 100; index += 1) {
+    talents.push({ name: `Talent ${index}`, rarity: 'rare' });
+  }
+  talents.push(Object.defineProperty({}, 'name', {
+    get() {
+      throw new Error('normalization should stop after one hundred valid talents');
+    }
+  }));
+
+  const pool = createTalentPool(database, { name: 'Cap Pool', talents });
+
+  assert.equal(pool.talents.length, 100);
+  assert.equal(pool.talents[99].name, 'Talent 99');
+});
+
 test('talent pool update returns null for nonexistent pool', () => {
   const database = createAppDatabase(':memory:');
   assert.equal(updateTalentPool(database, 'nonexistent', { name: 'test' }), null);

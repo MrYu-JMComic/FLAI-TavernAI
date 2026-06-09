@@ -37,3 +37,39 @@ test('weightedRandomPick scans weights directly without weighted arrays', () => 
   assert.doesNotMatch(functionSource, /talents\.map\(/);
   assert.doesNotMatch(functionSource, /\.reduce\(/);
 });
+
+test('talent row readers build lists with direct loops', () => {
+  const poolStart = talentsSource.indexOf('export function listTalentPools(database) {');
+  const poolEnd = talentsSource.indexOf('\n\nexport function getTalentPool', poolStart);
+  const characterStart = talentsSource.indexOf('export function getCharacterTalents(database, characterId) {');
+  const characterEnd = talentsSource.indexOf('\n\nexport function deleteCharacterTalent', characterStart);
+  assert.notEqual(poolStart, -1);
+  assert.notEqual(poolEnd, -1);
+  assert.notEqual(characterStart, -1);
+  assert.notEqual(characterEnd, -1);
+
+  const poolSource = talentsSource.slice(poolStart, poolEnd);
+  const characterSource = talentsSource.slice(characterStart, characterEnd);
+  assert.match(poolSource, /const rows = database[\s\S]*const pools = \[\];\s*for \(const row of rows\) \{\s*pools\.push\(toTalentPool\(row\)\);/);
+  assert.match(characterSource, /const rows = database[\s\S]*const talents = \[\];\s*for \(const row of rows\) \{\s*talents\.push\(toCharacterTalent\(row\)\);/);
+  assert.doesNotMatch(poolSource, /\.map\(/);
+  assert.doesNotMatch(characterSource, /\.map\(/);
+});
+
+test('talent pool normalization scans directly with a valid-row cap', () => {
+  const startMarker = 'function normalizeTalentsList(talents) {';
+  const endMarker = 'function normalizeRarity(value) {';
+  const start = talentsSource.indexOf(startMarker);
+  const end = talentsSource.indexOf(endMarker, start + startMarker.length);
+  assert.notEqual(start, -1);
+  assert.notEqual(end, -1);
+
+  const functionSource = talentsSource.slice(start, end);
+  assert.match(functionSource, /const normalized = \[\];/);
+  assert.match(functionSource, /for \(const talent of talents\) \{/);
+  assert.match(functionSource, /if \(normalized\.length >= 100\) \{\s*break;/);
+  assert.match(functionSource, /normalized\.push\(\{\s*name,/);
+  assert.doesNotMatch(functionSource, /\.map\(/);
+  assert.doesNotMatch(functionSource, /\.filter\(/);
+  assert.doesNotMatch(functionSource, /\.slice\(/);
+});

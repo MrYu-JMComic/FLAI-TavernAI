@@ -19,14 +19,18 @@ const RARITY_LABELS = {
 // ── Talent Pool CRUD ──
 
 export function listTalentPools(database) {
-  return database
+  const rows = database
     .prepare(
       `SELECT id, name, description, talents_json, created_at
        FROM talent_pools
        ORDER BY created_at DESC, rowid DESC`
     )
-    .all()
-    .map(toTalentPool);
+    .all();
+  const pools = [];
+  for (const row of rows) {
+    pools.push(toTalentPool(row));
+  }
+  return pools;
 }
 
 export function getTalentPool(database, poolId) {
@@ -144,15 +148,19 @@ export function rollTalent(database, characterId, poolId) {
 }
 
 export function getCharacterTalents(database, characterId) {
-  return database
+  const rows = database
     .prepare(
       `SELECT id, character_id, talent_name, talent_rarity, talent_description, talent_effect, pool_id, rolled_at
        FROM character_talents
        WHERE character_id = ?
        ORDER BY rolled_at DESC, rowid DESC`
     )
-    .all(characterId)
-    .map(toCharacterTalent);
+    .all(characterId);
+  const talents = [];
+  for (const row of rows) {
+    talents.push(toCharacterTalent(row));
+  }
+  return talents;
 }
 
 export function deleteCharacterTalent(database, talentId, characterId = '') {
@@ -237,15 +245,26 @@ function normalizeTalentsList(talents) {
     return [];
   }
 
-  return talents
-    .map((t) => ({
-      name: String(t.name || '').trim(),
-      description: String(t.description || '').trim(),
-      rarity: normalizeRarity(t.rarity),
-      effect: String(t.effect || '').trim()
-    }))
-    .filter((t) => t.name.length > 0 && t.name.length <= 60)
-    .slice(0, 100);
+  const normalized = [];
+  for (const talent of talents) {
+    if (normalized.length >= 100) {
+      break;
+    }
+    if (!talent || typeof talent !== 'object') {
+      continue;
+    }
+    const name = String(talent.name || '').trim();
+    if (!name || name.length > 60) {
+      continue;
+    }
+    normalized.push({
+      name,
+      description: String(talent.description || '').trim(),
+      rarity: normalizeRarity(talent.rarity),
+      effect: String(talent.effect || '').trim()
+    });
+  }
+  return normalized;
 }
 
 function normalizeRarity(value) {

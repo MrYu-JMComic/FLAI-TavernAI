@@ -40,6 +40,7 @@ The autonomous loop should choose one small item per run. Add new findings here 
 
 ## Done
 
+- 2026-06-09: Normalized backend talent pools and talent rows with direct loops and capped valid talent scans.
 - 2026-06-09: Scanned backend swipe rows directly and counted active swipe state without loading full alternate rows.
 - 2026-06-09: Reordered backend regex rule ids with direct scans instead of transient id arrays and update callbacks.
 - 2026-06-09: Loaded and reordered backend Mods with direct row scans instead of transient `map`/`filter` arrays.
