@@ -15,6 +15,7 @@ function refValue(value) {
 function createMessageActions({
   messages = [{ id: 'msg-1', role: 'user', content: 'Original' }],
   messagesRef = refValue(messages),
+  messageScrollerRef = refValue(null),
   route = { params: { id: 'conv-1' } },
   userRef = refValue({ username: 'tester' }),
   activeCharacter = () => null,
@@ -24,7 +25,7 @@ function createMessageActions({
 } = {}) {
   return useChatMessageActions({
     messages: messagesRef,
-    messageScroller: refValue(null),
+    messageScroller: messageScrollerRef,
     route,
     user: userRef,
     activeCharacter,
@@ -334,6 +335,77 @@ test('message edit drafts use the current list item for stale same-id events', a
 
   assert.equal(actions.editingMessageId.value, 'msg-1');
   assert.equal(actions.editingMessageContent.value, 'Current content');
+});
+
+test('message scroll anchors skip route changes before frame restore', async () => {
+  const originalWindow = globalThis.window;
+  const route = { params: { id: 'conv-1' } };
+  let frameCallback = null;
+  let frameRequests = 0;
+  let focusCalls = 0;
+  const messageElement = {
+    dataset: { messageId: 'msg-1' },
+    getBoundingClientRect() {
+      return { top: 100 };
+    },
+    querySelector(selector) {
+      if (selector === '.message-edit-box textarea') {
+        return {
+          focus() {
+            focusCalls += 1;
+          }
+        };
+      }
+      return null;
+    }
+  };
+  const scroller = {
+    scrollTop: 20,
+    scrollHeight: 1000,
+    clientHeight: 200,
+    querySelectorAll() {
+      return route.params.id === 'conv-1' ? [messageElement] : [];
+    }
+  };
+  const actions = createMessageActions({
+    route,
+    messageScrollerRef: refValue(scroller),
+    messages: [{ id: 'msg-1', role: 'user', content: 'Original' }]
+  });
+
+  globalThis.window = {
+    ...(originalWindow || {}),
+    requestAnimationFrame(callback) {
+      frameRequests += 1;
+      frameCallback = callback;
+      return frameRequests;
+    },
+    cancelAnimationFrame() {}
+  };
+
+  try {
+    const editPromise = actions.beginEditMessage({ id: 'msg-1', role: 'user', content: 'Original' });
+    await nextTick();
+    await Promise.resolve();
+
+    assert.equal(frameRequests, 1);
+    assert.equal(typeof frameCallback, 'function');
+
+    route.params.id = 'conv-2';
+    scroller.scrollTop = 80;
+    frameCallback();
+    await editPromise;
+
+    assert.equal(scroller.scrollTop, 80);
+    assert.equal(frameRequests, 1);
+    assert.equal(focusCalls, 0);
+  } finally {
+    if (originalWindow === undefined) {
+      delete globalThis.window;
+    } else {
+      globalThis.window = originalWindow;
+    }
+  }
 });
 
 test('message edit saves update the current list item for stale same-id events', async () => {
@@ -1275,7 +1347,15 @@ test('message edit and delete actions stay locked while a branch action is busy'
 test('message scroll lookup and swipe initialization avoid list clone helpers', () => {
   assert.match(
     chatMessageActionsSource,
-    /function findMessageElement\(messageId\) \{[\s\S]*const elements = messageScroller\.value\.querySelectorAll\('\.deep-message'\);[\s\S]*for \(const element of elements\) \{[\s\S]*return element;[\s\S]*return null;\s*\}/
+    /function findMessageElement\(messageId, conversationId = route\.params\.id\) \{[\s\S]*if \(!isCurrentMessageUiContext\(conversationId\) \|\| !messageId \|\| !messageScroller\.value\) \{[\s\S]*const elements = messageScroller\.value\.querySelectorAll\('\.deep-message'\);[\s\S]*for \(const element of elements\) \{[\s\S]*return element;[\s\S]*return null;\s*\}/
+  );
+  assert.match(
+    chatMessageActionsSource,
+    /function isCurrentMessageUiContext\(conversationId\) \{\s*return !disposed && route\.params\.id === conversationId;\s*\}/
+  );
+  assert.match(
+    chatMessageActionsSource,
+    /async function withMessageScrollAnchor\(messageId, callback, conversationId = route\.params\.id\) \{[\s\S]*if \(!isCurrentMessageUiContext\(conversationId\)\) \{[\s\S]*return undefined;[\s\S]*if \(!isCurrentMessageUiContext\(conversationId\)\) \{[\s\S]*return result;[\s\S]*restoreMessageScrollAnchor\(anchor\);/
   );
   assert.match(
     chatMessageActionsSource,

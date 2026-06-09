@@ -182,11 +182,15 @@ export function useChatMessageActions({
     if (!messageId || !currentMessage) {
       return;
     }
+    const conversationId = route.params.id;
     await withMessageScrollAnchor(messageId, async () => {
       editingMessageId.value = messageId;
       editingMessageContent.value = currentMessage?.content || '';
-    });
-    focusMessageEditor(messageId);
+    }, conversationId);
+    if (!isCurrentMessageUiContext(conversationId)) {
+      return;
+    }
+    focusMessageEditor(messageId, conversationId);
   }
 
   async function cancelEditMessage(message = null) {
@@ -417,35 +421,36 @@ export function useChatMessageActions({
     }
   }
 
-  async function withMessageScrollAnchor(messageId, callback) {
-    if (disposed) {
+  async function withMessageScrollAnchor(messageId, callback, conversationId = route.params.id) {
+    if (!isCurrentMessageUiContext(conversationId)) {
       return undefined;
     }
-    const anchor = captureMessageScrollAnchor(messageId);
+    const anchor = captureMessageScrollAnchor(messageId, conversationId);
     const result = await callback();
-    if (disposed) {
+    if (!isCurrentMessageUiContext(conversationId)) {
       return result;
     }
     await nextTick();
-    if (disposed) {
+    if (!isCurrentMessageUiContext(conversationId)) {
       return result;
     }
     await waitForFrame();
-    if (disposed) {
+    if (!isCurrentMessageUiContext(conversationId)) {
       return result;
     }
     restoreMessageScrollAnchor(anchor);
     return result;
   }
 
-  function captureMessageScrollAnchor(messageId) {
+  function captureMessageScrollAnchor(messageId, conversationId = route.params.id) {
     const scroller = messageScroller.value;
     if (!scroller) {
       return null;
     }
 
-    const element = findMessageElement(messageId);
+    const element = findMessageElement(messageId, conversationId);
     return {
+      conversationId,
       messageId,
       top: element ? element.getBoundingClientRect().top : null,
       scrollTop: scroller.scrollTop
@@ -454,12 +459,12 @@ export function useChatMessageActions({
 
   function restoreMessageScrollAnchor(anchor) {
     const scroller = messageScroller.value;
-    if (disposed || !scroller || !anchor) {
+    if (!anchor || !isCurrentMessageUiContext(anchor.conversationId) || !scroller) {
       return;
     }
 
     const maxScrollTop = Math.max(0, scroller.scrollHeight - scroller.clientHeight);
-    const element = findMessageElement(anchor.messageId);
+    const element = findMessageElement(anchor.messageId, anchor.conversationId);
     if (element && anchor.top !== null) {
       const delta = element.getBoundingClientRect().top - anchor.top;
       scroller.scrollTop = Math.min(maxScrollTop, Math.max(0, scroller.scrollTop + delta));
@@ -468,8 +473,8 @@ export function useChatMessageActions({
     }
   }
 
-  function findMessageElement(messageId) {
-    if (disposed || !messageId || !messageScroller.value) {
+  function findMessageElement(messageId, conversationId = route.params.id) {
+    if (!isCurrentMessageUiContext(conversationId) || !messageId || !messageScroller.value) {
       return null;
     }
     const targetId = String(messageId);
@@ -489,8 +494,8 @@ export function useChatMessageActions({
     await new Promise((resolve) => window.requestAnimationFrame(resolve));
   }
 
-  function focusMessageEditor(messageId) {
-    if (disposed || typeof window === 'undefined') {
+  function focusMessageEditor(messageId, conversationId = route.params.id) {
+    if (!isCurrentMessageUiContext(conversationId) || typeof window === 'undefined') {
       return;
     }
     if (focusEditorRafId) {
@@ -498,12 +503,16 @@ export function useChatMessageActions({
     }
     focusEditorRafId = window.requestAnimationFrame(() => {
       focusEditorRafId = null;
-      if (disposed) {
+      if (!isCurrentMessageUiContext(conversationId)) {
         return;
       }
-      const textarea = findMessageElement(messageId)?.querySelector('.message-edit-box textarea');
+      const textarea = findMessageElement(messageId, conversationId)?.querySelector('.message-edit-box textarea');
       textarea?.focus?.({ preventScroll: true });
     });
+  }
+
+  function isCurrentMessageUiContext(conversationId) {
+    return !disposed && route.params.id === conversationId;
   }
 
   function isCurrentMessageAction(actionToken, conversationId) {
