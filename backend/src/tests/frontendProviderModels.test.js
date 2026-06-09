@@ -5,6 +5,7 @@ import { readRepoText } from './frontendSfcTestUtils.js';
 const { useProviderModels } = await import('../../../frontend/src/composables/useProviderModels.js');
 const {
   areProviderModelListsEqual,
+  buildModelSelectOptions,
   readCachedProviderModels
 } = await import('../../../frontend/src/services/modelCatalog.js');
 const modelCatalogSource = readRepoText('frontend/src/services/modelCatalog.js');
@@ -106,6 +107,30 @@ test('useProviderModels skips redundant cache syncs for identical model lists', 
       assert.equal(providerModels.value[1].label, 'Model B+');
     });
   });
+});
+
+test('provider model select options preserve missing current model before normalized rows', () => {
+  const options = buildModelSelectOptions([
+    { id: 'model-b', label: 'Model B', ownedBy: 'team-b' },
+    { id: 'model-a', label: 'Model A', ownedBy: 'team-a' }
+  ], 'model-c', 'Use global model');
+
+  assert.deepEqual(options.map((model) => model.id), ['', 'model-c', 'model-a', 'model-b']);
+  assert.equal(options[0].empty, true);
+  assert.equal(options[1].current, true);
+});
+
+test('provider model select options scan normalized rows directly', () => {
+  assert.match(
+    modelCatalogSource,
+    /export function buildModelSelectOptions\(models = \[\], currentValue = '', emptyLabel = ''\) \{[\s\S]*const normalized = normalizeModelList\(models\);[\s\S]*if \(current && !hasNormalizedModelId\(normalized, current\)\) \{[\s\S]*for \(let index = 0; index < normalized\.length; index \+= 1\) \{[\s\S]*options\.push\(normalized\[index\]\);[\s\S]*return options;[\s\S]*\}/
+  );
+  assert.match(
+    modelCatalogSource,
+    /function hasNormalizedModelId\(models, modelId\) \{[\s\S]*for \(let index = 0; index < models\.length; index \+= 1\) \{[\s\S]*if \(models\[index\]\?\.id === modelId\) \{[\s\S]*return true;[\s\S]*return false;[\s\S]*\}/
+  );
+  assert.doesNotMatch(modelCatalogSource, /normalized\.some\(/);
+  assert.doesNotMatch(modelCatalogSource, /return \[\.\.\.options, \.\.\.normalized\];/);
 });
 
 test('provider model list equality compares the UI-visible model fields', () => {

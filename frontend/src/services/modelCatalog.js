@@ -53,7 +53,7 @@ export function buildModelSelectOptions(models = [], currentValue = '', emptyLab
 
   const normalized = normalizeModelList(models);
   const current = String(currentValue || '').trim();
-  if (current && !normalized.some((model) => model.id === current)) {
+  if (current && !hasNormalizedModelId(normalized, current)) {
     options.push({
       id: current,
       label: `当前保存：${current}`,
@@ -61,7 +61,19 @@ export function buildModelSelectOptions(models = [], currentValue = '', emptyLab
     });
   }
 
-  return [...options, ...normalized];
+  for (let index = 0; index < normalized.length; index += 1) {
+    options.push(normalized[index]);
+  }
+  return options;
+}
+
+function hasNormalizedModelId(models, modelId) {
+  for (let index = 0; index < models.length; index += 1) {
+    if (models[index]?.id === modelId) {
+      return true;
+    }
+  }
+  return false;
 }
 
 export function subscribeProviderModelCache(callback) {
