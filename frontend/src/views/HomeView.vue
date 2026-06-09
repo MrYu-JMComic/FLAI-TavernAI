@@ -112,9 +112,7 @@ const activeFilterLabel = computed(() => {
 
 const hasActiveFilters = computed(() => Boolean(search.value || selectedTag.value));
 
-const currentSortOption = computed(() => (
-  sortOptions.find((option) => option.value === sort.value) || sortOptions[0]
-));
+const currentSortOption = computed(() => getSortOptionByValue(sort.value));
 
 const providerLabel = computed(() => {
   if (!props.provider?.model && !props.provider?.gatewayName) {
@@ -140,7 +138,7 @@ const selectedHotTag = computed(() => {
   if (!selectedTag.value) {
     return null;
   }
-  return tags.value.find((tag) => tag?.name === selectedTag.value) || null;
+  return getTagByName(tags.value, selectedTag.value);
 });
 
 const topTags = computed(() => {
@@ -229,6 +227,41 @@ function pickRandomizedHotTags(sourceTags, seed, limit) {
     nextTags.push(scoredTags[index].tag);
   }
   return nextTags.sort(compareTagPopularity);
+}
+
+function getSortOptionByValue(value) {
+  const normalizedValue = String(value || '');
+  for (const option of sortOptions) {
+    if (option.value === normalizedValue) {
+      return option;
+    }
+  }
+  return sortOptions[0];
+}
+
+function getNextSortValue(value) {
+  const normalizedValue = String(value || '');
+  for (let index = 0; index < sortOptions.length; index += 1) {
+    if (sortOptions[index]?.value === normalizedValue) {
+      const nextIndex = (index + 1) % sortOptions.length;
+      return sortOptions[nextIndex]?.value || sortOptions[0].value;
+    }
+  }
+  return sortOptions[0].value;
+}
+
+function getTagByName(sourceTags, name) {
+  const selectedName = String(name || '');
+  if (!selectedName) {
+    return null;
+  }
+  const list = Array.isArray(sourceTags) ? sourceTags : [];
+  for (const tag of list) {
+    if (tag?.name === selectedName) {
+      return tag;
+    }
+  }
+  return null;
 }
 
 function pinSelectedHotTag(list, selected, limit) {
@@ -597,9 +630,7 @@ async function clearFilters() {
 }
 
 function cycleSort() {
-  const currentIndex = sortOptions.findIndex((option) => option.value === sort.value);
-  const nextIndex = (currentIndex + 1) % sortOptions.length;
-  sort.value = sortOptions[nextIndex].value;
+  sort.value = getNextSortValue(sort.value);
 }
 
 async function loadCharacters() {

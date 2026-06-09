@@ -40,6 +40,7 @@ The autonomous loop should choose one small item per run. Add new findings here 
 
 ## Done
 
+- 2026-06-09: Scanned HomeView sort options and selected hot tags directly instead of `find`/`findIndex` lookup callbacks.
 - 2026-06-09: Built NPC behavior prompt sections with direct string accumulation instead of behavior/memory map and section join intermediates.
 - 2026-06-09: Collected provider model catalog Map values with a direct helper and shared id comparator instead of spread plus inline sort.
 - 2026-06-09: Normalized advanced status blueprint variables with a capped direct loop instead of map/filter/slice intermediates.

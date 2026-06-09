@@ -75,6 +75,33 @@ test('HomeView debounces search reloads while keeping sort and tag changes immed
   assert.match(homeViewTemplate, /<select v-model="sort" aria-label="[^"]+">/);
 });
 
+test('HomeView scans sort options and selected hot tags directly', () => {
+  assert.match(homeViewScript, /const currentSortOption = computed\(\(\) => getSortOptionByValue\(sort\.value\)\);/);
+  assert.match(
+    homeViewScript,
+    /const selectedHotTag = computed\(\(\) => \{[\s\S]*if \(!selectedTag\.value\) \{[\s\S]*return null;[\s\S]*return getTagByName\(tags\.value, selectedTag\.value\);[\s\S]*\}\);/
+  );
+  assert.match(
+    homeViewScript,
+    /function getSortOptionByValue\(value\) \{\s*const normalizedValue = String\(value \|\| ''\);[\s\S]*for \(const option of sortOptions\) \{[\s\S]*if \(option\.value === normalizedValue\) \{[\s\S]*return option;[\s\S]*return sortOptions\[0\];[\s\S]*\}/
+  );
+  assert.match(
+    homeViewScript,
+    /function getNextSortValue\(value\) \{\s*const normalizedValue = String\(value \|\| ''\);[\s\S]*for \(let index = 0; index < sortOptions\.length; index \+= 1\) \{[\s\S]*const nextIndex = \(index \+ 1\) % sortOptions\.length;[\s\S]*return sortOptions\[nextIndex\]\?\.value \|\| sortOptions\[0\]\.value;[\s\S]*return sortOptions\[0\]\.value;[\s\S]*\}/
+  );
+  assert.match(
+    homeViewScript,
+    /function getTagByName\(sourceTags, name\) \{\s*const selectedName = String\(name \|\| ''\);[\s\S]*const list = Array\.isArray\(sourceTags\) \? sourceTags : \[\];[\s\S]*for \(const tag of list\) \{[\s\S]*if \(tag\?\.name === selectedName\) \{[\s\S]*return tag;[\s\S]*return null;[\s\S]*\}/
+  );
+  assert.match(
+    homeViewScript,
+    /function cycleSort\(\) \{\s*sort\.value = getNextSortValue\(sort\.value\);[\s\S]*\}/
+  );
+  assert.doesNotMatch(homeViewScript, /sortOptions\.find\(/);
+  assert.doesNotMatch(homeViewScript, /sortOptions\.findIndex\(/);
+  assert.doesNotMatch(homeViewScript, /tags\.value\.find\(/);
+});
+
 test('HomeView keeps chat-open pending state guarded during route navigation', () => {
   assert.match(homeViewScript, /let chatOpenNavigationToken = 0;/);
   assert.match(
