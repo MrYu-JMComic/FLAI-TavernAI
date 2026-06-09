@@ -391,6 +391,17 @@ test('CharacterFormView normalizes status blueprint variables with direct loops'
   assert.doesNotMatch(characterFormScript, /normalized\.variables\.map\(\(variable\) => \(\{ \.\.\.variable \}\)\)/);
 });
 
+test('CharacterFormView scans status blueprint variables directly by key', () => {
+  assert.match(
+    characterFormScript,
+    /function findStatusBlueprintVariable\(name = ''\) \{\s*const key = normalizeStatusVariableKey\(name\);\s*if \(!key\) \{\s*return null;\s*\}[\s\S]*const variables = Array\.isArray\(blueprint\.variables\) \? blueprint\.variables : \[\];\s*for \(const variable of variables\) \{[\s\S]*if \(normalizeStatusVariableKey\(variable\?\.name\) === key\) \{[\s\S]*return variable;[\s\S]*\}\s*\}\s*return null;\s*\}/
+  );
+  assert.doesNotMatch(
+    characterFormScript,
+    /variables\.find\(\(variable\) => normalizeStatusVariableKey\(variable\?\.name\) === key\)/
+  );
+});
+
 test('CharacterFormView builds status blueprint editor rows without intermediate mapping arrays', () => {
   assert.match(
     characterFormScript,

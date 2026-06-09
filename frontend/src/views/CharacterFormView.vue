@@ -2160,9 +2160,17 @@ function setStatusBlueprintVariableValue(name = '', value = '') {
 
 function findStatusBlueprintVariable(name = '') {
   const key = normalizeStatusVariableKey(name);
+  if (!key) {
+    return null;
+  }
   const blueprint = form.authorAdvancedSettings.statusBarBlueprint || {};
   const variables = Array.isArray(blueprint.variables) ? blueprint.variables : [];
-  return variables.find((variable) => normalizeStatusVariableKey(variable?.name) === key) || null;
+  for (const variable of variables) {
+    if (normalizeStatusVariableKey(variable?.name) === key) {
+      return variable;
+    }
+  }
+  return null;
 }
 
 function setStatusBlueprintVariableMode(variable, mode) {
