@@ -790,35 +790,11 @@ export async function streamToolCompletion(settings, messages, tools, executeToo
     let roundContent = '';
     let roundReasoning = '';
     const pendingToolCalls = new Map();
-    const thinkingTagFilter = createThinkingTagFilter({
-      onContent(text) {
-        roundContent += text;
-        finalContent += text;
-        step.content += text;
-        emit('content', { round: step.round, text });
-      },
-      onReasoning(text) {
-        roundReasoning += text;
-        finalReasoning += text;
-        step.reasoning += text;
-        emit('reasoning', { round: step.round, text });
-      }
-    });
-
-    for await (const event of parseSse(response.body)) {
-      if (event.data === '[DONE]') {
-        break;
-      }
-
-      const json = parseJson(event.data, null);
-      if (!json) {
-        continue;
-      }
-
-      usage = json.usage || usage;
-      const delta = extractStreamingDelta(json);
-      const reasoningDelta = extractReasoning(delta);
-      const contentDelta = extractText(delta.content);
+    const consumeToolPayload = (payload, event = {}) => {
+      usage = extractStreamingUsage(payload, usage);
+      const delta = extractStreamingDelta(payload);
+      const reasoningDelta = extractStreamingReasoningDelta(payload, delta);
+      const contentDelta = extractStreamingContentDelta(payload, delta, event);
       if (reasoningDelta) {
         roundReasoning += reasoningDelta;
         finalReasoning += reasoningDelta;
@@ -840,6 +816,42 @@ export async function streamToolCompletion(settings, messages, tools, executeToo
         if (call.name) existing.name = call.name;
         if (call.arguments) existing.arguments += call.arguments;
         pendingToolCalls.set(call.index, existing);
+      }
+    };
+    const thinkingTagFilter = createThinkingTagFilter({
+      onContent(text) {
+        roundContent += text;
+        finalContent += text;
+        step.content += text;
+        emit('content', { round: step.round, text });
+      },
+      onReasoning(text) {
+        roundReasoning += text;
+        finalReasoning += text;
+        step.reasoning += text;
+        emit('reasoning', { round: step.round, text });
+      }
+    });
+
+    if (isJsonResponse(response)) {
+      const json = await readJsonResponseValue(response, { allowArray: true });
+      for (const payload of collectChatCompletionStreamPayloads(json)) {
+        consumeToolPayload(payload);
+      }
+    } else {
+      for await (const event of parseSse(response.body)) {
+        if (event.data === '[DONE]') {
+          break;
+        }
+
+        const json = parseJson(event.data, null);
+        if (!json) {
+          continue;
+        }
+
+        for (const payload of collectChatCompletionStreamPayloads(json)) {
+          consumeToolPayload(payload, event);
+        }
       }
     }
     thinkingTagFilter.flush();
@@ -945,17 +957,7 @@ export async function generateCompletion(settings, messages, options = {}) {
   });
 
   const json = await readJsonResponse(response);
-  const message = extractChatMessage(json);
-  const parsedContent = splitThinkingTags(extractText(message.content));
-  const reasoning = mergeReasoning(extractReasoning(message), parsedContent.reasoning);
-  return {
-    content: parsedContent.content,
-    reasoning,
-    usage: json.usage || null,
-    provider: settings.gatewayName,
-    providerType: settings.providerType,
-    model: normalizeProviderModel(settings.providerType, settings.model)
-  };
+  return parseChatCompletionResult(json, settings);
 }
 
 export async function streamCompletion(settings, messages, emit, signal, options = {}) {
@@ -982,52 +984,50 @@ export async function streamCompletion(settings, messages, emit, signal, options
     throw new Error(await responseErrorText(response));
   }
 
-  let content = '';
-  let reasoning = '';
-  let usage = null;
+  if (isJsonResponse(response)) {
+    return streamChatCompletionJsonResponse(response, settings, emit);
+  }
+
+  const state = { content: '', reasoning: '', usage: null };
+  const diagnostics = createStreamResponseDiagnostics(response);
   const thinkingTagFilter = createThinkingTagFilter({
     onContent(text) {
-      content += text;
+      state.content += text;
       emit('content', { text });
     },
     onReasoning(text) {
-      reasoning += text;
+      state.reasoning += text;
       emit('reasoning', { text });
     }
   });
 
   for await (const event of parseSse(response.body)) {
     if (event.data === '[DONE]') {
+      diagnostics.doneEvent = true;
       break;
     }
 
     const json = parseJson(event.data, null);
     if (!json) {
+      recordStreamEventDiagnostics(diagnostics, event, null);
       continue;
     }
 
-    usage = json.usage || usage;
-    const delta = extractStreamingDelta(json);
-    const reasoningDelta = extractReasoning(delta);
-    const contentDelta = extractText(delta.content);
-
-    if (reasoningDelta) {
-      reasoning += reasoningDelta;
-      emit('reasoning', { text: reasoningDelta });
-    }
-    if (contentDelta) {
-      thinkingTagFilter.push(contentDelta);
+    recordStreamEventDiagnostics(diagnostics, event, json);
+    for (const payload of collectChatCompletionStreamPayloads(json)) {
+      consumeChatCompletionStreamPayload(payload, event, state, thinkingTagFilter, emit);
     }
   }
   thinkingTagFilter.flush();
 
   return {
-    content,
-    reasoning,
-    usage,
+    content: state.content,
+    reasoning: state.reasoning,
+    usage: state.usage,
     provider: settings.gatewayName,
     providerType: settings.providerType,
-    model: normalizeProviderModel(settings.providerType, settings.model)
+    model: normalizeProviderModel(settings.providerType, settings.model),
+    diagnostics: finalizeStreamDiagnostics(diagnostics)
   };
 }
 
@@ -1645,6 +1645,10 @@ function providerAllowsNoAuth(settings) {
 }
 
 async function readJsonResponse(response) {
+  return readJsonResponseValue(response);
+}
+
+async function readJsonResponseValue(response, options = {}) {
   const text = await response.text().catch(() => '');
   const json = parseJson(text || 'null', null);
   if (json === null) {
@@ -1655,7 +1659,7 @@ async function readJsonResponse(response) {
     throw new Error(providerJsonErrorMessage(json) || responseErrorMessage(response, text));
   }
 
-  if (Array.isArray(json) || typeof json !== 'object') {
+  if ((Array.isArray(json) && !options.allowArray) || !json || typeof json !== 'object') {
     throw new Error('AI response JSON must be an object.');
   }
 
@@ -1665,6 +1669,379 @@ async function readJsonResponse(response) {
 async function responseErrorText(response) {
   const text = await response.text().catch(() => '');
   return responseErrorMessage(response, text);
+}
+
+async function streamChatCompletionJsonResponse(response, settings, emit) {
+  const json = await readJsonResponseValue(response, { allowArray: true });
+  const result = Array.isArray(json)
+    ? consumeChatCompletionStreamPayloads(json, settings, emit)
+    : parseChatCompletionResult(json, settings);
+  result.diagnostics = Array.isArray(json)
+    ? createJsonStreamResponseDiagnostics(response, result, json)
+    : createJsonResponseDiagnostics(response, result);
+  if (!Array.isArray(json)) {
+    emitChatCompletionResult(result, emit);
+  }
+  return result;
+}
+
+function parseChatCompletionResult(json, settings = {}) {
+  const message = extractChatMessage(json);
+  const parsedContent = splitThinkingTags(extractText(message.content));
+  const reasoning = mergeReasoning(extractReasoning(message), parsedContent.reasoning);
+  return {
+    content: parsedContent.content,
+    reasoning,
+    usage: extractChatCompletionUsage(json),
+    provider: settings.gatewayName,
+    providerType: settings.providerType,
+    model: normalizeProviderModel(settings.providerType, settings.model)
+  };
+}
+
+function emitChatCompletionResult(result = {}, emit) {
+  if (typeof emit !== 'function') {
+    return;
+  }
+  if (result.reasoning) {
+    emit('reasoning', { text: result.reasoning });
+  }
+  if (result.content) {
+    emit('content', { text: result.content });
+  }
+}
+
+function extractChatCompletionUsage(json = {}) {
+  return json.usage || normalizeGeminiUsage(json.usageMetadata || json.usage_metadata);
+}
+
+function consumeChatCompletionStreamPayloads(value, settings = {}, emit) {
+  const state = { content: '', reasoning: '', usage: null };
+  const thinkingTagFilter = createThinkingTagFilter({
+    onContent(text) {
+      state.content += text;
+      emit?.('content', { text });
+    },
+    onReasoning(text) {
+      state.reasoning += text;
+      emit?.('reasoning', { text });
+    }
+  });
+
+  for (const payload of collectChatCompletionStreamPayloads(value)) {
+    consumeChatCompletionStreamPayload(payload, {}, state, thinkingTagFilter, emit);
+  }
+  thinkingTagFilter.flush();
+
+  return {
+    content: state.content,
+    reasoning: state.reasoning,
+    usage: state.usage,
+    provider: settings.gatewayName,
+    providerType: settings.providerType,
+    model: normalizeProviderModel(settings.providerType, settings.model)
+  };
+}
+
+function consumeChatCompletionStreamPayload(payload, event, state, thinkingTagFilter, emit) {
+  state.usage = extractStreamingUsage(payload, state.usage);
+  const delta = extractStreamingDelta(payload);
+  const reasoningDelta = extractStreamingReasoningDelta(payload, delta);
+  const contentDelta = extractStreamingContentDelta(payload, delta, event);
+
+  if (reasoningDelta) {
+    state.reasoning += reasoningDelta;
+    emit?.('reasoning', { text: reasoningDelta });
+  }
+  if (contentDelta) {
+    thinkingTagFilter.push(contentDelta);
+  }
+}
+
+function collectChatCompletionStreamPayloads(value) {
+  const payloads = [];
+  appendChatCompletionStreamPayloads(payloads, value, 0);
+  return payloads;
+}
+
+function appendChatCompletionStreamPayloads(payloads, value, depth) {
+  if (depth > 5 || value == null) {
+    return;
+  }
+
+  const parsed = parseNestedJsonPayload(value);
+  if (parsed == null) {
+    return;
+  }
+
+  if (Array.isArray(parsed)) {
+    for (const item of parsed) {
+      appendChatCompletionStreamPayloads(payloads, item, depth + 1);
+    }
+    return;
+  }
+
+  if (typeof parsed !== 'object') {
+    return;
+  }
+
+  if (hasDirectChatCompletionPayload(parsed)) {
+    payloads.push(parsed);
+    return;
+  }
+
+  appendWrappedChatCompletionPayloads(payloads, parsed, depth);
+}
+
+function appendWrappedChatCompletionPayloads(payloads, value, depth) {
+  appendWrappedChatCompletionPayload(payloads, value, 'data', depth);
+  appendWrappedChatCompletionPayload(payloads, value, 'payload', depth);
+  appendWrappedChatCompletionPayload(payloads, value, 'chunk', depth);
+  appendWrappedChatCompletionPayload(payloads, value, 'result', depth);
+  appendWrappedChatCompletionPayload(payloads, value, 'response', depth);
+}
+
+function appendWrappedChatCompletionPayload(payloads, value, key, depth) {
+  if (!Object.prototype.hasOwnProperty.call(value, key) || value[key] === value) {
+    return;
+  }
+  appendChatCompletionStreamPayloads(payloads, value[key], depth + 1);
+}
+
+function parseNestedJsonPayload(value) {
+  if (typeof value !== 'string') {
+    return value;
+  }
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return null;
+  }
+  if (!trimmed.startsWith('{') && !trimmed.startsWith('[')) {
+    return null;
+  }
+  return parseJson(trimmed, null);
+}
+
+function hasDirectChatCompletionPayload(value) {
+  if (!value || typeof value !== 'object') {
+    return false;
+  }
+  return Boolean(
+    Array.isArray(value.choices) ||
+      Array.isArray(value.candidates) ||
+      value.delta !== undefined ||
+      value.content !== undefined ||
+      value.text !== undefined ||
+      value.output_text !== undefined ||
+      value.output?.choices ||
+      value.output?.message ||
+      value.output?.delta ||
+      value.output?.content ||
+      value.message ||
+      value.usage ||
+      value.usageMetadata ||
+      value.usage_metadata ||
+      value.response?.usage ||
+      value.response?.output_text ||
+      value.response?.output
+  );
+}
+
+function normalizeGeminiUsage(usage) {
+  if (!usage || typeof usage !== 'object') {
+    return null;
+  }
+
+  const promptTokens = readNumber(usage.prompt_tokens, usage.promptTokenCount, usage.prompt_token_count, 0);
+  const completionTokens = readNumber(usage.completion_tokens, usage.candidatesTokenCount, usage.candidates_token_count, 0);
+  const totalTokens = readOptionalNumber(usage.total_tokens ?? usage.totalTokenCount ?? usage.total_token_count) ??
+    promptTokens + completionTokens;
+  return {
+    ...usage,
+    prompt_tokens: promptTokens,
+    completion_tokens: completionTokens,
+    total_tokens: totalTokens
+  };
+}
+
+function isJsonResponse(response) {
+  const contentType = String(response.headers?.get?.('content-type') || '').toLowerCase();
+  return contentType.includes('application/json') || contentType.includes('+json');
+}
+
+function extractStreamingUsage(json = {}, fallback = null) {
+  return json.usage || json.response?.usage || normalizeGeminiUsage(json.usageMetadata || json.usage_metadata) || fallback;
+}
+
+function extractStreamingReasoningDelta(json = {}, delta = {}) {
+  return mergeReasoning(
+    extractReasoning(delta),
+    extractText(json.reasoning_delta || json.reasoningDelta || json.reasoning_content_delta || '')
+  );
+}
+
+function extractStreamingContentDelta(json = {}, delta = {}, event = {}) {
+  const deltaContent = extractText(delta?.content || delta?.text || delta?.output_text || delta?.text_delta || delta?.delta);
+  if (deltaContent) {
+    return deltaContent;
+  }
+
+  const responseDelta = extractResponsesOutputTextDelta(event?.event || json.type, json);
+  if (responseDelta) {
+    return responseDelta;
+  }
+
+  if (typeof json.delta === 'string') {
+    return json.delta;
+  }
+
+  return extractText(
+    json.content ||
+      json.text ||
+      json.output_text ||
+      json.response?.output_text ||
+      json.response?.text ||
+      json.response?.content ||
+      json.response?.output ||
+      json.response ||
+      json.message?.content ||
+      json.choices?.[0]?.text ||
+      json.choices?.[0]?.message?.content ||
+      json.choices?.[0]?.delta?.text ||
+      json.output?.text ||
+      json.output?.content
+  );
+}
+
+function extractResponsesOutputTextDelta(type, json = {}) {
+  const eventType = String(type || '');
+  if (/^response\.output_text\.delta$/.test(eventType) && typeof json.delta === 'string') {
+    return json.delta;
+  }
+  if (/^response\.(content|text|message|content_part)\.(added|delta|done)?$/.test(eventType)) {
+    return extractText(json.delta || json.text || json.content || json.output_text || json.part || '');
+  }
+  if (/^response\.output_item\.(added|done)$/.test(eventType)) {
+    return extractText(json.item?.content || json.item?.text || json.output_text || '');
+  }
+  return '';
+}
+
+function createJsonResponseDiagnostics(response, result = {}) {
+  return {
+    transport: 'json',
+    contentType: responseContentType(response),
+    contentLength: String(result?.content || '').length,
+    reasoningLength: String(result?.reasoning || '').length,
+    usageKeys: listObjectKeys(result?.usage)
+  };
+}
+
+function createJsonStreamResponseDiagnostics(response, result = {}, json = []) {
+  return {
+    transport: 'json-stream',
+    contentType: responseContentType(response),
+    itemCount: Array.isArray(json) ? json.length : 0,
+    contentLength: String(result?.content || '').length,
+    reasoningLength: String(result?.reasoning || '').length,
+    usageKeys: listObjectKeys(result?.usage)
+  };
+}
+
+function createStreamResponseDiagnostics(response) {
+  return {
+    transport: 'sse',
+    contentType: responseContentType(response),
+    eventCount: 0,
+    jsonEventCount: 0,
+    nonJsonEventCount: 0,
+    doneEvent: false,
+    samples: []
+  };
+}
+
+function recordStreamEventDiagnostics(diagnostics, event = {}, json) {
+  if (!diagnostics) {
+    return;
+  }
+  diagnostics.eventCount += 1;
+  if (!json || typeof json !== 'object') {
+    diagnostics.nonJsonEventCount += 1;
+    addStreamDiagnosticSample(diagnostics, {
+      event: event.event || 'message',
+      json: false
+    });
+    return;
+  }
+
+  diagnostics.jsonEventCount += 1;
+  addStreamDiagnosticSample(diagnostics, describeStreamJsonEvent(event, json));
+}
+
+function describeStreamJsonEvent(event = {}, json = {}) {
+  const choice = Array.isArray(json.choices) ? json.choices[0] : null;
+  const candidate = Array.isArray(json.candidates) ? json.candidates[0] : null;
+  const delta = choice?.delta || json.delta;
+  const message = choice?.message || json.message;
+  const sample = {
+    event: event.event || 'message',
+    json: true,
+    type: String(json.type || ''),
+    topKeys: listObjectKeys(json),
+    choiceKeys: listObjectKeys(choice),
+    deltaKind: typeof delta,
+    deltaKeys: listObjectKeys(delta),
+    messageKeys: listObjectKeys(message),
+    candidateKeys: listObjectKeys(candidate),
+    finishReason: String(choice?.finish_reason || choice?.finishReason || candidate?.finishReason || candidate?.finish_reason || '')
+  };
+
+  if (candidate?.content) {
+    sample.candidateContentKeys = listObjectKeys(candidate.content);
+    const parts = Array.isArray(candidate.content.parts) ? candidate.content.parts : [];
+    sample.candidatePartKeys = listObjectKeys(parts[0]);
+  }
+  return sample;
+}
+
+function addStreamDiagnosticSample(diagnostics, sample) {
+  if (!diagnostics || diagnostics.samples.length >= 6) {
+    return;
+  }
+  diagnostics.samples.push(sample);
+}
+
+function finalizeStreamDiagnostics(diagnostics) {
+  if (!diagnostics) {
+    return null;
+  }
+  return {
+    transport: diagnostics.transport,
+    contentType: diagnostics.contentType,
+    eventCount: diagnostics.eventCount,
+    jsonEventCount: diagnostics.jsonEventCount,
+    nonJsonEventCount: diagnostics.nonJsonEventCount,
+    doneEvent: diagnostics.doneEvent,
+    samples: diagnostics.samples
+  };
+}
+
+function responseContentType(response) {
+  return String(response?.headers?.get?.('content-type') || '').toLowerCase();
+}
+
+function listObjectKeys(value, limit = 12) {
+  if (!value || typeof value !== 'object') {
+    return [];
+  }
+  const keys = [];
+  for (const key of Object.keys(value)) {
+    keys.push(key);
+    if (keys.length >= limit) {
+      break;
+    }
+  }
+  return keys;
 }
 
 function providerJsonErrorMessage(json) {
@@ -1819,18 +2196,104 @@ function extractChatMessage(json = {}) {
   return json.choices?.[0]?.message ||
     json.output?.choices?.[0]?.message ||
     json.output?.message ||
+    normalizeGeminiCandidateMessage(json.candidates?.[0]) ||
     json.message ||
     {};
 }
 
 function extractStreamingDelta(json = {}) {
-  return json.choices?.[0]?.delta ||
-    json.choices?.[0]?.message ||
-    json.output?.choices?.[0]?.delta ||
-    json.output?.choices?.[0]?.message ||
-    json.output?.delta ||
-    json.delta ||
-    {};
+  return firstStreamingPayload(
+    json.choices?.[0]?.delta,
+    json.choices?.[0]?.message,
+    json.output?.choices?.[0]?.delta,
+    json.output?.choices?.[0]?.message,
+    json.output?.delta,
+    normalizeGeminiCandidateMessage(json.candidates?.[0]),
+    json.delta
+  );
+}
+
+function firstStreamingPayload(...values) {
+  for (const value of values) {
+    if (hasStreamingPayload(value)) {
+      return value;
+    }
+  }
+  return {};
+}
+
+function hasStreamingPayload(value) {
+  if (!value) {
+    return false;
+  }
+  if (typeof value === 'string') {
+    return Boolean(value);
+  }
+  if (typeof value !== 'object') {
+    return true;
+  }
+  return Boolean(
+    extractText(value.content || value.text || value.parts) ||
+      extractReasoning(value) ||
+      hasListItems(value.tool_calls) ||
+      value.function_call ||
+      typeof value.delta === 'string'
+  );
+}
+
+function hasListItems(value) {
+  return Array.isArray(value) && value.length > 0;
+}
+
+function normalizeGeminiCandidateMessage(candidate) {
+  if (!candidate || typeof candidate !== 'object') {
+    return null;
+  }
+
+  const parts = normalizeGeminiContentParts(candidate);
+  const content = parts || candidate.content || candidate.text;
+  const toolCalls = normalizeGeminiFunctionCallParts(parts);
+  if (!content && !toolCalls.length) {
+    return null;
+  }
+
+  return {
+    content,
+    tool_calls: toolCalls,
+    reasoning: candidate.reasoning || candidate.thinking || candidate.content?.reasoning || ''
+  };
+}
+
+function normalizeGeminiContentParts(candidate) {
+  const parts = candidate?.content?.parts || candidate?.parts;
+  return Array.isArray(parts) ? parts : null;
+}
+
+function normalizeGeminiFunctionCallParts(parts) {
+  if (!Array.isArray(parts)) {
+    return [];
+  }
+
+  const calls = [];
+  for (let index = 0; index < parts.length; index += 1) {
+    const part = parts[index];
+    const functionCall = part?.functionCall || part?.function_call;
+    if (!functionCall?.name) {
+      continue;
+    }
+    const args = functionCall.args || functionCall.arguments || {};
+    const argumentText = typeof args === 'string' ? args : JSON.stringify(args || {});
+    calls.push({
+      index,
+      id: functionCall.id || `gemini-function-call-${index}`,
+      type: 'function',
+      function: {
+        name: functionCall.name,
+        arguments: argumentText
+      }
+    });
+  }
+  return calls;
 }
 
 function extractReasoning(value = {}) {
@@ -1841,7 +2304,7 @@ function extractReasoning(value = {}) {
       value.reasoning_details ||
       value.reasoningDetails ||
       value.reasoning_delta ||
-      value.thought ||
+      (value.thought === true ? '' : value.thought) ||
       value.thoughts ||
       value.thinking ||
       value.thinking_content ||
@@ -1873,7 +2336,7 @@ function extractText(value) {
   }
 
   if (typeof value === 'object') {
-    return extractText(value.text || value.content);
+    return extractText(value.text || value.content || value.parts);
   }
 
   return String(value);

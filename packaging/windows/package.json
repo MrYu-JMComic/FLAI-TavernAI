@@ -1,0 +1,81 @@
+{
+  "name": "flai-tavernai-windows-desktop",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Local Windows desktop wrapper for FLAI TavernAI.",
+  "type": "module",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder --win",
+    "dist:setup": "electron-builder --win nsis",
+    "dist:portable": "electron-builder --win portable"
+  },
+  "devDependencies": {
+    "electron": "latest",
+    "electron-builder": "latest"
+  },
+  "build": {
+    "appId": "local.flai.tavernai",
+    "productName": "FLAI TavernAI",
+    "asar": true,
+    "afterPack": "afterPack.cjs",
+    "files": [
+      "main.js",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "../../dist/windows-app/backend",
+        "to": "backend",
+        "filter": [
+          "**/*"
+        ]
+      },
+      {
+        "from": "../../dist/windows-app/frontend",
+        "to": "frontend",
+        "filter": [
+          "**/*"
+        ]
+      },
+      {
+        "from": "../../dist/windows-app/shared",
+        "to": "shared",
+        "filter": [
+          "**/*"
+        ]
+      },
+      {
+        "from": "../../dist/windows-app/node",
+        "to": "node",
+        "filter": [
+          "**/*"
+        ]
+      }
+    ],
+    "directories": {
+      "output": "../../dist/windows-exe"
+    },
+    "win": {
+      "icon": "../../frontend/public/icons/icon-512.png",
+      "target": [
+        "nsis"
+      ]
+    },
+    "nsis": {
+      "artifactName": "FLAI-TavernAI-Setup.${ext}",
+      "oneClick": false,
+      "perMachine": false,
+      "allowElevation": true,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "FLAI TavernAI",
+      "deleteAppDataOnUninstall": false
+    },
+    "portable": {
+      "artifactName": "FLAI-TavernAI-Portable.${ext}"
+    }
+  }
+}

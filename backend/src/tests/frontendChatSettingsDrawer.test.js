@@ -26,7 +26,7 @@ test('ChatSettingsDrawer keeps close actions visible but locked while saves are 
 });
 
 test('ChatSettingsDrawer locks appearance controls while saving appearance', () => {
-  assert.equal(countMatches(chatSettingsDrawerTemplate, /:disabled="appearanceSaving"/g), 11);
+  assert.equal(countMatches(chatSettingsDrawerTemplate, /:disabled="appearanceSaving"/g), 12);
   assert.equal(countMatches(chatSettingsDrawerTemplate, /:class="{ 'is-disabled': appearanceSaving }"/g), 2);
   assert.match(chatSettingsDrawerTemplate, /:disabled="worldBooksLoading \|\| appearanceSaving"/);
   assert.match(chatSettingsDrawerTemplate, /:aria-busy="appearanceSaving"/);
@@ -36,6 +36,14 @@ test('ChatSettingsDrawer locks appearance controls while saving appearance', () 
   assert.match(stylesSource, /\.chat-setting-upload\.is-disabled,/);
   assert.match(stylesSource, /\.chat-setting-inline-button:disabled/);
   assert.match(stylesSource, /\.chat-setting-upload\.is-disabled input/);
+});
+
+test('ChatSettingsDrawer exposes the world-book match source toggle', () => {
+  assert.match(chatSettingsDrawerTemplate, /class="chat-setting-toggle"[\s\S]*v-model="chatAppearanceForm\.showWorldBookMatches"[\s\S]*type="checkbox"[\s\S]*:disabled="appearanceSaving"/);
+  assert.match(chatSettingsDrawerTemplate, /class="chat-setting-toggle-control" aria-hidden="true"/);
+  assert.match(stylesSource, /\.chat-setting-toggle\s*{\s*position: relative;/);
+  assert.match(stylesSource, /\.chat-setting-toggle-input:checked \+ \.chat-setting-toggle-control/);
+  assert.match(stylesSource, /\.chat-setting-toggle-input:disabled \+ \.chat-setting-toggle-control,/);
 });
 
 test('ChatSettingsDrawer resolves chat lorebook binding labels without template list scans', () => {

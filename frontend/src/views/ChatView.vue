@@ -1,5 +1,6 @@
 ﻿<script setup>
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { BookOpen, Bot, Clipboard, RotateCcw, Settings, X } from '@lucide/vue';
 import EconomyPanel from '../components/EconomyPanel.vue';
 import NpcPanel from '../components/NpcPanel.vue';
 import SaveLoadPanel from '../components/SaveLoadPanel.vue';
@@ -40,6 +41,7 @@ const npcRefreshKey = ref(0);
 const modelSwitcherOpen = ref(false);
 const modelSwitcherRefreshing = ref(false);
 const modelSwitcherSaving = ref(false);
+const worldBookMatchDialogOpen = ref(false);
 const statusBarUpdateStatus = ref('not-updated');
 const statusBarCollapseRequest = ref(0);
 const npcUpdateStatus = ref('not-updated');
@@ -177,9 +179,10 @@ function prepareExpandedStatusBarForSubmit() {
 
 const {
   input, useStream, thinkingEnabled,
-  sending, usage,
+  sending, usage, lastFailure, latestWorldBookMatches,
   canSend, canToggleThinking,
-  submit, stop, setSelectedPresetId, toggleUseStream, toggleThinking,
+  submit, stop, restoreLastFailureInput, retryLastFailure, dismissLastFailure,
+  setSelectedPresetId, toggleUseStream, toggleThinking,
   cleanup: cleanupSubmit
 } = useChatSubmit({
   route: props.route, messages, provider: computed(() => props.provider),
@@ -199,6 +202,89 @@ const {
 });
 const { providerModels, syncProviderModels } = useProviderModels(computed(() => props.provider));
 const chatRenderPlugins = computed(() => activeRenderPlugins());
+const activeChatFailure = computed(() => {
+  const failure = lastFailure.value;
+  return failure?.conversationId === props.route.params.id ? failure : null;
+});
+const worldBookMatchSummary = computed(() => {
+  const matches = Array.isArray(latestWorldBookMatches.value) ? latestWorldBookMatches.value : [];
+  const summary = [];
+  for (const match of matches) {
+    if (!match?.id) {
+      continue;
+    }
+    summary.push({
+      ...match,
+      positionLabel: worldBookPositionLabel(match.position),
+      roleLabel: worldBookRoleLabel(match.role)
+    });
+  }
+  return summary;
+});
+const showWorldBookMatchSummary = computed(() => effectiveChatAppearance.value.showWorldBookMatches !== false);
+
+function hasWorldBookMatchesForMessage(message) {
+  return Boolean(
+    message?.id
+    && latestAssistantMessage.value?.id === message.id
+    && showWorldBookMatchSummary.value
+    && worldBookMatchSummary.value.length
+  );
+}
+
+function openWorldBookMatchDialog(message) {
+  if (!hasWorldBookMatchesForMessage(message)) {
+    return;
+  }
+  worldBookMatchDialogOpen.value = true;
+}
+
+function closeWorldBookMatchDialog() {
+  worldBookMatchDialogOpen.value = false;
+}
+
+function worldBookPositionLabel(position) {
+  if (position === 'at_start') return '开头';
+  if (position === 'after_char') return '角色后';
+  if (position === 'at_depth') return '按深度';
+  return '角色前';
+}
+
+function worldBookRoleLabel(role) {
+  if (Number(role) === 1) return 'user';
+  if (Number(role) === 2) return 'assistant';
+  return 'system';
+}
+
+async function copyLastFailureMessage() {
+  const failure = activeChatFailure.value;
+  const message = failure?.diagnosticId
+    ? `${failure.message}\n诊断 ID: ${failure.diagnosticId}`
+    : failure?.message || '';
+  if (!message) {
+    return;
+  }
+  try {
+    if (typeof navigator === 'undefined' || typeof navigator.clipboard?.writeText !== 'function') {
+      throw new Error('clipboard unavailable');
+    }
+    await navigator.clipboard.writeText(message);
+    notify.success('已复制错误信息');
+  } catch {
+    notify.error('复制失败，请手动选择错误信息。');
+  }
+}
+
+function restoreFailureToComposer() {
+  if (restoreLastFailureInput()) {
+    scheduleComposerLayoutUpdate({ focus: true });
+  }
+}
+
+async function retryFailureFromPanel() {
+  await retryLastFailure();
+  scheduleComposerLayoutUpdate({ focus: true });
+}
 
 function openModelSwitcher() {
   if (sending.value) {
@@ -647,7 +733,16 @@ function canSwipePrev(message) {
   return (messageSwipeState[message.id]?.activeIndex || 0) > 0;
 }
 
+function canSwipeNext(message) {
+  const state = messageSwipeState[message.id];
+  return Boolean(state && state.swipeCount > 1 && state.activeIndex < state.swipeCount - 1);
+}
+
 function handleGlobalKeydown(event) {
+  if (event.key === 'Escape' && worldBookMatchDialogOpen.value) {
+    closeWorldBookMatchDialog();
+    return;
+  }
   if (event.key === 'Escape' && modelSwitcherOpen.value) {
     closeModelSwitcher();
     return;
@@ -1012,7 +1107,14 @@ watch(() => conversation.value?.id || '', (conversationId, previousConversationI
     return;
   }
   resetMessageUiState();
+  closeWorldBookMatchDialog();
   closeAccessoryPanels();
+});
+
+watch([showWorldBookMatchSummary, worldBookMatchSummary], ([shouldShow, matches]) => {
+  if (!shouldShow || !matches.length) {
+    closeWorldBookMatchDialog();
+  }
 });
 
 watch(showNpcFeature, (active) => {
@@ -1170,9 +1272,10 @@ watch(showNpcFeature, (active) => {
             :render-plugins="chatRenderPlugins"
             :swipe-display="getSwipeDisplay(message)"
             :swipe-can-prev="canSwipePrev(message)"
-            :swipe-can-next="message.role === 'assistant'"
+            :swipe-can-next="canSwipeNext(message)"
             :swipe-loading="swipeLoading.has(message.id) || messageActionBusy === message.id || branchBusy"
             :branch-busy="branchBusy"
+            :world-book-match-count="hasWorldBookMatchesForMessage(message) ? worldBookMatchSummary.length : 0"
             @toggle-reasoning="toggleReasoning"
             @begin-edit="beginEditMessage"
             @cancel-edit="cancelEditMessage"
@@ -1183,6 +1286,7 @@ watch(showNpcFeature, (active) => {
             @swipe-prev="swipeMessagePrev"
             @swipe-next="(item) => swipeMessageNext(item, route.params.id)"
             @branch="createBranchFromMessage"
+            @open-worldbook-matches="openWorldBookMatchDialog"
           />
           <div v-if="hasStatusBarVisible && message === latestAssistantMessage" class="status-bar-wrapper">
             <StatusBar
@@ -1194,6 +1298,49 @@ watch(showNpcFeature, (active) => {
             />
           </div>
         </template>
+        <aside
+          v-if="activeChatFailure"
+          class="chat-recovery-panel"
+          role="alert"
+          aria-live="polite"
+        >
+          <div class="chat-recovery-copy">
+            <strong>这次回复失败了</strong>
+            <p>{{ activeChatFailure.message }}</p>
+            <small v-if="activeChatFailure.diagnosticId">诊断 ID: {{ activeChatFailure.diagnosticId }}</small>
+          </div>
+          <div class="chat-recovery-actions">
+            <button
+              v-if="activeChatFailure.canRetry"
+              class="chat-recovery-button"
+              type="button"
+              :disabled="sending"
+              :aria-busy="sending"
+              @click="retryFailureFromPanel"
+            >
+              <RotateCcw :size="16" />
+              <span>重试发送</span>
+            </button>
+            <button class="chat-recovery-button" type="button" :disabled="sending" @click="restoreFailureToComposer">
+              <RotateCcw :size="16" />
+              <span>放回输入框</span>
+            </button>
+            <button class="chat-recovery-button" type="button" @click="openModelSwitcher">
+              <Bot :size="16" />
+              <span>切换模型</span>
+            </button>
+            <button class="chat-recovery-button" type="button" @click="emit('navigate', 'settings')">
+              <Settings :size="16" />
+              <span>打开设置</span>
+            </button>
+            <button class="chat-recovery-icon" type="button" aria-label="复制错误信息" title="复制错误信息" @click="copyLastFailureMessage">
+              <Clipboard :size="16" />
+            </button>
+            <button class="chat-recovery-icon" type="button" aria-label="关闭失败提示" title="关闭" @click="dismissLastFailure">
+              <X :size="16" />
+            </button>
+          </div>
+        </aside>
       </div>
 
       <ChatComposer
@@ -1219,6 +1366,43 @@ watch(showNpcFeature, (active) => {
         @scroll-to-bottom="scrollToBottom()"
         @update:selected-preset-id="setSelectedPresetId"
       />
+      <div
+        v-if="worldBookMatchDialogOpen && showWorldBookMatchSummary && worldBookMatchSummary.length"
+        class="chat-worldbook-match-overlay"
+        @click.self="closeWorldBookMatchDialog"
+      >
+        <section
+          class="chat-worldbook-match-dialog"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="chat-worldbook-match-title"
+        >
+          <header class="chat-worldbook-match-head">
+            <div>
+              <span>
+                <BookOpen :size="15" />
+                世界书命中来源
+              </span>
+              <h2 id="chat-worldbook-match-title">本轮命中 {{ worldBookMatchSummary.length }} 条世界书</h2>
+            </div>
+            <button
+              class="chat-worldbook-match-close"
+              type="button"
+              aria-label="关闭世界书命中来源"
+              title="关闭"
+              @click="closeWorldBookMatchDialog"
+            >
+              <X :size="18" />
+            </button>
+          </header>
+          <ul class="chat-worldbook-match-list">
+            <li v-for="match in worldBookMatchSummary" :key="match.id">
+              <strong>{{ match.name }}</strong>
+              <span>{{ match.worldBookName }} · {{ match.positionLabel }} · {{ match.roleLabel }}{{ match.position === 'at_depth' ? ` depth ${match.depth}` : '' }}</span>
+            </li>
+          </ul>
+        </section>
+      </div>
       <ChatModelSwitcher
         :open="modelSwitcherOpen"
         :provider="provider"
@@ -1256,3 +1440,192 @@ watch(showNpcFeature, (active) => {
     />
   </section>
 </template>
+
+<style scoped>
+.chat-recovery-panel {
+  width: min(calc(100% - 24px), var(--chat-readable-width, 860px));
+  margin: 8px auto 12px;
+  border: 1px solid color-mix(in srgb, var(--primary) 22%, var(--line));
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--surface-strong) 90%, transparent);
+  box-shadow: 0 14px 34px color-mix(in srgb, var(--primary) 12%, transparent);
+}
+
+.chat-recovery-panel {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+}
+
+.chat-recovery-copy strong {
+  display: block;
+  color: var(--text);
+  font-size: 0.92rem;
+}
+
+.chat-recovery-copy p {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 0.84rem;
+  line-height: 1.5;
+}
+
+.chat-recovery-copy small {
+  display: block;
+  margin-top: 4px;
+  color: color-mix(in srgb, var(--muted) 86%, var(--text));
+  font-size: 0.76rem;
+  line-height: 1.4;
+}
+
+.chat-recovery-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.chat-recovery-button,
+.chat-recovery-icon {
+  min-height: 34px;
+  border: 1px solid color-mix(in srgb, var(--line) 84%, transparent);
+  background: color-mix(in srgb, var(--surface) 84%, transparent);
+  color: var(--text);
+}
+
+.chat-recovery-button {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+  justify-content: center;
+  padding: 0 10px;
+  border-radius: 8px;
+  font-size: 0.82rem;
+}
+
+.chat-recovery-icon {
+  display: inline-grid;
+  width: 34px;
+  place-items: center;
+  border-radius: 999px;
+}
+
+.chat-recovery-button:hover:not(:disabled),
+.chat-recovery-icon:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--primary) 36%, var(--line));
+  background: color-mix(in srgb, var(--primary-soft) 52%, var(--surface));
+}
+
+.chat-worldbook-match-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 128;
+  display: grid;
+  place-items: center;
+  padding: 18px;
+  background: rgba(15, 23, 42, 0.34);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+
+.chat-worldbook-match-dialog {
+  display: grid;
+  width: min(560px, calc(100vw - 28px));
+  max-height: min(620px, calc(100dvh - 36px));
+  grid-template-rows: auto minmax(0, 1fr);
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--primary) 22%, var(--line));
+  border-radius: 8px;
+  color: var(--text);
+  background: color-mix(in srgb, var(--surface) 96%, #ffffff 4%);
+  box-shadow: 0 24px 70px rgba(15, 23, 42, 0.22);
+}
+
+.chat-worldbook-match-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 16px 18px 12px;
+  border-bottom: 1px solid color-mix(in srgb, var(--line) 70%, transparent);
+}
+
+.chat-worldbook-match-head span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 800;
+}
+
+.chat-worldbook-match-head h2 {
+  margin: 4px 0 0;
+  font-size: 1.04rem;
+  line-height: 1.28;
+}
+
+.chat-worldbook-match-close {
+  display: inline-grid;
+  width: 34px;
+  height: 34px;
+  flex: 0 0 auto;
+  place-items: center;
+  border: 1px solid color-mix(in srgb, var(--line) 84%, transparent);
+  border-radius: 999px;
+  color: var(--muted);
+  background: color-mix(in srgb, var(--surface-strong) 84%, transparent);
+}
+
+.chat-worldbook-match-close:hover {
+  color: var(--primary);
+  border-color: color-mix(in srgb, var(--primary) 30%, var(--line));
+  background: var(--primary-soft);
+}
+
+.chat-worldbook-match-list {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 14px 18px 18px;
+  overflow: auto;
+  list-style: none;
+}
+
+.chat-worldbook-match-list li {
+  display: grid;
+  gap: 3px;
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, var(--line) 68%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--surface-strong) 74%, transparent);
+}
+
+.chat-worldbook-match-list strong,
+.chat-worldbook-match-list span {
+  overflow-wrap: anywhere;
+}
+
+.chat-worldbook-match-list strong {
+  color: var(--text);
+  font-size: 0.86rem;
+}
+
+.chat-worldbook-match-list span {
+  color: var(--muted);
+  font-size: 0.78rem;
+  line-height: 1.45;
+}
+
+@media (max-width: 520px) {
+  .chat-worldbook-match-overlay {
+    align-items: end;
+    padding: 12px;
+  }
+
+  .chat-worldbook-match-dialog {
+    width: 100%;
+    max-height: min(640px, calc(100dvh - 24px));
+  }
+}
+</style>

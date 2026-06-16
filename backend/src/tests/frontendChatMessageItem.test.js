@@ -63,7 +63,7 @@ test('ChatMessageItem locks copy action while clipboard work is busy', () => {
 test('ChatMessageItem locks swipe navigation while a swipe is loading', () => {
   assert.match(chatViewTemplate, /:swipe-loading="swipeLoading\.has\(message\.id\) \|\| messageActionBusy === message\.id \|\| branchBusy"/);
   assert.match(chatMessageItemTemplate, /:disabled="!swipeCanPrev \|\| swipeLoading"/);
-  assert.match(chatMessageItemTemplate, /:disabled="swipeLoading"/);
+  assert.match(chatMessageItemTemplate, /:disabled="!swipeCanNext \|\| swipeLoading"/);
   assert.match(chatMessageItemTemplate, /:aria-busy="swipeLoading"/);
   assert.match(
     chatMessageActionsSource,

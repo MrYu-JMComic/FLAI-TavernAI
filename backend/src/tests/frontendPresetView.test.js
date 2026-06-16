@@ -21,6 +21,13 @@ test('PresetView retry action ignores events while presets are loading', () => {
   );
 });
 
+test('PresetView error state offers creation and navigation exits', () => {
+  assert.match(
+    presetViewTemplate,
+    /<div v-else-if="error" class="empty-state error-state">[\s\S]*@click="loadPresets"[\s\S]*@click="startCreate"[\s\S]*新建预设[\s\S]*@click="emit\('navigate', 'home'\)"[\s\S]*返回首页/
+  );
+});
+
 test('PresetView preserves unchanged preset list references during refreshes', () => {
   assert.match(
     presetViewScript,
@@ -88,8 +95,8 @@ test('PresetView freezes list entry actions while preset work is busy', () => {
     /async function handleSetDefault\(preset\)\s*{\s*if \(presetViewDisposed \|\| presetListActionBusy\.value\)/
   );
 
-  assert.equal(countMatches(presetViewTemplate, /:disabled="presetListActionBusy"/g), 4);
-  assert.equal(countMatches(presetViewTemplate, /:aria-busy="presetListActionBusy"/g), 2);
+  assert.equal(countMatches(presetViewTemplate, /:disabled="presetListActionBusy"/g), 5);
+  assert.equal(countMatches(presetViewTemplate, /:aria-busy="presetListActionBusy"/g), 3);
   assert.match(presetViewTemplate, /'is-busy': presetListActionBusy/);
   assert.match(presetViewTemplate, /:aria-disabled="presetListActionBusy"/);
   assert.match(presetViewTemplate, /:aria-busy="defaultingPresetId === preset\.id"/);

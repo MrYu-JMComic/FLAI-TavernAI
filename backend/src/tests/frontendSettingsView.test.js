@@ -63,7 +63,7 @@ test('SettingsView model refresh ignores events while refresh is unavailable or 
 test('SettingsView personal provider and profile saves expose visible busy guards', () => {
   assert.match(
     settingsViewScript,
-    /const providerControlsBusy = computed\(\(\) => saving\.value \|\| modelLoading\.value\);/
+    /const providerControlsBusy = computed\(\(\) => saving\.value \|\| modelLoading\.value \|\| modelProbeLoading\.value\);/
   );
   assert.match(
     settingsViewScript,
@@ -112,6 +112,33 @@ test('SettingsView personal provider and profile saves expose visible busy guard
   assert.match(
     settingsViewTemplate,
     /<button class="primary-button" type="submit" :disabled="providerControlsBusy">/
+  );
+});
+
+test('SettingsView exposes provider connection probing beside model refresh', () => {
+  assert.match(settingsViewScript, /const modelProbeLoading = ref\(false\);/);
+  assert.match(settingsViewScript, /const modelProbeStatus = ref\('idle'\);/);
+  assert.match(settingsViewScript, /const modelProbeMessage = ref\(''\);/);
+  assert.match(
+    settingsViewScript,
+    /async function probeProviderConnection\(\) \{[\s\S]*if \(!isPersonalPage\.value \|\| providerControlsBusy\.value \|\| !canFetchModels\.value\) \{[\s\S]*return;[\s\S]*modelProbeLoading\.value = true;[\s\S]*setProviderProbeResult\('checking', '正在检测网关和模型列表\.\.\.'\);[\s\S]*refreshProviderModels\(request, \{ forceRefresh: true \}\)/
+  );
+  assert.match(
+    settingsViewScript,
+    /setProviderProbeResult\('success', message\);[\s\S]*notify\.success\(message\);/
+  );
+  assert.match(
+    settingsViewScript,
+    /setProviderProbeResult\('error', message\);[\s\S]*notify\.error\(`连接检测失败：\$\{message\}`\);/
+  );
+  assert.match(
+    settingsViewTemplate,
+    /<button class="ghost-button compact-button" type="button" :disabled="providerControlsBusy \|\| !canFetchModels" :aria-busy="modelProbeLoading" @click="probeProviderConnection">/
+  );
+  assert.match(settingsViewTemplate, /<span>\{\{ modelProbeLoading \? '检测中' : '检测连接' \}\}<\/span>/);
+  assert.match(
+    settingsViewTemplate,
+    /<p v-if="modelProbeMessage" class="provider-probe-message" :class="`probe-\$\{modelProbeStatus\}`" role="status">/
   );
 });
 

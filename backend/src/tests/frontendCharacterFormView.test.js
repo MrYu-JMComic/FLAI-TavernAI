@@ -57,6 +57,13 @@ test('CharacterFormView footer actions share one busy state', () => {
   assert.doesNotMatch(characterFormTemplate, /type="submit" :disabled="saving"/);
 });
 
+test('CharacterFormView load error state offers creation and navigation exits', () => {
+  assert.match(
+    characterFormTemplate,
+    /<section v-else-if="loadError" class="form-panel empty-state error-state" role="alert">[\s\S]*@click="loadEditingCharacter"[\s\S]*@click="emit\('navigate', 'characterNew'\)"[\s\S]*创建新角色[\s\S]*@click="emit\('navigate', 'home'\)"[\s\S]*返回首页/
+  );
+});
+
 test('CharacterFormView invalidates route-replacing action tokens before navigation', () => {
   assert.match(
     characterFormScript,

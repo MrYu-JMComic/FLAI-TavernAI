@@ -7,7 +7,10 @@ const { script: chatComposerScript, template: chatComposerTemplate } = readVueBl
 );
 const stylesSource = readFrontendStyles();
 const chatSubmitSource = readRepoText('frontend/src/composables/chat/useChatSubmit.js');
-const { script: chatViewScript, template: chatViewTemplate } = readVueBlocks('frontend/src/views/ChatView.vue');
+const { script: chatViewScript, template: chatViewTemplate, style: chatViewStyle } = readVueBlocks(
+  'frontend/src/views/ChatView.vue',
+  ['script', 'template', 'style']
+);
 const { script: statusBarScript } = readVueBlocks('frontend/src/components/StatusBar.vue', ['script']);
 
 function readStyleRange(startMarker, endMarker, fromIndex = 0) {
@@ -74,9 +77,36 @@ test('ChatView ignores model switcher open events while sending', () => {
 });
 
 test('ChatView routes preset selection through the guarded submit setter', () => {
-  assert.match(chatViewScript, /submit, stop, setSelectedPresetId, toggleUseStream, toggleThinking/);
+  assert.match(chatViewScript, /submit, stop,[\s\S]*setSelectedPresetId, toggleUseStream, toggleThinking/);
   assert.match(chatViewTemplate, /@update:selected-preset-id="setSelectedPresetId"/);
   assert.doesNotMatch(chatViewTemplate, /@update:selected-preset-id="\([^"]+\) => selectedPresetId =/);
+});
+
+test('ChatView exposes chat failure recovery and world book match dialog entry', () => {
+  assert.match(chatViewScript, /lastFailure, latestWorldBookMatches/);
+  assert.match(chatViewScript, /restoreLastFailureInput, retryLastFailure, dismissLastFailure/);
+  assert.match(chatViewScript, /const activeChatFailure = computed\(\(\) => \{[\s\S]*failure\?\.conversationId === props\.route\.params\.id/);
+  assert.match(chatViewScript, /const worldBookMatchSummary = computed\(\(\) => \{[\s\S]*positionLabel: worldBookPositionLabel\(match\.position\)[\s\S]*roleLabel: worldBookRoleLabel\(match\.role\)/);
+  assert.match(chatViewScript, /const showWorldBookMatchSummary = computed\(\(\) => effectiveChatAppearance\.value\.showWorldBookMatches !== false\);/);
+  assert.match(chatViewScript, /const worldBookMatchDialogOpen = ref\(false\);/);
+  assert.match(chatViewScript, /function hasWorldBookMatchesForMessage\(message\) \{[\s\S]*latestAssistantMessage\.value\?\.id === message\.id[\s\S]*worldBookMatchSummary\.value\.length/);
+  assert.match(chatViewScript, /function openWorldBookMatchDialog\(message\) \{[\s\S]*worldBookMatchDialogOpen\.value = true;/);
+  assert.match(chatViewTemplate, /v-if="activeChatFailure"[\s\S]*class="chat-recovery-panel"/);
+  assert.match(chatViewTemplate, /@click="restoreFailureToComposer"/);
+  assert.match(chatViewTemplate, /@click="retryFailureFromPanel"/);
+  assert.match(chatViewTemplate, /@click="openModelSwitcher"/);
+  assert.match(chatViewTemplate, /@click="emit\('navigate', 'settings'\)"/);
+  assert.match(chatViewTemplate, /:world-book-match-count="hasWorldBookMatchesForMessage\(message\) \? worldBookMatchSummary\.length : 0"/);
+  assert.match(chatViewTemplate, /@open-worldbook-matches="openWorldBookMatchDialog"/);
+  assert.match(chatViewTemplate, /v-if="worldBookMatchDialogOpen && showWorldBookMatchSummary && worldBookMatchSummary\.length"[\s\S]*class="chat-worldbook-match-overlay"/);
+  assert.match(chatViewTemplate, /class="chat-worldbook-match-dialog"[\s\S]*role="dialog"[\s\S]*aria-modal="true"/);
+  assert.match(chatViewTemplate, /class="chat-worldbook-match-list"[\s\S]*v-for="match in worldBookMatchSummary"/);
+  assert.match(chatViewTemplate, /本轮命中 \{\{ worldBookMatchSummary\.length \}\} 条世界书/);
+  assert.doesNotMatch(chatViewTemplate, /class="chat-worldbook-explain"/);
+  assert.doesNotMatch(chatViewScript, /handleWorldBookExplainToggle|scrollWorldBookExplainIntoView/);
+  assert.match(chatViewStyle, /\.chat-worldbook-match-overlay\s*{/);
+  assert.match(chatViewStyle, /\.chat-worldbook-match-dialog\s*{/);
+  assert.match(chatViewStyle, /\.chat-worldbook-match-list li\s*{/);
 });
 
 test('ChatView composer layout work falls back when animation frames are unavailable', () => {

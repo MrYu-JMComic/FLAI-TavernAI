@@ -57,6 +57,7 @@ const advancedSettingsSchema = z.object({
   customCss: z.string().max(50000).trim().optional().default(''),
   customJs: z.string().max(50000).trim().optional().default(''),
   statusBarPrompt: z.string().max(50000).trim().optional().default(''),
+  showWorldBookMatches: booleanLikeSchema.optional().default(true),
   statusBarBlueprint: statusBarBlueprintSchema,
   accessorySkills: accessorySkillsSchema
 }).partial().optional().default({});
@@ -265,6 +266,7 @@ export const saveConversationSettingsSchema = z.object({
   customCss: z.string().max(50000).trim().optional().default(''),
   customJs: z.string().max(50000).trim().optional().default(''),
   statusBarPrompt: z.string().max(50000).trim().optional().default(''),
+  showWorldBookMatches: booleanLikeSchema.optional().default(true),
   chatLorebookId: z.string().max(200).trim().nullable().optional(),
   accessorySkills: accessorySkillsSchema
 });
@@ -338,6 +340,13 @@ export const updateNpcSchema = z.object({
   aliases: z.array(z.string().max(80).trim()).max(20).optional(),
   aliasesText: z.string().max(1000).trim().optional(),
   memorySealed: booleanLikeSchema.optional()
+});
+
+export const npcOrganizerSchema = z.object({
+  requirement: z.string().max(4000).trim().optional().default(''),
+  selectedNpc: z.string().max(100).trim().optional().default(''),
+  modelOverride: z.string().max(120).trim().optional().default(''),
+  stream: z.boolean().optional().default(false)
 });
 
 // ── 存档相关 ──

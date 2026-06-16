@@ -1104,9 +1104,18 @@ function toolResultLabel(result = {}) {
         <AlertCircle :size="48" />
         <h2>加载失败</h2>
         <p>{{ error }}</p>
-        <button class="ghost-button" :disabled="loading" :aria-busy="loading" @click="retryLoad">
-          <span>重试</span>
-        </button>
+        <div class="empty-state-actions">
+          <button class="ghost-button" :disabled="loading" :aria-busy="loading" @click="retryLoad">
+            <span>重试</span>
+          </button>
+          <button class="primary-button" :disabled="saving" :aria-busy="saving" @click="openCreateBook">
+            <Plus :size="18" />
+            <span>新建世界书</span>
+          </button>
+          <button class="ghost-button" @click="emit('navigate', 'home')">
+            <span>返回首页</span>
+          </button>
+        </div>
       </div>
 
       <div v-else-if="!books.length" class="empty-state">

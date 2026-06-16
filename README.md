@@ -64,6 +64,16 @@ Before committing, use the guarded preparation script instead of a broad `git ad
 
 The dry run checks UTF-8 encoding and shows the worktree, including ignored local files. The staging mode blocks local data, uploads, env files, build output, logs, dependency folders, generated prompt drafts, and common temporary files. Prefer `-Path` for reviewed files; reserve `-AllAllowed` for fully reviewed worktrees.
 
+## Performance
+
+Recent optimizations (2026-06-13):
+- **91.8%** reduction in StatusBar bundle size (304KB → 25KB)
+- Smart code splitting for third-party libraries
+- Markdown renderer (254KB) and icon library (80KB) load on-demand
+- Optimized build configuration with manual chunking strategy
+
+See `OPTIMIZATION_SUMMARY.md` for details and `docs/performance-best-practices.md` for guidelines.
+
 ## AI Workstation
 
 This repo includes a guarded autonomous iteration setup:

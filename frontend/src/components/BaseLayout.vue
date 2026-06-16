@@ -25,6 +25,7 @@ const props = defineProps({
 const emit = defineEmits(['navigate', 'logout', 'toggle-theme']);
 
 const isChatRoute = computed(() => props.currentRoute === 'chat');
+const isHomeRoute = computed(() => props.currentRoute === 'home');
 const isWorldBookRoute = computed(() => props.currentRoute === 'worldBooks' || props.currentRoute === 'worldBookDetail');
 const isExtensionsRoute = computed(() => props.currentRoute === 'extensions');
 const isPresetsRoute = computed(() => props.currentRoute === 'presets');
@@ -89,7 +90,7 @@ function navigateAndClose(name) {
 </script>
 
 <template>
-  <div class="layout-shell" :class="{ 'chat-layout-shell': isChatRoute }">
+  <div class="layout-shell" :class="{ 'chat-layout-shell': isChatRoute, 'home-layout-shell': isHomeRoute }">
     <a href="#main-content" class="skip-link">跳转到主要内容</a>
 
     <header v-if="!isChatRoute" class="topbar">

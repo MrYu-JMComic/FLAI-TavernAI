@@ -91,7 +91,12 @@ export function useChatAppearance({
   function syncConversationAppearance(settings = {}, options = {}) {
     const sourceSettings = settings || {};
     const authorSettings = normalizeChatAppearance(sourceSettings?.authorSettings || conversation.value?.authorSettings || {});
-    const userSettings = normalizeChatAppearance(sourceSettings?.userSettings || conversation.value?.userSettings || sourceSettings);
+    const userSettingsSource = sourceSettings?.userSettings || conversation.value?.userSettings || sourceSettings;
+    const userSettings = normalizeChatAppearance(userSettingsSource);
+    const directSettings = hasDirectAppearanceSettings(sourceSettings) ? normalizeChatAppearance(sourceSettings) : null;
+    if (directSettings && hasOwnAppearanceSetting(sourceSettings, 'showWorldBookMatches', 'show_world_book_matches')) {
+      userSettings.showWorldBookMatches = directSettings.showWorldBookMatches;
+    }
     const nextChatLorebookId = (sourceSettings?.chatLorebookId ?? conversation.value?.chatLorebookId ?? null) || null;
     const nextSignature = serializeAppearanceSync(authorSettings, userSettings, nextChatLorebookId);
     if (!options.force && nextSignature === lastAppearanceSyncSignature) {
@@ -134,6 +139,7 @@ export function useChatAppearance({
         customCss: chatAppearanceForm.customCss,
         customJs: chatAppearanceForm.customJs,
         statusBarPrompt: chatAppearanceForm.statusBarPrompt,
+        showWorldBookMatches: chatAppearanceForm.showWorldBookMatches,
         chatLorebookId: chatLorebookId.value
       });
       if (!isCurrentAppearanceSave(requestToken, conversationId)) {
@@ -243,6 +249,16 @@ export function useChatAppearance({
       userSettings,
       chatLorebookId
     });
+  }
+
+  function hasDirectAppearanceSettings(source = {}) {
+    return source && typeof source === 'object' && !source.authorSettings && !source.userSettings;
+  }
+
+  function hasOwnAppearanceSetting(source, camelKey, snakeKey) {
+    const input = source && typeof source === 'object' ? source : {};
+    return Object.prototype.hasOwnProperty.call(input, camelKey)
+      || Object.prototype.hasOwnProperty.call(input, snakeKey);
   }
 
   function isCurrentAppearanceApply(applyToken, conversationId) {

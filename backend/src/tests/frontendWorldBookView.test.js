@@ -25,6 +25,13 @@ test('WorldBookView retry action ignores events while loading is active', () => 
   );
 });
 
+test('WorldBookView list error state offers creation and navigation exits', () => {
+  assert.match(
+    worldBookViewTemplate,
+    /<div v-else-if="error" class="empty-state error-state">[\s\S]*@click="retryLoad"[\s\S]*@click="openCreateBook"[\s\S]*新建世界书[\s\S]*@click="emit\('navigate', 'home'\)"[\s\S]*返回首页/
+  );
+});
+
 test('WorldBookView preserves unchanged book and entry references during refreshes', () => {
   assert.match(
     worldBookViewScript,

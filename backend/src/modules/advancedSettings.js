@@ -10,6 +10,7 @@ export function normalizeAdvancedSettings(input = {}) {
     customCss: normalizeText(source.customCss ?? source.custom_css ?? ''),
     customJs: normalizeText(source.customJs ?? source.custom_js ?? ''),
     statusBarPrompt: normalizeText(source.statusBarPrompt ?? source.status_bar_prompt ?? source.status_bar_prompt_text ?? ''),
+    showWorldBookMatches: normalizeBoolean(source.showWorldBookMatches ?? source.show_world_book_matches, true),
     statusBarBlueprint: normalizeStatusBarBlueprint(source.statusBarBlueprint ?? source.status_bar_blueprint ?? {}),
     accessorySkills: normalizeAccessorySkills(source.accessorySkills ?? source.accessory_skills ?? {})
   };
@@ -25,6 +26,9 @@ export function mergeAdvancedSettings(author = {}, user = {}) {
     customCss: mergeAdvancedText(authorSettings.customCss, userSettings.customCss),
     customJs: mergeAdvancedText(authorSettings.customJs, userSettings.customJs),
     statusBarPrompt: mergeAdvancedText(authorSettings.statusBarPrompt, userSettings.statusBarPrompt),
+    showWorldBookMatches: hasOwnSetting(userSource, 'showWorldBookMatches', 'show_world_book_matches')
+      ? userSettings.showWorldBookMatches
+      : authorSettings.showWorldBookMatches,
     statusBarBlueprint: hasStatusBarBlueprint(userSettings.statusBarBlueprint)
       ? userSettings.statusBarBlueprint
       : authorSettings.statusBarBlueprint,
@@ -114,6 +118,21 @@ export function isAccessorySkillActive(skills = {}, key, context = {}) {
 function normalizeText(value) {
   const text = String(value || '');
   return text.trim() ? text : '';
+}
+
+function normalizeBoolean(value, fallback = false) {
+  if (value === true || value === 'true' || value === '1' || value === 'on') {
+    return true;
+  }
+  if (value === false || value === 'false' || value === '0' || value === 'off') {
+    return false;
+  }
+  return fallback;
+}
+
+function hasOwnSetting(source, camelKey, snakeKey) {
+  return Object.prototype.hasOwnProperty.call(source, camelKey)
+    || Object.prototype.hasOwnProperty.call(source, snakeKey);
 }
 
 function normalizeStatusVariables(value, template = '') {

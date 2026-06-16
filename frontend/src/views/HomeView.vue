@@ -1,6 +1,6 @@
 <script setup>
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
-import { measureElement, useVirtualizer } from '@tanstack/vue-virtual';
+import { useVirtualizer } from '@tanstack/vue-virtual';
 import {
   AlertTriangle,
   BookOpen,
@@ -84,7 +84,6 @@ const virtualizerOptions = computed(() => ({
   count: characterRowCount.value,
   getScrollElement: () => scrollContainerRef.value,
   estimateSize: () => (containerWidth.value && containerWidth.value < 620 ? MOBILE_CARD_ESTIMATED_HEIGHT : CARD_ESTIMATED_HEIGHT) + GRID_GAP,
-  measureElement,
   overscan: 3
 }));
 
@@ -175,10 +174,6 @@ const emptyCopy = computed(() => (
     ? '换一个关键词或标签，角色可能就在旁边。'
     : '创建第一个角色，补齐头像、人设、世界观和开场白。'
 ));
-
-function measureVirtualRow(element) {
-  rowVirtualizer.value?.measureElement(element);
-}
 
 function getCharacterRowItems(rowIndex) {
   const normalizedRowIndex = Math.max(0, Math.floor(Number(rowIndex) || 0));
@@ -995,10 +990,23 @@ function formatCount(value) {
       <AlertTriangle :size="36" />
       <h2>加载失败</h2>
       <p>{{ loadError }}</p>
-      <button class="home-primary-action" type="button" :disabled="loading" :aria-busy="loading" @click="retryLoadCharacters">
-        <RefreshCw :size="18" />
-        <span>重新加载</span>
-      </button>
+      <div class="home-empty-actions">
+        <button class="home-primary-action" type="button" :disabled="loading" :aria-busy="loading" @click="retryLoadCharacters">
+          <RefreshCw :size="18" />
+          <span>重新加载</span>
+        </button>
+        <button v-if="hasActiveFilters" class="home-secondary-action" type="button" @click="clearFilters">
+          <span>清除筛选</span>
+        </button>
+        <button class="home-secondary-action" type="button" @click="emit('navigate', 'characterNew')">
+          <Plus :size="18" />
+          <span>创建角色</span>
+        </button>
+        <button class="home-secondary-action" type="button" @click="emit('navigate', 'settings')">
+          <Settings :size="18" />
+          <span>检查设置</span>
+        </button>
+      </div>
     </section>
 
     <section v-else-if="characters.length && isMobileListLayout" class="home-character-list">
@@ -1086,7 +1094,6 @@ function formatCount(value) {
         <div
           v-for="virtualRow in rowVirtualizer.getVirtualItems()"
           :key="virtualRow.key"
-          :ref="measureVirtualRow"
           :data-index="virtualRow.index"
           class="home-character-row"
           :style="{

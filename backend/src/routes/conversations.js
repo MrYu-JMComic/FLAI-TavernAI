@@ -60,6 +60,7 @@ import { renderPromptVariables, resolvePromptUserName } from '../services/prompt
 import { saveConversationAppearance } from '../modules/conversationAppearance.js';
 import { withSavepoint } from '../modules/savepoint.js';
 import { getAccessorySkillsPayload, runAccessoryAgents } from '../services/accessoryAgents.js';
+import { completeNpcOrganization, streamNpcOrganization } from '../services/npcOrganizer.js';
 import {
   getChatProviderSettingsFromContext,
   toConversation,
@@ -67,9 +68,12 @@ import {
   withConversationUsage,
   parseJson,
   normalizeIdList,
+  withModelOverride,
   writeSse
 } from './helpers.js';
-import { sendMessageSchema, updateMessageSchema, saveConversationSettingsSchema, saveStatusBarSchema, economyTransactionSchema, addNpcMemorySchema, updateNpcMemorySchema, addNpcBehaviorSchema, updateNpcBehaviorSchema, updateNpcSchema, createSaveSchema, renameSaveSchema, createConversationSchema, bulkDeleteSchema, validate } from '../validations/schemas.js';
+import { sendMessageSchema, updateMessageSchema, saveConversationSettingsSchema, saveStatusBarSchema, economyTransactionSchema, addNpcMemorySchema, updateNpcMemorySchema, addNpcBehaviorSchema, updateNpcBehaviorSchema, updateNpcSchema, npcOrganizerSchema, createSaveSchema, renameSaveSchema, createConversationSchema, bulkDeleteSchema, validate } from '../validations/schemas.js';
+
+const CHAT_STREAM_HEARTBEAT_MS = 15_000;
 
 export function createConversationsRouter(ctx) {
   const { db, requireAuth, asyncRoute, newId, nowIso, withEtag, withListCache } = ctx;
@@ -230,6 +234,7 @@ export function createConversationsRouter(ctx) {
     const recentTexts = recentForWI.map((m) => m.content);
     recentTexts.push(processedUserText);
     const worldBookEntries = matchWorldBookEntries(db, character.id, recentTexts, { conversationId: conversation.id });
+    const worldBookMatches = summarizeWorldBookMatches(worldBookEntries);
     const userMods = getEnabledModsForUser(db, request.auth.user.id, { characterId: character.id });
     const accessoryState = getAccessorySkillsPayload(conversation, statusBar);
     const npcPrompt = accessoryState.active.npcAgent ? buildNpcBehaviorPrompt(db, conversation.id) : '';
@@ -282,6 +287,7 @@ export function createConversationsRouter(ctx) {
         settings: settings.value,
         userMessage,
         statusBar,
+        worldBookMatches,
         thinkingEnabled: aiOptions.thinkingEnabled,
         completionOptions: aiOptions
       });
@@ -290,11 +296,26 @@ export function createConversationsRouter(ctx) {
 
     const result = await generateCompletion(settings.value, modelMessages, aiOptions);
     if (!hasAssistantPayload(result)) {
+      const diagnosticId = createChatDiagnosticId();
+      logAssistantPayloadFailure({
+        diagnosticId,
+        stage: 'provider-empty',
+        mode: 'json',
+        request,
+        conversation,
+        character,
+        settings: settings.value,
+        result,
+        modelMessages,
+        worldBookMatches
+      });
       response.status(502).json({
         error: '模型没有返回正文，请重试或检查当前模型/网关是否支持该对话格式。',
+        diagnosticId,
         accepted: true,
         userMessage,
-        provider: result.provider
+        provider: result.provider,
+        worldBookMatches
       });
       return;
     }
@@ -310,11 +331,26 @@ export function createConversationsRouter(ctx) {
       }
     });
     if (!assistantMessage) {
+      const diagnosticId = createChatDiagnosticId();
+      logAssistantPayloadFailure({
+        diagnosticId,
+        stage: 'postprocess-empty',
+        mode: 'json',
+        request,
+        conversation,
+        character,
+        settings: settings.value,
+        result,
+        modelMessages,
+        worldBookMatches
+      });
       response.status(502).json({
         error: '模型回复被处理后为空，请检查输出正则或重试。',
+        diagnosticId,
         accepted: true,
         userMessage,
-        provider: result.provider
+        provider: result.provider,
+        worldBookMatches
       });
       return;
     }
@@ -323,6 +359,7 @@ export function createConversationsRouter(ctx) {
       assistantMessage,
       usage: assistantMessage.usage,
       provider: result.provider,
+      worldBookMatches,
       statusBar: getStatusBar(db, request.auth.user.id, conversation.id),
       accessoryBackground: true
     });
@@ -535,6 +572,85 @@ export function createConversationsRouter(ctx) {
     const result = hideEmptyConversationNpcs(db, request.auth.user.id, request.params.id, character?.name || '');
     response.json({ ok: true, ...result });
   });
+
+  router.post('/:id/npcs/organize', requireAuth, validate(npcOrganizerSchema), asyncRoute(async (request, response) => {
+    const conversation = getConversation(request.auth.user.id, request.params.id);
+    if (!conversation) {
+      response.status(404).json({ error: '对话不存在' });
+      return;
+    }
+
+    const settings = getChatProviderSettings(request.auth.user.id);
+    if (!settings.ok) {
+      response.status(400).json({ error: settings.error });
+      return;
+    }
+
+    const character = getCharacter(db, request.auth.user.id, conversation.characterId);
+    const effectiveSettings = withModelOverride(settings.value, request.body?.modelOverride);
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(new Error('AI NPC 整理请求超时，请稍后重试。')), 300000);
+    request.on('aborted', () => controller.abort(new Error('客户端已取消 AI NPC 整理请求。')));
+
+    const organizerRequest = {
+      database: db,
+      userId: request.auth.user.id,
+      conversationId: request.params.id,
+      conversation,
+      character,
+      requirement: request.body?.requirement || '',
+      selectedNpc: request.body?.selectedNpc || '',
+      signal: controller.signal
+    };
+
+    try {
+      if (request.body?.stream === true) {
+        request.socket?.setTimeout?.(0);
+        response.socket?.setTimeout?.(0);
+        response.setTimeout?.(0);
+        response.writeHead(200, {
+          'Content-Type': 'text/event-stream; charset=utf-8',
+          'Content-Encoding': 'identity',
+          'Cache-Control': 'no-cache, no-transform',
+          Connection: 'keep-alive',
+          'X-Accel-Buffering': 'no'
+        });
+        response.flushHeaders?.();
+        const heartbeat = setInterval(() => writeSse(response, 'ping', { at: Date.now() }), 15000);
+        try {
+          const result = await streamNpcOrganization(effectiveSettings, {
+            ...organizerRequest,
+            emit: (event, data) => writeSse(response, event, data)
+          });
+          writeSse(response, 'done', result);
+          response.end();
+        } catch (error) {
+          if (!request.aborted && !response.destroyed) {
+            const message = controller.signal.aborted
+              ? controller.signal.reason?.message || 'AI NPC 整理请求已中断，请重试。'
+              : normalizeNpcOrganizerError(error);
+            writeSse(response, 'error', { error: message });
+            response.end();
+          }
+        } finally {
+          clearInterval(heartbeat);
+        }
+        return;
+      }
+
+      response.json(await completeNpcOrganization(effectiveSettings, organizerRequest));
+    } catch (error) {
+      if (request.aborted || response.destroyed) {
+        return;
+      }
+      const message = controller.signal.aborted
+        ? controller.signal.reason?.message || 'AI NPC 整理请求已中断，请重试。'
+        : normalizeNpcOrganizerError(error);
+      response.status(controller.signal.aborted ? 504 : 400).json({ error: message });
+    } finally {
+      clearTimeout(timeout);
+    }
+  }));
 
   router.get('/:id/npcs/:npc/memories', requireAuth, (request, response) => {
     const conversation = getConversation(request.auth.user.id, request.params.id);
@@ -912,6 +1028,31 @@ export function createConversationsRouter(ctx) {
     return messages;
   }
 
+  const WORLD_BOOK_MATCH_SUMMARY_LIMIT = 12;
+
+  function summarizeWorldBookMatches(entries = []) {
+    const sourceEntries = Array.isArray(entries) ? entries : [];
+    const matches = [];
+    for (const entry of sourceEntries) {
+      if (!entry?.id) {
+        continue;
+      }
+      matches.push({
+        id: entry.id,
+        name: entry.name || '未命名条目',
+        worldBookId: entry.worldBookId || '',
+        worldBookName: entry.worldBookName || '未命名世界书',
+        position: entry.position || 'before_char',
+        depth: Number.isFinite(Number(entry.depth)) ? Number(entry.depth) : 0,
+        role: Number.isFinite(Number(entry.role)) ? Number(entry.role) : 0
+      });
+      if (matches.length >= WORLD_BOOK_MATCH_SUMMARY_LIMIT) {
+        break;
+      }
+    }
+    return matches;
+  }
+
   function normalizeModelName(value) {
     const name = String(value || '').trim();
     return /^[A-Za-z0-9_-]{1,64}$/.test(name) ? name : '';
@@ -928,11 +1069,16 @@ export function createConversationsRouter(ctx) {
     settings,
     userMessage,
     statusBar = null,
+    worldBookMatches = [],
     thinkingEnabled = true,
     completionOptions = {}
   }) {
+    request.socket?.setTimeout?.(0);
+    response.socket?.setTimeout?.(0);
+    response.setTimeout?.(0);
     response.writeHead(200, {
       'Content-Type': 'text/event-stream; charset=utf-8',
+      'Content-Encoding': 'identity',
       'Cache-Control': 'no-cache, no-transform',
       Connection: 'keep-alive',
       'X-Accel-Buffering': 'no'
@@ -966,13 +1112,29 @@ export function createConversationsRouter(ctx) {
     emit('meta', {
       provider: settings.gatewayName,
       model: settings.model,
-      reasoning: settings.supportsReasoning && thinkingEnabled
+      reasoning: settings.supportsReasoning && thinkingEnabled,
+      worldBookMatches
     });
+    const heartbeat = setInterval(() => writeSse(response, 'ping', { at: Date.now() }), CHAT_STREAM_HEARTBEAT_MS);
 
     try {
       const result = await streamCompletion(settings, modelMessages, emit, controller.signal, { thinkingEnabled, ...completionOptions });
       if (!hasAssistantPayload(result)) {
-        emit('error', { error: '模型没有返回正文，请重试或检查当前模型/网关是否支持该对话格式。' });
+        const diagnosticId = createChatDiagnosticId();
+        logAssistantPayloadFailure({
+          diagnosticId,
+          stage: 'provider-empty',
+          mode: 'stream',
+          request,
+          conversation,
+          character,
+          settings,
+          result,
+          partialAssistant,
+          modelMessages,
+          worldBookMatches
+        });
+        emit('error', { error: '模型没有返回正文，请重试或检查当前模型/网关是否支持该对话格式。', diagnosticId });
         response.end();
         return;
       }
@@ -989,7 +1151,21 @@ export function createConversationsRouter(ctx) {
         }
       });
       if (!assistantMessage) {
-        emit('error', { error: '模型回复被处理后为空，请检查输出正则或重试。' });
+        const diagnosticId = createChatDiagnosticId();
+        logAssistantPayloadFailure({
+          diagnosticId,
+          stage: 'postprocess-empty',
+          mode: 'stream',
+          request,
+          conversation,
+          character,
+          settings,
+          result,
+          partialAssistant,
+          modelMessages,
+          worldBookMatches
+        });
+        emit('error', { error: '模型回复被处理后为空，请检查输出正则或重试。', diagnosticId });
         response.end();
         return;
       }
@@ -998,6 +1174,7 @@ export function createConversationsRouter(ctx) {
         assistantMessage,
         usage: assistantMessage.usage,
         provider: result.provider,
+        worldBookMatches,
         statusBar: getStatusBar(db, userId, conversation.id),
         accessoryBackground: true
       });
@@ -1035,6 +1212,7 @@ export function createConversationsRouter(ctx) {
         response.end();
       }
     } finally {
+      clearInterval(heartbeat);
       clearTimeout(serverTimeout);
     }
   }
@@ -1099,6 +1277,95 @@ export function createConversationsRouter(ctx) {
       return true;
     }
     return Boolean(String(row.content || '').trim() || String(row.reasoning || '').trim());
+  }
+
+  function createChatDiagnosticId() {
+    return `chat-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+  }
+
+  function logAssistantPayloadFailure({
+    diagnosticId,
+    stage,
+    mode,
+    request,
+    conversation,
+    character,
+    settings,
+    result,
+    partialAssistant,
+    modelMessages,
+    worldBookMatches
+  }) {
+    try {
+      console.warn('[chat] assistant payload missing', {
+        diagnosticId,
+        stage,
+        mode,
+        userId: request?.auth?.user?.id || '',
+        conversationId: conversation?.id || '',
+        characterId: character?.id || conversation?.characterId || conversation?.character_id || '',
+        providerType: settings?.providerType || '',
+        gatewayName: settings?.gatewayName || '',
+        model: settings?.model || '',
+        baseUrlHost: safeUrlHost(settings?.baseUrl),
+        supportsReasoning: Boolean(settings?.supportsReasoning),
+        messageCount: countIterable(modelMessages),
+        worldBookMatchCount: countIterable(worldBookMatches),
+        resultKeys: listOwnKeys(result),
+        resultProvider: result?.provider || '',
+        resultProviderType: result?.providerType || '',
+        resultModel: result?.model || '',
+        contentLength: String(result?.content || '').length,
+        reasoningLength: String(result?.reasoning || '').length,
+        partialContentLength: String(partialAssistant?.content || '').length,
+        partialReasoningLength: String(partialAssistant?.reasoning || '').length,
+        usageKeys: listOwnKeys(result?.usage),
+        providerDiagnostics: result?.diagnostics || null
+      });
+    } catch (error) {
+      console.warn('[chat] assistant payload missing; failed to build diagnostics', diagnosticId, error?.message || error);
+    }
+  }
+
+  function safeUrlHost(value) {
+    try {
+      return value ? new URL(String(value)).host : '';
+    } catch {
+      return '';
+    }
+  }
+
+  function countIterable(value) {
+    if (!value || typeof value[Symbol.iterator] !== 'function') {
+      return 0;
+    }
+    let count = 0;
+    for (const _item of value) {
+      count += 1;
+    }
+    return count;
+  }
+
+  function listOwnKeys(value, limit = 12) {
+    if (!value || typeof value !== 'object') {
+      return [];
+    }
+    const keys = [];
+    for (const key of Object.keys(value)) {
+      keys.push(key);
+      if (keys.length >= limit) {
+        break;
+      }
+    }
+    return keys;
+  }
+
+  function normalizeNpcOrganizerError(error) {
+    const message = String(error?.message || 'AI NPC 整理失败，请稍后重试。');
+    if (/terminated|ECONNRESET|socket|fetch failed|network/i.test(message)) {
+      return 'AI 服务连接中断，请检查网关地址、网络或稍后重试。';
+    }
+    return message;
   }
 
   function isAbortError(error) {

@@ -2814,6 +2814,10 @@ function applyLocalRules(text, rules, phase) {
           <RotateCcw :size="18" />
           <span>{{ loading ? '重试中...' : '重试' }}</span>
         </button>
+        <button class="primary-button" type="button" @click="emit('navigate', 'characterNew')">
+          <Plus :size="18" />
+          <span>创建新角色</span>
+        </button>
         <button class="ghost-button" type="button" @click="emit('navigate', 'home')">
           <ArrowLeft :size="18" />
           <span>返回首页</span>
