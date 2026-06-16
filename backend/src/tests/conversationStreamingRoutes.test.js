@@ -1,12 +1,23 @@
 import assert from 'node:assert/strict';
 import express from 'express';
+import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
 const { createAppDatabase } = await import('../db.js');
 const { createCharacter } = await import('../modules/characters.js');
+const { createEntry, createWorldBook } = await import('../modules/worldBooks.js');
 const { createConversationsRouter } = await import('../routes/conversations.js');
 const { hasUsableProvider } = await import('../services/providers.js');
 const { insertUser, withServer } = await import('./routeTestUtils.js');
+const conversationsRouteSource = readFileSync(new URL('../routes/conversations.js', import.meta.url), 'utf8');
+
+test('chat streaming route keeps SSE connections alive during quiet provider periods', () => {
+  assert.match(conversationsRouteSource, /const CHAT_STREAM_HEARTBEAT_MS = 15_000;/);
+  assert.match(conversationsRouteSource, /response\.socket\?\.setTimeout\?\.\(0\);/);
+  assert.match(conversationsRouteSource, /'Content-Encoding': 'identity'/);
+  assert.match(conversationsRouteSource, /setInterval\(\(\) => writeSse\(response, 'ping'/);
+  assert.match(conversationsRouteSource, /clearInterval\(heartbeat\);/);
+});
 
 test('streaming chat emits provider errors without saving an assistant message', async () => {
   const database = createAppDatabase(':memory:');
@@ -14,6 +25,15 @@ test('streaming chat emits provider errors without saving an assistant message',
   const conversationId = 'stream-route-error-conversation';
   insertUser(database, userId);
   const character = createCharacter(database, userId, { name: 'StreamError', visibility: 'private' });
+  const worldBook = createWorldBook(database, userId, {
+    name: 'Route Lore',
+    characterId: character.id
+  });
+  createEntry(database, userId, worldBook.id, {
+    name: 'Route Secret',
+    triggerKeys: 'secret',
+    content: 'Secret route lore'
+  });
   insertConversation(database, { userId, conversationId, characterId: character.id });
 
   const app = createConversationStreamingApp(database, userId);
@@ -32,12 +52,15 @@ test('streaming chat emits provider errors without saving an assistant message',
       const response = await fetch(`${baseUrl}/api/conversations/${conversationId}/messages`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ content: 'please continue' })
+        body: JSON.stringify({ content: 'please continue secret' })
       });
       const body = await response.text();
 
       assert.equal(response.status, 200);
       assert.match(body, /event: user_message/);
+      assert.match(body, /event: meta/);
+      assert.match(body, /Route Lore/);
+      assert.match(body, /Route Secret/);
       assert.match(body, /event: error/);
       assert.match(body, /Provider exploded/);
 
@@ -45,7 +68,7 @@ test('streaming chat emits provider errors without saving an assistant message',
         .prepare('SELECT role, content FROM messages WHERE conversation_id = ? ORDER BY rowid ASC')
         .all(conversationId)
         .map((row) => ({ role: row.role, content: row.content }));
-      assert.deepEqual(messages, [{ role: 'user', content: 'please continue' }]);
+      assert.deepEqual(messages, [{ role: 'user', content: 'please continue secret' }]);
     });
   } finally {
     globalThis.fetch = originalFetch;

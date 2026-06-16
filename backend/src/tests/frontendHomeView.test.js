@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { countMatches, readVueBlocks } from './frontendSfcTestUtils.js';
+import { countMatches, readFrontendStyles, readVueBlocks } from './frontendSfcTestUtils.js';
 
 const { script: homeViewScript, template: homeViewTemplate } = readVueBlocks('frontend/src/views/HomeView.vue');
+const stylesSource = readFrontendStyles();
 
 test('HomeView retry actions ignore events while their loads are active', () => {
   assert.match(homeViewScript, /const tagLoading = ref\(false\);/);
@@ -32,6 +33,13 @@ test('HomeView retry actions ignore events while their loads are active', () => 
   assert.match(
     homeViewTemplate,
     /<button class="home-primary-action" type="button" :disabled="loading" :aria-busy="loading" @click="retryLoadCharacters">/
+  );
+});
+
+test('HomeView load error state offers filtering, creation, and settings exits', () => {
+  assert.match(
+    homeViewTemplate,
+    /<section v-else-if="loadError" class="home-empty-panel error-state">[\s\S]*@click="retryLoadCharacters"[\s\S]*@click="clearFilters"[\s\S]*清除筛选[\s\S]*@click="emit\('navigate', 'characterNew'\)"[\s\S]*创建角色[\s\S]*@click="emit\('navigate', 'settings'\)"[\s\S]*检查设置/
   );
 });
 
@@ -73,6 +81,81 @@ test('HomeView debounces search reloads while keeping sort and tag changes immed
     /<input v-model\.trim="search" placeholder="[^"]+" aria-label="[^"]+" \/>/
   );
   assert.match(homeViewTemplate, /<select v-model="sort" aria-label="[^"]+">/);
+});
+
+test('HomeView mobile filter controls stick to the internal scroll top', () => {
+  assert.match(
+    stylesSource,
+    /\.home-layout-shell\s*\{[\s\S]*--home-control-sticky-top:\s*10px;[\s\S]*\}/
+  );
+  assert.match(
+    stylesSource,
+    /\.home-control-panel\s*\{[\s\S]*top:\s*var\(--home-control-sticky-top, 10px\);[\s\S]*z-index:\s*19;/
+  );
+  assert.match(
+    stylesSource,
+    /@media \(max-width: 760px\) \{[\s\S]*\.home-layout-shell\s*\{[\s\S]*--home-control-sticky-top:\s*0px;[\s\S]*\}[\s\S]*\.home-control-panel\s*\{[\s\S]*grid-template-columns:\s*minmax\(0, 1fr\) minmax\(104px, 128px\);/
+  );
+  assert.doesNotMatch(
+    stylesSource,
+    /@media \(max-width: 760px\) \{[\s\S]*\.home-layout-shell\s*\{[\s\S]*--home-control-sticky-top:\s*calc\(76px \+ env\(safe-area-inset-top, 0px\)\);/
+  );
+  assert.doesNotMatch(
+    stylesSource,
+    /@media \(max-width: 760px\) \{[\s\S]*\.home-control-panel\s*\{[\s\S]*top:\s*8px;/
+  );
+});
+
+test('HomeView keeps home workbench interactions from changing scrollable overflow', () => {
+  const homeWorkbenchIndex = stylesSource.indexOf('HOME WORKBENCH REDESIGN');
+  const homeWorkbenchStyles = stylesSource.slice(homeWorkbenchIndex);
+
+  assert.notEqual(homeWorkbenchIndex, -1);
+  assert.equal(countMatches(stylesSource, /\.home-character-card:hover/g), 1);
+  assert.match(
+    homeWorkbenchStyles,
+    /Transformed hover states alter the internal home scroller's scrollable overflow\./
+  );
+  assert.match(
+    homeWorkbenchStyles,
+    /@media \(hover: hover\) and \(pointer: fine\) \{[\s\S]*\.home-character-card:hover\s*\{[\s\S]*border-color:\s*color-mix\(in srgb, var\(--green\) 30%, var\(--line\)\);[\s\S]*inset 0 0 0 1px color-mix\(in srgb, var\(--green\) 18%, transparent\),[\s\S]*0 10px 28px rgba\(48, 56, 64, 0\.08\);[\s\S]*\}[\s\S]*\}/
+  );
+  assert.doesNotMatch(homeWorkbenchStyles, /transform\s*:/);
+  assert.doesNotMatch(homeWorkbenchStyles, /transform\s+[0-9.]/);
+  assert.doesNotMatch(homeWorkbenchStyles, /0 18px 42px/);
+});
+
+test('HomeView keeps reaction buttons as stable click targets while counts update', () => {
+  assert.match(
+    stylesSource,
+    /\.home-reaction-button\s*\{[\s\S]*min-width:\s*54px;[\s\S]*font-variant-numeric:\s*tabular-nums;[\s\S]*\}/
+  );
+  assert.match(
+    stylesSource,
+    /\.home-reaction-button span\s*\{[\s\S]*min-width:\s*2ch;[\s\S]*text-align:\s*right;[\s\S]*\}/
+  );
+});
+
+test('HomeView keeps reaction clicks from becoming scroll anchors', () => {
+  assert.doesNotMatch(homeViewScript, /\bmeasureElement\b/);
+  assert.doesNotMatch(homeViewScript, /function measureVirtualRow/);
+  assert.doesNotMatch(homeViewTemplate, /:ref="measureVirtualRow"/);
+  assert.match(
+    stylesSource,
+    /\.home-layout-shell \.page-shell\s*\{[\s\S]*overflow-anchor:\s*none;[\s\S]*\}/
+  );
+  assert.match(
+    stylesSource,
+    /\.home-control-panel,\s*[\r\n]+\.home-character-scroll,\s*[\r\n]+\.home-character-spacer,\s*[\r\n]+\.home-character-list,\s*[\r\n]+\.home-character-row,\s*[\r\n]+\.home-character-card\s*\{[\s\S]*overflow-anchor:\s*none;[\s\S]*\}/
+  );
+  assert.match(
+    stylesSource,
+    /\.home-character-scroll\s*\{[\s\S]*overscroll-behavior:\s*contain;[\s\S]*\}/
+  );
+  assert.match(
+    stylesSource,
+    /\.home-character-row \.home-character-card\s*\{[\s\S]*height:\s*372px;[\s\S]*\}/
+  );
 });
 
 test('HomeView scans sort options and selected hot tags directly', () => {

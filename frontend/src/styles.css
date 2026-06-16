@@ -27,6 +27,14 @@
     linear-gradient(180deg, #fbfaf6 0%, #eef4ef 48%, #e6eee9 100%);
   --chat-sidebar-bg: color-mix(in srgb, var(--surface) 88%, var(--green-soft));
   --touch-min: 44px;
+  --scrollbar-size: 10px;
+  --scrollbar-track: color-mix(in srgb, var(--surface-strong) 58%, transparent);
+  --scrollbar-track-hover: color-mix(in srgb, var(--surface-strong) 76%, transparent);
+  --scrollbar-track-border: color-mix(in srgb, var(--line) 72%, transparent);
+  --scrollbar-thumb: color-mix(in srgb, var(--green) 50%, var(--primary));
+  --scrollbar-thumb-end: color-mix(in srgb, var(--primary) 62%, var(--surface));
+  --scrollbar-thumb-hover: color-mix(in srgb, var(--green) 66%, var(--primary));
+  --scrollbar-thumb-hover-end: color-mix(in srgb, var(--primary) 76%, var(--surface));
 }
 
 :root[data-theme="dark"] {
@@ -51,11 +59,58 @@
   --chat-shell-bg:
     linear-gradient(180deg, #18201d 0%, #111614 100%);
   --chat-sidebar-bg: #1a211e;
+  --scrollbar-track: color-mix(in srgb, var(--surface-strong) 72%, #050806 18%);
+  --scrollbar-track-hover: color-mix(in srgb, var(--surface-strong) 84%, #050806 12%);
+  --scrollbar-track-border: color-mix(in srgb, var(--line) 78%, #000 12%);
+  --scrollbar-thumb: color-mix(in srgb, var(--green) 58%, var(--primary));
+  --scrollbar-thumb-end: color-mix(in srgb, var(--primary) 58%, var(--surface));
+  --scrollbar-thumb-hover: color-mix(in srgb, var(--green) 70%, var(--primary));
+  --scrollbar-thumb-hover-end: color-mix(in srgb, var(--primary) 72%, var(--surface));
 }
 
 * {
   box-sizing: border-box;
   -webkit-tap-highlight-color: transparent;
+  scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
+  scrollbar-width: thin;
+}
+
+*::-webkit-scrollbar {
+  width: var(--scrollbar-size);
+  height: var(--scrollbar-size);
+}
+
+*::-webkit-scrollbar-track {
+  background: var(--scrollbar-track);
+}
+
+*::-webkit-scrollbar-track:hover {
+  background: var(--scrollbar-track-hover);
+}
+
+*::-webkit-scrollbar-thumb {
+  min-height: 42px;
+  border: 2px solid transparent;
+  border-radius: 999px;
+  background:
+    linear-gradient(180deg, var(--scrollbar-thumb), var(--scrollbar-thumb-end))
+    padding-box;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background:
+    linear-gradient(180deg, var(--scrollbar-thumb-hover), var(--scrollbar-thumb-hover-end))
+    padding-box;
+}
+
+*::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+*::-webkit-scrollbar-button {
+  display: none;
+  width: 0;
+  height: 0;
 }
 
 :where(a, button, input, textarea, select, summary, label, [role="button"], [role="tab"], [tabindex]) {
@@ -94,36 +149,33 @@ button {
 }
 
 :where(button, a[href], label, [role="button"], [role="tab"], [data-ripple]) {
+  position: relative;
   --ripple-x: 50%;
   --ripple-y: 50%;
   --ripple-size: 0px;
 }
 
-:where(button, a[href], label, [role="button"], [role="tab"], [data-ripple])[data-ripple-active] {
-  position: relative;
-  overflow: hidden;
-}
-
 :where(button, a[href], label, [role="button"], [role="tab"], [data-ripple])[data-ripple-active]::after {
   content: "";
   position: absolute;
-  left: var(--ripple-x);
-  top: var(--ripple-y);
+  inset: 0;
   z-index: 1;
-  width: var(--ripple-size);
-  height: var(--ripple-size);
-  border-radius: 999px;
+  border-radius: inherit;
   pointer-events: none;
-  background: color-mix(in srgb, currentColor 22%, transparent);
+  background:
+    radial-gradient(
+      circle at var(--ripple-x) var(--ripple-y),
+      color-mix(in srgb, currentColor 24%, transparent) 0,
+      color-mix(in srgb, currentColor 14%, transparent) 28%,
+      transparent 64%
+    );
   opacity: 0;
-  transform: translate(-50%, -50%) scale(0);
   animation: ui-local-ripple 540ms ease-out;
 }
 
 @keyframes ui-local-ripple {
   0% {
     opacity: 0.28;
-    transform: translate(-50%, -50%) scale(0);
   }
 
   72% {
@@ -132,7 +184,6 @@ button {
 
   100% {
     opacity: 0;
-    transform: translate(-50%, -50%) scale(1);
   }
 }
 
@@ -459,6 +510,79 @@ p {
 .layout-shell {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
+}
+
+.home-layout-shell {
+  --home-control-sticky-top: 10px;
+  min-height: 0;
+  height: 100vh;
+  height: 100svh;
+  height: 100dvh;
+  overflow: hidden;
+}
+
+.home-layout-shell .page-shell {
+  min-height: 0;
+  padding-top: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: none;
+  overflow-anchor: none;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+  scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
+}
+
+.home-layout-shell .page-shell::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+.home-layout-shell .page-shell::-webkit-scrollbar-track {
+  border-left: 1px solid var(--scrollbar-track-border);
+  background: var(--scrollbar-track);
+}
+
+.home-layout-shell .page-shell::-webkit-scrollbar-thumb {
+  min-height: 56px;
+  border: 2px solid transparent;
+  border-radius: 999px;
+  background:
+    linear-gradient(
+      180deg,
+      var(--scrollbar-thumb),
+      var(--scrollbar-thumb-end)
+    )
+    padding-box;
+}
+
+.home-layout-shell .page-shell::-webkit-scrollbar-thumb:hover {
+  background:
+    linear-gradient(
+      180deg,
+      var(--scrollbar-thumb-hover),
+      var(--scrollbar-thumb-hover-end)
+    )
+    padding-box;
+}
+
+.home-layout-shell .page-shell::-webkit-scrollbar-corner,
+.home-layout-shell .page-shell::-webkit-scrollbar-button {
+  display: none;
+}
+
+.home-layout-shell .home-workbench {
+  padding-top: 28px;
+}
+
+.home-control-panel,
+.home-character-scroll,
+.home-character-spacer,
+.home-character-list,
+.home-character-row,
+.home-character-card {
+  overflow-anchor: none;
 }
 
 .topbar {
@@ -1759,9 +1883,7 @@ p {
   scroll-padding-inline: 8px;
   -webkit-overflow-scrolling: touch;
   scrollbar-width: thin;
-  scrollbar-color:
-    color-mix(in srgb, var(--green) 44%, var(--primary))
-    color-mix(in srgb, var(--surface-strong) 72%, transparent);
+  scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
   border-color: color-mix(in srgb, var(--line) 82%, var(--primary) 18%);
   background: color-mix(in srgb, var(--surface-strong) 92%, transparent);
   box-shadow: 0 12px 30px rgba(67, 45, 30, 0.11);
@@ -1777,7 +1899,7 @@ p {
 
 .character-section-nav::-webkit-scrollbar-track {
   border-radius: 999px;
-  background: color-mix(in srgb, var(--surface-strong) 68%, transparent);
+  background: var(--scrollbar-track);
 }
 
 .character-section-nav::-webkit-scrollbar-thumb {
@@ -1786,8 +1908,8 @@ p {
   background:
     linear-gradient(
       90deg,
-      color-mix(in srgb, var(--green) 56%, var(--primary)),
-      color-mix(in srgb, var(--primary) 64%, var(--surface))
+      var(--scrollbar-thumb),
+      var(--scrollbar-thumb-end)
     )
     padding-box;
 }
@@ -2322,9 +2444,7 @@ section[id^="extension-section-"] {
 .ai-draft-panel,
 .ai-draft-panel .field textarea {
   scrollbar-width: thin;
-  scrollbar-color:
-    color-mix(in srgb, var(--green) 48%, var(--primary))
-    color-mix(in srgb, var(--surface-strong) 76%, transparent);
+  scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
 }
 
 .ai-draft-panel::-webkit-scrollbar,
@@ -2336,7 +2456,7 @@ section[id^="extension-section-"] {
 .ai-draft-panel::-webkit-scrollbar-track,
 .ai-draft-panel .field textarea::-webkit-scrollbar-track {
   border-radius: 999px;
-  background: color-mix(in srgb, var(--surface-strong) 68%, transparent);
+  background: var(--scrollbar-track);
 }
 
 .ai-draft-panel::-webkit-scrollbar-thumb,
@@ -2347,8 +2467,8 @@ section[id^="extension-section-"] {
   background:
     linear-gradient(
       180deg,
-      color-mix(in srgb, var(--green) 60%, var(--primary)),
-      color-mix(in srgb, var(--primary) 64%, var(--surface))
+      var(--scrollbar-thumb),
+      var(--scrollbar-thumb-end)
     )
     padding-box;
 }
@@ -2358,8 +2478,8 @@ section[id^="extension-section-"] {
   background:
     linear-gradient(
       180deg,
-      color-mix(in srgb, var(--green) 72%, var(--primary)),
-      color-mix(in srgb, var(--primary) 78%, var(--surface))
+      var(--scrollbar-thumb-hover),
+      var(--scrollbar-thumb-hover-end)
     )
     padding-box;
 }
@@ -3716,6 +3836,24 @@ section[id^="extension-section-"] {
     padding: 18px 14px 26px;
   }
 
+  .home-layout-shell .page-shell {
+    scrollbar-gutter: auto;
+  }
+
+  .home-layout-shell .page-shell::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+
+  .home-layout-shell .page-shell::-webkit-scrollbar-track {
+    border-left: 0;
+    background: transparent;
+  }
+
+  .home-layout-shell .home-workbench {
+    padding-top: 18px;
+  }
+
   .topbar {
     padding: 12px 14px;
     grid-template-columns: minmax(0, 1fr) auto auto;
@@ -4234,6 +4372,107 @@ section[id^="extension-section-"] {
   color: var(--text);
   font-size: 0.82rem;
   font-weight: 800;
+}
+
+.chat-setting-toggle {
+  position: relative;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 12px;
+  min-height: 48px;
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, var(--line) 82%, transparent);
+  border-radius: 8px;
+  color: var(--text);
+  background: color-mix(in srgb, var(--surface) 72%, var(--surface-strong));
+  cursor: pointer;
+  line-height: 1.35;
+  transition:
+    border-color 0.16s ease,
+    background 0.16s ease,
+    box-shadow 0.16s ease;
+}
+
+.chat-setting-toggle:hover {
+  border-color: color-mix(in srgb, var(--primary) 34%, var(--line));
+}
+
+.chat-setting-toggle-input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.chat-setting-toggle-control {
+  position: relative;
+  width: 44px;
+  height: 24px;
+  border: 1px solid color-mix(in srgb, var(--line) 92%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--muted) 18%, var(--surface));
+  box-shadow: inset 0 1px 2px color-mix(in srgb, var(--text) 10%, transparent);
+  transition:
+    border-color 0.16s ease,
+    background 0.16s ease;
+}
+
+.chat-setting-toggle-control::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--surface);
+  box-shadow: 0 2px 6px color-mix(in srgb, var(--text) 22%, transparent);
+  transition:
+    background 0.16s ease,
+    transform 0.16s ease;
+}
+
+.chat-setting-toggle-input:checked + .chat-setting-toggle-control {
+  border-color: color-mix(in srgb, var(--primary) 70%, var(--line));
+  background: color-mix(in srgb, var(--primary) 78%, var(--green));
+}
+
+.chat-setting-toggle-input:checked + .chat-setting-toggle-control::after {
+  transform: translateX(20px);
+  background: #fffaf2;
+}
+
+.chat-setting-toggle-input:focus-visible + .chat-setting-toggle-control {
+  outline: 2px solid color-mix(in srgb, var(--primary) 40%, transparent);
+  outline-offset: 2px;
+}
+
+.chat-setting-toggle-input:disabled + .chat-setting-toggle-control,
+.chat-setting-toggle-input:disabled ~ .chat-setting-toggle-copy {
+  opacity: 0.62;
+}
+
+.chat-setting-toggle:has(.chat-setting-toggle-input:disabled) {
+  cursor: not-allowed;
+}
+
+.chat-setting-toggle-copy {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.chat-setting-toggle-copy strong {
+  color: var(--text);
+  font-size: 0.82rem;
+  font-weight: 800;
+}
+
+.chat-setting-toggle-copy small {
+  color: var(--muted);
+  font-size: 0.76rem;
 }
 
 .chat-setting-field input,
@@ -5239,6 +5478,21 @@ fieldset.accessory-skills-grid:disabled {
   opacity: 0.46;
 }
 
+.swipe-counter {
+  display: inline-flex;
+  min-height: 28px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid color-mix(in srgb, var(--primary) 20%, var(--line));
+  border-radius: 8px;
+  padding: 0 8px;
+  color: var(--text);
+  background: color-mix(in srgb, var(--primary-soft) 42%, var(--surface));
+  font-size: 0.74rem;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
 .message-edit-box {
   display: grid;
   gap: 8px;
@@ -6060,6 +6314,12 @@ fieldset.accessory-skills-grid:disabled {
     overflow: hidden;
     clip: rect(0, 0, 0, 0);
     white-space: nowrap;
+  }
+
+  .swipe-counter {
+    min-height: 44px;
+    padding: 0 10px;
+    font-size: 0.76rem;
   }
 
   .history-tools {
@@ -9657,7 +9917,6 @@ fieldset.accessory-skills-grid:disabled {
     background 0.16s ease,
     border-color 0.16s ease,
     color 0.16s ease,
-    transform 0.16s ease,
     box-shadow 0.16s ease;
 }
 
@@ -9680,13 +9939,21 @@ fieldset.accessory-skills-grid:disabled {
   background: color-mix(in srgb, var(--surface) 82%, rgba(255, 255, 255, 0.58));
 }
 
-.home-primary-action:hover:not(:disabled),
+/* Transformed hover states alter the internal home scroller's scrollable overflow. */
+.home-primary-action:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--primary) 34%, var(--line));
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, #fff 18%, transparent),
+    0 14px 30px color-mix(in srgb, var(--primary) 22%, transparent);
+}
+
 .home-secondary-action:hover:not(:disabled),
 .home-quick-action:hover:not(:disabled),
 .home-icon-button:hover:not(:disabled),
 .home-tag-chip:hover:not(:disabled),
 .home-reaction-button:hover:not(:disabled) {
-  transform: translateY(-1px);
+  border-color: color-mix(in srgb, var(--primary) 30%, var(--line));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--primary) 14%, transparent);
 }
 
 .home-primary-action.compact,
@@ -9820,8 +10087,8 @@ fieldset.accessory-skills-grid:disabled {
 
 .home-control-panel {
   position: sticky;
-  top: 10px;
-  z-index: 9;
+  top: var(--home-control-sticky-top, 10px);
+  z-index: 19;
   display: grid;
   grid-template-columns: minmax(220px, 1fr) minmax(160px, 220px) 44px;
   gap: 10px;
@@ -10002,7 +10269,7 @@ fieldset.accessory-skills-grid:disabled {
   overflow-x: hidden;
   overflow-y: auto;
   padding: 2px 2px 14px;
-  overscroll-behavior: auto;
+  overscroll-behavior: contain;
   scrollbar-gutter: stable;
 }
 
@@ -10036,8 +10303,11 @@ fieldset.accessory-skills-grid:disabled {
   box-shadow: 0 10px 28px rgba(48, 56, 64, 0.08);
   transition:
     border-color 0.16s ease,
-    box-shadow 0.16s ease,
-    transform 0.16s ease;
+    box-shadow 0.16s ease;
+}
+
+.home-character-row .home-character-card {
+  height: 372px;
 }
 
 :root[data-theme="dark"] .home-character-card {
@@ -10046,10 +10316,13 @@ fieldset.accessory-skills-grid:disabled {
     var(--surface);
 }
 
-.home-character-card:hover {
-  transform: translateY(-2px);
-  border-color: color-mix(in srgb, var(--green) 30%, var(--line));
-  box-shadow: 0 18px 42px rgba(48, 56, 64, 0.13);
+@media (hover: hover) and (pointer: fine) {
+  .home-character-card:hover {
+    border-color: color-mix(in srgb, var(--green) 30%, var(--line));
+    box-shadow:
+      inset 0 0 0 1px color-mix(in srgb, var(--green) 18%, transparent),
+      0 10px 28px rgba(48, 56, 64, 0.08);
+  }
 }
 
 .home-card-topline,
@@ -10094,12 +10367,19 @@ fieldset.accessory-skills-grid:disabled {
 
 .home-reaction-button {
   gap: 4px;
+  min-width: 54px;
   min-height: 30px;
   padding: 0 8px;
   color: var(--muted);
   border-color: color-mix(in srgb, var(--line) 80%, transparent);
   background: color-mix(in srgb, var(--surface) 76%, transparent);
   font-size: 0.74rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.home-reaction-button span {
+  min-width: 2ch;
+  text-align: right;
 }
 
 .home-reaction-button.favorite.active {
@@ -10322,6 +10602,12 @@ fieldset.accessory-skills-grid:disabled {
 }
 
 @media (max-width: 760px) {
+  .home-layout-shell {
+    --home-control-sticky-top: 0px;
+    min-height: 100svh;
+    height: 100svh;
+  }
+
   .home-workbench {
     gap: 13px;
   }
@@ -10386,7 +10672,6 @@ fieldset.accessory-skills-grid:disabled {
   }
 
   .home-control-panel {
-    top: calc(76px + env(safe-area-inset-top, 0px));
     grid-template-columns: minmax(0, 1fr) minmax(104px, 128px);
     gap: 8px;
     padding: 8px;
@@ -10395,13 +10680,13 @@ fieldset.accessory-skills-grid:disabled {
       gap 0.22s ease,
       padding 0.22s ease,
       background 0.18s ease,
-      box-shadow 0.18s ease,
-      transform 0.18s ease;
+      box-shadow 0.18s ease;
   }
 
   .home-control-panel:focus-within {
-    transform: translateY(-1px);
-    box-shadow: 0 16px 34px rgba(48, 56, 64, 0.12);
+    box-shadow:
+      inset 0 0 0 1px color-mix(in srgb, var(--green) 12%, transparent),
+      0 14px 32px rgba(48, 56, 64, 0.09);
   }
 
   .home-select-field {
@@ -10429,7 +10714,6 @@ fieldset.accessory-skills-grid:disabled {
       border-color 0.18s ease,
       background 0.18s ease,
       color 0.18s ease,
-      transform 0.16s ease,
       box-shadow 0.18s ease;
   }
 
@@ -10441,7 +10725,8 @@ fieldset.accessory-skills-grid:disabled {
   }
 
   .home-sort-button:active {
-    transform: scale(0.97);
+    background: color-mix(in srgb, var(--primary-soft) 54%, var(--surface));
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--primary) 16%, transparent);
   }
 
   .home-section-head {

@@ -6,7 +6,6 @@ The autonomous loop should choose one small item per run. Add new findings here 
 
 ### 原有任务
 - Improve empty, loading, and error states in the Vue views.
-- Add backend tests for provider settings, character CRUD, and streaming error paths.
 - Improve frontend API error handling and user-facing messages.
 - Add lightweight accessibility checks for forms and chat controls.
 - Burn down `node scripts/find-inaccessible-vue-controls.mjs --json` findings.
@@ -40,6 +39,8 @@ The autonomous loop should choose one small item per run. Add new findings here 
 
 ## Done
 
+- 2026-06-10: Added chat failure recovery actions, latest world-book match explainability, provider connection probing, and next-step actions in home, character, world-book, and preset error states.
+- 2026-06-10: Reconciled the backend-test backlog item after provider settings, character route, and streaming error route coverage existed, while adding world-book match route coverage.
 - 2026-06-09: Built NPC memory/behavior detail lists and empty-NPC hiding with direct scans instead of map/filter intermediates.
 - 2026-06-09: Normalized backend talent pools and talent rows with direct loops and capped valid talent scans.
 - 2026-06-09: Scanned backend swipe rows directly and counted active swipe state without loading full alternate rows.

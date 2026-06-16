@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import { findSseBlockSeparator, forEachSseLine } from '../../../shared/sse.js';
 
-const { apiRequest, streamCharacterDraft, updateCharacter } = await import('../../../frontend/src/api.js');
+const { apiRequest, streamCharacterDraft, streamNpcOrganizer, updateCharacter } = await import('../../../frontend/src/api.js');
 const frontendApiSource = readFileSync(new URL('../../../frontend/src/api.js', import.meta.url), 'utf8');
 
 function jsonResponse(data, status = 200) {
@@ -104,6 +104,40 @@ test('frontend assistant SSE errors preserve plain text payloads', async () => {
       () => streamCharacterDraft({ name: 'Plain Text Error Target' }),
       /Upstream timeout while streaming/
     );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('frontend NPC organizer streams through the conversation NPC organize route', async () => {
+  const originalFetch = globalThis.fetch;
+  const requests = [];
+
+  globalThis.fetch = async (url, request = {}) => {
+    requests.push({ url: String(url), request });
+    if (String(url).endsWith('/api/csrf-token')) {
+      return jsonResponse({ csrfToken: 'csrf-for-npc-organizer-test' });
+    }
+    return sseResponse('event: done\ndata: {"summary":"ok","toolCalls":[]}\n\n');
+  };
+
+  try {
+    const result = await streamNpcOrganizer(
+      'conversation-1',
+      { requirement: '整理 NPC', selectedNpc: 'Mira' }
+    );
+
+    assert.equal(result.summary, 'ok');
+    assert.ok(requests.length >= 1);
+    const streamRequest = requests[requests.length - 1];
+    assert.equal(streamRequest.url, '/api/conversations/conversation-1/npcs/organize');
+    assert.equal(streamRequest.request.method, 'POST');
+    assert.ok(streamRequest.request.headers['X-CSRF-Token']);
+    assert.deepEqual(JSON.parse(streamRequest.request.body), {
+      requirement: '整理 NPC',
+      selectedNpc: 'Mira',
+      stream: true
+    });
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -282,6 +316,65 @@ test('frontend API HTTP errors ignore HTML response bodies', async () => {
         assert.deepEqual(error.data, { rawText: '<!doctype html><title>Proxy Error</title>' });
         return true;
       }
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('frontend API retries transient idempotent proxy failures', async () => {
+  const originalFetch = globalThis.fetch;
+  const requests = [];
+
+  globalThis.fetch = async (url, request = {}) => {
+    requests.push({ url: String(url), request });
+    if (requests.length === 1) {
+      return textResponse('<!doctype html><title>Proxy starting</title>', 503);
+    }
+    return jsonResponse({ ok: true });
+  };
+
+  try {
+    const result = await apiRequest('/api/transient-load');
+
+    assert.deepEqual(result, { ok: true });
+    assert.deepEqual(
+      requests.map(({ url }) => url),
+      ['/api/transient-load', '/api/transient-load']
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('frontend API does not retry transient mutation failures', async () => {
+  const originalFetch = globalThis.fetch;
+  const requests = [];
+
+  globalThis.fetch = async (url, request = {}) => {
+    requests.push({ url: String(url), request });
+    if (String(url).endsWith('/api/csrf-token')) {
+      return jsonResponse({ csrfToken: 'csrf-for-no-mutation-retry-test' });
+    }
+    return textResponse('Backend is restarting', 503);
+  };
+
+  try {
+    await assert.rejects(
+      () => apiRequest('/api/transient-mutation', {
+        method: 'POST',
+        body: JSON.stringify({ value: true })
+      }),
+      (error) => {
+        assert.equal(error.status, 503);
+        assert.equal(error.message, 'Backend is restarting');
+        return true;
+      }
+    );
+
+    assert.equal(
+      requests.filter(({ url }) => url === '/api/transient-mutation').length,
+      1
     );
   } finally {
     globalThis.fetch = originalFetch;

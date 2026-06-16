@@ -10,7 +10,8 @@ const {
 
 test('NpcPanel disables NPC mutations while one action is busy', () => {
   assert.match(npcPanelScript, /const npcActionBusyId = ref\(''\)/);
-  assert.match(npcPanelScript, /const npcActionBusy = computed\(\(\) => Boolean\(npcActionBusyId\.value\)\)/);
+  assert.match(npcPanelScript, /const npcOrganizerBusy = computed\(\(\) => organizerLoading\.value\);/);
+  assert.match(npcPanelScript, /const npcActionBusy = computed\(\(\) => Boolean\(npcActionBusyId\.value\) \|\| npcOrganizerBusy\.value\)/);
   assert.match(npcPanelScript, /function startNpcAction\(actionId\)/);
   assert.match(npcPanelScript, /function finishNpcAction\(actionId, mutationToken, conversationId, npcName = null\)/);
   assert.match(npcPanelScript, /async function loadNpcs\(options = {}\)/);
@@ -51,6 +52,34 @@ test('NpcPanel locks close actions while an NPC mutation is busy', () => {
   );
   assert.match(npcPanelStyle, /\.npc-close:hover:not\(:disabled\)/);
   assert.match(npcPanelStyle, /\.npc-close:disabled,/);
+});
+
+test('NpcPanel exposes an AI organizer with streaming tool logs', () => {
+  assert.match(npcPanelScript, /streamNpcOrganizer,/);
+  assert.match(npcPanelScript, /import \{ appendAiToolList, cloneAiToolList \} from '\.\.\/utils\/aiToolLists';/);
+  assert.match(npcPanelScript, /const organizerOpen = ref\(false\);/);
+  assert.match(npcPanelScript, /const organizerLoading = ref\(false\);/);
+  assert.match(npcPanelScript, /const organizerProcess = ref\(\[\]\);/);
+  assert.match(npcPanelScript, /function toggleOrganizerPanel\(\)/);
+  assert.match(npcPanelScript, /async function runNpcOrganizer\(\)/);
+  assert.match(npcPanelScript, /streamNpcOrganizer\(\s*conversationId,[\s\S]*requirement: organizerRequirement\.value\.trim\(\),[\s\S]*selectedNpc: selectedNpc\.value/);
+  assert.match(npcPanelScript, /function npcOrganizerStreamHandlers\(controller, conversationId\)/);
+  assert.match(npcPanelScript, /function stopNpcOrganizer\(\)\s*{\s*organizerAbortController\.value\?\.abort\(\);/);
+  assert.match(npcPanelScript, /appendOrganizerToolCall\(log\);/);
+
+  assert.match(npcPanelTemplate, /class="npc-organize-button"[\s\S]*@click="toggleOrganizerPanel"/);
+  assert.match(npcPanelTemplate, /class="npc-organizer-panel"/);
+  assert.match(npcPanelTemplate, /v-model="organizerRequirement"/);
+  assert.match(npcPanelTemplate, /@click="runNpcOrganizer"/);
+  assert.match(npcPanelTemplate, /@click="stopNpcOrganizer"/);
+  assert.match(npcPanelTemplate, /organizerToolResultLabel\(call\.result\)/);
+  assert.match(npcPanelTemplate, /formatOrganizerValue\(call\.arguments\)/);
+
+  assert.match(npcPanelStyle, /\.npc-organize-button/);
+  assert.match(npcPanelStyle, /\.npc-organizer-panel/);
+  assert.match(npcPanelStyle, /\.npc-organizer-process\s*{[\s\S]*max-height: min\(320px, 34vh\);[\s\S]*overflow-y: auto;[\s\S]*scrollbar-gutter: stable;/);
+  assert.match(npcPanelStyle, /\.npc-organizer-tool pre/);
+  assert.match(npcPanelStyle, /\.npc-organize-button:disabled,/);
 });
 
 test('NpcPanel memory cards use a neutral themed card treatment', () => {

@@ -5,6 +5,8 @@ const jsonHeaders = {
 };
 
 const MAX_ERROR_BODY_LENGTH = 1000;
+const CONNECTION_RETRY_DELAYS_MS = [150, 450, 900];
+const TRANSIENT_CONNECTION_STATUSES = new Set([408, 502, 503, 504]);
 
 // ── CSRF Token 管理 ──
 let csrfToken = '';
@@ -49,7 +51,7 @@ function safeDecodeCookieValue(value) {
 export async function ensureCsrfToken() {
   if (getCsrfToken()) return csrfToken;
   try {
-    const res = await fetch(apiUrl('/api/csrf-token'), { credentials: 'include' });
+    const res = await fetchWithConnectionRetry(apiUrl('/api/csrf-token'), { credentials: 'include' });
     const data = await res.json();
     csrfToken = data.csrfToken || '';
   } catch {
@@ -76,7 +78,7 @@ export async function apiRequest(path, options = {}) {
   let base;
 
   try {
-    ({ response, data, base } = await requestJson(path, options));
+    ({ response, data, base } = await requestJsonWithConnectionRetry(path, options));
   } catch (error) {
     throwApiError(normalizeNetworkError(error), null, { cause: error?.message || String(error) });
   }
@@ -705,6 +707,10 @@ export function fetchConversationNpcs(conversationId) {
   return apiRequest(`/api/conversations/${conversationId}/npcs`);
 }
 
+export function streamNpcOrganizer(conversationId, payload, handlers = {}, signal) {
+  return streamAssistantDraft(`/api/conversations/${conversationId}/npcs/organize`, payload, handlers, signal);
+}
+
 export function hideConversationNpc(conversationId, npcName) {
   return apiRequest(`/api/conversations/${conversationId}/npcs/${encodeURIComponent(npcName)}`, {
     method: 'DELETE'
@@ -1005,6 +1011,42 @@ async function requestJson(path, options = {}, base = configuredApiBase) {
   };
 }
 
+async function requestJsonWithConnectionRetry(path, options = {}, base = configuredApiBase) {
+  let attempt = 0;
+  while (true) {
+    try {
+      const result = await requestJson(path, options, base);
+      if (!shouldRetryConnectionResponse(result.response, result.data, options, attempt)) {
+        return result;
+      }
+    } catch (error) {
+      if (!shouldRetryConnectionError(error, options, attempt)) {
+        throw error;
+      }
+    }
+    await waitForConnectionRetry(attempt);
+    attempt += 1;
+  }
+}
+
+async function fetchWithConnectionRetry(url, options = {}) {
+  let attempt = 0;
+  while (true) {
+    try {
+      const response = await fetch(url, options);
+      if (!shouldRetryConnectionResponse(response, {}, options, attempt)) {
+        return response;
+      }
+    } catch (error) {
+      if (!shouldRetryConnectionError(error, options, attempt)) {
+        throw error;
+      }
+    }
+    await waitForConnectionRetry(attempt);
+    attempt += 1;
+  }
+}
+
 function apiUrl(path, base = configuredApiBase) {
   if (/^https?:\/\//i.test(path)) {
     return path;
@@ -1055,10 +1097,41 @@ function normalizeBaseUrl(value) {
 
 async function guardedRequestJson(path, options = {}, base = configuredApiBase) {
   try {
-    return await requestJson(path, options, base);
+    return await requestJsonWithConnectionRetry(path, options, base);
   } catch (error) {
     throwApiError(normalizeNetworkError(error), null, { cause: error?.message || String(error) });
   }
+}
+
+function shouldRetryConnectionResponse(response, data, options = {}, attempt = 0) {
+  return Boolean(
+    canRetryConnection(options, attempt) &&
+      TRANSIENT_CONNECTION_STATUSES.has(response.status) &&
+      !getStructuredErrorMessage(data)
+  );
+}
+
+function shouldRetryConnectionError(error, options = {}, attempt = 0) {
+  return Boolean(canRetryConnection(options, attempt) && isTransientConnectionError(error));
+}
+
+function canRetryConnection(options = {}, attempt = 0) {
+  return isIdempotentRequest(options) && attempt < CONNECTION_RETRY_DELAYS_MS.length && !options.signal?.aborted;
+}
+
+function isIdempotentRequest(options = {}) {
+  const method = String(options.method || 'GET').toUpperCase();
+  return method === 'GET' || method === 'HEAD';
+}
+
+function isTransientConnectionError(error) {
+  const message = String(error?.message || error || '');
+  return error instanceof TypeError || /Failed to fetch|NetworkError|fetch|ECONNREFUSED|ECONNRESET|terminated/i.test(message);
+}
+
+function waitForConnectionRetry(attempt) {
+  const delayMs = CONNECTION_RETRY_DELAYS_MS[attempt] || 0;
+  return delayMs > 0 ? new Promise((resolve) => setTimeout(resolve, delayMs)) : Promise.resolve();
 }
 
 function getResponseErrorMessage(response, data = {}) {

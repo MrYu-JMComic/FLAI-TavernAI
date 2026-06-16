@@ -332,9 +332,11 @@ export function matchWorldBookEntries(database, characterId, texts, options = {}
   const placeholders = allBookIds.map(() => '?').join(',');
   const entries = database
     .prepare(
-      `SELECT * FROM world_book_entries
-       WHERE world_book_id IN (${placeholders}) AND enabled = 1
-       ORDER BY order_index ASC, rowid ASC`
+      `SELECT wbe.*, wb.name AS world_book_name
+       FROM world_book_entries wbe
+       JOIN world_books wb ON wb.id = wbe.world_book_id
+       WHERE wbe.world_book_id IN (${placeholders}) AND wbe.enabled = 1
+       ORDER BY wbe.order_index ASC, wbe.rowid ASC`
     )
     .all(...allBookIds);
 
@@ -738,6 +740,8 @@ function toMatchedIdSet(matched) {
 function toMatchedEntry(entry) {
   return {
     id: entry.id,
+    worldBookId: entry.world_book_id,
+    worldBookName: entry.world_book_name || '',
     name: entry.name,
     content: entry.content,
     position: entry.position,

@@ -73,6 +73,257 @@ test('chat submit preset selection ignores updates while sending', () => {
   assert.equal(selectedPresetId.value, '');
 });
 
+test('chat submit remembers failed prompts for visible recovery actions', async () => {
+  const originalFetch = globalThis.fetch;
+  const previousUser = { id: 'old-user', role: 'user', content: 'Old prompt' };
+  const previousAssistant = { id: 'old-assistant', role: 'assistant', content: 'Old reply' };
+  const messages = shallowRef([previousUser, previousAssistant]);
+  const errors = [];
+
+  globalThis.fetch = async (url, request = {}) => {
+    assert.equal(String(url), '/api/conversations/conv-1/messages');
+    assert.equal(JSON.parse(request.body).stream, false);
+    return jsonResponse({
+      error: 'AI 供应商配置不完整',
+      accepted: false
+    }, 400);
+  };
+
+  try {
+    const { submit } = createSubmitState({
+      messages,
+      selectedPresetId: refValue(''),
+      showError(message) {
+        errors.push(message);
+      }
+    });
+
+    submit.useStream.value = false;
+    submit.input.value = 'Recover this prompt';
+    await submit.submit();
+
+    assert.equal(errors[0], 'AI 供应商配置不完整');
+    assert.equal(submit.lastFailure.value.content, 'Recover this prompt');
+    assert.equal(submit.lastFailure.value.conversationId, 'conv-1');
+    assert.equal(submit.lastFailure.value.canRetry, true);
+    assert.equal(submit.input.value, 'Recover this prompt');
+    assert.deepEqual(messages.value, [previousUser, previousAssistant]);
+
+    assert.equal(submit.restoreLastFailureInput(), true);
+    assert.equal(submit.input.value, 'Recover this prompt');
+    assert.equal(submit.lastFailure.value, null);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('chat submit restores failed stream prompts without removing previous messages', async () => {
+  const originalFetch = globalThis.fetch;
+  const originalWindow = globalThis.window;
+  const previousUser = { id: 'old-user', role: 'user', content: 'Old prompt' };
+  const previousAssistant = { id: 'old-assistant', role: 'assistant', content: 'Old reply' };
+  const messages = shallowRef([previousUser, previousAssistant]);
+  const errors = [];
+
+  globalThis.window = {
+    setTimeout,
+    clearTimeout,
+    localStorage: {
+      getItem() { return null; },
+      setItem() {}
+    }
+  };
+
+  globalThis.fetch = async (url, request = {}) => {
+    const requestUrl = String(url);
+    if (requestUrl === '/api/csrf-token') {
+      return jsonResponse({ csrfToken: 'csrf-stream-failure-test' });
+    }
+    if (requestUrl === '/api/conversations/conv-1/messages' && request.method === 'POST') {
+      return sseResponse([
+        `event: user_message\ndata: ${JSON.stringify({
+          userMessage: { id: 'user-stream-1', role: 'user', content: 'Stream failed prompt' }
+        })}`,
+        `event: error\ndata: ${JSON.stringify({ error: 'Provider failed' })}`
+      ], request.signal, { close: true });
+    }
+    return jsonResponse({ error: `Unexpected request: ${requestUrl}` }, 500);
+  };
+
+  try {
+    const { submit } = createSubmitState({
+      messages,
+      selectedPresetId: refValue(''),
+      showError(message) {
+        errors.push(message);
+      }
+    });
+
+    submit.input.value = 'Stream failed prompt';
+    await submit.submit();
+
+    assert.equal(errors[0], 'Provider failed');
+    assert.equal(submit.input.value, 'Stream failed prompt');
+    assert.equal(submit.lastFailure.value.content, 'Stream failed prompt');
+    assert.equal(messages.value[0], previousUser);
+    assert.equal(messages.value[1], previousAssistant);
+    assert.equal(messages.value[2].id, 'user-stream-1');
+    assert.equal(messages.value[2].content, 'Stream failed prompt');
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalWindow === undefined) {
+      delete globalThis.window;
+    } else {
+      globalThis.window = originalWindow;
+    }
+  }
+});
+
+test('chat submit does not overwrite a newer draft when restoring failed prompts', async () => {
+  const originalFetch = globalThis.fetch;
+  const previousUser = { id: 'old-user', role: 'user', content: 'Old prompt' };
+  const previousAssistant = { id: 'old-assistant', role: 'assistant', content: 'Old reply' };
+  const messages = shallowRef([previousUser, previousAssistant]);
+  let fetchStarted = false;
+  let resolveFetch = null;
+  let fetchResolved = false;
+  const fetchPromise = new Promise((resolve) => {
+    resolveFetch = resolve;
+  });
+
+  globalThis.fetch = async (url, request = {}) => {
+    assert.equal(String(url), '/api/conversations/conv-1/messages');
+    assert.equal(JSON.parse(request.body).stream, false);
+    fetchStarted = true;
+    return fetchPromise;
+  };
+
+  const { submit } = createSubmitState({
+    messages,
+    selectedPresetId: refValue('')
+  });
+  submit.useStream.value = false;
+  submit.input.value = 'Original failed prompt';
+  const submitPromise = submit.submit();
+
+  try {
+    await waitFor(() => fetchStarted);
+    submit.input.value = 'New draft';
+    fetchResolved = true;
+    resolveFetch(jsonResponse({
+      error: 'Backend failed',
+      accepted: false
+    }, 503));
+    await submitPromise;
+
+    assert.equal(submit.input.value, 'New draft');
+    assert.equal(submit.lastFailure.value.content, 'Original failed prompt');
+    assert.deepEqual(messages.value, [previousUser, previousAssistant]);
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (!fetchResolved && resolveFetch) {
+      fetchResolved = true;
+      resolveFetch(jsonResponse({
+        error: 'Backend failed',
+        accepted: false
+      }, 503));
+      await submitPromise.catch(() => {});
+    }
+  }
+});
+
+test('chat submit exposes latest streamed world book matches', async () => {
+  const originalFetch = globalThis.fetch;
+  const originalWindow = globalThis.window;
+
+  globalThis.window = {
+    setTimeout,
+    clearTimeout,
+    localStorage: {
+      getItem() { return null; },
+      setItem() {}
+    }
+  };
+
+  globalThis.fetch = async (url, request = {}) => {
+    const requestUrl = String(url);
+    if (requestUrl === '/api/csrf-token') {
+      return jsonResponse({ csrfToken: 'csrf-world-book-match-test' });
+    }
+    if (requestUrl === '/api/conversations/conv-1/messages' && request.method === 'POST') {
+      return sseResponse([
+        `event: meta\ndata: ${JSON.stringify({
+          provider: 'test',
+          model: 'test-model',
+          worldBookMatches: [
+            {
+              id: 'entry-1',
+              name: 'Secret gate',
+              worldBookId: 'book-1',
+              worldBookName: 'Castle lore',
+              position: 'at_depth',
+              depth: 2,
+              role: 2
+            }
+          ]
+        })}`,
+        `event: user_message\ndata: ${JSON.stringify({
+          userMessage: { id: 'user-1', role: 'user', content: 'Hello' }
+        })}`,
+        `event: content\ndata: ${JSON.stringify({ text: 'Reply' })}`,
+        `event: done\ndata: ${JSON.stringify({
+          userMessage: { id: 'user-1', role: 'user', content: 'Hello' },
+          assistantMessage: { id: 'assistant-1', role: 'assistant', content: 'Reply' },
+          worldBookMatches: [
+            {
+              id: 'entry-1',
+              name: 'Secret gate',
+              worldBookId: 'book-1',
+              worldBookName: 'Castle lore',
+              position: 'at_depth',
+              depth: 2,
+              role: 2
+            }
+          ]
+        })}`
+      ], request.signal, { close: true });
+    }
+    if (requestUrl === '/api/conversations/conv-1/messages' && (!request.method || request.method === 'GET')) {
+      return jsonResponse({ conversation: { id: 'conv-1' }, messages: [] });
+    }
+    return jsonResponse({ error: `Unexpected request: ${requestUrl}` }, 500);
+  };
+
+  try {
+    const { submit } = createSubmitState({
+      selectedPresetId: refValue(''),
+      stickToBottomIfNeeded() {}
+    });
+
+    submit.input.value = 'Hello';
+    await submit.submit();
+
+    assert.deepEqual(submit.latestWorldBookMatches.value, [
+      {
+        id: 'entry-1',
+        name: 'Secret gate',
+        worldBookId: 'book-1',
+        worldBookName: 'Castle lore',
+        position: 'at_depth',
+        depth: 2,
+        role: 2
+      }
+    ]);
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalWindow === undefined) {
+      delete globalThis.window;
+    } else {
+      globalThis.window = originalWindow;
+    }
+  }
+});
+
 test('chat submit inserts local drafts with a message-list ref update', async () => {
   const originalFetch = globalThis.fetch;
   const messages = shallowRef(null);

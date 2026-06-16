@@ -14,13 +14,15 @@ export function normalizeConversationAppearance(input = {}) {
   const customCss = normalizeMultilineText(input.customCss ?? input.custom_css ?? '');
   const customJs = normalizeMultilineText(input.customJs ?? input.custom_js ?? '');
   const statusBarPrompt = normalizeMultilineText(input.statusBarPrompt ?? input.status_bar_prompt ?? '');
+  const showWorldBookMatches = normalizeBoolean(input.showWorldBookMatches ?? input.show_world_book_matches, true);
 
   return {
     desktopBackgroundUrl,
     mobileBackgroundUrl,
     customCss,
     customJs,
-    statusBarPrompt
+    statusBarPrompt,
+    showWorldBookMatches
   };
 }
 
@@ -112,11 +114,22 @@ function normalizeMultilineText(value) {
   return text.trim() ? text : '';
 }
 
+function normalizeBoolean(value, fallback = false) {
+  if (value === true || value === 'true' || value === '1' || value === 'on') {
+    return true;
+  }
+  if (value === false || value === 'false' || value === '0' || value === 'off') {
+    return false;
+  }
+  return fallback;
+}
+
 function toLegacyAppearance(appearance) {
   return {
     desktopBackgroundUrl: appearance.desktopBackgroundUrl,
     mobileBackgroundUrl: appearance.mobileBackgroundUrl,
     customCss: appearance.customCss,
-    customJs: appearance.customJs
+    customJs: appearance.customJs,
+    showWorldBookMatches: appearance.showWorldBookMatches
   };
 }

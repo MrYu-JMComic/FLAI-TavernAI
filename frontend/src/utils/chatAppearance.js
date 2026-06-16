@@ -5,7 +5,8 @@ const defaultAppearance = () => ({
   mobileBackgroundUrl: '',
   customCss: '',
   customJs: '',
-  statusBarPrompt: ''
+  statusBarPrompt: '',
+  showWorldBookMatches: true
 });
 
 export function createDefaultChatAppearance() {
@@ -22,7 +23,8 @@ export function normalizeChatAppearance(input = {}) {
     ),
     customCss: normalizeOptionalText(input.customCss ?? input.custom_css ?? ''),
     customJs: normalizeOptionalText(input.customJs ?? input.custom_js ?? ''),
-    statusBarPrompt: normalizeOptionalText(input.statusBarPrompt ?? input.status_bar_prompt ?? '')
+    statusBarPrompt: normalizeOptionalText(input.statusBarPrompt ?? input.status_bar_prompt ?? ''),
+    showWorldBookMatches: normalizeBoolean(input.showWorldBookMatches ?? input.show_world_book_matches, true)
   };
 }
 
@@ -34,7 +36,10 @@ export function mergeChatAppearance(author = {}, user = {}) {
     mobileBackgroundUrl: userSettings.mobileBackgroundUrl || authorSettings.mobileBackgroundUrl,
     customCss: mergeAppearanceText(authorSettings.customCss, userSettings.customCss),
     customJs: mergeAppearanceText(authorSettings.customJs, userSettings.customJs),
-    statusBarPrompt: mergeAppearanceText(authorSettings.statusBarPrompt, userSettings.statusBarPrompt)
+    statusBarPrompt: mergeAppearanceText(authorSettings.statusBarPrompt, userSettings.statusBarPrompt),
+    showWorldBookMatches: hasOwnSetting(user, 'showWorldBookMatches', 'show_world_book_matches')
+      ? userSettings.showWorldBookMatches
+      : authorSettings.showWorldBookMatches
   };
 }
 
@@ -233,6 +238,22 @@ function collectCustomScriptQueryAll(selector, root) {
 function normalizeOptionalText(value) {
   const text = String(value || '');
   return text.trim() ? text : '';
+}
+
+function normalizeBoolean(value, fallback = false) {
+  if (value === true || value === 'true' || value === '1' || value === 'on') {
+    return true;
+  }
+  if (value === false || value === 'false' || value === '0' || value === 'off') {
+    return false;
+  }
+  return fallback;
+}
+
+function hasOwnSetting(source, camelKey, snakeKey) {
+  const input = source && typeof source === 'object' ? source : {};
+  return Object.prototype.hasOwnProperty.call(input, camelKey)
+    || Object.prototype.hasOwnProperty.call(input, snakeKey);
 }
 
 function normalizeImageUrl(value) {

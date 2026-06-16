@@ -481,6 +481,19 @@ function requestClose() {
             </option>
           </select>
         </label>
+        <label class="chat-setting-toggle">
+          <input
+            v-model="chatAppearanceForm.showWorldBookMatches"
+            class="chat-setting-toggle-input"
+            type="checkbox"
+            :disabled="appearanceSaving"
+          />
+          <span class="chat-setting-toggle-control" aria-hidden="true"></span>
+          <span class="chat-setting-toggle-copy">
+            <strong>显示世界书命中来源</strong>
+            <small>关闭后隐藏消息下方的世界书命中来源按钮和弹窗。</small>
+          </span>
+        </label>
         <p v-if="worldBooksLoading" class="chat-lorebook-hint">加载世界书列表中...</p>
         <p v-else-if="chatLorebookBindingLabel" class="chat-lorebook-hint">
           已绑定：{{ chatLorebookBindingLabel }}

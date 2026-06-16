@@ -1,5 +1,6 @@
 <script setup>
 import {
+  BookOpen,
   Brain,
   Check,
   ChevronDown,
@@ -34,7 +35,8 @@ const props = defineProps({
   swipeCanPrev: { type: Boolean, default: false },
   swipeCanNext: { type: Boolean, default: false },
   swipeLoading: { type: Boolean, default: false },
-  branchBusy: { type: Boolean, default: false }
+  branchBusy: { type: Boolean, default: false },
+  worldBookMatchCount: { type: Number, default: 0 }
 });
 
 const emit = defineEmits([
@@ -47,7 +49,8 @@ const emit = defineEmits([
   'update:editingMessageContent',
   'swipe-prev',
   'swipe-next',
-  'branch'
+  'branch',
+  'open-worldbook-matches'
 ]);
 
 function onEditingMessageInput(event) {
@@ -159,6 +162,18 @@ function onEditingMessageInput(event) {
           <span>删除</span>
         </button>
         <button
+          v-if="worldBookMatchCount > 0"
+          type="button"
+          class="message-action-button"
+          data-worldbook-match-button
+          :title="`世界书命中来源（${worldBookMatchCount} 条）`"
+          :aria-label="`查看世界书命中来源，共 ${worldBookMatchCount} 条`"
+          @click.stop="emit('open-worldbook-matches', message)"
+        >
+          <BookOpen :size="14" />
+          <span>世界书</span>
+        </button>
+        <button
           v-if="swipeDisplay"
           class="message-action-button swipe-nav"
           type="button"
@@ -170,15 +185,15 @@ function onEditingMessageInput(event) {
         >
           <ChevronLeft :size="14" />
         </button>
-        <span v-if="swipeDisplay" class="swipe-counter">{{ swipeDisplay }}</span>
+        <span v-if="swipeDisplay" class="swipe-counter" :title="`候选回复 ${swipeDisplay}`">候选 {{ swipeDisplay }}</span>
         <button
-          v-if="swipeDisplay || swipeCanNext"
+          v-if="swipeDisplay"
           class="message-action-button swipe-nav"
           type="button"
-          aria-label="下一条候选或生成新候选"
-          :disabled="swipeLoading"
+          aria-label="下一条候选回复"
+          :disabled="!swipeCanNext || swipeLoading"
           :aria-busy="swipeLoading"
-          title="下一条候选 / 生成新候选"
+          title="下一条候选"
           @click.stop="emit('swipe-next', message)"
         >
           <ChevronRight :size="14" />

@@ -7,6 +7,7 @@ import {
   Plus,
   RefreshCw,
   SlidersHorizontal,
+  Sparkles,
   Trash2,
   Users,
   X,
@@ -22,11 +23,13 @@ import {
   fetchNpcMemories,
   hideConversationNpc,
   hideEmptyConversationNpcs,
+  streamNpcOrganizer,
   updateConversationNpc,
   updateNpcMemory,
   updateNpcBehavior
 } from '../api';
 import { useNotify } from '../composables/useNotify';
+import { appendAiToolList, cloneAiToolList } from '../utils/aiToolLists';
 
 const props = defineProps({
   conversationId: { type: String, required: true },
@@ -51,6 +54,14 @@ const addBehaviorOpen = ref(false);
 const editingMemoryId = ref('');
 const editingBehaviorId = ref('');
 const npcActionBusyId = ref('');
+const organizerOpen = ref(false);
+const organizerLoading = ref(false);
+const organizerRequirement = ref('');
+const organizerProcess = ref([]);
+const organizerToolCalls = ref([]);
+const organizerReasoning = ref('');
+const organizerError = ref('');
+const organizerAbortController = ref(null);
 let npcLoadToken = 0;
 let npcDetailToken = 0;
 let npcMutationToken = 0;
@@ -115,7 +126,8 @@ const selectedNpcStats = computed(() => ({
 }));
 const selectedNpcMemorySealActive = computed(() => Boolean(selectedNpcData.value?.memorySealActive));
 const emptyNpcNames = computed(() => npcPanelSummary.value.emptyNpcNames);
-const npcActionBusy = computed(() => Boolean(npcActionBusyId.value));
+const npcOrganizerBusy = computed(() => organizerLoading.value);
+const npcActionBusy = computed(() => Boolean(npcActionBusyId.value) || npcOrganizerBusy.value);
 
 const memoryTypeOptions = [
   { value: 'event', label: '事件' },
@@ -170,6 +182,7 @@ watch(selectedNpcData, (npc) => {
 
 onBeforeUnmount(() => {
   npcPanelDisposed = true;
+  cancelNpcOrganizer();
   resetNpcState();
 });
 
@@ -184,6 +197,7 @@ function resetNpcState() {
   npcLoadToken += 1;
   npcDetailToken += 1;
   npcMutationToken += 1;
+  cancelNpcOrganizer();
   setNpcsIfChanged([]);
   setSelectedNpc('');
   setMemoriesIfChanged([]);
@@ -195,6 +209,12 @@ function resetNpcState() {
   editingMemoryId.value = '';
   editingBehaviorId.value = '';
   npcActionBusyId.value = '';
+  organizerOpen.value = false;
+  organizerRequirement.value = '';
+  organizerProcess.value = [];
+  organizerToolCalls.value = [];
+  organizerReasoning.value = '';
+  organizerError.value = '';
   resetNpcForms();
   loading.value = false;
   detailLoading.value = false;
@@ -207,6 +227,15 @@ function cancelNpcPanelLoad() {
   detailLoading.value = false;
   loadError.value = '';
   detailError.value = '';
+}
+
+function cancelNpcOrganizer() {
+  const controller = organizerAbortController.value;
+  if (controller) {
+    controller.abort();
+  }
+  organizerAbortController.value = null;
+  organizerLoading.value = false;
 }
 
 function setSelectedNpc(name) {
@@ -1066,6 +1095,186 @@ async function removeEmptyNpcs() {
   }
 }
 
+function toggleOrganizerPanel() {
+  if (organizerLoading.value) return;
+  organizerOpen.value = !organizerOpen.value;
+}
+
+function collapseOrganizerPanel() {
+  if (organizerLoading.value) return;
+  organizerOpen.value = false;
+  organizerProcess.value = [];
+  organizerToolCalls.value = [];
+  organizerReasoning.value = '';
+  organizerError.value = '';
+}
+
+function isCurrentOrganizerRun(controller, conversationId) {
+  return !npcPanelDisposed
+    && organizerAbortController.value === controller
+    && conversationId === props.conversationId;
+}
+
+async function runNpcOrganizer() {
+  if (npcPanelDisposed || organizerLoading.value) return;
+  const conversationId = props.conversationId;
+  if (!conversationId) return;
+  const controller = new AbortController();
+  organizerAbortController.value = controller;
+  organizerLoading.value = true;
+  organizerError.value = '';
+  organizerReasoning.value = '';
+  organizerProcess.value = [{ round: 1, reasoning: '等待模型响应...', content: '', tools: [] }];
+  organizerToolCalls.value = [];
+  npcMutationToken += 1;
+
+  try {
+    const result = await streamNpcOrganizer(
+      conversationId,
+      {
+        requirement: organizerRequirement.value.trim(),
+        selectedNpc: selectedNpc.value
+      },
+      npcOrganizerStreamHandlers(controller, conversationId),
+      controller.signal
+    );
+    if (!isCurrentOrganizerRun(controller, conversationId)) return;
+    organizerProcess.value = Array.isArray(result?.process) ? result.process : organizerProcess.value;
+    organizerToolCalls.value = Array.isArray(result?.toolCalls) ? result.toolCalls : organizerToolCalls.value;
+    organizerReasoning.value = result?.reasoning || organizerReasoning.value;
+    await loadNpcs({ allowWhileBusy: true });
+    if (!isCurrentOrganizerRun(controller, conversationId)) return;
+    if (selectedNpc.value) {
+      await loadNpcDetail({ allowWhileBusy: true });
+    }
+    if (!isCurrentOrganizerRun(controller, conversationId)) return;
+    notify.success(`AI 整理完成，调用 ${organizerToolCalls.value.length} 次工具`);
+  } catch (err) {
+    if (!isCurrentOrganizerRun(controller, conversationId)) return;
+    if (controller.signal.aborted) {
+      notify.info('AI 整理已暂停');
+    } else {
+      organizerError.value = err.message || 'AI 整理失败';
+      notify.error(organizerError.value);
+    }
+  } finally {
+    if (organizerAbortController.value === controller) {
+      organizerAbortController.value = null;
+      organizerLoading.value = false;
+    }
+  }
+}
+
+function stopNpcOrganizer() {
+  organizerAbortController.value?.abort();
+}
+
+function npcOrganizerStreamHandlers(controller, conversationId) {
+  return {
+    step: (step = {}) => {
+      if (!isCurrentOrganizerRun(controller, conversationId)) return;
+      updateOrganizerProcessStep(step.round || 1, (target) => ({
+        ...target,
+        reasoning: step.reasoning || target.reasoning,
+        content: step.content || target.content,
+        tools: step.tools?.length ? cloneAiToolList(step.tools) : cloneAiToolList(target.tools)
+      }));
+    },
+    content: ({ round = 1, text = '' } = {}) => {
+      if (!isCurrentOrganizerRun(controller, conversationId)) return;
+      updateOrganizerProcessStep(round, (target) => ({
+        ...target,
+        content: `${target.content || ''}${text}`
+      }));
+    },
+    reasoning: ({ round = 1, text = '' } = {}) => {
+      if (!isCurrentOrganizerRun(controller, conversationId)) return;
+      organizerReasoning.value += text;
+      updateOrganizerProcessStep(round, (target) => ({
+        ...target,
+        reasoning: `${target.reasoning || ''}${text}`
+      }));
+    },
+    tool: (call = {}) => {
+      if (!isCurrentOrganizerRun(controller, conversationId)) return;
+      const log = {
+        name: call.name || 'tool',
+        arguments: call.arguments || {},
+        result: call.result || {}
+      };
+      updateOrganizerProcessStep(call.round || 1, (target) => ({
+        ...target,
+        tools: appendAiToolList(target.tools, log)
+      }));
+      appendOrganizerToolCall(log);
+    }
+  };
+}
+
+function updateOrganizerProcessStep(round = 1, updateStep) {
+  const currentProcess = Array.isArray(organizerProcess.value) ? organizerProcess.value : [];
+  const nextProcess = [];
+  let updated = false;
+  for (const step of currentProcess) {
+    if ((step?.round || 1) === round) {
+      const currentStep = {
+        round: step.round || round,
+        reasoning: step.reasoning || '',
+        content: step.content || '',
+        tools: cloneAiToolList(step.tools)
+      };
+      nextProcess.push(updateStep(currentStep));
+      updated = true;
+    } else {
+      nextProcess.push(step);
+    }
+  }
+  if (!updated) {
+    nextProcess.push(updateStep({ round, reasoning: '', content: '', tools: [] }));
+  }
+  organizerProcess.value = nextProcess;
+}
+
+function appendOrganizerToolCall(log) {
+  const currentToolCalls = Array.isArray(organizerToolCalls.value) ? organizerToolCalls.value : [];
+  const nextToolCalls = [];
+  for (const toolCall of currentToolCalls) {
+    nextToolCalls.push(toolCall);
+  }
+  nextToolCalls.push(log);
+  organizerToolCalls.value = nextToolCalls;
+}
+
+function formatOrganizerValue(value) {
+  try {
+    return JSON.stringify(value, null, 2);
+  } catch {
+    return String(value || '');
+  }
+}
+
+function organizerToolResultLabel(result = {}) {
+  if (result?.ok === false) {
+    return result.error || '失败';
+  }
+  if (result?.memory) {
+    return '记忆';
+  }
+  if (result?.behavior) {
+    return '行为';
+  }
+  if (result?.npc || result?.hidden) {
+    return '资料';
+  }
+  if (result?.deletedId) {
+    return '已删除';
+  }
+  if (result?.summary) {
+    return result.summary;
+  }
+  return '完成';
+}
+
 function memoryTypeLabel(type) {
   return optionLabel(memoryTypeOptions, type);
 }
@@ -1155,11 +1364,110 @@ function formatTime(iso) {
           </section>
 
           <div class="npc-panel-body">
+            <section
+              v-if="organizerOpen || organizerProcess.length || organizerToolCalls.length || organizerError"
+              class="npc-organizer-panel"
+              aria-label="AI NPC 整理助手"
+            >
+              <div class="npc-organizer-header">
+                <span>
+                  <Sparkles :size="15" />
+                  AI 整理助手
+                </span>
+                <button
+                  class="npc-organizer-collapse"
+                  type="button"
+                  :disabled="organizerLoading"
+                  @click="collapseOrganizerPanel"
+                >
+                  收起
+                </button>
+              </div>
+              <div v-if="organizerOpen" class="npc-organizer-form">
+                <textarea
+                  v-model="organizerRequirement"
+                  class="npc-textarea"
+                  rows="3"
+                  placeholder="可选：告诉助手重点整理谁、保留什么、删除什么..."
+                  aria-label="AI NPC 整理要求"
+                  :disabled="organizerLoading"
+                />
+                <div class="npc-form-actions">
+                  <button
+                    class="npc-save"
+                    type="button"
+                    :disabled="organizerLoading || loading"
+                    :aria-busy="organizerLoading"
+                    @click="runNpcOrganizer"
+                  >
+                    <Sparkles :size="14" />
+                    <span>{{ organizerLoading ? '整理中...' : '开始整理' }}</span>
+                  </button>
+                  <button
+                    v-if="organizerLoading"
+                    class="npc-cancel"
+                    type="button"
+                    @click="stopNpcOrganizer"
+                  >
+                    停止
+                  </button>
+                </div>
+              </div>
+              <p v-if="organizerError" class="npc-organizer-error">{{ organizerError }}</p>
+              <div v-if="organizerReasoning" class="npc-organizer-reasoning">
+                {{ organizerReasoning }}
+              </div>
+              <div v-if="organizerProcess.length || organizerToolCalls.length" class="npc-organizer-process">
+                <div class="npc-organizer-process-title">
+                  <span>过程 {{ organizerProcess.length || 1 }} 轮 · 工具 {{ organizerToolCalls.length }}</span>
+                </div>
+                <details
+                  v-for="(step, stepIndex) in organizerProcess"
+                  :key="`npc-organizer-${step.round || stepIndex}`"
+                  class="npc-organizer-step"
+                  open
+                >
+                  <summary>
+                    <span>第 {{ step.round || stepIndex + 1 }} 轮</span>
+                    <small>{{ step.tools?.length || 0 }} 个工具</small>
+                  </summary>
+                  <p v-if="step.reasoning" class="npc-organizer-text">{{ step.reasoning }}</p>
+                  <p v-if="step.content" class="npc-organizer-text">{{ step.content }}</p>
+                  <div v-if="step.tools?.length" class="npc-organizer-tool-list">
+                    <details
+                      v-for="(call, index) in step.tools"
+                      :key="`${call.name}-${index}`"
+                      class="npc-organizer-tool"
+                    >
+                      <summary>
+                        <span>{{ call.name }}</span>
+                        <small>{{ organizerToolResultLabel(call.result) }}</small>
+                      </summary>
+                      <pre>{{ formatOrganizerValue(call.arguments) }}</pre>
+                      <pre>{{ formatOrganizerValue(call.result) }}</pre>
+                    </details>
+                  </div>
+                </details>
+              </div>
+            </section>
+
             <!-- NPC List -->
             <div class="npc-list-section">
               <div class="npc-list-header">
                 <span>NPC 列表</span>
                 <div class="npc-list-actions">
+                  <button
+                    class="npc-organize-button"
+                    type="button"
+                    :disabled="loading || npcActionBusy"
+                    :aria-pressed="organizerOpen"
+                    :aria-busy="organizerLoading"
+                    title="AI 整理 NPC、记忆、行为和资料"
+                    @click="toggleOrganizerPanel"
+                  >
+                    <Sparkles :size="14" />
+                    <span>整理</span>
+                  </button>
                   <button
                     class="npc-empty-remove"
                     type="button"
@@ -1816,6 +2124,152 @@ function formatTime(iso) {
   gap: 8px;
 }
 
+.npc-organize-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  min-height: 30px;
+  padding: 0 10px;
+  border: 1px solid color-mix(in srgb, var(--accent, #818cf8) 34%, var(--line, #2a2a3e));
+  border-radius: 8px;
+  color: var(--accent, #818cf8);
+  background: color-mix(in srgb, var(--accent, #818cf8) 11%, transparent);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 800;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.npc-organize-button:hover:not(:disabled),
+.npc-organize-button[aria-pressed="true"] {
+  background: color-mix(in srgb, var(--accent, #818cf8) 18%, transparent);
+}
+
+.npc-organizer-panel {
+  display: grid;
+  gap: 10px;
+  padding: 12px 14px;
+  border-bottom: 1px solid color-mix(in srgb, var(--line, #2a2a3e) 64%, transparent);
+  background: color-mix(in srgb, var(--surface, #1a1a2e) 58%, transparent);
+}
+
+.npc-organizer-header,
+.npc-organizer-process-title,
+.npc-organizer-step summary,
+.npc-organizer-tool summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.npc-organizer-header > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text, #e8e6e3);
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.npc-organizer-collapse {
+  border: none;
+  background: transparent;
+  color: var(--text-muted, #888);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.npc-organizer-form {
+  display: grid;
+  gap: 8px;
+}
+
+.npc-organizer-error {
+  margin: 0;
+  padding: 8px 10px;
+  border: 1px solid color-mix(in srgb, #ef4444 32%, var(--line, #2a2a3e));
+  border-radius: 8px;
+  color: #ef4444;
+  background: color-mix(in srgb, #ef4444 9%, transparent);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.npc-organizer-reasoning,
+.npc-organizer-text {
+  margin: 0;
+  color: var(--text-muted, #888);
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.npc-organizer-process {
+  display: grid;
+  gap: 8px;
+  max-height: min(320px, 34vh);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-right: 2px;
+  scrollbar-gutter: stable;
+}
+
+.npc-organizer-process-title {
+  color: var(--text-muted, #888);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.npc-organizer-step,
+.npc-organizer-tool {
+  border: 1px solid color-mix(in srgb, var(--line, #2a2a3e) 70%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--surface, #1a1a2e) 64%, transparent);
+}
+
+.npc-organizer-step summary,
+.npc-organizer-tool summary {
+  min-height: 34px;
+  padding: 0 10px;
+  color: var(--text, #e8e6e3);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.npc-organizer-step small,
+.npc-organizer-tool small {
+  color: var(--text-muted, #888);
+  font-size: 11px;
+}
+
+.npc-organizer-step > .npc-organizer-text {
+  padding: 0 10px 8px;
+}
+
+.npc-organizer-tool-list {
+  display: grid;
+  gap: 6px;
+  padding: 0 8px 8px;
+}
+
+.npc-organizer-tool pre {
+  max-height: 160px;
+  overflow: auto;
+  margin: 0;
+  padding: 8px 10px;
+  border-top: 1px solid color-mix(in srgb, var(--line, #2a2a3e) 62%, transparent);
+  color: var(--text-muted, #888);
+  font-size: 11px;
+  white-space: pre-wrap;
+}
+
 .npc-empty-remove {
   min-height: 30px;
   padding: 0 10px;
@@ -2387,6 +2841,8 @@ function formatTime(iso) {
   align-items: center;
 }
 .npc-refresh:disabled,
+.npc-organize-button:disabled,
+.npc-organizer-collapse:disabled,
 .npc-retry-button:disabled,
 .npc-item:disabled,
 .npc-detail-remove:disabled,

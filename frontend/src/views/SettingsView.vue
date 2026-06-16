@@ -169,11 +169,14 @@ const saving = ref(false);
 const profileSaving = ref(false);
 const avatarSaving = ref(false);
 const modelLoading = ref(false);
+const modelProbeLoading = ref(false);
+const modelProbeStatus = ref('idle');
+const modelProbeMessage = ref('');
 const balanceLoading = ref(false);
 const modelOptions = ref([]);
 const balance = ref(null);
 const settingsModelOptions = computed(() => buildModelSelectOptions(modelOptions.value, form.model));
-const providerControlsBusy = computed(() => saving.value || modelLoading.value);
+const providerControlsBusy = computed(() => saving.value || modelLoading.value || modelProbeLoading.value);
 let settingsLoadToken = 0;
 let modelLoadToken = 0;
 let providerSaveToken = 0;
@@ -214,6 +217,7 @@ watch(
   ],
   ([providerType], [previousProviderType] = []) => {
     syncCachedModelOptions();
+    resetProviderProbeStatus();
     if (previousProviderType !== undefined && providerType !== previousProviderType) {
       resetBalanceLoadScope();
       balance.value = null;
@@ -298,6 +302,43 @@ async function loadModels() {
   } finally {
     if (isCurrentModelLoadToken(requestToken)) {
       modelLoading.value = false;
+    }
+  }
+}
+
+async function probeProviderConnection() {
+  if (!isPersonalPage.value || providerControlsBusy.value || !canFetchModels.value) {
+    return;
+  }
+  const requestToken = ++modelLoadToken;
+  const request = buildProviderModelRequest();
+  modelProbeLoading.value = true;
+  setProviderProbeResult('checking', '正在检测网关和模型列表...');
+  try {
+    const nextOptions = await refreshProviderModels(request, { forceRefresh: true });
+    if (!isCurrentModelLoadResult(requestToken, request)) return;
+    applyModelOptions(nextOptions);
+    if (!nextOptions.length) {
+      const message = '连接成功，但网关没有返回模型列表；请确认 /models 接口是否开放。';
+      setProviderProbeResult('warning', message);
+      notify.info(message);
+    } else if (!hasProviderModelOption(nextOptions, form.model)) {
+      const message = `连接成功，返回 ${nextOptions.length} 个模型，但当前模型不在列表中。`;
+      setProviderProbeResult('warning', message);
+      notify.warning(message);
+    } else {
+      const message = `连接正常，已读取 ${nextOptions.length} 个模型。`;
+      setProviderProbeResult('success', message);
+      notify.success(message);
+    }
+  } catch (err) {
+    if (!isCurrentModelLoadResult(requestToken, request)) return;
+    const message = err?.message || '连接检测失败';
+    setProviderProbeResult('error', message);
+    notify.error(`连接检测失败：${message}`);
+  } finally {
+    if (isCurrentModelLoadToken(requestToken)) {
+      modelProbeLoading.value = false;
     }
   }
 }
@@ -515,6 +556,8 @@ function resetPersonalAsyncScope() {
   avatarSaving.value = false;
   profileSaving.value = false;
   modelLoading.value = false;
+  modelProbeLoading.value = false;
+  resetProviderProbeStatus();
 }
 
 function resetSettingsAsyncScopes() {
@@ -557,6 +600,20 @@ function applySettings(settings) {
 
 function syncCachedModelOptions() {
   applyModelOptions(readCachedProviderModels(form));
+}
+
+function setProviderProbeResult(status, message) {
+  modelProbeStatus.value = status || 'idle';
+  modelProbeMessage.value = String(message || '');
+}
+
+function resetProviderProbeStatus() {
+  if (modelProbeStatus.value !== 'idle') {
+    modelProbeStatus.value = 'idle';
+  }
+  if (modelProbeMessage.value) {
+    modelProbeMessage.value = '';
+  }
 }
 
 function applyModelOptions(nextOptions) {
@@ -2140,7 +2197,14 @@ function scrollToSection(sectionId) {
               <RefreshCw :size="17" />
               <span>{{ modelLoading ? '刷新中' : '刷新模型' }}</span>
             </button>
+            <button class="ghost-button compact-button" type="button" :disabled="providerControlsBusy || !canFetchModels" :aria-busy="modelProbeLoading" @click="probeProviderConnection">
+              <ShieldCheck :size="17" />
+              <span>{{ modelProbeLoading ? '检测中' : '检测连接' }}</span>
+            </button>
           </div>
+          <p v-if="modelProbeMessage" class="provider-probe-message" :class="`probe-${modelProbeStatus}`" role="status">
+            {{ modelProbeMessage }}
+          </p>
         </div>
       </div>
 
@@ -2637,3 +2701,31 @@ function scrollToSection(sectionId) {
     </section>
   </section>
 </template>
+
+<style scoped>
+.provider-probe-message {
+  margin: 8px 0 0;
+  padding: 8px 10px;
+  border: 1px solid color-mix(in srgb, var(--line) 82%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--surface-strong) 84%, transparent);
+  color: var(--muted);
+  font-size: 0.82rem;
+  line-height: 1.45;
+}
+
+.provider-probe-message.probe-success {
+  border-color: color-mix(in srgb, var(--green) 34%, var(--line));
+  color: color-mix(in srgb, var(--green) 70%, var(--text));
+}
+
+.provider-probe-message.probe-warning {
+  border-color: color-mix(in srgb, var(--primary) 34%, var(--line));
+  color: color-mix(in srgb, var(--primary) 72%, var(--text));
+}
+
+.provider-probe-message.probe-error {
+  border-color: color-mix(in srgb, #c44 42%, var(--line));
+  color: color-mix(in srgb, #c44 78%, var(--text));
+}
+</style>

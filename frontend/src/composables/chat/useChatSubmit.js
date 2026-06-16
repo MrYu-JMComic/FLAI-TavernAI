@@ -31,6 +31,8 @@ export function useChatSubmit({
   const controller = ref(null);
   const usage = ref(null);
   const providerMeta = ref(null);
+  const lastFailure = ref(null);
+  const latestWorldBookMatches = ref([]);
 
   let stoppingByUser = false;
   let accessoryRefreshRun = 0;
@@ -104,6 +106,8 @@ export function useChatSubmit({
     if (!content || sending.value || submitDisposed || !conversationId) {
       return;
     }
+    clearLastFailure();
+    setLatestWorldBookMatches([]);
     const submitId = ++submitRunId;
     const anchorAssistantReply = isPinnedToBottom() && prepareExpandedStatusBarForSubmit();
 
@@ -184,6 +188,7 @@ export function useChatSubmit({
             meta(data) {
               if (!isCurrentSubmit(submitId, conversationId)) return;
               setProviderMetaIfChanged(data);
+              setLatestWorldBookMatches(data?.worldBookMatches);
               refreshStreamTimer();
             },
             user_message(data) {
@@ -256,7 +261,11 @@ export function useChatSubmit({
               }
               if (!data.assistantMessage && !hasMessagePayload(currentAssistant)) {
                 finishAssistantDraft(assistant);
-                showError('模型没有返回正文，请重试或检查当前模型/网关是否支持该对话格式。');
+                handleSubmitFailure(
+                  '模型没有返回正文，请重试或检查当前模型/网关是否支持该对话格式。',
+                  content,
+                  conversationId
+                );
                 return;
               }
               finalizeUserDraft(localUser, data.userMessage);
@@ -267,6 +276,7 @@ export function useChatSubmit({
                 ...(providerMeta.value || {}),
                 provider: data.provider || providerMeta.value?.provider
               });
+              setLatestWorldBookMatches(data?.worldBookMatches);
               if (data.statusBar) {
                 updateStatusBar(data.statusBar);
               }
@@ -286,7 +296,9 @@ export function useChatSubmit({
               clearStreamTimer();
               finishAssistantDraft(assistant);
               if (!stoppingByUser) {
-                showError(data.error || '生成失败');
+                handleSubmitFailure(data.error || '生成失败', content, conversationId, {
+                  diagnosticId: data?.diagnosticId
+                });
               }
             }
           },
@@ -303,9 +315,9 @@ export function useChatSubmit({
             await reconcileInterruptedStreamDrafts(conversationId, localUser, assistant);
           }
           if (streamTimedOut && !stoppingByUser) {
-            showError('模型响应超时，请检查网络、余额或模型状态后重试。');
+            handleSubmitFailure('模型响应超时，请检查网络、余额或模型状态后重试。', content, conversationId);
           } else if (!stoppingByUser && !streamFinished && !hasCurrentMessagePayload(assistant)) {
-            showError('连接已结束，但没有收到模型回复。请检查 API Key、余额或网关状态后重试。');
+            handleSubmitFailure('连接已结束，但没有收到模型回复。请检查 API Key、余额或网关状态后重试。', content, conversationId);
           }
         }
         if (!streamResult?.aborted) {
@@ -324,6 +336,7 @@ export function useChatSubmit({
         const finalizedAssistant = finalizeStreamedAssistant(assistant, result.assistantMessage);
         setUsageIfChanged(result.usage || null);
         setProviderMetaIfChanged({ provider: result.provider });
+        setLatestWorldBookMatches(result.worldBookMatches);
         if (Array.isArray(result.skillResults)) {
           result.skillResults.forEach((item) => handleSkillResult(withConversationContext(item, conversationId)));
         }
@@ -349,11 +362,14 @@ export function useChatSubmit({
         return;
       }
       if (streamTimedOut && !stoppingByUser) {
-        showError('模型响应超时，请检查网络、余额或模型状态后重试。');
+        handleSubmitFailure('模型响应超时，请检查网络、余额或模型状态后重试。', content, conversationId);
       } else if (err.name !== 'AbortError' && !stoppingByUser) {
-        showError(err.message);
+        handleSubmitFailure(err.message, content, conversationId, {
+          canRetry: err?.data?.accepted === false,
+          diagnosticId: err?.data?.diagnosticId
+        });
       }
-      if (err.data?.accepted === false) {
+      if (err?.data?.accepted === false) {
         removeMessageItemsByIdIfPresent(localUser.id);
       }
       finishAssistantDraft(assistant);
@@ -534,6 +550,116 @@ export function useChatSubmit({
     if (last) {
       finishAssistantDraft(last);
     }
+  }
+
+  function handleSubmitFailure(message, content, conversationId, options = {}) {
+    rememberLastFailure(message, content, conversationId, options);
+    restoreFailedContentToInput(content, conversationId);
+    showError(message);
+  }
+
+  function restoreFailedContentToInput(content, conversationId) {
+    const normalizedContent = normalizeMessageText(content);
+    const normalizedConversationId = normalizeConversationId(conversationId);
+    if (!normalizedContent || !normalizedConversationId || stoppingByUser || submitDisposed) {
+      return false;
+    }
+    if (normalizeConversationId(route.params.id) !== normalizedConversationId) {
+      return false;
+    }
+    if (normalizeMessageText(input.value)) {
+      return false;
+    }
+    input.value = normalizedContent;
+    return true;
+  }
+
+  function rememberLastFailure(message, content, conversationId, options = {}) {
+    const normalizedContent = normalizeMessageText(content);
+    const normalizedConversationId = normalizeConversationId(conversationId);
+    if (!normalizedContent || !normalizedConversationId || stoppingByUser || submitDisposed) {
+      return;
+    }
+    lastFailure.value = {
+      message: String(message || '生成失败').trim() || '生成失败',
+      content: normalizedContent,
+      conversationId: normalizedConversationId,
+      diagnosticId: normalizeMessageText(options.diagnosticId),
+      canRetry: Boolean(options.canRetry),
+      createdAt: new Date().toISOString()
+    };
+  }
+
+  function clearLastFailure() {
+    if (lastFailure.value) {
+      lastFailure.value = null;
+    }
+  }
+
+  function restoreLastFailureInput() {
+    const failure = lastFailure.value;
+    if (!isRestorableFailure(failure)) {
+      return false;
+    }
+    input.value = failure.content;
+    clearLastFailure();
+    return true;
+  }
+
+  async function retryLastFailure() {
+    const failure = lastFailure.value;
+    if (!isRestorableFailure(failure) || !failure.canRetry || sending.value) {
+      return false;
+    }
+    input.value = failure.content;
+    clearLastFailure();
+    await nextTick();
+    await submit();
+    return true;
+  }
+
+  function dismissLastFailure() {
+    clearLastFailure();
+  }
+
+  function isRestorableFailure(failure) {
+    return Boolean(
+      failure?.content &&
+      failure.conversationId &&
+      normalizeConversationId(route.params.id) === normalizeConversationId(failure.conversationId)
+    );
+  }
+
+  function setLatestWorldBookMatches(matches) {
+    const normalizedMatches = normalizeWorldBookMatches(matches);
+    if (samePlainValue(latestWorldBookMatches.value, normalizedMatches)) {
+      return false;
+    }
+    latestWorldBookMatches.value = normalizedMatches;
+    return true;
+  }
+
+  function normalizeWorldBookMatches(matches) {
+    const sourceMatches = Array.isArray(matches) ? matches : [];
+    const normalizedMatches = [];
+    for (const match of sourceMatches) {
+      if (!match?.id) {
+        continue;
+      }
+      normalizedMatches.push({
+        id: String(match.id),
+        name: String(match.name || '未命名条目'),
+        worldBookId: String(match.worldBookId || ''),
+        worldBookName: String(match.worldBookName || '未命名世界书'),
+        position: String(match.position || 'before_char'),
+        depth: Number.isFinite(Number(match.depth)) ? Number(match.depth) : 0,
+        role: Number.isFinite(Number(match.role)) ? Number(match.role) : 0
+      });
+      if (normalizedMatches.length >= 12) {
+        break;
+      }
+    }
+    return normalizedMatches;
   }
 
   function findLastStreamingMessage() {
@@ -979,10 +1105,15 @@ export function useChatSubmit({
     controller,
     usage,
     providerMeta,
+    lastFailure,
+    latestWorldBookMatches,
     canSend,
     canToggleThinking,
     submit,
     stop,
+    restoreLastFailureInput,
+    retryLastFailure,
+    dismissLastFailure,
     setSelectedPresetId,
     toggleUseStream,
     toggleThinking,

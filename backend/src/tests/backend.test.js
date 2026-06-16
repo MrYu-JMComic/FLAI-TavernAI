@@ -2498,7 +2498,8 @@ test('conversation appearance settings persist empty values and custom code', ()
     desktopBackgroundUrl: saved.desktopBackgroundUrl,
     mobileBackgroundUrl: '',
     customCss: ' .deep-bubble { border-radius: 24px; } ',
-    customJs: 'return () => {}'
+    customJs: 'return () => {}',
+    showWorldBookMatches: true
   });
 
   assert.deepEqual(getConversationAppearance(database, 'owner-1', conversationId), saved);
@@ -2541,7 +2542,8 @@ test('conversation appearance treats null input as defaults', () => {
     mobileBackgroundUrl: '',
     customCss: '',
     customJs: '',
-    statusBarPrompt: ''
+    statusBarPrompt: '',
+    showWorldBookMatches: true
   });
 });
 
@@ -2554,6 +2556,8 @@ test('conversation settings schema accepts large background data URLs', () => {
 
   assert.equal(parsed.desktopBackgroundUrl, dataUrl);
   assert.equal(parsed.mobileBackgroundUrl, dataUrl);
+  assert.equal(parsed.showWorldBookMatches, true);
+  assert.equal(saveConversationSettingsSchema.parse({ showWorldBookMatches: 'false' }).showWorldBookMatches, false);
 });
 
 test('OpenAI-compatible streaming parser separates reasoning and content', async () => {
@@ -7053,11 +7057,17 @@ test('advanced settings helpers treat null inputs as defaults', () => {
   const normalized = normalizeAdvancedSettings(null);
   assert.equal(normalized.desktopBackgroundUrl, '');
   assert.equal(normalized.statusBarPrompt, '');
+  assert.equal(normalized.showWorldBookMatches, true);
   assert.equal(normalized.statusBarBlueprint.variables.length, 0);
   assert.equal(normalized.accessorySkills.statusBarAgent.enabled, 'auto');
 
-  const merged = mergeAdvancedSettings({ statusBarPrompt: 'author prompt' }, null);
+  const merged = mergeAdvancedSettings({ statusBarPrompt: 'author prompt', showWorldBookMatches: false }, null);
   assert.equal(merged.statusBarPrompt, 'author prompt');
+  assert.equal(merged.showWorldBookMatches, false);
+  assert.equal(
+    mergeAdvancedSettings({ showWorldBookMatches: false }, { showWorldBookMatches: true }).showWorldBookMatches,
+    true
+  );
   assert.equal(merged.accessorySkills.statusBarAgent.enabled, 'auto');
 
   assert.equal(isAccessorySkillActive({ statusBarAgent: { enabled: 'auto' } }, 'statusBarAgent', null), false);
@@ -7185,7 +7195,8 @@ test('conversation settings invalid lorebook rolls back appearance inside transa
         desktopBackgroundUrl: '',
         mobileBackgroundUrl: '',
         customCss: '',
-        customJs: ''
+        customJs: '',
+        showWorldBookMatches: true
       });
 
       database.prepare('UPDATE conversations SET title = ? WHERE id = ?').run('Outer Transaction Still Open', conversationId);
@@ -7266,7 +7277,8 @@ test('conversation settings save succeeds inside an existing transaction', async
         desktopBackgroundUrl: '/nested-settings.png',
         mobileBackgroundUrl: '',
         customCss: '.nested-settings { color: green; }',
-        customJs: ''
+        customJs: '',
+        showWorldBookMatches: true
       });
       assert.equal(
         database.prepare('SELECT chat_lorebook_id FROM conversations WHERE id = ?').get(conversationId).chat_lorebook_id,
@@ -7280,7 +7292,8 @@ test('conversation settings save succeeds inside an existing transaction', async
       desktopBackgroundUrl: '',
       mobileBackgroundUrl: '',
       customCss: '',
-      customJs: ''
+      customJs: '',
+      showWorldBookMatches: true
     });
     assert.equal(
       database.prepare('SELECT chat_lorebook_id FROM conversations WHERE id = ?').get(conversationId).chat_lorebook_id,

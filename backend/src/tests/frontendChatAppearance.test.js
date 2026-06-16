@@ -98,13 +98,15 @@ test('chat appearance merges layered text fields without filter arrays', () => {
         desktopBackgroundUrl: '/author.png',
         customCss: '.author {}',
         customJs: 'author();',
-        statusBarPrompt: 'Author prompt'
+        statusBarPrompt: 'Author prompt',
+        showWorldBookMatches: true
       },
       {
         mobileBackgroundUrl: '/user-mobile.png',
         customCss: '.user {}',
         customJs: '',
-        statusBarPrompt: 'User prompt'
+        statusBarPrompt: 'User prompt',
+        showWorldBookMatches: false
       }
     ),
     {
@@ -112,7 +114,8 @@ test('chat appearance merges layered text fields without filter arrays', () => {
       mobileBackgroundUrl: '/user-mobile.png',
       customCss: '.author {}\n\n.user {}',
       customJs: 'author();',
-      statusBarPrompt: 'Author prompt\n\nUser prompt'
+      statusBarPrompt: 'Author prompt\n\nUser prompt',
+      showWorldBookMatches: false
     }
   );
   assert.match(
@@ -343,7 +346,8 @@ test('chat appearance save preserves active conversation references for unchange
     mobileBackgroundUrl: '',
     customCss: '',
     customJs: '',
-    statusBarPrompt: ''
+    statusBarPrompt: '',
+    showWorldBookMatches: true
   };
   const savedSettings = {
     ...normalizedAppearance,
@@ -773,6 +777,7 @@ test('ChatView routes chat appearance reset and lorebook updates through guarded
   assert.match(chatViewScript, /syncConversationAppearance, resetConversationAppearance, saveConversationAppearanceChanges/);
   assert.match(chatViewScript, /setChatLorebookId, applyConversationAppearance/);
   assert.match(chatViewScript, /setActiveConversationIfChanged,\s*showActionNotice, showError/);
+  assert.match(chatAppearanceSource, /showWorldBookMatches: chatAppearanceForm\.showWorldBookMatches/);
   assert.match(chatViewTemplate, /@reset-appearance="resetConversationAppearance\(conversation\?\.settings\)"/);
   assert.match(chatViewTemplate, /@update:chat-lorebook-id="setChatLorebookId"/);
   assert.doesNotMatch(chatViewTemplate, /@reset-appearance="syncConversationAppearance/);
