@@ -142,6 +142,53 @@ test('CharacterFormView exposes compact draft recovery controls', () => {
   );
 });
 
+test('CharacterFormView offers a scoped new-character creation wizard', () => {
+  assert.match(characterFormScript, /import \{ computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch \} from 'vue';/);
+  assert.match(characterFormScript, /const characterCreationMode = ref\('wizard'\);/);
+  assert.match(characterFormScript, /const characterWizardStepId = ref\('basic'\);/);
+  assert.match(
+    characterFormScript,
+    /const CHARACTER_CREATION_WIZARD_STEPS = \[[\s\S]*id: 'basic'[\s\S]*sections: \['basic'\][\s\S]*id: 'settings'[\s\S]*sections: \['settings', 'ai'\][\s\S]*id: 'advanced'[\s\S]*sections: \['advanced-settings', 'status-blueprint', 'accessories', 'render-plugins', 'regex'\]/
+  );
+  assert.match(
+    characterFormScript,
+    /const isCharacterCreationWizardAvailable = computed\(\(\) => !isEditing\.value && canEdit\.value\);/
+  );
+  assert.match(
+    characterFormScript,
+    /function isSectionVisible\(section\) \{\s*return isCharacterSectionVisibleInCurrentMode\(section\.id\)[\s\S]*typeof section\.visible !== 'function' \|\| section\.visible\(\)/
+  );
+  assert.match(
+    characterFormScript,
+    /function isCharacterSectionVisibleInCurrentMode\(sectionId\) \{[\s\S]*if \(!isCharacterCreationWizardActive\.value\) \{[\s\S]*return true;[\s\S]*for \(const currentSectionId of step\.sections\) \{[\s\S]*currentSectionId === sectionId/
+  );
+  assert.match(
+    characterFormScript,
+    /function skipCharacterWizardStep\(\) \{[\s\S]*if \(nextIndex >= CHARACTER_CREATION_WIZARD_STEPS\.length\) \{[\s\S]*setCharacterCreationMode\('full'\);/
+  );
+  assert.match(
+    characterFormScript,
+    /function scrollToCharacterWizardStep\(sectionId\) \{[\s\S]*nextTick\(\(\) => \{[\s\S]*getCharacterSectionTarget\(sectionId\)[\s\S]*window\.scrollTo/
+  );
+
+  assert.match(characterFormTemplate, /class="character-wizard-panel"/);
+  assert.match(characterFormTemplate, /role="group" aria-label="角色创建模式"/);
+  assert.match(characterFormTemplate, /role="tablist" aria-label="角色创建向导步骤"/);
+  assert.match(characterFormTemplate, /v-for="step in CHARACTER_CREATION_WIZARD_STEPS"/);
+  assert.match(characterFormTemplate, /@click="setCharacterCreationMode\('full'\)"/);
+  assert.match(characterFormTemplate, /@click="skipCharacterWizardStep"/);
+  assert.match(characterFormTemplate, /v-if="isCharacterSectionVisibleInCurrentMode\('basic'\)" id="section-basic"/);
+  assert.match(characterFormTemplate, /v-if="isCharacterSectionVisibleInCurrentMode\('settings'\)" id="section-settings"/);
+  assert.match(characterFormTemplate, /v-if="canEdit && isCharacterSectionVisibleInCurrentMode\('ai'\)"/);
+  assert.match(characterFormTemplate, /v-if="isCharacterSectionVisibleInCurrentMode\('advanced-settings'\)" id="section-advanced-settings"/);
+  assert.match(characterFormTemplate, /v-if="isCharacterSectionVisibleInCurrentMode\('render-plugins'\)" id="section-render-plugins"/);
+  assert.match(characterFormTemplate, /v-if="isCharacterSectionVisibleInCurrentMode\('regex'\)" id="section-regex"/);
+
+  assert.match(stylesSource, /\.character-wizard-panel\s*\{[\s\S]*display:\s*grid;[\s\S]*border:\s*1px solid color-mix\(in srgb, var\(--primary\) 28%, var\(--line\)\);/);
+  assert.match(stylesSource, /\.character-wizard-steps\s*\{[\s\S]*grid-template-columns:\s*repeat\(3, minmax\(0, 1fr\)\);/);
+  assert.match(stylesSource, /@media \(max-width: 768px\) \{[\s\S]*\.character-wizard-steps\s*\{[\s\S]*grid-template-columns:\s*minmax\(0, 1fr\);/);
+});
+
 test('CharacterFormView load error state offers creation and navigation exits', () => {
   assert.match(
     characterFormTemplate,
@@ -841,8 +888,8 @@ test('CharacterFormView uses a flowing card layout and modal status preview', ()
   );
 
   assert.match(characterFormTemplate, /<div class="character-main-sections">/);
-  assert.match(characterFormTemplate, /<section id="section-basic" class="form-panel form-section-group character-basic-panel">/);
-  assert.match(characterFormTemplate, /<section id="section-settings" class="form-panel form-section-group character-settings-panel">/);
+  assert.match(characterFormTemplate, /<section v-if="isCharacterSectionVisibleInCurrentMode\('basic'\)" id="section-basic" class="form-panel form-section-group character-basic-panel">/);
+  assert.match(characterFormTemplate, /<section v-if="isCharacterSectionVisibleInCurrentMode\('settings'\)" id="section-settings" class="form-panel form-section-group character-settings-panel">/);
   assert.match(characterFormTemplate, /<div id="section-advanced" class="form-section-group-advanced">/);
   assert.match(characterFormTemplate, /class="status-blueprint-heading-actions"[\s\S]*showStatusPreviewDialog = true[\s\S]*<Eye :size="16" \/>/);
   assert.doesNotMatch(characterFormTemplate, /<div class="status-blueprint-preview">/);
