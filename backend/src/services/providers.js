@@ -23,6 +23,11 @@ const DEFAULT_TOOL_COMPLETION_ROUNDS = 6;
 const MAX_TOOL_COMPLETION_ROUNDS = 100;
 const OPENAI_IMAGE_GENERATION_MODELS = new Set(['gpt-image-2']);
 const XAI_IMAGE_GENERATION_MODELS = new Set(['grok-imagine-image', 'grok-imagine-image-quality']);
+const GEMINI_IMAGE_GENERATION_MODELS = new Set([
+  'gemini-3.1-flash-image',
+  'gemini-3-pro-image',
+  'gemini-2.5-flash-image'
+]);
 
 export const providerPresets = {
   openai: {
@@ -967,6 +972,9 @@ export async function generateImage(settings, prompt, options = {}) {
   if (!compatibility.supported) {
     throw new Error(compatibility.error);
   }
+  if (settings.providerType === 'gemini') {
+    return generateGeminiImage(settings, prompt, options);
+  }
   const response = await providerFetch(settings, '/images/generations', {
     method: 'POST',
     body: JSON.stringify({
@@ -993,6 +1001,36 @@ export async function generateImage(settings, prompt, options = {}) {
   };
 }
 
+async function generateGeminiImage(settings, prompt, options = {}) {
+  const model = normalizeProviderModel(settings.providerType, resolveProviderModel(settings, options));
+  const response = await fetchProviderRequest(geminiNativeGenerateContentUrl(settings, model), {
+    method: 'POST',
+    headers: geminiNativeRequestHeaders(settings),
+    body: JSON.stringify({
+      contents: [{
+        role: 'user',
+        parts: [{ text: String(prompt || '').trim() }]
+      }],
+      generationConfig: {
+        responseModalities: ['TEXT', 'IMAGE']
+      }
+    })
+  });
+  const json = await readJsonResponse(response);
+  const image = normalizeGeminiGeneratedImage(json);
+  if (!image) {
+    throw new Error('Gemini 生图模型没有返回 inlineData 图片数据');
+  }
+  return {
+    content: image.revisedPrompt ? `已生成图片：${image.revisedPrompt}` : '已生成图片',
+    attachments: [image],
+    usage: json.usageMetadata || json.usage_metadata || json.usage || null,
+    provider: settings.gatewayName,
+    providerType: settings.providerType,
+    model
+  };
+}
+
 function getImageGenerationCompatibility(settings = {}, options = {}) {
   const providerType = String(settings.providerType || '').trim();
   const model = normalizeProviderModel(providerType, resolveProviderModel(settings, options));
@@ -1011,12 +1049,18 @@ function getImageGenerationCompatibility(settings = {}, options = {}) {
       error: XAI_IMAGE_GENERATION_MODELS.has(model) ? '' : imageGenerationUnsupportedMessage(model)
     };
   }
+  if (providerType === 'gemini') {
+    return {
+      supported: GEMINI_IMAGE_GENERATION_MODELS.has(model),
+      error: GEMINI_IMAGE_GENERATION_MODELS.has(model) ? '' : imageGenerationUnsupportedMessage(model)
+    };
+  }
   return { supported: false, error: imageGenerationUnsupportedMessage(model) };
 }
 
 function imageGenerationUnsupportedMessage(model) {
   const normalizedModel = String(model || '').trim() || '当前模型';
-  return `Model ${normalizedModel} is not supported on /v1/images/generations or /v1/images/edits. Use gpt-image-2, grok-imagine-image, grok-imagine-image-quality, or a configured openai-compatibility image model.`;
+  return `Model ${normalizedModel} is not supported for this provider's image generation route. Use gpt-image-2 on OpenAI, grok-imagine-image or grok-imagine-image-quality on xAI, gemini-3.1-flash-image, gemini-3-pro-image, or gemini-2.5-flash-image on Gemini, or a configured OpenAI-compatible custom image model.`;
 }
 
 function normalizeGeneratedImage(json = {}) {
@@ -1038,6 +1082,68 @@ function normalizeGeneratedImage(json = {}) {
     size: Math.floor((b64.length * 3) / 4),
     revisedPrompt: String(first.revised_prompt || first.revisedPrompt || '').trim()
   };
+}
+
+function normalizeGeminiGeneratedImage(json = {}) {
+  const candidates = Array.isArray(json.candidates) ? json.candidates : [];
+  let revisedPrompt = '';
+  for (const candidate of candidates) {
+    const parts = candidate?.content?.parts || candidate?.parts;
+    if (!Array.isArray(parts)) {
+      continue;
+    }
+    for (const part of parts) {
+      if (typeof part?.text === 'string' && part.text.trim()) {
+        revisedPrompt = revisedPrompt ? `${revisedPrompt}\n${part.text.trim()}` : part.text.trim();
+        continue;
+      }
+      const inlineData = part?.inlineData || part?.inline_data;
+      const b64 = String(inlineData?.data || '').trim();
+      if (!b64) {
+        continue;
+      }
+      const mimeType = String(inlineData.mimeType || inlineData.mime_type || 'image/png').trim() || 'image/png';
+      return {
+        type: 'image',
+        dataUrl: `data:${mimeType};base64,${b64}`,
+        mimeType,
+        name: 'gemini-generated-image.png',
+        alt: 'Gemini generated image',
+        size: Buffer.byteLength(b64, 'base64'),
+        revisedPrompt
+      };
+    }
+  }
+  return null;
+}
+
+function geminiNativeGenerateContentUrl(settings = {}, model = '') {
+  let url;
+  try {
+    url = new URL(normalizeProviderBaseUrl('gemini', settings.baseUrl || providerPresets.gemini.baseUrl));
+  } catch {
+    url = new URL(providerPresets.gemini.baseUrl);
+  }
+
+  let pathname = url.pathname.replace(/\/+$/, '');
+  if (pathname.endsWith('/openai')) {
+    pathname = pathname.slice(0, -'/openai'.length);
+  }
+  url.pathname = `${pathname}/models/${encodeURIComponent(model)}:generateContent`;
+  url.search = '';
+  url.hash = '';
+  return url.toString();
+}
+
+function geminiNativeRequestHeaders(settings = {}) {
+  const headers = {
+    'Content-Type': 'application/json',
+    Accept: 'application/json'
+  };
+  if (settings.apiKey) {
+    headers['x-goog-api-key'] = settings.apiKey;
+  }
+  return headers;
 }
 
 export async function streamCompletion(settings, messages, emit, signal, options = {}) {

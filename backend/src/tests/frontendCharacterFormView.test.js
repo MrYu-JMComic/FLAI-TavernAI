@@ -57,6 +57,91 @@ test('CharacterFormView footer actions share one busy state', () => {
   assert.doesNotMatch(characterFormTemplate, /type="submit" :disabled="saving"/);
 });
 
+test('CharacterFormView autosaves editable local drafts through one scoped path', () => {
+  assert.match(characterFormScript, /const pendingCharacterDraft = ref\(null\);/);
+  assert.match(characterFormScript, /const characterDraftStatus = ref\('idle'\);/);
+  assert.match(characterFormScript, /const CHARACTER_FORM_DRAFT_STORAGE_PREFIX = 'flai-character-form-draft';/);
+  assert.match(characterFormScript, /const CHARACTER_FORM_DRAFT_AUTOSAVE_MS = 30000;/);
+  assert.match(characterFormScript, /const CHARACTER_FORM_DRAFT_DEBOUNCE_MS = 1200;/);
+  assert.match(characterFormScript, /const CHARACTER_FORM_DRAFT_MAX_CHARS = 200000;/);
+
+  assert.match(
+    characterFormScript,
+    /watch\(\s*\(\) => \(\{[\s\S]*payload: toPayload\(\),[\s\S]*selectedWorldBookIds: \[\.\.\.selectedWorldBookIds\.value\][\s\S]*scheduleCharacterDraftSave\(\);[\s\S]*\{ deep: true \}/
+  );
+  assert.match(
+    characterFormScript,
+    /function getCharacterDraftStorageKey\(\) \{[\s\S]*`\$\{CHARACTER_FORM_DRAFT_STORAGE_PREFIX\}:edit:\$\{characterId\}`[\s\S]*`\$\{CHARACTER_FORM_DRAFT_STORAGE_PREFIX\}:new`/
+  );
+  assert.match(
+    characterFormScript,
+    /function canPersistCharacterDraft\(\) \{[\s\S]*!characterFormDisposed[\s\S]*!characterDraftHydrating[\s\S]*canEdit\.value[\s\S]*!pendingCharacterDraft\.value[\s\S]*Boolean\(characterDraftBaselineSerialized\)[\s\S]*Boolean\(getCharacterDraftStorageKey\(\)\);/
+  );
+  assert.match(
+    characterFormScript,
+    /function saveCharacterDraftNow\(\) \{[\s\S]*if \(!serialized \|\| serialized === characterDraftBaselineSerialized\) \{[\s\S]*removeCharacterDraftFromStorage\(\);[\s\S]*raw\.length > CHARACTER_FORM_DRAFT_MAX_CHARS[\s\S]*localStorage\.setItem\(getCharacterDraftStorageKey\(\), raw\);/
+  );
+  assert.equal(countMatches(characterFormScript, /localStorage\.setItem\(getCharacterDraftStorageKey\(\), raw\);/g), 1);
+  assert.match(
+    characterFormScript,
+    /function scheduleCharacterDraftSave\(\) \{[\s\S]*characterDraftSaveTimer = setTimeout\(\(\) => \{[\s\S]*saveCharacterDraftNow\(\);[\s\S]*CHARACTER_FORM_DRAFT_DEBOUNCE_MS/
+  );
+  assert.match(
+    characterFormScript,
+    /function startCharacterDraftInterval\(\) \{[\s\S]*characterDraftInterval = setInterval\(saveCharacterDraftNow, CHARACTER_FORM_DRAFT_AUTOSAVE_MS\);/
+  );
+  assert.match(
+    characterFormScript,
+    /onMounted\(async \(\) => \{[\s\S]*startCharacterDraftInterval\(\);[\s\S]*initializeCharacterDraftState\(\);[\s\S]*await optionsLoad;/
+  );
+  assert.match(
+    characterFormScript,
+    /Object\.assign\(form, normalizeForForm\(character\)\);[\s\S]*setSelectedWorldBookIdsFromBooksIfChanged\(linkedBooks\);[\s\S]*initializeCharacterDraftState\(\);/
+  );
+  assert.match(
+    characterFormScript,
+    /await syncCharacterWorldBooks\(saved\.id, \{ editing, selectedIds: worldBookIds \}\);[\s\S]*establishCharacterDraftBaseline\(\);[\s\S]*clearCurrentCharacterDraft\(\);[\s\S]*notify\.success/
+  );
+  assert.match(
+    characterFormScript,
+    /onBeforeUnmount\(\(\) => \{\s*flushCharacterDraftBeforeDispose\(\);\s*characterFormDisposed = true;/
+  );
+});
+
+test('CharacterFormView exposes compact draft recovery controls', () => {
+  assert.match(
+    characterFormTemplate,
+    /class="character-draft-note"[\s\S]*:class="\{ pending: pendingCharacterDraft, warning: characterDraftStatus === 'too-large' \|\| characterDraftStatus === 'error' \}"[\s\S]*aria-live="polite"/
+  );
+  assert.match(characterFormTemplate, /@click="restoreCharacterDraft"/);
+  assert.match(characterFormTemplate, /@click="discardCharacterDraft"/);
+  assert.match(
+    characterFormScript,
+    /function restoreCharacterDraft\(\) \{[\s\S]*applyCharacterDraftPayload\(draft\.payload\);[\s\S]*setSelectedWorldBookIdsIfChanged\(draft\.selectedWorldBookIds\);[\s\S]*pendingCharacterDraft\.value = null;[\s\S]*characterDraftStatus\.value = 'restored';[\s\S]*scheduleCharacterDraftSave\(\);/
+  );
+  assert.match(
+    characterFormScript,
+    /function discardCharacterDraft\(\) \{[\s\S]*clearCurrentCharacterDraft\(\);[\s\S]*scheduleCharacterDraftSave\(\);/
+  );
+  assert.match(
+    characterFormScript,
+    /function applyCharacterDraftPayload\(payload = \{\}\) \{[\s\S]*form\.name = normalized\.name;[\s\S]*form\.authorAdvancedSettings = normalized\.authorAdvancedSettings;[\s\S]*form\.selectedTags = \[\.\.\.normalized\.tags\];/
+  );
+
+  assert.match(
+    stylesSource,
+    /\.character-draft-note\s*\{[\s\S]*display:\s*flex;[\s\S]*border:\s*1px solid color-mix\(in srgb, var\(--green\) 28%, var\(--line\)\);/
+  );
+  assert.match(
+    stylesSource,
+    /\.character-draft-note\.pending\s*\{[\s\S]*background:\s*color-mix\(in srgb, var\(--primary-soft\) 56%, var\(--surface\)\);/
+  );
+  assert.match(
+    stylesSource,
+    /@media \(max-width: 768px\) \{[\s\S]*\.character-draft-note\s*\{[\s\S]*flex-direction:\s*column;/
+  );
+});
+
 test('CharacterFormView load error state offers creation and navigation exits', () => {
   assert.match(
     characterFormTemplate,

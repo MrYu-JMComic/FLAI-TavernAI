@@ -1,5 +1,5 @@
 ﻿<script setup>
-import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
 import { ArrowLeft, ChevronLeft, ChevronRight, Dice6, Download, Eye, ListChecks, Plus, RotateCcw, Save, Settings, Sparkles, Trash2, Upload, WandSparkles, X } from '@lucide/vue';
 import { createCharacter, createMod, createTag, deleteCharacter, exportCharacter, fetchCharacter, fetchCharacterWorldBooks, fetchTags, fetchWorldBooks, linkCharacterWorldBook, streamCharacterDraft, unlinkCharacterWorldBook, updateCharacter } from '../api';
 import CharacterImagePanel from '../components/CharacterImagePanel.vue';
@@ -118,6 +118,8 @@ const optionsLoadError = ref('');
 const tagSearch = ref('');
 const tagCreating = ref(false);
 const activeSection = ref('basic');
+const characterCreationMode = ref('wizard');
+const characterWizardStepId = ref('basic');
 const sectionNavRef = ref(null);
 const form = reactive(emptyCharacter());
 const pendingCharacterDraft = ref(null);
@@ -139,6 +141,26 @@ const WORLD_BOOK_SORT_OPTIONS = [
   { value: 'updatedDesc', label: '最近更新' },
   { value: 'nameAsc', label: '名称 A-Z' },
   { value: 'entryCountDesc', label: '条目多到少' }
+];
+const CHARACTER_CREATION_WIZARD_STEPS = [
+  {
+    id: 'basic',
+    label: '基础信息',
+    description: '先确定角色身份、头像、标签和关联世界书。',
+    sections: ['basic']
+  },
+  {
+    id: 'settings',
+    label: '角色设定',
+    description: '补充背景、世界观、人设、开场白，也可以用 AI 完善。',
+    sections: ['settings', 'ai']
+  },
+  {
+    id: 'advanced',
+    label: '高级配置',
+    description: '按需设置状态栏、附属技能、渲染插件和正则规则。',
+    sections: ['advanced-settings', 'status-blueprint', 'accessories', 'render-plugins', 'regex']
+  }
 ];
 const CHARACTER_FORM_DRAFT_STORAGE_PREFIX = 'flai-character-form-draft';
 const CHARACTER_FORM_DRAFT_AUTOSAVE_MS = 30000;
@@ -255,6 +277,17 @@ watch(
   () => {
     syncStatusBlueprintVariablesFromTemplate();
   }
+);
+
+watch(
+  () => ({
+    payload: toPayload(),
+    selectedWorldBookIds: [...selectedWorldBookIds.value]
+  }),
+  () => {
+    scheduleCharacterDraftSave();
+  },
+  { deep: true }
 );
 
 // ---- AI draft panel drag / resize state ----
@@ -621,6 +654,7 @@ onMounted(() => {
 });
 
 onBeforeUnmount(() => {
+  flushCharacterDraftBeforeDispose();
   characterFormDisposed = true;
   formOptionsLoadToken += 1;
   editingCharacterLoadToken += 1;
@@ -648,6 +682,13 @@ onBeforeUnmount(() => {
 });
 
 const canEdit = computed(() => !isEditing.value || form.canEdit !== false);
+const isCharacterCreationWizardAvailable = computed(() => !isEditing.value && canEdit.value);
+const isCharacterCreationWizardActive = computed(() => isCharacterCreationWizardAvailable.value && characterCreationMode.value === 'wizard');
+const characterWizardStepIndex = computed(getCharacterWizardStepIndex);
+const currentCharacterWizardStep = computed(getCurrentCharacterWizardStep);
+const characterWizardProgressText = computed(() => (
+  `步骤 ${characterWizardStepIndex.value + 1} / ${CHARACTER_CREATION_WIZARD_STEPS.length}`
+));
 const formSections = [
   { id: 'basic', label: '基础信息' },
   { id: 'settings', label: '角色设定' },
@@ -685,7 +726,8 @@ function scrollToSection(id) {
 }
 
 function isSectionVisible(section) {
-  return typeof section.visible !== 'function' || section.visible();
+  return isCharacterSectionVisibleInCurrentMode(section.id)
+    && (typeof section.visible !== 'function' || section.visible());
 }
 
 function getVisibleFormSections() {
@@ -696,6 +738,118 @@ function getVisibleFormSections() {
     }
   }
   return sections;
+}
+
+function getCharacterWizardStepIndex() {
+  for (let index = 0; index < CHARACTER_CREATION_WIZARD_STEPS.length; index += 1) {
+    if (CHARACTER_CREATION_WIZARD_STEPS[index].id === characterWizardStepId.value) {
+      return index;
+    }
+  }
+  return 0;
+}
+
+function getCurrentCharacterWizardStep() {
+  return CHARACTER_CREATION_WIZARD_STEPS[characterWizardStepIndex.value] || CHARACTER_CREATION_WIZARD_STEPS[0];
+}
+
+function isCharacterSectionVisibleInCurrentMode(sectionId) {
+  if (!isCharacterCreationWizardActive.value) {
+    return true;
+  }
+  const step = currentCharacterWizardStep.value;
+  for (const currentSectionId of step.sections) {
+    if (currentSectionId === sectionId) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function setCharacterCreationMode(nextMode) {
+  const normalizedMode = nextMode === 'full' ? 'full' : 'wizard';
+  if (characterCreationMode.value === normalizedMode) {
+    return;
+  }
+  characterCreationMode.value = normalizedMode;
+  if (normalizedMode === 'wizard') {
+    setCharacterWizardStep(characterWizardStepId.value, { scroll: true });
+    return;
+  }
+  setActiveCharacterSection('basic');
+  scheduleCharacterSectionNavSync();
+}
+
+function setCharacterWizardStep(stepId, { scroll = false } = {}) {
+  if (!isCharacterCreationWizardAvailable.value || !isValidCharacterWizardStep(stepId)) {
+    return;
+  }
+  characterWizardStepId.value = stepId;
+  const firstSectionId = getCharacterWizardStepFirstSectionId(stepId);
+  if (firstSectionId) {
+    activeSection.value = firstSectionId;
+  }
+  scheduleCharacterSectionNavSync();
+  if (scroll) {
+    scrollToCharacterWizardStep(firstSectionId);
+  }
+}
+
+function isValidCharacterWizardStep(stepId) {
+  for (const step of CHARACTER_CREATION_WIZARD_STEPS) {
+    if (step.id === stepId) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function getCharacterWizardStepFirstSectionId(stepId) {
+  for (const step of CHARACTER_CREATION_WIZARD_STEPS) {
+    if (step.id === stepId) {
+      return step.sections[0] || '';
+    }
+  }
+  return '';
+}
+
+function goToPreviousCharacterWizardStep() {
+  const previousIndex = characterWizardStepIndex.value - 1;
+  if (previousIndex < 0) {
+    return;
+  }
+  setCharacterWizardStep(CHARACTER_CREATION_WIZARD_STEPS[previousIndex].id, { scroll: true });
+}
+
+function goToNextCharacterWizardStep() {
+  const nextIndex = characterWizardStepIndex.value + 1;
+  if (nextIndex >= CHARACTER_CREATION_WIZARD_STEPS.length) {
+    return;
+  }
+  setCharacterWizardStep(CHARACTER_CREATION_WIZARD_STEPS[nextIndex].id, { scroll: true });
+}
+
+function skipCharacterWizardStep() {
+  const nextIndex = characterWizardStepIndex.value + 1;
+  if (nextIndex >= CHARACTER_CREATION_WIZARD_STEPS.length) {
+    setCharacterCreationMode('full');
+    return;
+  }
+  setCharacterWizardStep(CHARACTER_CREATION_WIZARD_STEPS[nextIndex].id, { scroll: true });
+}
+
+function scrollToCharacterWizardStep(sectionId) {
+  if (!sectionId || typeof window === 'undefined') {
+    return;
+  }
+  nextTick(() => {
+    const target = getCharacterSectionTarget(sectionId);
+    if (!target) {
+      return;
+    }
+    const top = target.getBoundingClientRect().top + window.scrollY - getCharacterSectionActivationOffset();
+    window.scrollTo({ top: Math.max(0, Math.round(top)), behavior: 'smooth' });
+  });
 }
 
 function hasVisibleFormSection(sectionId, sections = visibleFormSections.value) {
@@ -909,11 +1063,13 @@ function modelOverrideOptions(value = '') {
 }
 
 onMounted(async () => {
+  startCharacterDraftInterval();
   const optionsLoad = loadFormOptions();
   if (isEditing.value) {
     await Promise.all([optionsLoad, loadEditingCharacter()]);
     return;
   }
+  initializeCharacterDraftState();
   await optionsLoad;
 });
 
@@ -955,6 +1111,7 @@ async function loadEditingCharacter() {
     if (!isCurrentEditingCharacterLoad(loadToken, characterId)) return;
     Object.assign(form, normalizeForForm(character));
     setSelectedWorldBookIdsFromBooksIfChanged(linkedBooks);
+    initializeCharacterDraftState();
   } catch (err) {
     if (!isCurrentEditingCharacterLoad(loadToken, characterId)) return;
     const message = err?.message || '加载角色失败';
@@ -1212,6 +1369,8 @@ async function submit() {
       : await createCharacter(payload);
     await syncCharacterWorldBooks(saved.id, { editing, selectedIds: worldBookIds });
     if (!isCurrentFormSubmit(submitToken, { editing, characterId })) return;
+    establishCharacterDraftBaseline();
+    clearCurrentCharacterDraft();
     notify.success(editing ? '角色已保存' : '角色已创建');
     if (editing) {
       emit('navigate', 'characterEdit', { id: saved.id });
@@ -1347,6 +1506,7 @@ async function removeCharacter() {
   try {
     await deleteCharacter(characterId);
     if (!isCurrentCharacterDelete(deleteToken, characterId)) return;
+    clearCurrentCharacterDraft();
     notify.success('角色已删除');
     navigateFromCharacterDelete('home');
   } catch (err) {
@@ -1559,6 +1719,272 @@ function toPayload() {
     worldBookId: form.worldBookId || '',
     tags: form.selectedTags.length ? form.selectedTags : parseTagsTextForPayload(form.tagsText)
   };
+}
+
+function initializeCharacterDraftState() {
+  establishCharacterDraftBaseline();
+  loadPendingCharacterDraft();
+}
+
+function establishCharacterDraftBaseline() {
+  characterDraftBaselineSerialized = serializeCharacterDraftSnapshot(buildCharacterDraftSnapshot());
+  characterDraftStatus.value = 'idle';
+  characterDraftSavedAt.value = '';
+}
+
+function buildCharacterDraftSnapshot() {
+  return {
+    payload: normalizeCharacterDraftPayload(toPayload()),
+    selectedWorldBookIds: normalizeWorldBookIds(selectedWorldBookIds.value)
+  };
+}
+
+function normalizeCharacterDraftPayload(input = {}) {
+  const source = input && typeof input === 'object' ? input : {};
+  return {
+    name: String(source.name || ''),
+    avatarUrl: String(source.avatarUrl || ''),
+    gender: String(source.gender || ''),
+    age: String(source.age || ''),
+    background: String(source.background || ''),
+    worldview: String(source.worldview || ''),
+    persona: String(source.persona || ''),
+    openingMessage: String(source.openingMessage || ''),
+    visibility: source.visibility === 'public' ? 'public' : 'private',
+    authorAdvancedSettings: normalizeAdvancedSettingsForForm(source.authorAdvancedSettings || source.advancedSettings || {}),
+    renderPlugins: Array.isArray(source.renderPlugins) ? source.renderPlugins : [defaultRenderPlugin()],
+    regexRules: Array.isArray(source.regexRules) ? source.regexRules : [],
+    worldBookId: String(source.worldBookId || ''),
+    tags: normalizeCharacterDraftTags(source.tags)
+  };
+}
+
+function normalizeCharacterDraftTags(input) {
+  const tags = [];
+  for (const item of Array.isArray(input) ? input : []) {
+    const name = typeof item === 'string' ? item : item?.name;
+    const trimmed = String(name || '').trim();
+    if (trimmed) {
+      tags.push(trimmed);
+    }
+  }
+  return tags;
+}
+
+function serializeCharacterDraftSnapshot(snapshot = buildCharacterDraftSnapshot()) {
+  return JSON.stringify({
+    payload: normalizeCharacterDraftPayload(snapshot.payload),
+    selectedWorldBookIds: normalizeWorldBookIds(snapshot.selectedWorldBookIds)
+  });
+}
+
+function getCharacterDraftStorageKey() {
+  if (isEditing.value) {
+    const characterId = String(editingCharacterId.value || '').trim();
+    return characterId ? `${CHARACTER_FORM_DRAFT_STORAGE_PREFIX}:edit:${characterId}` : '';
+  }
+  return `${CHARACTER_FORM_DRAFT_STORAGE_PREFIX}:new`;
+}
+
+function loadPendingCharacterDraft() {
+  pendingCharacterDraft.value = null;
+  if (!canEdit.value) {
+    return;
+  }
+  const draft = readCharacterDraftFromStorage();
+  if (!draft) {
+    return;
+  }
+  const serialized = serializeCharacterDraftSnapshot(draft);
+  if (!serialized || serialized === characterDraftBaselineSerialized) {
+    removeCharacterDraftFromStorage();
+    return;
+  }
+  pendingCharacterDraft.value = draft;
+  characterDraftSavedAt.value = draft.updatedAt || '';
+  characterDraftStatus.value = 'idle';
+}
+
+function readCharacterDraftFromStorage() {
+  const key = getCharacterDraftStorageKey();
+  if (!key) {
+    return null;
+  }
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw) {
+      return null;
+    }
+    const parsed = JSON.parse(raw);
+    return normalizeCharacterDraftRecord(parsed);
+  } catch {
+    removeCharacterDraftFromStorage();
+    return null;
+  }
+}
+
+function normalizeCharacterDraftRecord(input = {}) {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) {
+    return null;
+  }
+  const payload = normalizeCharacterDraftPayload(input.payload || input.character || {});
+  return {
+    payload,
+    selectedWorldBookIds: normalizeWorldBookIds(input.selectedWorldBookIds || input.worldBookIds),
+    updatedAt: String(input.updatedAt || '')
+  };
+}
+
+function removeCharacterDraftFromStorage() {
+  const key = getCharacterDraftStorageKey();
+  if (!key) {
+    return;
+  }
+  try {
+    localStorage.removeItem(key);
+  } catch {}
+}
+
+function clearCurrentCharacterDraft() {
+  clearCharacterDraftSaveTimer();
+  removeCharacterDraftFromStorage();
+  pendingCharacterDraft.value = null;
+  characterDraftStatus.value = 'idle';
+  characterDraftSavedAt.value = '';
+}
+
+function restoreCharacterDraft() {
+  const draft = pendingCharacterDraft.value;
+  if (!draft || !canEdit.value) {
+    return;
+  }
+  characterDraftHydrating = true;
+  try {
+    applyCharacterDraftPayload(draft.payload);
+    setSelectedWorldBookIdsIfChanged(draft.selectedWorldBookIds);
+  } finally {
+    characterDraftHydrating = false;
+  }
+  pendingCharacterDraft.value = null;
+  characterDraftStatus.value = 'restored';
+  characterDraftSavedAt.value = draft.updatedAt || '';
+  scheduleCharacterDraftSave();
+}
+
+function discardCharacterDraft() {
+  clearCurrentCharacterDraft();
+  scheduleCharacterDraftSave();
+}
+
+function applyCharacterDraftPayload(payload = {}) {
+  const normalized = normalizeCharacterDraftPayload(payload);
+  form.name = normalized.name;
+  form.avatarUrl = normalized.avatarUrl;
+  form.gender = normalized.gender;
+  form.age = normalized.age;
+  form.background = normalized.background;
+  form.worldview = normalized.worldview;
+  form.persona = normalized.persona;
+  form.openingMessage = normalized.openingMessage;
+  form.visibility = normalized.visibility;
+  form.authorAdvancedSettings = normalized.authorAdvancedSettings;
+  form.renderPlugins = normalized.renderPlugins;
+  form.regexRules = normalized.regexRules;
+  form.worldBookId = normalized.worldBookId;
+  form.tagsText = normalized.tags.join(', ');
+  form.selectedTags = [...normalized.tags];
+}
+
+function scheduleCharacterDraftSave() {
+  if (!canPersistCharacterDraft()) {
+    return;
+  }
+  clearCharacterDraftSaveTimer();
+  characterDraftSaveTimer = setTimeout(() => {
+    characterDraftSaveTimer = null;
+    saveCharacterDraftNow();
+  }, CHARACTER_FORM_DRAFT_DEBOUNCE_MS);
+}
+
+function saveCharacterDraftNow() {
+  clearCharacterDraftSaveTimer();
+  if (!canPersistCharacterDraft()) {
+    return false;
+  }
+  const snapshot = buildCharacterDraftSnapshot();
+  const serialized = serializeCharacterDraftSnapshot(snapshot);
+  if (!serialized || serialized === characterDraftBaselineSerialized) {
+    removeCharacterDraftFromStorage();
+    characterDraftStatus.value = 'idle';
+    characterDraftSavedAt.value = '';
+    return false;
+  }
+  const updatedAt = new Date().toISOString();
+  const raw = JSON.stringify({
+    version: 1,
+    mode: isEditing.value ? 'edit' : 'new',
+    characterId: isEditing.value ? editingCharacterId.value : '',
+    updatedAt,
+    ...snapshot
+  });
+  if (raw.length > CHARACTER_FORM_DRAFT_MAX_CHARS) {
+    characterDraftStatus.value = 'too-large';
+    return false;
+  }
+  characterDraftStatus.value = 'saving';
+  try {
+    localStorage.setItem(getCharacterDraftStorageKey(), raw);
+    characterDraftSavedAt.value = updatedAt;
+    characterDraftStatus.value = 'saved';
+    return true;
+  } catch {
+    characterDraftStatus.value = 'error';
+    return false;
+  }
+}
+
+function canPersistCharacterDraft() {
+  return !characterFormDisposed
+    && !characterDraftHydrating
+    && canEdit.value
+    && !pendingCharacterDraft.value
+    && Boolean(characterDraftBaselineSerialized)
+    && Boolean(getCharacterDraftStorageKey());
+}
+
+function startCharacterDraftInterval() {
+  if (characterDraftInterval !== null) {
+    return;
+  }
+  characterDraftInterval = setInterval(saveCharacterDraftNow, CHARACTER_FORM_DRAFT_AUTOSAVE_MS);
+}
+
+function clearCharacterDraftSaveTimer() {
+  if (characterDraftSaveTimer !== null) {
+    clearTimeout(characterDraftSaveTimer);
+  }
+  characterDraftSaveTimer = null;
+}
+
+function stopCharacterDraftInterval() {
+  if (characterDraftInterval !== null) {
+    clearInterval(characterDraftInterval);
+  }
+  characterDraftInterval = null;
+}
+
+function flushCharacterDraftBeforeDispose() {
+  saveCharacterDraftNow();
+  clearCharacterDraftSaveTimer();
+  stopCharacterDraftInterval();
+}
+
+function formatCharacterDraftTime(value) {
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) {
+    return '';
+  }
+  return date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
 }
 
 function parseTagsTextForPayload(value = '') {
@@ -2860,6 +3286,100 @@ function applyLocalRules(text, rules, phase) {
       </div>
     </section>
     <p v-if="!loading && !loadError" class="permission-note" :class="{ readonly: !canEdit }">{{ permissionText }}</p>
+    <section
+      v-if="!loading && !loadError && canEdit && characterDraftStatusText"
+      class="character-draft-note"
+      :class="{ pending: pendingCharacterDraft, warning: characterDraftStatus === 'too-large' || characterDraftStatus === 'error' }"
+      aria-live="polite"
+    >
+      <div class="character-draft-copy">
+        <strong>{{ pendingCharacterDraft ? '本地草稿' : '自动保存' }}</strong>
+        <span>{{ characterDraftStatusText }}</span>
+      </div>
+      <div v-if="pendingCharacterDraft" class="character-draft-actions">
+        <button class="ghost-button" type="button" @click="restoreCharacterDraft">
+          <RotateCcw :size="17" />
+          <span>恢复</span>
+        </button>
+        <button class="ghost-button" type="button" @click="discardCharacterDraft">
+          <X :size="17" />
+          <span>丢弃</span>
+        </button>
+      </div>
+    </section>
+
+    <section
+      v-if="!loading && !loadError && isCharacterCreationWizardAvailable"
+      class="character-wizard-panel"
+      :class="{ 'is-full': !isCharacterCreationWizardActive }"
+      aria-live="polite"
+    >
+      <div class="character-wizard-head">
+        <div>
+          <strong>{{ isCharacterCreationWizardActive ? `${characterWizardProgressText}：${currentCharacterWizardStep.label}` : '完整表单模式' }}</strong>
+          <span>{{ isCharacterCreationWizardActive ? currentCharacterWizardStep.description : '显示全部创建字段，适合熟悉完整角色配置的编辑流程。' }}</span>
+        </div>
+        <div class="character-wizard-mode" role="group" aria-label="角色创建模式">
+          <button
+            class="ghost-button"
+            type="button"
+            :class="{ active: isCharacterCreationWizardActive }"
+            @click="setCharacterCreationMode('wizard')"
+          >
+            <ListChecks :size="17" />
+            <span>向导</span>
+          </button>
+          <button
+            class="ghost-button"
+            type="button"
+            :class="{ active: !isCharacterCreationWizardActive }"
+            @click="setCharacterCreationMode('full')"
+          >
+            <Settings :size="17" />
+            <span>完整表单</span>
+          </button>
+        </div>
+      </div>
+      <div v-if="isCharacterCreationWizardActive" class="character-wizard-steps" role="tablist" aria-label="角色创建向导步骤">
+        <button
+          v-for="step in CHARACTER_CREATION_WIZARD_STEPS"
+          :key="step.id"
+          class="character-wizard-step"
+          :class="{ active: characterWizardStepId === step.id }"
+          type="button"
+          role="tab"
+          :aria-selected="characterWizardStepId === step.id"
+          :tabindex="characterWizardStepId === step.id ? 0 : -1"
+          @click="setCharacterWizardStep(step.id, { scroll: true })"
+        >
+          <strong>{{ step.label }}</strong>
+          <span>{{ step.description }}</span>
+        </button>
+      </div>
+      <div v-if="isCharacterCreationWizardActive" class="character-wizard-actions">
+        <button
+          class="ghost-button"
+          type="button"
+          :disabled="characterWizardStepIndex === 0"
+          @click="goToPreviousCharacterWizardStep"
+        >
+          <ChevronLeft :size="17" />
+          <span>上一步</span>
+        </button>
+        <button class="ghost-button" type="button" @click="skipCharacterWizardStep">
+          <span>跳过本步</span>
+        </button>
+        <button
+          v-if="characterWizardStepIndex < CHARACTER_CREATION_WIZARD_STEPS.length - 1"
+          class="primary-button"
+          type="button"
+          @click="goToNextCharacterWizardStep"
+        >
+          <span>下一步</span>
+          <ChevronRight :size="17" />
+        </button>
+      </div>
+    </section>
 
     <nav v-if="!loading && !loadError" ref="sectionNavRef" class="form-section-nav character-section-nav">
       <button
@@ -2878,7 +3398,7 @@ function applyLocalRules(text, rules, phase) {
 
     <form v-if="!loading && !loadError" class="editor-layout" @submit.prevent="submit">
       <div class="character-main-sections">
-        <section id="section-basic" class="form-panel form-section-group character-basic-panel">
+        <section v-if="isCharacterSectionVisibleInCurrentMode('basic')" id="section-basic" class="form-panel form-section-group character-basic-panel">
           <div class="inline-heading">
             <div>
               <h2>基础信息</h2>
@@ -3032,7 +3552,7 @@ function applyLocalRules(text, rules, phase) {
           </div>
         </section>
 
-        <section id="section-settings" class="form-panel form-section-group character-settings-panel">
+        <section v-if="isCharacterSectionVisibleInCurrentMode('settings')" id="section-settings" class="form-panel form-section-group character-settings-panel">
           <h3 class="form-section-title">角色设定</h3>
           <p class="form-section-desc">定义角色的背景、世界观、人设和开场白。支持 <span class="variable-token">{user}</span> 变量替换。</p>
 
@@ -3106,7 +3626,7 @@ function applyLocalRules(text, rules, phase) {
       <div class="editor-side">
         <div id="section-advanced" class="form-section-group-advanced">
         <section
-          v-if="canEdit"
+          v-if="canEdit && isCharacterSectionVisibleInCurrentMode('ai')"
           id="section-ai"
           ref="aiPanelRef"
           class="form-panel ai-draft-panel"
@@ -3242,11 +3762,11 @@ function applyLocalRules(text, rules, phase) {
           <span class="ai-panel-resize-handle" aria-hidden="true" @pointerdown.stop="onAiPanelResizeStart"></span>
         </section>
 
-        <section v-if="isEditing && editingCharacterId" id="section-images" class="form-panel character-image-section">
+        <section v-if="isEditing && editingCharacterId && isCharacterSectionVisibleInCurrentMode('images')" id="section-images" class="form-panel character-image-section">
           <CharacterImagePanel :character-id="editingCharacterId" :disabled="!canEdit" />
         </section>
 
-        <section v-if="isEditing && editingCharacterId" id="section-talents" class="form-panel talent-panel">
+        <section v-if="isEditing && editingCharacterId && isCharacterSectionVisibleInCurrentMode('talents')" id="section-talents" class="form-panel talent-panel">
           <div class="inline-heading">
             <div>
               <h2>角色天赋</h2>
@@ -3267,7 +3787,7 @@ function applyLocalRules(text, rules, phase) {
           @close="showTalentDialog = false"
         />
 
-        <section id="section-advanced-settings" class="form-panel advanced-settings-panel">
+        <section v-if="isCharacterSectionVisibleInCurrentMode('advanced-settings')" id="section-advanced-settings" class="form-panel advanced-settings-panel">
           <div class="inline-heading">
             <div>
               <h2>作者高级设置</h2>
@@ -3592,7 +4112,7 @@ function applyLocalRules(text, rules, phase) {
           </label>
         </section>
 
-        <section id="section-render-plugins" class="form-panel render-plugin-panel">
+        <section v-if="isCharacterSectionVisibleInCurrentMode('render-plugins')" id="section-render-plugins" class="form-panel render-plugin-panel">
           <div class="inline-heading">
             <div>
               <h2>消息渲染插件</h2>
@@ -3675,7 +4195,7 @@ function applyLocalRules(text, rules, phase) {
           </div>
         </section>
 
-        <section id="section-regex" class="form-panel regex-panel">
+        <section v-if="isCharacterSectionVisibleInCurrentMode('regex')" id="section-regex" class="form-panel regex-panel">
         <div class="inline-heading">
           <div>
             <h2>高阶正则替换</h2>

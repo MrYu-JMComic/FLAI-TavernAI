@@ -493,6 +493,67 @@ p {
   font-size: 16px;
 }
 
+.auth-mode-tabs {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+  margin-bottom: 18px;
+  padding: 4px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--surface-strong) 70%, transparent);
+}
+
+.auth-mode-tab {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-height: 40px;
+  border: 0;
+  border-radius: 8px;
+  color: var(--muted);
+  background: transparent;
+  font-weight: 900;
+}
+
+.auth-mode-tab.active {
+  color: var(--text);
+  background: var(--surface);
+  box-shadow: 0 1px 8px rgba(62, 48, 38, 0.08);
+}
+
+.auth-password-field {
+  position: relative;
+  display: grid;
+}
+
+.auth-password-field input {
+  padding-right: 50px;
+}
+
+.auth-password-toggle {
+  position: absolute;
+  top: 50%;
+  right: 4px;
+  width: 38px;
+  min-height: 38px;
+  height: 38px;
+  border: 0;
+  color: var(--muted);
+  background: transparent;
+  transform: translateY(-50%);
+}
+
+.auth-password-toggle:hover {
+  color: var(--text);
+  background: color-mix(in srgb, var(--surface-strong) 72%, transparent);
+}
+
+.auth-inline-error {
+  font-size: 0.88rem;
+}
+
 .field-hint {
   margin: 0;
   color: var(--muted);
@@ -2316,6 +2377,154 @@ section[id^="extension-section-"] {
 .permission-note.readonly {
   color: var(--primary);
   background: var(--primary-soft);
+}
+
+.character-draft-note {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, var(--green) 28%, var(--line));
+  border-radius: 8px;
+  color: var(--text);
+  background: color-mix(in srgb, var(--green-soft) 48%, var(--surface));
+}
+
+.character-draft-note.pending {
+  border-color: color-mix(in srgb, var(--primary) 42%, var(--line));
+  background: color-mix(in srgb, var(--primary-soft) 56%, var(--surface));
+}
+
+.character-draft-note.warning {
+  border-color: color-mix(in srgb, var(--danger) 42%, var(--line));
+  background: color-mix(in srgb, var(--danger) 12%, var(--surface));
+}
+
+.character-draft-copy {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px 10px;
+  min-width: 0;
+}
+
+.character-draft-copy strong {
+  color: var(--text);
+  font-size: 0.92rem;
+  font-weight: 900;
+}
+
+.character-draft-copy span {
+  color: var(--muted);
+  font-size: 0.9rem;
+  font-weight: 700;
+}
+
+.character-draft-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.character-draft-actions .ghost-button {
+  min-height: 34px;
+  padding: 7px 10px;
+  white-space: nowrap;
+}
+
+.character-wizard-panel {
+  display: grid;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid color-mix(in srgb, var(--primary) 28%, var(--line));
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--surface) 78%, var(--primary-soft));
+}
+
+.character-wizard-panel.is-full {
+  border-color: var(--line);
+  background: color-mix(in srgb, var(--surface) 88%, transparent);
+}
+
+.character-wizard-head {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.character-wizard-head > div:first-child {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.character-wizard-head strong {
+  color: var(--text);
+  font-size: 0.98rem;
+  font-weight: 900;
+}
+
+.character-wizard-head span,
+.character-wizard-step span {
+  color: var(--muted);
+  font-size: 0.86rem;
+  font-weight: 700;
+  line-height: 1.45;
+}
+
+.character-wizard-mode,
+.character-wizard-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.character-wizard-mode .ghost-button,
+.character-wizard-actions .ghost-button,
+.character-wizard-actions .primary-button {
+  min-height: 36px;
+  padding: 7px 11px;
+}
+
+.character-wizard-mode .ghost-button.active {
+  border-color: color-mix(in srgb, var(--primary) 42%, var(--line));
+  color: var(--text);
+  background: var(--surface);
+}
+
+.character-wizard-steps {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.character-wizard-step {
+  display: grid;
+  min-height: 86px;
+  align-content: start;
+  gap: 5px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px;
+  color: var(--text);
+  background: color-mix(in srgb, var(--surface) 84%, transparent);
+  text-align: left;
+}
+
+.character-wizard-step.active {
+  border-color: color-mix(in srgb, var(--green) 42%, var(--line));
+  background: color-mix(in srgb, var(--green-soft) 42%, var(--surface));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--green) 10%, transparent);
+}
+
+.character-wizard-step strong {
+  font-size: 0.9rem;
+  font-weight: 900;
 }
 
 .file-button input {
@@ -5454,10 +5663,6 @@ fieldset.accessory-skills-grid:disabled {
   opacity: 1;
 }
 
-.message-action-menu-toggle {
-  display: none;
-}
-
 .message-action-button {
   display: inline-flex;
   min-height: 28px;
@@ -5611,12 +5816,6 @@ fieldset.accessory-skills-grid:disabled {
 
 :root[data-theme="dark"] .deep-message.assistant .deep-bubble {
   color: #eef4ff;
-}
-
-:root[data-theme="dark"] .message-actions.is-menu-open {
-  border-color: rgba(148, 163, 184, 0.22);
-  background: rgba(17, 24, 39, 0.94);
-  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.24);
 }
 
 .reasoning-block {
@@ -6480,27 +6679,6 @@ fieldset.accessory-skills-grid:disabled {
     overflow: visible;
   }
 
-  .message-action-menu-toggle {
-    display: inline-flex;
-  }
-
-  .message-action-list {
-    display: none;
-  }
-
-  .message-actions.is-menu-open {
-    padding: 6px;
-    border: 1px solid color-mix(in srgb, var(--line) 86%, transparent);
-    border-radius: 10px;
-    background: color-mix(in srgb, var(--surface) 94%, transparent);
-    box-shadow: 0 10px 24px rgba(15, 23, 42, 0.08);
-  }
-
-  .message-actions.is-menu-open .message-action-list {
-    display: flex;
-    flex: 1 1 100%;
-  }
-
   .message-action-button {
     width: 44px;
     min-height: 44px;
@@ -7188,6 +7366,43 @@ fieldset.accessory-skills-grid:disabled {
   .character-section-nav {
     top: calc(var(--character-section-nav-top, 112px) + env(safe-area-inset-top, 0px));
     z-index: 19;
+  }
+
+  .character-draft-note {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .character-draft-actions {
+    justify-content: stretch;
+  }
+
+  .character-draft-actions .ghost-button {
+    flex: 1 1 120px;
+  }
+
+  .character-wizard-head {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .character-wizard-mode,
+  .character-wizard-actions {
+    justify-content: stretch;
+  }
+
+  .character-wizard-mode .ghost-button,
+  .character-wizard-actions .ghost-button,
+  .character-wizard-actions .primary-button {
+    flex: 1 1 130px;
+  }
+
+  .character-wizard-steps {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .character-wizard-step {
+    min-height: 0;
   }
 
   .extension-section-nav {

@@ -61,30 +61,26 @@ test('ChatMessageItem locks copy action while clipboard work is busy', () => {
   );
 });
 
-test('ChatMessageItem exposes a mobile action menu without replacing the desktop toolbar', () => {
+test('ChatMessageItem keeps message actions directly visible without a folded mobile menu', () => {
   assert.match(chatMessageItemScript, /import \{ computed, nextTick, ref, watch \} from 'vue';/);
-  assert.match(chatMessageItemScript, /const actionMenuOpen = ref\(false\);/);
-  assert.match(chatMessageItemScript, /const messageActionMenuBusy = computed\(\(\) => props\.messageActionBusy \|\| props\.copyBusy \|\| props\.swipeLoading \|\| props\.branchBusy\);/);
-  assert.match(chatMessageItemScript, /const actionMenuLabel = computed\(\(\) => \(actionMenuOpen\.value \? '收起消息操作' : '展开消息操作'\)\);/);
+  assert.doesNotMatch(chatMessageItemScript, /actionMenu/);
+  assert.doesNotMatch(chatMessageItemScript, /MoreHorizontal/);
   assert.match(
     chatMessageItemScript,
-    /function toggleActionMenu\(\) \{\s*if \(messageActionMenuBusy\.value && !actionMenuOpen\.value\) \{[\s\S]*actionMenuOpen\.value = !actionMenuOpen\.value;[\s\S]*\}/
+    /function emitMessageAction\(eventName\) \{\s*emit\(eventName, props\.message\);\s*\}/
   );
-  assert.match(
-    chatMessageItemScript,
-    /function emitMessageAction\(eventName\) \{\s*closeActionMenu\(\);\s*emit\(eventName, props\.message\);\s*\}/
-  );
-  assert.match(chatMessageItemTemplate, /<div class="message-actions" :class="\[message\.role, \{ 'is-menu-open': actionMenuOpen \}\]">/);
-  assert.match(
-    chatMessageItemTemplate,
-    /class="message-action-button message-action-menu-toggle"[\s\S]*:title="actionMenuLabel"[\s\S]*:aria-label="actionMenuLabel"[\s\S]*:aria-expanded="String\(actionMenuOpen\)"[\s\S]*:aria-controls="actionMenuId"[\s\S]*@click\.stop="toggleActionMenu"/
-  );
-  assert.match(chatMessageItemTemplate, /<div :id="actionMenuId" class="message-action-list" role="group" aria-label="消息操作">/);
-  assert.match(stylesSource, /\.message-action-menu-toggle\s*{\s*display:\s*none;/);
+  assert.match(chatMessageItemTemplate, /<div class="message-actions" :class="message\.role">/);
+  assert.match(chatMessageItemTemplate, /<div class="message-action-list" role="group" aria-label="消息操作">/);
+  assert.doesNotMatch(chatMessageItemTemplate, /message-action-menu-toggle/);
+  assert.doesNotMatch(chatMessageItemTemplate, /is-menu-open/);
+  assert.doesNotMatch(chatMessageItemTemplate, /aria-expanded="String\(actionMenuOpen\)"/);
   assert.match(
     stylesSource,
-    /@media \(max-width: 520px\) \{[\s\S]*\.message-action-menu-toggle\s*{[\s\S]*display:\s*inline-flex;[\s\S]*\.message-action-list\s*{[\s\S]*display:\s*none;[\s\S]*\.message-actions\.is-menu-open \.message-action-list\s*{[\s\S]*display:\s*flex;/
+    /\.message-action-list\s*{\s*display:\s*flex;[\s\S]*flex-wrap:\s*wrap;/
   );
+  assert.doesNotMatch(stylesSource, /message-action-menu-toggle/);
+  assert.doesNotMatch(stylesSource, /message-actions\.is-menu-open/);
+  assert.doesNotMatch(stylesSource, /\.message-action-list\s*{\s*display:\s*none;/);
 });
 
 test('ChatMessageItem focuses the edit textarea when edit mode opens', () => {
@@ -92,7 +88,7 @@ test('ChatMessageItem focuses the edit textarea when edit mode opens', () => {
   assert.match(chatMessageItemTemplate, /<textarea[\s\S]*ref="editTextareaRef"[\s\S]*aria-label="编辑消息内容"/);
   assert.match(
     chatMessageItemScript,
-    /watch\(isEditingCurrentMessage, async \(active\) => \{[\s\S]*closeActionMenu\(\);[\s\S]*await nextTick\(\);[\s\S]*editTextareaRef\.value\?\.focus\?\.\(\);[\s\S]*\}\);/
+    /watch\(isEditingCurrentMessage, async \(active\) => \{[\s\S]*await nextTick\(\);[\s\S]*editTextareaRef\.value\?\.focus\?\.\(\);[\s\S]*\}\);/
   );
 });
 

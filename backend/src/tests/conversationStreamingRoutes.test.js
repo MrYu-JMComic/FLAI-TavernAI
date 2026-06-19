@@ -248,6 +248,73 @@ test('chat image generation saves returned image as an assistant attachment', as
   }
 });
 
+test('chat image generation uses Gemini native generateContent for Gemini image models', async () => {
+  const database = createAppDatabase(':memory:');
+  const userId = 'chat-gemini-image-generation-user';
+  const conversationId = 'chat-gemini-image-generation-conversation';
+  insertUser(database, userId);
+  const character = createCharacter(database, userId, { name: 'GeminiImageChar', visibility: 'private' });
+  insertConversation(database, { userId, conversationId, characterId: character.id });
+
+  const app = createConversationStreamingApp(database, userId, {
+    providerType: 'gemini',
+    gatewayName: 'Gemini',
+    baseUrl: 'https://generativelanguage.googleapis.com/v1/openai',
+    model: 'gemini-3.1-flash-image'
+  });
+  const originalFetch = globalThis.fetch;
+  let providerBody = null;
+  let providerHeaders = null;
+  globalThis.fetch = async (url, options) => {
+    const href = String(url);
+    if (href.startsWith('http://127.0.0.1:')) {
+      return originalFetch(url, options);
+    }
+    assert.match(href, /\/v1\/models\/gemini-3\.1-flash-image:generateContent$/);
+    providerHeaders = options.headers;
+    providerBody = JSON.parse(options.body);
+    return new Response(JSON.stringify({
+      candidates: [{
+        content: {
+          parts: [
+            { text: 'a tiny moon gate' },
+            { inlineData: { mimeType: 'image/png', data: 'AQID' } }
+          ]
+        }
+      }],
+      usageMetadata: { totalTokenCount: 42 }
+    }), { headers: { 'Content-Type': 'application/json' } });
+  };
+
+  try {
+    await withServer(app, async (baseUrl) => {
+      const response = await fetch(`${baseUrl}/api/conversations/${conversationId}/messages`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          content: 'draw a moon gate',
+          stream: false,
+          imageGeneration: true
+        })
+      });
+      const body = await response.json();
+
+      assert.equal(response.status, 200);
+      assert.equal(providerHeaders['x-goog-api-key'], 'sk-test');
+      assert.deepEqual(providerBody.contents, [{
+        role: 'user',
+        parts: [{ text: 'draw a moon gate' }]
+      }]);
+      assert.deepEqual(providerBody.generationConfig.responseModalities, ['TEXT', 'IMAGE']);
+      assert.equal(body.assistantMessage.attachments.length, 1);
+      assert.equal(body.assistantMessage.attachments[0].dataUrl, 'data:image/png;base64,AQID');
+      assert.match(body.assistantMessage.content, /a tiny moon gate/);
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test('chat image generation rejects unsupported xAI lite image model before provider fetch', async () => {
   const database = createAppDatabase(':memory:');
   const userId = 'chat-image-generation-lite-user';

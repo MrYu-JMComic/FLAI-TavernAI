@@ -9,7 +9,6 @@ import {
   ChevronRight,
   Copy,
   GitBranch,
-  MoreHorizontal,
   Pencil,
   Trash2,
   X
@@ -55,32 +54,11 @@ const emit = defineEmits([
   'open-worldbook-matches'
 ]);
 
-const actionMenuOpen = ref(false);
 const editTextareaRef = ref(null);
 const isEditingCurrentMessage = computed(() => props.editingMessageId === props.message.id);
 const messageAttachments = computed(() => normalizeMessageAttachments(props.message?.attachments));
-const messageActionMenuBusy = computed(() => props.messageActionBusy || props.copyBusy || props.swipeLoading || props.branchBusy);
-const actionMenuId = computed(() => `message-actions-${normalizeMessageActionId(props.message?.id)}`);
-const actionMenuLabel = computed(() => (actionMenuOpen.value ? '收起消息操作' : '展开消息操作'));
-
-function normalizeMessageActionId(id) {
-  const value = String(id || 'local').trim().replace(/[^A-Za-z0-9_-]+/g, '-');
-  return value || 'local';
-}
-
-function closeActionMenu() {
-  actionMenuOpen.value = false;
-}
-
-function toggleActionMenu() {
-  if (messageActionMenuBusy.value && !actionMenuOpen.value) {
-    return;
-  }
-  actionMenuOpen.value = !actionMenuOpen.value;
-}
 
 function emitMessageAction(eventName) {
-  closeActionMenu();
   emit(eventName, props.message);
 }
 
@@ -113,17 +91,8 @@ watch(isEditingCurrentMessage, async (active) => {
   if (!active) {
     return;
   }
-  closeActionMenu();
   await nextTick();
   editTextareaRef.value?.focus?.();
-});
-
-watch(() => props.message.id, closeActionMenu);
-
-watch(messageActionMenuBusy, (busy) => {
-  if (busy) {
-    closeActionMenu();
-  }
 });
 </script>
 
@@ -209,99 +178,86 @@ watch(messageActionMenuBusy, (busy) => {
           />
         </template>
       </div>
-      <div class="message-actions" :class="[message.role, { 'is-menu-open': actionMenuOpen }]">
-        <button
-          type="button"
-          class="message-action-button message-action-menu-toggle"
-          :title="actionMenuLabel"
-          :aria-label="actionMenuLabel"
-          :aria-expanded="String(actionMenuOpen)"
-          :aria-controls="actionMenuId"
-          :disabled="messageActionMenuBusy && !actionMenuOpen"
-          @click.stop="toggleActionMenu"
-        >
-          <MoreHorizontal :size="14" />
-          <span>操作</span>
-        </button>
-        <div :id="actionMenuId" class="message-action-list" role="group" aria-label="消息操作">
-        <button
-          type="button"
-          class="message-action-button"
-          title="复制消息"
-          :disabled="copyBusy"
-          :aria-busy="copyBusy"
-          @click="emitMessageAction('copy')"
-        >
-          <Copy :size="14" />
-          <span>复制</span>
-        </button>
-        <button
-          type="button"
-          class="message-action-button"
-          title="编辑消息"
-          :disabled="!canEdit"
-          @click="emitMessageAction('begin-edit')"
-        >
-          <Pencil :size="14" />
-          <span>编辑</span>
-        </button>
-        <button
-          type="button"
-          class="message-action-button danger"
-          title="删除消息"
-          :disabled="!canDelete"
-          @click="emitMessageAction('delete')"
-        >
-          <Trash2 :size="14" />
-          <span>删除</span>
-        </button>
-        <button
-          v-if="worldBookMatchCount > 0"
-          type="button"
-          class="message-action-button"
-          data-worldbook-match-button
-          :title="`世界书命中来源（${worldBookMatchCount} 条）`"
-          :aria-label="`查看世界书命中来源，共 ${worldBookMatchCount} 条`"
-          @click.stop="emitMessageAction('open-worldbook-matches')"
-        >
-          <BookOpen :size="14" />
-          <span>世界书</span>
-        </button>
-        <button
-          v-if="swipeDisplay"
-          class="message-action-button swipe-nav"
-          type="button"
-          aria-label="上一条候选回复"
-          :disabled="!swipeCanPrev || swipeLoading"
-          :aria-busy="swipeLoading"
-          title="上一条候选"
-          @click.stop="emitMessageAction('swipe-prev')"
-        >
-          <ChevronLeft :size="14" />
-        </button>
-        <span v-if="swipeDisplay" class="swipe-counter" :title="`候选回复 ${swipeDisplay}`">候选 {{ swipeDisplay }}</span>
-        <button
-          v-if="swipeDisplay"
-          class="message-action-button swipe-nav"
-          type="button"
-          aria-label="下一条候选回复"
-          :disabled="!swipeCanNext || swipeLoading"
-          :aria-busy="swipeLoading"
-          title="下一条候选"
-          @click.stop="emitMessageAction('swipe-next')"
-        >
-          <ChevronRight :size="14" />
-        </button>
-        <button
-          class="message-action-button"
-          type="button"
-          aria-label="从此消息创建分支对话"
-          :disabled="!branchCan || branchBusy"
-          title="从此消息创建分支对话"
-          @click.stop="emitMessageAction('branch')"
-        >
-          <GitBranch :size="14" />
-        </button>
+      <div class="message-actions" :class="message.role">
+        <div class="message-action-list" role="group" aria-label="消息操作">
+          <button
+            type="button"
+            class="message-action-button"
+            title="复制消息"
+            :disabled="copyBusy"
+            :aria-busy="copyBusy"
+            @click="emitMessageAction('copy')"
+          >
+            <Copy :size="14" />
+            <span>复制</span>
+          </button>
+          <button
+            type="button"
+            class="message-action-button"
+            title="编辑消息"
+            :disabled="!canEdit"
+            @click="emitMessageAction('begin-edit')"
+          >
+            <Pencil :size="14" />
+            <span>编辑</span>
+          </button>
+          <button
+            type="button"
+            class="message-action-button danger"
+            title="删除消息"
+            :disabled="!canDelete"
+            @click="emitMessageAction('delete')"
+          >
+            <Trash2 :size="14" />
+            <span>删除</span>
+          </button>
+          <button
+            v-if="worldBookMatchCount > 0"
+            type="button"
+            class="message-action-button"
+            data-worldbook-match-button
+            :title="`世界书命中来源（${worldBookMatchCount} 条）`"
+            :aria-label="`查看世界书命中来源，共 ${worldBookMatchCount} 条`"
+            @click.stop="emitMessageAction('open-worldbook-matches')"
+          >
+            <BookOpen :size="14" />
+            <span>世界书</span>
+          </button>
+          <button
+            v-if="swipeDisplay"
+            class="message-action-button swipe-nav"
+            type="button"
+            aria-label="上一条候选回复"
+            :disabled="!swipeCanPrev || swipeLoading"
+            :aria-busy="swipeLoading"
+            title="上一条候选"
+            @click.stop="emitMessageAction('swipe-prev')"
+          >
+            <ChevronLeft :size="14" />
+          </button>
+          <span v-if="swipeDisplay" class="swipe-counter" :title="`候选回复 ${swipeDisplay}`">候选 {{ swipeDisplay }}</span>
+          <button
+            v-if="swipeDisplay"
+            class="message-action-button swipe-nav"
+            type="button"
+            aria-label="下一条候选回复"
+            :disabled="!swipeCanNext || swipeLoading"
+            :aria-busy="swipeLoading"
+            title="下一条候选"
+            @click.stop="emitMessageAction('swipe-next')"
+          >
+            <ChevronRight :size="14" />
+          </button>
+          <button
+            class="message-action-button"
+            type="button"
+            aria-label="从此消息创建分支对话"
+            :disabled="!branchCan || branchBusy"
+            title="从此消息创建分支对话"
+            @click.stop="emitMessageAction('branch')"
+          >
+            <GitBranch :size="14" />
+          </button>
         </div>
       </div>
     </div>

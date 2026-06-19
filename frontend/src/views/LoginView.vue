@@ -1,95 +1,9 @@
 <script setup>
-import { onBeforeUnmount, ref } from 'vue';
-import { LogIn } from '@lucide/vue';
-import { login } from '../api';
-import { useNotify } from '../composables/useNotify';
+import AuthView from './AuthView.vue';
 
-const emit = defineEmits(['authenticated', 'navigate']);
-const notify = useNotify();
-const username = ref('');
-const password = ref('');
-const loading = ref(false);
-let submitToken = 0;
-let disposed = false;
-
-onBeforeUnmount(() => {
-  disposed = true;
-  submitToken += 1;
-});
-
-function isCurrentSubmit(token) {
-  return !disposed && token === submitToken;
-}
-
-async function submit() {
-  if (loading.value) return;
-  const requestToken = ++submitToken;
-  loading.value = true;
-  try {
-    const result = await login({ username: username.value, password: password.value });
-    if (!isCurrentSubmit(requestToken)) return;
-    emit('authenticated', result);
-  } catch (err) {
-    if (!isCurrentSubmit(requestToken)) return;
-    notify.error(err.message);
-  } finally {
-    if (isCurrentSubmit(requestToken)) {
-      loading.value = false;
-    }
-  }
-}
+const emit = defineEmits(['authenticated']);
 </script>
 
 <template>
-  <main class="auth-page">
-    <section class="auth-panel" role="region" aria-label="登录">
-      <div class="auth-brand">
-        <span class="brand-mark" aria-hidden="true">F</span>
-        <div>
-          <p class="auth-brand-eyebrow">欢迎回来</p>
-          <h1>登录 FLAI Tavern AI</h1>
-          <p class="auth-brand-sub">本地部署 · 数据自持 · 安全可控</p>
-        </div>
-      </div>
-
-      <form class="form-grid" :aria-busy="loading" @submit.prevent="submit" novalidate>
-        <label class="field" for="login-username">
-          <span>用户名</span>
-          <input
-            id="login-username"
-            v-model.trim="username"
-            autocomplete="username"
-            maxlength="32"
-            required
-            aria-required="true"
-            :disabled="loading"
-          />
-          <small class="field-hint">最多 32 个字符</small>
-        </label>
-        <label class="field" for="login-password">
-          <span>密码</span>
-          <input
-            id="login-password"
-            v-model="password"
-            autocomplete="current-password"
-            type="password"
-            minlength="6"
-            maxlength="128"
-            required
-            aria-required="true"
-            :disabled="loading"
-          />
-          <small class="field-hint">至少 6 个字符</small>
-        </label>
-        <button class="primary-button auth-submit" type="submit" :disabled="loading" :aria-busy="loading">
-          <LogIn :size="18" aria-hidden="true" />
-          <span>{{ loading ? '登录中...' : '登录' }}</span>
-        </button>
-      </form>
-
-      <button class="text-button" type="button" aria-label="跳转到注册页面" :disabled="loading" @click="emit('navigate', 'register')">
-        还没有账号？创建一个
-      </button>
-    </section>
-  </main>
+  <AuthView initial-mode="login" @authenticated="emit('authenticated', $event)" />
 </template>
