@@ -98,6 +98,7 @@ export function toMessage(row) {
     id: row.id,
     role: row.role,
     content: row.content,
+    attachments: parseJson(row.attachments_json, []),
     reasoning: row.reasoning || '',
     usage: parseJson(row.usage_json, null),
     createdAt: row.created_at

@@ -1,6 +1,10 @@
 import { computed, nextTick, ref, triggerRef } from 'vue';
 import { fetchConversationMessages, sendMessage, streamMessage } from '../../api.js';
+import { readFileAsDataUrl } from '../../utils/fileReaders.js';
 import { samePlainValue } from '../../utils/plainValues.js';
+
+const CHAT_IMAGE_LIMIT = 4;
+const CHAT_IMAGE_MAX_BYTES = 4 * 1024 * 1024;
 
 export function useChatSubmit({
   route,
@@ -27,6 +31,9 @@ export function useChatSubmit({
   const input = ref('');
   const useStream = ref(readLocalBoolean('flai-chat-use-stream', true));
   const thinkingEnabled = ref(readLocalBoolean('flai-chat-thinking-enabled', false));
+  const imageGenerationEnabled = ref(readLocalBoolean('flai-chat-image-generation-enabled', false));
+  const chatAttachments = ref([]);
+  const attachmentBusy = ref(false);
   const sending = ref(false);
   const controller = ref(null);
   const usage = ref(null);
@@ -38,6 +45,7 @@ export function useChatSubmit({
   let accessoryRefreshRun = 0;
   let submitRunId = 0;
   let submitDisposed = false;
+  let lastSubmittedAttachments = [];
   const accessoryRefreshTimers = [];
 
   const updateStatusBar = typeof applyStatusBarUpdate === 'function'
@@ -47,7 +55,7 @@ export function useChatSubmit({
   const streamIdleTimeoutMs = 60000;
   const accessoryRefreshDelays = [1200, 4000, 9000, 16000, 25000, 38000, 55000];
 
-  const canSend = computed(() => input.value.trim() && !sending.value);
+  const canSend = computed(() => Boolean((input.value.trim() || chatAttachments.value.length) && !sending.value && !attachmentBusy.value));
   const canToggleThinking = computed(() => Boolean(provider.value?.supportsReasoning));
 
   function readLocalBoolean(key, fallback) {
@@ -93,6 +101,14 @@ export function useChatSubmit({
     writeLocalBoolean('flai-chat-thinking-enabled', thinkingEnabled.value);
   }
 
+  function toggleImageGeneration() {
+    if (sending.value || attachmentBusy.value) {
+      return;
+    }
+    imageGenerationEnabled.value = !imageGenerationEnabled.value;
+    writeLocalBoolean('flai-chat-image-generation-enabled', imageGenerationEnabled.value);
+  }
+
   function setSelectedPresetId(value) {
     if (sending.value || submitDisposed) {
       return;
@@ -102,16 +118,19 @@ export function useChatSubmit({
 
   async function submit() {
     const content = input.value.trim();
+    const attachments = normalizeChatAttachments(chatAttachments.value);
     const conversationId = normalizeConversationId(route.params.id);
-    if (!content || sending.value || submitDisposed || !conversationId) {
+    if ((!content && !attachments.length) || sending.value || attachmentBusy.value || submitDisposed || !conversationId) {
       return;
     }
     clearLastFailure();
+    lastSubmittedAttachments = attachments;
     setLatestWorldBookMatches([]);
     const submitId = ++submitRunId;
     const anchorAssistantReply = isPinnedToBottom() && prepareExpandedStatusBarForSubmit();
 
     input.value = '';
+    setChatAttachments([]);
     await nextTick();
     if (!isCurrentSubmit(submitId, conversationId)) {
       return;
@@ -121,6 +140,7 @@ export function useChatSubmit({
       id: `local-user-${Date.now()}`,
       role: 'user',
       content,
+      attachments,
       reasoning: '',
       createdAt: new Date().toISOString()
     };
@@ -151,6 +171,8 @@ export function useChatSubmit({
 
     const requestPayload = {
       content,
+      attachments,
+      imageGeneration: imageGenerationEnabled.value,
       thinkingEnabled: canToggleThinking.value ? thinkingEnabled.value : true
     };
     if (selectedPresetId.value) {
@@ -177,7 +199,7 @@ export function useChatSubmit({
     };
 
     try {
-      if (useStream.value) {
+      if (useStream.value && !imageGenerationEnabled.value) {
         streamController = new AbortController();
         controller.value = streamController;
         refreshStreamTimer();
@@ -554,35 +576,39 @@ export function useChatSubmit({
 
   function handleSubmitFailure(message, content, conversationId, options = {}) {
     rememberLastFailure(message, content, conversationId, options);
-    restoreFailedContentToInput(content, conversationId);
+    restoreFailedContentToInput(content, conversationId, options.attachments || lastSubmittedAttachments);
     showError(message);
   }
 
-  function restoreFailedContentToInput(content, conversationId) {
+  function restoreFailedContentToInput(content, conversationId, attachments = []) {
     const normalizedContent = normalizeMessageText(content);
+    const normalizedAttachments = normalizeChatAttachments(attachments);
     const normalizedConversationId = normalizeConversationId(conversationId);
-    if (!normalizedContent || !normalizedConversationId || stoppingByUser || submitDisposed) {
+    if ((!normalizedContent && !normalizedAttachments.length) || !normalizedConversationId || stoppingByUser || submitDisposed) {
       return false;
     }
     if (normalizeConversationId(route.params.id) !== normalizedConversationId) {
       return false;
     }
-    if (normalizeMessageText(input.value)) {
+    if (normalizeMessageText(input.value) || chatAttachments.value.length) {
       return false;
     }
     input.value = normalizedContent;
+    setChatAttachments(normalizedAttachments);
     return true;
   }
 
   function rememberLastFailure(message, content, conversationId, options = {}) {
     const normalizedContent = normalizeMessageText(content);
+    const normalizedAttachments = normalizeChatAttachments(options.attachments || lastSubmittedAttachments);
     const normalizedConversationId = normalizeConversationId(conversationId);
-    if (!normalizedContent || !normalizedConversationId || stoppingByUser || submitDisposed) {
+    if ((!normalizedContent && !normalizedAttachments.length) || !normalizedConversationId || stoppingByUser || submitDisposed) {
       return;
     }
     lastFailure.value = {
       message: String(message || '生成失败').trim() || '生成失败',
       content: normalizedContent,
+      attachments: normalizedAttachments,
       conversationId: normalizedConversationId,
       diagnosticId: normalizeMessageText(options.diagnosticId),
       canRetry: Boolean(options.canRetry),
@@ -602,6 +628,7 @@ export function useChatSubmit({
       return false;
     }
     input.value = failure.content;
+    setChatAttachments(failure.attachments || []);
     clearLastFailure();
     return true;
   }
@@ -612,6 +639,7 @@ export function useChatSubmit({
       return false;
     }
     input.value = failure.content;
+    setChatAttachments(failure.attachments || []);
     clearLastFailure();
     await nextTick();
     await submit();
@@ -624,7 +652,7 @@ export function useChatSubmit({
 
   function isRestorableFailure(failure) {
     return Boolean(
-      failure?.content &&
+      (failure?.content || failure?.attachments?.length) &&
       failure.conversationId &&
       normalizeConversationId(route.params.id) === normalizeConversationId(failure.conversationId)
     );
@@ -1097,10 +1125,130 @@ export function useChatSubmit({
     return String(messageId ?? '').trim();
   }
 
+  async function addChatAttachmentFiles(files) {
+    if (sending.value || attachmentBusy.value || submitDisposed) {
+      return false;
+    }
+    const fileList = collectChatImageFiles(files);
+    if (!fileList.length) {
+      return false;
+    }
+    attachmentBusy.value = true;
+    try {
+      const nextAttachments = normalizeChatAttachments(chatAttachments.value);
+      for (const file of fileList) {
+        if (nextAttachments.length >= CHAT_IMAGE_LIMIT) {
+          break;
+        }
+        const dataUrl = await readFileAsDataUrl(file);
+        if (submitDisposed) {
+          return false;
+        }
+        nextAttachments.push({
+          id: `chat-image-${Date.now()}-${nextAttachments.length}`,
+          type: 'image',
+          dataUrl,
+          mimeType: file.type,
+          name: file.name || 'image',
+          alt: file.name || 'image',
+          size: file.size || 0
+        });
+      }
+      setChatAttachments(nextAttachments);
+      return true;
+    } catch (error) {
+      showError(error?.message || '图片读取失败');
+      return false;
+    } finally {
+      attachmentBusy.value = false;
+    }
+  }
+
+  function removeChatAttachment(attachmentId) {
+    const targetId = normalizeMessageId(attachmentId);
+    if (!targetId || sending.value) {
+      return false;
+    }
+    const nextAttachments = [];
+    let removed = false;
+    for (const attachment of chatAttachments.value) {
+      if (normalizeMessageId(attachment?.id) === targetId) {
+        removed = true;
+      } else {
+        nextAttachments.push(attachment);
+      }
+    }
+    if (!removed) {
+      return false;
+    }
+    setChatAttachments(nextAttachments);
+    return true;
+  }
+
+  function clearChatAttachments() {
+    return setChatAttachments([]);
+  }
+
+  function setChatAttachments(attachments = []) {
+    const normalized = normalizeChatAttachments(attachments);
+    if (samePlainValue(chatAttachments.value, normalized)) {
+      return false;
+    }
+    chatAttachments.value = normalized;
+    return true;
+  }
+
+  function collectChatImageFiles(files) {
+    const source = files && typeof files[Symbol.iterator] === 'function' ? files : [];
+    const collected = [];
+    for (const file of source) {
+      if (!file || !isSupportedChatImageType(file.type) || file.size > CHAT_IMAGE_MAX_BYTES) {
+        continue;
+      }
+      collected.push(file);
+      if (collected.length >= CHAT_IMAGE_LIMIT) {
+        break;
+      }
+    }
+    return collected;
+  }
+
+  function normalizeChatAttachments(attachments = []) {
+    const source = Array.isArray(attachments) ? attachments : [];
+    const normalized = [];
+    for (const attachment of source) {
+      const dataUrl = String(attachment?.dataUrl || '').trim();
+      const mimeType = String(attachment?.mimeType || '').trim();
+      if (!dataUrl || !isSupportedChatImageType(mimeType)) {
+        continue;
+      }
+      normalized.push({
+        id: normalizeMessageId(attachment.id) || `chat-image-${normalized.length}`,
+        type: 'image',
+        dataUrl,
+        mimeType,
+        name: String(attachment.name || '').trim(),
+        alt: String(attachment.alt || attachment.name || '').trim(),
+        size: Number.isFinite(Number(attachment.size)) ? Number(attachment.size) : 0
+      });
+      if (normalized.length >= CHAT_IMAGE_LIMIT) {
+        break;
+      }
+    }
+    return normalized;
+  }
+
+  function isSupportedChatImageType(type) {
+    return type === 'image/png' || type === 'image/jpeg' || type === 'image/webp';
+  }
+
   return {
     input,
+    chatAttachments,
+    attachmentBusy,
     useStream,
     thinkingEnabled,
+    imageGenerationEnabled,
     sending,
     controller,
     usage,
@@ -1114,9 +1262,13 @@ export function useChatSubmit({
     restoreLastFailureInput,
     retryLastFailure,
     dismissLastFailure,
+    addChatAttachmentFiles,
+    removeChatAttachment,
+    clearChatAttachments,
     setSelectedPresetId,
     toggleUseStream,
     toggleThinking,
+    toggleImageGeneration,
     finishAssistantDraft,
     cleanup
   };

@@ -54,6 +54,7 @@ import {
 import {
   buildUsageSnapshot,
   generateCompletion,
+  generateImage,
   streamCompletion
 } from '../services/providers.js';
 import { renderPromptVariables, resolvePromptUserName } from '../services/promptVariables.js';
@@ -206,7 +207,8 @@ export function createConversationsRouter(ctx) {
     }
 
     const userText = String(request.body?.content || request.body?.message || '').trim();
-    if (!userText) {
+    const userAttachments = normalizeChatAttachments(request.body?.attachments);
+    if (!userText && !userAttachments.length) {
       response.status(400).json({ error: '消息不能为空' });
       return;
     }
@@ -232,7 +234,9 @@ export function createConversationsRouter(ctx) {
     // Collect recent messages for scan_depth matching
     const recentForWI = getRecentMessages(request.auth.user.id, conversation.id);
     const recentTexts = recentForWI.map((m) => m.content);
-    recentTexts.push(processedUserText);
+    if (processedUserText) {
+      recentTexts.push(processedUserText);
+    }
     const worldBookEntries = matchWorldBookEntries(db, character.id, recentTexts, { conversationId: conversation.id });
     const worldBookMatches = summarizeWorldBookMatches(worldBookEntries);
     const userMods = getEnabledModsForUser(db, request.auth.user.id, { characterId: character.id });
@@ -243,6 +247,7 @@ export function createConversationsRouter(ctx) {
       character,
       history: getRecentMessages(request.auth.user.id, conversation.id),
       userText: processedUserText,
+      userAttachments,
       user: request.auth.user,
       worldBookContext: buildWorldBookContext(worldBookEntries),
       worldBookEntries,
@@ -259,6 +264,7 @@ export function createConversationsRouter(ctx) {
       conversationId: conversation.id,
       role: 'user',
       content: userText,
+      attachments: userAttachments,
       reasoning: '',
       usage: null
     });
@@ -273,6 +279,47 @@ export function createConversationsRouter(ctx) {
       aiOptions.topP = activePreset.topP;
       aiOptions.frequencyPenalty = activePreset.frequencyPenalty;
       aiOptions.presencePenalty = activePreset.presencePenalty;
+    }
+
+    if (request.body?.imageGeneration) {
+      let result;
+      try {
+        result = await generateImage(settings.value, processedUserText || userText, aiOptions);
+      } catch (error) {
+        response.status(400).json({
+          error: error?.message || '生图模型调用失败',
+          accepted: true,
+          userMessage,
+          worldBookMatches
+        });
+        return;
+      }
+      const assistantMessage = saveAssistantImageResult({
+        userId: request.auth.user.id,
+        conversation,
+        character,
+        result
+      });
+      if (!assistantMessage) {
+        response.status(502).json({
+          error: '生图模型没有返回可保存的图片',
+          accepted: true,
+          userMessage,
+          provider: result.provider,
+          worldBookMatches
+        });
+        return;
+      }
+      response.json({
+        userMessage,
+        assistantMessage,
+        usage: assistantMessage.usage,
+        provider: result.provider,
+        worldBookMatches,
+        statusBar: getStatusBar(db, request.auth.user.id, conversation.id),
+        accessoryBackground: false
+      });
+      return;
     }
 
     if (request.body?.stream !== false) {
@@ -916,12 +963,23 @@ export function createConversationsRouter(ctx) {
     return recentMessages;
   }
 
-  function insertMessage({ userId, conversationId, role, content, reasoning, usage }) {
+  function insertMessage({ userId, conversationId, role, content, attachments = [], reasoning, usage }) {
     const id = newId();
+    const normalizedAttachments = normalizeChatAttachments(attachments);
     db.prepare(
-      `INSERT INTO messages (id, user_id, conversation_id, role, content, reasoning, usage_json, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
-    ).run(id, userId, conversationId, role, content, reasoning || '', usage ? JSON.stringify(usage) : null, nowIso());
+      `INSERT INTO messages (id, user_id, conversation_id, role, content, attachments_json, reasoning, usage_json, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run(
+      id,
+      userId,
+      conversationId,
+      role,
+      content,
+      JSON.stringify(normalizedAttachments),
+      reasoning || '',
+      usage ? JSON.stringify(usage) : null,
+      nowIso()
+    );
 
     return toMessage(db.prepare('SELECT * FROM messages WHERE id = ?').get(id));
   }
@@ -969,6 +1027,7 @@ export function createConversationsRouter(ctx) {
     character,
     history,
     userText,
+    userAttachments = [],
     user = {},
     userName = '',
     worldBookContext = '',
@@ -1004,9 +1063,9 @@ export function createConversationsRouter(ctx) {
     }
 
     const participantName = normalizeModelName(user.displayName || userName) || normalizeModelName(user.accountName || user.username);
-    const userMessage = (content) => ({
+    const userMessage = (content, attachments = []) => ({
       role: 'user',
-      content,
+      content: buildUserMessageContent(content, attachments),
       ...(participantName ? { name: participantName } : {})
     });
 
@@ -1015,9 +1074,9 @@ export function createConversationsRouter(ctx) {
       ...history.map((message) => (
         message.role === 'assistant'
           ? { role: 'assistant', content: message.content }
-          : userMessage(message.content)
+          : userMessage(message.content, message.attachments || parseJson(message.attachments_json, []))
       )),
-      userMessage(userText)
+      userMessage(userText, userAttachments)
     ];
 
     // Inject at_depth world book entries at their specified positions
@@ -1056,6 +1115,80 @@ export function createConversationsRouter(ctx) {
   function normalizeModelName(value) {
     const name = String(value || '').trim();
     return /^[A-Za-z0-9_-]{1,64}$/.test(name) ? name : '';
+  }
+
+  function buildUserMessageContent(content, attachments = []) {
+    const text = String(content || '').trim();
+    const normalizedAttachments = normalizeChatAttachments(attachments);
+    if (!normalizedAttachments.length) {
+      return text;
+    }
+
+    const parts = [];
+    if (text) {
+      parts.push({ type: 'text', text });
+    }
+    for (const attachment of normalizedAttachments) {
+      parts.push({
+        type: 'image_url',
+        image_url: {
+          url: attachment.dataUrl || attachment.url
+        }
+      });
+    }
+    return parts;
+  }
+
+  function normalizeChatAttachments(attachments = []) {
+    const source = Array.isArray(attachments) ? attachments : [];
+    const normalized = [];
+    for (const attachment of source) {
+      const normalizedAttachment = normalizeChatImageAttachment(attachment);
+      if (!normalizedAttachment) {
+        continue;
+      }
+      normalized.push(normalizedAttachment);
+      if (normalized.length >= 4) {
+        break;
+      }
+    }
+    return normalized;
+  }
+
+  function normalizeChatImageAttachment(attachment = {}) {
+    const dataUrl = String(attachment.dataUrl || attachment.url || '').trim();
+    const parsed = parseImageDataUrl(dataUrl);
+    if (!parsed || parsed.size > 4 * 1024 * 1024) {
+      return null;
+    }
+    return {
+      type: 'image',
+      dataUrl,
+      mimeType: parsed.mimeType,
+      name: String(attachment.name || '').trim().slice(0, 120),
+      alt: String(attachment.alt || attachment.name || '').trim().slice(0, 200),
+      size: parsed.size
+    };
+  }
+
+  function parseImageDataUrl(value) {
+    const match = /^data:(image\/(?:png|jpeg|webp));base64,([A-Za-z0-9+/=]+)$/i.exec(String(value || '').trim());
+    if (!match) {
+      return null;
+    }
+    const base64 = match[2];
+    return {
+      mimeType: match[1].toLowerCase(),
+      size: Math.floor((base64.length * 3) / 4) - countBase64Padding(base64)
+    };
+  }
+
+  function countBase64Padding(value) {
+    let padding = 0;
+    for (let index = value.length - 1; index >= 0 && value[index] === '='; index -= 1) {
+      padding += 1;
+    }
+    return padding;
   }
 
   async function streamAssistantResponse({
@@ -1260,6 +1393,27 @@ export function createConversationsRouter(ctx) {
       role: 'assistant',
       content,
       reasoning,
+      usage
+    });
+    updateConversationTimestamp(userId, conversation.id);
+    touchCharacter(db, userId, character.id);
+
+    return assistantMessage;
+  }
+
+  function saveAssistantImageResult({ userId, conversation, character, result }) {
+    const attachments = normalizeChatAttachments(result.attachments);
+    if (!attachments.length) {
+      return null;
+    }
+    const usage = buildUsageSnapshot(result.usage, result);
+    const assistantMessage = insertMessage({
+      userId,
+      conversationId: conversation.id,
+      role: 'assistant',
+      content: String(result.content || '已生成图片').trim() || '已生成图片',
+      attachments,
+      reasoning: '',
       usage
     });
     updateConversationTimestamp(userId, conversation.id);

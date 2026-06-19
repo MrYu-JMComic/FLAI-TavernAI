@@ -1,12 +1,13 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { readRepoText, readVueBlocks } from './frontendSfcTestUtils.js';
+import { readFrontendStyles, readRepoText, readVueBlocks } from './frontendSfcTestUtils.js';
 
 const { script: chatMessageItemScript, template: chatMessageItemTemplate } = readVueBlocks(
   'frontend/src/components/chat/ChatMessageItem.vue'
 );
 const { script: chatViewScript, template: chatViewTemplate } = readVueBlocks('frontend/src/views/ChatView.vue');
 const chatMessageActionsSource = readRepoText('frontend/src/composables/chat/useChatMessageActions.js');
+const stylesSource = readFrontendStyles();
 
 test('ChatMessageItem freezes the edit box while a message action is busy', () => {
   assert.match(chatMessageItemScript, /messageActionBusy: \{ type: Boolean, default: false \}/);
@@ -47,7 +48,7 @@ test('ChatMessageItem locks copy action while clipboard work is busy', () => {
   assert.match(chatViewTemplate, /:copy-busy="copyBusy"/);
   assert.match(
     chatMessageItemTemplate,
-    /<button[\s\S]*title="复制消息"[\s\S]*:disabled="copyBusy"[\s\S]*:aria-busy="copyBusy"[\s\S]*@click="emit\('copy', message\)"/
+    /<button[\s\S]*title="复制消息"[\s\S]*:disabled="copyBusy"[\s\S]*:aria-busy="copyBusy"[\s\S]*@click="emitMessageAction\('copy'\)"/
   );
   assert.match(chatMessageActionsSource, /const copyBusy = ref\(false\);/);
   assert.match(
@@ -57,6 +58,41 @@ test('ChatMessageItem locks copy action while clipboard work is busy', () => {
   assert.match(
     chatMessageActionsSource,
     /function isCurrentCopyAction\(actionToken\) \{\s*return !disposed && actionToken === copyActionToken;/
+  );
+});
+
+test('ChatMessageItem exposes a mobile action menu without replacing the desktop toolbar', () => {
+  assert.match(chatMessageItemScript, /import \{ computed, nextTick, ref, watch \} from 'vue';/);
+  assert.match(chatMessageItemScript, /const actionMenuOpen = ref\(false\);/);
+  assert.match(chatMessageItemScript, /const messageActionMenuBusy = computed\(\(\) => props\.messageActionBusy \|\| props\.copyBusy \|\| props\.swipeLoading \|\| props\.branchBusy\);/);
+  assert.match(chatMessageItemScript, /const actionMenuLabel = computed\(\(\) => \(actionMenuOpen\.value \? '收起消息操作' : '展开消息操作'\)\);/);
+  assert.match(
+    chatMessageItemScript,
+    /function toggleActionMenu\(\) \{\s*if \(messageActionMenuBusy\.value && !actionMenuOpen\.value\) \{[\s\S]*actionMenuOpen\.value = !actionMenuOpen\.value;[\s\S]*\}/
+  );
+  assert.match(
+    chatMessageItemScript,
+    /function emitMessageAction\(eventName\) \{\s*closeActionMenu\(\);\s*emit\(eventName, props\.message\);\s*\}/
+  );
+  assert.match(chatMessageItemTemplate, /<div class="message-actions" :class="\[message\.role, \{ 'is-menu-open': actionMenuOpen \}\]">/);
+  assert.match(
+    chatMessageItemTemplate,
+    /class="message-action-button message-action-menu-toggle"[\s\S]*:title="actionMenuLabel"[\s\S]*:aria-label="actionMenuLabel"[\s\S]*:aria-expanded="String\(actionMenuOpen\)"[\s\S]*:aria-controls="actionMenuId"[\s\S]*@click\.stop="toggleActionMenu"/
+  );
+  assert.match(chatMessageItemTemplate, /<div :id="actionMenuId" class="message-action-list" role="group" aria-label="消息操作">/);
+  assert.match(stylesSource, /\.message-action-menu-toggle\s*{\s*display:\s*none;/);
+  assert.match(
+    stylesSource,
+    /@media \(max-width: 520px\) \{[\s\S]*\.message-action-menu-toggle\s*{[\s\S]*display:\s*inline-flex;[\s\S]*\.message-action-list\s*{[\s\S]*display:\s*none;[\s\S]*\.message-actions\.is-menu-open \.message-action-list\s*{[\s\S]*display:\s*flex;/
+  );
+});
+
+test('ChatMessageItem focuses the edit textarea when edit mode opens', () => {
+  assert.match(chatMessageItemScript, /const editTextareaRef = ref\(null\);/);
+  assert.match(chatMessageItemTemplate, /<textarea[\s\S]*ref="editTextareaRef"[\s\S]*aria-label="编辑消息内容"/);
+  assert.match(
+    chatMessageItemScript,
+    /watch\(isEditingCurrentMessage, async \(active\) => \{[\s\S]*closeActionMenu\(\);[\s\S]*await nextTick\(\);[\s\S]*editTextareaRef\.value\?\.focus\?\.\(\);[\s\S]*\}\);/
   );
 });
 

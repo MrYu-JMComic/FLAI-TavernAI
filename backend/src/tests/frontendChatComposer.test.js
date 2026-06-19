@@ -23,8 +23,11 @@ function readStyleRange(startMarker, endMarker, fromIndex = 0) {
 
 test('ChatComposer locks configuration controls while sending', () => {
   assert.match(chatComposerTemplate, /<form class="deep-composer" :aria-busy="sending" @submit\.prevent="emit\('submit', \{ isEnter: false \}\)">/);
+  assert.match(chatComposerTemplate, /class="visually-hidden"[\s\S]*type="file"[\s\S]*aria-label="选择聊天图片"[\s\S]*@change="onAttachmentChange"/);
   assert.match(chatComposerTemplate, /class="preset-select"[\s\S]*:disabled="sending"[\s\S]*@change="onPresetChange"/);
-  assert.match(chatComposerTemplate, /class="mode-pill model-switch-pill"[\s\S]*:disabled="sending"[\s\S]*:aria-busy="sending"[\s\S]*@click="emit\('open-model-switcher'\)"/);
+  assert.match(chatComposerScript, /const modelSwitchLocked = computed\(\(\) => props\.sending \|\| props\.modelSaving\);/);
+  assert.match(chatComposerTemplate, /class="model-quick-select"[\s\S]*:disabled="modelSwitchLocked \|\| !canQuickSwitchModel"[\s\S]*@change="onQuickModelChange"/);
+  assert.match(chatComposerTemplate, /v-if="!quickModelOptions\.length"[\s\S]*class="mode-pill model-switch-pill"[\s\S]*:disabled="sending"[\s\S]*:aria-busy="sending"[\s\S]*@click="emit\('open-model-switcher'\)"/);
   assert.match(chatComposerTemplate, /:aria-pressed="String\(useStream\)"[\s\S]*:disabled="sending"[\s\S]*:aria-busy="sending"[\s\S]*@click="emit\('toggle-stream'\)"/);
   assert.match(chatComposerTemplate, /:disabled="sending \|\| !canToggleThinking"[\s\S]*:aria-busy="sending"[\s\S]*@click="emit\('toggle-thinking'\)"/);
 
@@ -45,9 +48,67 @@ test('ChatComposer input handlers tolerate missing event targets', () => {
     chatComposerScript,
     /function onPresetChange\(event\) {\s*const value = readEventTargetValue\(event\);\s*if \(value === undefined\) {\s*return;\s*}\s*emit\('update:selectedPresetId', value\);\s*}/
   );
+  assert.match(
+    chatComposerScript,
+    /function onQuickModelChange\(event\) {\s*const value = readEventTargetValue\(event\);[\s\S]*emit\('quick-model-change', nextModel\);[\s\S]*}/
+  );
   assert.match(chatComposerTemplate, /@input="onComposerInput"/);
   assert.match(chatComposerTemplate, /@change="onPresetChange"/);
+  assert.match(chatComposerTemplate, /@change="onQuickModelChange"/);
   assert.doesNotMatch(chatComposerTemplate, /\$event\.target\.value/);
+});
+
+test('ChatComposer exposes an inline quick model selector with deduped options', () => {
+  assert.match(chatComposerScript, /const quickModelOptions = computed\(\(\) => buildQuickModelOptions\(props\.modelOptions, props\.currentModel\)\);/);
+  assert.match(chatComposerScript, /const canQuickSwitchModel = computed\(\(\) => \{[\s\S]*return !props\.currentModel \|\| quickModelOptions\.value\.length > 1;[\s\S]*\}\);/);
+  assert.match(
+    chatComposerScript,
+    /function buildQuickModelOptions\(sourceModels, currentModel\) {[\s\S]*const byId = new Map\(\);[\s\S]*byId\.set\(current,[\s\S]*const models = Array\.isArray\(sourceModels\) \? sourceModels : \[\];[\s\S]*for \(const item of models\) {[\s\S]*byId\.set\(id,[\s\S]*return collectQuickModelOptions\(byId\);[\s\S]*}/
+  );
+  assert.match(
+    chatComposerScript,
+    /function collectQuickModelOptions\(byId\) {\s*const options = \[\];\s*for \(const option of byId\.values\(\)\) {\s*options\.push\(option\);[\s\S]*return options;[\s\S]*}/
+  );
+  assert.match(chatComposerTemplate, /<label v-if="quickModelOptions\.length" class="model-quick-select"/);
+  assert.match(chatComposerTemplate, /aria-label="快速切换聊天模型"/);
+  assert.match(chatComposerTemplate, /<option v-for="model in quickModelOptions" :key="model\.id" :value="model\.id">/);
+  assert.match(chatComposerTemplate, /<span v-if="currentModelSupportsReasoning" class="model-ability-chip">推理<\/span>/);
+  assert.match(chatComposerTemplate, /class="mode-pill image-generation-pill"/);
+  assert.match(chatComposerTemplate, /class="mode-pill stream-pill"/);
+  assert.match(chatComposerTemplate, /class="mode-pill thinking-pill"/);
+  assert.doesNotMatch(chatComposerScript, /modelOptions\.map\(/);
+  assert.doesNotMatch(chatComposerScript, /return\s+\[\.\.\.byId\.values\(\)\];/);
+});
+
+test('ChatComposer keeps mobile model switching to one stable control with dark theme colors', () => {
+  assert.match(
+    stylesSource,
+    /\.model-quick-select,[\s\S]*:root\[data-theme="dark"\] \.model-quick-select\s*{[\s\S]*border-color:\s*var\(--line\);[\s\S]*color:\s*var\(--text\);[\s\S]*background:\s*var\(--surface\);/
+  );
+  assert.match(stylesSource, /:root\[data-theme="dark"\] \.model-quick-select select\s*{\s*color-scheme:\s*dark;\s*}/);
+  assert.match(
+    stylesSource,
+    /:root\[data-theme="dark"\] \.model-quick-select select option\s*{[\s\S]*color:\s*#e5e7eb;[\s\S]*background:\s*#111827;[\s\S]*}/
+  );
+
+  const composerPhoneStart = stylesSource.indexOf('grid-template-columns: minmax(0, 1fr) repeat(4, 40px) 44px;');
+  assert.notEqual(composerPhoneStart, -1, 'missing phone composer grid marker');
+  const composerPhoneBlockStart = stylesSource.lastIndexOf('@media (max-width: 480px) {', composerPhoneStart);
+  const composerPhoneBlockEnd = stylesSource.indexOf('  .model-picker {', composerPhoneStart);
+  assert.notEqual(composerPhoneBlockStart, -1, 'missing phone composer block start');
+  assert.notEqual(composerPhoneBlockEnd, -1, 'missing phone composer block end');
+  const phoneBlock = stylesSource.slice(composerPhoneBlockStart, composerPhoneBlockEnd);
+  assert.match(phoneBlock, /\.composer-actions\s*{[\s\S]*grid-template-columns:\s*minmax\(0, 1fr\) repeat\(4, 40px\) 44px;[\s\S]*gap:\s*8px;/);
+  assert.match(phoneBlock, /\.composer-actions\.has-preset\s*{[\s\S]*grid-template-rows:\s*40px 40px;/);
+  assert.match(phoneBlock, /\.composer-actions\.has-preset \.preset-select\s*{[\s\S]*grid-column:\s*1 \/ -1;[\s\S]*grid-row:\s*1;/);
+  assert.match(phoneBlock, /\.model-quick-select\s*{[\s\S]*grid-column:\s*1;[\s\S]*grid-row:\s*1;/);
+  assert.match(phoneBlock, /\.composer-actions\.has-preset \.model-quick-select,[\s\S]*\.composer-actions\.has-preset \.model-switch-pill\s*{[\s\S]*grid-row:\s*2;/);
+  assert.match(phoneBlock, /\.attachment-pill\s*{[\s\S]*grid-column:\s*2;/);
+  assert.match(phoneBlock, /\.image-generation-pill\s*{[\s\S]*grid-column:\s*3;/);
+  assert.match(phoneBlock, /\.stream-pill\s*{[\s\S]*grid-column:\s*4;/);
+  assert.match(phoneBlock, /\.thinking-pill\s*{[\s\S]*grid-column:\s*5;/);
+  assert.match(phoneBlock, /\.round-send\s*{[\s\S]*grid-column:\s*6;/);
+  assert.doesNotMatch(phoneBlock, /\.model-switch-pill\s*{[^}]*display:\s*none;/);
 });
 
 test('ChatComposer follows readable width when desktop sidebar is collapsed', () => {
@@ -80,6 +141,14 @@ test('ChatView routes preset selection through the guarded submit setter', () =>
   assert.match(chatViewScript, /submit, stop,[\s\S]*setSelectedPresetId, toggleUseStream, toggleThinking/);
   assert.match(chatViewTemplate, /@update:selected-preset-id="setSelectedPresetId"/);
   assert.doesNotMatch(chatViewTemplate, /@update:selected-preset-id="\([^"]+\) => selectedPresetId =/);
+});
+
+test('ChatView wires composer quick model changes through the guarded model save path', () => {
+  assert.match(chatViewTemplate, /:model-options="providerModels"/);
+  assert.match(chatViewTemplate, /:model-saving="modelSwitcherSaving"/);
+  assert.match(chatViewTemplate, /:current-model-supports-reasoning="Boolean\(provider\?\.supportsReasoning\)"/);
+  assert.match(chatViewTemplate, /@quick-model-change="saveQuickModel"/);
+  assert.match(chatViewScript, /async function saveQuickModel\(model\)\s*{\s*if \(modelSwitcherSaving\.value\)/);
 });
 
 test('ChatView exposes chat failure recovery and world book match dialog entry', () => {

@@ -32,6 +32,12 @@ See `governance.md` for the full framework.
 
 Improve FLAI TavernAI in small, verified iterations. Prefer fixes and product polish that make the app more reliable, easier to use, and easier to maintain.
 
+## Implementation Hygiene
+
+- Do not only layer patches on top of old behavior. When a change replaces an older UI path, helper, style rule, test expectation, or dead branch, clean up the replaced code in the same small iteration unless doing so would touch unrelated user work.
+- Avoid leaving duplicate controls, overlapping responsive rules, or parallel implementations that make the app more confusing and harder to maintain.
+- If cleanup is intentionally deferred, record the reason and the exact follow-up in the iteration report.
+
 ## Project Shape
 
 - Frontend: `frontend`, Vue + Vite.

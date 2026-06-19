@@ -21,6 +21,8 @@ const providerModelCache = new Map();
 const PROVIDER_MODEL_CACHE_TTL_MS = 30 * 60 * 1000;
 const DEFAULT_TOOL_COMPLETION_ROUNDS = 6;
 const MAX_TOOL_COMPLETION_ROUNDS = 100;
+const OPENAI_IMAGE_GENERATION_MODELS = new Set(['gpt-image-2']);
+const XAI_IMAGE_GENERATION_MODELS = new Set(['grok-imagine-image', 'grok-imagine-image-quality']);
 
 export const providerPresets = {
   openai: {
@@ -960,6 +962,84 @@ export async function generateCompletion(settings, messages, options = {}) {
   return parseChatCompletionResult(json, settings);
 }
 
+export async function generateImage(settings, prompt, options = {}) {
+  const compatibility = getImageGenerationCompatibility(settings, options);
+  if (!compatibility.supported) {
+    throw new Error(compatibility.error);
+  }
+  const response = await providerFetch(settings, '/images/generations', {
+    method: 'POST',
+    body: JSON.stringify({
+      ...normalizeProviderExtraBody(settings.extraBody),
+      model: resolveProviderModel(settings, options),
+      prompt: String(prompt || '').trim(),
+      n: 1,
+      size: options.imageSize || '1024x1024',
+      response_format: 'b64_json'
+    })
+  });
+  const json = await readJsonResponse(response);
+  const image = normalizeGeneratedImage(json);
+  if (!image) {
+    throw new Error('生图模型没有返回图片数据');
+  }
+  return {
+    content: image.revisedPrompt ? `已生成图片：${image.revisedPrompt}` : '已生成图片',
+    attachments: [image],
+    usage: json.usage || null,
+    provider: settings.gatewayName,
+    providerType: settings.providerType,
+    model: normalizeProviderModel(settings.providerType, settings.model)
+  };
+}
+
+function getImageGenerationCompatibility(settings = {}, options = {}) {
+  const providerType = String(settings.providerType || '').trim();
+  const model = normalizeProviderModel(providerType, resolveProviderModel(settings, options));
+  if (providerType === 'custom') {
+    return { supported: Boolean(model), error: model ? '' : imageGenerationUnsupportedMessage(model) };
+  }
+  if (providerType === 'openai') {
+    return {
+      supported: OPENAI_IMAGE_GENERATION_MODELS.has(model),
+      error: OPENAI_IMAGE_GENERATION_MODELS.has(model) ? '' : imageGenerationUnsupportedMessage(model)
+    };
+  }
+  if (providerType === 'xai') {
+    return {
+      supported: XAI_IMAGE_GENERATION_MODELS.has(model),
+      error: XAI_IMAGE_GENERATION_MODELS.has(model) ? '' : imageGenerationUnsupportedMessage(model)
+    };
+  }
+  return { supported: false, error: imageGenerationUnsupportedMessage(model) };
+}
+
+function imageGenerationUnsupportedMessage(model) {
+  const normalizedModel = String(model || '').trim() || '当前模型';
+  return `Model ${normalizedModel} is not supported on /v1/images/generations or /v1/images/edits. Use gpt-image-2, grok-imagine-image, grok-imagine-image-quality, or a configured openai-compatibility image model.`;
+}
+
+function normalizeGeneratedImage(json = {}) {
+  const first = Array.isArray(json.data) ? json.data[0] : json.image || json.output?.[0] || null;
+  if (!first || typeof first !== 'object') {
+    return null;
+  }
+  const b64 = String(first.b64_json || first.b64Json || first.base64 || '').trim();
+  if (!b64) {
+    return null;
+  }
+  const mimeType = String(first.mime_type || first.mimeType || 'image/png').trim() || 'image/png';
+  return {
+    type: 'image',
+    dataUrl: `data:${mimeType};base64,${b64}`,
+    mimeType,
+    name: 'generated-image.png',
+    alt: String(first.revised_prompt || first.revisedPrompt || '生成图片').trim(),
+    size: Math.floor((b64.length * 3) / 4),
+    revisedPrompt: String(first.revised_prompt || first.revisedPrompt || '').trim()
+  };
+}
+
 export async function streamCompletion(settings, messages, emit, signal, options = {}) {
   options = options ?? {};
   if (!hasUsableProvider(settings)) {
@@ -1356,12 +1436,12 @@ function convertMessagesForAnthropic(messages = []) {
 
   for (const message of messages) {
     const role = message?.role;
-    const content = extractText(message?.content);
-    if (!content) {
+    const content = convertContentForAnthropic(message?.content);
+    if (!hasMessageContent(content)) {
       continue;
     }
     if (role === 'system') {
-      system.push(content);
+      system.push(extractText(content));
       continue;
     }
     if (role === 'user' || role === 'assistant') {
@@ -1373,6 +1453,78 @@ function convertMessagesForAnthropic(messages = []) {
     system: system.join('\n\n'),
     messages: converted.length ? converted : [{ role: 'user', content: '' }]
   };
+}
+
+function convertMessagesForOpenAiResponses(messages = []) {
+  const converted = [];
+  if (!messages || typeof messages[Symbol.iterator] !== 'function') {
+    return converted;
+  }
+  for (const message of messages) {
+    converted.push({
+      ...message,
+      content: convertContentForOpenAiResponses(message?.content)
+    });
+  }
+  return converted;
+}
+
+function convertContentForOpenAiResponses(content) {
+  if (!Array.isArray(content)) {
+    return content;
+  }
+  const parts = [];
+  for (const item of content) {
+    if (item?.type === 'image_url') {
+      const imageUrl = item.image_url?.url || item.url || '';
+      if (imageUrl) {
+        parts.push({ type: 'input_image', image_url: imageUrl });
+      }
+      continue;
+    }
+    const text = extractText(item?.text || item?.content || item);
+    if (text) {
+      parts.push({ type: 'input_text', text });
+    }
+  }
+  return parts.length ? parts : '';
+}
+
+function convertContentForAnthropic(content) {
+  if (!Array.isArray(content)) {
+    return extractText(content);
+  }
+  const parts = [];
+  for (const item of content) {
+    if (item?.type === 'image_url') {
+      const source = dataUrlToAnthropicSource(item.image_url?.url || item.url || '');
+      if (source) {
+        parts.push({ type: 'image', source });
+      }
+      continue;
+    }
+    const text = extractText(item?.text || item?.content || item);
+    if (text) {
+      parts.push({ type: 'text', text });
+    }
+  }
+  return parts.length ? parts : '';
+}
+
+function dataUrlToAnthropicSource(value) {
+  const match = /^data:(image\/(?:png|jpeg|webp));base64,([A-Za-z0-9+/=]+)$/i.exec(String(value || '').trim());
+  if (!match) {
+    return null;
+  }
+  return {
+    type: 'base64',
+    media_type: match[1].toLowerCase(),
+    data: match[2]
+  };
+}
+
+function hasMessageContent(content) {
+  return Boolean(Array.isArray(content) ? content.length : String(content || '').trim());
 }
 
 function convertToolsForAnthropic(tools = []) {
@@ -1442,7 +1594,7 @@ async function generateOpenAiResponse(settings, messages, options = {}) {
     body: JSON.stringify({
       ...normalizeProviderExtraBody(settings.extraBody),
       model: resolveProviderModel(settings, options),
-      input: messages,
+      input: convertMessagesForOpenAiResponses(messages),
       reasoning: buildOpenAiReasoning(settings, options),
       stream: false
     })
@@ -1467,7 +1619,7 @@ async function streamOpenAiResponse(settings, messages, emit, signal, options = 
     body: JSON.stringify({
       ...normalizeProviderExtraBody(settings.extraBody),
       model: resolveProviderModel(settings, options),
-      input: messages,
+      input: convertMessagesForOpenAiResponses(messages),
       reasoning: buildOpenAiReasoning(settings, options),
       stream: true
     }),
@@ -1545,7 +1697,7 @@ function findLastUserMessageContent(messages = []) {
     for (let index = messages.length - 1; index >= 0; index -= 1) {
       const message = messages[index];
       if (message?.role === 'user') {
-        return message.content || '';
+        return extractText(message.content);
       }
     }
     return '';
@@ -1558,7 +1710,7 @@ function findLastUserMessageContent(messages = []) {
   let content = '';
   for (const message of messages) {
     if (message?.role === 'user') {
-      content = message.content || '';
+      content = extractText(message.content);
     }
   }
   return content;

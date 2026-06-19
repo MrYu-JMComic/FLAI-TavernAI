@@ -106,8 +106,8 @@ export function loadSave(database, userId, saveId, requestedConversationId = '')
     // Restore messages from snapshot
     if (Array.isArray(snapshot.messages) && snapshot.messages.length > 0) {
       const insert = database.prepare(
-        `INSERT INTO messages (id, user_id, conversation_id, role, content, reasoning, usage_json, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+        `INSERT INTO messages (id, user_id, conversation_id, role, content, attachments_json, reasoning, usage_json, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
       );
       for (const msg of snapshot.messages) {
         insert.run(
@@ -116,6 +116,7 @@ export function loadSave(database, userId, saveId, requestedConversationId = '')
           targetConversationId,
           msg.role,
           msg.content,
+          JSON.stringify(normalizeSnapshotAttachments(msg.attachments)),
           msg.reasoning || '',
           msg.usage ? JSON.stringify(msg.usage) : null,
           msg.createdAt || nowIso()
@@ -140,7 +141,7 @@ export function loadSave(database, userId, saveId, requestedConversationId = '')
 function buildSnapshot(database, userId, conversationId) {
   const messages = database
     .prepare(
-      `SELECT id, role, content, reasoning, usage_json, created_at
+      `SELECT id, role, content, attachments_json, reasoning, usage_json, created_at
        FROM messages
        WHERE user_id = ? AND conversation_id = ?
        ORDER BY created_at ASC, rowid ASC`
@@ -150,6 +151,7 @@ function buildSnapshot(database, userId, conversationId) {
       id: row.id,
       role: row.role,
       content: row.content,
+      attachments: normalizeSnapshotAttachments(parseJson(row.attachments_json, [])),
       reasoning: row.reasoning || '',
       usage: parseJson(row.usage_json, null),
       createdAt: row.created_at
@@ -159,6 +161,25 @@ function buildSnapshot(database, userId, conversationId) {
     messages,
     savedAt: nowIso()
   };
+}
+
+function normalizeSnapshotAttachments(attachments = []) {
+  const source = Array.isArray(attachments) ? attachments : [];
+  const normalized = [];
+  for (const attachment of source) {
+    if (!attachment || typeof attachment !== 'object') {
+      continue;
+    }
+    normalized.push({
+      type: String(attachment.type || 'image'),
+      dataUrl: String(attachment.dataUrl || ''),
+      mimeType: String(attachment.mimeType || ''),
+      name: String(attachment.name || ''),
+      alt: String(attachment.alt || ''),
+      size: Number.isFinite(Number(attachment.size)) ? Number(attachment.size) : 0
+    });
+  }
+  return normalized;
 }
 
 function buildPreview(snapshot) {

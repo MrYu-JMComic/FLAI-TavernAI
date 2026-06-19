@@ -46,8 +46,18 @@ export function branchConversation(db, userId, conversationId, branchFromMessage
     for (const msg of messages) {
       const newMsgId = newId();
       db.prepare(
-        'INSERT INTO messages (id, user_id, conversation_id, role, content, reasoning, usage_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
-      ).run(newMsgId, userId, newConversationId, msg.role, msg.content, msg.reasoning || '', msg.usage_json, msg.created_at);
+        'INSERT INTO messages (id, user_id, conversation_id, role, content, attachments_json, reasoning, usage_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
+      ).run(
+        newMsgId,
+        userId,
+        newConversationId,
+        msg.role,
+        msg.content,
+        msg.attachments_json || '[]',
+        msg.reasoning || '',
+        msg.usage_json,
+        msg.created_at
+      );
 
       // Copy swipes for assistant messages
       if (msg.role === 'assistant') {

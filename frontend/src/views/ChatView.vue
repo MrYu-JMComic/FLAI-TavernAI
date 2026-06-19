@@ -178,11 +178,12 @@ function prepareExpandedStatusBarForSubmit() {
 }
 
 const {
-  input, useStream, thinkingEnabled,
+  input, chatAttachments, attachmentBusy, useStream, thinkingEnabled, imageGenerationEnabled,
   sending, usage, lastFailure, latestWorldBookMatches,
   canSend, canToggleThinking,
   submit, stop, restoreLastFailureInput, retryLastFailure, dismissLastFailure,
-  setSelectedPresetId, toggleUseStream, toggleThinking,
+  addChatAttachmentFiles, removeChatAttachment, clearChatAttachments,
+  setSelectedPresetId, toggleUseStream, toggleThinking, toggleImageGeneration,
   cleanup: cleanupSubmit
 } = useChatSubmit({
   route: props.route, messages, provider: computed(() => props.provider),
@@ -1350,19 +1351,30 @@ watch(showNpcFeature, (active) => {
         :can-send="canSend"
         :use-stream="useStream"
         :thinking-enabled="thinkingEnabled"
+        :image-generation-enabled="imageGenerationEnabled"
         :can-toggle-thinking="canToggleThinking"
         :chat-viewport-is-phone="chatViewportIsPhone"
         :show-scroll-bottom-button="showScrollBottomButton"
         :usage="usage"
+        :attachments="chatAttachments"
+        :attachment-busy="attachmentBusy"
         :preset-list="presetList"
         :selected-preset-id="selectedPresetId"
         :current-model="provider?.model || ''"
+        :model-options="providerModels"
+        :model-saving="modelSwitcherSaving"
+        :current-model-supports-reasoning="Boolean(provider?.supportsReasoning)"
         @update:input="(val) => input = val"
         @submit="handleComposerEnterFromComposer"
         @stop="stop"
         @toggle-stream="toggleUseStream"
         @toggle-thinking="toggleThinking"
+        @toggle-image-generation="toggleImageGeneration"
         @open-model-switcher="openModelSwitcher"
+        @quick-model-change="saveQuickModel"
+        @add-attachments="addChatAttachmentFiles"
+        @remove-attachment="removeChatAttachment"
+        @clear-attachments="clearChatAttachments"
         @scroll-to-bottom="scrollToBottom()"
         @update:selected-preset-id="setSelectedPresetId"
       />

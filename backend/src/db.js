@@ -180,6 +180,7 @@ export function initializeDatabase(database) {
       conversation_id TEXT NOT NULL,
       role TEXT NOT NULL,
       content TEXT NOT NULL,
+      attachments_json TEXT NOT NULL DEFAULT '[]',
       reasoning TEXT,
       usage_json TEXT,
       created_at TEXT NOT NULL,
@@ -207,6 +208,7 @@ export function initializeDatabase(database) {
   ensureColumn(database, 'conversations', 'custom_js', "TEXT NOT NULL DEFAULT ''");
   ensureColumn(database, 'conversations', 'user_advanced_settings', "TEXT NOT NULL DEFAULT '{}'");
   ensureColumn(database, 'conversations', 'chat_lorebook_id', 'TEXT');
+  ensureColumn(database, 'messages', 'attachments_json', "TEXT NOT NULL DEFAULT '[]'");
   database.exec(`
     CREATE TABLE IF NOT EXISTS character_likes (
       user_id TEXT NOT NULL,

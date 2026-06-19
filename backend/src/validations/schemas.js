@@ -7,6 +7,7 @@ import { z } from 'zod';
 
 const STATUS_BLUEPRINT_VARIABLE_LIMIT = 60;
 const BACKGROUND_IMAGE_INPUT_MAX_LENGTH = 6_000_000;
+const CHAT_IMAGE_INPUT_MAX_LENGTH = 6_000_000;
 const BOOLEAN_STRING_VALUES = new Set(['true', 'false', '1', '0']);
 const MOD_CHARACTER_BINDING_LIMIT = 100;
 const npcMemoryTypeSchema = z.enum(['event', 'relationship', 'opinion', 'knowledge', 'emotion']);
@@ -137,10 +138,22 @@ export const importCharacterSchema = z.object({
 
 // ── 消息相关 ──
 
+const chatImageAttachmentSchema = z.object({
+  type: z.literal('image').optional().default('image'),
+  dataUrl: z.string().max(CHAT_IMAGE_INPUT_MAX_LENGTH).trim().optional().default(''),
+  url: z.string().max(CHAT_IMAGE_INPUT_MAX_LENGTH).trim().optional().default(''),
+  mimeType: z.enum(['image/png', 'image/jpeg', 'image/webp']).optional(),
+  name: z.string().max(120).trim().optional().default(''),
+  alt: z.string().max(200).trim().optional().default(''),
+  size: z.number().int().min(0).max(4 * 1024 * 1024).optional().default(0)
+}).passthrough();
+
 export const sendMessageSchema = z.object({
-  content: z.string().min(1, '消息不能为空').max(32000, '消息最多 32000 字').trim(),
+  content: z.string().max(32000, '消息最多 32000 字').trim().optional().default(''),
   message: z.string().max(32000).trim().optional(),
+  attachments: z.array(chatImageAttachmentSchema).max(4).optional().default([]),
   stream: booleanLikeSchema.optional(),
+  imageGeneration: booleanLikeSchema.optional(),
   presetId: z.string().optional(),
   thinkingEnabled: booleanLikeSchema.optional()
 });

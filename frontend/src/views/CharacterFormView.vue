@@ -120,6 +120,9 @@ const tagCreating = ref(false);
 const activeSection = ref('basic');
 const sectionNavRef = ref(null);
 const form = reactive(emptyCharacter());
+const pendingCharacterDraft = ref(null);
+const characterDraftStatus = ref('idle');
+const characterDraftSavedAt = ref('');
 const backgroundUploading = reactive({
   desktopBackgroundUrl: false,
   mobileBackgroundUrl: false
@@ -127,12 +130,20 @@ const backgroundUploading = reactive({
 const backgroundUploadTokens = {};
 let avatarUploadToken = 0;
 let sectionNavRafId = null;
+let characterDraftBaselineSerialized = '';
+let characterDraftSaveTimer = null;
+let characterDraftInterval = null;
+let characterDraftHydrating = false;
 const WORLD_BOOK_SELECTOR_PAGE_SIZE = 8;
 const WORLD_BOOK_SORT_OPTIONS = [
   { value: 'updatedDesc', label: '最近更新' },
   { value: 'nameAsc', label: '名称 A-Z' },
   { value: 'entryCountDesc', label: '条目多到少' }
 ];
+const CHARACTER_FORM_DRAFT_STORAGE_PREFIX = 'flai-character-form-draft';
+const CHARACTER_FORM_DRAFT_AUTOSAVE_MS = 30000;
+const CHARACTER_FORM_DRAFT_DEBOUNCE_MS = 1200;
+const CHARACTER_FORM_DRAFT_MAX_CHARS = 200000;
 
 const statusBarBlueprintPreview = computed(() => {
   const blueprint = normalizeStatusBarBlueprintForPayload(form.authorAdvancedSettings.statusBarBlueprint || {});
@@ -166,6 +177,30 @@ const statusBarBlueprintTemplateStats = computed(() => {
     lines: template ? template.split(/\r\n|\r|\n/).length : 0,
     hasTemplate: Boolean(template)
   };
+});
+
+const characterDraftStatusText = computed(() => {
+  if (pendingCharacterDraft.value) {
+    return '发现未提交的本地草稿';
+  }
+  if (characterDraftStatus.value === 'saving') {
+    return '草稿保存中...';
+  }
+  if (characterDraftStatus.value === 'saved') {
+    return characterDraftSavedAt.value
+      ? `草稿已自动保存 ${formatCharacterDraftTime(characterDraftSavedAt.value)}`
+      : '草稿已自动保存';
+  }
+  if (characterDraftStatus.value === 'restored') {
+    return '草稿已恢复，保存角色后会清理本地草稿';
+  }
+  if (characterDraftStatus.value === 'too-large') {
+    return '草稿内容过大，已暂停自动保存';
+  }
+  if (characterDraftStatus.value === 'error') {
+    return '草稿暂时无法保存';
+  }
+  return '';
 });
 
 const statusBlueprintEditorRows = computed(() => {

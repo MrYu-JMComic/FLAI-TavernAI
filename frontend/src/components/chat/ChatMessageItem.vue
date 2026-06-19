@@ -1,4 +1,5 @@
 <script setup>
+import { computed, nextTick, ref, watch } from 'vue';
 import {
   BookOpen,
   Brain,
@@ -8,6 +9,7 @@ import {
   ChevronRight,
   Copy,
   GitBranch,
+  MoreHorizontal,
   Pencil,
   Trash2,
   X
@@ -53,6 +55,52 @@ const emit = defineEmits([
   'open-worldbook-matches'
 ]);
 
+const actionMenuOpen = ref(false);
+const editTextareaRef = ref(null);
+const isEditingCurrentMessage = computed(() => props.editingMessageId === props.message.id);
+const messageAttachments = computed(() => normalizeMessageAttachments(props.message?.attachments));
+const messageActionMenuBusy = computed(() => props.messageActionBusy || props.copyBusy || props.swipeLoading || props.branchBusy);
+const actionMenuId = computed(() => `message-actions-${normalizeMessageActionId(props.message?.id)}`);
+const actionMenuLabel = computed(() => (actionMenuOpen.value ? '收起消息操作' : '展开消息操作'));
+
+function normalizeMessageActionId(id) {
+  const value = String(id || 'local').trim().replace(/[^A-Za-z0-9_-]+/g, '-');
+  return value || 'local';
+}
+
+function closeActionMenu() {
+  actionMenuOpen.value = false;
+}
+
+function toggleActionMenu() {
+  if (messageActionMenuBusy.value && !actionMenuOpen.value) {
+    return;
+  }
+  actionMenuOpen.value = !actionMenuOpen.value;
+}
+
+function emitMessageAction(eventName) {
+  closeActionMenu();
+  emit(eventName, props.message);
+}
+
+function normalizeMessageAttachments(attachments = []) {
+  const normalized = [];
+  const source = Array.isArray(attachments) ? attachments : [];
+  for (const attachment of source) {
+    const dataUrl = String(attachment?.dataUrl || '').trim();
+    if (!dataUrl) {
+      continue;
+    }
+    normalized.push({
+      id: String(attachment.id || dataUrl.slice(0, 48)),
+      dataUrl,
+      alt: String(attachment.alt || attachment.name || '聊天图片').trim() || '聊天图片'
+    });
+  }
+  return normalized;
+}
+
 function onEditingMessageInput(event) {
   const target = event?.target;
   if (!target || target.value === undefined) {
@@ -60,6 +108,23 @@ function onEditingMessageInput(event) {
   }
   emit('update:editingMessageContent', target.value);
 }
+
+watch(isEditingCurrentMessage, async (active) => {
+  if (!active) {
+    return;
+  }
+  closeActionMenu();
+  await nextTick();
+  editTextareaRef.value?.focus?.();
+});
+
+watch(() => props.message.id, closeActionMenu);
+
+watch(messageActionMenuBusy, (busy) => {
+  if (busy) {
+    closeActionMenu();
+  }
+});
 </script>
 
 <template>
@@ -98,12 +163,13 @@ function onEditingMessageInput(event) {
         class="deep-bubble"
         :class="{
           'is-typing': isContentTyping,
-          'is-waiting': isContentTyping && !message.content,
+          'is-waiting': isContentTyping && !message.content && !messageAttachments.length,
           'is-editing': editingMessageId === message.id
         }"
       >
         <div v-if="editingMessageId === message.id" class="message-edit-box" :aria-busy="messageActionBusy">
           <textarea
+            ref="editTextareaRef"
             :value="editingMessageContent"
             aria-label="编辑消息内容"
             rows="4"
@@ -122,21 +188,49 @@ function onEditingMessageInput(event) {
             </button>
           </div>
         </div>
-        <MarkdownContent
-          v-else
-          class="typing-text"
-          :text="message.content || messagePlaceholder"
-          :render-plugins="renderPlugins"
-        />
+        <template v-else>
+          <div v-if="messageAttachments.length" class="message-attachments">
+            <a
+              v-for="attachment in messageAttachments"
+              :key="attachment.id"
+              :href="attachment.dataUrl"
+              target="_blank"
+              rel="noreferrer"
+              class="message-attachment"
+            >
+              <img :src="attachment.dataUrl" :alt="attachment.alt" />
+            </a>
+          </div>
+          <MarkdownContent
+            v-if="message.content || messagePlaceholder"
+            class="typing-text"
+            :text="message.content || messagePlaceholder"
+            :render-plugins="renderPlugins"
+          />
+        </template>
       </div>
-      <div class="message-actions" :class="message.role">
+      <div class="message-actions" :class="[message.role, { 'is-menu-open': actionMenuOpen }]">
+        <button
+          type="button"
+          class="message-action-button message-action-menu-toggle"
+          :title="actionMenuLabel"
+          :aria-label="actionMenuLabel"
+          :aria-expanded="String(actionMenuOpen)"
+          :aria-controls="actionMenuId"
+          :disabled="messageActionMenuBusy && !actionMenuOpen"
+          @click.stop="toggleActionMenu"
+        >
+          <MoreHorizontal :size="14" />
+          <span>操作</span>
+        </button>
+        <div :id="actionMenuId" class="message-action-list" role="group" aria-label="消息操作">
         <button
           type="button"
           class="message-action-button"
           title="复制消息"
           :disabled="copyBusy"
           :aria-busy="copyBusy"
-          @click="emit('copy', message)"
+          @click="emitMessageAction('copy')"
         >
           <Copy :size="14" />
           <span>复制</span>
@@ -146,7 +240,7 @@ function onEditingMessageInput(event) {
           class="message-action-button"
           title="编辑消息"
           :disabled="!canEdit"
-          @click="emit('begin-edit', message)"
+          @click="emitMessageAction('begin-edit')"
         >
           <Pencil :size="14" />
           <span>编辑</span>
@@ -156,7 +250,7 @@ function onEditingMessageInput(event) {
           class="message-action-button danger"
           title="删除消息"
           :disabled="!canDelete"
-          @click="emit('delete', message)"
+          @click="emitMessageAction('delete')"
         >
           <Trash2 :size="14" />
           <span>删除</span>
@@ -168,7 +262,7 @@ function onEditingMessageInput(event) {
           data-worldbook-match-button
           :title="`世界书命中来源（${worldBookMatchCount} 条）`"
           :aria-label="`查看世界书命中来源，共 ${worldBookMatchCount} 条`"
-          @click.stop="emit('open-worldbook-matches', message)"
+          @click.stop="emitMessageAction('open-worldbook-matches')"
         >
           <BookOpen :size="14" />
           <span>世界书</span>
@@ -181,7 +275,7 @@ function onEditingMessageInput(event) {
           :disabled="!swipeCanPrev || swipeLoading"
           :aria-busy="swipeLoading"
           title="上一条候选"
-          @click.stop="emit('swipe-prev', message)"
+          @click.stop="emitMessageAction('swipe-prev')"
         >
           <ChevronLeft :size="14" />
         </button>
@@ -194,7 +288,7 @@ function onEditingMessageInput(event) {
           :disabled="!swipeCanNext || swipeLoading"
           :aria-busy="swipeLoading"
           title="下一条候选"
-          @click.stop="emit('swipe-next', message)"
+          @click.stop="emitMessageAction('swipe-next')"
         >
           <ChevronRight :size="14" />
         </button>
@@ -204,10 +298,11 @@ function onEditingMessageInput(event) {
           aria-label="从此消息创建分支对话"
           :disabled="!branchCan || branchBusy"
           title="从此消息创建分支对话"
-          @click.stop="emit('branch', message)"
+          @click.stop="emitMessageAction('branch')"
         >
           <GitBranch :size="14" />
         </button>
+        </div>
       </div>
     </div>
     <div v-if="message.role === 'user'" class="deep-message-author user" aria-hidden="true">

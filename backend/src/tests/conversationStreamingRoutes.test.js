@@ -134,7 +134,180 @@ test('streaming chat persists partial assistant output when the client aborts', 
   }
 });
 
-function createConversationStreamingApp(database, userId) {
+test('chat message image attachments are saved and sent as multimodal content', async () => {
+  const database = createAppDatabase(':memory:');
+  const userId = 'chat-image-user';
+  const conversationId = 'chat-image-conversation';
+  insertUser(database, userId);
+  const character = createCharacter(database, userId, { name: 'VisionChar', visibility: 'private' });
+  insertConversation(database, { userId, conversationId, characterId: character.id });
+
+  const app = createConversationStreamingApp(database, userId, {
+    providerType: 'custom',
+    gatewayName: 'Vision Gateway',
+    baseUrl: 'https://vision-provider.test/v1',
+    model: 'vision-model'
+  });
+  const originalFetch = globalThis.fetch;
+  let providerBody = null;
+  globalThis.fetch = async (url, options) => {
+    const href = String(url);
+    if (href.startsWith('http://127.0.0.1:')) {
+      return originalFetch(url, options);
+    }
+    providerBody = JSON.parse(options.body);
+    return new Response(JSON.stringify({
+      choices: [{ message: { content: 'I can see it.' } }]
+    }), { headers: { 'Content-Type': 'application/json' } });
+  };
+
+  try {
+    await withServer(app, async (baseUrl) => {
+      const response = await fetch(`${baseUrl}/api/conversations/${conversationId}/messages`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          content: 'look',
+          stream: false,
+          attachments: [{
+            type: 'image',
+            dataUrl: 'data:image/png;base64,AQID',
+            mimeType: 'image/png',
+            name: 'look.png',
+            size: 3
+          }]
+        })
+      });
+      const body = await response.json();
+
+      assert.equal(response.status, 200);
+      assert.equal(body.userMessage.attachments.length, 1);
+      assert.equal(body.userMessage.attachments[0].dataUrl, 'data:image/png;base64,AQID');
+      const lastMessage = providerBody.messages.at(-1);
+      assert.equal(lastMessage.role, 'user');
+      assert.deepEqual(lastMessage.content, [
+        { type: 'text', text: 'look' },
+        { type: 'image_url', image_url: { url: 'data:image/png;base64,AQID' } }
+      ]);
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('chat image generation saves returned image as an assistant attachment', async () => {
+  const database = createAppDatabase(':memory:');
+  const userId = 'chat-image-generation-user';
+  const conversationId = 'chat-image-generation-conversation';
+  insertUser(database, userId);
+  const character = createCharacter(database, userId, { name: 'ImageGenChar', visibility: 'private' });
+  insertConversation(database, { userId, conversationId, characterId: character.id });
+
+  const app = createConversationStreamingApp(database, userId, {
+    providerType: 'custom',
+    gatewayName: 'Image Gateway',
+    baseUrl: 'https://image-provider.test/v1',
+    model: 'image-model'
+  });
+  const originalFetch = globalThis.fetch;
+  let providerBody = null;
+  globalThis.fetch = async (url, options) => {
+    const href = String(url);
+    if (href.startsWith('http://127.0.0.1:')) {
+      return originalFetch(url, options);
+    }
+    assert.match(href, /\/images\/generations$/);
+    providerBody = JSON.parse(options.body);
+    return new Response(JSON.stringify({
+      data: [{ b64_json: 'AQID', revised_prompt: 'a small lantern' }]
+    }), { headers: { 'Content-Type': 'application/json' } });
+  };
+
+  try {
+    await withServer(app, async (baseUrl) => {
+      const response = await fetch(`${baseUrl}/api/conversations/${conversationId}/messages`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          content: 'draw a lantern',
+          stream: false,
+          imageGeneration: true
+        })
+      });
+      const body = await response.json();
+
+      assert.equal(response.status, 200);
+      assert.equal(providerBody.model, 'image-model');
+      assert.equal(providerBody.prompt, 'draw a lantern');
+      assert.equal(body.assistantMessage.attachments.length, 1);
+      assert.equal(body.assistantMessage.attachments[0].dataUrl, 'data:image/png;base64,AQID');
+      assert.match(body.assistantMessage.content, /a small lantern/);
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('chat image generation rejects unsupported xAI lite image model before provider fetch', async () => {
+  const database = createAppDatabase(':memory:');
+  const userId = 'chat-image-generation-lite-user';
+  const conversationId = 'chat-image-generation-lite-conversation';
+  insertUser(database, userId);
+  const character = createCharacter(database, userId, { name: 'ImageLiteChar', visibility: 'private' });
+  insertConversation(database, { userId, conversationId, characterId: character.id });
+
+  const app = createConversationStreamingApp(database, userId, {
+    providerType: 'xai',
+    gatewayName: 'xAI',
+    baseUrl: 'https://api.x.ai/v1',
+    model: 'grok-imagine-image-lite'
+  });
+  const originalFetch = globalThis.fetch;
+  let providerFetchCount = 0;
+  globalThis.fetch = async (url, options) => {
+    const href = String(url);
+    if (href.startsWith('http://127.0.0.1:')) {
+      return originalFetch(url, options);
+    }
+    providerFetchCount += 1;
+    return originalFetch(url, options);
+  };
+
+  try {
+    await withServer(app, async (baseUrl) => {
+      const response = await fetch(`${baseUrl}/api/conversations/${conversationId}/messages`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          content: 'draw a lantern',
+          stream: false,
+          imageGeneration: true
+        })
+      });
+      const body = await response.json();
+
+      assert.equal(response.status, 400);
+      assert.equal(providerFetchCount, 0);
+      assert.match(body.error, /grok-imagine-image-lite/);
+      assert.match(body.error, /grok-imagine-image-quality/);
+      assert.equal(body.userMessage.content, 'draw a lantern');
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+function createConversationStreamingApp(database, userId, providerOverrides = {}) {
+  const providerSettings = {
+    providerType: 'deepseek',
+    gatewayName: 'Failing Provider',
+    baseUrl: 'https://stream-route-error-provider.test',
+    model: 'test-model',
+    apiKey: 'sk-test',
+    supportsReasoning: false,
+    extraBody: {},
+    ...providerOverrides
+  };
   const app = express();
   app.use(express.json());
   app.use('/api/conversations', createConversationsRouter({
@@ -152,15 +325,7 @@ function createConversationStreamingApp(database, userId) {
     withEtag: (_request, response, data) => response.json(data),
     withListCache: (_request, response, data) => response.json(data),
     providerWithSecret: (row) => row,
-    getProviderRow: () => ({
-      providerType: 'deepseek',
-      gatewayName: 'Failing Provider',
-      baseUrl: 'https://stream-route-error-provider.test',
-      model: 'test-model',
-      apiKey: 'sk-test',
-      supportsReasoning: false,
-      extraBody: {}
-    }),
+    getProviderRow: () => providerSettings,
     hasUsableProvider
   }));
   app.use((error, _request, response, _next) => {
