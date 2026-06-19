@@ -2,6 +2,7 @@ import { newId, nowIso } from '../security.js';
 import { normalizeBoolean } from '../utils/boolean.js';
 import { parseJson } from '../utils/json.js';
 import { normalizeFiniteNumber } from '../utils/number.js';
+import { withSavepoint } from './savepoint.js';
 
 const VALID_TYPES = ['prompt_inject', 'style_enhance', 'custom'];
 const VALID_SCOPES = ['global', 'all_characters', 'characters'];
@@ -128,13 +129,15 @@ export function reorderMods(database, userId, orderedIds) {
     }
   }
 
-  const statement = database.prepare(
-    'UPDATE mods SET order_index = ? WHERE id = ? AND user_id = ?'
-  );
-  for (let i = 0; i < nextIds.length; i++) {
-    statement.run(i, nextIds[i], userId);
-  }
-  return listMods(database, userId);
+  return withSavepoint(database, 'sp_reorder_mods', () => {
+    const statement = database.prepare(
+      'UPDATE mods SET order_index = ? WHERE id = ? AND user_id = ?'
+    );
+    for (let i = 0; i < nextIds.length; i++) {
+      statement.run(i, nextIds[i], userId);
+    }
+    return listMods(database, userId);
+  });
 }
 
 export function getEnabledModsForUser(database, userId, options = {}) {

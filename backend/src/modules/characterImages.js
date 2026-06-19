@@ -1,4 +1,5 @@
 import { newId, nowIso } from '../security.js';
+import { withSavepoint } from './savepoint.js';
 
 const maxImagesPerCharacter = 20;
 
@@ -148,17 +149,19 @@ export function reorderCharacterImages(database, characterId, orderedIds) {
     }
   }
 
-  const update = database.prepare(
-    'UPDATE character_images SET order_index = ? WHERE id = ? AND character_id = ?'
-  );
-  let changed = 0;
-  let index = 0;
-  for (const id of nextIds) {
-    const result = update.run(index, id, characterId);
-    changed += result.changes;
-    index += 1;
-  }
-  return changed;
+  return withSavepoint(database, 'sp_reorder_character_images', () => {
+    const update = database.prepare(
+      'UPDATE character_images SET order_index = ? WHERE id = ? AND character_id = ?'
+    );
+    let changed = 0;
+    let index = 0;
+    for (const id of nextIds) {
+      const result = update.run(index, id, characterId);
+      changed += result.changes;
+      index += 1;
+    }
+    return changed;
+  });
 }
 
 // ── Scene detection from AI text ──
@@ -244,15 +247,17 @@ function clearDefaultCharacterImages(database, characterId, exceptImageId = '') 
 }
 
 function reorderAfterDelete(database, characterId) {
-  const rows = database
-    .prepare('SELECT id FROM character_images WHERE character_id = ? ORDER BY order_index ASC, created_at ASC, rowid ASC')
-    .all(characterId);
-  const update = database.prepare('UPDATE character_images SET order_index = ? WHERE id = ?');
-  let index = 0;
-  for (const row of rows) {
-    update.run(index, row.id);
-    index += 1;
-  }
+  withSavepoint(database, 'sp_reorder_after_delete', () => {
+    const rows = database
+      .prepare('SELECT id FROM character_images WHERE character_id = ? ORDER BY order_index ASC, created_at ASC, rowid ASC')
+      .all(characterId);
+    const update = database.prepare('UPDATE character_images SET order_index = ? WHERE id = ?');
+    let index = 0;
+    for (const row of rows) {
+      update.run(index, row.id);
+      index += 1;
+    }
+  });
 }
 
 function toCharacterImage(row) {

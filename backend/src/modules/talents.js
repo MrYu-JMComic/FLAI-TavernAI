@@ -205,10 +205,18 @@ function formatTalentPromptLine(talent) {
 // ── Roll engine: weighted random ──
 
 export function weightedRandomPick(talents) {
+  if (!Array.isArray(talents) || talents.length === 0) {
+    return { name: '', rarity: 'common', description: '', effect: '' };
+  }
+
   let totalWeight = 0;
   for (const talent of talents) {
     const rarity = talent.rarity || 'common';
     totalWeight += RARITY_WEIGHTS[rarity] || RARITY_WEIGHTS.common;
+  }
+
+  if (totalWeight <= 0) {
+    return talents[talents.length - 1];
   }
 
   let random = Math.random() * totalWeight;

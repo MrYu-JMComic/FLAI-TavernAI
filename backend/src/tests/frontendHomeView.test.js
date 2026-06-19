@@ -378,7 +378,11 @@ test('HomeView ignores stale character import file reads', () => {
   );
   assert.match(
     homeViewScript,
-    /async function handleImportFile\(event\) {[\s\S]*const input = event\?\.target;[\s\S]*const file = input\?\.files\?\.\[0\];[\s\S]*if \(input\) {\s*input\.value = '';[\s\S]*if \(importLoading\.value \|\| !file \|\| !isHomeActive\(\)\) return;[\s\S]*const readToken = \+\+importFileReadToken;[\s\S]*const text = await file\.text\(\);[\s\S]*if \(!isCurrentImportFileRead\(readToken\)\) return;[\s\S]*importPreview\.value = data;[\s\S]*} catch {[\s\S]*if \(!isCurrentImportFileRead\(readToken\)\) return;/
+    /async function handleImportFile\(event\) {[\s\S]*const input = event\?\.target;[\s\S]*const file = input\?\.files\?\.\[0\];[\s\S]*if \(input\) {\s*input\.value = '';[\s\S]*await previewImportFile\(file\);[\s\S]*}/
+  );
+  assert.match(
+    homeViewScript,
+    /async function previewImportFile\(file\) {[\s\S]*if \(importLoading\.value \|\| !file \|\| !isHomeActive\(\)\) return;[\s\S]*const readToken = \+\+importFileReadToken;[\s\S]*importPreview\.value = null;[\s\S]*importError\.value = '';[\s\S]*importFileName\.value = file\.name \|\| '';[\s\S]*const text = await file\.text\(\);[\s\S]*if \(!isCurrentImportFileRead\(readToken\)\) return;[\s\S]*importPreview\.value = data;[\s\S]*} catch {[\s\S]*if \(!isCurrentImportFileRead\(readToken\)\) return;[\s\S]*importError\.value = '无法解析角色卡文件，请确认是有效的 JSON 文件';/
   );
   assert.match(
     homeViewScript,
@@ -390,4 +394,18 @@ test('HomeView ignores stale character import file reads', () => {
   );
   assert.equal(countMatches(homeViewTemplate, /class="home-secondary-action home-file-action" :class="\{ disabled: importLoading \}"/g), 2);
   assert.equal(countMatches(homeViewTemplate, /<input type="file" accept="\.json" :disabled="importLoading" @change="handleImportFile" \/>/g), 2);
+});
+
+test('HomeView keeps character import preview inline with direct edit and import actions', () => {
+  assert.match(homeViewTemplate, /class="page-stack home-workbench" @dragover\.prevent @drop\.prevent="handleImportDrop"/);
+  assert.match(homeViewTemplate, /<section v-if="importPreview \|\| importError" class="home-import-panel"/);
+  assert.match(homeViewTemplate, /<p v-if="importError" class="home-import-error">\{\{ importError \}\}<\/p>/);
+  assert.match(homeViewTemplate, /@click="confirmImport\(true\)"[\s\S]*导入并编辑/);
+  assert.match(homeViewTemplate, /@click="confirmImport\(false\)"[\s\S]*直接导入/);
+  assert.doesNotMatch(homeViewTemplate, /<Teleport to="body">/);
+  assert.doesNotMatch(homeViewTemplate, /class="import-overlay"/);
+  assert.match(
+    homeViewScript,
+    /async function confirmImport\(editAfter = false\) {[\s\S]*const savedCharacter = await importCharacter\(nextImport\);[\s\S]*if \(editAfter && savedCharacter\?\.id\) {[\s\S]*emit\('navigate', 'characterEdit', { id: savedCharacter\.id }\);[\s\S]*return;[\s\S]*}/
+  );
 });

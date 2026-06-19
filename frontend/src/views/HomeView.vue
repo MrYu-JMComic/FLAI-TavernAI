@@ -60,6 +60,8 @@ const loadError = ref('');
 const reactionPending = usePendingKeys();
 const chatOpenPending = usePendingKeys();
 const importPreview = ref(null);
+const importFileName = ref('');
+const importError = ref('');
 const importLoading = ref(false);
 const scrollContainerRef = ref(null);
 const containerWidth = ref(0);
@@ -559,6 +561,7 @@ function resetHomeAsyncScope() {
   reactionPending.reset();
   chatOpenPending.reset();
   importLoading.value = false;
+  importError.value = '';
 }
 
 function isHomeActive() {
@@ -744,21 +747,35 @@ async function handleImportFile(event) {
   if (input) {
     input.value = '';
   }
+  await previewImportFile(file);
+}
+
+async function handleImportDrop(event) {
+  const file = event?.dataTransfer?.files?.[0];
+  await previewImportFile(file);
+}
+
+async function previewImportFile(file) {
   if (importLoading.value || !file || !isHomeActive()) return;
   const readToken = ++importFileReadToken;
+  importPreview.value = null;
+  importError.value = '';
+  importFileName.value = file.name || '';
 
   try {
     const text = await file.text();
     if (!isCurrentImportFileRead(readToken)) return;
     const data = JSON.parse(text);
     if (!data.character?.name) {
-      notify.error('无效的角色卡文件：缺少角色名');
+      importError.value = '无效的角色卡文件：缺少角色名';
+      notify.error(importError.value);
       return;
     }
     importPreview.value = data;
   } catch {
     if (!isCurrentImportFileRead(readToken)) return;
-    notify.error('无法解析角色卡文件，请确认是有效的 JSON 文件');
+    importError.value = '无法解析角色卡文件，请确认是有效的 JSON 文件';
+    notify.error(importError.value);
   }
 }
 
@@ -766,19 +783,26 @@ function isCurrentImportFileRead(readToken) {
   return isHomeActive() && readToken === importFileReadToken;
 }
 
-async function confirmImport() {
+async function confirmImport(editAfter = false) {
   if (!importPreview.value || importLoading.value || !isHomeActive()) return;
   const nextImport = importPreview.value;
   importLoading.value = true;
+  importError.value = '';
   try {
-    await importCharacter(nextImport);
+    const savedCharacter = await importCharacter(nextImport);
     if (!isHomeActive()) return;
     notify.success('角色卡导入成功');
     importPreview.value = null;
+    importFileName.value = '';
+    if (editAfter && savedCharacter?.id) {
+      emit('navigate', 'characterEdit', { id: savedCharacter.id });
+      return;
+    }
     await loadCharacters();
   } catch (err) {
     if (!isHomeActive()) return;
-    notify.error(err.message);
+    importError.value = err.message || '角色卡导入失败';
+    notify.error(importError.value);
   } finally {
     if (!isHomeActive()) return;
     importLoading.value = false;
@@ -791,6 +815,8 @@ function cancelImport() {
   }
   importFileReadToken += 1;
   importPreview.value = null;
+  importFileName.value = '';
+  importError.value = '';
 }
 
 function visibilityLabel(character) {
@@ -846,7 +872,7 @@ function formatCount(value) {
 </script>
 
 <template>
-  <section class="page-stack home-workbench">
+  <section class="page-stack home-workbench" @dragover.prevent @drop.prevent="handleImportDrop">
     <section class="home-hero">
       <div class="home-hero-main">
         <p class="home-eyebrow">
@@ -967,6 +993,78 @@ function formatCount(value) {
         <h2>{{ activeFilterLabel }}</h2>
       </div>
       <button v-if="hasActiveFilters" class="home-text-button" type="button" @click="clearFilters">清除筛选</button>
+    </section>
+
+    <section v-if="importPreview || importError" class="home-import-panel" :class="{ 'error-state': importError && !importPreview }" aria-live="polite">
+      <div class="home-import-panel-head">
+        <div>
+          <p>
+            <Upload :size="15" />
+            <span>{{ importPreview ? '待导入角色' : '导入失败' }}</span>
+          </p>
+          <h2>{{ importPreview?.character?.name || importFileName || '角色卡文件' }}</h2>
+        </div>
+        <button class="home-text-button" type="button" :disabled="importLoading" @click="cancelImport">清除</button>
+      </div>
+
+      <p v-if="importError" class="home-import-error">{{ importError }}</p>
+
+      <template v-if="importPreview">
+        <div class="import-preview-content inline">
+          <div class="import-preview-avatar">
+            <img v-if="importPreview.character?.avatarUrl" :src="importPreview.character.avatarUrl" :alt="importPreview.character?.name" />
+            <span v-else>{{ getInitial(importPreview.character?.name) }}</span>
+          </div>
+          <div class="import-preview-info">
+            <h3>{{ importPreview.character?.name }}</h3>
+            <p v-if="importPreview.character?.gender || importPreview.character?.age">
+              {{ importPreview.character?.gender || '未设置' }} · {{ importPreview.character?.age || '年龄未知' }}
+            </p>
+            <p v-if="importPreview.character?.persona" class="import-persona">{{ importPreview.character.persona }}</p>
+          </div>
+        </div>
+
+        <div class="import-meta inline">
+          <div v-if="importPreview.tags?.length" class="import-meta-item">
+            <strong>标签</strong>
+            <div class="tag-row">
+              <span v-for="tag in importPreview.tags" :key="tag" class="tag-badge">{{ tag }}</span>
+            </div>
+          </div>
+          <div v-if="importPreview.regex_rules?.length" class="import-meta-item">
+            <strong>正则规则</strong>
+            <span>{{ importPreview.regex_rules.length }} 条</span>
+          </div>
+          <div v-if="importPreview.world_book" class="import-meta-item">
+            <strong>世界书</strong>
+            <span>{{ importPreview.world_book.name }}（{{ importPreview.world_book.entries?.length || 0 }} 条目）</span>
+          </div>
+        </div>
+
+        <div class="import-actions inline">
+          <button class="ghost-button" type="button" :disabled="importLoading" @click="cancelImport">取消</button>
+          <button
+            class="secondary-button"
+            type="button"
+            :disabled="importLoading"
+            :aria-busy="importLoading"
+            @click="confirmImport(true)"
+          >
+            <Pencil :size="17" />
+            <span>{{ importLoading ? '导入中...' : '导入并编辑' }}</span>
+          </button>
+          <button
+            class="primary-button"
+            type="button"
+            :disabled="importLoading"
+            :aria-busy="importLoading"
+            @click="confirmImport(false)"
+          >
+            <Download :size="18" />
+            <span>{{ importLoading ? '导入中...' : '直接导入' }}</span>
+          </button>
+        </div>
+      </template>
     </section>
 
     <section v-if="loading" class="home-skeleton-grid redesigned">
@@ -1200,54 +1298,5 @@ function formatCount(value) {
       </div>
     </section>
 
-    <Teleport to="body">
-      <div v-if="importPreview" class="import-overlay" @click.self="cancelImport">
-        <div class="import-dialog">
-          <h2>导入角色卡预览</h2>
-          <div class="import-preview-content">
-            <div class="import-preview-avatar">
-              <img v-if="importPreview.character?.avatarUrl" :src="importPreview.character.avatarUrl" :alt="importPreview.character?.name" />
-              <span v-else>{{ getInitial(importPreview.character?.name) }}</span>
-            </div>
-            <div class="import-preview-info">
-              <h3>{{ importPreview.character?.name }}</h3>
-              <p v-if="importPreview.character?.gender || importPreview.character?.age">
-                {{ importPreview.character?.gender || '未设置' }} · {{ importPreview.character?.age || '年龄未知' }}
-              </p>
-              <p v-if="importPreview.character?.persona" class="import-persona">{{ importPreview.character.persona }}</p>
-            </div>
-          </div>
-          <div class="import-meta">
-            <div v-if="importPreview.tags?.length" class="import-meta-item">
-              <strong>标签</strong>
-              <div class="tag-row">
-                <span v-for="tag in importPreview.tags" :key="tag" class="tag-badge">{{ tag }}</span>
-              </div>
-            </div>
-            <div v-if="importPreview.regex_rules?.length" class="import-meta-item">
-              <strong>正则规则</strong>
-              <span>{{ importPreview.regex_rules.length }} 条</span>
-            </div>
-            <div v-if="importPreview.world_book" class="import-meta-item">
-              <strong>世界书</strong>
-              <span>{{ importPreview.world_book.name }}（{{ importPreview.world_book.entries?.length || 0 }} 条目）</span>
-            </div>
-          </div>
-          <div class="import-actions">
-            <button class="ghost-button" type="button" :disabled="importLoading" @click="cancelImport">取消</button>
-            <button
-              class="primary-button"
-              type="button"
-              :disabled="importLoading"
-              :aria-busy="importLoading"
-              @click="confirmImport"
-            >
-              <Download :size="18" />
-              <span>{{ importLoading ? '导入中...' : '确认导入' }}</span>
-            </button>
-          </div>
-        </div>
-      </div>
-    </Teleport>
   </section>
 </template>

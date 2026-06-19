@@ -1,6 +1,7 @@
 import { nowIso } from '../security.js';
 import { conversationBackgroundOwnerTypes, saveBackgroundImageInput } from '../services/avatars.js';
 import { parseJson } from '../utils/json.js';
+import { normalizeBoolean } from '../utils/boolean.js';
 import { normalizeAdvancedSettings } from './advancedSettings.js';
 
 export function normalizeConversationAppearance(input = {}) {
@@ -114,15 +115,7 @@ function normalizeMultilineText(value) {
   return text.trim() ? text : '';
 }
 
-function normalizeBoolean(value, fallback = false) {
-  if (value === true || value === 'true' || value === '1' || value === 'on') {
-    return true;
-  }
-  if (value === false || value === 'false' || value === '0' || value === 'off') {
-    return false;
-  }
-  return fallback;
-}
+
 
 function toLegacyAppearance(appearance) {
   return {
