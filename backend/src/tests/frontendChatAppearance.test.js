@@ -130,6 +130,10 @@ test('chat appearance scopes selector lists with a direct comma scanner', () => 
     buildScopedChatCss('.message:is(.sent, .failed), [data-label="HP, MP"], :root { color: red; }', '[data-chat-scope="conv"]'),
     '\n[data-chat-scope="conv"] .message:is(.sent, .failed), [data-chat-scope="conv"] [data-label="HP, MP"], [data-chat-scope="conv"] { color: red; }'
   );
+  assert.equal(
+    buildScopedChatCss('@media (max-width: 420px) { .attr-panel { padding: 8px; } .attr-grid, :root { gap: 4px; } }', '[data-chat-scope="conv"]'),
+    '@media (max-width: 420px) {\n[data-chat-scope="conv"] .attr-panel { padding: 8px; }\n[data-chat-scope="conv"] .attr-grid, [data-chat-scope="conv"] { gap: 4px; } }'
+  );
   assert.match(
     chatAppearanceUtilsSource,
     /function scopeCssSelectorList\(selectorText, scopeSelector\) \{[\s\S]*for \(let index = 0; index <= selectorText\.length; index \+= 1\) \{[\s\S]*appendScopedCssSelector/

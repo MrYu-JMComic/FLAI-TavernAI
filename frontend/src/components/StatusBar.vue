@@ -913,6 +913,11 @@ function templateLabelText(value) {
 
 .status-bar-container.sb-custom-mode:not(.sb-collapsed) {
   min-width: 0;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  box-shadow: none;
+  backdrop-filter: none;
 }
 
 .flai-statusbar-collapsed-card {
@@ -1108,7 +1113,7 @@ function templateLabelText(value) {
   overflow-x: hidden;
   color: var(--text, #2d2420);
   line-height: 1.55;
-  white-space: pre-wrap;
+  white-space: normal;
   word-break: break-word;
   overflow-wrap: anywhere;
 }

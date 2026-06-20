@@ -2,8 +2,9 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { readVueBlocks } from './frontendSfcTestUtils.js';
 
-const { script: statusBarScript, template: statusBarTemplate } = readVueBlocks(
-  'frontend/src/components/StatusBar.vue'
+const { script: statusBarScript, template: statusBarTemplate, style: statusBarStyle } = readVueBlocks(
+  'frontend/src/components/StatusBar.vue',
+  ['script', 'template', 'style']
 );
 
 test('StatusBar normalizes display variables and immersive characters with direct loops', () => {
@@ -90,6 +91,21 @@ test('StatusBar builds custom template CSS and style text without array pipeline
   assert.doesNotMatch(statusBarScript, /safeStyleBlocks\.join\('\\n\\n'\)/);
   assert.doesNotMatch(statusBarScript, /const segments = css\.split\(';'\)/);
   assert.doesNotMatch(statusBarScript, /rawProp\.replace\(/);
+});
+
+test('StatusBar lets custom templates control chrome and pasted whitespace', () => {
+  assert.match(
+    statusBarStyle,
+    /\.status-bar-container\.sb-custom-mode:not\(\.sb-collapsed\) \{[\s\S]*border: 0;[\s\S]*padding: 0;[\s\S]*background: transparent;[\s\S]*box-shadow: none;[\s\S]*backdrop-filter: none;/
+  );
+  assert.match(
+    statusBarStyle,
+    /\.status-bar-custom \{[\s\S]*white-space: normal;/
+  );
+  assert.doesNotMatch(
+    statusBarStyle,
+    /\.status-bar-custom \{[^}]*white-space:\s*pre-wrap;/
+  );
 });
 
 test('StatusBar scans custom template DOM collections without cloning node lists', () => {

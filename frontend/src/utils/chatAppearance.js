@@ -317,7 +317,7 @@ function findBlockEnd(source, startIndex) {
 }
 
 function prefixCssSelectors(source, scopeSelector) {
-  return source.replace(/(^|})\s*([^@{}][^{}]*?)\s*\{/g, (full, prefix, selectorText) => {
+  return source.replace(/(^|[{}])\s*([^@{}][^{}]*?)\s*\{/g, (full, prefix, selectorText) => {
     const selectors = scopeCssSelectorList(selectorText, scopeSelector);
     return `${prefix}\n${selectors} {`;
   });
