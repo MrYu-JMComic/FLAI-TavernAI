@@ -502,6 +502,28 @@ test('NPC status aliases and memory seal affect prompt memory injection', () => 
   assert.doesNotMatch(promptSource, /sections\.join/);
 });
 
+test('NPC current location is listed, prompt-injected, and protects cleanup', () => {
+  const { database, userId, conversationId } = setupDatabase();
+
+  const updated = updateConversationNpc(database, userId, conversationId, 'Scout', {
+    currentLocation: 'North gate watchtower'
+  });
+  assert.equal(updated.currentLocation, 'North gate watchtower');
+
+  const listed = listConversationNpcs(database, userId, conversationId, '')
+    .find((npc) => npc.name === 'Scout');
+  assert.equal(listed.currentLocation, 'North gate watchtower');
+
+  const prompt = buildNpcBehaviorPrompt(database, conversationId);
+  assert.ok(prompt.includes('Current location: North gate watchtower'));
+  assert.ok(prompt.includes('continuity constraint'));
+  assert.ok(prompt.includes('teleport'));
+
+  const cleanup = hideEmptyConversationNpcs(database, userId, conversationId, '');
+  assert.equal(cleanup.count, 0);
+  assert.ok(listConversationNpcs(database, userId, conversationId, '').some((npc) => npc.name === 'Scout'));
+});
+
 test('hideEmptyConversationNpcs hides NPCs without memories or behaviors only', () => {
   const { database, userId, conversationId } = setupDatabase();
   database.prepare(

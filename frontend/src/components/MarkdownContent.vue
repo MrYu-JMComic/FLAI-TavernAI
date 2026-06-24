@@ -1,5 +1,5 @@
 <script>
-import { computed, defineComponent, h } from 'vue';
+import { defineComponent, h, onBeforeUnmount, shallowRef, watch } from 'vue';
 import MarkdownIt from 'markdown-it';
 import hljs from 'highlight.js/lib/common';
 import DOMPurify from 'dompurify';
@@ -209,6 +209,20 @@ function appendPluginCacheField(cacheKey, value) {
   return `${cacheKey}${text.length}:${text};`;
 }
 
+function scheduleMarkdownFrame(callback) {
+  if (typeof requestAnimationFrame !== 'function') {
+    callback();
+    return null;
+  }
+  return requestAnimationFrame(callback);
+}
+
+function cancelMarkdownFrame(frameId) {
+  if (frameId !== null && typeof cancelAnimationFrame === 'function') {
+    cancelAnimationFrame(frameId);
+  }
+}
+
 export default defineComponent({
   name: 'MarkdownContent',
   inheritAttrs: false,
@@ -220,10 +234,52 @@ export default defineComponent({
     renderPlugins: {
       type: Array,
       default: () => []
+    },
+    deferUpdates: {
+      type: Boolean,
+      default: false
     }
   },
   setup(props, { attrs }) {
-    const renderedHtml = computed(() => getCachedRender(props.text, props.renderPlugins));
+    const renderedHtml = shallowRef('');
+    let markdownRenderFrame = null;
+    let pendingMarkdownText = props.text;
+    let pendingRenderPlugins = props.renderPlugins;
+
+    function cancelPendingMarkdownFrame() {
+      cancelMarkdownFrame(markdownRenderFrame);
+      markdownRenderFrame = null;
+    }
+
+    function renderMarkdownNow(text, renderPlugins) {
+      renderedHtml.value = getCachedRender(text, renderPlugins);
+    }
+
+    function flushPendingMarkdownRender() {
+      markdownRenderFrame = null;
+      renderMarkdownNow(pendingMarkdownText, pendingRenderPlugins);
+    }
+
+    function scheduleRenderedMarkdown() {
+      pendingMarkdownText = props.text;
+      pendingRenderPlugins = props.renderPlugins;
+
+      if (!props.deferUpdates) {
+        cancelPendingMarkdownFrame();
+        renderMarkdownNow(pendingMarkdownText, pendingRenderPlugins);
+        return;
+      }
+
+      if (markdownRenderFrame !== null) {
+        return;
+      }
+      markdownRenderFrame = scheduleMarkdownFrame(flushPendingMarkdownRender);
+    }
+
+    watch(() => props.text, scheduleRenderedMarkdown, { immediate: true });
+    watch(() => buildPluginCacheKey(props.renderPlugins), scheduleRenderedMarkdown);
+    watch(() => props.deferUpdates, scheduleRenderedMarkdown);
+    onBeforeUnmount(cancelPendingMarkdownFrame);
     
     return () => {
       const { class: className, ...restAttrs } = attrs;

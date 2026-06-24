@@ -796,6 +796,9 @@ test('CharacterFormView preserves unchanged AI process panel references', () => 
     characterFormScript,
     /function aiStreamHandlers\(isCurrent = \(\) => !characterFormDisposed\) \{[\s\S]*step: \(step = \{\}\) => \{[\s\S]*updateAiProcessStep\(step\.round \|\| 1, \(target\) => \(\{[\s\S]*tools: target\.tools\?\.length \? target\.tools : cloneAiToolList\(step\.tools\)[\s\S]*tool: \(call = \{\}\) => \{[\s\S]*updateAiProcessStep\(call\.round \|\| 1, \(target\) => \(\{[\s\S]*tools: appendAiToolList\(target\.tools, log\)[\s\S]*appendAiToolCall\(log\);/
   );
+  assert.match(characterFormTemplate, /class="ai-process-text empty">等待模型返回本轮流程\.\.\.<\/p>/);
+  assert.match(characterFormTemplate, /class="ai-tool-detail" open[\s\S]*<strong>参数<\/strong>[\s\S]*<strong>结果<\/strong>/);
+  assert.match(characterFormTemplate, /class="ai-tool-detail-list standalone"[\s\S]*v-for="\(call, index\) in aiToolCalls"[\s\S]*class="ai-tool-detail" open/);
   assert.ok(countMatches(characterFormScript, /setAiProcessIfChanged\(\[\{ round: 1, reasoning: err\.message, content: '', tools: \[\] \}\]\);/g) >= 2);
   assert.doesNotMatch(characterFormScript, /aiToolCalls\.value\s*=(?!=)/);
   assert.doesNotMatch(characterFormScript, /aiProcess\.value\s*=(?!=)/);
@@ -978,4 +981,53 @@ test('CharacterFormView keeps the floating AI draft panel layout stable on focus
     /\.ai-draft-panel \.ai-panel-resize-handle\s*\{[\s\S]*display:\s*block;[\s\S]*position:\s*fixed;[\s\S]*right:\s*auto;[\s\S]*bottom:\s*auto;/
   );
   assert.match(stylesSource, /\.ai-panel-resize-handle\s*\{[\s\S]*cursor:\s*nwse-resize;[\s\S]*touch-action:\s*none;/);
+});
+
+test('CharacterFormView keeps mobile AI assistant output inside the viewport', () => {
+  assert.match(
+    stylesSource,
+    /\.ai-draft-panel\s*\{[^}]*box-sizing:\s*border-box;[^}]*width:\s*100%;[^}]*max-width:\s*100%;[^}]*min-width:\s*0;[^}]*overflow-x:\s*hidden;[^}]*overflow-y:\s*visible;/
+  );
+  assert.match(
+    stylesSource,
+    /\.ai-process-panel\s*\{[^}]*display:\s*grid;[^}]*min-width:\s*0;[^}]*max-width:\s*100%;[^}]*overflow-x:\s*hidden;[^}]*overflow-y:\s*visible;/
+  );
+  assert.doesNotMatch(stylesSource, /\.ai-process-panel\s*\{[^}]*max-height:/);
+  assert.match(
+    stylesSource,
+    /\.ai-action-row\s*\{[^}]*display:\s*flex;[^}]*min-width:\s*0;[^}]*max-width:\s*100%;/
+  );
+  assert.match(
+    stylesSource,
+    /\.ai-action-row \.ai-draft-button,\s*\.ai-action-row \.primary-button,\s*\.ai-action-row \.ghost-button:first-child\s*\{[^}]*flex:\s*1 1 auto;[^}]*min-width:\s*0;/
+  );
+  assert.match(
+    stylesSource,
+    /\.ai-reasoning-box,\s*\.ai-process-step,\s*\.ai-tool-detail\s*\{[^}]*min-width:\s*0;[^}]*max-width:\s*100%;/
+  );
+  assert.match(
+    stylesSource,
+    /\.ai-reasoning-box p,\s*\.ai-process-text\s*\{[^}]*white-space:\s*pre-wrap;[^}]*overflow-wrap:\s*anywhere;[^}]*word-break:\s*break-word;/
+  );
+  assert.match(
+    stylesSource,
+    /\.ai-tool-detail pre\s*\{[^}]*box-sizing:\s*border-box;[^}]*max-width:\s*calc\(100% - 20px\);[^}]*min-width:\s*0;[\s\S]*overflow-wrap:\s*anywhere;/
+  );
+  assert.match(
+    stylesSource,
+    /\.ai-process-step\[open\] > summary,\s*\.ai-tool-detail\[open\] > summary\s*\{[^}]*border-bottom:\s*1px solid/
+  );
+  assert.match(stylesSource, /\.ai-process-text\.empty\s*\{[^}]*font-style:\s*italic;/);
+  assert.match(stylesSource, /\.ai-tool-detail-list\.standalone\s*\{[^}]*padding:\s*0;/);
+  assert.match(
+    stylesSource,
+    /@media \(max-width: 900px\) \{[\s\S]*\.ai-draft-panel\s*\{[\s\S]*width:\s*100%;[\s\S]*max-width:\s*100%;[\s\S]*min-width:\s*0;[\s\S]*overflow-x:\s*hidden;[\s\S]*overflow-y:\s*visible;/
+  );
+  const aiPanelStyleBlocks = [...stylesSource.matchAll(/\.ai-draft-panel\s*\{[^}]*\}/g)];
+  assert.ok(aiPanelStyleBlocks.length >= 3);
+  for (const [block] of aiPanelStyleBlocks) {
+    assert.doesNotMatch(block, /width:\s*auto;/);
+    assert.doesNotMatch(block, /max-width:\s*none;/);
+    assert.doesNotMatch(block, /overflow:\s*hidden;/);
+  }
 });

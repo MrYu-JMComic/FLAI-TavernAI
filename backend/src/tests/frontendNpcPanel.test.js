@@ -141,10 +141,32 @@ test('NpcPanel exposes NPC status aliases and memory seal metadata controls', ()
   assert.match(npcPanelStyle, /\.npc-seal-input:checked \+ \.npc-seal-control/);
 });
 
+test('NpcPanel exposes NPC current location controls and compact labels', () => {
+  assert.match(npcPanelScript, /MapPin,/);
+  assert.match(npcPanelScript, /currentLocation: ''/);
+  assert.match(npcPanelScript, /npcMetaForm\.currentLocation = '';/);
+  assert.match(npcPanelScript, /npcMetaForm\.currentLocation = npc\.currentLocation \|\| '';/);
+  assert.match(npcPanelScript, /currentLocation: npcMetaForm\.currentLocation\.trim\(\)/);
+  assert.match(npcPanelScript, /String\(current\?\.currentLocation \|\| ''\) === String\(next\?\.currentLocation \|\| ''\)/);
+  assert.match(npcPanelScript, /memoryCount === 0 && behaviorCount === 0 && !npc\?\.currentLocation/);
+
+  assert.match(npcPanelTemplate, /detailTab === 'location'/);
+  assert.match(npcPanelTemplate, /@click="detailTab = 'location'"/);
+  assert.match(npcPanelTemplate, /<MapPin :size="15" \/>/);
+  assert.match(npcPanelTemplate, /v-model="npcMetaForm\.currentLocation"/);
+  assert.match(npcPanelTemplate, /maxlength="160"/);
+  assert.match(npcPanelTemplate, /class="npc-location-pill"/);
+  assert.match(npcPanelTemplate, /class="npc-location-metric"/);
+
+  assert.match(npcPanelStyle, /\.npc-location-pill/);
+  assert.match(npcPanelStyle, /\.npc-detail-metrics > span/);
+  assert.match(npcPanelStyle, /\.npc-tabs\s*{[\s\S]*flex-wrap: wrap;/);
+});
+
 test('NpcPanel aggregates panel stats and empty NPC names in one pass', () => {
   assert.match(
     npcPanelScript,
-    /const npcPanelSummary = computed\(\(\) => \{[\s\S]*const sourceNpcs = Array\.isArray\(npcs\.value\) \? npcs\.value : \[\];[\s\S]*const stats = \{[\s\S]*npcCount: sourceNpcs\.length,[\s\S]*memoryCount: 0,[\s\S]*behaviorCount: 0[\s\S]*const emptyNpcNames = \[\];[\s\S]*for \(const npc of sourceNpcs\) \{[\s\S]*const memoryCount = Number\(npc\?\.memoryCount \|\| 0\);[\s\S]*const behaviorCount = Number\(npc\?\.behaviorCount \|\| 0\);[\s\S]*stats\.memoryCount \+= memoryCount;[\s\S]*stats\.behaviorCount \+= behaviorCount;[\s\S]*emptyNpcNames\.push\(npc\?\.name\);[\s\S]*return \{ stats, emptyNpcNames \};[\s\S]*\}\);/
+    /const npcPanelSummary = computed\(\(\) => \{[\s\S]*const sourceNpcs = Array\.isArray\(npcs\.value\) \? npcs\.value : \[\];[\s\S]*const stats = \{[\s\S]*npcCount: sourceNpcs\.length,[\s\S]*memoryCount: 0,[\s\S]*behaviorCount: 0[\s\S]*const emptyNpcNames = \[\];[\s\S]*for \(const npc of sourceNpcs\) \{[\s\S]*const memoryCount = Number\(npc\?\.memoryCount \|\| 0\);[\s\S]*const behaviorCount = Number\(npc\?\.behaviorCount \|\| 0\);[\s\S]*stats\.memoryCount \+= memoryCount;[\s\S]*stats\.behaviorCount \+= behaviorCount;[\s\S]*memoryCount === 0 && behaviorCount === 0 && !npc\?\.currentLocation[\s\S]*emptyNpcNames\.push\(npc\?\.name\);[\s\S]*return \{ stats, emptyNpcNames \};[\s\S]*\}\);/
   );
   assert.match(npcPanelScript, /const npcPanelStats = computed\(\(\) => npcPanelSummary\.value\.stats\);/);
   assert.match(npcPanelScript, /const emptyNpcNames = computed\(\(\) => npcPanelSummary\.value\.emptyNpcNames\);/);

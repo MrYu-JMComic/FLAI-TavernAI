@@ -20,6 +20,7 @@ function createMessageActions({
   userRef = refValue({ username: 'tester' }),
   activeCharacter = () => null,
   loadSidebarData = async () => {},
+  onCopyFallback = () => false,
   showActionNotice = () => {},
   showError = () => {}
 } = {}) {
@@ -30,6 +31,7 @@ function createMessageActions({
     user: userRef,
     activeCharacter,
     loadSidebarData,
+    onCopyFallback,
     showActionNotice,
     showError
   });
@@ -264,6 +266,50 @@ test('message copy fallback removes the temporary textarea when copy throws', as
       delete globalThis.document;
     } else {
       globalThis.document = originalDocument;
+    }
+  }
+});
+
+test('message copy inserts into composer fallback when clipboard permission is denied', async () => {
+  const originalWindow = globalThis.window;
+  const notices = [];
+  const fallbackTexts = [];
+  let clipboardWrites = 0;
+  const actions = createMessageActions({
+    onCopyFallback(text) {
+      fallbackTexts.push(text);
+      return true;
+    },
+    showActionNotice(messageText, type) {
+      notices.push([messageText, type]);
+    }
+  });
+
+  globalThis.window = {
+    navigator: {
+      permissions: {
+        query: async () => ({ state: 'denied' })
+      },
+      clipboard: {
+        writeText: async () => {
+          clipboardWrites += 1;
+        }
+      }
+    }
+  };
+
+  try {
+    await actions.copyMessage({ id: 'msg-1', content: '  Copy fallback text  ' });
+
+    assert.deepEqual(fallbackTexts, ['Copy fallback text']);
+    assert.equal(clipboardWrites, 0);
+    assert.equal(actions.copyBusy.value, false);
+    assert.deepEqual(notices, [['剪贴板不可用，已放入输入框', 'warning']]);
+  } finally {
+    if (originalWindow === undefined) {
+      delete globalThis.window;
+    } else {
+      globalThis.window = originalWindow;
     }
   }
 });

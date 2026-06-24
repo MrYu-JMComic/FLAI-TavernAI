@@ -54,6 +54,13 @@ const notify = useNotify();
 const isExtensionsPage = computed(() => props.route?.name === 'extensions');
 const isPersonalPage = computed(() => !isExtensionsPage.value);
 
+const personalSections = [
+  { id: 'profile', label: '个人资料' },
+  { id: 'provider', label: '模型网关' }
+];
+const activePersonalSection = ref('profile');
+const personalNavRef = ref(null);
+
 // Extension section navigation
 const extensionSections = [
   { id: 'tags', label: '标签管理', icon: 'Tag' },
@@ -1982,15 +1989,8 @@ function handleRegexImportFile(event) {
   }
 }
 
-function setActiveExtensionSection(sectionId) {
-  if (!hasExtensionSection(sectionId)) {
-    return;
-  }
-  activeExtensionSection.value = sectionId;
-}
-
-function hasExtensionSection(sectionId) {
-  for (const section of extensionSections) {
+function hasSettingsSection(sections, sectionId) {
+  for (const section of sections) {
     if (section.id === sectionId) {
       return true;
     }
@@ -1998,8 +1998,16 @@ function hasExtensionSection(sectionId) {
   return false;
 }
 
-function scrollActiveExtensionTab(sectionId) {
-  const nav = extensionNavRef.value;
+function setActiveSettingsSection(activeSectionRef, sections, sectionId) {
+  if (!hasSettingsSection(sections, sectionId)) {
+    return false;
+  }
+  activeSectionRef.value = sectionId;
+  return true;
+}
+
+function scrollActiveSettingsTab(navRef, sectionId) {
+  const nav = navRef.value;
   const tab = nav?.querySelector(`[data-section-id="${sectionId}"]`);
   if (!tab) {
     return;
@@ -2007,13 +2015,23 @@ function scrollActiveExtensionTab(sectionId) {
   tab.scrollIntoView({ behavior: 'auto', block: 'nearest', inline: 'center' });
 }
 
-function scrollToSection(sectionId) {
-  setActiveExtensionSection(sectionId);
-  scrollActiveExtensionTab(sectionId);
-  const el = document.getElementById(`extension-section-${sectionId}`);
+function scrollToSettingsSection(prefix, activeSectionRef, sections, navRef, sectionId) {
+  if (!setActiveSettingsSection(activeSectionRef, sections, sectionId)) {
+    return;
+  }
+  scrollActiveSettingsTab(navRef, sectionId);
+  const el = document.getElementById(`${prefix}-${sectionId}`);
   if (el) {
     el.scrollIntoView({ behavior: 'smooth', block: 'start' });
   }
+}
+
+function scrollToPersonalSection(sectionId) {
+  scrollToSettingsSection('personal-section', activePersonalSection, personalSections, personalNavRef, sectionId);
+}
+
+function scrollToExtensionSection(sectionId) {
+  scrollToSettingsSection('extension-section', activeExtensionSection, extensionSections, extensionNavRef, sectionId);
 }
 </script>
 
@@ -2027,7 +2045,21 @@ function scrollToSection(sectionId) {
     </div>
 
     <!-- Extension Section Navigation -->
-    <nav v-if="isExtensionsPage" ref="extensionNavRef" class="form-section-nav extension-section-nav">
+    <nav v-if="isPersonalPage && !loading && !loadError" ref="personalNavRef" class="form-section-nav settings-section-nav personal-section-nav" aria-label="个人设置分区">
+      <button
+        v-for="section in personalSections"
+        :key="section.id"
+        class="form-section-tab"
+        :class="{ active: activePersonalSection === section.id }"
+        :data-section-id="section.id"
+        type="button"
+        @click="scrollToPersonalSection(section.id)"
+      >
+        {{ section.label }}
+      </button>
+    </nav>
+
+    <nav v-if="isExtensionsPage" ref="extensionNavRef" class="form-section-nav settings-section-nav extension-section-nav" aria-label="扩展管理分区">
       <button
         v-for="section in extensionSections"
         :key="section.id"
@@ -2035,7 +2067,7 @@ function scrollToSection(sectionId) {
         :class="{ active: activeExtensionSection === section.id }"
         :data-section-id="section.id"
         type="button"
-        @click="scrollToSection(section.id)"
+        @click="scrollToExtensionSection(section.id)"
       >
         {{ section.label }}
       </button>
@@ -2055,7 +2087,7 @@ function scrollToSection(sectionId) {
       </button>
     </section>
 
-    <section v-if="isPersonalPage && !loading && !loadError" class="form-panel profile-panel">
+    <section v-if="isPersonalPage && !loading && !loadError" id="personal-section-profile" class="form-panel profile-panel">
       <div class="inline-heading">
         <div>
           <h2>个人资料</h2>
@@ -2151,7 +2183,7 @@ function scrollToSection(sectionId) {
       </div>
     </section>
 
-    <form v-if="isPersonalPage && !loading && !loadError" class="form-panel" :aria-busy="providerControlsBusy" @submit.prevent="submit">
+    <form v-if="isPersonalPage && !loading && !loadError" id="personal-section-provider" class="form-panel provider-settings-panel" :aria-busy="providerControlsBusy" @submit.prevent="submit">
       <div class="inline-heading">
         <div>
           <h2>AI 供应商设置</h2>
@@ -2222,6 +2254,26 @@ function scrollToSection(sectionId) {
         <input v-model="form.clearApiKey" type="checkbox" :disabled="providerControlsBusy" />
         <span>清除已保存密钥 {{ form.apiKeyHint ? `（当前：${form.apiKeyHint}）` : '' }}</span>
       </label>
+      <details class="provider-advanced-settings">
+        <summary>
+          <span>高级模型参数</span>
+        </summary>
+        <div class="provider-advanced-body">
+          <label class="checkbox-line">
+            <input v-model="form.supportsReasoning" type="checkbox" :disabled="providerControlsBusy" />
+            <span>支持推理输出</span>
+          </label>
+          <label class="field">
+            <span>Extra Body JSON</span>
+            <textarea
+              v-model="form.extraBody"
+              rows="5"
+              spellcheck="false"
+              :disabled="providerControlsBusy"
+            />
+          </label>
+        </div>
+      </details>
       <div class="form-actions">
         <button class="primary-button" type="submit" :disabled="providerControlsBusy">
           <Save :size="18" />

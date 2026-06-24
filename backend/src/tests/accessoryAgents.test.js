@@ -291,6 +291,72 @@ test('status bar agent skips unchanged variable writes and update badges', async
   assert.doesNotMatch(mergeHelper[0], /current\.map|updates\s*\.\s*filter|updates\s*\.\s*map|\[\.\.\.current/);
 });
 
+test('status bar agent accepts explicit skip tool without fallback updates', async () => {
+  const env = setupConversation({ statusBarAgent: skill('auto') });
+  const statusBar = upsertStatusBar(env.db, env.userId, env.conversation.id, {
+    name: 'State',
+    variables: [{ name: 'HP', value: 100, max: 100 }],
+    template: ''
+  });
+
+  const originalFetch = globalThis.fetch;
+  let requestBody = null;
+  let calls = 0;
+  globalThis.fetch = async (_url, request) => {
+    calls += 1;
+    requestBody = JSON.parse(request.body);
+    return jsonResponse({
+      choices: [
+        {
+          message: {
+            role: 'assistant',
+            content: null,
+            tool_calls: [
+              {
+                id: 'status-skip-1',
+                type: 'function',
+                function: {
+                  name: 'skip_status_bar_update',
+                  arguments: JSON.stringify({ reason: 'No durable state changed.' })
+                }
+              }
+            ]
+          }
+        }
+      ]
+    });
+  };
+
+  try {
+    const results = await runAccessoryAgents({
+      db: env.db,
+      userId: env.userId,
+      conversation: env.conversation,
+      character: env.character,
+      assistantMessage: { content: 'HP: 75/100 appears in narration, but it is only hypothetical.' },
+      settings: providerSettings(),
+      statusBar
+    });
+
+    let hasSkipTool = false;
+    for (const tool of requestBody.tools || []) {
+      if (tool?.function?.name === 'skip_status_bar_update') {
+        hasSkipTool = true;
+        break;
+      }
+    }
+    assert.equal(hasSkipTool, true);
+    assert.equal(calls, 1);
+    assert.equal(results[0].ok, true);
+    assert.equal(results[0].result.skipped, true);
+    assert.deepEqual(results[0].result.updates, []);
+    assert.equal(getStatusBar(env.db, env.userId, env.conversation.id).variables[0].value, 100);
+    assert.match(accessoryAgentsSource, /Call skip_status_bar_update when no status value should change/);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test('status bar templates infer composite placeholder child variables', () => {
   const template = '<div class="row"><span class="sb-label">\u5730\u70b9</span><span class="sb-val">{{\u5927\u5730\u70b9}} &gt; {{\u5177\u4f53\u4f4d\u7f6e}}</span></div>';
   const env = setupConversation({ statusBarAgent: skill('auto') });
@@ -571,7 +637,8 @@ test('npc agent upserts structured NPCs and respects hidden names', async () => 
                     arguments: JSON.stringify({
                       npcName: 'Gate Captain',
                       evidence: 'Gate Captain warned the party at the gate.',
-                      confidence: 92
+                      confidence: 92,
+                      currentLocation: 'city gate'
                     })
                   }
                 },
@@ -610,6 +677,7 @@ test('npc agent upserts structured NPCs and respects hidden names', async () => 
     assert.equal(results[0].ok, true);
     const npcs = listConversationNpcs(env.db, env.userId, env.conversation.id, env.character.name);
     assert.ok(npcs.some((npc) => npc.name === 'Gate Captain' && npc.source === 'agent' && npc.confidence === 92));
+    assert.equal(npcs.find((npc) => npc.name === 'Gate Captain')?.currentLocation, 'city gate');
     assert.ok(!npcs.some((npc) => npc.name === 'FakeTitle'));
   } finally {
     globalThis.fetch = originalFetch;

@@ -8,6 +8,7 @@ export function useChatMessageActions({
   user,
   activeCharacter,
   loadSidebarData,
+  onCopyFallback,
   showActionNotice,
   showError
 }) {
@@ -358,7 +359,11 @@ export function useChatMessageActions({
       showActionNotice('已复制到剪贴板');
     } catch (err) {
       if (isCurrentCopyAction(actionToken)) {
-        showActionNotice(err.message || '复制失败，请检查浏览器权限', 'warning');
+        if (applyCopyFallback(text)) {
+          showActionNotice('剪贴板不可用，已放入输入框', 'warning');
+        } else {
+          showActionNotice(err.message || '复制失败，请检查浏览器权限', 'warning');
+        }
       }
     } finally {
       if (isLatestCopyAction(actionToken)) {
@@ -369,6 +374,13 @@ export function useChatMessageActions({
 
   function messageTextForCopy(message) {
     return String(message?.content || message?.reasoning || '').trim();
+  }
+
+  function applyCopyFallback(text) {
+    if (typeof onCopyFallback !== 'function') {
+      return false;
+    }
+    return onCopyFallback(text) === true;
   }
 
   function isCurrentCopyAction(actionToken) {

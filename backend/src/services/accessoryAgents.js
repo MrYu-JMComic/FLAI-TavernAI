@@ -101,20 +101,29 @@ async function runStatusBarAgent({ db, userId, conversation, assistantMessage, s
 
   const currentStatusBar = statusBar || { name: '状态栏', variables: [], template: '' };
   let updates = [];
+  let skippedUpdate = false;
   if (hasUsableProvider(settings)) {
     const toolResult = await runToolCompletion(
       withModelOverride(settings, skill),
       buildStatusBarMessages(currentStatusBar, assistantMessage.content, statusBarPrompt),
-      [statusBarTool()],
+      [statusBarTool(), statusBarSkipTool()],
       async (toolName, args) => {
-        if (toolName !== 'update_status_bar') {
-          return { ok: false, error: `Unsupported tool: ${toolName}` };
+        if (toolName === 'skip_status_bar_update') {
+          skippedUpdate = true;
+          return { ok: true, skipped: true, stop: true };
         }
-        updates = normalizeStatusUpdates(args);
-        return { ok: true, updates };
+        if (toolName === 'update_status_bar') {
+          updates = normalizeStatusUpdates(args);
+          return { ok: true, updates };
+        }
+        return { ok: false, error: `Unsupported tool: ${toolName}` };
       },
       { maxRounds: 2, thinkingEnabled: false }
     ).catch(() => null);
+
+    if (skippedUpdate) {
+      return { statusBar, updates: [], skipped: true };
+    }
 
     if (!updates.length && toolResult?.content) {
       updates = extractVariablesFromText(toolResult.content, currentStatusBar.variables);
@@ -264,6 +273,7 @@ function buildStatusBarMessages(statusBar, content, statusBarPrompt = '') {
       content: [
         'You are a state bar updater for a roleplay chat.',
         'Call update_status_bar only when the assistant reply clearly changes one or more variables.',
+        'Call skip_status_bar_update when no status value should change, and do not write explanatory prose instead.',
         'The variable value can be a number for meters or a short string for profile/status text.',
         'Pay close attention to short text fields for outfit, clothing, equipment, carried items, location, mood, and memory.',
         'Template rows may combine multiple child variables, for example "Location = {{Region}} > {{Place}}".',
@@ -376,6 +386,7 @@ function buildNpcMessages(character, content) {
       content: [
         'You are an NPC management assistant for a roleplay chat.',
         'Call upsert_npc for named side characters that clearly appear in the reply.',
+        'Update currentLocation when the reply clearly places or moves an NPC. Use concise physical locations, and do not infer a location from vague presence.',
         'Update status when the reply clearly says an NPC left, permanently left, died, is on a mission, follows, or has another stable custom state.',
         'Aliases are exact alternate ways this same individual is called. Stable nicknames or titles count only when they uniquely identify this NPC. Generic roles, vague references, pronouns, and group labels do not count.',
         'Call record_npc_memory only when there is a concise useful memory about that side character.',
@@ -412,6 +423,7 @@ function npcUpsertTool() {
           confidence: { type: 'number', description: '0-100 confidence that this is a real side character name.' },
           status: { type: 'string', enum: ['active', 'left', 'permanently_left', 'dead', 'on_mission', 'following', 'custom'] },
           customStatus: { type: 'string' },
+          currentLocation: { type: 'string', description: 'Concise current physical location if the reply clearly places or moves this NPC.' },
           aliases: {
             type: 'array',
             items: { type: 'string' },
@@ -488,6 +500,27 @@ function statusBarTool() {
           }
         },
         required: ['variables']
+      }
+    }
+  };
+}
+
+function statusBarSkipTool() {
+  return {
+    type: 'function',
+    function: {
+      name: 'skip_status_bar_update',
+      description: 'Confirm that the reply does not require any status bar variable update.',
+      parameters: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          reason: {
+            type: 'string',
+            maxLength: 160,
+            description: 'Optional short reason for skipping the status update.'
+          }
+        }
       }
     }
   };
@@ -692,6 +725,7 @@ function upsertNpcFromAgent(db, userId, conversationId, args = {}) {
     confidence: Number.isFinite(Number(args.confidence)) ? Number(args.confidence) : 75,
     status: args.status,
     customStatus: args.customStatus,
+    currentLocation: args.currentLocation,
     aliases: args.aliases,
     memorySealed: args.memorySealed
   });

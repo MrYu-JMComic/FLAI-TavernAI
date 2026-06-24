@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { isLocalOrPrivateBaseUrl } from '../../../shared/privateNetwork.js';
-import { countMatches, readVueBlocks } from './frontendSfcTestUtils.js';
+import { countMatches, readFrontendStyles, readVueBlocks } from './frontendSfcTestUtils.js';
 
 const { script: settingsViewScript, template: settingsViewTemplate } = readVueBlocks('frontend/src/views/SettingsView.vue');
+const stylesSource = readFrontendStyles();
 
 test('SettingsView personal-page retry and balance handlers ignore disabled states', () => {
   assert.match(
@@ -83,7 +84,7 @@ test('SettingsView personal provider and profile saves expose visible busy guard
   );
   assert.match(
     settingsViewTemplate,
-    /<form v-if="isPersonalPage && !loading && !loadError" class="form-panel" :aria-busy="providerControlsBusy" @submit\.prevent="submit">/
+    /<form v-if="isPersonalPage && !loading && !loadError" id="personal-section-provider" class="form-panel provider-settings-panel" :aria-busy="providerControlsBusy" @submit\.prevent="submit">/
   );
   assert.match(
     settingsViewTemplate,
@@ -111,7 +112,47 @@ test('SettingsView personal provider and profile saves expose visible busy guard
   );
   assert.match(
     settingsViewTemplate,
+    /<details class="provider-advanced-settings">[\s\S]*<summary>[\s\S]*<span>高级模型参数<\/span>[\s\S]*<input v-model="form\.supportsReasoning" type="checkbox" :disabled="providerControlsBusy" \/>[\s\S]*<textarea[\s\S]*v-model="form\.extraBody"[\s\S]*:disabled="providerControlsBusy"[\s\S]*\/>[\s\S]*<\/details>/
+  );
+  assert.doesNotMatch(settingsViewTemplate, /<details class="provider-advanced-settings" open>/);
+  assert.match(
+    settingsViewTemplate,
     /<button class="primary-button" type="submit" :disabled="providerControlsBusy">/
+  );
+});
+
+test('SettingsView structures personal settings and extensions through shared section navigation', () => {
+  assert.match(
+    settingsViewScript,
+    /const personalSections = \[\s*\{ id: 'profile', label: '个人资料' \},\s*\{ id: 'provider', label: '模型网关' \}\s*\];/
+  );
+  assert.match(settingsViewScript, /const activePersonalSection = ref\('profile'\);/);
+  assert.match(settingsViewScript, /const personalNavRef = ref\(null\);/);
+  assert.match(
+    settingsViewTemplate,
+    /<nav v-if="isPersonalPage && !loading && !loadError" ref="personalNavRef" class="form-section-nav settings-section-nav personal-section-nav" aria-label="个人设置分区">[\s\S]*v-for="section in personalSections"[\s\S]*:class="\{ active: activePersonalSection === section\.id \}"[\s\S]*@click="scrollToPersonalSection\(section\.id\)"/
+  );
+  assert.match(settingsViewTemplate, /id="personal-section-profile" class="form-panel profile-panel"/);
+  assert.match(settingsViewTemplate, /id="personal-section-provider" class="form-panel provider-settings-panel"/);
+  assert.match(
+    settingsViewTemplate,
+    /<nav v-if="isExtensionsPage" ref="extensionNavRef" class="form-section-nav settings-section-nav extension-section-nav" aria-label="扩展管理分区">/
+  );
+  assert.match(
+    stylesSource,
+    /\.settings-section-nav\s*{[\s\S]*position:\s*sticky;[\s\S]*backdrop-filter:\s*blur\(14px\);[\s\S]*}/
+  );
+  assert.match(
+    stylesSource,
+    /section\[id\^="personal-section-"\],[\s\S]*section\[id\^="extension-section-"\]\s*{[\s\S]*scroll-margin-top:\s*146px;[\s\S]*}/
+  );
+  assert.match(
+    stylesSource,
+    /\.provider-advanced-settings\s*{[\s\S]*border:\s*1px solid[\s\S]*border-radius:\s*8px;[\s\S]*}/
+  );
+  assert.match(
+    stylesSource,
+    /\.provider-advanced-body textarea\s*{[\s\S]*min-height:\s*138px;[\s\S]*font-family:\s*ui-monospace[\s\S]*}/
   );
 });
 
@@ -200,13 +241,28 @@ test('SettingsView direct-scans Mod select-all and extension sections', () => {
 
   assert.match(
     settingsViewScript,
-    /function setActiveExtensionSection\(sectionId\) \{\s*if \(!hasExtensionSection\(sectionId\)\) \{\s*return;\s*\}\s*activeExtensionSection\.value = sectionId;\s*\}/
+    /function hasSettingsSection\(sections, sectionId\) \{\s*for \(const section of sections\) \{\s*if \(section\.id === sectionId\) \{\s*return true;\s*\}\s*\}\s*return false;\s*\}/
   );
   assert.match(
     settingsViewScript,
-    /function hasExtensionSection\(sectionId\) \{\s*for \(const section of extensionSections\) \{\s*if \(section\.id === sectionId\) \{\s*return true;\s*\}\s*\}\s*return false;\s*\}/
+    /function setActiveSettingsSection\(activeSectionRef, sections, sectionId\) \{\s*if \(!hasSettingsSection\(sections, sectionId\)\) \{\s*return false;\s*\}\s*activeSectionRef\.value = sectionId;\s*return true;\s*\}/
+  );
+  assert.match(
+    settingsViewScript,
+    /function scrollToSettingsSection\(prefix, activeSectionRef, sections, navRef, sectionId\) \{\s*if \(!setActiveSettingsSection\(activeSectionRef, sections, sectionId\)\) \{\s*return;\s*\}[\s\S]*document\.getElementById\(`\$\{prefix\}-\$\{sectionId\}`\);/
+  );
+  assert.match(
+    settingsViewScript,
+    /function scrollToPersonalSection\(sectionId\) \{\s*scrollToSettingsSection\('personal-section', activePersonalSection, personalSections, personalNavRef, sectionId\);\s*\}/
+  );
+  assert.match(
+    settingsViewScript,
+    /function scrollToExtensionSection\(sectionId\) \{\s*scrollToSettingsSection\('extension-section', activeExtensionSection, extensionSections, extensionNavRef, sectionId\);\s*\}/
   );
   assert.doesNotMatch(settingsViewScript, /extensionSections\.some/);
+  assert.doesNotMatch(settingsViewScript, /function setActiveExtensionSection/);
+  assert.doesNotMatch(settingsViewScript, /function hasExtensionSection/);
+  assert.doesNotMatch(settingsViewScript, /function scrollActiveExtensionTab/);
 });
 
 test('SettingsView preserves unchanged extension list references during refreshes', () => {
@@ -386,7 +442,7 @@ test('SettingsView import file handlers tolerate missing event targets', () => {
   const presetEnd = settingsViewScript.indexOf('\n// 鈹€鈹€ Mod Management', presetStart);
   const presetHandler = settingsViewScript.slice(presetStart, presetEnd);
   const regexStart = settingsViewScript.indexOf('function handleRegexImportFile(event) {');
-  const regexEnd = settingsViewScript.indexOf('\nfunction setActiveExtensionSection', regexStart);
+  const regexEnd = settingsViewScript.indexOf('\nfunction hasSettingsSection', regexStart);
   const regexHandler = settingsViewScript.slice(regexStart, regexEnd);
 
   assert.match(
@@ -409,7 +465,7 @@ test('SettingsView import file handlers settle busy state when reads throw synch
   const presetEnd = settingsViewScript.indexOf('const modList = ref([]);', presetStart);
   const presetHandler = settingsViewScript.slice(presetStart, presetEnd);
   const regexStart = settingsViewScript.indexOf('function handleRegexImportFile(event) {');
-  const regexEnd = settingsViewScript.indexOf('function setActiveExtensionSection', regexStart);
+  const regexEnd = settingsViewScript.indexOf('function hasSettingsSection', regexStart);
   const regexHandler = settingsViewScript.slice(regexStart, regexEnd);
 
   assert.match(

@@ -12,6 +12,36 @@ test('MarkdownContent render cache refreshes exact hits before returning cached 
   assert.doesNotMatch(markdownContentScript, /const cached = renderCache\.get\(cacheKey\);\s*if \(cached\) return cached;/);
 });
 
+test('MarkdownContent coalesces streaming renders through animation frames', () => {
+  assert.match(
+    markdownContentScript,
+    /import \{ defineComponent, h, onBeforeUnmount, shallowRef, watch \} from 'vue';/
+  );
+  assert.match(markdownContentScript, /deferUpdates: \{\s*type: Boolean,\s*default: false\s*\}/);
+  assert.match(markdownContentScript, /const renderedHtml = shallowRef\(''\);/);
+  assert.match(
+    markdownContentScript,
+    /function scheduleMarkdownFrame\(callback\) \{\s*if \(typeof requestAnimationFrame !== 'function'\) \{\s*callback\(\);\s*return null;\s*\}\s*return requestAnimationFrame\(callback\);\s*\}/
+  );
+  assert.match(
+    markdownContentScript,
+    /function cancelMarkdownFrame\(frameId\) \{\s*if \(frameId !== null && typeof cancelAnimationFrame === 'function'\) \{\s*cancelAnimationFrame\(frameId\);\s*\}\s*\}/
+  );
+  assert.match(
+    markdownContentScript,
+    /function scheduleRenderedMarkdown\(\) \{[\s\S]*pendingMarkdownText = props\.text;[\s\S]*pendingRenderPlugins = props\.renderPlugins;[\s\S]*if \(!props\.deferUpdates\) \{[\s\S]*cancelPendingMarkdownFrame\(\);[\s\S]*renderMarkdownNow\(pendingMarkdownText, pendingRenderPlugins\);[\s\S]*return;[\s\S]*if \(markdownRenderFrame !== null\) \{[\s\S]*return;[\s\S]*markdownRenderFrame = scheduleMarkdownFrame\(flushPendingMarkdownRender\);[\s\S]*}/
+  );
+  assert.match(
+    markdownContentScript,
+    /function flushPendingMarkdownRender\(\) \{\s*markdownRenderFrame = null;\s*renderMarkdownNow\(pendingMarkdownText, pendingRenderPlugins\);\s*\}/
+  );
+  assert.match(markdownContentScript, /watch\(\(\) => props\.text, scheduleRenderedMarkdown, \{ immediate: true \}\);/);
+  assert.match(markdownContentScript, /watch\(\(\) => buildPluginCacheKey\(props\.renderPlugins\), scheduleRenderedMarkdown\);/);
+  assert.match(markdownContentScript, /watch\(\(\) => props\.deferUpdates, scheduleRenderedMarkdown\);/);
+  assert.match(markdownContentScript, /onBeforeUnmount\(cancelPendingMarkdownFrame\);/);
+  assert.doesNotMatch(markdownContentScript, /computed\(\(\) => getCachedRender/);
+});
+
 test('MarkdownContent builds plugin cache keys without plugin shape arrays', () => {
   assert.match(
     markdownContentScript,

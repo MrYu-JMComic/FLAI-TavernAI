@@ -152,7 +152,7 @@ const {
 } = useChatMessageActions({
   messages, messageScroller, route: props.route,
   user: computed(() => props.user), activeCharacter,
-  loadSidebarData, showActionNotice, showError
+  loadSidebarData, onCopyFallback: appendCopyFallbackToComposer, showActionNotice, showError
 });
 
 const scroll = useChatScroll({
@@ -178,12 +178,12 @@ function prepareExpandedStatusBarForSubmit() {
 }
 
 const {
-  input, chatAttachments, attachmentBusy, useStream, thinkingEnabled, imageGenerationEnabled,
+  input, chatAttachments, attachmentBusy, useStream, thinkingEnabled,
   sending, usage, lastFailure, latestWorldBookMatches,
   canSend, canToggleThinking,
   submit, stop, restoreLastFailureInput, retryLastFailure, dismissLastFailure,
   addChatAttachmentFiles, removeChatAttachment, clearChatAttachments,
-  setSelectedPresetId, toggleUseStream, toggleThinking, toggleImageGeneration,
+  setSelectedPresetId, toggleUseStream, toggleThinking,
   cleanup: cleanupSubmit
 } = useChatSubmit({
   route: props.route, messages, provider: computed(() => props.provider),
@@ -480,6 +480,18 @@ function handleStatusBarQuickReply(text) {
   const sep = current && !current.endsWith('\n') ? '\n' : '';
   input.value = current + sep + text;
   scheduleComposerLayoutUpdate({ focus: true });
+}
+
+function appendCopyFallbackToComposer(text) {
+  const normalizedText = String(text || '').trim();
+  if (!normalizedText) {
+    return false;
+  }
+  const current = input.value || '';
+  const sep = current && !current.endsWith('\n') ? '\n' : '';
+  input.value = current + sep + normalizedText;
+  scheduleComposerLayoutUpdate({ focus: true });
+  return true;
 }
 
 function handleNpcPanelOpenUpdate(value) {
@@ -1351,7 +1363,6 @@ watch(showNpcFeature, (active) => {
         :can-send="canSend"
         :use-stream="useStream"
         :thinking-enabled="thinkingEnabled"
-        :image-generation-enabled="imageGenerationEnabled"
         :can-toggle-thinking="canToggleThinking"
         :chat-viewport-is-phone="chatViewportIsPhone"
         :show-scroll-bottom-button="showScrollBottomButton"
@@ -1369,7 +1380,6 @@ watch(showNpcFeature, (active) => {
         @stop="stop"
         @toggle-stream="toggleUseStream"
         @toggle-thinking="toggleThinking"
-        @toggle-image-generation="toggleImageGeneration"
         @open-model-switcher="openModelSwitcher"
         @quick-model-change="saveQuickModel"
         @add-attachments="addChatAttachmentFiles"

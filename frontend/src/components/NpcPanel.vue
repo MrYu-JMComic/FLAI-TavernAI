@@ -3,6 +3,7 @@ import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue';
 import {
   Brain,
   Check,
+  MapPin,
   Pencil,
   Plus,
   RefreshCw,
@@ -85,6 +86,7 @@ const behaviorEditForm = reactive({
 const npcMetaForm = reactive({
   status: 'active',
   customStatus: '',
+  currentLocation: '',
   aliasesText: '',
   memorySealed: false
 });
@@ -110,7 +112,7 @@ const npcPanelSummary = computed(() => {
     const behaviorCount = Number(npc?.behaviorCount || 0);
     stats.memoryCount += memoryCount;
     stats.behaviorCount += behaviorCount;
-    if (memoryCount === 0 && behaviorCount === 0) {
+    if (memoryCount === 0 && behaviorCount === 0 && !npc?.currentLocation) {
       emptyNpcNames.push(npc?.name);
     }
   }
@@ -277,6 +279,7 @@ function resetBehaviorEditForm() {
 function resetNpcMetaForm() {
   npcMetaForm.status = 'active';
   npcMetaForm.customStatus = '';
+  npcMetaForm.currentLocation = '';
   npcMetaForm.aliasesText = '';
   npcMetaForm.memorySealed = false;
 }
@@ -288,6 +291,7 @@ function syncNpcMetaForm(npc) {
   }
   npcMetaForm.status = npc.status || 'active';
   npcMetaForm.customStatus = npc.customStatus || '';
+  npcMetaForm.currentLocation = npc.currentLocation || '';
   npcMetaForm.aliasesText = Array.isArray(npc.aliases) ? npc.aliases.join('\n') : '';
   npcMetaForm.memorySealed = Boolean(npc.memorySealed);
 }
@@ -445,6 +449,7 @@ function sameNpcSummary(current = {}, next = {}) {
     && String(current?.evidence || '') === String(next?.evidence || '')
     && String(current?.status || '') === String(next?.status || '')
     && String(current?.customStatus || '') === String(next?.customStatus || '')
+    && String(current?.currentLocation || '') === String(next?.currentLocation || '')
     && Boolean(current?.memorySealed) === Boolean(next?.memorySealed)
     && Boolean(current?.memorySealActive) === Boolean(next?.memorySealActive)
     && sameStringList(current?.aliases, next?.aliases);
@@ -754,6 +759,7 @@ async function submitNpcMeta() {
     const updated = await updateConversationNpc(conversationId, npcName, {
       status: npcMetaForm.status,
       customStatus: npcMetaForm.customStatus.trim(),
+      currentLocation: npcMetaForm.currentLocation.trim(),
       aliases: parseNpcAliasesText(npcMetaForm.aliasesText),
       memorySealed: npcMetaForm.memorySealed
     });
@@ -1040,7 +1046,7 @@ async function removeSelectedNpc() {
   const conversationId = props.conversationId;
   const npcName = selectedNpc.value;
   if (!conversationId) return;
-  if (!window.confirm(`从 NPC 列表移除“${npcName}”？已有记忆和行为不会被删除。`)) {
+  if (!window.confirm(`从 NPC 列表移除“${npcName}”？已有记忆、行为和位置不会被删除。`)) {
     return;
   }
   const actionId = 'npc-remove-selected';
@@ -1070,7 +1076,7 @@ async function removeEmptyNpcs() {
   if (!conversationId || !names.length) return;
   const preview = names.slice(0, 5).join('、');
   const suffix = names.length > 5 ? `等 ${names.length} 个` : `${names.length} 个`;
-  if (!window.confirm(`从 NPC 列表移除 ${suffix}没有记忆和行为的 NPC？\n${preview}\n已有记忆和行为不会被删除。`)) {
+  if (!window.confirm(`从 NPC 列表移除 ${suffix}没有记忆、行为和位置的 NPC？\n${preview}\n已有记忆、行为和位置不会被删除。`)) {
     return;
   }
   const actionId = 'npc-remove-empty';
@@ -1462,7 +1468,7 @@ function formatTime(iso) {
                     :disabled="loading || npcActionBusy"
                     :aria-pressed="organizerOpen"
                     :aria-busy="organizerLoading"
-                    title="AI 整理 NPC、记忆、行为和资料"
+                    title="AI 整理 NPC、位置、记忆、行为和资料"
                     @click="toggleOrganizerPanel"
                   >
                     <Sparkles :size="14" />
@@ -1473,7 +1479,7 @@ function formatTime(iso) {
                     type="button"
                     :disabled="!emptyNpcNames.length || loading || npcActionBusy"
                     :aria-busy="isNpcActionBusy('npc-remove-empty')"
-                    title="移除没有记忆和行为的 NPC"
+                    title="移除没有记忆、行为和位置的 NPC"
                     @click="removeEmptyNpcs"
                   >
                     清理空项
@@ -1523,6 +1529,10 @@ function formatTime(iso) {
                     <span class="npc-item-main">
                       <span class="npc-item-name">{{ npc.name }}</span>
                       <span v-if="shouldShowNpcStatus(npc)" class="npc-status-pill">{{ npcStatusLabel(npc) }}</span>
+                      <span v-if="npc.currentLocation" class="npc-location-pill" title="当前位置">
+                        <MapPin :size="11" />
+                        <span>{{ npc.currentLocation }}</span>
+                      </span>
                     </span>
                     <span class="npc-item-counts">
                       <span title="记忆数" class="npc-badge">🧠 {{ npc.memoryCount }}</span>
@@ -1541,6 +1551,10 @@ function formatTime(iso) {
                 <div class="npc-detail-metrics">
                   <span v-if="selectedNpcData">{{ npcStatusLabel(selectedNpcData) }}</span>
                   <span v-if="selectedNpcStats.aliasCount">{{ selectedNpcStats.aliasCount }} 个别名</span>
+                  <span v-if="selectedNpcData?.currentLocation" class="npc-location-metric">
+                    <MapPin :size="12" />
+                    <span>{{ selectedNpcData.currentLocation }}</span>
+                  </span>
                   <span v-if="selectedNpcMemorySealActive">记忆封存</span>
                   <span>{{ selectedNpcStats.memoryCount }} 记忆</span>
                   <span>{{ selectedNpcStats.behaviorCount }} 行为</span>
@@ -1567,6 +1581,15 @@ function formatTime(iso) {
                 >
                   <SlidersHorizontal :size="15" />
                   <span>资料</span>
+                </button>
+                <button
+                  class="npc-tab"
+                  :class="{ active: detailTab === 'location' }"
+                  type="button"
+                  @click="detailTab = 'location'"
+                >
+                  <MapPin :size="15" />
+                  <span>位置</span>
                 </button>
                 <button
                   class="npc-tab"
@@ -1647,6 +1670,35 @@ function formatTime(iso) {
                   <p v-if="selectedNpcMemorySealActive" class="npc-meta-note">
                     已封存的记忆不会删除；状态恢复后会再次参与主回复上下文。
                   </p>
+                  <div class="npc-form-actions">
+                    <button
+                      class="npc-save"
+                      type="button"
+                      :disabled="npcActionBusy"
+                      :aria-busy="isNpcActionBusy('npc-meta-save')"
+                      @click="submitNpcMeta"
+                    >
+                      保存
+                    </button>
+                  </div>
+                </div>
+              </template>
+
+              <!-- Location Tab -->
+              <template v-else-if="detailTab === 'location'">
+                <div class="npc-form npc-meta-form">
+                  <label class="npc-field-label">
+                    <span>当前位置</span>
+                    <textarea
+                      v-model="npcMetaForm.currentLocation"
+                      class="npc-textarea"
+                      rows="3"
+                      maxlength="160"
+                      placeholder="如：月光酒馆二楼"
+                      aria-label="NPC 当前位置"
+                      :disabled="npcActionBusy"
+                    />
+                  </label>
                   <div class="npc-form-actions">
                     <button
                       class="npc-save"
@@ -2366,6 +2418,29 @@ function formatTime(iso) {
   font-weight: 800;
 }
 
+.npc-location-pill {
+  max-width: 170px;
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  overflow: hidden;
+  padding: 1px 6px;
+  border: 1px solid color-mix(in srgb, var(--primary, #8d4a43) 28%, transparent);
+  border-radius: 999px;
+  color: var(--primary-strong, #713932);
+  background: color-mix(in srgb, var(--primary-soft, #efe1dc) 62%, transparent);
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.npc-location-pill span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .npc-item-counts {
   display: flex;
   flex-wrap: wrap;
@@ -2405,7 +2480,8 @@ function formatTime(iso) {
   gap: 6px;
 }
 
-.npc-detail-metrics span {
+.npc-detail-metrics > span {
+  min-width: 0;
   padding: 2px 7px;
   border: 1px solid color-mix(in srgb, var(--line, #2a2a3e) 70%, transparent);
   border-radius: 999px;
@@ -2413,6 +2489,20 @@ function formatTime(iso) {
   background: color-mix(in srgb, var(--surface, #1a1a2e) 62%, transparent);
   font-size: 11px;
   font-weight: 700;
+}
+
+.npc-detail-metrics .npc-location-metric {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: min(100%, 220px);
+}
+
+.npc-location-metric span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .npc-detail-remove {
@@ -2437,6 +2527,7 @@ function formatTime(iso) {
 
 .npc-tabs {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
   padding: 10px 20px;
   border-bottom: 1px solid color-mix(in srgb, var(--line, #2a2a3e) 64%, transparent);

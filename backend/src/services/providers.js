@@ -1031,6 +1031,30 @@ async function generateGeminiImage(settings, prompt, options = {}) {
   };
 }
 
+export function isImageGenerationModel(settings = {}, options = {}) {
+  const providerType = String(settings.providerType || '').trim();
+  const model = normalizeProviderModel(providerType, resolveProviderModel(settings, options));
+  if (!model) {
+    return false;
+  }
+  if (providerType === 'openai') {
+    return OPENAI_IMAGE_GENERATION_MODELS.has(model);
+  }
+  if (providerType === 'xai') {
+    return XAI_IMAGE_GENERATION_MODELS.has(model);
+  }
+  if (providerType === 'gemini') {
+    return GEMINI_IMAGE_GENERATION_MODELS.has(model);
+  }
+  return providerType === 'custom' && isKnownImageGenerationModel(model);
+}
+
+function isKnownImageGenerationModel(model) {
+  return OPENAI_IMAGE_GENERATION_MODELS.has(model) ||
+    XAI_IMAGE_GENERATION_MODELS.has(model) ||
+    GEMINI_IMAGE_GENERATION_MODELS.has(model);
+}
+
 function getImageGenerationCompatibility(settings = {}, options = {}) {
   const providerType = String(settings.providerType || '').trim();
   const model = normalizeProviderModel(providerType, resolveProviderModel(settings, options));

@@ -3742,8 +3742,9 @@ function applyLocalRules(text, rules, phase) {
               </summary>
               <p v-if="step.reasoning" class="ai-process-text">{{ step.reasoning }}</p>
               <p v-if="step.content" class="ai-process-text">{{ step.content }}</p>
+              <p v-if="!step.reasoning && !step.content && !step.tools?.length" class="ai-process-text empty">等待模型返回本轮流程...</p>
               <div v-if="step.tools?.length" class="ai-tool-detail-list">
-                <details v-for="(call, index) in step.tools" :key="`${call.name}-${index}`" class="ai-tool-detail">
+                <details v-for="(call, index) in step.tools" :key="`${call.name}-${index}`" class="ai-tool-detail" open>
                   <summary>
                     <span>{{ call.name }}</span>
                     <small>{{ toolResultLabel(call.result) }}</small>
@@ -3755,8 +3756,17 @@ function applyLocalRules(text, rules, phase) {
                 </details>
               </div>
             </details>
-            <div v-if="!aiProcess.length && aiToolCalls.length" class="ai-tool-list">
-              <span v-for="(call, index) in aiToolCalls" :key="`${call.name}-${index}`">{{ call.name }}</span>
+            <div v-if="!aiProcess.length && aiToolCalls.length" class="ai-tool-detail-list standalone">
+              <details v-for="(call, index) in aiToolCalls" :key="`${call.name}-${index}`" class="ai-tool-detail" open>
+                <summary>
+                  <span>{{ call.name }}</span>
+                  <small>{{ toolResultLabel(call.result) }}</small>
+                </summary>
+                <strong>参数</strong>
+                <pre>{{ formatAiValue(call.arguments) }}</pre>
+                <strong>结果</strong>
+                <pre>{{ formatAiValue(call.result) }}</pre>
+              </details>
             </div>
           </div>
           <span class="ai-panel-resize-handle" aria-hidden="true" @pointerdown.stop="onAiPanelResizeStart"></span>

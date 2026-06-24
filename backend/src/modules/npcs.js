@@ -227,13 +227,16 @@ export function upsertConversationNpc(database, userId, conversationId, payload 
   const memorySealed = hasMemorySealedPayload(payload)
     ? (normalizeBoolean(payload.memorySealed ?? payload.memory_sealed, Boolean(existing?.memory_sealed)) ? 1 : 0)
     : Number(existing?.memory_sealed || 0);
+  const currentLocation = hasCurrentLocationPayload(payload)
+    ? normalizeNpcLocation(payload.currentLocation ?? payload.current_location ?? payload.location)
+    : normalizeNpcLocation(existing?.current_location || '');
 
   if (existing) {
     const nextHidden = existing.hidden && !shouldUnhide ? 1 : hidden;
     database
       .prepare(
         `UPDATE npc_registry
-         SET source = ?, evidence = ?, confidence = ?, hidden = ?, status = ?, custom_status = ?, aliases = ?, memory_sealed = ?, updated_at = ?
+         SET source = ?, evidence = ?, confidence = ?, hidden = ?, status = ?, custom_status = ?, aliases = ?, memory_sealed = ?, current_location = ?, updated_at = ?
          WHERE conversation_id = ? AND npc_name = ?`
       )
       .run(
@@ -245,6 +248,7 @@ export function upsertConversationNpc(database, userId, conversationId, payload 
         statusPayload.customStatus,
         JSON.stringify(aliases),
         memorySealed,
+        currentLocation,
         timestamp,
         conversationId,
         npcName
@@ -252,8 +256,8 @@ export function upsertConversationNpc(database, userId, conversationId, payload 
   } else {
     database
       .prepare(
-        `INSERT INTO npc_registry (id, conversation_id, npc_name, source, evidence, confidence, hidden, status, custom_status, aliases, memory_sealed, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        `INSERT INTO npc_registry (id, conversation_id, npc_name, source, evidence, confidence, hidden, status, custom_status, aliases, memory_sealed, current_location, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         newId(),
@@ -267,6 +271,7 @@ export function upsertConversationNpc(database, userId, conversationId, payload 
         statusPayload.customStatus,
         JSON.stringify(aliases),
         memorySealed,
+        currentLocation,
         timestamp,
         timestamp
       );
@@ -299,7 +304,7 @@ export function hideEmptyConversationNpcs(database, userId, conversationId, main
   const npcs = listConversationNpcs(database, userId, conversationId, mainCharacterName);
   const hidden = [];
   for (const npc of npcs) {
-    if (Number(npc.memoryCount || 0) !== 0 || Number(npc.behaviorCount || 0) !== 0) {
+    if (Number(npc.memoryCount || 0) !== 0 || Number(npc.behaviorCount || 0) !== 0 || npc.currentLocation) {
       continue;
     }
     const hiddenNpc = hideConversationNpc(database, userId, conversationId, npc.name);
@@ -406,6 +411,7 @@ export function listConversationNpcs(database, userId, conversationId, mainChara
       evidence: registry?.evidence || '',
       status: registry?.status || 'active',
       customStatus: registry?.customStatus || '',
+      currentLocation: registry?.currentLocation || '',
       aliases: registry?.aliases || [],
       memorySealed: Boolean(registry?.memorySealed),
       memorySealActive: Boolean(registry?.memorySealActive)
@@ -550,7 +556,7 @@ function buildNpcBehaviorPromptFromRows(database, conversationId, behaviors, mem
   if (!promptBody) {
     return '';
   }
-  return `\n[NPC 自主行为引擎 / NPC autonomous behavior engine]\n${promptBody}\nUse the NPC status, exact aliases, behavior rules, and available memories to keep side characters consistent. Exact aliases identify the same NPC; stable nicknames or titles count only when they uniquely name this NPC. Generic roles, vague references, pronouns, and group labels are not aliases. If an NPC is dead or permanently_left, do not portray them as present or active unless the story explicitly changes that status. Do not invent memories that are not provided.\n`;
+  return `\n[NPC 自主行为引擎 / NPC autonomous behavior engine]\n${promptBody}\nUse the NPC status, current location, exact aliases, behavior rules, and available memories to keep side characters consistent. Treat current location as a continuity constraint: do not make an NPC appear in another place, teleport, or join long-distance dialogue unless the story explicitly moves them, uses a communication channel, or updates their location. Exact aliases identify the same NPC; stable nicknames or titles count only when they uniquely name this NPC. Generic roles, vague references, pronouns, and group labels are not aliases. If an NPC is dead or permanently_left, do not portray them as present or active unless the story explicitly changes that status. Do not invent memories that are not provided.\n`;
 }
 
 function buildNpcMetadataPromptLines(registry) {
@@ -560,6 +566,9 @@ function buildNpcMetadataPromptLines(registry) {
   const lines = [];
   if (registry.status && registry.status !== 'active') {
     lines.push(`  Status: ${formatNpcStatusForPrompt(registry)}`);
+  }
+  if (registry.currentLocation) {
+    lines.push(`  Current location: ${registry.currentLocation}`);
   }
   if (registry.aliases.length > 0) {
     lines.push(`  Exact aliases: ${registry.aliases.join(', ')}`);
@@ -575,6 +584,7 @@ function hasPromptRegistryMetadata(registry) {
     registry &&
       !registry.hidden &&
       ((registry.status && registry.status !== 'active') ||
+        registry.currentLocation ||
         registry.aliases.length > 0 ||
         isNpcRegistryMemorySealActive(registry))
   );
@@ -645,6 +655,16 @@ function hasAliasPayload(payload = {}) {
 
 function hasMemorySealedPayload(payload = {}) {
   return payload.memorySealed !== undefined || payload.memory_sealed !== undefined;
+}
+
+function hasCurrentLocationPayload(payload = {}) {
+  return (payload.currentLocation !== undefined && payload.currentLocation !== null) ||
+    (payload.current_location !== undefined && payload.current_location !== null) ||
+    (payload.location !== undefined && payload.location !== null);
+}
+
+function normalizeNpcLocation(value) {
+  return String(value || '').replace(/\s+/g, ' ').trim().slice(0, 160);
 }
 
 function parseNpcAliases(value) {
@@ -728,6 +748,7 @@ function toNpcRegistry(row) {
     hidden: Boolean(row.hidden),
     status: normalizeNpcStatus(row.status || 'active'),
     customStatus: normalizeCustomStatus(row.custom_status || ''),
+    currentLocation: normalizeNpcLocation(row.current_location || ''),
     aliases: parseNpcAliases(row.aliases),
     memorySealed: Boolean(row.memory_sealed),
     createdAt: row.created_at,

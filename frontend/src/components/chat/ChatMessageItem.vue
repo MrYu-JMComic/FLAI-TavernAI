@@ -124,7 +124,7 @@ watch(isEditingCurrentMessage, async (active) => {
           class="reasoning-body"
           :class="{ 'is-typing': isReasoningTyping }"
         >
-          <MarkdownContent class="typing-text" :text="message.reasoning" :render-plugins="renderPlugins" />
+          <MarkdownContent class="typing-text" :text="message.reasoning" :render-plugins="renderPlugins" :defer-updates="isReasoningTyping" />
         </div>
       </div>
 
@@ -175,6 +175,7 @@ watch(isEditingCurrentMessage, async (active) => {
             class="typing-text"
             :text="message.content || messagePlaceholder"
             :render-plugins="renderPlugins"
+            :defer-updates="isContentTyping"
           />
         </template>
       </div>

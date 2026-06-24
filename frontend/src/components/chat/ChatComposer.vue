@@ -8,7 +8,6 @@ const props = defineProps({
   canSend: { type: Boolean, default: false },
   useStream: { type: Boolean, default: true },
   thinkingEnabled: { type: Boolean, default: false },
-  imageGenerationEnabled: { type: Boolean, default: false },
   canToggleThinking: { type: Boolean, default: false },
   chatViewportIsPhone: { type: Boolean, default: false },
   showScrollBottomButton: { type: Boolean, default: false },
@@ -29,7 +28,6 @@ const emit = defineEmits([
   'stop',
   'toggle-stream',
   'toggle-thinking',
-  'toggle-image-generation',
   'open-model-switcher',
   'quick-model-change',
   'add-attachments',
@@ -51,7 +49,6 @@ const canQuickSwitchModel = computed(() => {
   }
   return !props.currentModel || quickModelOptions.value.length > 1;
 });
-
 function readEventTargetValue(event) {
   const target = event?.target;
   return target && target.value !== undefined ? target.value : undefined;
@@ -64,6 +61,10 @@ function onComposerInput(event) {
   }
   emit('update:input', value);
   emit('composer-input', event);
+}
+
+function submitComposer(payload) {
+  emit('submit', payload);
 }
 
 function onPresetChange(event) {
@@ -157,7 +158,7 @@ defineExpose({ wrapRef, textareaRef });
     >
       <ChevronDown :size="18" />
     </button>
-    <form class="deep-composer" :aria-busy="sending" @submit.prevent="emit('submit', { isEnter: false })">
+    <form class="deep-composer" :aria-busy="sending" @submit.prevent="submitComposer({ isEnter: false })">
       <textarea
         ref="textareaRef"
         :value="input"
@@ -165,7 +166,7 @@ defineExpose({ wrapRef, textareaRef });
         placeholder="给 AI 发送消息"
         :rows="chatViewportIsPhone ? 1 : 2"
         @input="onComposerInput"
-        @keydown.enter.exact="emit('submit', { isEnter: true, event: $event })"
+        @keydown.enter.exact="submitComposer({ isEnter: true, event: $event })"
       />
       <div v-if="attachments.length" class="composer-attachments" aria-label="待发送图片">
         <figure v-for="attachment in attachments" :key="attachment.id" class="composer-attachment">
@@ -203,19 +204,6 @@ defineExpose({ wrapRef, textareaRef });
         >
           <ImagePlus :size="16" />
           <span>图片</span>
-        </button>
-        <button
-          class="mode-pill image-generation-pill"
-          :class="{ active: imageGenerationEnabled }"
-          type="button"
-          :aria-pressed="String(imageGenerationEnabled)"
-          :disabled="sending || attachmentBusy"
-          :aria-busy="sending || attachmentBusy"
-          title="生图模式"
-          @click="emit('toggle-image-generation')"
-        >
-          <Sparkles :size="16" />
-          <span>{{ imageGenerationEnabled ? '生图中' : '生图' }}</span>
         </button>
         <select
           v-if="presetList.length"

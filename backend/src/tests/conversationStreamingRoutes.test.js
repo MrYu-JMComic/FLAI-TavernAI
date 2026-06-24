@@ -248,7 +248,7 @@ test('chat image generation saves returned image as an assistant attachment', as
   }
 });
 
-test('chat image generation uses Gemini native generateContent for Gemini image models', async () => {
+test('chat image generation auto-detects Gemini image models and uses native generateContent', async () => {
   const database = createAppDatabase(':memory:');
   const userId = 'chat-gemini-image-generation-user';
   const conversationId = 'chat-gemini-image-generation-conversation';
@@ -293,8 +293,7 @@ test('chat image generation uses Gemini native generateContent for Gemini image 
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           content: 'draw a moon gate',
-          stream: false,
-          imageGeneration: true
+          stream: false
         })
       });
       const body = await response.json();

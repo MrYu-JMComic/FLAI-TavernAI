@@ -350,6 +350,7 @@ export const updateNpcBehaviorSchema = z.object({
 export const updateNpcSchema = z.object({
   status: z.enum(['active', 'left', 'permanently_left', 'dead', 'on_mission', 'following', 'custom']).optional(),
   customStatus: z.string().max(80).trim().optional(),
+  currentLocation: z.string().max(160).trim().optional(),
   aliases: z.array(z.string().max(80).trim()).max(20).optional(),
   aliasesText: z.string().max(1000).trim().optional(),
   memorySealed: booleanLikeSchema.optional()

@@ -55,6 +55,7 @@ import {
   buildUsageSnapshot,
   generateCompletion,
   generateImage,
+  isImageGenerationModel,
   streamCompletion
 } from '../services/providers.js';
 import { renderPromptVariables, resolvePromptUserName } from '../services/promptVariables.js';
@@ -281,7 +282,7 @@ export function createConversationsRouter(ctx) {
       aiOptions.presencePenalty = activePreset.presencePenalty;
     }
 
-    if (request.body?.imageGeneration) {
+    if (request.body?.imageGeneration || isImageGenerationModel(settings.value, aiOptions)) {
       let result;
       try {
         result = await generateImage(settings.value, processedUserText || userText, aiOptions);

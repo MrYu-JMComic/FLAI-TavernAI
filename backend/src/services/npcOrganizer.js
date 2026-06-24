@@ -27,13 +27,14 @@ const npcOrganizerTools = [
     type: 'function',
     function: {
       name: 'upsert_npc_profile',
-      description: 'Create or update an NPC profile: status, aliases, memory seal, confidence, and evidence.',
+      description: 'Create or update an NPC profile: status, current location, aliases, memory seal, confidence, and evidence.',
       parameters: {
         type: 'object',
         properties: {
           npcName: { type: 'string' },
           status: { type: 'string', enum: npcStatusValues },
           customStatus: { type: 'string' },
+          currentLocation: { type: 'string', description: 'The NPC current physical location. Use an empty string only to clear a wrong location.' },
           aliases: { type: 'array', items: { type: 'string' } },
           memorySealed: { type: 'boolean' },
           evidence: { type: 'string' },
@@ -244,10 +245,11 @@ function buildNpcOrganizerMessages(state) {
       role: 'system',
       content: [
         'You are the dedicated NPC organizer for FLAI Tavern AI.',
-        'You must use tools to organize NPC profiles, memories, and behavior rules; do not answer with prose only.',
+        'You must use tools to organize NPC profiles, current locations, memories, and behavior rules; do not answer with prose only.',
         'Make small, reviewable edits. Preserve user-written data unless it is duplicate, empty, stale, contradictory, or clearly a false positive.',
         'Ground new memories and behavior rules in the current NPC data or recent conversation evidence.',
-        'Use profile tools for status, exact aliases, and memory sealing. Use memory tools for facts, relationships, opinions, knowledge, emotions, and events.',
+        'Use profile tools for current location, status, exact aliases, and memory sealing. Update current location only when evidence clearly moves or places the NPC.',
+        'Use memory tools for facts, relationships, opinions, knowledge, emotions, and events.',
         'Use behavior tools only for stable portrayal rules that should affect future chat replies.',
         'Hide NPC profiles only for false positives or entries the user would not expect to see as NPCs.',
         'For Chinese roleplay, write concise polished Chinese content. Keep memories and behavior actions short enough to be useful in prompt context.',
@@ -419,6 +421,9 @@ function upsertNpcProfileTool(args, state) {
   }
   if (args.customStatus !== undefined) {
     payload.customStatus = limitText(args.customStatus, 80);
+  }
+  if (args.currentLocation !== undefined) {
+    payload.currentLocation = limitText(args.currentLocation, 160);
   }
   if (args.aliases !== undefined) {
     payload.aliases = normalizeStringList(args.aliases, 20, 80);

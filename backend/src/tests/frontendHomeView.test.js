@@ -136,7 +136,7 @@ test('HomeView keeps reaction buttons as stable click targets while counts updat
   );
 });
 
-test('HomeView keeps reaction clicks from becoming scroll anchors', () => {
+test('HomeView keeps reaction clicks from becoming scroll anchors without trapping page wheel scroll', () => {
   assert.doesNotMatch(homeViewScript, /\bmeasureElement\b/);
   assert.doesNotMatch(homeViewScript, /function measureVirtualRow/);
   assert.doesNotMatch(homeViewTemplate, /:ref="measureVirtualRow"/);
@@ -150,7 +150,11 @@ test('HomeView keeps reaction clicks from becoming scroll anchors', () => {
   );
   assert.match(
     stylesSource,
-    /\.home-character-scroll\s*\{[\s\S]*overscroll-behavior:\s*contain;[\s\S]*\}/
+    /\.home-character-scroll\s*\{[^}]*overscroll-behavior:\s*auto;[^}]*\}/
+  );
+  assert.doesNotMatch(
+    stylesSource,
+    /\.home-character-scroll\s*\{[^}]*overscroll-behavior:\s*contain;[^}]*\}/
   );
   assert.match(
     stylesSource,

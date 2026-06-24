@@ -59,6 +59,13 @@ test('ChatMessageItem locks copy action while clipboard work is busy', () => {
     chatMessageActionsSource,
     /function isCurrentCopyAction\(actionToken\) \{\s*return !disposed && actionToken === copyActionToken;/
   );
+  assert.match(chatMessageActionsSource, /onCopyFallback,/);
+  assert.match(chatMessageActionsSource, /function applyCopyFallback\(text\) \{[\s\S]*return onCopyFallback\(text\) === true;/);
+  assert.match(chatViewScript, /onCopyFallback: appendCopyFallbackToComposer/);
+  assert.match(
+    chatViewScript,
+    /function appendCopyFallbackToComposer\(text\) \{[\s\S]*input\.value = current \+ sep \+ normalizedText;[\s\S]*scheduleComposerLayoutUpdate\(\{ focus: true \}\);[\s\S]*return true;/
+  );
 });
 
 test('ChatMessageItem keeps message actions directly visible without a folded mobile menu', () => {
@@ -90,6 +97,20 @@ test('ChatMessageItem focuses the edit textarea when edit mode opens', () => {
     chatMessageItemScript,
     /watch\(isEditingCurrentMessage, async \(active\) => \{[\s\S]*await nextTick\(\);[\s\S]*editTextareaRef\.value\?\.focus\?\.\(\);[\s\S]*\}\);/
   );
+});
+
+test('ChatMessageItem defers Markdown rendering only while a message is typing', () => {
+  assert.match(chatMessageItemScript, /isReasoningTyping: \{ type: Boolean, default: false \}/);
+  assert.match(chatMessageItemScript, /isContentTyping: \{ type: Boolean, default: false \}/);
+  assert.match(
+    chatMessageItemTemplate,
+    /<MarkdownContent class="typing-text" :text="message\.reasoning" :render-plugins="renderPlugins" :defer-updates="isReasoningTyping" \/>/
+  );
+  assert.match(
+    chatMessageItemTemplate,
+    /<MarkdownContent[\s\S]*:text="message\.content \|\| messagePlaceholder"[\s\S]*:render-plugins="renderPlugins"[\s\S]*:defer-updates="isContentTyping"[\s\S]*\/>/
+  );
+  assert.doesNotMatch(chatMessageItemTemplate, /:defer-updates="true"/);
 });
 
 test('ChatMessageItem locks swipe navigation while a swipe is loading', () => {

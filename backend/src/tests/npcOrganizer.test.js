@@ -34,6 +34,7 @@ test('NPC organizer tools edit profiles, memories, and behaviors', () => {
     npcName: 'Mira',
     status: 'custom',
     customStatus: 'tracking a lead',
+    currentLocation: 'Cellar stairs',
     aliases: ['Innkeeper Mira', 'Mira'],
     memorySealed: true,
     evidence: 'Mentioned in recent chat.',
@@ -42,6 +43,7 @@ test('NPC organizer tools edit profiles, memories, and behaviors', () => {
   assert.equal(profile.ok, true);
   assert.equal(profile.npc.name, 'Mira');
   assert.equal(profile.npc.status, 'custom');
+  assert.equal(profile.npc.currentLocation, 'Cellar stairs');
   assert.deepEqual(profile.npc.aliases, ['Innkeeper Mira', 'Mira']);
 
   const addedMemory = applyNpcOrganizerTool(database, userId, conversationId, 'add_npc_memory', {

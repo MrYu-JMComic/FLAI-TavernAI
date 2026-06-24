@@ -581,6 +581,7 @@ export function initializeDatabase(database) {
   ensureColumn(database, 'npc_registry', 'custom_status', "TEXT NOT NULL DEFAULT ''");
   ensureColumn(database, 'npc_registry', 'aliases', "TEXT NOT NULL DEFAULT '[]'");
   ensureColumn(database, 'npc_registry', 'memory_sealed', 'INTEGER NOT NULL DEFAULT 0');
+  ensureColumn(database, 'npc_registry', 'current_location', "TEXT NOT NULL DEFAULT ''");
   ensureColumn(database, 'mods', 'scope', "TEXT NOT NULL DEFAULT 'global'");
   ensureColumn(database, 'mods', 'character_ids', "TEXT NOT NULL DEFAULT '[]'");
 

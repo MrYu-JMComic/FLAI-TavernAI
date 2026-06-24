@@ -5,6 +5,15 @@ import { samePlainValue } from '../../utils/plainValues.js';
 
 const CHAT_IMAGE_LIMIT = 4;
 const CHAT_IMAGE_MAX_BYTES = 4 * 1024 * 1024;
+const IMAGE_GENERATION_MODELS_BY_PROVIDER = {
+  openai: new Set(['gpt-image-2']),
+  xai: new Set(['grok-imagine-image', 'grok-imagine-image-quality']),
+  gemini: new Set([
+    'gemini-3.1-flash-image',
+    'gemini-3-pro-image',
+    'gemini-2.5-flash-image'
+  ])
+};
 
 export function useChatSubmit({
   route,
@@ -31,7 +40,6 @@ export function useChatSubmit({
   const input = ref('');
   const useStream = ref(readLocalBoolean('flai-chat-use-stream', true));
   const thinkingEnabled = ref(readLocalBoolean('flai-chat-thinking-enabled', false));
-  const imageGenerationEnabled = ref(readLocalBoolean('flai-chat-image-generation-enabled', false));
   const chatAttachments = ref([]);
   const attachmentBusy = ref(false);
   const sending = ref(false);
@@ -85,6 +93,33 @@ export function useChatSubmit({
     }
   }
 
+  function isAutomaticImageGenerationModel(currentProvider = {}) {
+    const providerType = String(currentProvider?.providerType || '').trim();
+    const model = normalizeChatProviderModel(providerType, currentProvider?.model);
+    if (!model) {
+      return false;
+    }
+    const providerModels = IMAGE_GENERATION_MODELS_BY_PROVIDER[providerType];
+    if (providerModels) {
+      return providerModels.has(model);
+    }
+    return providerType === 'custom' && isKnownImageGenerationModel(model);
+  }
+
+  function isKnownImageGenerationModel(model) {
+    return IMAGE_GENERATION_MODELS_BY_PROVIDER.openai.has(model) ||
+      IMAGE_GENERATION_MODELS_BY_PROVIDER.xai.has(model) ||
+      IMAGE_GENERATION_MODELS_BY_PROVIDER.gemini.has(model);
+  }
+
+  function normalizeChatProviderModel(providerType, model) {
+    const value = String(model || '').trim();
+    if (providerType === 'deepseek' && (value === 'deepseek-chat' || value === 'deepseek-reasoner')) {
+      return 'deepseek-v4-flash';
+    }
+    return value;
+  }
+
   function toggleUseStream() {
     if (sending.value) {
       return;
@@ -99,14 +134,6 @@ export function useChatSubmit({
     }
     thinkingEnabled.value = !thinkingEnabled.value;
     writeLocalBoolean('flai-chat-thinking-enabled', thinkingEnabled.value);
-  }
-
-  function toggleImageGeneration() {
-    if (sending.value || attachmentBusy.value) {
-      return;
-    }
-    imageGenerationEnabled.value = !imageGenerationEnabled.value;
-    writeLocalBoolean('flai-chat-image-generation-enabled', imageGenerationEnabled.value);
   }
 
   function setSelectedPresetId(value) {
@@ -169,10 +196,11 @@ export function useChatSubmit({
       stickToBottomIfNeeded(true);
     }
 
+    const shouldGenerateImage = isAutomaticImageGenerationModel(provider.value);
     const requestPayload = {
       content,
       attachments,
-      imageGeneration: imageGenerationEnabled.value,
+      imageGeneration: shouldGenerateImage,
       thinkingEnabled: canToggleThinking.value ? thinkingEnabled.value : true
     };
     if (selectedPresetId.value) {
@@ -199,7 +227,7 @@ export function useChatSubmit({
     };
 
     try {
-      if (useStream.value && !imageGenerationEnabled.value) {
+      if (useStream.value && !shouldGenerateImage) {
         streamController = new AbortController();
         controller.value = streamController;
         refreshStreamTimer();
@@ -1248,7 +1276,6 @@ export function useChatSubmit({
     attachmentBusy,
     useStream,
     thinkingEnabled,
-    imageGenerationEnabled,
     sending,
     controller,
     usage,
@@ -1268,7 +1295,6 @@ export function useChatSubmit({
     setSelectedPresetId,
     toggleUseStream,
     toggleThinking,
-    toggleImageGeneration,
     finishAssistantDraft,
     cleanup
   };

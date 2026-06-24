@@ -22,7 +22,9 @@ function readStyleRange(startMarker, endMarker, fromIndex = 0) {
 }
 
 test('ChatComposer locks configuration controls while sending', () => {
-  assert.match(chatComposerTemplate, /<form class="deep-composer" :aria-busy="sending" @submit\.prevent="emit\('submit', \{ isEnter: false \}\)">/);
+  assert.match(chatComposerTemplate, /<form class="deep-composer" :aria-busy="sending" @submit\.prevent="submitComposer\(\{ isEnter: false \}\)">/);
+  assert.match(chatComposerTemplate, /@keydown\.enter\.exact="submitComposer\(\{ isEnter: true, event: \$event \}\)"/);
+  assert.match(chatComposerScript, /function submitComposer\(payload\) {\s*emit\('submit', payload\);\s*}/);
   assert.match(chatComposerTemplate, /class="visually-hidden"[\s\S]*type="file"[\s\S]*aria-label="选择聊天图片"[\s\S]*@change="onAttachmentChange"/);
   assert.match(chatComposerTemplate, /class="preset-select"[\s\S]*:disabled="sending"[\s\S]*@change="onPresetChange"/);
   assert.match(chatComposerScript, /const modelSwitchLocked = computed\(\(\) => props\.sending \|\| props\.modelSaving\);/);
@@ -58,6 +60,17 @@ test('ChatComposer input handlers tolerate missing event targets', () => {
   assert.doesNotMatch(chatComposerTemplate, /\$event\.target\.value/);
 });
 
+test('ChatComposer keeps the composer single-path without shortcut toolbar chrome', () => {
+  assert.match(chatComposerScript, /import \{ computed, ref \} from 'vue';/);
+  assert.doesNotMatch(chatComposerScript, /nextTick|INPUT_HISTORY_LIMIT|composerHistory|historyCursor|historyDraft/);
+  assert.doesNotMatch(chatComposerScript, /applyMarkdownShortcut|wrapComposerSelection|insertComposerText|rememberComposerHistory|browseInputHistory/);
+  assert.doesNotMatch(chatComposerTemplate, /composer-shortcuts|composer-shortcut-button|history-shortcut-button|variable-shortcut-button/);
+  assert.doesNotMatch(chatComposerTemplate, /aria-label="Bold"|aria-label="Italic"|aria-label="Insert \{user\}"|aria-label="Previous input"|aria-label="Next input"/);
+  assert.equal((chatComposerTemplate.match(/<textarea\b/g) || []).length, 1);
+  assert.doesNotMatch(chatComposerTemplate, /@submit\.prevent="emit\('submit'/);
+  assert.doesNotMatch(chatComposerTemplate, /@keydown\.enter\.exact="emit\('submit'/);
+});
+
 test('ChatComposer exposes an inline quick model selector with deduped options', () => {
   assert.match(chatComposerScript, /const quickModelOptions = computed\(\(\) => buildQuickModelOptions\(props\.modelOptions, props\.currentModel\)\);/);
   assert.match(chatComposerScript, /const canQuickSwitchModel = computed\(\(\) => \{[\s\S]*return !props\.currentModel \|\| quickModelOptions\.value\.length > 1;[\s\S]*\}\);/);
@@ -73,9 +86,9 @@ test('ChatComposer exposes an inline quick model selector with deduped options',
   assert.match(chatComposerTemplate, /aria-label="快速切换聊天模型"/);
   assert.match(chatComposerTemplate, /<option v-for="model in quickModelOptions" :key="model\.id" :value="model\.id">/);
   assert.match(chatComposerTemplate, /<span v-if="currentModelSupportsReasoning" class="model-ability-chip">推理<\/span>/);
-  assert.match(chatComposerTemplate, /class="mode-pill image-generation-pill"/);
   assert.match(chatComposerTemplate, /class="mode-pill stream-pill"/);
   assert.match(chatComposerTemplate, /class="mode-pill thinking-pill"/);
+  assert.doesNotMatch(chatComposerTemplate, /image-generation-pill|toggle-image-generation|imageGenerationEnabled/);
   assert.doesNotMatch(chatComposerScript, /modelOptions\.map\(/);
   assert.doesNotMatch(chatComposerScript, /return\s+\[\.\.\.byId\.values\(\)\];/);
 });
@@ -91,24 +104,28 @@ test('ChatComposer keeps mobile model switching to one stable control with dark 
     /:root\[data-theme="dark"\] \.model-quick-select select option\s*{[\s\S]*color:\s*#e5e7eb;[\s\S]*background:\s*#111827;[\s\S]*}/
   );
 
-  const composerPhoneStart = stylesSource.indexOf('grid-template-columns: minmax(0, 1fr) repeat(4, 40px) 44px;');
+  const composerPhoneStart = stylesSource.indexOf('grid-template-columns: minmax(0, 1fr) repeat(3, 40px) 44px;');
   assert.notEqual(composerPhoneStart, -1, 'missing phone composer grid marker');
   const composerPhoneBlockStart = stylesSource.lastIndexOf('@media (max-width: 480px) {', composerPhoneStart);
   const composerPhoneBlockEnd = stylesSource.indexOf('  .model-picker {', composerPhoneStart);
   assert.notEqual(composerPhoneBlockStart, -1, 'missing phone composer block start');
   assert.notEqual(composerPhoneBlockEnd, -1, 'missing phone composer block end');
   const phoneBlock = stylesSource.slice(composerPhoneBlockStart, composerPhoneBlockEnd);
-  assert.match(phoneBlock, /\.composer-actions\s*{[\s\S]*grid-template-columns:\s*minmax\(0, 1fr\) repeat\(4, 40px\) 44px;[\s\S]*gap:\s*8px;/);
+  assert.match(phoneBlock, /\.composer-actions\s*{[\s\S]*grid-template-columns:\s*minmax\(0, 1fr\) repeat\(3, 40px\) 44px;[\s\S]*gap:\s*8px;/);
   assert.match(phoneBlock, /\.composer-actions\.has-preset\s*{[\s\S]*grid-template-rows:\s*40px 40px;/);
   assert.match(phoneBlock, /\.composer-actions\.has-preset \.preset-select\s*{[\s\S]*grid-column:\s*1 \/ -1;[\s\S]*grid-row:\s*1;/);
   assert.match(phoneBlock, /\.model-quick-select\s*{[\s\S]*grid-column:\s*1;[\s\S]*grid-row:\s*1;/);
   assert.match(phoneBlock, /\.composer-actions\.has-preset \.model-quick-select,[\s\S]*\.composer-actions\.has-preset \.model-switch-pill\s*{[\s\S]*grid-row:\s*2;/);
   assert.match(phoneBlock, /\.attachment-pill\s*{[\s\S]*grid-column:\s*2;/);
-  assert.match(phoneBlock, /\.image-generation-pill\s*{[\s\S]*grid-column:\s*3;/);
-  assert.match(phoneBlock, /\.stream-pill\s*{[\s\S]*grid-column:\s*4;/);
-  assert.match(phoneBlock, /\.thinking-pill\s*{[\s\S]*grid-column:\s*5;/);
-  assert.match(phoneBlock, /\.round-send\s*{[\s\S]*grid-column:\s*6;/);
+  assert.match(phoneBlock, /\.stream-pill\s*{[\s\S]*grid-column:\s*3;/);
+  assert.match(phoneBlock, /\.thinking-pill\s*{[\s\S]*grid-column:\s*4;/);
+  assert.match(phoneBlock, /\.round-send\s*{[\s\S]*grid-column:\s*5;/);
+  assert.doesNotMatch(phoneBlock, /\.image-generation-pill/);
   assert.doesNotMatch(phoneBlock, /\.model-switch-pill\s*{[^}]*display:\s*none;/);
+});
+
+test('ChatComposer removed shortcut toolbar styles after removing the toolbar UI', () => {
+  assert.doesNotMatch(stylesSource, /\.composer-shortcuts|\.composer-shortcut-button|\.composer-shortcuts-divider|\.variable-shortcut-button/);
 });
 
 test('ChatComposer follows readable width when desktop sidebar is collapsed', () => {
@@ -141,6 +158,8 @@ test('ChatView routes preset selection through the guarded submit setter', () =>
   assert.match(chatViewScript, /submit, stop,[\s\S]*setSelectedPresetId, toggleUseStream, toggleThinking/);
   assert.match(chatViewTemplate, /@update:selected-preset-id="setSelectedPresetId"/);
   assert.doesNotMatch(chatViewTemplate, /@update:selected-preset-id="\([^"]+\) => selectedPresetId =/);
+  assert.doesNotMatch(chatViewScript, /imageGenerationEnabled|toggleImageGeneration/);
+  assert.doesNotMatch(chatViewTemplate, /image-generation-enabled|toggle-image-generation/);
 });
 
 test('ChatView wires composer quick model changes through the guarded model save path', () => {

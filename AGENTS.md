@@ -2,28 +2,29 @@
 
 This project may be maintained by AI agents. Follow these rules before changing code.
 
-## Governance — 三省六部制
+## Governance - Three-Office Workflow
 
-See `governance.md` for the full framework.
+See `governance.md` for the full framework. Keep this file ASCII-only unless the user explicitly approves otherwise, so every agent and terminal can read it without encoding ambiguity.
 
-### 三权分立
+### Separation Of Duties
 
-| 省 | 执掌 | 职责 |
+| Office | Holder | Duties |
 |---|---|---|
-| 中书省 | 乐（人） | 立项、规划、写 backlog |
-| 门下省 | 自动化 | 跑测试、生成报告、pass/fail |
-| 尚书省 | OpenCode / Claude Code | 写代码、改文件 |
+| Planning Office (Zhongshu) | Le (human) | Approve initiatives, write plans, maintain backlog |
+| Review Office (Menxia) | Automation | Run tests, generate reports, decide pass/fail |
+| Implementation Office (Shangshu) | OpenCode / Claude Code | Write code and edit files |
 
-### 核心规则
+### Core Rules
 
-- **中书省未立项** → 尚书省不可行动
-- **门下省未审核** → 变更不可合并
-- **任何人不得兼任中书省和门下省**
-- 门下省审核命令: `powershell -ExecutionPolicy Bypass -File scripts/review-gate.ps1`
+- No approved planning item -> Implementation Office must not act.
+- No Review Office approval -> changes must not be merged.
+- No person or agent may serve as both Planning Office and Review Office.
+- Review Office gate command: `powershell -ExecutionPolicy Bypass -File scripts/review-gate.ps1`
 
 ### Encoding Rules
 
 - All source and Markdown files must be UTF-8. Do not save files with GBK, ANSI, or PowerShell's default legacy encoding.
+- Keep `AGENTS.md` ASCII-only by default because it is the cross-agent entry point.
 - On Windows, prefer Node `fs.readFileSync/writeFileSync(..., 'utf8')`, editor UTF-8 mode, or PowerShell `Set-Content -Encoding utf8` when writing files.
 - Never paste mojibake or replacement-character text into source files.
 - Run `node scripts/check-encoding.mjs` before reporting that a code change is complete.
@@ -32,11 +33,12 @@ See `governance.md` for the full framework.
 
 Improve FLAI TavernAI in small, verified iterations. Prefer fixes and product polish that make the app more reliable, easier to use, and easier to maintain.
 
-## Implementation Hygiene
+## Implementation Hygiene - Old Code Cleanup
 
-- Do not only layer patches on top of old behavior. When a change replaces an older UI path, helper, style rule, test expectation, or dead branch, clean up the replaced code in the same small iteration unless doing so would touch unrelated user work.
-- Avoid leaving duplicate controls, overlapping responsive rules, or parallel implementations that make the app more confusing and harder to maintain.
-- If cleanup is intentionally deferred, record the reason and the exact follow-up in the iteration report.
+- Do not only layer patches on top of old behavior. When a fix or new flow replaces an older UI entry, component branch, helper, style rule, test expectation, or dead branch, identify the replaced path and clean it up in the same small iteration when safe.
+- Prefer simplifying the existing path over adding another permanent workaround.
+- Avoid duplicate controls, overlapping responsive rules, parallel implementations, and avoidable compatibility branches that make the app harder to maintain.
+- If cleanup cannot be done safely because it would touch unrelated user work, widen risk, or require separate design, record the reason, retained scope, and exact follow-up task in the iteration report.
 
 ## Project Shape
 

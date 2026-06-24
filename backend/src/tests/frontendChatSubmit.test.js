@@ -179,6 +179,52 @@ test('chat submit restores failed stream prompts without removing previous messa
   }
 });
 
+test('chat submit auto-detects image generation models without a manual toggle', async () => {
+  const originalFetch = globalThis.fetch;
+  let requestBody = null;
+
+  globalThis.fetch = async (url, request = {}) => {
+    assert.equal(String(url), '/api/conversations/conv-1/messages');
+    requestBody = JSON.parse(request.body);
+    return jsonResponse({
+      userMessage: {
+        id: 'user-image-1',
+        role: 'user',
+        content: 'Draw a lantern'
+      },
+      assistantMessage: {
+        id: 'assistant-image-1',
+        role: 'assistant',
+        content: 'Generated image',
+        attachments: [{ id: 'image-1', type: 'image', dataUrl: 'data:image/png;base64,AQID' }]
+      },
+      provider: 'OpenAI',
+      usage: null
+    });
+  };
+
+  try {
+    const { submit } = createSubmitState({
+      provider: refValue({
+        providerType: 'openai',
+        model: 'gpt-image-2',
+        supportsReasoning: false
+      }),
+      selectedPresetId: refValue('')
+    });
+
+    submit.useStream.value = true;
+    submit.input.value = 'Draw a lantern';
+    await submit.submit();
+
+    assert.equal(requestBody.stream, false);
+    assert.equal(requestBody.imageGeneration, true);
+    assert.equal(requestBody.content, 'Draw a lantern');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test('chat submit does not overwrite a newer draft when restoring failed prompts', async () => {
   const originalFetch = globalThis.fetch;
   const previousUser = { id: 'old-user', role: 'user', content: 'Old prompt' };
@@ -583,6 +629,17 @@ test('chat submit skips stream append follow-scroll after stale or stopped appen
     chatSubmitSource,
     /async function appendStreamText\(message, field, text, anchorAssistantReply = false, isStillCurrent = \(\) => true\) \{[\s\S]*currentMessage\[field\] \+= value;[\s\S]*triggerRef\(messages\);[\s\S]*await nextTick\(\);\s*if \(submitDisposed \|\| !currentMessage\.streaming \|\| !isStillCurrent\(\)\) {\s*return;\s*}\s*followSubmitScroll\(currentMessage, anchorAssistantReply, false\);/
   );
+});
+
+test('chat submit image generation mode is derived from the provider model', () => {
+  assert.match(
+    chatSubmitSource,
+    /const shouldGenerateImage = isAutomaticImageGenerationModel\(provider\.value\);[\s\S]*imageGeneration: shouldGenerateImage[\s\S]*if \(useStream\.value && !shouldGenerateImage\)/
+  );
+  assert.match(chatSubmitSource, /openai:\s*new Set\(\['gpt-image-2'\]\)/);
+  assert.match(chatSubmitSource, /xai:\s*new Set\(\['grok-imagine-image', 'grok-imagine-image-quality'\]\)/);
+  assert.match(chatSubmitSource, /gemini:\s*new Set\(\[[\s\S]*'gemini-3\.1-flash-image'[\s\S]*'gemini-3-pro-image'[\s\S]*'gemini-2\.5-flash-image'[\s\S]*\]\)/);
+  assert.doesNotMatch(chatSubmitSource, /flai-chat-image-generation-enabled|toggleImageGeneration|imageGenerationEnabled/);
 });
 
 test('chat submit persisted draft matching avoids candidate list allocations', () => {
