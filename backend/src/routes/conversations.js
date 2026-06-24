@@ -58,6 +58,7 @@ import {
   isImageGenerationModel,
   streamCompletion
 } from '../services/providers.js';
+import { buildContextDirectorPrompt } from '../services/chatContextDirector.js';
 import { renderPromptVariables, resolvePromptUserName } from '../services/promptVariables.js';
 import { saveConversationAppearance } from '../modules/conversationAppearance.js';
 import { withSavepoint } from '../modules/savepoint.js';
@@ -1058,7 +1059,17 @@ export function createConversationsRouter(ctx) {
       .filter(Boolean)
       .join('\n');
 
-    const systemMessages = [{ role: 'system', content: baseSystemPrompt }];
+    const contextDirectorPrompt = buildContextDirectorPrompt({
+      worldBookContext,
+      worldBookEntries,
+      modSystemPrompt,
+      npcBehaviorPrompt,
+      talentPrompt
+    });
+    const systemMessages = [
+      { role: 'system', content: baseSystemPrompt },
+      { role: 'system', content: contextDirectorPrompt }
+    ];
     if (presetSystemPrompt.trim()) {
       systemMessages.push({ role: 'system', content: presetSystemPrompt.trim() });
     }

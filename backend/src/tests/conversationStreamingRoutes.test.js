@@ -363,6 +363,93 @@ test('chat image generation rejects unsupported xAI lite image model before prov
   }
 });
 
+test('chat completion inserts context director between base and preset system prompts', async () => {
+  const database = createAppDatabase(':memory:');
+  const userId = 'chat-context-director-user';
+  const conversationId = 'chat-context-director-conversation';
+  insertUser(database, userId);
+  const character = createCharacter(database, userId, {
+    name: 'DirectorChar',
+    persona: 'Speaks carefully.',
+    visibility: 'private'
+  });
+  const worldBook = createWorldBook(database, userId, {
+    name: 'Director Lore',
+    characterId: character.id
+  });
+  createEntry(database, userId, worldBook.id, {
+    name: 'Moon Gate',
+    triggerKeys: 'moon gate',
+    content: 'The moon gate opens only for sworn guests.'
+  });
+  insertConversation(database, { userId, conversationId, characterId: character.id });
+
+  database.prepare(
+    `INSERT INTO presets (id, user_id, name, system_prompt, temperature, max_tokens, top_p, frequency_penalty, presence_penalty, is_default, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  ).run(
+    'director-preset',
+    userId,
+    'Director Preset',
+    'Preset session guidance sentinel.',
+    0.7,
+    2048,
+    1,
+    0,
+    0,
+    1,
+    new Date().toISOString(),
+    new Date().toISOString()
+  );
+
+  const app = createConversationStreamingApp(database, userId, {
+    providerType: 'custom',
+    gatewayName: 'Director Gateway',
+    baseUrl: 'https://director-provider.test/v1',
+    model: 'director-model'
+  });
+  const originalFetch = globalThis.fetch;
+  let providerBody = null;
+  globalThis.fetch = async (url, options) => {
+    const href = String(url);
+    if (href.startsWith('http://127.0.0.1:')) {
+      return originalFetch(url, options);
+    }
+    providerBody = JSON.parse(options.body);
+    return new Response(JSON.stringify({
+      choices: [{ message: { content: 'Director reply.' } }]
+    }), { headers: { 'Content-Type': 'application/json' } });
+  };
+
+  try {
+    await withServer(app, async (baseUrl) => {
+      const response = await fetch(`${baseUrl}/api/conversations/${conversationId}/messages`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          content: 'approach the moon gate',
+          stream: false
+        })
+      });
+
+      assert.equal(response.status, 200);
+      assert.equal(providerBody.messages[0].role, 'system');
+      assert.match(providerBody.messages[0].content, /DirectorChar/);
+      assert.match(providerBody.messages[0].content, /The moon gate opens only for sworn guests/);
+      assert.equal(providerBody.messages[1].role, 'system');
+      assert.match(providerBody.messages[1].content, /Context priority and conflict handling/);
+      assert.match(providerBody.messages[1].content, /1\. Explicit user instruction/);
+      assert.match(providerBody.messages[1].content, /matched world book entries/i);
+      assert.equal(providerBody.messages[2].role, 'system');
+      assert.equal(providerBody.messages[2].content, 'Preset session guidance sentinel.');
+      assert.equal(providerBody.messages.at(-1).role, 'user');
+      assert.equal(providerBody.messages.at(-1).content, 'approach the moon gate');
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 function createConversationStreamingApp(database, userId, providerOverrides = {}) {
   const providerSettings = {
     providerType: 'deepseek',
