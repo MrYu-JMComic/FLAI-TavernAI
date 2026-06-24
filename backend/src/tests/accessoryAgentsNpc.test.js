@@ -30,8 +30,10 @@ test('NPC accessory agent keeps automatic behavior rules conservative', () => {
 });
 
 test('NPC accessory agent prompt describes status aliases and memory sealing', () => {
-  assert.match(accessoryAgentsSource, /Update status when the reply clearly says an NPC left/);
+  assert.match(accessoryAgentsSource, /Update status when the current turn clearly says an NPC left/);
   assert.match(accessoryAgentsSource, /Aliases are exact alternate ways this same individual is called/);
   assert.match(accessoryAgentsSource, /generic (?:section titles|roles)/i);
   assert.match(accessoryAgentsSource, /memorySealed/);
+  assert.match(accessoryAgentsSource, /current turn/i);
+  assert.match(accessoryAgentsSource, /Do not convert world lore, prior history, plans, examples, or unchanged state into NPC memory/);
 });

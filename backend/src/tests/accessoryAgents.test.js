@@ -78,6 +78,73 @@ test('accessory skill payloads build active flags with direct own-key loops', ()
   assert.doesNotMatch(accessoryAgentsSource, /Object\.keys\(skills\)/);
 });
 
+test('provider-backed accessory agents receive current-turn observation windows', async () => {
+  const env = setupConversation({
+    statusBarAgent: skill(true),
+    npcAgent: skill(true),
+    economyAgent: skill(true)
+  });
+  const statusBar = upsertStatusBar(env.db, env.userId, env.conversation.id, {
+    name: 'State',
+    variables: [{ name: 'HP', value: 100, max: 100 }],
+    template: ''
+  });
+  const capturedBodies = [];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (_url, request) => {
+    const body = JSON.parse(request.body);
+    capturedBodies.push(body);
+    let toolName = '';
+    for (const tool of body.tools || []) {
+      const name = tool?.function?.name || '';
+      if (name) {
+        toolName = name;
+        break;
+      }
+    }
+    if (toolName === 'update_status_bar') {
+      return jsonResponse({
+        choices: [{ message: { role: 'assistant', content: null, tool_calls: [] } }]
+      });
+    }
+    if (toolName === 'upsert_npc') {
+      return jsonResponse({
+        choices: [{ message: { role: 'assistant', content: null, tool_calls: [] } }]
+      });
+    }
+    if (toolName === 'record_economy_transaction') {
+      return jsonResponse({
+        choices: [{ message: { role: 'assistant', content: null, tool_calls: [] } }]
+      });
+    }
+    return jsonResponse({ choices: [{ message: { role: 'assistant', content: 'done' } }] });
+  };
+
+  try {
+    await runAccessoryAgents({
+      db: env.db,
+      userId: env.userId,
+      conversation: env.conversation,
+      character: env.character,
+      userMessage: { content: 'I pay Mira 5 gold for a room and ask where the cellar is.' },
+      assistantMessage: { content: 'Mira accepts 5 gold and points toward the cellar stairs.' },
+      settings: providerSettings(),
+      statusBar
+    });
+
+    assert.equal(capturedBodies.length, 3);
+    for (const body of capturedBodies) {
+      const systemMessage = body.messages.find((message) => message.role === 'system');
+      const userPayload = JSON.parse(body.messages.find((message) => message.role === 'user').content);
+      assert.match(systemMessage.content, /current turn/i);
+      assert.equal(userPayload.observationWindow.user, 'I pay Mira 5 gold for a room and ask where the cellar is.');
+      assert.equal(userPayload.observationWindow.assistant, 'Mira accepts 5 gold and points toward the cellar stairs.');
+    }
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test('advanced settings text fields merge without filter join arrays', () => {
   const merged = mergeAdvancedSettings(
     {

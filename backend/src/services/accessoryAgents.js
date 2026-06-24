@@ -35,6 +35,7 @@ export async function runAccessoryAgents({
   userId,
   conversation,
   character,
+  userMessage,
   assistantMessage,
   settings,
   statusBar,
@@ -42,20 +43,21 @@ export async function runAccessoryAgents({
 }) {
   const { skills, active } = getAccessorySkillsPayload(conversation, statusBar);
   const jobs = [];
+  const observationWindow = buildObservationWindow(userMessage, assistantMessage);
 
   if (active.statusBarAgent) {
     jobs.push(runAgentJob('statusBarAgent', skills.statusBarAgent, emit, () =>
-      runStatusBarAgent({ db, userId, conversation, assistantMessage, settings, statusBar, skill: skills.statusBarAgent })
+      runStatusBarAgent({ db, userId, conversation, assistantMessage, observationWindow, settings, statusBar, skill: skills.statusBarAgent })
     ));
   }
   if (active.npcAgent) {
     jobs.push(runAgentJob('npcAgent', skills.npcAgent, emit, () =>
-      runNpcAgent({ db, userId, conversation, character, assistantMessage, settings, skill: skills.npcAgent })
+      runNpcAgent({ db, userId, conversation, character, assistantMessage, observationWindow, settings, skill: skills.npcAgent })
     ));
   }
   if (active.economyAgent) {
     jobs.push(runAgentJob('economyAgent', skills.economyAgent, emit, () =>
-      runEconomyAgent({ db, userId, conversation, assistantMessage, settings, skill: skills.economyAgent })
+      runEconomyAgent({ db, userId, conversation, assistantMessage, observationWindow, settings, skill: skills.economyAgent })
     ));
   }
   if (active.cgScene) {
@@ -93,7 +95,7 @@ async function runAgentJob(skill, config, emit, handler) {
   return payload;
 }
 
-async function runStatusBarAgent({ db, userId, conversation, assistantMessage, settings, statusBar, skill }) {
+async function runStatusBarAgent({ db, userId, conversation, assistantMessage, observationWindow, settings, statusBar, skill }) {
   const statusBarPrompt = normalizeAdvancedSettings(conversation?.settings || {}).statusBarPrompt;
   if (!statusBar?.variables?.length && !statusBarPrompt) {
     return { statusBar: null, updates: [] };
@@ -105,7 +107,7 @@ async function runStatusBarAgent({ db, userId, conversation, assistantMessage, s
   if (hasUsableProvider(settings)) {
     const toolResult = await runToolCompletion(
       withModelOverride(settings, skill),
-      buildStatusBarMessages(currentStatusBar, assistantMessage.content, statusBarPrompt),
+      buildStatusBarMessages(currentStatusBar, observationWindow, statusBarPrompt),
       [statusBarTool(), statusBarSkipTool()],
       async (toolName, args) => {
         if (toolName === 'skip_status_bar_update') {
@@ -151,7 +153,7 @@ async function runStatusBarAgent({ db, userId, conversation, assistantMessage, s
   return { statusBar: nextStatusBar, updates };
 }
 
-async function runNpcAgent({ db, userId, conversation, character, assistantMessage, settings, skill }) {
+async function runNpcAgent({ db, userId, conversation, character, assistantMessage, observationWindow, settings, skill }) {
   const recorded = [];
   const behaviors = [];
   const npcs = [];
@@ -159,7 +161,7 @@ async function runNpcAgent({ db, userId, conversation, character, assistantMessa
   if (hasUsableProvider(settings)) {
     await runToolCompletion(
       withModelOverride(settings, skill),
-      buildNpcMessages(character, assistantMessage.content),
+      buildNpcMessages(character, observationWindow),
       [npcUpsertTool(), npcMemoryTool(), npcBehaviorTool()],
       async (toolName, args) => {
         if (toolName === 'upsert_npc') {
@@ -217,13 +219,13 @@ async function runNpcAgent({ db, userId, conversation, character, assistantMessa
   return { npcs, memories: recorded, behaviors };
 }
 
-async function runEconomyAgent({ db, userId, conversation, assistantMessage, settings, skill }) {
+async function runEconomyAgent({ db, userId, conversation, assistantMessage, observationWindow, settings, skill }) {
   const transactions = [];
 
   if (hasUsableProvider(settings)) {
     await runToolCompletion(
       withModelOverride(settings, skill),
-      buildEconomyMessages(assistantMessage.content),
+      buildEconomyMessages(observationWindow),
       [economyTool()],
       async (toolName, args) => {
         if (toolName !== 'record_economy_transaction') {
@@ -266,14 +268,23 @@ function withModelOverride(settings, skill = {}) {
   };
 }
 
-function buildStatusBarMessages(statusBar, content, statusBarPrompt = '') {
+function buildObservationWindow(userMessage, assistantMessage) {
+  return {
+    user: String(userMessage?.content || '').trim(),
+    assistant: String(assistantMessage?.content || '').trim()
+  };
+}
+
+function buildStatusBarMessages(statusBar, observationWindow, statusBarPrompt = '') {
   return [
     {
       role: 'system',
       content: [
         'You are a state bar updater for a roleplay chat.',
-        'Call update_status_bar only when the assistant reply clearly changes one or more variables.',
+        'Use only the current turn observation window as evidence for changes.',
+        'Call update_status_bar only when the current turn clearly changes one or more variables.',
         'Call skip_status_bar_update when no status value should change, and do not write explanatory prose instead.',
+        'Do not convert world lore, prior history, plans, examples, hypotheticals, or unchanged state into status updates.',
         'The variable value can be a number for meters or a short string for profile/status text.',
         'Pay close attention to short text fields for outfit, clothing, equipment, carried items, location, mood, and memory.',
         'Template rows may combine multiple child variables, for example "Location = {{Region}} > {{Place}}".',
@@ -294,7 +305,8 @@ function buildStatusBarMessages(statusBar, content, statusBarPrompt = '') {
         variables: statusBar.variables,
         template: statusBar.template || '',
         templateHints: buildStatusBarTemplateHints(statusBar.template || ''),
-        reply: content
+        observationWindow,
+        reply: observationWindow.assistant
       })
     }
   ];
@@ -379,18 +391,20 @@ function normalizeStatusTemplateText(value = '') {
     .trim();
 }
 
-function buildNpcMessages(character, content) {
+function buildNpcMessages(character, observationWindow) {
   return [
     {
       role: 'system',
       content: [
         'You are an NPC management assistant for a roleplay chat.',
-        'Call upsert_npc for named side characters that clearly appear in the reply.',
-        'Update currentLocation when the reply clearly places or moves an NPC. Use concise physical locations, and do not infer a location from vague presence.',
-        'Update status when the reply clearly says an NPC left, permanently left, died, is on a mission, follows, or has another stable custom state.',
+        'Use only the current turn observation window as evidence for NPC updates.',
+        'Call upsert_npc for named side characters that clearly appear in the current turn.',
+        'Update currentLocation when the current turn clearly places or moves an NPC. Use concise physical locations, and do not infer a location from vague presence.',
+        'Update status when the current turn clearly says an NPC left, permanently left, died, is on a mission, follows, or has another stable custom state.',
         'Aliases are exact alternate ways this same individual is called. Stable nicknames or titles count only when they uniquely identify this NPC. Generic roles, vague references, pronouns, and group labels do not count.',
         'Call record_npc_memory only when there is a concise useful memory about that side character.',
         'Prefer record_npc_memory for observations, facts, relationship changes, opinions, emotions, and events.',
+        'Do not convert world lore, prior history, plans, examples, or unchanged state into NPC memory.',
         'Call record_npc_behavior only for explicit, stable, reusable future rules with a clear trigger condition.',
         'Do not create behavior rules for ordinary dialogue, one-time actions, temporary moods, scene movement, or details already covered by memory.',
         'When unsure, skip record_npc_behavior because too many behavior rules can over-constrain the character.',
@@ -402,7 +416,8 @@ function buildNpcMessages(character, content) {
       role: 'user',
       content: JSON.stringify({
         mainCharacter: character?.name || '',
-        reply: content
+        observationWindow,
+        reply: observationWindow.assistant
       })
     }
   ];
@@ -460,17 +475,25 @@ function npcBehaviorTool() {
   };
 }
 
-function buildEconomyMessages(content) {
+function buildEconomyMessages(observationWindow) {
   return [
     {
       role: 'system',
       content: [
         'You extract explicit economy transactions from a roleplay reply.',
-        'Call record_economy_transaction only for clear gains, spending, rewards, penalties, trades, or transfers.',
+        'Use only the current turn observation window as evidence for transactions.',
+        'Call record_economy_transaction only for clear gains, spending, rewards, penalties, trades, or transfers in the current turn.',
+        'Do not convert world lore, prior history, plans, examples, hypotheticals, or unchanged balances into transactions.',
         'If no transaction is explicit, do not call a tool.'
       ].join('\n')
     },
-    { role: 'user', content }
+    {
+      role: 'user',
+      content: JSON.stringify({
+        observationWindow,
+        reply: observationWindow.assistant
+      })
+    }
   ];
 }
 
