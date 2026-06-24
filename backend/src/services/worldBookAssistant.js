@@ -65,6 +65,14 @@ const worldBookTools = [
   }
 ];
 
+const worldBookQualityInstructions = [
+  'Break lore into atomic entries: one entry should cover one person, place, faction, item, rule, event, relationship, or secret.',
+  'Trigger keys should be exact names, aliases, locations, factions, items, events, and recurring secrets, written as comma-separated values.',
+  'Choose injection positions intentionally: before_char for durable setting/context, after_char for live scene pressure, at_start for global instructions, and at_depth for background facts that can sit deeper in the prompt.',
+  'Do not dump the whole setting into every entry; keep content concise and only include facts that help the model roleplay the triggered subject.',
+  'Use alwaysActive, regexMode, probability, sticky, cooldown, delay, and group sparingly; each advanced control needs a clear gameplay or narrative reason.'
+];
+
 export async function completeWorldBookDraft(settings, request = {}) {
   const { requirement = '', current = {}, signal } = nullToEmptyObject(request);
   const draft = normalizeDraft(current);
@@ -77,6 +85,7 @@ export async function completeWorldBookDraft(settings, request = {}) {
         content: [
           'You are a lorebook / world-info architect for FLAI Tavern AI.',
           'You must use tools to create a structured world book draft; do not answer with prose only.',
+          ...worldBookQualityInstructions,
           'Design entries like SillyTavern World Info: compact facts activated by keywords, with clear trigger keys and concise injected content.',
           'Prefer specific nouns, aliases, locations, factions, rules, items, events, relationships, and recurring secrets as trigger keys.',
           'Keep each entry self-contained and useful when injected into chat context. Avoid dumping the entire setting into every entry.',
@@ -137,6 +146,7 @@ export async function streamWorldBookDraft(settings, request = {}) {
         content: [
           'You are a lorebook / world-info architect for FLAI Tavern AI.',
           'You must use tools to create a structured world book draft; do not answer with prose only.',
+          ...worldBookQualityInstructions,
           'Design entries like SillyTavern World Info: compact facts activated by keywords, with clear trigger keys and concise injected content.',
           'Prefer specific nouns, aliases, locations, factions, rules, items, events, relationships, and recurring secrets as trigger keys.',
           'Keep each entry self-contained and useful when injected into chat context. Avoid dumping the entire setting into every entry.',
