@@ -220,6 +220,13 @@ const statusBarBlueprintInstructions = [
   'Keep statusBarBlueprint.template syntactically valid: balanced HTML tags, balanced quotes, balanced CSS braces, and balanced placeholders. If unsure, leave template empty and rely on variables.'
 ];
 
+const characterQualityInstructions = [
+  'Persona fields are durable roleplay contracts: define identity, voice, boundaries, decision habits, and stable relationship posture instead of vague adjectives.',
+  'Opening messages must be playable first scenes: include setting, immediate hook, and space for the user to respond; do not summarize the character card.',
+  'Tie extension and status suggestions to observable roleplay use; do not enable tools, status variables, Mods, or render plugins just to fill optional sections.',
+  'Keep character identity separate from world facts and user control. The character should not know hidden lore unless the card explicitly grants that knowledge.'
+];
+
 export async function completeCharacterDraft(settings, request = {}) {
   const { requirement = '', current = {}, user = {}, options: rawOptions = {}, signal } = nullToEmptyObject(request);
   const options = rawOptions ?? {};
@@ -246,6 +253,7 @@ export async function completeCharacterDraft(settings, request = {}) {
           '正则规则只在用户明确需要自动替换、口癖清洗、禁词替换、格式规范时添加。',
           '正则 pattern 必须是 JavaScript 可用正则，避免过宽、灾难性回溯或破坏正常中文内容。',
           'You may call set_character_extensions to suggest world book notes, markdown fold render plugins, opening accessory skill defaults, status bar prompt, initial statusBarBlueprint variables/template, and built-in CSS/JS.',
+          ...characterQualityInstructions,
           ...statusBarBlueprintInstructions,
           `Only modify these enabled sections: ${formatEnabledSectionList(enabledSections)}.`,
           'If a section is not enabled, do not call tools for it and do not include it in arguments.',
@@ -312,6 +320,7 @@ export async function streamCharacterDraft(settings, request = {}) {
           '正则规则只在用户明确需要自动替换、口癖清洗、禁词替换、格式规范时添加。',
           '正则 pattern 必须是 JavaScript 可用正则，避免过宽、灾难性回溯或破坏正常中文内容。',
           'You may call set_character_extensions to suggest world book notes, markdown fold render plugins, opening accessory skill defaults, status bar prompt, initial statusBarBlueprint variables/template, and built-in CSS/JS.',
+          ...characterQualityInstructions,
           ...statusBarBlueprintInstructions,
           `Only modify these enabled sections: ${formatEnabledSectionList(enabledSections)}.`,
           'If a section is not enabled, do not call tools for it and do not include it in arguments.',

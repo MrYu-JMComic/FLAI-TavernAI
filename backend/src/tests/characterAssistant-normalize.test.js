@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import test from 'node:test';
 
-const { completeCharacterDraft } = await import('../services/characterAssistant.js');
+const { completeCharacterDraft, streamCharacterDraft } = await import('../services/characterAssistant.js');
 
 function jsonResponse(body, init = {}) {
   return new Response(JSON.stringify(body), {
@@ -107,6 +107,53 @@ test('character assistant normalizes generation options with direct defaults loo
     assert.match(snippet, /for \(const key in defaults\)/);
     assert.doesNotMatch(snippet, /Object\.fromEntries/);
     assert.doesNotMatch(snippet, /Object\.entries\(defaults\)\.map/);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('character assistant prompts include shared quality guidance', async () => {
+  const originalFetch = globalThis.fetch;
+  const prompts = [];
+  try {
+    globalThis.fetch = async (_url, request = {}) => {
+      const body = JSON.parse(request.body);
+      prompts.push(body.messages[0].content);
+      return jsonResponse({
+        choices: [{ message: { role: 'assistant', content: 'Done.' } }]
+      });
+    };
+
+    await completeCharacterDraft(
+      {
+        providerType: 'deepseek',
+        gatewayName: 'DeepSeek',
+        baseUrl: 'https://api.deepseek.com',
+        model: 'deepseek-v4-flash',
+        apiKey: 'sk-test',
+        extraBody: {}
+      },
+      { requirement: 'make a playable tavern character', current: {} }
+    );
+
+    await streamCharacterDraft(
+      {
+        providerType: 'deepseek',
+        gatewayName: 'DeepSeek',
+        baseUrl: 'https://api.deepseek.com',
+        model: 'deepseek-v4-flash',
+        apiKey: 'sk-test',
+        extraBody: {}
+      },
+      { requirement: 'make a playable tavern character', current: {} }
+    );
+
+    assert.equal(prompts.length, 2);
+    for (const prompt of prompts) {
+      assert.match(prompt, /Persona fields are durable roleplay contracts/);
+      assert.match(prompt, /Opening messages must be playable first scenes/);
+      assert.match(prompt, /Tie extension and status suggestions to observable roleplay use/);
+    }
   } finally {
     globalThis.fetch = originalFetch;
   }
