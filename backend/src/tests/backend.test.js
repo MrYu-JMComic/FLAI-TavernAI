@@ -64,7 +64,7 @@ const {
 } = await import('../modules/conversationAppearance.js');
 const { branchConversation, getConversationBranches } = await import('../modules/branches.js');
 const { completeCharacterDraft } = await import('../services/characterAssistant.js');
-const { completeWorldBookDraft } = await import('../services/worldBookAssistant.js');
+const { completeWorldBookDraft, streamWorldBookDraft } = await import('../services/worldBookAssistant.js');
 const { createCharactersRouter } = await import('../routes/characters.js');
 const { createConversationsRouter, createSavesRouter } = await import('../routes/conversations.js');
 const { createRegexRouter } = await import('../routes/regex.js');
@@ -1781,6 +1781,124 @@ test('world book assistant normalizes AI draft fields for real entry creation', 
     assert.equal(entry.group, 'noble-rumor');
     assert.equal(entry.role, 2);
     assert.equal(entry.position, 'at_depth');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('world book assistant includes quality guide in complete and stream prompts', async () => {
+  const originalFetch = globalThis.fetch;
+  const settings = {
+    providerType: 'deepseek',
+    gatewayName: 'DeepSeek',
+    baseUrl: 'https://api.deepseek.com',
+    model: 'deepseek-v4-flash',
+    apiKey: 'sk-test',
+    extraBody: {}
+  };
+  const requiredGuideLines = [
+    'Break lore into atomic entries',
+    'Trigger keys should be exact names, aliases, locations, factions, items, events, and recurring secrets',
+    'Choose injection positions intentionally',
+    'Use alwaysActive, regexMode, probability, sticky, cooldown, delay, and group sparingly'
+  ];
+
+  try {
+    const completeBodies = [];
+    globalThis.fetch = async (_url, request = {}) => {
+      const body = JSON.parse(request.body);
+      completeBodies.push(body);
+      if (completeBodies.length === 1) {
+        return jsonResponse({
+          choices: [
+            {
+              message: {
+                role: 'assistant',
+                content: null,
+                tool_calls: [
+                  {
+                    id: 'wb-quality-entry',
+                    type: 'function',
+                    function: {
+                      name: 'replace_world_book_entries',
+                      arguments: JSON.stringify({
+                        entries: [
+                          {
+                            name: 'Lantern Archive',
+                            triggerKeys: 'Lantern Archive,archive',
+                            content: 'The Lantern Archive preserves banned royal maps.'
+                          }
+                        ]
+                      })
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        });
+      }
+
+      return jsonResponse({
+        choices: [{ message: { role: 'assistant', content: 'Done.' } }]
+      });
+    };
+
+    await completeWorldBookDraft(settings, { requirement: 'archive lore' });
+
+    const completePrompt = completeBodies[0].messages[0].content;
+    for (const line of requiredGuideLines) {
+      assert.match(completePrompt, new RegExp(line));
+    }
+
+    const streamBodies = [];
+    globalThis.fetch = async (_url, request = {}) => {
+      const body = JSON.parse(request.body);
+      streamBodies.push(body);
+      if (streamBodies.length === 1) {
+        return new Response(sseStream([
+          `data: ${JSON.stringify({
+            choices: [
+              {
+                delta: {
+                  tool_calls: [
+                    {
+                      index: 0,
+                      id: 'wb-quality-stream-entry',
+                      function: {
+                        name: 'replace_world_book_entries',
+                        arguments: JSON.stringify({
+                          entries: [
+                            {
+                              name: 'Harbor Oath',
+                              triggerKeys: 'Harbor Oath,oath',
+                              content: 'The Harbor Oath binds every dock captain to protect refugees.'
+                            }
+                          ]
+                        })
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          })}`,
+          'data: [DONE]'
+        ]));
+      }
+
+      return new Response(sseStream([
+        'data: {"choices":[{"delta":{"content":"Done."}}]}',
+        'data: [DONE]'
+      ]));
+    };
+
+    await streamWorldBookDraft(settings, { requirement: 'harbor oath lore', emit: () => {} });
+
+    const streamPrompt = streamBodies[0].messages[0].content;
+    for (const line of requiredGuideLines) {
+      assert.match(streamPrompt, new RegExp(line));
+    }
   } finally {
     globalThis.fetch = originalFetch;
   }
