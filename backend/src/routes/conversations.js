@@ -418,6 +418,7 @@ export function createConversationsRouter(ctx) {
       userId: request.auth.user.id,
       conversation,
       character,
+      userMessage,
       assistantMessage,
       settings: settings.value,
       statusBar: getStatusBar(db, request.auth.user.id, conversation.id) || statusBar
@@ -1329,6 +1330,7 @@ export function createConversationsRouter(ctx) {
         userId,
         conversation,
         character,
+        userMessage,
         assistantMessage,
         settings,
         statusBar: getStatusBar(db, userId, conversation.id) || statusBar
