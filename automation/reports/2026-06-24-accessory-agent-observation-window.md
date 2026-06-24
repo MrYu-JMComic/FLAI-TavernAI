@@ -28,6 +28,8 @@ The deterministic fallback parsers still read the assistant reply directly, so e
 
 No database schema, frontend UI, provider transport, or accessory tool schemas changed. Existing duplicate-memory, hidden-NPC, behavior-cap, and ownership guards remain in place.
 
+Post-merge validation exposed one source-test helper regex that assumed LF-only line endings. The test was made CRLF-tolerant without changing production behavior.
+
 ## Next Recommended Task
 
 Move to B-stage: improve the character draft assistant so generated character cards include steadier persona boundaries, better first-message scaffolding, and more useful extension/status suggestions.

@@ -345,13 +345,13 @@ test('status bar agent skips unchanged variable writes and update badges', async
     /const nextVariables = mergeStatusVariables\(currentStatusBar\.variables, updates\);[\s\S]*if \(nextVariables === currentStatusBar\.variables\) \{[\s\S]*return \{ statusBar, updates: \[\] \};/
   );
 
-  const normalizeUpdatesHelper = accessoryAgentsSource.match(/function normalizeStatusUpdates[\s\S]*?\n}\n\nfunction mergeStatusVariables/);
+  const normalizeUpdatesHelper = accessoryAgentsSource.match(/function normalizeStatusUpdates[\s\S]*?\r?\n}\r?\n\r?\nfunction mergeStatusVariables/);
   assert.ok(normalizeUpdatesHelper);
   assert.match(normalizeUpdatesHelper[0], /const normalized = \[\];/);
   assert.match(normalizeUpdatesHelper[0], /normalized\.length < STATUS_BAR_VARIABLE_LIMIT/);
   assert.doesNotMatch(normalizeUpdatesHelper[0], /\.map\(|\.filter\(|\.slice\(/);
 
-  const mergeHelper = accessoryAgentsSource.match(/function mergeStatusVariables[\s\S]*?\n}\n\nfunction statusVariableKey/);
+  const mergeHelper = accessoryAgentsSource.match(/function mergeStatusVariables[\s\S]*?\r?\n}\r?\n\r?\nfunction statusVariableKey/);
   assert.ok(mergeHelper);
   assert.match(mergeHelper[0], /const current = applyVariableUpdates\(sourceVariables, updates\);/);
   assert.match(mergeHelper[0], /if \(nextVariables === current\) \{[\s\S]*nextVariables = current\.slice\(\);/);
