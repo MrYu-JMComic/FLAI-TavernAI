@@ -64,7 +64,9 @@ const importFileName = ref('');
 const importError = ref('');
 const importLoading = ref(false);
 const scrollContainerRef = ref(null);
+const pageScrollContainerRef = ref(null);
 const containerWidth = ref(0);
+const virtualScrollMargin = ref(0);
 const isMobileListLayout = ref(false);
 const CARD_MIN_WIDTH = 320;
 const CARD_ESTIMATED_HEIGHT = 372;
@@ -84,8 +86,9 @@ const characterRowCount = computed(() => Math.ceil(characters.value.length / col
 
 const virtualizerOptions = computed(() => ({
   count: characterRowCount.value,
-  getScrollElement: () => scrollContainerRef.value,
+  getScrollElement: () => pageScrollContainerRef.value || scrollContainerRef.value,
   estimateSize: () => (containerWidth.value && containerWidth.value < 620 ? MOBILE_CARD_ESTIMATED_HEIGHT : CARD_ESTIMATED_HEIGHT) + GRID_GAP,
+  scrollMargin: virtualScrollMargin.value,
   overscan: 3
 }));
 
@@ -440,6 +443,24 @@ function measureContainerWidth() {
   if (scrollContainerRef.value) {
     containerWidth.value = scrollContainerRef.value.clientWidth;
   }
+  measureVirtualScrollMargin();
+}
+
+function syncPageScrollContainer() {
+  pageScrollContainerRef.value = scrollContainerRef.value?.closest('.page-shell') || scrollContainerRef.value;
+}
+
+function measureVirtualScrollMargin() {
+  const listElement = scrollContainerRef.value;
+  const scrollElement = pageScrollContainerRef.value;
+  if (!listElement || !scrollElement || listElement === scrollElement) {
+    virtualScrollMargin.value = 0;
+    return;
+  }
+
+  const listRect = listElement.getBoundingClientRect();
+  const scrollRect = scrollElement.getBoundingClientRect();
+  virtualScrollMargin.value = Math.max(0, Math.round(listRect.top - scrollRect.top + scrollElement.scrollTop));
 }
 
 let resizeObserver = null;
@@ -507,12 +528,20 @@ function refreshScrollMeasurements() {
     resizeObserver = null;
   }
 
+  syncPageScrollContainer();
   cancelContainerWidthMeasurement();
   measureContainerWidth();
   if (scrollContainerRef.value && typeof ResizeObserver !== 'undefined') {
     resizeObserver = new ResizeObserver(scheduleContainerWidthMeasurement);
     resizeObserver.observe(scrollContainerRef.value);
   }
+}
+
+async function refreshScrollMeasurementsAfterRender() {
+  await nextTick();
+  if (!isHomeActive()) return;
+  refreshScrollMeasurements();
+  rowVirtualizer.measure?.();
 }
 
 onMounted(async () => {
@@ -549,6 +578,17 @@ watch(isMobileListLayout, async () => {
   if (!isHomeActive()) return;
   refreshScrollMeasurements();
 });
+watch(
+  [
+    () => loading.value,
+    () => tagLoading.value,
+    () => characters.value.length,
+    () => topTags.value.length,
+    () => Boolean(importPreview.value),
+    () => Boolean(importError.value)
+  ],
+  refreshScrollMeasurementsAfterRender
+);
 
 function resetHomeAsyncScope() {
   characterLoadToken += 1;
@@ -1196,7 +1236,7 @@ function formatCount(value) {
           class="home-character-row"
           :style="{
             position: 'absolute',
-            top: virtualRow.start + 'px',
+            top: (virtualRow.start - virtualScrollMargin) + 'px',
             left: 0,
             width: '100%',
             paddingBottom: GRID_GAP + 'px'

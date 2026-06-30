@@ -2015,6 +2015,41 @@ function scrollActiveSettingsTab(navRef, sectionId) {
   tab.scrollIntoView({ behavior: 'auto', block: 'nearest', inline: 'center' });
 }
 
+function getSettingsScrollContainer(navRef) {
+  if (typeof document === 'undefined') {
+    return null;
+  }
+  return navRef.value?.closest?.('.page-shell') || document.querySelector('.page-shell');
+}
+
+function getSettingsTopbarBottom() {
+  if (typeof document === 'undefined') {
+    return 0;
+  }
+  const topbarBottom = document.querySelector('.topbar')?.getBoundingClientRect().bottom;
+  return Math.max(0, Math.ceil(Number.isFinite(topbarBottom) ? topbarBottom : 0));
+}
+
+function getSettingsSectionActivationOffset(navRef) {
+  const navHeight = navRef.value?.getBoundingClientRect().height || 0;
+  return getSettingsTopbarBottom() + navHeight + 14;
+}
+
+function getSettingsScrollTop(navRef) {
+  const scroller = getSettingsScrollContainer(navRef);
+  return scroller ? scroller.scrollTop : window.scrollY || 0;
+}
+
+function scrollSettingsPageTo(navRef, top) {
+  const roundedTop = Math.max(0, Math.round(top));
+  const scroller = getSettingsScrollContainer(navRef);
+  if (scroller && typeof scroller.scrollTo === 'function') {
+    scroller.scrollTo({ top: roundedTop, behavior: 'smooth' });
+    return;
+  }
+  window.scrollTo({ top: roundedTop, behavior: 'smooth' });
+}
+
 function scrollToSettingsSection(prefix, activeSectionRef, sections, navRef, sectionId) {
   if (!setActiveSettingsSection(activeSectionRef, sections, sectionId)) {
     return;
@@ -2022,7 +2057,8 @@ function scrollToSettingsSection(prefix, activeSectionRef, sections, navRef, sec
   scrollActiveSettingsTab(navRef, sectionId);
   const el = document.getElementById(`${prefix}-${sectionId}`);
   if (el) {
-    el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    const top = el.getBoundingClientRect().top + getSettingsScrollTop(navRef) - getSettingsSectionActivationOffset(navRef);
+    scrollSettingsPageTo(navRef, top);
   }
 }
 

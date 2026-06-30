@@ -249,7 +249,23 @@ test('SettingsView direct-scans Mod select-all and extension sections', () => {
   );
   assert.match(
     settingsViewScript,
-    /function scrollToSettingsSection\(prefix, activeSectionRef, sections, navRef, sectionId\) \{\s*if \(!setActiveSettingsSection\(activeSectionRef, sections, sectionId\)\) \{\s*return;\s*\}[\s\S]*document\.getElementById\(`\$\{prefix\}-\$\{sectionId\}`\);/
+    /function getSettingsScrollContainer\(navRef\) \{[\s\S]*navRef\.value\?\.closest\?\.\('\.page-shell'\)[\s\S]*document\.querySelector\('\.page-shell'\);[\s\S]*\}/
+  );
+  assert.match(
+    settingsViewScript,
+    /function getSettingsTopbarBottom\(\) \{[\s\S]*document\.querySelector\('\.topbar'\)\?\.getBoundingClientRect\(\)\.bottom[\s\S]*\}/
+  );
+  assert.match(
+    settingsViewScript,
+    /function getSettingsSectionActivationOffset\(navRef\) \{[\s\S]*const navHeight = navRef\.value\?\.getBoundingClientRect\(\)\.height \|\| 0;[\s\S]*return getSettingsTopbarBottom\(\) \+ navHeight \+ 14;[\s\S]*\}/
+  );
+  assert.match(
+    settingsViewScript,
+    /function scrollSettingsPageTo\(navRef, top\) \{[\s\S]*const scroller = getSettingsScrollContainer\(navRef\);[\s\S]*scroller\.scrollTo\(\{ top: roundedTop, behavior: 'smooth' \}\);[\s\S]*window\.scrollTo\(\{ top: roundedTop, behavior: 'smooth' \}\);[\s\S]*\}/
+  );
+  assert.match(
+    settingsViewScript,
+    /function scrollToSettingsSection\(prefix, activeSectionRef, sections, navRef, sectionId\) \{\s*if \(!setActiveSettingsSection\(activeSectionRef, sections, sectionId\)\) \{\s*return;\s*\}[\s\S]*document\.getElementById\(`\$\{prefix\}-\$\{sectionId\}`\);[\s\S]*const top = el\.getBoundingClientRect\(\)\.top \+ getSettingsScrollTop\(navRef\) - getSettingsSectionActivationOffset\(navRef\);[\s\S]*scrollSettingsPageTo\(navRef, top\);/
   );
   assert.match(
     settingsViewScript,
@@ -263,6 +279,7 @@ test('SettingsView direct-scans Mod select-all and extension sections', () => {
   assert.doesNotMatch(settingsViewScript, /function setActiveExtensionSection/);
   assert.doesNotMatch(settingsViewScript, /function hasExtensionSection/);
   assert.doesNotMatch(settingsViewScript, /function scrollActiveExtensionTab/);
+  assert.doesNotMatch(settingsViewScript, /el\.scrollIntoView\(\{ behavior: 'smooth', block: 'start' \}\);/);
 });
 
 test('SettingsView preserves unchanged extension list references during refreshes', () => {

@@ -132,6 +132,7 @@ const backgroundUploading = reactive({
 const backgroundUploadTokens = {};
 let avatarUploadToken = 0;
 let sectionNavRafId = null;
+let characterScrollListenerTarget = null;
 let characterDraftBaselineSerialized = '';
 let characterDraftSaveTimer = null;
 let characterDraftInterval = null;
@@ -634,12 +635,35 @@ function syncAiPanelResizeObserver(el = aiPanelRef.value) {
 
 function onWindowResize() {
   syncAiPanelResizeObserver();
+  syncCharacterScrollListener();
   scheduleAiPanelLayoutSync();
   scheduleCharacterSectionNavSync();
 }
 
-function onWindowScroll() {
+function onCharacterScroll() {
   scheduleCharacterSectionNavSync();
+}
+
+function syncCharacterScrollListener() {
+  const nextTarget = getCharacterScrollContainer() || (typeof window !== 'undefined' ? window : null);
+  if (characterScrollListenerTarget === nextTarget) {
+    return;
+  }
+  if (characterScrollListenerTarget) {
+    characterScrollListenerTarget.removeEventListener('scroll', onCharacterScroll);
+  }
+  characterScrollListenerTarget = nextTarget;
+  if (characterScrollListenerTarget) {
+    characterScrollListenerTarget.addEventListener('scroll', onCharacterScroll, { passive: true });
+  }
+}
+
+function stopCharacterScrollListener() {
+  if (!characterScrollListenerTarget) {
+    return;
+  }
+  characterScrollListenerTarget.removeEventListener('scroll', onCharacterScroll);
+  characterScrollListenerTarget = null;
 }
 
 watch(aiPanelRef, (el) => {
@@ -649,7 +673,7 @@ watch(aiPanelRef, (el) => {
 
 onMounted(() => {
   window.addEventListener('resize', onWindowResize);
-  window.addEventListener('scroll', onWindowScroll, { passive: true });
+  syncCharacterScrollListener();
   onWindowResize();
 });
 
@@ -677,8 +701,8 @@ onBeforeUnmount(() => {
   stopAiPanelResizeObserver();
   cancelAiPanelLayoutSync();
   cancelCharacterSectionNavSync();
+  stopCharacterScrollListener();
   window.removeEventListener('resize', onWindowResize);
-  window.removeEventListener('scroll', onWindowScroll);
 });
 
 const canEdit = computed(() => !isEditing.value || form.canEdit !== false);
@@ -721,8 +745,8 @@ function scrollToSection(id) {
   }
   setActiveCharacterSection(id);
   scrollActiveSectionTab(id);
-  const top = scrollTarget.getBoundingClientRect().top + window.scrollY - getCharacterSectionActivationOffset();
-  window.scrollTo({ top: Math.max(0, Math.round(top)), behavior: 'smooth' });
+  const top = scrollTarget.getBoundingClientRect().top + getCharacterScrollTop() - getCharacterSectionActivationOffset();
+  scrollCharacterPageTo(top);
 }
 
 function isSectionVisible(section) {
@@ -847,8 +871,8 @@ function scrollToCharacterWizardStep(sectionId) {
     if (!target) {
       return;
     }
-    const top = target.getBoundingClientRect().top + window.scrollY - getCharacterSectionActivationOffset();
-    window.scrollTo({ top: Math.max(0, Math.round(top)), behavior: 'smooth' });
+    const top = target.getBoundingClientRect().top + getCharacterScrollTop() - getCharacterSectionActivationOffset();
+    scrollCharacterPageTo(top);
   });
 }
 
@@ -859,6 +883,48 @@ function hasVisibleFormSection(sectionId, sections = visibleFormSections.value) 
     }
   }
   return false;
+}
+
+function getCharacterScrollContainer() {
+  if (typeof document === 'undefined') {
+    return null;
+  }
+  return sectionNavRef.value?.closest?.('.page-shell') || document.querySelector('.page-shell');
+}
+
+function getCharacterScrollTop() {
+  const scroller = getCharacterScrollContainer();
+  return scroller ? scroller.scrollTop : window.scrollY || 0;
+}
+
+function scrollCharacterPageTo(top) {
+  const roundedTop = Math.max(0, Math.round(top));
+  const scroller = getCharacterScrollContainer();
+  if (scroller && typeof scroller.scrollTo === 'function') {
+    scroller.scrollTo({ top: roundedTop, behavior: 'smooth' });
+    return;
+  }
+  window.scrollTo({ top: roundedTop, behavior: 'smooth' });
+}
+
+function getCharacterScrollState() {
+  const scroller = getCharacterScrollContainer();
+  if (scroller) {
+    return {
+      scrollTop: scroller.scrollTop,
+      clientHeight: scroller.clientHeight,
+      scrollHeight: scroller.scrollHeight
+    };
+  }
+  const scrollHeight = Math.max(
+    document.documentElement?.scrollHeight || 0,
+    document.body?.scrollHeight || 0
+  );
+  return {
+    scrollTop: window.scrollY || 0,
+    clientHeight: window.innerHeight || 0,
+    scrollHeight
+  };
 }
 
 function getCharacterSectionTarget(id) {
@@ -939,11 +1005,8 @@ function syncActiveSectionFromScroll() {
   if (!nextSectionId) {
     return;
   }
-  const scrollHeight = Math.max(
-    document.documentElement?.scrollHeight || 0,
-    document.body?.scrollHeight || 0
-  );
-  if (lastSectionId && window.innerHeight + window.scrollY >= scrollHeight - 2) {
+  const scrollState = getCharacterScrollState();
+  if (lastSectionId && scrollState.clientHeight + scrollState.scrollTop >= scrollState.scrollHeight - 2) {
     nextSectionId = lastSectionId;
   }
   setActiveCharacterSection(nextSectionId);

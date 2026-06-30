@@ -583,6 +583,9 @@ p {
 }
 
 .home-layout-shell .page-shell {
+  width: 100%;
+  max-width: none;
+  margin: 0;
   min-height: 0;
   padding-top: 0;
   overflow-x: hidden;
@@ -635,6 +638,66 @@ p {
 
 .home-layout-shell .home-workbench {
   padding-top: 28px;
+}
+
+.workspace-layout-shell {
+  min-height: 0;
+  height: 100vh;
+  height: 100svh;
+  height: 100dvh;
+  overflow: hidden;
+}
+
+.workspace-layout-shell .page-shell {
+  width: 100%;
+  max-width: none;
+  margin: 0;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: none;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+  scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
+}
+
+.workspace-layout-shell .page-shell::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+.workspace-layout-shell .page-shell::-webkit-scrollbar-track {
+  border-left: 1px solid var(--scrollbar-track-border);
+  background: var(--scrollbar-track);
+}
+
+.workspace-layout-shell .page-shell::-webkit-scrollbar-thumb {
+  min-height: 56px;
+  border: 2px solid transparent;
+  border-radius: 999px;
+  background:
+    linear-gradient(
+      180deg,
+      var(--scrollbar-thumb),
+      var(--scrollbar-thumb-end)
+    )
+    padding-box;
+}
+
+.workspace-layout-shell .page-shell::-webkit-scrollbar-thumb:hover {
+  background:
+    linear-gradient(
+      180deg,
+      var(--scrollbar-thumb-hover),
+      var(--scrollbar-thumb-hover-end)
+    )
+    padding-box;
+}
+
+.workspace-layout-shell .page-shell::-webkit-scrollbar-corner,
+.workspace-layout-shell .page-shell::-webkit-scrollbar-button {
+  display: none;
 }
 
 .home-control-panel,
@@ -875,6 +938,14 @@ p {
 .extensions-page {
   width: min(1120px, 100%);
   margin: 0 auto;
+}
+
+.workspace-layout-shell .narrow-page,
+.workspace-layout-shell .extensions-page,
+.workspace-layout-shell .preset-page {
+  width: 100%;
+  max-width: none;
+  margin: 0;
 }
 
 .section-heading {
@@ -2018,6 +2089,11 @@ p {
 
 .settings-section-nav .form-section-tab.active {
   transform: none;
+}
+
+.workspace-layout-shell .character-section-nav,
+.workspace-layout-shell .settings-section-nav {
+  top: 0;
 }
 
 section[id^="personal-section-"],
@@ -4196,12 +4272,26 @@ section[id^="extension-section-"] {
     scrollbar-gutter: auto;
   }
 
+  .workspace-layout-shell .page-shell {
+    scrollbar-gutter: auto;
+  }
+
   .home-layout-shell .page-shell::-webkit-scrollbar {
     width: 6px;
     height: 6px;
   }
 
+  .workspace-layout-shell .page-shell::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+
   .home-layout-shell .page-shell::-webkit-scrollbar-track {
+    border-left: 0;
+    background: transparent;
+  }
+
+  .workspace-layout-shell .page-shell::-webkit-scrollbar-track {
     border-left: 0;
     background: transparent;
   }
@@ -10957,13 +11047,13 @@ fieldset.accessory-skills-grid:disabled {
 }
 
 .home-character-scroll {
-  height: calc(100vh - 236px);
-  min-height: 440px;
-  overflow-x: hidden;
-  overflow-y: auto;
+  height: auto;
+  min-height: 0;
+  overflow-x: visible;
+  overflow-y: visible;
   padding: 2px 2px 14px;
   overscroll-behavior: auto;
-  scrollbar-gutter: stable;
+  scrollbar-gutter: auto;
 }
 
 .home-character-list {
@@ -11297,6 +11387,11 @@ fieldset.accessory-skills-grid:disabled {
 @media (max-width: 760px) {
   .home-layout-shell {
     --home-control-sticky-top: 0px;
+    min-height: 100svh;
+    height: 100svh;
+  }
+
+  .workspace-layout-shell {
     min-height: 100svh;
     height: 100svh;
   }

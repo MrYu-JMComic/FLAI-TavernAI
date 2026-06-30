@@ -824,14 +824,38 @@ test('CharacterFormView uses granular sticky section navigation', () => {
     characterFormScript,
     /function hasVisibleFormSection\(sectionId, sections = visibleFormSections\.value\) \{[\s\S]*for \(const section of sections\) \{[\s\S]*if \(section\.id === sectionId\) \{[\s\S]*return true;[\s\S]*return false;/
   );
-  assert.match(characterFormScript, /window\.addEventListener\('scroll', onWindowScroll, \{ passive: true \}\);/);
+  assert.match(characterFormScript, /let characterScrollListenerTarget = null;/);
   assert.match(
     characterFormScript,
-    /onBeforeUnmount\(\(\) => \{[\s\S]*cancelCharacterSectionNavSync\(\);[\s\S]*window\.removeEventListener\('scroll', onWindowScroll\);/
+    /function getCharacterScrollContainer\(\) \{[\s\S]*sectionNavRef\.value\?\.closest\?\.\('\.page-shell'\)[\s\S]*document\.querySelector\('\.page-shell'\);[\s\S]*\}/
   );
   assert.match(
     characterFormScript,
-    /function scrollToSection\(id\) \{[\s\S]*getCharacterSectionTarget\(id\)[\s\S]*window\.scrollTo\(\{ top: Math\.max\(0, Math\.round\(top\)\), behavior: 'smooth' \}\);/
+    /function getCharacterScrollTop\(\) \{[\s\S]*const scroller = getCharacterScrollContainer\(\);[\s\S]*return scroller \? scroller\.scrollTop : window\.scrollY \|\| 0;[\s\S]*\}/
+  );
+  assert.match(
+    characterFormScript,
+    /function scrollCharacterPageTo\(top\) \{[\s\S]*const roundedTop = Math\.max\(0, Math\.round\(top\)\);[\s\S]*scroller\.scrollTo\(\{ top: roundedTop, behavior: 'smooth' \}\);[\s\S]*window\.scrollTo\(\{ top: roundedTop, behavior: 'smooth' \}\);[\s\S]*\}/
+  );
+  assert.match(
+    characterFormScript,
+    /function getCharacterScrollState\(\) \{[\s\S]*clientHeight: scroller\.clientHeight,[\s\S]*scrollHeight: scroller\.scrollHeight[\s\S]*document\.documentElement\?\.scrollHeight[\s\S]*window\.innerHeight[\s\S]*\}/
+  );
+  assert.match(
+    characterFormScript,
+    /function syncCharacterScrollListener\(\) \{[\s\S]*characterScrollListenerTarget\.removeEventListener\('scroll', onCharacterScroll\);[\s\S]*characterScrollListenerTarget = nextTarget;[\s\S]*characterScrollListenerTarget\.addEventListener\('scroll', onCharacterScroll, \{ passive: true \}\);[\s\S]*\}/
+  );
+  assert.match(
+    characterFormScript,
+    /onBeforeUnmount\(\(\) => \{[\s\S]*cancelCharacterSectionNavSync\(\);[\s\S]*stopCharacterScrollListener\(\);/
+  );
+  assert.match(
+    characterFormScript,
+    /function scrollToSection\(id\) \{[\s\S]*getCharacterSectionTarget\(id\)[\s\S]*const top = scrollTarget\.getBoundingClientRect\(\)\.top \+ getCharacterScrollTop\(\) - getCharacterSectionActivationOffset\(\);[\s\S]*scrollCharacterPageTo\(top\);/
+  );
+  assert.match(
+    characterFormScript,
+    /function scrollToCharacterWizardStep\(sectionId\) \{[\s\S]*const top = target\.getBoundingClientRect\(\)\.top \+ getCharacterScrollTop\(\) - getCharacterSectionActivationOffset\(\);[\s\S]*scrollCharacterPageTo\(top\);/
   );
   assert.match(
     characterFormScript,
@@ -847,8 +871,10 @@ test('CharacterFormView uses granular sticky section navigation', () => {
   );
   assert.match(
     characterFormScript,
-    /function syncActiveSectionFromScroll\(\) \{[\s\S]*for \(const section of visibleFormSections\.value\) \{[\s\S]*const target = getCharacterSectionTarget\(section\.id\);[\s\S]*lastSectionId = section\.id;[\s\S]*if \(lastSectionId && window\.innerHeight \+ window\.scrollY >= scrollHeight - 2\) \{[\s\S]*nextSectionId = lastSectionId;/
+    /function syncActiveSectionFromScroll\(\) \{[\s\S]*for \(const section of visibleFormSections\.value\) \{[\s\S]*const target = getCharacterSectionTarget\(section\.id\);[\s\S]*lastSectionId = section\.id;[\s\S]*const scrollState = getCharacterScrollState\(\);[\s\S]*if \(lastSectionId && scrollState\.clientHeight \+ scrollState\.scrollTop >= scrollState\.scrollHeight - 2\) \{[\s\S]*nextSectionId = lastSectionId;/
   );
+  assert.doesNotMatch(characterFormScript, /window\.addEventListener\('scroll', onWindowScroll/);
+  assert.doesNotMatch(characterFormScript, /window\.removeEventListener\('scroll', onWindowScroll\)/);
   assert.doesNotMatch(characterFormScript, /visibleFormSections\.value\s*\.\s*map/);
   assert.doesNotMatch(characterFormScript, /visibleFormSections\.value[\s\S]{0,120}\.filter/);
   assert.doesNotMatch(characterFormScript, /formSections\.filter\(isSectionVisible\)/);

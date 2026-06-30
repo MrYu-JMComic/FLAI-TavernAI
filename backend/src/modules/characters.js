@@ -205,10 +205,10 @@ export function getRegexRules(database, userId, characterId) {
   return database
     .prepare(
       `SELECT *, rowid AS _rowid FROM regex_rules
-       WHERE user_id = ? AND character_id = ?`
+       WHERE user_id = ? AND character_id = ?
+       ORDER BY priority ASC, order_index ASC, rowid ASC`
     )
     .all(userId, characterId)
-    .sort((a, b) => (a.priority ?? 0) - (b.priority ?? 0) || a.order_index - b.order_index || a._rowid - b._rowid)
     .map((row) => ({
       id: row.id,
       label: row.label,
@@ -232,10 +232,10 @@ export function getRegexRulesByGroup(database, userId, group) {
     sql += ' AND group_name = ?';
     params.push(group);
   }
+  sql += ' ORDER BY priority ASC, order_index ASC, rowid ASC';
   return database
     .prepare(sql)
     .all(...params)
-    .sort((a, b) => (a.priority ?? 0) - (b.priority ?? 0) || a.order_index - b.order_index || a._rowid - b._rowid)
     .map((row) => ({
       id: row.id,
       characterId: row.character_id,

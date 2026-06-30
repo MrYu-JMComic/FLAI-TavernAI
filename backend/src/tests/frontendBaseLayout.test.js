@@ -55,7 +55,7 @@ test('BaseLayout keeps the home route scroll inside a fixed app shell', () => {
   assert.match(baseLayoutScript, /const isHomeRoute = computed\(\(\) => props\.currentRoute === 'home'\);/);
   assert.match(
     baseLayoutTemplate,
-    /:class="\{ 'chat-layout-shell': isChatRoute, 'home-layout-shell': isHomeRoute \}"/
+    /:class="\{ 'chat-layout-shell': isChatRoute, 'home-layout-shell': isHomeRoute, 'workspace-layout-shell': isWorkspaceRoute \}"/
   );
   assert.match(
     stylesSource,
@@ -96,5 +96,36 @@ test('BaseLayout keeps the home route scroll inside a fixed app shell', () => {
   assert.match(
     stylesSource,
     /@media \(max-width: 760px\) \{[\s\S]*\.home-layout-shell\s*\{[\s\S]*min-height:\s*100svh;[\s\S]*height:\s*100svh;[\s\S]*\}/
+  );
+});
+
+test('BaseLayout gives workspace routes a full-width single scroll shell', () => {
+  assert.match(
+    baseLayoutScript,
+    /const isWorkspaceRoute = computed\(\(\) => \(\s*props\.currentRoute === 'characterNew'\s*\|\| props\.currentRoute === 'characterEdit'\s*\|\| isWorldBookRoute\.value\s*\|\| isExtensionsRoute\.value\s*\|\| isPresetsRoute\.value\s*\|\| props\.currentRoute === 'settings'\s*\)\);/
+  );
+  assert.match(
+    baseLayoutTemplate,
+    /:class="\{ 'chat-layout-shell': isChatRoute, 'home-layout-shell': isHomeRoute, 'workspace-layout-shell': isWorkspaceRoute \}"/
+  );
+  assert.match(
+    stylesSource,
+    /\.workspace-layout-shell\s*\{[\s\S]*height:\s*100vh;[\s\S]*height:\s*100svh;[\s\S]*height:\s*100dvh;[\s\S]*overflow:\s*hidden;[\s\S]*\}/
+  );
+  assert.match(
+    stylesSource,
+    /\.workspace-layout-shell \.page-shell\s*\{[^}]*width:\s*100%;[^}]*max-width:\s*none;[^}]*margin:\s*0;[^}]*min-height:\s*0;[^}]*overflow-x:\s*hidden;[^}]*overflow-y:\s*auto;[^}]*overscroll-behavior:\s*none;[^}]*\}/
+  );
+  assert.match(
+    stylesSource,
+    /\.workspace-layout-shell \.narrow-page,\s*\.workspace-layout-shell \.extensions-page,\s*\.workspace-layout-shell \.preset-page\s*\{[^}]*width:\s*100%;[^}]*max-width:\s*none;[^}]*margin:\s*0;[^}]*\}/
+  );
+  assert.match(
+    stylesSource,
+    /@media \(max-width: 620px\) \{[\s\S]*\.workspace-layout-shell \.page-shell\s*\{[\s\S]*scrollbar-gutter:\s*auto;[\s\S]*\}/
+  );
+  assert.match(
+    stylesSource,
+    /\.workspace-layout-shell \.character-section-nav,\s*\.workspace-layout-shell \.settings-section-nav\s*\{[\s\S]*top:\s*0;[\s\S]*\}/
   );
 });

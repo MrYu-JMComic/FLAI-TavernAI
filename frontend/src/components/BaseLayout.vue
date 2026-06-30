@@ -29,6 +29,14 @@ const isHomeRoute = computed(() => props.currentRoute === 'home');
 const isWorldBookRoute = computed(() => props.currentRoute === 'worldBooks' || props.currentRoute === 'worldBookDetail');
 const isExtensionsRoute = computed(() => props.currentRoute === 'extensions');
 const isPresetsRoute = computed(() => props.currentRoute === 'presets');
+const isWorkspaceRoute = computed(() => (
+  props.currentRoute === 'characterNew'
+  || props.currentRoute === 'characterEdit'
+  || isWorldBookRoute.value
+  || isExtensionsRoute.value
+  || isPresetsRoute.value
+  || props.currentRoute === 'settings'
+));
 const userMenuOpen = ref(false);
 const userMenuRef = ref(null);
 const mobileNavOpen = ref(false);
@@ -90,7 +98,7 @@ function navigateAndClose(name) {
 </script>
 
 <template>
-  <div class="layout-shell" :class="{ 'chat-layout-shell': isChatRoute, 'home-layout-shell': isHomeRoute }">
+  <div class="layout-shell" :class="{ 'chat-layout-shell': isChatRoute, 'home-layout-shell': isHomeRoute, 'workspace-layout-shell': isWorkspaceRoute }">
     <a href="#main-content" class="skip-link">跳转到主要内容</a>
 
     <header v-if="!isChatRoute" class="topbar">

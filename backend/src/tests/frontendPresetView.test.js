@@ -28,6 +28,14 @@ test('PresetView error state offers creation and navigation exits', () => {
   );
 });
 
+test('PresetView can expand list and editor content in the workspace shell', () => {
+  assert.match(presetViewTemplate, /<section class="page-stack preset-page">/);
+  assert.match(
+    presetViewStyle,
+    /\.preset-form\s*\{[\s\S]*width:\s*100%;[\s\S]*max-width:\s*none;[\s\S]*\}/
+  );
+});
+
 test('PresetView preserves unchanged preset list references during refreshes', () => {
   assert.match(
     presetViewScript,

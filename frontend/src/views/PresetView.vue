@@ -335,7 +335,7 @@ function clampInt(value, min, max) {
 </script>
 
 <template>
-  <section class="page-stack">
+  <section class="page-stack preset-page">
     <!-- List Mode -->
     <template v-if="!editing">
       <div class="section-heading">
@@ -659,7 +659,8 @@ function clampInt(value, min, max) {
 }
 
 .preset-form {
-  max-width: 640px;
+  width: 100%;
+  max-width: none;
 }
 
 .preset-form .form-grid {

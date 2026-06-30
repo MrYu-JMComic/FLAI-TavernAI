@@ -162,6 +162,58 @@ test('HomeView keeps reaction clicks from becoming scroll anchors without trappi
   );
 });
 
+test('HomeView desktop layout fills the available page width without a nested character scroller', () => {
+  assert.match(
+    stylesSource,
+    /\.home-layout-shell \.page-shell\s*\{[^}]*width:\s*100%;[^}]*max-width:\s*none;[^}]*margin:\s*0;[^}]*\}/
+  );
+  assert.doesNotMatch(
+    stylesSource,
+    /\.home-layout-shell \.page-shell\s*\{[^}]*width:\s*min\([^)]+\);[^}]*\}/
+  );
+  assert.match(
+    stylesSource,
+    /\.home-character-scroll\s*\{[\s\S]*height:\s*auto;[\s\S]*min-height:\s*0;[\s\S]*overflow-x:\s*visible;[\s\S]*overflow-y:\s*visible;[\s\S]*scrollbar-gutter:\s*auto;[\s\S]*\}/
+  );
+  assert.doesNotMatch(
+    stylesSource,
+    /\.home-character-scroll\s*\{[\s\S]*height:\s*calc\(100vh - 236px\);[\s\S]*overflow-y:\s*auto;[\s\S]*\}/
+  );
+});
+
+test('HomeView virtual rows listen to the page shell scroll container', () => {
+  assert.match(homeViewScript, /const pageScrollContainerRef = ref\(null\);/);
+  assert.match(homeViewScript, /const virtualScrollMargin = ref\(0\);/);
+  assert.match(
+    homeViewScript,
+    /getScrollElement:\s*\(\) => pageScrollContainerRef\.value \|\| scrollContainerRef\.value,/
+  );
+  assert.match(homeViewScript, /scrollMargin:\s*virtualScrollMargin\.value,/);
+  assert.match(
+    homeViewScript,
+    /function syncPageScrollContainer\(\) \{[\s\S]*pageScrollContainerRef\.value = scrollContainerRef\.value\?\.closest\('\.page-shell'\) \|\| scrollContainerRef\.value;[\s\S]*\}/
+  );
+  assert.match(
+    homeViewScript,
+    /function measureVirtualScrollMargin\(\) \{[\s\S]*virtualScrollMargin\.value = Math\.max\(0, Math\.round\(listRect\.top - scrollRect\.top \+ scrollElement\.scrollTop\)\);[\s\S]*\}/
+  );
+  assert.match(
+    homeViewScript,
+    /function refreshScrollMeasurements\(\) \{[\s\S]*syncPageScrollContainer\(\);[\s\S]*measureContainerWidth\(\);/
+  );
+});
+
+test('HomeView refreshes virtual scroll measurements after home content height changes', () => {
+  assert.match(
+    homeViewScript,
+    /async function refreshScrollMeasurementsAfterRender\(\) \{[\s\S]*await nextTick\(\);[\s\S]*refreshScrollMeasurements\(\);[\s\S]*rowVirtualizer\.measure\?\.\(\);[\s\S]*\}/
+  );
+  assert.match(
+    homeViewScript,
+    /watch\(\s*\[\s*\(\) => loading\.value,[\s\S]*\(\) => tagLoading\.value,[\s\S]*\(\) => characters\.value\.length,[\s\S]*\(\) => topTags\.value\.length,[\s\S]*\(\) => Boolean\(importPreview\.value\),[\s\S]*\(\) => Boolean\(importError\.value\)[\s\S]*\],\s*refreshScrollMeasurementsAfterRender\s*\);/
+  );
+});
+
 test('HomeView scans sort options and selected hot tags directly', () => {
   assert.match(homeViewScript, /const currentSortOption = computed\(\(\) => getSortOptionByValue\(sort\.value\)\);/);
   assert.match(
@@ -253,12 +305,13 @@ test('HomeView virtualizes character rows without prebuilding every row slice', 
   );
   assert.match(
     homeViewScript,
-    /const virtualizerOptions = computed\(\(\) => \(\{[\s\S]*count: characterRowCount\.value,[\s\S]*getScrollElement: \(\) => scrollContainerRef\.value,[\s\S]*overscan: 3[\s\S]*\}\)\);/
+    /const virtualizerOptions = computed\(\(\) => \(\{[\s\S]*count: characterRowCount\.value,[\s\S]*getScrollElement: \(\) => pageScrollContainerRef\.value \|\| scrollContainerRef\.value,[\s\S]*scrollMargin: virtualScrollMargin\.value,[\s\S]*overscan: 3[\s\S]*\}\)\);/
   );
   assert.match(
     homeViewScript,
     /function getCharacterRowItems\(rowIndex\) {\s*const normalizedRowIndex = Math\.max\(0, Math\.floor\(Number\(rowIndex\) \|\| 0\)\);[\s\S]*const startIndex = normalizedRowIndex \* columnsPerRow\.value;[\s\S]*return characters\.value\.slice\(startIndex, startIndex \+ columnsPerRow\.value\);[\s\S]*}/
   );
+  assert.match(homeViewTemplate, /top: \(virtualRow\.start - virtualScrollMargin\) \+ 'px'/);
   assert.match(homeViewTemplate, /v-for="character in getCharacterRowItems\(virtualRow\.index\)"/);
   assert.doesNotMatch(homeViewScript, /const characterRows = computed/);
   assert.doesNotMatch(homeViewTemplate, /characterRows\[virtualRow\.index\]/);
