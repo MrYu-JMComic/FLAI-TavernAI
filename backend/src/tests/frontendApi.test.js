@@ -3,8 +3,29 @@ import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import { findSseBlockSeparator, forEachSseLine } from '../../../shared/sse.js';
 
-const { apiRequest, streamCharacterDraft, streamNpcOrganizer, updateCharacter } = await import('../../../frontend/src/api.js');
-const frontendApiSource = readFileSync(new URL('../../../frontend/src/api.js', import.meta.url), 'utf8');
+const frontendApi = await import('../../../frontend/src/api.js');
+const {
+  __resetApiCsrfTokenForTests,
+  apiRequest,
+  streamCharacterDraft,
+  streamNpcOrganizer,
+  updateCharacter
+} = frontendApi;
+const authApi = await import('../../../frontend/src/api/auth.js');
+const providersApi = await import('../../../frontend/src/api/providers.js');
+const assetsApi = await import('../../../frontend/src/api/assets.js');
+const envelopesApi = await import('../../../frontend/src/api/envelopes.js');
+const diagnosticsApi = await import('../../../frontend/src/api/diagnostics.js');
+const appApi = await import('../../../frontend/src/api/app.js');
+const charactersApi = await import('../../../frontend/src/api/characters.js');
+const chatApi = await import('../../../frontend/src/api/chat.js');
+const modsApi = await import('../../../frontend/src/api/mods.js');
+const presetsApi = await import('../../../frontend/src/api/presets.js');
+const settingsApi = await import('../../../frontend/src/api/settings.js');
+const tagsApi = await import('../../../frontend/src/api/tags.js');
+const talentsApi = await import('../../../frontend/src/api/talents.js');
+const worldBooksApi = await import('../../../frontend/src/api/worldBooks.js');
+const frontendApiCoreSource = readFileSync(new URL('../../../frontend/src/api/core.js', import.meta.url), 'utf8');
 
 function jsonResponse(data, status = 200) {
   return new Response(JSON.stringify(data), {
@@ -51,6 +72,95 @@ function textResponse(text, status = 500) {
     headers: { 'Content-Type': 'text/plain' }
   });
 }
+
+test('frontend API domain modules back the compatibility exports', () => {
+  assert.equal(frontendApi.getMe, authApi.getMe);
+  assert.equal(frontendApi.login, authApi.login);
+  assert.equal(frontendApi.saveUserProfile, authApi.saveUserProfile);
+  assert.equal(frontendApi.getProviderSettings, providersApi.getProviderSettings);
+  assert.equal(frontendApi.fetchProviderCapabilities, providersApi.fetchProviderCapabilities);
+  assert.equal(frontendApi.checkProviderHealth, providersApi.checkProviderHealth);
+  assert.equal(frontendApi.fetchAssets, assetsApi.fetchAssets);
+  assert.equal(frontendApi.createAsset, assetsApi.createAsset);
+  assert.equal(frontendApi.exportEnvelope, envelopesApi.exportEnvelope);
+  assert.equal(frontendApi.importEnvelope, envelopesApi.importEnvelope);
+  assert.equal(frontendApi.exportDiagnostics, diagnosticsApi.exportDiagnostics);
+  assert.equal(frontendApi.fetchAppBootstrap, appApi.fetchAppBootstrap);
+  assert.equal(frontendApi.exportProjectSnapshot, appApi.exportProjectSnapshot);
+  assert.equal(frontendApi.fetchCharacters, charactersApi.fetchCharacters);
+  assert.equal(frontendApi.updateCharacter, charactersApi.updateCharacter);
+  assert.equal(frontendApi.streamCharacterDraft, charactersApi.streamCharacterDraft);
+  assert.equal(frontendApi.fetchCharacterImages, charactersApi.fetchCharacterImages);
+  assert.equal(frontendApi.rollCharacterTalent, charactersApi.rollCharacterTalent);
+  assert.equal(frontendApi.fetchWorldBooks, worldBooksApi.fetchWorldBooks);
+  assert.equal(frontendApi.previewWorldBookMatches, worldBooksApi.previewWorldBookMatches);
+  assert.equal(frontendApi.streamWorldBookDraft, worldBooksApi.streamWorldBookDraft);
+  assert.equal(frontendApi.fetchConversations, chatApi.fetchConversations);
+  assert.equal(frontendApi.fetchConversationBranchTree, chatApi.fetchConversationBranchTree);
+  assert.equal(frontendApi.previewConversationContext, chatApi.previewConversationContext);
+  assert.equal(frontendApi.fetchConversationMemories, chatApi.fetchConversationMemories);
+  assert.equal(frontendApi.confirmConversationMemory, chatApi.confirmConversationMemory);
+  assert.equal(frontendApi.disableConversationMemory, chatApi.disableConversationMemory);
+  assert.equal(frontendApi.rollbackConversationMemory, chatApi.rollbackConversationMemory);
+  assert.equal(frontendApi.streamNpcOrganizer, chatApi.streamNpcOrganizer);
+  assert.equal(frontendApi.streamMessage, chatApi.streamMessage);
+  assert.equal(frontendApi.continueMessage, chatApi.continueMessage);
+  assert.equal(frontendApi.streamContinueMessage, chatApi.streamContinueMessage);
+  assert.equal(frontendApi.fetchMods, modsApi.fetchMods);
+  assert.equal(frontendApi.reorderMods, modsApi.reorderMods);
+  assert.equal(frontendApi.fetchPresets, presetsApi.fetchPresets);
+  assert.equal(frontendApi.setDefaultPreset, presetsApi.setDefaultPreset);
+  assert.equal(frontendApi.fetchRegexRules, settingsApi.fetchRegexRules);
+  assert.equal(frontendApi.importRegexRuleSet, settingsApi.importRegexRuleSet);
+  assert.equal(frontendApi.fetchTags, tagsApi.fetchTags);
+  assert.equal(frontendApi.createTag, tagsApi.createTag);
+  assert.equal(frontendApi.fetchTalentPools, talentsApi.fetchTalentPools);
+  assert.equal(frontendApi.updateTalentPool, talentsApi.updateTalentPool);
+});
+
+test('frontend envelope API uses the unified envelope routes', async () => {
+  const originalFetch = globalThis.fetch;
+  const requests = [];
+  __resetApiCsrfTokenForTests();
+
+  globalThis.fetch = async (url, request = {}) => {
+    requests.push({ url: String(url), request });
+    if (String(url).endsWith('/api/csrf-token')) {
+      return jsonResponse({ csrfToken: 'csrf-for-envelope-api-test' });
+    }
+    return jsonResponse({ ok: true, kind: 'characters' });
+  };
+
+  try {
+    const exported = await envelopesApi.exportEnvelope('characters', { ids: ['char-1', 'char-1', 'char-2'] });
+    const imported = await envelopesApi.importEnvelope('world-books', {
+      version: 1,
+      kind: 'world_books',
+      items: []
+    });
+
+    assert.deepEqual(exported, { ok: true, kind: 'characters' });
+    assert.deepEqual(imported, { ok: true, kind: 'characters' });
+    assert.deepEqual(
+      requests.map(({ url }) => url),
+      [
+        '/api/envelopes/characters?ids=char-1%2Cchar-2',
+        '/api/csrf-token',
+        '/api/envelopes/world-books/import'
+      ]
+    );
+    assert.equal(requests[2].request.method, 'POST');
+    assert.equal(requests[2].request.headers['X-CSRF-Token'], 'csrf-for-envelope-api-test');
+    assert.deepEqual(JSON.parse(requests[2].request.body), {
+      version: 1,
+      kind: 'world_books',
+      items: []
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    __resetApiCsrfTokenForTests();
+  }
+});
 
 test('frontend assistant SSE errors preserve structured message fields', async () => {
   const originalFetch = globalThis.fetch;
@@ -165,13 +275,13 @@ test('frontend assistant SSE parser scans CRLF data lines without block split al
   const sharedLines = [];
   forEachSseLine('event: error\r\ndata: First line', (line) => sharedLines.push(line));
   assert.deepEqual(sharedLines, ['event: error', 'data: First line']);
-  assert.match(frontendApiSource, /from '..\/..\/shared\/sse\.js'/);
-  assert.match(frontendApiSource, /forEachSseLine\(block, \(line\) => \{/);
-  assert.doesNotMatch(frontendApiSource, /function forEachSseLine\(text, visit\)/);
-  assert.doesNotMatch(frontendApiSource, /block\.split\(\s*\/\\r\?\\n\//);
-  assert.doesNotMatch(frontendApiSource, /const dataLines = \[\]/);
-  assert.doesNotMatch(frontendApiSource, /dataLines\.push/);
-  assert.doesNotMatch(frontendApiSource, /dataLines\.join/);
+  assert.match(frontendApiCoreSource, /from '..\/..\/..\/shared\/sse\.js'/);
+  assert.match(frontendApiCoreSource, /forEachSseLine\(block, \(line\) => \{/);
+  assert.doesNotMatch(frontendApiCoreSource, /function forEachSseLine\(text, visit\)/);
+  assert.doesNotMatch(frontendApiCoreSource, /block\.split\(\s*\/\\r\?\\n\//);
+  assert.doesNotMatch(frontendApiCoreSource, /const dataLines = \[\]/);
+  assert.doesNotMatch(frontendApiCoreSource, /dataLines\.push/);
+  assert.doesNotMatch(frontendApiCoreSource, /dataLines\.join/);
 });
 
 test('frontend assistant SSE parser scans split CRLF block separators without regex match allocation', async () => {
@@ -198,10 +308,10 @@ test('frontend assistant SSE parser scans split CRLF block separators without re
   }
 
   assert.deepEqual(findSseBlockSeparator('a\r\n\r\nb'), { index: 1, length: 4 });
-  assert.match(frontendApiSource, /from '..\/..\/shared\/sse\.js'/);
-  assert.match(frontendApiSource, /let separator = findSseBlockSeparator\(buffer\);/);
-  assert.doesNotMatch(frontendApiSource, /function findSseBlockSeparator\(text\)/);
-  assert.doesNotMatch(frontendApiSource, /buffer\.match\(\s*\/\\r\?\\n\\r\?\\n\//);
+  assert.match(frontendApiCoreSource, /from '..\/..\/..\/shared\/sse\.js'/);
+  assert.match(frontendApiCoreSource, /let separator = findSseBlockSeparator\(buffer\);/);
+  assert.doesNotMatch(frontendApiCoreSource, /function findSseBlockSeparator\(text\)/);
+  assert.doesNotMatch(frontendApiCoreSource, /buffer\.match\(\s*\/\\r\?\\n\\r\?\\n\//);
 });
 
 test('frontend assistant SSE errors flush truncated trailing UTF-8 bytes', async () => {
@@ -1013,6 +1123,7 @@ test('frontend API reads CSRF token from the exact cookie name only', async () =
   const requests = [];
 
   delete globalThis.window;
+  __resetApiCsrfTokenForTests();
   globalThis.document = {
     cookie: 'not_flai_csrf=wrong-token; flai_csrf=csrf%20exact; flai_csrf_backup=wrong-backup'
   };
@@ -1048,9 +1159,9 @@ test('frontend API reads CSRF token from the exact cookie name only', async () =
     }
   }
 
-  assert.match(frontendApiSource, /function readCookieValue\(cookieText, cookieName\) \{/);
-  assert.match(frontendApiSource, /text\.startsWith\(target, pairStart\)/);
-  assert.doesNotMatch(frontendApiSource, /document\.cookie\.match\(/);
+  assert.match(frontendApiCoreSource, /function readCookieValue\(cookieText, cookieName\) \{/);
+  assert.match(frontendApiCoreSource, /text\.startsWith\(target, pairStart\)/);
+  assert.doesNotMatch(frontendApiCoreSource, /document\.cookie\.match\(/);
 });
 
 test('frontend JSON mutations retry nested CSRF errors', async () => {

@@ -9,8 +9,51 @@ export function readRepoText(relativePath) {
   return fs.readFileSync(path.join(repoRoot, relativePath), 'utf8');
 }
 
+function normalizeRepoPath(relativePath) {
+  return relativePath.replaceAll('\\', '/');
+}
+
+function readFrontendStylesFile(relativePath, visited = new Set()) {
+  const normalizedPath = normalizeRepoPath(relativePath);
+  if (visited.has(normalizedPath)) {
+    return '';
+  }
+  visited.add(normalizedPath);
+
+  const source = readRepoText(normalizedPath);
+  const importPattern = /^@import\s+(['"])(\.{1,2}\/[^'"]+\.css)\1\s*;/gm;
+  const currentDir = path.posix.dirname(normalizedPath);
+  let output = '';
+  let cursor = 0;
+
+  for (const match of source.matchAll(importPattern)) {
+    output += source.slice(cursor, match.index);
+    const importedPath = path.posix.normalize(path.posix.join(currentDir, match[2]));
+    output += readFrontendStylesFile(importedPath, visited);
+    cursor = match.index + match[0].length;
+  }
+
+  return output + source.slice(cursor);
+}
+
+function readFrontendEntryStylesFile(relativePath) {
+  const normalizedPath = normalizeRepoPath(relativePath);
+  const source = readRepoText(normalizedPath);
+  const importPattern = /^import\s+(['"])(\.{1,2}\/[^'"]+\.css)\1\s*;/gm;
+  const currentDir = path.posix.dirname(normalizedPath);
+  const visited = new Set();
+  let output = '';
+
+  for (const match of source.matchAll(importPattern)) {
+    const importedPath = path.posix.normalize(path.posix.join(currentDir, match[2]));
+    output += readFrontendStylesFile(importedPath, visited);
+  }
+
+  return output;
+}
+
 export function readFrontendStyles() {
-  return readRepoText('frontend/src/styles.css');
+  return readFrontendEntryStylesFile('frontend/src/main.js');
 }
 
 export function readVueBlock(source, tag) {

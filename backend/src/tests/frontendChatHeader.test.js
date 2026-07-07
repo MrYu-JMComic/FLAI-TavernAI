@@ -28,6 +28,7 @@ test('ChatHeader locks conversation panel actions until the conversation is read
     chatConversationSource,
     /function openEconomyPanel\(\)\s*{\s*if \(!conversationReady\.value\) {\s*return;\s*}/
   );
-  assert.equal((chatHeaderTemplate.match(/:disabled="!conversationReady"/g) || []).length, 3);
-  assert.equal((chatHeaderTemplate.match(/:aria-busy="!conversationReady"/g) || []).length, 3);
+  assert.match(chatHeaderTemplate, /aria-label="上下文检查器"[\s\S]*:disabled="!conversationReady"[\s\S]*@click="emit\('open-context'\)"/);
+  assert.equal((chatHeaderTemplate.match(/:disabled="!conversationReady"/g) || []).length, 4);
+  assert.equal((chatHeaderTemplate.match(/:aria-busy="!conversationReady"/g) || []).length, 4);
 });

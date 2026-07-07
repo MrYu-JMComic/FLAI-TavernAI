@@ -33,6 +33,55 @@ test('ChatMessageItem freezes the edit box while a message action is busy', () =
   );
 });
 
+test('ChatMessageItem wires edit-and-rerun through the chat orchestration layer', () => {
+  assert.match(chatMessageItemScript, /RotateCcw,/);
+  assert.match(chatMessageItemScript, /canRerunEdit: \{ type: Boolean, default: false \}/);
+  assert.match(chatMessageItemScript, /'save-edit-rerun',/);
+  assert.match(
+    chatMessageItemTemplate,
+    /v-if="canRerunEdit"[\s\S]*class="message-action-button primary"[\s\S]*@click="emit\('save-edit-rerun', message\)"[\s\S]*<RotateCcw :size="15" \/>[\s\S]*<span>保存并重跑<\/span>/
+  );
+  assert.match(chatViewScript, /canEditMessage, canDeleteMessage, canRerunMessageEdit, canBranchMessage,/);
+  assert.match(chatViewScript, /setEditingMessageContent, saveMessageEdit, prepareMessageEditRerun, removeMessage, copyMessage,/);
+  assert.match(chatViewScript, /submitDraft, submit, continueGeneration, stop, restoreLastFailureInput, retryLastFailure, dismissLastFailure,/);
+  assert.match(chatViewScript, /const composerHasDraft = computed\(\(\) => Boolean\(input\.value\.trim\(\) \|\| chatAttachments\.value\.length\)\);/);
+  assert.match(
+    chatViewScript,
+    /function canSaveMessageEditAndRerun\(message\) \{[\s\S]*canRerunMessageEdit\(message\)[\s\S]*!sending\.value[\s\S]*!attachmentBusy\.value;[\s\S]*}/
+  );
+  assert.match(
+    chatViewScript,
+    /async function saveMessageEditAndRerun\(message\) \{[\s\S]*if \(composerHasDraft\.value\) \{[\s\S]*请先处理输入框草稿后再重跑[\s\S]*const draft = await prepareMessageEditRerun\(message\);[\s\S]*await submitDraft\(draft\.content, draft\.attachments\);/
+  );
+  assert.match(chatViewTemplate, /:can-rerun-edit="canSaveMessageEditAndRerun\(message\)"/);
+  assert.match(chatViewTemplate, /@save-edit-rerun="saveMessageEditAndRerun"/);
+  assert.match(
+    chatMessageActionsSource,
+    /function canRerunMessageEdit\(message\) \{\s*return message\?\.role === 'user' && canEditMessage\(message\);/
+  );
+  assert.match(
+    chatMessageActionsSource,
+    /async function prepareMessageEditRerun\(message\) \{[\s\S]*const tailMessageIds = collectPersistedMessageIdsFrom\(messageId\);[\s\S]*for \(let index = tailMessageIds\.length - 1; index >= 0; index -= 1\) {[\s\S]*await deleteMessage\(conversationId, targetId\);[\s\S]*return \{ content, attachments \};/
+  );
+});
+
+test('ChatMessageItem binds continue generation to the latest message row', () => {
+  assert.match(chatMessageItemScript, /StepForward,/);
+  assert.match(chatMessageItemScript, /canContinue: \{ type: Boolean, default: false \}/);
+  assert.match(chatMessageItemScript, /'continue-generation',/);
+  assert.match(
+    chatMessageItemTemplate,
+    /v-if="canContinue"[\s\S]*class="message-action-button primary continue-message-button"[\s\S]*aria-label="继续生成"[\s\S]*@click="emitMessageAction\('continue-generation'\)"[\s\S]*<StepForward :size="14" \/>[\s\S]*<span>继续<\/span>/
+  );
+  assert.match(
+    chatViewScript,
+    /const latestMessage = computed\(\(\) => \{\s*const messageList = Array\.isArray\(messages\.value\) \? messages\.value : \[\];\s*for \(let index = messageList\.length - 1; index >= 0; index -= 1\) \{[\s\S]*if \(message\?\.id\) \{[\s\S]*return message;[\s\S]*return null;\s*\}\);/
+  );
+  assert.match(chatViewTemplate, /:can-continue="canContinueGeneration && latestMessage\?\.id === message\.id"/);
+  assert.match(chatViewTemplate, /@continue-generation="continueGeneration"/);
+  assert.doesNotMatch(chatViewTemplate, /<ChatComposer[\s\S]*@continue-generation=/);
+});
+
 test('ChatMessageItem edit input tolerates missing event targets', () => {
   assert.match(
     chatMessageItemScript,
@@ -113,6 +162,13 @@ test('ChatMessageItem defers Markdown rendering only while a message is typing',
   assert.doesNotMatch(chatMessageItemTemplate, /:defer-updates="true"/);
 });
 
+test('ChatMessageItem renders persisted asset URL attachments', () => {
+  assert.match(chatMessageItemScript, /const url = String\(attachment\?\.url \|\| attachment\?\.dataUrl \|\| ''\)\.trim\(\);/);
+  assert.match(chatMessageItemScript, /id: String\(attachment\.id \|\| url\.slice\(0, 48\)\),/);
+  assert.match(chatMessageItemTemplate, /:href="attachment\.url"/);
+  assert.match(chatMessageItemTemplate, /<img :src="attachment\.url" :alt="attachment\.alt" \/>/);
+});
+
 test('ChatMessageItem locks swipe navigation while a swipe is loading', () => {
   assert.match(chatViewTemplate, /:swipe-loading="swipeLoading\.has\(message\.id\) \|\| messageActionBusy === message\.id \|\| branchBusy"/);
   assert.match(chatMessageItemTemplate, /:disabled="!swipeCanPrev \|\| swipeLoading"/);
@@ -127,7 +183,7 @@ test('ChatMessageItem locks swipe navigation while a swipe is loading', () => {
 
 test('ChatMessageItem disables branch creation for messages that cannot be branched', () => {
   assert.match(chatMessageItemScript, /branchCan: \{ type: Boolean, default: true \}/);
-  assert.match(chatViewScript, /canEditMessage, canDeleteMessage, canBranchMessage,/);
+  assert.match(chatViewScript, /canEditMessage, canDeleteMessage, canRerunMessageEdit, canBranchMessage,/);
   assert.match(chatViewTemplate, /:branch-can="canBranchMessage\(message\)"/);
   assert.match(chatMessageItemTemplate, /:disabled="!branchCan \|\| branchBusy"/);
   assert.match(

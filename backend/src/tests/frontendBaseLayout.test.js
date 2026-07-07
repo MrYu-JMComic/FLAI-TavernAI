@@ -126,6 +126,6 @@ test('BaseLayout gives workspace routes a full-width single scroll shell', () =>
   );
   assert.match(
     stylesSource,
-    /\.workspace-layout-shell \.character-section-nav,\s*\.workspace-layout-shell \.settings-section-nav\s*\{[\s\S]*top:\s*0;[\s\S]*\}/
+    /\.workspace-layout-shell \.character-section-nav,\s*\.workspace-layout-shell \.settings-section-nav\s*\{[\s\S]*top:\s*calc\(-1 \* var\(--workspace-page-padding-top, 28px\)\);[\s\S]*\}/
   );
 });

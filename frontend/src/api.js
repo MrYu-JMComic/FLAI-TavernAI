@@ -1,1213 +1,147 @@
-import { findSseBlockSeparator, forEachSseLine } from '../../shared/sse.js';
-
-const jsonHeaders = {
-  'Content-Type': 'application/json'
-};
-
-const MAX_ERROR_BODY_LENGTH = 1000;
-const CONNECTION_RETRY_DELAYS_MS = [150, 450, 900];
-const TRANSIENT_CONNECTION_STATUSES = new Set([408, 502, 503, 504]);
-
-// ── CSRF Token 管理 ──
-let csrfToken = '';
-
-function getCsrfToken() {
-  if (csrfToken) return csrfToken;
-  if (typeof document === 'undefined' || !document.cookie) return csrfToken;
-  const decoded = readCookieValue(document.cookie, 'flai_csrf');
-  if (decoded) csrfToken = decoded;
-  return csrfToken;
-}
-
-function readCookieValue(cookieText, cookieName) {
-  const target = `${cookieName}=`;
-  const text = String(cookieText || '');
-  let start = 0;
-  while (start < text.length) {
-    let end = text.indexOf(';', start);
-    if (end === -1) {
-      end = text.length;
-    }
-    let pairStart = start;
-    while (pairStart < end && text.charCodeAt(pairStart) <= 32) {
-      pairStart += 1;
-    }
-    if (text.startsWith(target, pairStart)) {
-      return safeDecodeCookieValue(text.slice(pairStart + target.length, end).trim());
-    }
-    start = end + 1;
-  }
-  return '';
-}
-
-function safeDecodeCookieValue(value) {
-  try {
-    return decodeURIComponent(value);
-  } catch {
-    return '';
-  }
-}
-
-export async function ensureCsrfToken() {
-  if (getCsrfToken()) return csrfToken;
-  try {
-    const res = await fetchWithConnectionRetry(apiUrl('/api/csrf-token'), { credentials: 'include' });
-    const data = await res.json();
-    csrfToken = data.csrfToken || '';
-  } catch {
-    // 静默失败
-  }
-  return csrfToken;
-}
-
-async function refreshCsrfToken() {
-  csrfToken = '';
-  return ensureCsrfToken();
-}
-
-// 页面加载时获取 CSRF token
-if (typeof window !== 'undefined') {
-  ensureCsrfToken();
-}
-
-const configuredApiBase = normalizeBaseUrl(import.meta.env?.VITE_API_BASE_URL || '');
-
-export async function apiRequest(path, options = {}) {
-  let response;
-  let data;
-  let base;
-
-  try {
-    ({ response, data, base } = await requestJsonWithConnectionRetry(path, options));
-  } catch (error) {
-    throwApiError(normalizeNetworkError(error), null, { cause: error?.message || String(error) });
-  }
-
-  const retryBase = getApiBackendRetryBase(path, response);
-  if (retryBase && !shouldBlockApiBackendRetry(data)) {
-    ({ response, data, base } = await guardedRequestJson(path, options, retryBase));
-  }
-
-  if (shouldRetryAfterCsrf(response, data, options)) {
-    await refreshCsrfToken();
-    ({ response, data } = await guardedRequestJson(path, options, base));
-  }
-
-  if (!response.ok) {
-    throwApiError(getResponseErrorMessage(response, data), response, data);
-  }
-  return data;
-}
-
-export function getMe() {
-  return apiRequest('/api/auth/me');
-}
-
-export function register(payload) {
-  return apiRequest('/api/auth/register', {
-    method: 'POST',
-    body: JSON.stringify(payload)
-  });
-}
-
-export function login(payload) {
-  return apiRequest('/api/auth/login', {
-    method: 'POST',
-    body: JSON.stringify(payload)
-  });
-}
-
-export function logout() {
-  return apiRequest('/api/auth/logout', { method: 'POST' });
-}
-
-export function saveUserAvatar(payload) {
-  return apiRequest('/api/users/me/avatar', {
-    method: 'PUT',
-    body: JSON.stringify(payload)
-  });
-}
-
-export function getUserProfile() {
-  return apiRequest('/api/users/me/profile');
-}
-
-export function saveUserProfile(payload) {
-  return apiRequest('/api/users/me/profile', {
-    method: 'PUT',
-    body: JSON.stringify(payload)
-  });
-}
-
-export function fetchCharacters({ search = '', sort = 'created', tag = '' } = {}) {
-  const params = new URLSearchParams({ search, sort, tag });
-  return apiRequest(`/api/characters?${params.toString()}`, { cache: 'no-store' });
-}
-
-export function fetchCharacter(id) {
-  return apiRequest(`/api/characters/${id}`);
-}
-
-export function createCharacter(payload) {
-  return apiRequest('/api/characters', {
-    method: 'POST',
-    body: JSON.stringify(payload)
-  });
-}
-
-export function updateCharacter(id, payload) {
-  return apiRequest(`/api/characters/${id}`, {
-    method: 'PATCH',
-    body: JSON.stringify(payload)
-  });
-}
-
-export function deleteCharacter(id) {
-  return apiRequest(`/api/characters/${id}`, {
-    method: 'DELETE'
-  });
-}
-
-export function fetchCharacterWorldBooks(characterId) {
-  return apiRequest(`/api/characters/${characterId}/world-books`);
-}
-
-export function linkCharacterWorldBook(characterId, worldBookId) {
-  return apiRequest(`/api/characters/${characterId}/world-books`, {
-    method: 'POST',
-    body: JSON.stringify({ worldBookId })
-  });
-}
-
-export function unlinkCharacterWorldBook(characterId, worldBookId) {
-  return apiRequest(`/api/characters/${characterId}/world-books/${worldBookId}`, {
-    method: 'DELETE'
-  });
-}
-
-export function exportCharacter(id) {
-  return apiRequest(`/api/characters/${id}/export`);
-}
-
-export function importCharacter(payload) {
-  return apiRequest('/api/characters/import', {
-    method: 'POST',
-    body: JSON.stringify(payload)
-  });
-}
-
-export function completeCharacterDraft(payload) {
-  return apiRequest('/api/characters/complete-draft', {
-    method: 'POST',
-    body: JSON.stringify(payload)
-  });
-}
-
-export function streamCharacterDraft(payload, handlers = {}, signal) {
-  return streamAssistantDraft('/api/characters/complete-draft', payload, handlers, signal);
-}
-
-export function setCharacterFavorite(id, favorited) {
-  return apiRequest(`/api/characters/${id}/favorite`, {
-    method: 'PUT',
-    body: JSON.stringify({ favorited })
-  });
-}
-
-export function setCharacterLike(id, liked) {
-  return apiRequest(`/api/characters/${id}/like`, {
-    method: 'PUT',
-    body: JSON.stringify({ liked })
-  });
-}
-
-// ── Character Images (CG 立绘) ──
-
-export function fetchCharacterImages(characterId) {
-  return apiRequest(`/api/characters/${characterId}/images`);
-}
-
-export function createCharacterImage(characterId, payload) {
-  return apiRequest(`/api/characters/${characterId}/images`, {
-    method: 'POST',
-    body: JSON.stringify(payload)
-  });
-}
-
-export function updateCharacterImage(characterId, imageId, payload) {
-  return apiRequest(`/api/characters/${characterId}/images/${imageId}`, {
-    method: 'PUT',
-    body: JSON.stringify(payload)
-  });
-}
-
-export function deleteCharacterImage(characterId, imageId) {
-  return apiRequest(`/api/characters/${characterId}/images/${imageId}`, {
-    method: 'DELETE'
-  });
-}
-
-export function reorderCharacterImages(characterId, orderedIds) {
-  return apiRequest(`/api/characters/${characterId}/images/order`, {
-    method: 'PUT',
-    body: JSON.stringify({ orderedIds })
-  });
-}
-
-// ── World Books ──
-
-export function fetchWorldBooks() {
-  return apiRequest('/api/world-books', { cache: 'no-store' });
-}
-
-export function completeWorldBookDraft(payload) {
-  return apiRequest('/api/world-books/complete-draft', {
-    method: 'POST',
-    body: JSON.stringify(payload)
-  });
-}
-
-export function streamWorldBookDraft(payload, handlers = {}, signal) {
-  return streamAssistantDraft('/api/world-books/complete-draft', payload, handlers, signal);
-}
-
-export function createWorldBook(payload) {
-  return apiRequest('/api/world-books', {
-    method: 'POST',
-    body: JSON.stringify(payload)
-  });
-}
-
-export function fetchWorldBook(id) {
-  return apiRequest(`/api/world-books/${id}`);
-}
-
-export function updateWorldBook(id, payload) {
-  return apiRequest(`/api/world-books/${id}`, {
-    method: 'PUT',
-    body: JSON.stringify(payload)
-  });
-}
-
-export function deleteWorldBook(id) {
-  return apiRequest(`/api/world-books/${id}`, {
-    method: 'DELETE'
-  });
-}
-
-export function createWorldBookEntry(bookId, payload) {
-  return apiRequest(`/api/world-books/${bookId}/entries`, {
-    method: 'POST',
-    body: JSON.stringify(payload)
-  });
-}
-
-export function updateWorldBookEntry(bookId, entryId, payload) {
-  return apiRequest(`/api/world-books/${bookId}/entries/${entryId}`, {
-    method: 'PUT',
-    body: JSON.stringify(payload)
-  });
-}
-
-export function deleteWorldBookEntry(bookId, entryId) {
-  return apiRequest(`/api/world-books/${bookId}/entries/${entryId}`, {
-    method: 'DELETE'
-  });
-}
-
-// ── Tags ──
-
-export function fetchTags({ limit } = {}) {
-  const params = new URLSearchParams();
-  if (Number.isFinite(Number(limit)) && Number(limit) > 0) {
-    params.set('limit', Math.floor(Number(limit)));
-  }
-  const suffix = params.toString() ? `?${params.toString()}` : '';
-  return apiRequest(`/api/tags${suffix}`);
-}
-
-export function createTag(payload) {
-  return apiRequest('/api/tags', {
-    method: 'POST',
-    body: JSON.stringify(payload)
-  });
-}
-
-export function deleteTag(id) {
-  return apiRequest(`/api/tags/${encodeURIComponent(id)}`, {
-    method: 'DELETE'
-  });
-}
-
-export function getProviderSettings() {
-  return apiRequest('/api/settings/provider');
-}
-
-export function saveProviderSettings(payload) {
-  return apiRequest('/api/settings/provider', {
-    method: 'PUT',
-    body: JSON.stringify(payload)
-  });
-}
-
-export function fetchProviderModels(payload = {}, options = {}) {
-  return apiRequest('/api/providers/models', {
-    method: 'POST',
-    body: JSON.stringify({
-      ...payload,
-      forceRefresh: Boolean(options.forceRefresh ?? payload.forceRefresh)
-    })
-  });
-}
-
-export function fetchDeepSeekBalance() {
-  return apiRequest('/api/providers/deepseek/balance');
-}
-
-export function fetchConversations({ characterId = '' } = {}) {
-  const params = new URLSearchParams();
-  if (characterId) {
-    params.set('characterId', characterId);
-  }
-  const suffix = params.toString() ? `?${params.toString()}` : '';
-  return apiRequest(`/api/conversations${suffix}`);
-}
-
-export function createConversation(characterId) {
-  return apiRequest('/api/conversations', {
-    method: 'POST',
-    body: JSON.stringify({ characterId })
-  });
-}
-
-export function deleteConversation(conversationId) {
-  return apiRequest(`/api/conversations/${conversationId}`, {
-    method: 'DELETE'
-  });
-}
-
-export function deleteConversations(ids) {
-  return apiRequest('/api/conversations/bulk-delete', {
-    method: 'POST',
-    body: JSON.stringify({ ids })
-  });
-}
-
-export function fetchConversationMessages(conversationId) {
-  return apiRequest(`/api/conversations/${conversationId}/messages`);
-}
-
-export function fetchConversationBranches(conversationId) {
-  return apiRequest(`/api/conversations/${conversationId}/branches`);
-}
-
-export function branchConversation(conversationId, messageId) {
-  return apiRequest(`/api/conversations/${conversationId}/branch`, {
-    method: 'POST',
-    body: JSON.stringify({ messageId })
-  });
-}
-
-export function fetchMessageSwipes(_conversationId, messageId) {
-  return apiRequest(`/api/messages/${messageId}/swipes`);
-}
-
-export function createMessageSwipe(_conversationId, messageId, payload = {}) {
-  return apiRequest(`/api/messages/${messageId}/swipes`, {
-    method: 'POST',
-    body: JSON.stringify(payload)
-  });
-}
-
-export function fetchConversationSettings(conversationId) {
-  return apiRequest(`/api/conversations/${conversationId}/settings`);
-}
-
-export function saveConversationSettings(conversationId, payload) {
-  return apiRequest(`/api/conversations/${conversationId}/settings`, {
-    method: 'PUT',
-    body: JSON.stringify(payload)
-  });
-}
-
-export function fetchConversationAccessorySkills(conversationId) {
-  return apiRequest(`/api/conversations/${conversationId}/accessory-skills`);
-}
-
-export function saveConversationAccessorySkills(conversationId, payload) {
-  return apiRequest(`/api/conversations/${conversationId}/accessory-skills`, {
-    method: 'PUT',
-    body: JSON.stringify(payload)
-  });
-}
-
-export function saveCharacterAccessorySkills(characterId, payload) {
-  return apiRequest(`/api/characters/${characterId}/accessory-skills`, {
-    method: 'PUT',
-    body: JSON.stringify(payload)
-  });
-}
-
-// ── Saves ──
-
-export function fetchSaves(conversationId) {
-  return apiRequest(`/api/conversations/${conversationId}/saves`);
-}
-
-export function createSave(conversationId, payload = {}) {
-  return apiRequest(`/api/conversations/${conversationId}/saves`, {
-    method: 'POST',
-    body: JSON.stringify(payload)
-  });
-}
-
-export function fetchSave(saveId) {
-  return apiRequest(`/api/saves/${saveId}`);
-}
-
-export function loadSave(saveId, conversationId = '') {
-  return apiRequest(`/api/saves/${saveId}/load`, {
-    method: 'POST',
-    body: JSON.stringify({ conversationId })
-  });
-}
-
-export function renameSave(saveId, name, conversationId = '') {
-  return apiRequest(`/api/saves/${saveId}`, {
-    method: 'PUT',
-    body: JSON.stringify({ name, conversationId })
-  });
-}
-
-export function deleteSave(saveId, conversationId = '') {
-  return apiRequest(`/api/saves/${saveId}`, {
-    method: 'DELETE',
-    body: JSON.stringify({ conversationId })
-  });
-}
-
-// ── Regex Rules ──
-
-export function fetchRegexRules(group = '') {
-  const params = new URLSearchParams();
-  if (group) params.set('group', group);
-  const suffix = params.toString() ? `?${params.toString()}` : '';
-  return apiRequest(`/api/regex-rules${suffix}`);
-}
-
-export function toggleRegexRule(ruleId) {
-  return apiRequest(`/api/regex-rules/${ruleId}/toggle`, { method: 'PUT' });
-}
-
-export function reorderRegexRules(orderedIds, group = '') {
-  const body = { orderedIds };
-  if (group) body.group = group;
-  return apiRequest('/api/regex-rules/order', {
-    method: 'PUT',
-    body: JSON.stringify(body)
-  });
-}
-
-export function importRegexRuleSet(payload) {
-  return apiRequest('/api/regex-rules/import', {
-    method: 'POST',
-    body: JSON.stringify(payload)
-  });
-}
-
-// ── Presets ──
-
-export function fetchPresets() {
-  return apiRequest('/api/presets');
-}
-
-export function createPreset(payload) {
-  return apiRequest('/api/presets', {
-    method: 'POST',
-    body: JSON.stringify(payload)
-  });
-}
-
-export function fetchPreset(id) {
-  return apiRequest(`/api/presets/${id}`);
-}
-
-export function updatePreset(id, payload) {
-  return apiRequest(`/api/presets/${id}`, {
-    method: 'PUT',
-    body: JSON.stringify(payload)
-  });
-}
-
-export function deletePreset(id) {
-  return apiRequest(`/api/presets/${id}`, {
-    method: 'DELETE'
-  });
-}
-
-export function setDefaultPreset(id) {
-  return apiRequest(`/api/presets/${id}/set-default`, {
-    method: 'POST'
-  });
-}
-
-// ── Talent Pools ──
-
-export function fetchTalentPools() {
-  return apiRequest('/api/talent-pools');
-}
-
-export function createTalentPool(payload) {
-  return apiRequest('/api/talent-pools', {
-    method: 'POST',
-    body: JSON.stringify(payload)
-  });
-}
-
-export function updateTalentPool(id, payload) {
-  return apiRequest(`/api/talent-pools/${id}`, {
-    method: 'PUT',
-    body: JSON.stringify(payload)
-  });
-}
-
-export function deleteTalentPool(id) {
-  return apiRequest(`/api/talent-pools/${id}`, {
-    method: 'DELETE'
-  });
-}
-
-// ── Character Talents ──
-
-export function rollCharacterTalent(characterId, poolId) {
-  return apiRequest(`/api/characters/${characterId}/roll-talent`, {
-    method: 'POST',
-    body: JSON.stringify({ poolId })
-  });
-}
-
-export function fetchCharacterTalents(characterId) {
-  return apiRequest(`/api/characters/${characterId}/talents`);
-}
-
-export function deleteCharacterTalent(characterId, talentId) {
-  return apiRequest(`/api/characters/${characterId}/talents/${talentId}`, {
-    method: 'DELETE'
-  });
-}
-
-export function deleteAllCharacterTalents(characterId) {
-  return apiRequest(`/api/characters/${characterId}/talents`, {
-    method: 'DELETE'
-  });
-}
-
-// ── Mods ──
-
-export function fetchMods() {
-  return apiRequest('/api/mods');
-}
-
-export function createMod(payload) {
-  return apiRequest('/api/mods', {
-    method: 'POST',
-    body: JSON.stringify(payload)
-  });
-}
-
-export function updateMod(id, payload) {
-  return apiRequest(`/api/mods/${id}`, {
-    method: 'PUT',
-    body: JSON.stringify(payload)
-  });
-}
-
-export function deleteMod(id) {
-  return apiRequest(`/api/mods/${id}`, {
-    method: 'DELETE'
-  });
-}
-
-export function reorderMods(order) {
-  return apiRequest('/api/mods/order', {
-    method: 'PUT',
-    body: JSON.stringify({ order })
-  });
-}
-
-export function updateMessage(conversationId, messageId, payload) {
-  return apiRequest(`/api/conversations/${conversationId}/messages/${messageId}`, {
-    method: 'PATCH',
-    body: JSON.stringify(payload)
-  });
-}
-
-export function deleteMessage(conversationId, messageId) {
-  return apiRequest(`/api/conversations/${conversationId}/messages/${messageId}`, {
-    method: 'DELETE'
-  });
-}
-
-export function sendMessage(conversationId, payload) {
-  return apiRequest(`/api/conversations/${conversationId}/messages`, {
-    method: 'POST',
-    body: JSON.stringify({ ...payload, stream: false })
-  });
-}
-
-// ── Economy ──
-
-export function fetchConversationEconomy(conversationId, options = {}) {
-  const params = new URLSearchParams();
-  if (options.ensure === false) {
-    params.set('ensure', '0');
-  }
-  const suffix = params.toString() ? `?${params.toString()}` : '';
-  return apiRequest(`/api/conversations/${conversationId}/economy${suffix}`);
-}
-
-export function createEconomyTransaction(conversationId, payload) {
-  return apiRequest(`/api/conversations/${conversationId}/economy/transaction`, {
-    method: 'POST',
-    body: JSON.stringify(payload)
-  });
-}
-
-export function fetchEconomyHistory(conversationId, params = {}) {
-  const query = new URLSearchParams();
-  if (params.limit) query.set('limit', params.limit);
-  if (params.offset) query.set('offset', params.offset);
-  if (params.currencyType) query.set('currencyType', params.currencyType);
-  const suffix = query.toString() ? `?${query.toString()}` : '';
-  return apiRequest(`/api/conversations/${conversationId}/economy/history${suffix}`);
-}
-
-// ── Status Bar ──
-
-export function fetchStatusBar(conversationId) {
-  return apiRequest(`/api/conversations/${conversationId}/status-bar`);
-}
-
-export function saveStatusBar(conversationId, payload) {
-  return apiRequest(`/api/conversations/${conversationId}/status-bar`, {
-    method: 'PUT',
-    body: JSON.stringify(payload)
-  });
-}
-
-export function deleteStatusBar(conversationId) {
-  return apiRequest(`/api/conversations/${conversationId}/status-bar`, {
-    method: 'DELETE'
-  });
-}
-
-// ── NPC Agent Engine ──
-
-export function fetchConversationNpcs(conversationId) {
-  return apiRequest(`/api/conversations/${conversationId}/npcs`);
-}
-
-export function streamNpcOrganizer(conversationId, payload, handlers = {}, signal) {
-  return streamAssistantDraft(`/api/conversations/${conversationId}/npcs/organize`, payload, handlers, signal);
-}
-
-export function hideConversationNpc(conversationId, npcName) {
-  return apiRequest(`/api/conversations/${conversationId}/npcs/${encodeURIComponent(npcName)}`, {
-    method: 'DELETE'
-  });
-}
-
-export function hideEmptyConversationNpcs(conversationId) {
-  return apiRequest(`/api/conversations/${conversationId}/npcs-empty`, {
-    method: 'DELETE'
-  });
-}
-
-export function updateConversationNpc(conversationId, npcName, payload) {
-  return apiRequest(`/api/conversations/${conversationId}/npcs/${encodeURIComponent(npcName)}`, {
-    method: 'PUT',
-    body: JSON.stringify(payload)
-  });
-}
-
-export function fetchNpcMemories(conversationId, npcName) {
-  return apiRequest(`/api/conversations/${conversationId}/npcs/${encodeURIComponent(npcName)}/memories`);
-}
-
-export function addNpcMemory(conversationId, npcName, payload) {
-  return apiRequest(`/api/conversations/${conversationId}/npcs/${encodeURIComponent(npcName)}/memories`, {
-    method: 'POST',
-    body: JSON.stringify(payload)
-  });
-}
-
-export function updateNpcMemory(conversationId, npcName, memoryId, payload) {
-  return apiRequest(`/api/conversations/${conversationId}/npcs/${encodeURIComponent(npcName)}/memories/${memoryId}`, {
-    method: 'PUT',
-    body: JSON.stringify(payload)
-  });
-}
-
-export function deleteNpcMemory(conversationId, npcName, memoryId) {
-  return apiRequest(`/api/conversations/${conversationId}/npcs/${encodeURIComponent(npcName)}/memories/${memoryId}`, {
-    method: 'DELETE'
-  });
-}
-
-export function fetchNpcBehaviors(conversationId, npcName) {
-  return apiRequest(`/api/conversations/${conversationId}/npcs/${encodeURIComponent(npcName)}/behaviors`);
-}
-
-export function addNpcBehavior(conversationId, npcName, payload) {
-  return apiRequest(`/api/conversations/${conversationId}/npcs/${encodeURIComponent(npcName)}/behaviors`, {
-    method: 'POST',
-    body: JSON.stringify(payload)
-  });
-}
-
-export function updateNpcBehavior(conversationId, npcName, behaviorId, payload) {
-  return apiRequest(`/api/conversations/${conversationId}/npcs/${encodeURIComponent(npcName)}/behaviors/${behaviorId}`, {
-    method: 'PUT',
-    body: JSON.stringify(payload)
-  });
-}
-
-export function deleteNpcBehavior(conversationId, npcName, behaviorId) {
-  return apiRequest(`/api/conversations/${conversationId}/npcs/${encodeURIComponent(npcName)}/behaviors/${behaviorId}`, {
-    method: 'DELETE'
-  });
-}
-
-/**
- * Shared SSE streaming implementation.
- * Handles CSRF, retry, response validation, and SSE block parsing.
- * @param {string} path - API path
- * @param {object} payload - request payload (will be merged with { stream: true })
- * @param {object} handlers - event name → handler map
- * @param {AbortSignal} signal - abort signal
- * @param {object} options - { throwOnError, doneEventName, returnDoneData }
- * @returns {Promise<object|undefined>} - { aborted } or done event data
- */
-async function streamSSE(path, payload, handlers = {}, signal, options = {}) {
-  const { throwOnError = false, returnDoneData = false } = options;
-  await ensureCsrfToken();
-  const body = JSON.stringify({ ...payload, stream: true });
-  const buildRequest = () => ({
-    method: 'POST',
-    credentials: 'include',
-    headers: {
-      ...jsonHeaders,
-      Accept: 'text/event-stream',
-      'X-CSRF-Token': getCsrfToken() || ''
-    },
-    body,
-    signal
-  });
-
-  let streamBase = configuredApiBase;
-  let result = await fetchSseResponse(path, streamBase, buildRequest, signal);
-  if (result.aborted) return { aborted: true };
-  let response = result.response;
-  let responseErrorDetail = null;
-
-  const retryBase = getApiBackendRetryBase(path, response);
-  if (retryBase) {
-    const retryDetail = await readResponseBodyOrHttpError(response);
-    if (!shouldBlockApiBackendRetry(retryDetail)) {
-      streamBase = retryBase;
-      result = await fetchSseResponse(path, streamBase, buildRequest, signal);
-      if (result.aborted) return { aborted: true };
-      response = result.response;
-    } else {
-      responseErrorDetail = retryDetail;
-    }
-  }
-
-  if (response.status === 403 || response.status === 419) {
-    const detail = await readResponseBody(response).catch(() => ({}));
-    if (isCsrfFailure(response, detail)) {
-      await refreshCsrfToken();
-      result = await fetchSseResponse(path, streamBase, buildRequest, signal);
-      if (result.aborted) return { aborted: true };
-      response = result.response;
-    } else {
-      responseErrorDetail = detail;
-    }
-  }
-
-  if (!response.ok) {
-    const detail = responseErrorDetail || (await readResponseBody(response).catch(() => ({})));
-    throwApiError(getResponseErrorMessage(response, detail), response, detail);
-  }
-
-  const reader = getSseReader(response);
-  const decoder = new TextDecoder();
-  let buffer = '';
-  let doneData = null;
-
-  const handleSseEvent = async (event) => {
-    if (returnDoneData && event.name === 'done') {
-      doneData = event.data;
-    }
-    if (throwOnError && event.name === 'error') {
-      if (handlers.error) {
-        await handlers.error(event.data);
-      }
-      throwApiError(
-        getStructuredErrorMessage(event.data) || normalizeRawErrorText(event.rawText) || 'AI 助手生成失败',
-        null,
-        event.data
-      );
-    } else if (event.name && handlers[event.name]) {
-      await handlers[event.name](event.data);
-    } else if (['content', 'reasoning', 'tool', 'step', 'nudge', 'ping'].includes(event.name)) {
-      await nextPaint();
-    }
-  };
-
-  while (true) {
-    let chunk;
-    try {
-      chunk = await reader.read();
-    } catch (err) {
-      if (signal?.aborted || err.name === 'AbortError') {
-        return { aborted: true };
-      }
-      // Handle stream cancellation from browser/network layer
-      if (err.name === 'TypeError' || /cancel|closed|network/i.test(String(err.message))) {
-        return { aborted: true };
-      }
-      throw err;
-    }
-
-    const { done, value } = chunk;
-    if (done) {
-      break;
-    }
-
-    buffer += decoder.decode(value, { stream: true });
-    let separator = findSseBlockSeparator(buffer);
-    while (separator) {
-      const block = buffer.slice(0, separator.index);
-      buffer = buffer.slice(separator.index + separator.length);
-      const event = parseSseBlock(block);
-      await handleSseEvent(event);
-      separator = findSseBlockSeparator(buffer);
-    }
-  }
-
-  buffer += decoder.decode();
-  if (buffer.trim()) {
-    await handleSseEvent(parseSseBlock(buffer));
-  }
-
-  return returnDoneData ? doneData : undefined;
-}
-
-export async function streamMessage(conversationId, payload, handlers = {}, signal) {
-  return streamSSE(`/api/conversations/${conversationId}/messages`, payload, handlers, signal);
-}
-
-async function streamAssistantDraft(path, payload, handlers = {}, signal) {
-  return streamSSE(path, payload, handlers, signal, { throwOnError: true, returnDoneData: true });
-}
-
-async function fetchSseResponse(path, base, buildRequest, signal) {
-  try {
-    return { response: await fetch(apiUrl(path, base), buildRequest()) };
-  } catch (error) {
-    if (signal?.aborted || error.name === 'AbortError') {
-      return { aborted: true };
-    }
-    throwApiError(normalizeNetworkError(error), null, { cause: error?.message || String(error) });
-  }
-}
-
-function getSseReader(response) {
-  if (response.body && typeof response.body.getReader === 'function') {
-    return response.body.getReader();
-  }
-  throwApiError('流式响应不可用，请稍后重试。', response, { error: 'Missing response body' });
-}
-
-function parseSseBlock(block) {
-  let name = 'message';
-  let rawText = '';
-  let hasData = false;
-
-  forEachSseLine(block, (line) => {
-    if (line.startsWith('event:')) {
-      name = line.slice(6).trim();
-    } else if (line.startsWith('data:')) {
-      if (hasData) {
-        rawText += '\n';
-      }
-      rawText += line.slice(5).trimStart();
-      hasData = true;
-    }
-  });
-
-  return {
-    name,
-    data: safeJson(rawText),
-    rawText
-  };
-}
-
-function safeJson(text) {
-  try {
-    return JSON.parse(text);
-  } catch {
-    return {};
-  }
-}
-
-async function readResponseBody(response) {
-  const text = await response.text();
-  return parseResponseBody(text, response);
-}
-
-async function readResponseBodyOrHttpError(response) {
-  try {
-    return await readResponseBody(response);
-  } catch (error) {
-    if (response.ok) {
-      throw error;
-    }
-    return { error: normalizeHttpError(response) };
-  }
-}
-
-function parseResponseBody(text, response) {
-  if (!text) return {};
-
-  try {
-    return JSON.parse(text);
-  } catch {
-    return response.ok ? {} : { rawText: truncateResponseText(text) };
-  }
-}
-
-async function requestJson(path, options = {}, base = configuredApiBase) {
-  const isMutation = ['POST', 'PUT', 'PATCH', 'DELETE'].includes((options.method || 'GET').toUpperCase());
-  if (isMutation) {
-    await ensureCsrfToken();
-  }
-  const csrfHeaders = isMutation ? { 'X-CSRF-Token': getCsrfToken() || '' } : {};
-  const response = await fetch(apiUrl(path, base), {
-    credentials: 'include',
-    ...options,
-    headers: {
-      ...csrfHeaders,
-      ...(options.body ? jsonHeaders : {}),
-      ...(options.headers || {})
-    }
-  });
-
-  return {
-    response,
-    data: await readResponseBodyOrHttpError(response),
-    base
-  };
-}
-
-async function requestJsonWithConnectionRetry(path, options = {}, base = configuredApiBase) {
-  let attempt = 0;
-  while (true) {
-    try {
-      const result = await requestJson(path, options, base);
-      if (!shouldRetryConnectionResponse(result.response, result.data, options, attempt)) {
-        return result;
-      }
-    } catch (error) {
-      if (!shouldRetryConnectionError(error, options, attempt)) {
-        throw error;
-      }
-    }
-    await waitForConnectionRetry(attempt);
-    attempt += 1;
-  }
-}
-
-async function fetchWithConnectionRetry(url, options = {}) {
-  let attempt = 0;
-  while (true) {
-    try {
-      const response = await fetch(url, options);
-      if (!shouldRetryConnectionResponse(response, {}, options, attempt)) {
-        return response;
-      }
-    } catch (error) {
-      if (!shouldRetryConnectionError(error, options, attempt)) {
-        throw error;
-      }
-    }
-    await waitForConnectionRetry(attempt);
-    attempt += 1;
-  }
-}
-
-function apiUrl(path, base = configuredApiBase) {
-  if (/^https?:\/\//i.test(path)) {
-    return path;
-  }
-  return base ? `${base}${path}` : path;
-}
-
-function getApiBackendRetryBase(path, response) {
-  if (response.status !== 404 || !isApiPath(path) || configuredApiBase) {
-    return '';
-  }
-  return devBackendBase();
-}
-
-function isApiPath(path) {
-  return path === '/api' || path.startsWith('/api/');
-}
-
-function shouldBlockApiBackendRetry(data = {}) {
-  return Boolean(getRetryBlockingErrorMessage(data));
-}
-
-function shouldRetryAfterCsrf(response, data, options = {}) {
-  const isMutation = ['POST', 'PUT', 'PATCH', 'DELETE'].includes((options.method || 'GET').toUpperCase());
-  return isMutation && isCsrfFailure(response, data);
-}
-
-function isCsrfFailure(response, data = {}) {
-  const message = getReadableErrorMessage(data);
-  return [403, 419].includes(response.status) && /csrf/i.test(message);
-}
-
-function devBackendBase() {
-  if (typeof window === 'undefined') {
-    return '';
-  }
-
-  if (!['5173', '4173'].includes(window.location.port)) {
-    return '';
-  }
-
-  return `${window.location.protocol}//${window.location.hostname}:3001`;
-}
-
-function normalizeBaseUrl(value) {
-  return String(value || '').replace(/\/+$/, '');
-}
-
-async function guardedRequestJson(path, options = {}, base = configuredApiBase) {
-  try {
-    return await requestJsonWithConnectionRetry(path, options, base);
-  } catch (error) {
-    throwApiError(normalizeNetworkError(error), null, { cause: error?.message || String(error) });
-  }
-}
-
-function shouldRetryConnectionResponse(response, data, options = {}, attempt = 0) {
-  return Boolean(
-    canRetryConnection(options, attempt) &&
-      TRANSIENT_CONNECTION_STATUSES.has(response.status) &&
-      !getStructuredErrorMessage(data)
-  );
-}
-
-function shouldRetryConnectionError(error, options = {}, attempt = 0) {
-  return Boolean(canRetryConnection(options, attempt) && isTransientConnectionError(error));
-}
-
-function canRetryConnection(options = {}, attempt = 0) {
-  return isIdempotentRequest(options) && attempt < CONNECTION_RETRY_DELAYS_MS.length && !options.signal?.aborted;
-}
-
-function isIdempotentRequest(options = {}) {
-  const method = String(options.method || 'GET').toUpperCase();
-  return method === 'GET' || method === 'HEAD';
-}
-
-function isTransientConnectionError(error) {
-  const message = String(error?.message || error || '');
-  return error instanceof TypeError || /Failed to fetch|NetworkError|fetch|ECONNREFUSED|ECONNRESET|terminated/i.test(message);
-}
-
-function waitForConnectionRetry(attempt) {
-  const delayMs = CONNECTION_RETRY_DELAYS_MS[attempt] || 0;
-  return delayMs > 0 ? new Promise((resolve) => setTimeout(resolve, delayMs)) : Promise.resolve();
-}
-
-function getResponseErrorMessage(response, data = {}) {
-  const structuredMessage = getStructuredErrorMessage(data);
-  if (structuredMessage) return structuredMessage;
-  if (response.status === 502) return normalizeHttpError(response);
-  return normalizeRawErrorText(data?.rawText) || normalizeHttpError(response);
-}
-
-function getReadableErrorMessage(data = {}) {
-  return getStructuredErrorMessage(data) || normalizeRawErrorText(data?.rawText);
-}
-
-function getRetryBlockingErrorMessage(data = {}) {
-  const structuredMessage = getStructuredErrorMessage(data);
-  if (structuredMessage) return structuredMessage;
-  const rawMessage = normalizeRawErrorText(data?.rawText);
-  return isGenericDevNotFoundText(rawMessage) ? '' : rawMessage;
-}
-
-function getStructuredErrorMessage(data) {
-  if (typeof data === 'string') return data.trim();
-  if (!data || typeof data !== 'object') return '';
-  return normalizeStructuredMessageValue(data.error) || normalizeStructuredMessageValue(data.message);
-}
-
-function normalizeStructuredMessageValue(value) {
-  if (typeof value === 'string') return value.trim();
-  if (!value || typeof value !== 'object') return '';
-  return normalizeStructuredMessageValue(value.message) || normalizeStructuredMessageValue(value.error);
-}
-
-function normalizeRawErrorText(text) {
-  const value = String(text || '').trim();
-  if (!value || value.startsWith('<')) return '';
-  if (['{}', '[]', 'null'].includes(value)) return '';
-  return value.replace(/\s+/g, ' ');
-}
-
-function isGenericDevNotFoundText(message) {
-  return /^(not found|cannot (get|post|put|patch|delete) \/api(?:\/\S*)?)$/i.test(message);
-}
-
-function truncateResponseText(text) {
-  const value = String(text || '').trim();
-  if (value.length <= MAX_ERROR_BODY_LENGTH) return value;
-  return `${value.slice(0, MAX_ERROR_BODY_LENGTH)}...`;
-}
-
-function normalizeHttpError(response) {
-  if (response.status === 502) {
-    return '后端连接中断或正在重启，请看后端日志窗口，等 3001 启动完成后重试。';
-  }
-  return `请求失败：${response.status}`;
-}
-
-function normalizeNetworkError(error) {
-  const message = String(error?.message || error || '');
-  if (/Failed to fetch|NetworkError|fetch/i.test(message)) {
-    return '无法连接后端服务，请确认 3001 后端窗口正在运行。';
-  }
-  return message || '请求失败，请稍后重试。';
-}
-
-function throwApiError(message, response, data) {
-  const error = new Error(message);
-  error.status = response?.status || 0;
-  error.data = data;
-  throw error;
-}
-
-function nextPaint() {
-  if (typeof window === 'undefined' || typeof window.requestAnimationFrame !== 'function') {
-    return Promise.resolve();
-  }
-  return new Promise((resolve) => {
-    window.requestAnimationFrame(() => resolve());
-  });
-}
+export { apiRequest, ensureCsrfToken } from './api/core.js';
+export { __resetApiCsrfTokenForTests } from './api/core.js';
+export {
+  getMe,
+  getUserProfile,
+  login,
+  logout,
+  register,
+  saveUserAvatar,
+  saveUserProfile
+} from './api/auth.js';
+export { fetchAppBootstrap, exportProjectSnapshot } from './api/app.js';
+export { createAsset, deleteAsset, fetchAssets } from './api/assets.js';
+export { exportEnvelope, importEnvelope } from './api/envelopes.js';
+export {
+  addNpcBehavior,
+  addNpcMemory,
+  branchConversation,
+  confirmConversationMemory,
+  continueMessage,
+  createConversation,
+  createConversationMemory,
+  createEconomyTransaction,
+  createMessageSwipe,
+  createSave,
+  deleteConversation,
+  deleteConversationMemory,
+  deleteConversations,
+  deleteMessage,
+  disableConversationMemory,
+  deleteNpcBehavior,
+  deleteNpcMemory,
+  deleteSave,
+  deleteStatusBar,
+  fetchConversationAccessorySkills,
+  fetchConversationBranches,
+  fetchConversationBranchTree,
+  fetchConversationEconomy,
+  fetchConversationMemories,
+  fetchConversationMessages,
+  fetchConversationNpcs,
+  fetchConversationSettings,
+  fetchConversations,
+  fetchEconomyHistory,
+  fetchMessageSwipes,
+  fetchNpcBehaviors,
+  fetchNpcMemories,
+  fetchSave,
+  fetchSaves,
+  fetchStatusBar,
+  hideConversationNpc,
+  hideEmptyConversationNpcs,
+  loadSave,
+  previewConversationContext,
+  renameSave,
+  rollbackConversationMemory,
+  saveConversationAccessorySkills,
+  saveConversationSettings,
+  saveStatusBar,
+  sendMessage,
+  streamContinueMessage,
+  streamMessage,
+  streamNpcOrganizer,
+  updateConversationMemory,
+  updateConversationNpc,
+  updateMessage,
+  updateNpcBehavior,
+  updateNpcMemory
+} from './api/chat.js';
+export {
+  completeCharacterDraft,
+  createCharacter,
+  createCharacterImage,
+  deleteAllCharacterTalents,
+  deleteCharacter,
+  deleteCharacterImage,
+  deleteCharacterTalent,
+  fetchCharacter,
+  fetchCharacterImages,
+  fetchCharacterTalents,
+  fetchCharacterWorldBooks,
+  fetchCharacters,
+  linkCharacterWorldBook,
+  reorderCharacterImages,
+  rollCharacterTalent,
+  saveCharacterAccessorySkills,
+  setCharacterFavorite,
+  setCharacterLike,
+  streamCharacterDraft,
+  unlinkCharacterWorldBook,
+  updateCharacter,
+  updateCharacterImage
+} from './api/characters.js';
+export { exportDiagnostics } from './api/diagnostics.js';
+export {
+  createMod,
+  deleteMod,
+  fetchMods,
+  reorderMods,
+  updateMod
+} from './api/mods.js';
+export {
+  createPreset,
+  deletePreset,
+  fetchPreset,
+  fetchPresets,
+  setDefaultPreset,
+  updatePreset
+} from './api/presets.js';
+export {
+  checkProviderHealth,
+  fetchDeepSeekBalance,
+  fetchProviderCapabilities,
+  fetchProviderModels,
+  getProviderSettings,
+  saveProviderSettings
+} from './api/providers.js';
+export {
+  fetchRegexRules,
+  importRegexRuleSet,
+  reorderRegexRules,
+  toggleRegexRule
+} from './api/settings.js';
+export {
+  createTag,
+  deleteTag,
+  fetchTags
+} from './api/tags.js';
+export {
+  createTalentPool,
+  deleteTalentPool,
+  fetchTalentPools,
+  updateTalentPool
+} from './api/talents.js';
+export {
+  completeWorldBookDraft,
+  createWorldBook,
+  createWorldBookEntry,
+  deleteWorldBook,
+  deleteWorldBookEntry,
+  fetchWorldBook,
+  fetchWorldBooks,
+  previewWorldBookMatches,
+  streamWorldBookDraft,
+  updateWorldBook,
+  updateWorldBookEntry
+} from './api/worldBooks.js';

@@ -4,6 +4,7 @@ import MarkdownIt from 'markdown-it';
 import hljs from 'highlight.js/lib/common';
 import DOMPurify from 'dompurify';
 import { normalizeRegexFlags as normalizeSharedRegexFlags } from '../../../shared/regexFlags.js';
+import { recordFrontendDiagnostic } from '../diagnostics.js';
 
 // Initialize markdown-it with highlight.js
 const md = new MarkdownIt({
@@ -16,7 +17,9 @@ const md = new MarkdownIt({
       try {
         const highlighted = hljs.highlight(str, { language: lang, ignoreIllegals: true }).value;
         return `<pre class="markdown-code"><code class="hljs language-${lang}">${highlighted}</code></pre>`;
-      } catch {}
+      } catch (error) {
+        recordFrontendDiagnostic('markdown.highlight', error, { lang });
+      }
     }
     const escaped = md.utils.escapeHtml(str);
     return `<pre class="markdown-code"><code>${escaped}</code></pre>`;
@@ -164,7 +167,12 @@ function compileFoldPlugins(renderPlugins = []) {
         regex: new RegExp(plugin.pattern, flags),
         titleTemplate: String(plugin.titleTemplate || plugin.label || '$1')
       });
-    } catch {}
+    } catch (error) {
+      recordFrontendDiagnostic('markdown.foldPlugin.compile', error, {
+        pattern: plugin.pattern,
+        flags: plugin.flags || 'u'
+      });
+    }
   }
   return plugins;
 }

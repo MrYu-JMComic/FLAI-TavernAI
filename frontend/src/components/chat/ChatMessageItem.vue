@@ -10,6 +10,8 @@ import {
   Copy,
   GitBranch,
   Pencil,
+  RotateCcw,
+  StepForward,
   Trash2,
   X
 } from '@lucide/vue';
@@ -28,6 +30,8 @@ const props = defineProps({
   avatarUrl: { type: String, default: '' },
   canEdit: { type: Boolean, default: false },
   canDelete: { type: Boolean, default: false },
+  canRerunEdit: { type: Boolean, default: false },
+  canContinue: { type: Boolean, default: false },
   branchCan: { type: Boolean, default: true },
   messageActionBusy: { type: Boolean, default: false },
   copyBusy: { type: Boolean, default: false },
@@ -45,6 +49,8 @@ const emit = defineEmits([
   'begin-edit',
   'cancel-edit',
   'save-edit',
+  'save-edit-rerun',
+  'continue-generation',
   'delete',
   'copy',
   'update:editingMessageContent',
@@ -66,13 +72,13 @@ function normalizeMessageAttachments(attachments = []) {
   const normalized = [];
   const source = Array.isArray(attachments) ? attachments : [];
   for (const attachment of source) {
-    const dataUrl = String(attachment?.dataUrl || '').trim();
-    if (!dataUrl) {
+    const url = String(attachment?.url || attachment?.dataUrl || '').trim();
+    if (!url) {
       continue;
     }
     normalized.push({
-      id: String(attachment.id || dataUrl.slice(0, 48)),
-      dataUrl,
+      id: String(attachment.id || url.slice(0, 48)),
+      url,
       alt: String(attachment.alt || attachment.name || '聊天图片').trim() || '聊天图片'
     });
   }
@@ -151,6 +157,17 @@ watch(isEditingCurrentMessage, async (active) => {
               <Check :size="15" />
               <span>保存</span>
             </button>
+            <button
+              v-if="canRerunEdit"
+              type="button"
+              class="message-action-button primary"
+              :disabled="messageActionBusy"
+              :aria-busy="messageActionBusy"
+              @click="emit('save-edit-rerun', message)"
+            >
+              <RotateCcw :size="15" />
+              <span>保存并重跑</span>
+            </button>
             <button type="button" class="message-action-button" :disabled="messageActionBusy" @click="emit('cancel-edit', message)">
               <X :size="15" />
               <span>取消</span>
@@ -162,12 +179,12 @@ watch(isEditingCurrentMessage, async (active) => {
             <a
               v-for="attachment in messageAttachments"
               :key="attachment.id"
-              :href="attachment.dataUrl"
+              :href="attachment.url"
               target="_blank"
               rel="noreferrer"
               class="message-attachment"
             >
-              <img :src="attachment.dataUrl" :alt="attachment.alt" />
+              <img :src="attachment.url" :alt="attachment.alt" />
             </a>
           </div>
           <MarkdownContent
@@ -211,6 +228,17 @@ watch(isEditingCurrentMessage, async (active) => {
           >
             <Trash2 :size="14" />
             <span>删除</span>
+          </button>
+          <button
+            v-if="canContinue"
+            type="button"
+            class="message-action-button primary continue-message-button"
+            aria-label="继续生成"
+            title="继续生成"
+            @click="emitMessageAction('continue-generation')"
+          >
+            <StepForward :size="14" />
+            <span>继续</span>
           </button>
           <button
             v-if="worldBookMatchCount > 0"

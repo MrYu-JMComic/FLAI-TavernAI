@@ -127,6 +127,35 @@ test('package scripts keep encoding checks wired into backend tests and frontend
   assert.equal(frontendPackage.scripts.build, 'vite build');
 });
 
+test('frontend keeps Playwright E2E smoke entry wired', () => {
+  const frontendPackage = readJson('frontend/package.json');
+  const playwrightConfig = readText('frontend/playwright.config.js');
+  const e2eHelpers = readText('frontend/e2e/helpers.js');
+  const smokeSpec = readText('frontend/e2e/local-first-smoke.spec.js');
+  const importWorldBookSpec = readText('frontend/e2e/auth-import-worldbook.spec.js');
+  const settingsNpcSpec = readText('frontend/e2e/settings-npc.spec.js');
+
+  assert.equal(frontendPackage.scripts['test:e2e'], 'playwright test');
+  assert.ok(frontendPackage.devDependencies['@playwright/test']);
+  assert.match(playwrightConfig, /webServer:/);
+  assert.match(playwrightConfig, /FLAI_DB_PATH/);
+  assert.match(playwrightConfig, /VITE_API_PROXY_TARGET/);
+  assert.match(playwrightConfig, /3211/);
+  assert.match(playwrightConfig, /5174/);
+  assert.match(e2eHelpers, /export async function registerUser/);
+  assert.match(e2eHelpers, /export async function loginUser/);
+  assert.match(e2eHelpers, /export async function apiRequest/);
+  assert.match(e2eHelpers, /注册并进入/);
+  assert.match(smokeSpec, /保存角色/);
+  assert.match(smokeSpec, /本地 Mock 回复/);
+  assert.match(importWorldBookSpec, /直接导入/);
+  assert.match(importWorldBookSpec, /测试触发/);
+  assert.match(importWorldBookSpec, /\/api\/world-books/);
+  assert.match(settingsNpcSpec, /AI 供应商设置/);
+  assert.match(settingsNpcSpec, /NPC 管理/);
+  assert.match(settingsNpcSpec, /\/api\/providers\/capabilities/);
+});
+
 test('review gate keeps required validation stages wired', () => {
   const reviewGate = readText('scripts/review-gate.ps1');
 
@@ -138,6 +167,13 @@ test('review gate keeps required validation stages wired', () => {
     /Vue 控件可访问性诊断/,
     /function\s+Invoke-CapturedNativeCommand/,
     /function\s+Invoke-LoggedNativeCommand/,
+    /\$reviewLogDir\s*=\s*Join-Path\s+\$projectRoot\s+".runtime-check"/,
+    /\$reviewLogFile\s*=\s*Join-Path\s+\$reviewLogDir\s+\("review-gate-\{0\}\.log"/,
+    /function\s+Write-ReviewLog/,
+    /Set-Content\s+-LiteralPath\s+\$reviewLogFile\s+-Value\s+"FLAI TavernAI review gate log"/,
+    /Add-Content\s+-LiteralPath\s+\$reviewLogFile\s+-Value\s+\$Line\s+-Encoding\s+utf8/,
+    /Write-ReviewOutput\s+"Log: \$reviewLogFile"/,
+    /Write-ReviewLog\s+"\[\$File \$\(\$Arguments -join ' '\)\] exit=\$exitCode"/,
     /Push-Location\s+\$projectRoot\s*\r?\ntry\s*\{/,
     /}\s*finally\s*\{\s*\r?\n\s*Pop-Location\s*\r?\n\}\s*$/,
     /\$exitCode\s*=\s*1/,
@@ -194,6 +230,58 @@ test('encoding checker keeps reports in scope and reports scan coverage', () => 
     /readFileSync\(filePath\);\s*\r?\n\s*const text = buffer\.toString\('utf8'\)/,
     /text\.split\(\s*\/\\r\?\\n\/\s*\)/,
     /\[\s*\.\.\.\s*line\s*\]\.some/
+  ]);
+});
+
+test('Windows packaging runs the review gate before staging artifacts', () => {
+  const packageScript = readText('scripts/package-windows.ps1');
+
+  assertTextMatches(packageScript, [
+    /\[switch\]\$SkipReviewGate/,
+    /function\s+Get-PowerShellCommand/,
+    /function\s+Invoke-PrePackageReviewGate/,
+    /Skipped pre-package review gate because -SkipReviewGate was supplied\./,
+    /Running pre-package review gate\.\.\./,
+    /Join-Path\s+\$repoRoot\s+'scripts\\review-gate\.ps1'/,
+    /Invoke-CheckedCommand\s+-FilePath\s+\$powerShell\s+-Arguments\s+@\([\s\S]*'-ExecutionPolicy'[\s\S]*'Bypass'[\s\S]*'-File'/,
+    /\$utf8NoBom\s*=\s*\[System\.Text\.UTF8Encoding\]::new\(\$false\)/,
+    /\[System\.IO\.File\]::WriteAllText\(\$markerPath, \$marker, \$utf8NoBom\)/,
+    /Invoke-PrePackageReviewGate\s*\r?\n\s*Reset-Directory\s+-Path\s+\$stageRoot/
+  ]);
+});
+
+test('Windows package smoke validates staged runtime health', () => {
+  const smokeScript = readText('scripts/smoke-windows-package.ps1');
+
+  assertTextMatches(smokeScript, [
+    /\[switch\]\$SkipNpmInstall/,
+    /\[switch\]\$SkipStage/,
+    /\[switch\]\$SkipReviewGate/,
+    /Join-Path\s+\$repoRoot\s+'dist\\windows-app'/,
+    /Join-Path\s+\$repoRoot\s+'\.runtime-check\\windows-package-smoke'/,
+    /Invoke-CheckedCommand\s+-FilePath\s+\(Get-PowerShellCommand\)\s+-Arguments\s+\$arguments\s+-WorkingDirectory\s+\$repoRoot/,
+    /Join-Path\s+\$repoRoot\s+'scripts\\package-windows\.ps1'/,
+    /'-NoPackage'/,
+    /\$arguments\s+\+=\s+'-SkipNpmInstall'/,
+    /function\s+Assert-StagedRuntime/,
+    /Staged backend runtime marker is missing\./,
+    /Staged frontend index is missing\./,
+    /Staged Node runtime is missing\./,
+    /function\s+New-SmokeRuntime/,
+    /Copy-DirectoryContents\s+-Source\s+\$backendStage\s+-Destination\s+\$runtimeBackend/,
+    /Copy-DirectoryContents\s+-Source\s+\$sharedStage\s+-Destination\s+\$runtimeShared/,
+    /function\s+Start-SmokeBackend/,
+    /Set-TemporaryEnvironment[\s\S]*'FLAI_DB_PATH'/,
+    /Start-Process[\s\S]*-WindowStyle Hidden[\s\S]*-PassThru/,
+    /function\s+Wait-ForRuntimeHealth/,
+    /\/api\/health/,
+    /\$health\.runtime\.packaged\s+-eq\s+\$true/,
+    /\$health\.checks\.database\.ok\s+-eq\s+\$true/,
+    /\$health\.checks\.storage\.ok\s+-eq\s+\$true/,
+    /\$health\.checks\.bundle\.present\s+-eq\s+\$true/,
+    /function\s+Stop-SmokeBackend/,
+    /Stop-Process\s+-Id\s+\$Process\.Id\s+-Force/,
+    /Windows package smoke passed:/
   ]);
 });
 

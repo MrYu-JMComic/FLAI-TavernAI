@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
+import { appConfig } from './config.js';
 import { normalizeBoolean } from './utils/boolean.js';
 
 const sessionCookieName = 'flai_session';
@@ -15,11 +16,11 @@ const secretFile = path.join(backendRoot, 'data', 'app-secret');
 const legacyDevSecret = 'flai-dev-secret-change-me';
 
 function appSecret() {
-  if (process.env.APP_SECRET) {
-    return process.env.APP_SECRET;
+  if (appConfig.appSecret) {
+    return appConfig.appSecret;
   }
 
-  if (process.env.NODE_ENV === 'production') {
+  if (appConfig.isProduction) {
     throw new Error('APP_SECRET is required in production');
   }
 
@@ -272,7 +273,7 @@ export function setSessionCookie(response, sessionId) {
   response.cookie(sessionCookieName, sessionId, {
     httpOnly: true,
     sameSite: 'lax',
-    secure: process.env.NODE_ENV === 'production',
+    secure: appConfig.isProduction,
     maxAge: sessionDays * 24 * 60 * 60 * 1000,
     path: '/'
   });
@@ -282,7 +283,7 @@ export function clearSessionCookie(response) {
   response.clearCookie(sessionCookieName, {
     httpOnly: true,
     sameSite: 'lax',
-    secure: process.env.NODE_ENV === 'production',
+    secure: appConfig.isProduction,
     path: '/'
   });
 }

@@ -1,0 +1,500 @@
+/* Status Bar Editor */
+
+.status-bar-editor-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.status-bar-editor {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--surface-strong) 50%, transparent);
+}
+
+.status-bar-editor-fields {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.status-bar-editor-fields:disabled {
+  opacity: 0.68;
+}
+
+.status-bar-variables-editor {
+  display: grid;
+  gap: 8px;
+}
+
+.variables-editor-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  color: var(--text);
+  font-size: 0.82rem;
+  font-weight: 800;
+}
+
+.variables-editor-header .chat-setting-inline-button.small {
+  min-height: 26px;
+  padding: 0 8px;
+  font-size: 0.76rem;
+}
+
+.variable-editor-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  min-width: 0;
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.variable-editor-row > .variable-input {
+  min-width: 0;
+}
+
+.variable-editor-row > .variable-input.name {
+  flex: 1 1 80px;
+  min-width: 60px;
+}
+
+.variable-editor-row > .variable-input.num {
+  flex: 0 0 58px;
+}
+
+.variable-editor-row > .variable-input.color {
+  flex: 0 0 32px;
+}
+
+.variable-input {
+  border: 1px solid color-mix(in srgb, var(--line) 88%, transparent);
+  border-radius: 6px;
+  padding: 4px 8px;
+  color: var(--text);
+  background: color-mix(in srgb, var(--surface) 86%, transparent);
+  font-size: 0.82rem;
+  outline: none;
+}
+
+.variable-input:focus {
+  border-color: color-mix(in srgb, var(--primary) 42%, var(--line));
+}
+
+.variable-input.name {
+  flex: 1;
+  min-width: 60px;
+}
+
+.variable-input.num {
+  width: 58px;
+  text-align: center;
+}
+
+.variable-input.color {
+  width: 32px;
+  height: 28px;
+  padding: 2px;
+  cursor: pointer;
+}
+
+.variable-separator {
+  color: var(--muted);
+  font-size: 0.82rem;
+  font-weight: 600;
+}
+
+.variable-remove {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border: 0;
+  border-radius: 6px;
+  color: var(--danger);
+  background: transparent;
+  font-size: 1rem;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.variable-remove:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--danger) 12%, transparent);
+}
+
+.status-blueprint-vars .status-variable-row {
+  display: grid;
+  grid-template-columns: minmax(82px, 1fr) 60px 58px auto 58px 32px 24px;
+  gap: 6px;
+  align-items: center;
+}
+
+.status-blueprint-vars .status-variable-row.is-text {
+  grid-template-columns: minmax(88px, 1fr) 60px minmax(94px, 1.1fr) 24px;
+}
+
+.status-blueprint-vars .status-variable-row.is-composite {
+  grid-template-columns: minmax(88px, 0.8fr) 60px minmax(180px, 1.6fr);
+}
+
+.status-bar-variables-editor .status-variable-row.is-composite {
+  display: grid;
+  grid-template-columns: minmax(88px, 0.8fr) 60px minmax(180px, 1.6fr);
+  gap: 6px;
+  align-items: center;
+}
+
+.status-variable-row > .variable-input,
+.status-variable-row > .variable-input.name,
+.status-variable-row > .variable-input.num,
+.status-variable-row > .variable-input.color {
+  flex: initial;
+  width: 100%;
+  min-width: 0;
+}
+
+.status-variable-row > .variable-input.kind {
+  padding-right: 4px;
+  padding-left: 6px;
+  text-align: center;
+}
+
+.status-variable-row > .variable-input.value {
+  min-width: 0;
+}
+
+.status-variable-row.is-meter > .variable-input.value {
+  text-align: center;
+}
+
+.status-variable-row.is-text > .variable-input.value {
+  text-align: left;
+}
+
+.status-composite-kind {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 30px;
+  color: var(--muted);
+  font-size: 0.76rem;
+  font-weight: 800;
+}
+
+.status-composite-values {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(118px, 1fr));
+  gap: 6px;
+  min-width: 0;
+}
+
+.status-composite-value {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.status-composite-value > span {
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.status-composite-value > .variable-input.value {
+  width: 100%;
+  min-width: 0;
+}
+
+@media (max-width: 560px) {
+  .status-blueprint-toolbar {
+    align-items: stretch;
+  }
+
+  .status-blueprint-actions {
+    width: 100%;
+    justify-content: stretch;
+  }
+
+  .status-blueprint-actions .chat-setting-inline-button {
+    flex: 1 1 104px;
+    justify-content: center;
+  }
+
+  .status-blueprint-summary > span {
+    flex: 1 1 96px;
+  }
+
+  .status-blueprint-vars .status-variable-row,
+  .status-blueprint-vars .status-variable-row.is-text,
+  .status-blueprint-vars .status-variable-row.is-composite,
+  .status-bar-variables-editor .status-variable-row.is-composite {
+    grid-template-columns: minmax(86px, 1fr) 58px minmax(76px, 1fr) 24px;
+  }
+
+  .status-blueprint-vars .status-variable-row.is-composite .status-composite-values,
+  .status-bar-variables-editor .status-variable-row.is-composite .status-composite-values {
+    grid-column: 1 / -1;
+  }
+
+  .status-variable-row > .variable-remove {
+    grid-column: 4;
+    grid-row: 1;
+  }
+
+  .status-variable-row.is-meter > .variable-separator {
+    display: none;
+  }
+
+  .status-variable-row.is-meter > .variable-input.num {
+    grid-column: 2;
+    grid-row: 2;
+  }
+
+  .status-variable-row.is-meter > .variable-input.color {
+    grid-column: 3;
+    grid-row: 2;
+    width: 38px;
+  }
+
+  .status-variable-row.is-meter::before {
+    grid-column: 1;
+    grid-row: 2;
+    color: var(--muted);
+    font-size: 0.72rem;
+    font-weight: 800;
+    content: '最大 / 颜色';
+  }
+}
+
+.status-bar-editor-footer {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  justify-content: flex-end;
+}
+
+.chat-setting-inline-button.danger {
+  color: var(--danger);
+  border-color: color-mix(in srgb, var(--danger) 30%, var(--line));
+}
+
+.chat-setting-inline-button.danger:hover {
+  background: color-mix(in srgb, var(--danger) 10%, transparent);
+}
+
+.status-bar-wrapper {
+  padding: 0 0 4px;
+}
+
+/* -- Status Bar Template Editor -- */
+
+.sb-template-editor {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px dashed color-mix(in srgb, var(--line) 60%, transparent);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--surface-strong) 30%, transparent);
+}
+
+.sb-template-row {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.sb-template-row > .chat-setting-field {
+  flex: 1 1 120px;
+  min-width: 0;
+}
+
+.sb-accent-row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.sb-accent-row input[type="text"] {
+  flex: 1;
+  min-width: 0;
+}
+
+.sb-accent-picker {
+  flex: 0 0 36px;
+  width: 36px;
+  height: 36px;
+  min-height: 36px;
+  padding: 2px;
+  cursor: pointer;
+  border-radius: 8px;
+}
+
+.sb-effects-field {
+  display: grid;
+  gap: 6px;
+}
+
+.sb-effects-label {
+  color: var(--text);
+  font-size: 0.82rem;
+  font-weight: 800;
+}
+
+.sb-effects-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.sb-effect-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 30px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  cursor: pointer;
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: var(--text);
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.sb-effect-check:has(input:checked) {
+  border-color: color-mix(in srgb, var(--primary) 40%, var(--line));
+  background: var(--primary-soft);
+  color: var(--primary);
+}
+
+.sb-effect-check input {
+  width: 14px;
+  height: 14px;
+  accent-color: var(--primary);
+}
+
+.sb-custom-css {
+  min-height: 60px;
+  font-size: 0.8rem;
+  line-height: 1.5;
+}
+
+.status-bar-template-alert {
+  display: grid;
+  gap: 4px;
+  padding: 8px 10px;
+  border: 1px solid color-mix(in srgb, var(--danger) 32%, var(--line));
+  border-radius: 8px;
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 8%, transparent);
+  font-size: 0.78rem;
+  line-height: 1.45;
+}
+
+.status-bar-template-alert span {
+  font-weight: 800;
+}
+
+.status-bar-template-alert ul {
+  display: grid;
+  gap: 2px;
+  margin: 0;
+  padding-left: 18px;
+}
+
+/* -- Characters Editor -- */
+
+.sb-characters-editor {
+  display: grid;
+  gap: 10px;
+}
+
+.sb-char-editor-row {
+  position: relative;
+  display: grid;
+  gap: 8px;
+  padding: 10px 34px 10px 10px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+}
+
+.sb-char-editor-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: end;
+}
+
+.sb-char-editor-grid .chat-setting-field {
+  flex: 1 1 100px;
+  min-width: 0;
+}
+
+.sb-char-editor-grid .chat-setting-field .variable-input {
+  width: 100%;
+}
+
+.sb-char-css-field {
+  flex-basis: 100%;
+}
+
+.sb-char-vars {
+  display: grid;
+  gap: 6px;
+  padding-top: 6px;
+  border-top: 1px dashed color-mix(in srgb, var(--line) 50%, transparent);
+}
+
+.sb-char-vars-label {
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: var(--muted);
+}
+
+.char-remove {
+  position: absolute;
+  top: 8px;
+  right: 6px;
+}
+
+/* -- Quick Replies Editor -- */
+
+.sb-quick-replies-editor {
+  display: grid;
+  gap: 8px;
+}
+
+@media (max-width: 560px) {
+  .sb-template-row {
+    flex-direction: column;
+  }
+
+  .sb-template-row > .chat-setting-field {
+    flex-basis: 100%;
+  }
+}
+
+/* -- Status Editor Legacy Polish -- */
+
+.sb-template-editor,
+.status-bar-editor {
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--surface-strong) 50%, transparent);
+}

@@ -22,6 +22,7 @@ const props = defineProps({
   selectedConversationCount: { type: Number, default: 0 },
   conversationActionBusy: { type: Boolean, default: false },
   startConversationBusy: { type: Boolean, default: false },
+  conversationBranches: { type: Array, default: () => [] },
   sidebarLoadError: { type: String, default: '' },
   sidebarLoading: { type: Boolean, default: false },
   route: { type: Object, default: () => ({ params: {} }) },
@@ -71,6 +72,14 @@ function onHistorySearchInput(event) {
     return;
   }
   emit('update:historySearch', target.value);
+}
+
+function branchMeta(branch = {}) {
+  const createdAt = String(branch.createdAt || '').trim();
+  if (!createdAt) {
+    return '分支对话';
+  }
+  return createdAt.slice(0, 16).replace('T', ' ');
 }
 </script>
 
@@ -195,6 +204,27 @@ function onHistorySearchInput(event) {
           <Trash2 :size="15" />
         </button>
       </div>
+      <template v-if="conversationBranches.length">
+        <p class="history-group">分支</p>
+        <div
+          v-for="branch in conversationBranches"
+          :key="branch.id"
+          class="history-row branch-row"
+          :class="{ active: branch.id === route.params.id }"
+        >
+          <button
+            class="history-item"
+            type="button"
+            :disabled="conversationActionBusy"
+            :aria-busy="conversationActionBusy"
+            @click="emit('open-conversation', branch.id)"
+          >
+            <strong>{{ branch.title }}</strong>
+            <span>{{ branch.characterName || conversation?.character?.name || 'AI' }}</span>
+            <small>{{ branchMeta(branch) }}</small>
+          </button>
+        </div>
+      </template>
       <p v-if="!filteredConversations.length" class="history-empty">暂无会话</p>
     </div>
 

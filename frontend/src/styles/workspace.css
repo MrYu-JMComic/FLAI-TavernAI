@@ -1,0 +1,73 @@
+.workspace-layout-shell {
+  --workspace-page-padding-top: 28px;
+  min-height: 0;
+  height: 100vh;
+  height: 100svh;
+  height: 100dvh;
+  overflow: hidden;
+}
+
+.workspace-layout-shell .page-shell {
+  width: 100%;
+  max-width: none;
+  margin: 0;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: none;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+  scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
+}
+
+.workspace-layout-shell .page-shell::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+.workspace-layout-shell .page-shell::-webkit-scrollbar-track {
+  border-left: 1px solid var(--scrollbar-track-border);
+  background: var(--scrollbar-track);
+}
+
+.workspace-layout-shell .page-shell::-webkit-scrollbar-thumb {
+  min-height: 56px;
+  border: 2px solid transparent;
+  border-radius: 999px;
+  background:
+    linear-gradient(
+      180deg,
+      var(--scrollbar-thumb),
+      var(--scrollbar-thumb-end)
+    )
+    padding-box;
+}
+
+.workspace-layout-shell .page-shell::-webkit-scrollbar-thumb:hover {
+  background:
+    linear-gradient(
+      180deg,
+      var(--scrollbar-thumb-hover),
+      var(--scrollbar-thumb-hover-end)
+    )
+    padding-box;
+}
+
+.workspace-layout-shell .page-shell::-webkit-scrollbar-corner,
+.workspace-layout-shell .page-shell::-webkit-scrollbar-button {
+  display: none;
+}
+
+.workspace-layout-shell .narrow-page,
+.workspace-layout-shell .extensions-page,
+.workspace-layout-shell .preset-page {
+  width: 100%;
+  max-width: none;
+  margin: 0;
+}
+
+.workspace-layout-shell .character-section-nav,
+.workspace-layout-shell .settings-section-nav {
+  top: calc(-1 * var(--workspace-page-padding-top, 28px));
+}

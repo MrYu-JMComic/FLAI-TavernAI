@@ -13,7 +13,11 @@ export function normalizeConversationAppearance(input = {}) {
     input.mobileBackgroundUrl ?? input.mobile_background_url ?? input.mobileBgUrl ?? ''
   );
   const customCss = normalizeMultilineText(input.customCss ?? input.custom_css ?? '');
+  const customCssEnabled = normalizeBoolean(input.customCssEnabled ?? input.custom_css_enabled, false);
+  const customCssRiskAccepted = normalizeBoolean(input.customCssRiskAccepted ?? input.custom_css_risk_accepted, false);
   const customJs = normalizeMultilineText(input.customJs ?? input.custom_js ?? '');
+  const customJsEnabled = normalizeBoolean(input.customJsEnabled ?? input.custom_js_enabled, false);
+  const customJsRiskAccepted = normalizeBoolean(input.customJsRiskAccepted ?? input.custom_js_risk_accepted, false);
   const statusBarPrompt = normalizeMultilineText(input.statusBarPrompt ?? input.status_bar_prompt ?? '');
   const showWorldBookMatches = normalizeBoolean(input.showWorldBookMatches ?? input.show_world_book_matches, true);
 
@@ -21,7 +25,11 @@ export function normalizeConversationAppearance(input = {}) {
     desktopBackgroundUrl,
     mobileBackgroundUrl,
     customCss,
+    customCssEnabled,
+    customCssRiskAccepted,
     customJs,
+    customJsEnabled,
+    customJsRiskAccepted,
     statusBarPrompt,
     showWorldBookMatches
   };
@@ -122,7 +130,11 @@ function toLegacyAppearance(appearance) {
     desktopBackgroundUrl: appearance.desktopBackgroundUrl,
     mobileBackgroundUrl: appearance.mobileBackgroundUrl,
     customCss: appearance.customCss,
+    customCssEnabled: appearance.customCssEnabled,
+    customCssRiskAccepted: appearance.customCssRiskAccepted,
     customJs: appearance.customJs,
+    customJsEnabled: appearance.customJsEnabled,
+    customJsRiskAccepted: appearance.customJsRiskAccepted,
     showWorldBookMatches: appearance.showWorldBookMatches
   };
 }

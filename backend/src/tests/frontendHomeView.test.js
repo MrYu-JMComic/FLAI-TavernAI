@@ -428,6 +428,8 @@ test('HomeView builds card tag previews with bounded direct loops', () => {
 });
 
 test('HomeView ignores stale character import file reads', () => {
+  assert.match(homeViewScript, /import \{ importEnvelope \} from '\.\.\/api\/envelopes\.js';/);
+  assert.doesNotMatch(homeViewScript, /importCharacter/);
   assert.match(homeViewScript, /let importFileReadToken = 0;/);
   assert.match(
     homeViewScript,
@@ -439,7 +441,7 @@ test('HomeView ignores stale character import file reads', () => {
   );
   assert.match(
     homeViewScript,
-    /async function previewImportFile\(file\) {[\s\S]*if \(importLoading\.value \|\| !file \|\| !isHomeActive\(\)\) return;[\s\S]*const readToken = \+\+importFileReadToken;[\s\S]*importPreview\.value = null;[\s\S]*importError\.value = '';[\s\S]*importFileName\.value = file\.name \|\| '';[\s\S]*const text = await file\.text\(\);[\s\S]*if \(!isCurrentImportFileRead\(readToken\)\) return;[\s\S]*importPreview\.value = data;[\s\S]*} catch {[\s\S]*if \(!isCurrentImportFileRead\(readToken\)\) return;[\s\S]*importError\.value = '无法解析角色卡文件，请确认是有效的 JSON 文件';/
+    /async function previewImportFile\(file\) {[\s\S]*if \(importLoading\.value \|\| !file \|\| !isHomeActive\(\)\) return;[\s\S]*const readToken = \+\+importFileReadToken;[\s\S]*importPreview\.value = null;[\s\S]*importError\.value = '';[\s\S]*importFileName\.value = file\.name \|\| '';[\s\S]*const text = await file\.text\(\);[\s\S]*if \(!isCurrentImportFileRead\(readToken\)\) return;[\s\S]*const preview = normalizeCharacterImportPreview\(data\);[\s\S]*importPreview\.value = preview;[\s\S]*} catch {[\s\S]*if \(!isCurrentImportFileRead\(readToken\)\) return;[\s\S]*importError\.value = '无法解析角色卡文件，请确认是有效的 JSON 文件';/
   );
   assert.match(
     homeViewScript,
@@ -463,6 +465,40 @@ test('HomeView keeps character import preview inline with direct edit and import
   assert.doesNotMatch(homeViewTemplate, /class="import-overlay"/);
   assert.match(
     homeViewScript,
-    /async function confirmImport\(editAfter = false\) {[\s\S]*const savedCharacter = await importCharacter\(nextImport\);[\s\S]*if \(editAfter && savedCharacter\?\.id\) {[\s\S]*emit\('navigate', 'characterEdit', { id: savedCharacter\.id }\);[\s\S]*return;[\s\S]*}/
+    /async function confirmImport\(editAfter = false\) {[\s\S]*const nextImport = importPreview\.value\.payload \|\| importPreview\.value;[\s\S]*const importResult = await importEnvelope\('characters', nextImport\);[\s\S]*const savedCharacter = firstImportedCharacter\(importResult\);[\s\S]*if \(editAfter && savedCharacter\?\.id\) {[\s\S]*emit\('navigate', 'characterEdit', { id: savedCharacter\.id }\);[\s\S]*return;[\s\S]*}/
   );
+  assert.match(
+    homeViewScript,
+    /function normalizeCharacterImportPreview\(data\) {[\s\S]*normalizeCharacterEnvelopeKind\(data\.kind\)[\s\S]*firstValidCharacterImportItem\(data\.items\)[\s\S]*buildCharacterImportPreview\(data, firstItem,[\s\S]*format: 'envelope'[\s\S]*}/
+  );
+  assert.match(
+    homeViewTemplate,
+    /v-if="importPreview\.regexRules\?\.length"[\s\S]*\{\{ importPreview\.regexRules\.length \}\} 条[\s\S]*v-if="importPreview\.worldBook"/
+  );
+});
+
+test('HomeView shows character import differences before confirming import', () => {
+  assert.match(homeViewScript, /fetchCharacter,/);
+  assert.match(
+    homeViewScript,
+    /preview\.comparison = await buildCharacterImportComparison\(preview\);[\s\S]*importPreview\.value = preview;/
+  );
+  assert.match(
+    homeViewScript,
+    /async function buildCharacterImportComparison\(preview\) \{[\s\S]*const candidates = await fetchCharacters\(\{ search: importName, sort: 'name', tag: '' \}\);[\s\S]*existingSummary = findCharacterByExactName\(candidates, importName\);[\s\S]*existingCharacter = await fetchCharacter\(existingSummary\.id\);[\s\S]*buildCharacterImportFieldDiffs\(existingCharacter, preview\.character\);[\s\S]*buildCharacterImportTagDiff\(existingCharacter, preview\);/
+  );
+  assert.match(
+    homeViewScript,
+    /function buildCharacterImportFieldDiffs\(existingCharacter = \{\}, importedCharacter = \{\}\) \{[\s\S]*key: 'avatarUrl'[\s\S]*key: 'openingMessage'[\s\S]*rows\.push\(\{[\s\S]*current: summarizeImportDiffValue\(currentValue, spec\),[\s\S]*incoming: summarizeImportDiffValue\(incomingValue, spec\)[\s\S]*\}\);/
+  );
+  assert.match(
+    homeViewScript,
+    /function buildCharacterImportTagDiff\(existingCharacter = \{\}, preview = \{\}\) \{[\s\S]*const currentTags = collectCharacterTagNames\(existingCharacter\);[\s\S]*const incomingTags = collectImportPreviewTagNames\(preview\);[\s\S]*const added = diffStringLists\(incomingTags, currentTags\);[\s\S]*const removed = diffStringLists\(currentTags, incomingTags\);/
+  );
+  assert.match(homeViewTemplate, /class="import-diff-panel inline"/);
+  assert.match(homeViewTemplate, /导入差异/);
+  assert.match(homeViewTemplate, /v-for="row in importPreview\.comparison\.fieldDiffs"/);
+  assert.match(homeViewTemplate, /v-for="tag in importPreview\.comparison\.tagDiff\.added"/);
+  assert.match(stylesSource, /\.import-diff-panel\.inline\s*\{/);
+  assert.match(stylesSource, /@media \(max-width: 760px\) \{[\s\S]*\.import-diff-head,[\s\S]*\.import-diff-row\s*\{[\s\S]*grid-template-columns:\s*1fr;/);
 });

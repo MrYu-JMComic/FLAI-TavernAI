@@ -149,19 +149,35 @@ test('advanced settings text fields merge without filter join arrays', () => {
   const merged = mergeAdvancedSettings(
     {
       customCss: '.author {}',
+      customCssEnabled: true,
+      customCssRiskAccepted: true,
       customJs: 'author();',
+      customJsEnabled: true,
+      customJsRiskAccepted: true,
       statusBarPrompt: 'Author status prompt'
     },
     {
       customCss: '.user {}',
+      customCssEnabled: true,
+      customCssRiskAccepted: true,
       customJs: 'user();',
+      customJsEnabled: true,
+      customJsRiskAccepted: true,
       statusBarPrompt: 'User status prompt'
     }
   );
 
   assert.equal(merged.customCss, '.author {}\n\n.user {}');
+  assert.equal(merged.customCssEnabled, true);
+  assert.equal(merged.customCssRiskAccepted, true);
   assert.equal(merged.customJs, 'author();\n\nuser();');
+  assert.equal(merged.customJsEnabled, true);
+  assert.equal(merged.customJsRiskAccepted, true);
   assert.equal(merged.statusBarPrompt, 'Author status prompt\n\nUser status prompt');
+  assert.equal(mergeAdvancedSettings({ customCss: '.disabled {}' }, { customJs: 'disabled();' }).customCss, '');
+  assert.equal(mergeAdvancedSettings({ customCss: '.disabled {}' }, { customJs: 'disabled();' }).customJs, '');
+  assert.equal(mergeAdvancedSettings({ customCss: '.unaccepted {}', customCssEnabled: true }, {}).customCss, '');
+  assert.equal(mergeAdvancedSettings({}, { customJs: 'unaccepted();', customJsEnabled: true }).customJs, '');
   assert.match(
     advancedSettingsSource,
     /function mergeAdvancedText\(authorValue = '', userValue = ''\) \{\s*if \(authorValue && userValue\) \{\s*return `\$\{authorValue\}\\n\\n\$\{userValue\}`;/

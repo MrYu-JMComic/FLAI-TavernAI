@@ -27,7 +27,7 @@ const npcOrganizerTools = [
     type: 'function',
     function: {
       name: 'upsert_npc_profile',
-      description: 'Create or update an NPC profile: status, current location, aliases, memory seal, confidence, and evidence.',
+      description: 'Create or update an NPC profile: status, current location, relationship summary, aliases, memory seal, confidence, and evidence.',
       parameters: {
         type: 'object',
         properties: {
@@ -35,6 +35,7 @@ const npcOrganizerTools = [
           status: { type: 'string', enum: npcStatusValues },
           customStatus: { type: 'string' },
           currentLocation: { type: 'string', description: 'The NPC current physical location. Use an empty string only to clear a wrong location.' },
+          relationship: { type: 'string', description: 'A concise stable relationship summary, such as attitude, trust, allegiance, debt, rivalry, or connection to the protagonist or key cast.' },
           aliases: { type: 'array', items: { type: 'string' } },
           memorySealed: { type: 'boolean' },
           evidence: { type: 'string' },
@@ -245,10 +246,10 @@ function buildNpcOrganizerMessages(state) {
       role: 'system',
       content: [
         'You are the dedicated NPC organizer for FLAI Tavern AI.',
-        'You must use tools to organize NPC profiles, current locations, memories, and behavior rules; do not answer with prose only.',
+        'You must use tools to organize NPC profiles, current locations, relationship summaries, memories, and behavior rules; do not answer with prose only.',
         'Make small, reviewable edits. Preserve user-written data unless it is duplicate, empty, stale, contradictory, or clearly a false positive.',
         'Ground new memories and behavior rules in the current NPC data or recent conversation evidence.',
-        'Use profile tools for current location, status, exact aliases, and memory sealing. Update current location only when evidence clearly moves or places the NPC.',
+        'Use profile tools for current location, relationship summary, status, exact aliases, and memory sealing. Update current location only when evidence clearly moves or places the NPC. Update relationship only when the conversation gives stable evidence about attitude, trust, allegiance, debt, rivalry, or connection.',
         'Use memory tools for facts, relationships, opinions, knowledge, emotions, and events.',
         'Use behavior tools only for stable portrayal rules that should affect future chat replies.',
         'Hide NPC profiles only for false positives or entries the user would not expect to see as NPCs.',
@@ -265,7 +266,7 @@ function buildNpcOrganizerMessages(state) {
 
 function buildNpcOrganizerContext(state) {
   return {
-    requirement: state.requirement || '整理当前 NPC 资料、记忆和行为，合并重复项，补足明显缺口，移除错误或空泛项。',
+    requirement: state.requirement || '整理当前 NPC 资料、关系、记忆和行为，合并重复项，补足明显缺口，移除错误或空泛项。',
     selectedNpc: state.selectedNpc,
     conversation: {
       id: state.conversationId,
@@ -425,6 +426,9 @@ function upsertNpcProfileTool(args, state) {
   if (args.currentLocation !== undefined) {
     payload.currentLocation = limitText(args.currentLocation, 160);
   }
+  if (args.relationship !== undefined) {
+    payload.relationship = limitText(args.relationship, 240);
+  }
   if (args.aliases !== undefined) {
     payload.aliases = normalizeStringList(args.aliases, 20, 80);
   }
@@ -452,7 +456,8 @@ function addNpcMemoryTool(args, state) {
   }
   const memory = addNpcMemory(state.database, state.userId, state.conversationId, npcName, {
     memoryType: normalizeEnum(args.memoryType, memoryTypeValues, 'event'),
-    content
+    content,
+    auditActor: 'agent'
   });
   return { ok: true, memory };
 }
@@ -474,6 +479,7 @@ function updateNpcMemoryTool(args, state) {
     }
     payload.content = content;
   }
+  payload.auditActor = 'agent';
   const memory = updateNpcMemory(state.database, state.userId, state.conversationId, memoryId, payload, npcName);
   return memory ? { ok: true, memory } : { ok: false, error: 'Memory not found' };
 }
@@ -484,7 +490,7 @@ function deleteNpcMemoryTool(args, state) {
   if (!npcName || !memoryId) {
     return { ok: false, error: 'npcName and memoryId are required' };
   }
-  const deleted = deleteNpcMemory(state.database, state.userId, state.conversationId, memoryId, npcName);
+  const deleted = deleteNpcMemory(state.database, state.userId, state.conversationId, memoryId, npcName, { auditActor: 'agent' });
   return deleted ? { ok: true, deletedId: memoryId } : { ok: false, error: 'Memory not found' };
 }
 
@@ -499,7 +505,8 @@ function addNpcBehaviorTool(args, state) {
     triggerCondition: limitText(args.triggerCondition, 2000),
     action,
     priority: normalizeInteger(args.priority, 0, 100, 0),
-    enabled: args.enabled !== false
+    enabled: args.enabled !== false,
+    auditActor: 'agent'
   });
   return { ok: true, behavior };
 }
@@ -530,6 +537,7 @@ function updateNpcBehaviorTool(args, state) {
   if (args.enabled !== undefined) {
     payload.enabled = args.enabled === true;
   }
+  payload.auditActor = 'agent';
   const behavior = updateNpcBehavior(state.database, state.userId, state.conversationId, behaviorId, payload, npcName);
   return behavior ? { ok: true, behavior } : { ok: false, error: 'Behavior not found' };
 }
@@ -540,7 +548,7 @@ function deleteNpcBehaviorTool(args, state) {
   if (!npcName || !behaviorId) {
     return { ok: false, error: 'npcName and behaviorId are required' };
   }
-  const deleted = deleteNpcBehavior(state.database, state.userId, state.conversationId, behaviorId, npcName);
+  const deleted = deleteNpcBehavior(state.database, state.userId, state.conversationId, behaviorId, npcName, { auditActor: 'agent' });
   return deleted ? { ok: true, deletedId: behaviorId } : { ok: false, error: 'Behavior not found' };
 }
 

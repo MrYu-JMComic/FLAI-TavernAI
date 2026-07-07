@@ -1,20 +1,21 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { appConfig } from '../config.js';
 import { avatarUploadDir } from '../db.js';
+import { assetIdFromUrl, assetKinds, assetUrl } from '../modules/assets.js';
 import { newId, nowIso } from '../security.js';
+import {
+  defaultImageTypes,
+  defaultImageTypesWithGif,
+  parseImageBuffer,
+  parseImageDataUrl as parseSharedImageDataUrl
+} from './imageDataUrls.js';
 
-const avatarMaxBytes = 2 * 1024 * 1024;
-const backgroundMaxBytes = 4 * 1024 * 1024;
-const supportedImageTypes = new Map([
-  ['png', 'image/png'],
-  ['jpeg', 'image/jpeg'],
-  ['jpg', 'image/jpeg'],
-  ['webp', 'image/webp']
-]);
-const supportedBackgroundImageTypes = new Map([
-  ...supportedImageTypes,
-  ['gif', 'image/gif']
-]);
+const avatarMaxBytes = appConfig.upload.avatarMaxBytes;
+const backgroundMaxBytes = appConfig.upload.backgroundMaxBytes;
+const imageMaxPixels = appConfig.upload.imageMaxPixels;
+const supportedImageTypes = defaultImageTypes;
+const supportedBackgroundImageTypes = defaultImageTypesWithGif;
 export const characterBackgroundOwnerTypes = {
   desktop: 'character-background-desktop',
   mobile: 'character-background-mobile'
@@ -35,6 +36,13 @@ export function avatarShortUrl(assetId) {
 }
 
 export function getUserAvatarUrl(database, userId) {
+  const assetRow = database
+    .prepare("SELECT id FROM assets WHERE owner_type = 'user' AND owner_id = ? AND kind = ? ORDER BY updated_at DESC, rowid DESC")
+    .get(userId, assetKinds.avatar);
+  if (assetRow) {
+    return assetUrl(assetRow.id);
+  }
+
   const row = database
     .prepare("SELECT id FROM avatar_assets WHERE owner_type = 'user' AND owner_id = ?")
     .get(userId);
@@ -106,6 +114,10 @@ function saveImageAssetInput(database, {
     return '';
   }
 
+  if (input.startsWith('/api/assets/')) {
+    return keepExistingAssetUrl(database, { userId, ownerType, ownerId, input });
+  }
+
   if (input.startsWith(avatarShortUrlPrefix)) {
     return keepExistingShortUrl(database, { userId, ownerType, ownerId, input });
   }
@@ -118,48 +130,55 @@ function saveImageAssetInput(database, {
     return input;
   }
 
-  const existing = database
-    .prepare('SELECT created_at FROM avatar_assets WHERE owner_type = ? AND owner_id = ?')
-    .get(ownerType, ownerId);
+  const kind = imageAssetKindForOwnerType(ownerType);
+  const existing = getExistingImageAssetTimestamp(database, { ownerType, ownerId, kind });
   const id = newId();
   const createdAt = existing?.created_at || nowIso();
   const updatedAt = nowIso();
 
+  deleteAvatarAsset(database, ownerType, ownerId);
   database
     .prepare(
-      `INSERT INTO avatar_assets (
-        id, user_id, owner_type, owner_id, mime_type, base64_data, byte_size, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-      ON CONFLICT(owner_type, owner_id) DO UPDATE SET
-        id = excluded.id,
-        user_id = excluded.user_id,
-        mime_type = excluded.mime_type,
-        base64_data = excluded.base64_data,
-        byte_size = excluded.byte_size,
-        updated_at = excluded.updated_at`
+      `INSERT INTO assets (
+        id, user_id, owner_type, owner_id, kind, mime_type, name, alt,
+        base64_data, byte_size, metadata_json, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     )
     .run(
       id,
       userId,
       ownerType,
       ownerId,
+      kind,
       normalized.mimeType,
+      '',
+      '',
       normalized.base64Data,
       normalized.byteSize,
+      '{}',
       createdAt,
       updatedAt
     );
 
-  return avatarShortUrl(id);
+  return assetUrl(id);
 }
 
 export function deleteAvatarAsset(database, ownerType, ownerId) {
+  const kind = imageAssetKindForOwnerType(ownerType);
+  database
+    .prepare('DELETE FROM assets WHERE owner_type = ? AND owner_id = ? AND kind = ?')
+    .run(ownerType, ownerId, kind);
   database
     .prepare('DELETE FROM avatar_assets WHERE owner_type = ? AND owner_id = ?')
     .run(ownerType, ownerId);
 }
 
 export function getAvatarAssetForViewer(database, viewerId, assetId) {
+  const assetRow = database.prepare('SELECT * FROM assets WHERE id = ?').get(assetId);
+  if (assetRow) {
+    return canViewStoredImageAsset(database, viewerId, assetRow) ? toStoredImageAsset(assetRow) : null;
+  }
+
   const row = database.prepare('SELECT * FROM avatar_assets WHERE id = ?').get(assetId);
   if (!row) {
     return null;
@@ -171,8 +190,8 @@ export function getAvatarAssetForViewer(database, viewerId, assetId) {
 
   if (characterAssetOwnerTypes.has(row.owner_type)) {
     const character = database
-      .prepare("SELECT id FROM characters WHERE id = ? AND (user_id = ? OR visibility = 'public')")
-      .get(row.owner_id, viewerId);
+      .prepare("SELECT id FROM characters WHERE id = ? AND user_id = ? AND (user_id = ? OR visibility = 'public')")
+      .get(row.owner_id, row.user_id, viewerId);
     if (character) {
       return toAvatarAsset(row);
     }
@@ -184,49 +203,22 @@ export function getAvatarAssetForViewer(database, viewerId, assetId) {
 export function parseAvatarDataUrl(dataUrl, options = {}) {
   const {
     maxBytes = avatarMaxBytes,
+    maxPixels = imageMaxPixels,
     imageTypes = supportedImageTypes,
     unsupportedMessage = '头像仅支持 PNG、JPG 或 WebP',
-    tooLargeMessage = '头像不能超过 2MB'
+    tooLargeMessage = '头像不能超过 2MB',
+    tooManyPixelsMessage = '图片像素过大',
+    invalidMessage = 'Invalid avatar image data'
   } = options;
-  const match = /^data:image\/([a-z0-9.+-]+);base64,([A-Za-z0-9+/=]+)$/i.exec(String(dataUrl || ''));
-  if (!match) {
-    throw new Error(unsupportedMessage);
-  }
-
-  const extension = match[1].toLowerCase();
-  const mimeType = imageTypes.get(extension);
-  if (!mimeType) {
-    throw new Error(unsupportedMessage);
-  }
-  const base64Data = match[2];
-  if (!isValidBase64Payload(base64Data)) {
-    throw new Error('Invalid avatar image data');
-  }
-  const buffer = Buffer.from(base64Data, 'base64');
-
-  if (buffer.length === 0) {
-    throw new Error('Invalid avatar image data');
-  }
-
-  if (buffer.length > maxBytes) {
-    throw new Error(tooLargeMessage);
-  }
-
-  return {
-    mimeType,
-    base64Data,
-    byteSize: buffer.length
-  };
-}
-
-function isValidBase64Payload(value) {
-  if (!value || value.length % 4 === 1) {
-    return false;
-  }
-  if (!/^[A-Za-z0-9+/]+={0,2}$/.test(value)) {
-    return false;
-  }
-  return !value.includes('=') || value.length % 4 === 0;
+  return parseSharedImageDataUrl(dataUrl, {
+    maxBytes,
+    maxPixels,
+    imageTypes,
+    unsupportedMessage,
+    tooLargeMessage,
+    tooManyPixelsMessage,
+    invalidMessage
+  });
 }
 
 function keepExistingShortUrl(database, { userId, ownerType, ownerId, input }) {
@@ -234,6 +226,13 @@ function keepExistingShortUrl(database, { userId, ownerType, ownerId, input }) {
   if (!assetId) {
     return input;
   }
+  const assetRow = database.prepare('SELECT * FROM assets WHERE id = ?').get(assetId);
+  if (assetRow) {
+    return isOwnedImageAsset(assetRow, { userId, ownerType, ownerId })
+      ? assetUrl(assetRow.id)
+      : '';
+  }
+
   const row = database.prepare('SELECT * FROM avatar_assets WHERE id = ?').get(assetId);
   if (!row) {
     // Asset no longer exists — preserve the existing URL to avoid silently clearing the avatar
@@ -246,6 +245,69 @@ function keepExistingShortUrl(database, { userId, ownerType, ownerId, input }) {
 
   // Ownership mismatch — clear the URL (belongs to another user/type)
   return '';
+}
+
+function keepExistingAssetUrl(database, { userId, ownerType, ownerId, input }) {
+  const id = assetIdFromUrl(input);
+  if (!id) {
+    return input;
+  }
+  const row = database.prepare('SELECT * FROM assets WHERE id = ?').get(id);
+  if (!row) {
+    return input;
+  }
+  return isOwnedImageAsset(row, { userId, ownerType, ownerId })
+    ? assetUrl(row.id)
+    : '';
+}
+
+function imageAssetKindForOwnerType(ownerType) {
+  if (
+    ownerType === characterBackgroundOwnerTypes.desktop ||
+    ownerType === characterBackgroundOwnerTypes.mobile ||
+    ownerType === conversationBackgroundOwnerTypes.desktop ||
+    ownerType === conversationBackgroundOwnerTypes.mobile
+  ) {
+    return assetKinds.background;
+  }
+  return assetKinds.avatar;
+}
+
+function getExistingImageAssetTimestamp(database, { ownerType, ownerId, kind }) {
+  const assetRow = database
+    .prepare(
+      `SELECT created_at
+       FROM assets
+       WHERE owner_type = ? AND owner_id = ? AND kind = ?
+       ORDER BY created_at ASC, rowid ASC`
+    )
+    .get(ownerType, ownerId, kind);
+  if (assetRow) {
+    return assetRow;
+  }
+  return database
+    .prepare('SELECT created_at FROM avatar_assets WHERE owner_type = ? AND owner_id = ?')
+    .get(ownerType, ownerId);
+}
+
+function isOwnedImageAsset(row, { userId, ownerType, ownerId }) {
+  return row.user_id === userId &&
+    row.owner_type === ownerType &&
+    row.owner_id === ownerId &&
+    row.kind === imageAssetKindForOwnerType(ownerType);
+}
+
+function canViewStoredImageAsset(database, viewerId, row) {
+  if (row.user_id === viewerId) {
+    return true;
+  }
+  if (characterAssetOwnerTypes.has(row.owner_type)) {
+    const character = database
+      .prepare("SELECT id FROM characters WHERE id = ? AND user_id = ? AND (user_id = ? OR visibility = 'public')")
+      .get(row.owner_id, row.user_id, viewerId);
+    return Boolean(character);
+  }
+  return false;
 }
 
 function getAvatarShortUrlAssetId(input) {
@@ -291,18 +353,35 @@ function readLegacyUpload(value, options = {}) {
   }
 
   const buffer = fs.readFileSync(filePath);
-  if (buffer.length > maxBytes) {
-    throw new Error(tooLargeMessage);
-  }
+  const parsed = parseImageBuffer(buffer, {
+    expectedMimeType: mimeType,
+    maxBytes,
+    maxPixels: imageMaxPixels,
+    tooLargeMessage,
+    tooManyPixelsMessage: '图片像素过大',
+    invalidMessage: 'Invalid avatar image data'
+  });
 
   return {
-    mimeType,
-    base64Data: buffer.toString('base64'),
-    byteSize: buffer.length
+    mimeType: parsed.mimeType,
+    base64Data: parsed.base64Data,
+    byteSize: parsed.byteSize
   };
 }
 
 function toAvatarAsset(row) {
+  return {
+    id: row.id,
+    mimeType: row.mime_type,
+    base64Data: row.base64_data,
+    byteSize: row.byte_size,
+    ownerType: row.owner_type,
+    ownerId: row.owner_id,
+    updatedAt: row.updated_at
+  };
+}
+
+function toStoredImageAsset(row) {
   return {
     id: row.id,
     mimeType: row.mime_type,

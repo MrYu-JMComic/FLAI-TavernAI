@@ -3,20 +3,18 @@ import {
   createCharacter,
   deleteCharacter,
   getCharacter,
-  getRegexRules as getRegexRulesForExport,
   listCharacters,
   setCharacterFavorite,
   setCharacterLike,
   updateCharacter
 } from '../modules/characters.js';
 import {
-  createEntry,
-  createWorldBook,
   getWorldBook,
   linkWorldBookToCharacter,
   listCharacterWorldBooks,
   unlinkWorldBookFromCharacter
 } from '../modules/worldBooks.js';
+import { assetIdFromUrl, assetKinds, deleteAsset, saveAssetInput } from '../modules/assets.js';
 import { setCharacterTags } from '../modules/tags.js';
 import {
   createCharacterImage,
@@ -28,7 +26,7 @@ import {
 import { normalizeAdvancedSettings, normalizeAccessorySkills } from '../modules/advancedSettings.js';
 import { completeCharacterDraft, streamCharacterDraft } from '../services/characterAssistant.js';
 import { rollTalent, getCharacterTalents, deleteAllCharacterTalents, deleteCharacterTalent } from '../modules/talents.js';
-import { createCharacterSchema, updateCharacterSchema, importCharacterSchema, validate } from '../validations/schemas.js';
+import { createCharacterSchema, updateCharacterSchema, validate } from '../validations/schemas.js';
 import { sanitizeCharacterPayload } from '../services/sanitize.js';
 import { normalizeBoolean } from '../utils/boolean.js';
 import { normalizeFiniteNumber } from '../utils/number.js';
@@ -162,104 +160,6 @@ export function createCharactersRouter({
     response.json({ ok: true });
   });
 
-  // ── Character Import / Export ──
-
-  router.get('/:id/export', requireAuth, (request, response) => {
-    const character = getCharacter(db, request.auth.user.id, request.params.id);
-    if (!character) {
-      response.status(404).json({ error: '角色不存在' });
-      return;
-    }
-
-    const regexRules = getRegexRulesForExport(db, character.ownerId, character.id);
-    const characterTags = db
-      .prepare(
-        `SELECT tags.name, tags.color FROM character_tags
-         JOIN tags ON tags.id = character_tags.tag_id
-         WHERE character_tags.character_id = ? AND tags.user_id = ?
-         ORDER BY tags.name COLLATE NOCASE ASC, tags.name ASC, tags.rowid ASC`
-      )
-      .all(character.id, character.ownerId);
-
-    const worldBook = getCharacterExportWorldBook(db, character);
-
-    const exportData = {
-      _flai_export_version: 1,
-      exported_at: new Date().toISOString(),
-      character: {
-        name: character.name,
-        gender: character.gender || '',
-        age: character.age || '',
-        background: character.background || '',
-        worldview: character.worldview || '',
-        persona: character.persona || '',
-        openingMessage: character.openingMessage || '',
-        visibility: character.visibility,
-        renderPlugins: character.renderPlugins || []
-      },
-      regex_rules: regexRules,
-      tags: characterTags.map((t) => t.name),
-      world_book: worldBook
-    };
-
-    response.setHeader('Content-Type', 'application/json; charset=utf-8');
-    response.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(character.name)}.flai-char.json"`);
-    response.json(exportData);
-  });
-
-  router.post('/import', requireAuth, validate(importCharacterSchema), (request, response) => {
-    const data = request.body;
-    if (!data || !data.character) {
-      response.status(400).json({ error: '无效的角色卡数据：缺少 character 字段' });
-      return;
-    }
-
-    const characterData = data.character;
-    if (!String(characterData.name || '').trim()) {
-      response.status(400).json({ error: '角色名不能为空' });
-      return;
-    }
-
-    const userId = request.auth.user.id;
-
-    const character = createCharacter(db, userId, {
-      name: characterData.name,
-      gender: characterData.gender || '',
-      age: characterData.age || '',
-      background: characterData.background || '',
-      worldview: characterData.worldview || '',
-      persona: characterData.persona || '',
-      openingMessage: characterData.openingMessage || '',
-      visibility: 'private',
-      renderPlugins: Array.isArray(characterData.renderPlugins) ? characterData.renderPlugins : [],
-      regexRules: Array.isArray(data.regex_rules) ? data.regex_rules : [],
-      tags: Array.isArray(data.tags) ? data.tags : []
-    });
-    setCharacterTags(db, userId, character.id, data.tags);
-
-    if (data.world_book && data.world_book.name) {
-      const book = createWorldBook(db, userId, {
-        name: data.world_book.name,
-        description: data.world_book.description || '',
-        characterId: character.id
-      });
-
-      if (Array.isArray(data.world_book.entries)) {
-        for (const entry of data.world_book.entries) {
-          createEntry(db, userId, book.id, {
-            name: entry.name || '',
-            triggerKeys: entry.trigger_keys || entry.triggerKeys || '',
-            content: entry.content || '',
-            position: entry.position || 'before_char',
-            enabled: normalizeBoolean(entry.enabled, true)
-          });
-        }
-      }
-    }
-
-    response.status(201).json(withCharacterTags(withWorldBookId(character)));
-  });
-
   // ── Character Reactions ──
 
   router.put('/:id/favorite', requireAuth, (request, response) => {
@@ -302,13 +202,12 @@ export function createCharactersRouter({
       return;
     }
 
-    const imageUrl = String(request.body?.imageUrl || '').trim();
-    if (!imageUrl) {
-      response.status(400).json({ error: '请提供立绘图片' });
-      return;
-    }
-
     try {
+      const imageUrl = normalizeCharacterGalleryImageUrl(db, request.auth.user.id, request.params.id, request.body || {});
+      if (!imageUrl) {
+        response.status(400).json({ error: '请提供立绘图片' });
+        return;
+      }
       const image = createCharacterImage(db, {
         characterId: request.params.id,
         imageUrl,
@@ -356,9 +255,14 @@ export function createCharactersRouter({
       return;
     }
 
+    const existingImageUrl = getCharacterImageUrl(db, request.params.id, request.params.imageId);
     if (!deleteCharacterImage(db, request.params.id, request.params.imageId)) {
       response.status(404).json({ error: '立绘不存在' });
       return;
+    }
+    const assetId = assetIdFromUrl(existingImageUrl);
+    if (assetId) {
+      deleteAsset(db, request.auth.user.id, assetId);
     }
     response.json({ ok: true });
   });
@@ -582,49 +486,35 @@ export function createCharactersRouter({
   return router;
 }
 
-function getCharacterExportWorldBook(db, character) {
-  const linkedWorldBookRow = db
-    .prepare(
-      `SELECT wb.id, wb.name, wb.description
-       FROM character_world_books cwb
-       JOIN world_books wb ON wb.id = cwb.world_book_id
-       WHERE cwb.character_id = ? AND wb.user_id = ?
-       ORDER BY cwb.order_index ASC, cwb.created_at ASC, cwb.rowid ASC`
-    )
-    .get(character.id, character.ownerId);
-  let worldBookRow = linkedWorldBookRow;
-  if (!worldBookRow) {
-    worldBookRow = db
-      .prepare(
-        `SELECT id, name, description FROM world_books
-         WHERE character_id = ? AND user_id = ?
-         ORDER BY updated_at DESC, rowid DESC`
-      )
-      .get(character.id, character.ownerId);
-  }
-  if (!worldBookRow) {
-    return null;
-  }
-
-  const entries = db
-    .prepare(
-      `SELECT name, trigger_keys, content, position, enabled, order_index
-       FROM world_book_entries WHERE world_book_id = ? ORDER BY order_index ASC, rowid ASC`
-    )
-    .all(worldBookRow.id);
-  return {
-    name: worldBookRow.name,
-    description: worldBookRow.description || '',
-    entries
-  };
-}
-
 function prepareCharacterPayload(userId, body = {}) {
   const payload = { ...body };
   if (payload.avatarDataUrl && !payload.avatarUrl) {
     payload.avatarUrl = payload.avatarDataUrl;
   }
   return payload;
+}
+
+function normalizeCharacterGalleryImageUrl(db, userId, characterId, body = {}) {
+  return saveAssetInput(db, userId, {
+    value: body.dataUrl || body.imageUrl,
+    ownerType: 'character',
+    ownerId: characterId,
+    kind: assetKinds.characterGallery,
+    name: body.name || body.filename || '',
+    alt: body.alt || '',
+    metadata: {
+      source: 'character-gallery',
+      sceneTag: body.sceneTag || '',
+      emotionTag: body.emotionTag || ''
+    }
+  });
+}
+
+function getCharacterImageUrl(db, characterId, imageId) {
+  const row = db
+    .prepare('SELECT image_url FROM character_images WHERE id = ? AND character_id = ?')
+    .get(imageId, characterId);
+  return row?.image_url || '';
 }
 
 function hasCharacterDraftSeed(character = {}) {

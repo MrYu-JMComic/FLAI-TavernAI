@@ -4,8 +4,9 @@ import { countMatches, readRepoText, readVueBlocks } from './frontendSfcTestUtil
 
 const { readFileAsDataUrl } = await import('../../../frontend/src/utils/fileReaders.js');
 const fileReadersSource = readRepoText('frontend/src/utils/fileReaders.js');
-const { script: settingsViewScript } = readVueBlocks('frontend/src/views/SettingsView.vue', ['script']);
+const settingsProfileComposableSource = readRepoText('frontend/src/composables/settings/useSettingsProfile.js');
 const { script: characterFormScript } = readVueBlocks('frontend/src/views/CharacterFormView.vue', ['script']);
+const characterImageUploadsSource = readRepoText('frontend/src/composables/character/useCharacterImageUploads.js');
 const { script: characterImagePanelScript } = readVueBlocks('frontend/src/components/CharacterImagePanel.vue', ['script']);
 const chatAppearanceSource = readRepoText('frontend/src/composables/chat/useChatAppearance.js');
 
@@ -88,8 +89,8 @@ test('frontend image upload paths share the safe Data URL reader', () => {
   );
 
   const files = [
-    settingsViewScript,
-    characterFormScript,
+    settingsProfileComposableSource,
+    characterImageUploadsSource,
     characterImagePanelScript,
     chatAppearanceSource
   ];
@@ -100,9 +101,10 @@ test('frontend image upload paths share the safe Data URL reader', () => {
   }
 
   assert.doesNotMatch(chatAppearanceSource, /function readFileAsDataUrl\(file\) \{/);
-  assert.equal(countMatches(settingsViewScript, /readFileAsDataUrl\(file, '头像读取失败'\)/g), 1);
-  assert.equal(countMatches(characterFormScript, /readFileAsDataUrl\(file, '头像读取失败'\)/g), 1);
-  assert.equal(countMatches(characterFormScript, /readFileAsDataUrl\(file, '背景图片读取失败'\)/g), 1);
+  assert.doesNotMatch(characterFormScript, /readFileAsDataUrl/);
+  assert.equal(countMatches(settingsProfileComposableSource, /readFileAsDataUrl\(file, '头像读取失败'\)/g), 1);
+  assert.equal(countMatches(characterImageUploadsSource, /readFileAsDataUrl\(file, '头像读取失败'\)/g), 1);
+  assert.equal(countMatches(characterImageUploadsSource, /readFileAsDataUrl\(file, '背景图片读取失败'\)/g), 1);
   assert.equal(countMatches(characterImagePanelScript, /readFileAsDataUrl\(file, '图片读取失败'\)/g), 1);
   assert.equal(countMatches(chatAppearanceSource, /readFileAsDataUrl\(file, '背景图片读取失败'\)/g), 1);
 });

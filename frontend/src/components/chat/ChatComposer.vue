@@ -9,6 +9,8 @@ const props = defineProps({
   useStream: { type: Boolean, default: true },
   thinkingEnabled: { type: Boolean, default: false },
   canToggleThinking: { type: Boolean, default: false },
+  canUseStream: { type: Boolean, default: true },
+  canAddAttachments: { type: Boolean, default: true },
   chatViewportIsPhone: { type: Boolean, default: false },
   showScrollBottomButton: { type: Boolean, default: false },
   usage: { type: Object, default: null },
@@ -19,6 +21,7 @@ const props = defineProps({
   currentModel: { type: String, default: '' },
   modelOptions: { type: Array, default: () => [] },
   modelSaving: { type: Boolean, default: false },
+  modelCapabilities: { type: Object, default: null },
   currentModelSupportsReasoning: { type: Boolean, default: false }
 });
 
@@ -43,6 +46,30 @@ const textareaRef = ref(null);
 const attachmentInputRef = ref(null);
 const quickModelOptions = computed(() => buildQuickModelOptions(props.modelOptions, props.currentModel));
 const modelSwitchLocked = computed(() => props.sending || props.modelSaving);
+const normalizedModelCapabilities = computed(() => props.modelCapabilities && typeof props.modelCapabilities === 'object'
+  ? props.modelCapabilities
+  : {}
+);
+const currentModelReasoning = computed(() => Boolean(
+  normalizedModelCapabilities.value.reasoning ?? props.currentModelSupportsReasoning
+));
+const modelCapabilityChips = computed(() => {
+  const capabilities = normalizedModelCapabilities.value;
+  const chips = [];
+  if (currentModelReasoning.value) {
+    chips.push({ key: 'reasoning', label: '推理' });
+  }
+  if (capabilities.vision) {
+    chips.push({ key: 'vision', label: '视觉' });
+  }
+  if (capabilities.imageGeneration) {
+    chips.push({ key: 'imageGeneration', label: '绘图' });
+  }
+  if (capabilities.streaming) {
+    chips.push({ key: 'streaming', label: '流式' });
+  }
+  return chips;
+});
 const canQuickSwitchModel = computed(() => {
   if (!quickModelOptions.value.length) {
     return false;
@@ -88,7 +115,7 @@ function onQuickModelChange(event) {
 }
 
 function openAttachmentPicker() {
-  if (props.sending || props.attachmentBusy) {
+  if (props.sending || props.attachmentBusy || !props.canAddAttachments) {
     return;
   }
   attachmentInputRef.value?.click?.();
@@ -96,6 +123,12 @@ function openAttachmentPicker() {
 
 function onAttachmentChange(event) {
   const target = event?.target;
+  if (!props.canAddAttachments) {
+    if (target) {
+      target.value = '';
+    }
+    return;
+  }
   const files = target?.files;
   if (!files || !files.length) {
     return;
@@ -108,6 +141,10 @@ function onAttachmentChange(event) {
 
 function attachmentLabel(attachment = {}) {
   return attachment.alt || attachment.name || '聊天图片';
+}
+
+function attachmentPreviewUrl(attachment = {}) {
+  return attachment.dataUrl || attachment.url || '';
 }
 
 function buildQuickModelOptions(sourceModels, currentModel) {
@@ -170,7 +207,7 @@ defineExpose({ wrapRef, textareaRef });
       />
       <div v-if="attachments.length" class="composer-attachments" aria-label="待发送图片">
         <figure v-for="attachment in attachments" :key="attachment.id" class="composer-attachment">
-          <img :src="attachment.dataUrl" :alt="attachmentLabel(attachment)" />
+          <img :src="attachmentPreviewUrl(attachment)" :alt="attachmentLabel(attachment)" />
           <figcaption>{{ attachmentLabel(attachment) }}</figcaption>
           <button
             type="button"
@@ -191,6 +228,7 @@ defineExpose({ wrapRef, textareaRef });
           aria-label="选择聊天图片"
           accept="image/png,image/jpeg,image/webp"
           multiple
+          :disabled="!canAddAttachments"
           @change="onAttachmentChange"
         />
         <button
@@ -198,7 +236,7 @@ defineExpose({ wrapRef, textareaRef });
           type="button"
           title="添加图片"
           aria-label="添加图片"
-          :disabled="sending || attachmentBusy"
+          :disabled="sending || attachmentBusy || !canAddAttachments"
           :aria-busy="attachmentBusy"
           @click="openAttachmentPicker"
         >
@@ -234,7 +272,7 @@ defineExpose({ wrapRef, textareaRef });
               {{ model.label || model.id }}{{ model.current ? ' 当前' : '' }}
             </option>
           </select>
-          <span v-if="currentModelSupportsReasoning" class="model-ability-chip">推理</span>
+          <span v-for="chip in modelCapabilityChips" :key="chip.key" class="model-ability-chip">{{ chip.label }}</span>
         </label>
         <button
           v-if="!quickModelOptions.length"
@@ -250,10 +288,10 @@ defineExpose({ wrapRef, textareaRef });
         </button>
         <button
           class="mode-pill stream-pill"
-          :class="{ active: useStream }"
+          :class="{ active: canUseStream && useStream }"
           type="button"
-          :aria-pressed="String(useStream)"
-          :disabled="sending"
+          :aria-pressed="String(canUseStream && useStream)"
+          :disabled="sending || !canUseStream"
           :aria-busy="sending"
           @click="emit('toggle-stream')"
         >

@@ -31,6 +31,20 @@ export function buildContextDirectorPrompt(context = {}) {
     );
   }
 
+  if (hasText(source.memoryContext)) {
+    lines.push(
+      '',
+      'Use long-term conversation memory as continuity evidence. Prefer enabled memory over vague recent-message guesses, but do not expose memory labels.'
+    );
+  }
+
+  if (hasText(source.economyContext)) {
+    lines.push(
+      '',
+      'Use economy state as a concrete continuity constraint for balances, purchases, rewards, and penalties.'
+    );
+  }
+
   if (hasText(source.modSystemPrompt)) {
     lines.push(
       '',

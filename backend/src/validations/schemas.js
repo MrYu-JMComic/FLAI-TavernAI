@@ -8,6 +8,7 @@ import { z } from 'zod';
 const STATUS_BLUEPRINT_VARIABLE_LIMIT = 60;
 const BACKGROUND_IMAGE_INPUT_MAX_LENGTH = 6_000_000;
 const CHAT_IMAGE_INPUT_MAX_LENGTH = 6_000_000;
+const ASSET_IMAGE_INPUT_MAX_LENGTH = 8_500_000;
 const BOOLEAN_STRING_VALUES = new Set(['true', 'false', '1', '0']);
 const MOD_CHARACTER_BINDING_LIMIT = 100;
 const npcMemoryTypeSchema = z.enum(['event', 'relationship', 'opinion', 'knowledge', 'emotion']);
@@ -56,7 +57,11 @@ const advancedSettingsSchema = z.object({
   desktopBackgroundUrl: z.string().max(BACKGROUND_IMAGE_INPUT_MAX_LENGTH).trim().optional().default(''),
   mobileBackgroundUrl: z.string().max(BACKGROUND_IMAGE_INPUT_MAX_LENGTH).trim().optional().default(''),
   customCss: z.string().max(50000).trim().optional().default(''),
+  customCssEnabled: booleanLikeSchema.optional().default(false),
+  customCssRiskAccepted: booleanLikeSchema.optional().default(false),
   customJs: z.string().max(50000).trim().optional().default(''),
+  customJsEnabled: booleanLikeSchema.optional().default(false),
+  customJsRiskAccepted: booleanLikeSchema.optional().default(false),
   statusBarPrompt: z.string().max(50000).trim().optional().default(''),
   showWorldBookMatches: booleanLikeSchema.optional().default(true),
   statusBarBlueprint: statusBarBlueprintSchema,
@@ -114,28 +119,6 @@ export const createCharacterSchema = z.object({
 
 export const updateCharacterSchema = createCharacterSchema.partial();
 
-export const importCharacterSchema = z.object({
-  _flai_export_version: z.number().optional(),
-  character: z.object({
-    name: z.string().min(1).max(50).trim(),
-    gender: z.string().max(20).optional().default(''),
-    age: z.string().max(20).optional().default(''),
-    background: z.string().max(10000).optional().default(''),
-    worldview: z.string().max(10000).optional().default(''),
-    persona: z.string().max(10000).optional().default(''),
-    openingMessage: z.string().max(5000).optional().default(''),
-    visibility: z.enum(['public', 'private']).optional().default('private'),
-    renderPlugins: z.array(z.any()).optional().default([])
-  }),
-  regex_rules: z.array(z.any()).optional().default([]),
-  tags: z.array(z.string()).optional().default([]),
-  world_book: z.object({
-    name: z.string(),
-    description: z.string().optional().default(''),
-    entries: z.array(z.any()).optional().default([])
-  }).nullable().optional()
-});
-
 // ── 消息相关 ──
 
 const chatImageAttachmentSchema = z.object({
@@ -158,8 +141,28 @@ export const sendMessageSchema = z.object({
   thinkingEnabled: booleanLikeSchema.optional()
 });
 
+export const continueMessageSchema = z.object({
+  stream: booleanLikeSchema.optional(),
+  presetId: z.string().optional(),
+  thinkingEnabled: booleanLikeSchema.optional()
+});
+
 export const updateMessageSchema = z.object({
   content: z.string().min(1, '消息内容不能为空').max(32000).trim()
+});
+
+export const createAssetSchema = z.object({
+  dataUrl: z.string().max(ASSET_IMAGE_INPUT_MAX_LENGTH).trim().optional().default(''),
+  url: z.string().max(ASSET_IMAGE_INPUT_MAX_LENGTH).trim().optional().default(''),
+  ownerType: z.string().max(80).trim().optional().default(''),
+  ownerId: z.string().max(160).trim().optional().default(''),
+  kind: z.string().max(60).trim().optional().default('generic'),
+  name: z.string().max(160).trim().optional().default(''),
+  alt: z.string().max(240).trim().optional().default(''),
+  metadata: z.record(z.any()).optional().default({})
+}).refine((value) => value.dataUrl || value.url, {
+  path: ['dataUrl'],
+  message: '资产数据不能为空'
 });
 
 // ── 世界书相关 ──
@@ -277,7 +280,11 @@ export const saveConversationSettingsSchema = z.object({
   desktopBackgroundUrl: z.string().max(BACKGROUND_IMAGE_INPUT_MAX_LENGTH).trim().optional().default(''),
   mobileBackgroundUrl: z.string().max(BACKGROUND_IMAGE_INPUT_MAX_LENGTH).trim().optional().default(''),
   customCss: z.string().max(50000).trim().optional().default(''),
+  customCssEnabled: booleanLikeSchema.optional().default(false),
+  customCssRiskAccepted: booleanLikeSchema.optional().default(false),
   customJs: z.string().max(50000).trim().optional().default(''),
+  customJsEnabled: booleanLikeSchema.optional().default(false),
+  customJsRiskAccepted: booleanLikeSchema.optional().default(false),
   statusBarPrompt: z.string().max(50000).trim().optional().default(''),
   showWorldBookMatches: booleanLikeSchema.optional().default(true),
   chatLorebookId: z.string().max(200).trim().nullable().optional(),
@@ -351,6 +358,7 @@ export const updateNpcSchema = z.object({
   status: z.enum(['active', 'left', 'permanently_left', 'dead', 'on_mission', 'following', 'custom']).optional(),
   customStatus: z.string().max(80).trim().optional(),
   currentLocation: z.string().max(160).trim().optional(),
+  relationship: z.string().max(240).trim().optional(),
   aliases: z.array(z.string().max(80).trim()).max(20).optional(),
   aliasesText: z.string().max(1000).trim().optional(),
   memorySealed: booleanLikeSchema.optional()

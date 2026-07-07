@@ -6,7 +6,7 @@ import {
   fetchStatusBar,
   saveConversationAccessorySkills,
   saveStatusBar
-} from '../../api.js';
+} from '../../api/chat.js';
 import {
   STATUS_BAR_TEMPLATE_VALIDATOR_ALLOWED_TAGS,
   STATUS_BAR_TEMPLATE_VOID_TAGS,

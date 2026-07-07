@@ -97,14 +97,22 @@ test('chat appearance merges layered text fields without filter arrays', () => {
       {
         desktopBackgroundUrl: '/author.png',
         customCss: '.author {}',
+        customCssEnabled: true,
+        customCssRiskAccepted: true,
         customJs: 'author();',
+        customJsEnabled: true,
+        customJsRiskAccepted: true,
         statusBarPrompt: 'Author prompt',
         showWorldBookMatches: true
       },
       {
         mobileBackgroundUrl: '/user-mobile.png',
         customCss: '.user {}',
+        customCssEnabled: true,
+        customCssRiskAccepted: true,
         customJs: '',
+        customJsEnabled: false,
+        customJsRiskAccepted: true,
         statusBarPrompt: 'User prompt',
         showWorldBookMatches: false
       }
@@ -113,7 +121,11 @@ test('chat appearance merges layered text fields without filter arrays', () => {
       desktopBackgroundUrl: '/author.png',
       mobileBackgroundUrl: '/user-mobile.png',
       customCss: '.author {}\n\n.user {}',
+      customCssEnabled: true,
+      customCssRiskAccepted: true,
       customJs: 'author();',
+      customJsEnabled: true,
+      customJsRiskAccepted: true,
       statusBarPrompt: 'Author prompt\n\nUser prompt',
       showWorldBookMatches: false
     }
@@ -123,6 +135,49 @@ test('chat appearance merges layered text fields without filter arrays', () => {
     /function mergeAppearanceText\(authorText, userText\) \{[\s\S]*if \(authorText && userText\) \{[\s\S]*return `\$\{authorText\}\\n\\n\$\{userText\}`;[\s\S]*return authorText \|\| userText \|\| '';[\s\S]*\}/
   );
   assert.doesNotMatch(chatAppearanceUtilsSource, /\[authorSettings\.(?:customCss|customJs|statusBarPrompt), userSettings\.(?:customCss|customJs|statusBarPrompt)\]\.filter\(Boolean\)\.join/);
+});
+
+test('chat appearance only applies custom CSS and JS after risk confirmation', () => {
+  assert.deepEqual(
+    mergeChatAppearance(
+      {
+        customCss: '.author {}',
+        customJs: 'author();'
+      },
+      {
+        customCss: '.user {}',
+        customCssEnabled: true,
+        customJs: 'user();',
+        customJsEnabled: false
+      }
+    ),
+    {
+      desktopBackgroundUrl: '',
+      mobileBackgroundUrl: '',
+      customCss: '',
+      customCssEnabled: false,
+      customCssRiskAccepted: false,
+      customJs: '',
+      customJsEnabled: false,
+      customJsRiskAccepted: false,
+      statusBarPrompt: '',
+      showWorldBookMatches: true
+    }
+  );
+  assert.equal(
+    mergeChatAppearance(
+      { customCss: '.author {}', customCssEnabled: true, customCssRiskAccepted: true },
+      { customJs: 'user();', customJsEnabled: true, customJsRiskAccepted: true }
+    ).customCss,
+    '.author {}'
+  );
+  assert.equal(
+    mergeChatAppearance(
+      { customCss: '.author {}', customCssEnabled: true, customCssRiskAccepted: true },
+      { customJs: 'user();', customJsEnabled: true, customJsRiskAccepted: true }
+    ).customJs,
+    'user();'
+  );
 });
 
 test('chat appearance scopes selector lists with a direct comma scanner', () => {
@@ -349,7 +404,11 @@ test('chat appearance save preserves active conversation references for unchange
     desktopBackgroundUrl: '',
     mobileBackgroundUrl: '',
     customCss: '',
+    customCssEnabled: false,
+    customCssRiskAccepted: false,
     customJs: '',
+    customJsEnabled: false,
+    customJsRiskAccepted: false,
     statusBarPrompt: '',
     showWorldBookMatches: true
   };
@@ -420,7 +479,11 @@ test('chat appearance save keeps stale conversation saving locked until cleanup'
     desktopBackgroundUrl: '',
     mobileBackgroundUrl: '',
     customCss: '.saved {}',
+    customCssEnabled: true,
+    customCssRiskAccepted: true,
     customJs: '',
+    customJsEnabled: false,
+    customJsRiskAccepted: false,
     statusBarPrompt: '',
     chatLorebookId: 'book-next'
   });
@@ -528,6 +591,8 @@ test('chat custom script UI helpers ignore stale resumes after the active conver
         helperCalls.push(['closeSidebar']);
       }
     });
+    appearance.chatAppearanceForm.customJsEnabled = true;
+    appearance.chatAppearanceForm.customJsRiskAccepted = true;
     appearance.chatAppearanceForm.customJs = `
       await wait(5);
       setCssVar('--stale-appearance', '1');
@@ -581,6 +646,8 @@ test('chat custom script waits cancel stale direct DOM writes after the active c
       conversation,
       chatShellRef: { value: shell }
     });
+    appearance.chatAppearanceForm.customJsEnabled = true;
+    appearance.chatAppearanceForm.customJsRiskAccepted = true;
     appearance.chatAppearanceForm.customJs = `
       onCleanup(() => {
         state.staleWaitCleanup = true;
@@ -637,6 +704,8 @@ test('chat custom script requestPaint cancels stale direct DOM writes after the 
       conversation,
       chatShellRef: { value: shell }
     });
+    appearance.chatAppearanceForm.customJsEnabled = true;
+    appearance.chatAppearanceForm.customJsRiskAccepted = true;
     appearance.chatAppearanceForm.customJs = `
       await requestPaint();
       root.style.setProperty('--stale-direct-frame', '1');
@@ -782,6 +851,10 @@ test('ChatView routes chat appearance reset and lorebook updates through guarded
   assert.match(chatViewScript, /setChatLorebookId, applyConversationAppearance/);
   assert.match(chatViewScript, /setActiveConversationIfChanged,\s*showActionNotice, showError/);
   assert.match(chatAppearanceSource, /showWorldBookMatches: chatAppearanceForm\.showWorldBookMatches/);
+  assert.match(chatAppearanceSource, /customCssEnabled: chatAppearanceForm\.customCssEnabled/);
+  assert.match(chatAppearanceSource, /customCssRiskAccepted: chatAppearanceForm\.customCssRiskAccepted/);
+  assert.match(chatAppearanceSource, /customJsEnabled: chatAppearanceForm\.customJsEnabled/);
+  assert.match(chatAppearanceSource, /customJsRiskAccepted: chatAppearanceForm\.customJsRiskAccepted/);
   assert.match(chatViewTemplate, /@reset-appearance="resetConversationAppearance\(conversation\?\.settings\)"/);
   assert.match(chatViewTemplate, /@update:chat-lorebook-id="setChatLorebookId"/);
   assert.doesNotMatch(chatViewTemplate, /@reset-appearance="syncConversationAppearance/);

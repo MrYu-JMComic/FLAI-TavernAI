@@ -8,7 +8,11 @@ export function normalizeAdvancedSettings(input = {}) {
     desktopBackgroundUrl: normalizeImageUrl(source.desktopBackgroundUrl ?? source.desktop_background_url ?? ''),
     mobileBackgroundUrl: normalizeImageUrl(source.mobileBackgroundUrl ?? source.mobile_background_url ?? ''),
     customCss: normalizeText(source.customCss ?? source.custom_css ?? ''),
+    customCssEnabled: normalizeBoolean(source.customCssEnabled ?? source.custom_css_enabled, false),
+    customCssRiskAccepted: normalizeBoolean(source.customCssRiskAccepted ?? source.custom_css_risk_accepted, false),
     customJs: normalizeText(source.customJs ?? source.custom_js ?? ''),
+    customJsEnabled: normalizeBoolean(source.customJsEnabled ?? source.custom_js_enabled, false),
+    customJsRiskAccepted: normalizeBoolean(source.customJsRiskAccepted ?? source.custom_js_risk_accepted, false),
     statusBarPrompt: normalizeText(source.statusBarPrompt ?? source.status_bar_prompt ?? source.status_bar_prompt_text ?? ''),
     showWorldBookMatches: normalizeBoolean(source.showWorldBookMatches ?? source.show_world_book_matches, true),
     statusBarBlueprint: normalizeStatusBarBlueprint(source.statusBarBlueprint ?? source.status_bar_blueprint ?? {}),
@@ -23,8 +27,20 @@ export function mergeAdvancedSettings(author = {}, user = {}) {
   return {
     desktopBackgroundUrl: userSettings.desktopBackgroundUrl || authorSettings.desktopBackgroundUrl,
     mobileBackgroundUrl: userSettings.mobileBackgroundUrl || authorSettings.mobileBackgroundUrl,
-    customCss: mergeAdvancedText(authorSettings.customCss, userSettings.customCss),
-    customJs: mergeAdvancedText(authorSettings.customJs, userSettings.customJs),
+    customCss: mergeAdvancedText(
+      enabledAdvancedText(authorSettings.customCss, authorSettings.customCssEnabled, authorSettings.customCssRiskAccepted),
+      enabledAdvancedText(userSettings.customCss, userSettings.customCssEnabled, userSettings.customCssRiskAccepted)
+    ),
+    customCssEnabled: isRiskAcceptedEnabled(authorSettings.customCssEnabled, authorSettings.customCssRiskAccepted) ||
+      isRiskAcceptedEnabled(userSettings.customCssEnabled, userSettings.customCssRiskAccepted),
+    customCssRiskAccepted: Boolean(authorSettings.customCssRiskAccepted || userSettings.customCssRiskAccepted),
+    customJs: mergeAdvancedText(
+      enabledAdvancedText(authorSettings.customJs, authorSettings.customJsEnabled, authorSettings.customJsRiskAccepted),
+      enabledAdvancedText(userSettings.customJs, userSettings.customJsEnabled, userSettings.customJsRiskAccepted)
+    ),
+    customJsEnabled: isRiskAcceptedEnabled(authorSettings.customJsEnabled, authorSettings.customJsRiskAccepted) ||
+      isRiskAcceptedEnabled(userSettings.customJsEnabled, userSettings.customJsRiskAccepted),
+    customJsRiskAccepted: Boolean(authorSettings.customJsRiskAccepted || userSettings.customJsRiskAccepted),
     statusBarPrompt: mergeAdvancedText(authorSettings.statusBarPrompt, userSettings.statusBarPrompt),
     showWorldBookMatches: hasOwnSetting(userSource, 'showWorldBookMatches', 'show_world_book_matches')
       ? userSettings.showWorldBookMatches
@@ -37,6 +53,14 @@ export function mergeAdvancedSettings(author = {}, user = {}) {
       userSource.accessorySkills ?? userSource.accessory_skills ?? {}
     )
   };
+}
+
+function enabledAdvancedText(value, enabled, riskAccepted) {
+  return isRiskAcceptedEnabled(enabled, riskAccepted) ? value : '';
+}
+
+function isRiskAcceptedEnabled(enabled, riskAccepted) {
+  return Boolean(enabled && riskAccepted);
 }
 
 function mergeAdvancedText(authorValue = '', userValue = '') {

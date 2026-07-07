@@ -35,7 +35,7 @@ test('App session state preserves user and provider references for unchanged pay
   );
   assert.match(
     appScript,
-    /const nextProvider = await getProviderSettings\(\)\.catch\(\(\) => null\);[\s\S]*setProviderIfChanged\(nextProvider\);[\s\S]*return true;/
+    /let nextProvider = null;[\s\S]*nextProvider = await getProviderSettings\(\);[\s\S]*recordFrontendDiagnostic\('app\.provider\.refresh', error, \{ requestId \}\);[\s\S]*setProviderIfChanged\(nextProvider\);[\s\S]*return true;/
   );
   assert.match(
     appScript,

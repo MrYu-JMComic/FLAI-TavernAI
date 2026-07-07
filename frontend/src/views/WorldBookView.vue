@@ -6,12 +6,14 @@ import {
   BookOpen,
   ChevronDown,
   ChevronUp,
+  Download,
   Plus,
   Save,
   Sparkles,
   ToggleLeft,
   ToggleRight,
   Trash2,
+  Upload,
   WandSparkles
 } from '@lucide/vue';
 import {
@@ -24,10 +26,14 @@ import {
   streamWorldBookDraft,
   updateWorldBook,
   updateWorldBookEntry
-} from '../api';
+} from '../api/worldBooks.js';
+import { exportEnvelope, importEnvelope } from '../api/envelopes.js';
+import WorldBookMatchLab from '../components/worldbook/WorldBookMatchLab.vue';
 import { useNotify } from '../composables/useNotify';
 import { useProviderModels } from '../composables/useProviderModels';
+import { recordFrontendDiagnostic } from '../diagnostics.js';
 import { appendAiToolList, cloneAiToolList } from '../utils/aiToolLists';
+import { downloadJsonFile, todayStamp } from '../utils/downloadJson.js';
 import { countOwnObjectKeys } from '../utils/objectKeys';
 import { samePlainValue } from '../utils/plainValues';
 
@@ -136,7 +142,8 @@ const selectiveLogicOptions = [
 function loadAssistantModel() {
   try {
     return localStorage.getItem(ASSISTANT_MODEL_STORAGE_KEY) || '';
-  } catch {
+  } catch (error) {
+    recordFrontendDiagnostic('worldBook.assistantModel.load', error, { storageKey: ASSISTANT_MODEL_STORAGE_KEY });
     return '';
   }
 }
@@ -144,7 +151,9 @@ function loadAssistantModel() {
 watch(assistantModel, (value) => {
   try {
     localStorage.setItem(ASSISTANT_MODEL_STORAGE_KEY, String(value || '').trim());
-  } catch {}
+  } catch (error) {
+    recordFrontendDiagnostic('worldBook.assistantModel.save', error, { storageKey: ASSISTANT_MODEL_STORAGE_KEY });
+  }
 });
 
 onMounted(async () => {
@@ -491,6 +500,74 @@ async function removeBook(id) {
   }
 }
 
+async function exportWorldBooks() {
+  if (saving.value || isDetailView.value) return;
+  const routeKey = currentWorldBookRouteKey();
+  const mutationToken = worldBookMutationToken;
+  saving.value = true;
+  try {
+    const envelope = await exportEnvelope('world-books');
+    if (!isCurrentWorldBookRouteMutation(mutationToken, routeKey)) return;
+    downloadJsonFile(envelope, `flai-world-books-${todayStamp()}.json`);
+    notify.success('世界书已导出');
+  } catch (err) {
+    if (!isCurrentWorldBookRouteMutation(mutationToken, routeKey)) return;
+    notify.error(err?.message || '世界书导出失败');
+  } finally {
+    if (isCurrentWorldBookRouteMutation(mutationToken, routeKey)) {
+      saving.value = false;
+    }
+  }
+}
+
+async function importWorldBooks(importText, mutationToken = worldBookMutationToken, routeKey = currentWorldBookRouteKey()) {
+  try {
+    const parsed = JSON.parse(String(importText || ''));
+    const result = await importEnvelope('world-books', parsed);
+    if (!isCurrentWorldBookRouteMutation(mutationToken, routeKey)) return;
+    await loadBooks();
+    if (!isCurrentWorldBookRouteMutation(mutationToken, routeKey)) return;
+    if (result?.skipped?.length) {
+      notify.warning(`已跳过 ${result.skipped.length} 本无效世界书`);
+    }
+    notify.success(`已导入 ${Number(result?.imported || 0)} 本世界书`);
+  } catch (err) {
+    if (!isCurrentWorldBookRouteMutation(mutationToken, routeKey)) return;
+    notify.error(err instanceof SyntaxError ? '导入失败：JSON 格式不正确' : err?.message || '导入失败');
+  } finally {
+    if (isCurrentWorldBookRouteMutation(mutationToken, routeKey)) {
+      saving.value = false;
+    }
+  }
+}
+
+function handleWorldBookImportFile(event) {
+  const input = event?.target;
+  const file = input?.files?.[0];
+  if (input) {
+    input.value = '';
+  }
+  if (!file || saving.value || isDetailView.value) return;
+  const routeKey = currentWorldBookRouteKey();
+  const mutationToken = worldBookMutationToken;
+  const reader = new FileReader();
+  saving.value = true;
+  reader.onload = async () => {
+    if (!isCurrentWorldBookRouteMutation(mutationToken, routeKey)) return;
+    await importWorldBooks(reader.result, mutationToken, routeKey);
+  };
+  reader.onerror = () => {
+    if (!isCurrentWorldBookRouteMutation(mutationToken, routeKey)) return;
+    notify.error('导入失败：文件读取失败');
+    saving.value = false;
+  };
+  try {
+    reader.readAsText(file);
+  } catch {
+    reader.onerror?.();
+  }
+}
+
 function openCreateEntry() {
   if (saving.value) return;
   Object.assign(editingEntry, createEmptyEntry());
@@ -773,7 +850,9 @@ async function createBookFromAiDraft() {
     navigateFromWorldBookMutation('worldBookDetail', { id: createdBook.id });
   } catch (err) {
     if (createdBook?.id) {
-      await deleteWorldBook(createdBook.id).catch(() => null);
+      await deleteWorldBook(createdBook.id).catch((error) => {
+        recordFrontendDiagnostic('worldBook.aiDraft.rollbackDelete', error, { bookId: createdBook.id });
+      });
     }
     if (!isCurrentWorldBookRouteMutation(mutationToken, routeKey)) return;
     notify.error(err.message);
@@ -971,6 +1050,15 @@ function toolResultLabel(result = {}) {
             <Plus :size="18" />
             <span>新建世界书</span>
           </button>
+          <button class="ghost-button" type="button" :disabled="saving || !books.length" :aria-busy="saving" @click="exportWorldBooks">
+            <Download :size="18" />
+            <span>导出</span>
+          </button>
+          <label class="ghost-button file-import-button" :class="{ disabled: saving }" :aria-busy="saving">
+            <Upload :size="18" />
+            <span>导入</span>
+            <input type="file" accept=".json" :disabled="saving" @change="handleWorldBookImportFile" />
+          </label>
           <button class="ghost-button" @click="emit('navigate', 'home')">
             <ArrowLeft :size="18" />
             <span>返回</span>
@@ -1237,6 +1325,11 @@ function toolResultLabel(result = {}) {
             </div>
           </div>
         </div>
+
+        <WorldBookMatchLab
+          :world-book-id="currentBook.id"
+          :disabled="saving || loading"
+        />
 
         <div class="form-panel entries-panel">
           <div class="inline-heading">

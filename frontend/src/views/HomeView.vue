@@ -23,14 +23,14 @@ import {
   WandSparkles
 } from '@lucide/vue';
 import {
-  createConversation,
+  fetchCharacter,
   fetchCharacters,
-  fetchConversations,
-  fetchTags,
-  importCharacter,
   setCharacterFavorite,
   setCharacterLike
-} from '../api';
+} from '../api/characters.js';
+import { createConversation, fetchConversations } from '../api/chat.js';
+import { importEnvelope } from '../api/envelopes.js';
+import { fetchTags } from '../api/tags.js';
 import { useNotify } from '../composables/useNotify';
 import { usePendingKeys } from '../composables/usePendingKeys';
 
@@ -806,12 +806,15 @@ async function previewImportFile(file) {
     const text = await file.text();
     if (!isCurrentImportFileRead(readToken)) return;
     const data = JSON.parse(text);
-    if (!data.character?.name) {
+    const preview = normalizeCharacterImportPreview(data);
+    if (!preview) {
       importError.value = '无效的角色卡文件：缺少角色名';
       notify.error(importError.value);
       return;
     }
-    importPreview.value = data;
+    preview.comparison = await buildCharacterImportComparison(preview);
+    if (!isCurrentImportFileRead(readToken)) return;
+    importPreview.value = preview;
   } catch {
     if (!isCurrentImportFileRead(readToken)) return;
     importError.value = '无法解析角色卡文件，请确认是有效的 JSON 文件';
@@ -825,13 +828,14 @@ function isCurrentImportFileRead(readToken) {
 
 async function confirmImport(editAfter = false) {
   if (!importPreview.value || importLoading.value || !isHomeActive()) return;
-  const nextImport = importPreview.value;
+  const nextImport = importPreview.value.payload || importPreview.value;
   importLoading.value = true;
   importError.value = '';
   try {
-    const savedCharacter = await importCharacter(nextImport);
+    const importResult = await importEnvelope('characters', nextImport);
     if (!isHomeActive()) return;
-    notify.success('角色卡导入成功');
+    const savedCharacter = firstImportedCharacter(importResult);
+    notify.success(importResult?.imported > 1 ? `已导入 ${importResult.imported} 个角色` : '角色卡导入成功');
     importPreview.value = null;
     importFileName.value = '';
     if (editAfter && savedCharacter?.id) {
@@ -847,6 +851,353 @@ async function confirmImport(editAfter = false) {
     if (!isHomeActive()) return;
     importLoading.value = false;
   }
+}
+
+function normalizeCharacterImportPreview(data) {
+  if (!data || typeof data !== 'object' || Array.isArray(data)) {
+    return null;
+  }
+
+  const envelopeKind = normalizeCharacterEnvelopeKind(data.kind);
+  if (envelopeKind === 'characters' && Array.isArray(data.items)) {
+    const firstItem = firstValidCharacterImportItem(data.items);
+    if (!firstItem) {
+      return null;
+    }
+    const items = normalizeCharacterImportItems(data.items);
+    return buildCharacterImportPreview(data, firstItem, {
+      format: 'envelope',
+      itemCount: data.items.length,
+      items
+    });
+  }
+
+  const legacyItem = normalizeCharacterImportItem(data);
+  if (!legacyItem) {
+    return null;
+  }
+  return buildCharacterImportPreview(data, legacyItem, {
+    format: 'legacy',
+    itemCount: 1
+  });
+}
+
+function normalizeCharacterEnvelopeKind(value) {
+  const key = String(value || '').trim().toLowerCase();
+  if (key === 'characters' || key === 'character') {
+    return 'characters';
+  }
+  return '';
+}
+
+function firstValidCharacterImportItem(items) {
+  for (let index = 0; index < items.length; index += 1) {
+    const item = normalizeCharacterImportItem(items[index]);
+    if (item) {
+      return item;
+    }
+  }
+  return null;
+}
+
+function normalizeCharacterImportItems(items) {
+  const normalizedItems = [];
+  const source = Array.isArray(items) ? items : [];
+  for (let index = 0; index < source.length; index += 1) {
+    const item = normalizeCharacterImportItem(source[index]);
+    if (item) {
+      normalizedItems.push(item);
+    }
+  }
+  return normalizedItems;
+}
+
+function normalizeCharacterImportItem(item) {
+  if (!item || typeof item !== 'object' || Array.isArray(item)) {
+    return null;
+  }
+  const character = item.character && typeof item.character === 'object' ? item.character : item;
+  if (!String(character.name || '').trim()) {
+    return null;
+  }
+  return {
+    character,
+    tags: normalizePreviewTags(item.tags || character.tags),
+    regexRules: normalizePreviewList(item.regexRules || item.regex_rules || character.regexRules || character.regex_rules),
+    worldBook: item.worldBook || item.world_book || character.worldBook || character.world_book || null,
+    worldBooks: normalizePreviewList(item.worldBooks || item.world_books || character.worldBooks || character.world_books)
+  };
+}
+
+function buildCharacterImportPreview(payload, item, meta = {}) {
+  return {
+    payload,
+    format: meta.format || 'legacy',
+    itemCount: Math.max(1, Number(meta.itemCount || 1)),
+    items: Array.isArray(meta.items) && meta.items.length ? meta.items : [item],
+    character: item.character,
+    tags: item.tags,
+    regexRules: item.regexRules,
+    worldBook: item.worldBook,
+    worldBooks: item.worldBooks
+  };
+}
+
+function normalizePreviewTags(value) {
+  const tags = [];
+  const source = Array.isArray(value) ? value : [];
+  for (let index = 0; index < source.length; index += 1) {
+    const tag = String(source[index]?.name || source[index] || '').trim();
+    if (tag) {
+      tags.push(tag);
+    }
+  }
+  return tags;
+}
+
+function normalizePreviewList(value) {
+  return Array.isArray(value) ? value : [];
+}
+
+async function buildCharacterImportComparison(preview) {
+  const importName = String(preview?.character?.name || '').trim();
+  const baseSummary = buildImportItemSummary(preview);
+  const emptyComparison = {
+    status: 'new',
+    summary: '未发现同名角色，将作为新角色导入。',
+    existingCharacter: null,
+    fieldDiffs: [],
+    tagDiff: null,
+    changedCount: 0,
+    unchangedFieldCount: 0,
+    importItemSummary: baseSummary
+  };
+
+  if (!importName) {
+    return emptyComparison;
+  }
+
+  let existingSummary = null;
+  try {
+    const candidates = await fetchCharacters({ search: importName, sort: 'name', tag: '' });
+    existingSummary = findCharacterByExactName(candidates, importName);
+  } catch {
+    return {
+      ...emptyComparison,
+      status: 'unavailable',
+      summary: '无法读取现有角色，差异预览暂不可用。'
+    };
+  }
+
+  if (!existingSummary) {
+    return emptyComparison;
+  }
+
+  let existingCharacter = existingSummary;
+  try {
+    existingCharacter = await fetchCharacter(existingSummary.id);
+  } catch {
+    existingCharacter = existingSummary;
+  }
+
+  const fieldResult = buildCharacterImportFieldDiffs(existingCharacter, preview.character);
+  const tagDiff = buildCharacterImportTagDiff(existingCharacter, preview);
+  const changedCount = fieldResult.changedCount + (tagDiff?.changed ? 1 : 0);
+  return {
+    status: changedCount > 0 ? 'matched' : 'same',
+    summary: changedCount > 0
+      ? `发现同名角色，${changedCount} 处内容不同。`
+      : '发现同名角色，主要字段未发现差异。',
+    existingCharacter: {
+      id: existingCharacter.id,
+      name: existingCharacter.name,
+      visibility: visibilityLabel(existingCharacter)
+    },
+    fieldDiffs: fieldResult.rows,
+    tagDiff,
+    changedCount,
+    unchangedFieldCount: fieldResult.unchangedCount,
+    importItemSummary: baseSummary
+  };
+}
+
+function buildImportItemSummary(preview) {
+  const itemCount = Math.max(1, Number(preview?.itemCount || 1));
+  const validItems = Array.isArray(preview?.items) ? preview.items.length : 1;
+  if (itemCount > 1) {
+    return {
+      itemCount,
+      validItems,
+      text: `此文件含 ${itemCount} 个角色，当前显示第一个有效角色的差异。`
+    };
+  }
+  return {
+    itemCount,
+    validItems,
+    text: '此文件含 1 个角色。'
+  };
+}
+
+function findCharacterByExactName(candidates, name) {
+  const targetName = normalizeCompareKey(name);
+  const list = Array.isArray(candidates) ? candidates : [];
+  for (let index = 0; index < list.length; index += 1) {
+    const candidate = list[index];
+    if (normalizeCompareKey(candidate?.name) === targetName) {
+      return candidate;
+    }
+  }
+  return null;
+}
+
+function buildCharacterImportFieldDiffs(existingCharacter = {}, importedCharacter = {}) {
+  const specs = [
+    { key: 'avatarUrl', label: '头像', kind: 'asset' },
+    { key: 'gender', label: '性别' },
+    { key: 'age', label: '年龄' },
+    { key: 'persona', label: '人设' },
+    { key: 'background', label: '背景' },
+    { key: 'worldview', label: '世界观' },
+    { key: 'openingMessage', label: '开场白' }
+  ];
+  const rows = [];
+  let changedCount = 0;
+  let unchangedCount = 0;
+  for (let index = 0; index < specs.length; index += 1) {
+    const spec = specs[index];
+    const currentValue = normalizeImportDiffValue(existingCharacter?.[spec.key], spec);
+    const incomingValue = normalizeImportDiffValue(importedCharacter?.[spec.key], spec);
+    if (currentValue === incomingValue) {
+      if (currentValue) {
+        unchangedCount += 1;
+      }
+      continue;
+    }
+    changedCount += 1;
+    rows.push({
+      key: spec.key,
+      label: spec.label,
+      current: summarizeImportDiffValue(currentValue, spec),
+      incoming: summarizeImportDiffValue(incomingValue, spec)
+    });
+  }
+  return { rows, changedCount, unchangedCount };
+}
+
+function normalizeImportDiffValue(value, spec = {}) {
+  if (spec.kind === 'asset') {
+    return String(value || '').trim() ? 'present' : '';
+  }
+  return collapseImportDiffText(value);
+}
+
+function summarizeImportDiffValue(value, spec = {}) {
+  if (spec.kind === 'asset') {
+    return value ? '有头像' : '无头像';
+  }
+  if (!value) {
+    return '空';
+  }
+  return limitImportDiffText(value, 88);
+}
+
+function buildCharacterImportTagDiff(existingCharacter = {}, preview = {}) {
+  const currentTags = collectCharacterTagNames(existingCharacter);
+  const incomingTags = collectImportPreviewTagNames(preview);
+  const added = diffStringLists(incomingTags, currentTags);
+  const removed = diffStringLists(currentTags, incomingTags);
+  const changed = added.length > 0 || removed.length > 0;
+  if (!changed && !currentTags.length && !incomingTags.length) {
+    return null;
+  }
+  return {
+    changed,
+    current: currentTags,
+    incoming: incomingTags,
+    added,
+    removed
+  };
+}
+
+function collectCharacterTagNames(character = {}) {
+  const names = [];
+  const structuredTags = Array.isArray(character?.characterTags) ? character.characterTags : [];
+  if (structuredTags.length) {
+    appendTagNames(names, structuredTags, true);
+    return names;
+  }
+  appendTagNames(names, Array.isArray(character?.tags) ? character.tags : [], false);
+  return names;
+}
+
+function collectImportPreviewTagNames(preview = {}) {
+  const names = [];
+  appendTagNames(names, Array.isArray(preview?.tags) ? preview.tags : [], false);
+  if (!names.length) {
+    appendTagNames(names, Array.isArray(preview?.character?.tags) ? preview.character.tags : [], false);
+  }
+  return names;
+}
+
+function appendTagNames(target, source, structured) {
+  const tags = Array.isArray(source) ? source : [];
+  for (let index = 0; index < tags.length; index += 1) {
+    const rawName = structured ? tags[index]?.name : tags[index]?.name || tags[index];
+    const name = String(rawName || '').trim();
+    if (name && !stringListContains(target, name)) {
+      target.push(name);
+    }
+  }
+}
+
+function diffStringLists(left, right) {
+  const diff = [];
+  const source = Array.isArray(left) ? left : [];
+  for (let index = 0; index < source.length; index += 1) {
+    const item = String(source[index] || '').trim();
+    if (item && !stringListContains(right, item)) {
+      diff.push(item);
+    }
+  }
+  return diff;
+}
+
+function stringListContains(list, item) {
+  const target = normalizeCompareKey(item);
+  const source = Array.isArray(list) ? list : [];
+  for (let index = 0; index < source.length; index += 1) {
+    if (normalizeCompareKey(source[index]) === target) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function normalizeCompareKey(value) {
+  return String(value || '').trim().toLowerCase();
+}
+
+function collapseImportDiffText(value) {
+  return String(value || '').replace(/\s+/g, ' ').trim();
+}
+
+function limitImportDiffText(value, maxLength) {
+  const text = collapseImportDiffText(value);
+  const limit = Math.max(20, Number(maxLength || 88));
+  if (text.length <= limit) {
+    return text;
+  }
+  return `${text.slice(0, limit - 1)}...`;
+}
+
+function firstImportedCharacter(importResult) {
+  const items = Array.isArray(importResult?.items) ? importResult.items : [];
+  for (let index = 0; index < items.length; index += 1) {
+    if (items[index]?.id) {
+      return items[index];
+    }
+  }
+  return null;
 }
 
 function cancelImport() {
@@ -1071,13 +1422,64 @@ function formatCount(value) {
               <span v-for="tag in importPreview.tags" :key="tag" class="tag-badge">{{ tag }}</span>
             </div>
           </div>
-          <div v-if="importPreview.regex_rules?.length" class="import-meta-item">
+          <div v-if="importPreview.regexRules?.length" class="import-meta-item">
             <strong>正则规则</strong>
-            <span>{{ importPreview.regex_rules.length }} 条</span>
+            <span>{{ importPreview.regexRules.length }} 条</span>
           </div>
-          <div v-if="importPreview.world_book" class="import-meta-item">
+          <div v-if="importPreview.worldBook" class="import-meta-item">
             <strong>世界书</strong>
-            <span>{{ importPreview.world_book.name }}（{{ importPreview.world_book.entries?.length || 0 }} 条目）</span>
+            <span>{{ importPreview.worldBook.name }}（{{ importPreview.worldBook.entries?.length || 0 }} 条目）</span>
+          </div>
+          <div v-else-if="importPreview.worldBooks?.length" class="import-meta-item">
+            <strong>绑定世界书</strong>
+            <span>{{ importPreview.worldBooks.length }} 个引用</span>
+          </div>
+          <div v-if="importPreview.itemCount > 1" class="import-meta-item">
+            <strong>角色数量</strong>
+            <span>{{ importPreview.itemCount }} 个</span>
+          </div>
+        </div>
+
+        <div
+          v-if="importPreview.comparison"
+          class="import-diff-panel inline"
+          :class="`status-${importPreview.comparison.status}`"
+        >
+          <div class="import-diff-head">
+            <div>
+              <strong>导入差异</strong>
+              <span>{{ importPreview.comparison.summary }}</span>
+            </div>
+            <small v-if="importPreview.comparison.existingCharacter">
+              已有：{{ importPreview.comparison.existingCharacter.name }} · {{ importPreview.comparison.existingCharacter.visibility }}
+            </small>
+          </div>
+          <p v-if="importPreview.comparison.importItemSummary?.itemCount > 1" class="import-diff-note">
+            {{ importPreview.comparison.importItemSummary.text }}
+          </p>
+
+          <div v-if="importPreview.comparison.fieldDiffs?.length" class="import-diff-grid">
+            <article v-for="row in importPreview.comparison.fieldDiffs" :key="row.key" class="import-diff-row">
+              <strong>{{ row.label }}</strong>
+              <div>
+                <span>当前：{{ row.current }}</span>
+                <span>导入：{{ row.incoming }}</span>
+              </div>
+            </article>
+          </div>
+          <p v-else-if="importPreview.comparison.status === 'same'" class="import-diff-empty">
+            字段内容与同名角色一致
+          </p>
+
+          <div v-if="importPreview.comparison.tagDiff" class="import-diff-tags">
+            <strong>标签变化</strong>
+            <div v-if="importPreview.comparison.tagDiff.added.length" class="tag-row">
+              <span v-for="tag in importPreview.comparison.tagDiff.added" :key="`add-${tag}`" class="tag-badge">+ {{ tag }}</span>
+            </div>
+            <div v-if="importPreview.comparison.tagDiff.removed.length" class="tag-row muted">
+              <span v-for="tag in importPreview.comparison.tagDiff.removed" :key="`remove-${tag}`" class="tag-badge">- {{ tag }}</span>
+            </div>
+            <span v-if="!importPreview.comparison.tagDiff.changed" class="import-diff-empty">标签一致</span>
           </div>
         </div>
 

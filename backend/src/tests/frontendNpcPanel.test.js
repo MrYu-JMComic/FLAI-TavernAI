@@ -15,7 +15,7 @@ test('NpcPanel disables NPC mutations while one action is busy', () => {
   assert.match(npcPanelScript, /function startNpcAction\(actionId\)/);
   assert.match(npcPanelScript, /function finishNpcAction\(actionId, mutationToken, conversationId, npcName = null\)/);
   assert.match(npcPanelScript, /async function loadNpcs\(options = {}\)/);
-  assert.equal(countMatches(npcPanelScript, /const allowWhileBusy = Boolean\(options\.allowWhileBusy\);/g), 2);
+  assert.equal(countMatches(npcPanelScript, /const allowWhileBusy = Boolean\(options\.allowWhileBusy\);/g), 3);
   assert.match(npcPanelScript, /async function loadNpcs\(options = {}\)[\s\S]*if \(!allowWhileBusy && npcActionBusy\.value\) return;[\s\S]*const requestToken = \+\+npcLoadToken;/);
   assert.match(npcPanelScript, /await loadNpcDetail\({ allowWhileBusy }\);/);
   assert.match(npcPanelScript, /if \(npcPanelDisposed \|\| npcActionBusy\.value\) return;/);
@@ -148,7 +148,7 @@ test('NpcPanel exposes NPC current location controls and compact labels', () => 
   assert.match(npcPanelScript, /npcMetaForm\.currentLocation = npc\.currentLocation \|\| '';/);
   assert.match(npcPanelScript, /currentLocation: npcMetaForm\.currentLocation\.trim\(\)/);
   assert.match(npcPanelScript, /String\(current\?\.currentLocation \|\| ''\) === String\(next\?\.currentLocation \|\| ''\)/);
-  assert.match(npcPanelScript, /memoryCount === 0 && behaviorCount === 0 && !npc\?\.currentLocation/);
+  assert.match(npcPanelScript, /memoryCount === 0 && behaviorCount === 0 && !npc\?\.currentLocation && !npc\?\.relationship/);
 
   assert.match(npcPanelTemplate, /detailTab === 'location'/);
   assert.match(npcPanelTemplate, /@click="detailTab = 'location'"/);
@@ -163,10 +163,64 @@ test('NpcPanel exposes NPC current location controls and compact labels', () => 
   assert.match(npcPanelStyle, /\.npc-tabs\s*{[\s\S]*flex-wrap: wrap;/);
 });
 
+test('NpcPanel exposes first-class NPC relationship metadata', () => {
+  assert.match(npcPanelScript, /relationship: ''/);
+  assert.match(npcPanelScript, /npcMetaForm\.relationship = '';/);
+  assert.match(npcPanelScript, /npcMetaForm\.relationship = npc\.relationship \|\| '';/);
+  assert.match(npcPanelScript, /relationship: npcMetaForm\.relationship\.trim\(\)/);
+  assert.match(npcPanelScript, /String\(current\?\.relationship \|\| ''\) === String\(next\?\.relationship \|\| ''\)/);
+  assert.match(npcPanelScript, /if \(snapshot\.relationship\) \{[\s\S]*`关系 \$\{truncateAuditText\(snapshot\.relationship, 64\)\}`/);
+  assert.match(npcPanelTemplate, /v-model="npcMetaForm\.relationship"/);
+  assert.match(npcPanelTemplate, /aria-label="NPC 关系摘要"/);
+  assert.match(npcPanelTemplate, /class="npc-relationship-pill"/);
+  assert.match(npcPanelTemplate, /selectedNpcData\?\.relationship/);
+  assert.match(npcPanelStyle, /\.npc-relationship-pill\s*\{/);
+});
+
+test('NpcPanel exposes unified NPC audit and rollback controls', () => {
+  assert.match(npcPanelScript, /History,/);
+  assert.match(npcPanelScript, /Undo2,/);
+  assert.match(npcPanelScript, /fetchNpcAudit,/);
+  assert.match(npcPanelScript, /rollbackNpcAudit as rollbackNpcAuditRequest,/);
+  assert.match(npcPanelScript, /const npcAudit = ref\(\[\]\);/);
+  assert.match(npcPanelScript, /const npcAuditLoading = ref\(false\);/);
+  assert.match(npcPanelScript, /const npcAuditError = ref\(''\);/);
+  assert.match(npcPanelScript, /function setNpcAuditIfChanged\(nextAudit\)/);
+  assert.match(npcPanelScript, /function sameNpcAuditSummary\(current = \{\}, next = \{\}\)/);
+  assert.match(npcPanelScript, /current\?\.targetType === next\?\.targetType/);
+  assert.match(npcPanelScript, /function getCurrentNpcAudit\(auditId\)/);
+  assert.match(npcPanelScript, /async function loadNpcAudit\(options = \{\}\)/);
+  assert.match(npcPanelScript, /fetchNpcAudit\(conversationId, npcName, \{ limit: 30 \}\)/);
+  assert.match(npcPanelScript, /async function rollbackNpcAudit\(auditId\)/);
+  assert.match(npcPanelScript, /const actionId = npcAuditRollbackActionId\(currentAudit\.id\);/);
+  assert.match(npcPanelScript, /rollbackNpcAuditRequest\(conversationId, npcName, currentAudit\.id\)/);
+  assert.match(npcPanelScript, /await loadNpcs\(\{ allowWhileBusy: true \}\);[\s\S]*await loadNpcDetail\(\{ allowWhileBusy: true \}\);/);
+  assert.match(npcPanelScript, /function npcAuditTargetLabel\(record = \{\}\)/);
+  assert.match(npcPanelScript, /function formatNpcMemoryAuditSnapshot\(snapshot\)/);
+  assert.match(npcPanelScript, /function formatNpcBehaviorAuditSnapshot\(snapshot\)/);
+
+  assert.match(npcPanelTemplate, /detailTab === 'audit'/);
+  assert.match(npcPanelTemplate, /<History :size="15" \/>/);
+  assert.match(npcPanelTemplate, />审计 \(\{\{ npcAudit\.length \}\}\)</);
+  assert.match(npcPanelTemplate, /v-for="record in npcAudit"/);
+  assert.match(npcPanelTemplate, /npcAuditTargetLabel\(record\)/);
+  assert.match(npcPanelTemplate, /npcAuditActionLabel\(record\.action\)/);
+  assert.match(npcPanelTemplate, /npcAuditActorLabel\(record\.actor\)/);
+  assert.match(npcPanelTemplate, /formatNpcAuditSnapshot\(record, record\.before\)/);
+  assert.match(npcPanelTemplate, /formatNpcAuditSnapshot\(record, record\.after\)/);
+  assert.match(npcPanelTemplate, /:aria-busy="isNpcActionBusy\(npcAuditRollbackActionId\(record\.id\)\)"/);
+  assert.match(npcPanelTemplate, /@click="rollbackNpcAudit\(record\.id\)"/);
+
+  assert.match(npcPanelStyle, /\.npc-audit-card/);
+  assert.match(npcPanelStyle, /\.npc-audit-change/);
+  assert.match(npcPanelStyle, /\.npc-card-type\.target/);
+  assert.match(npcPanelStyle, /\.npc-card-rollback:hover:not\(:disabled\)/);
+});
+
 test('NpcPanel aggregates panel stats and empty NPC names in one pass', () => {
   assert.match(
     npcPanelScript,
-    /const npcPanelSummary = computed\(\(\) => \{[\s\S]*const sourceNpcs = Array\.isArray\(npcs\.value\) \? npcs\.value : \[\];[\s\S]*const stats = \{[\s\S]*npcCount: sourceNpcs\.length,[\s\S]*memoryCount: 0,[\s\S]*behaviorCount: 0[\s\S]*const emptyNpcNames = \[\];[\s\S]*for \(const npc of sourceNpcs\) \{[\s\S]*const memoryCount = Number\(npc\?\.memoryCount \|\| 0\);[\s\S]*const behaviorCount = Number\(npc\?\.behaviorCount \|\| 0\);[\s\S]*stats\.memoryCount \+= memoryCount;[\s\S]*stats\.behaviorCount \+= behaviorCount;[\s\S]*memoryCount === 0 && behaviorCount === 0 && !npc\?\.currentLocation[\s\S]*emptyNpcNames\.push\(npc\?\.name\);[\s\S]*return \{ stats, emptyNpcNames \};[\s\S]*\}\);/
+    /const npcPanelSummary = computed\(\(\) => \{[\s\S]*const sourceNpcs = Array\.isArray\(npcs\.value\) \? npcs\.value : \[\];[\s\S]*const stats = \{[\s\S]*npcCount: sourceNpcs\.length,[\s\S]*memoryCount: 0,[\s\S]*behaviorCount: 0[\s\S]*const emptyNpcNames = \[\];[\s\S]*for \(const npc of sourceNpcs\) \{[\s\S]*const memoryCount = Number\(npc\?\.memoryCount \|\| 0\);[\s\S]*const behaviorCount = Number\(npc\?\.behaviorCount \|\| 0\);[\s\S]*stats\.memoryCount \+= memoryCount;[\s\S]*stats\.behaviorCount \+= behaviorCount;[\s\S]*memoryCount === 0 && behaviorCount === 0 && !npc\?\.currentLocation && !npc\?\.relationship[\s\S]*emptyNpcNames\.push\(npc\?\.name\);[\s\S]*return \{ stats, emptyNpcNames \};[\s\S]*\}\);/
   );
   assert.match(npcPanelScript, /const npcPanelStats = computed\(\(\) => npcPanelSummary\.value\.stats\);/);
   assert.match(npcPanelScript, /const emptyNpcNames = computed\(\(\) => npcPanelSummary\.value\.emptyNpcNames\);/);
@@ -398,7 +452,7 @@ test('NpcPanel cancels pending list and detail loads when the panel closes', () 
   );
   assert.match(
     npcPanelScript,
-    /function cancelNpcPanelLoad\(\)\s*{\s*npcLoadToken \+= 1;\s*npcDetailToken \+= 1;\s*loading\.value = false;\s*detailLoading\.value = false;\s*loadError\.value = '';\s*detailError\.value = '';\s*}/
+    /function cancelNpcPanelLoad\(\)\s*{\s*npcLoadToken \+= 1;\s*npcDetailToken \+= 1;\s*npcAuditToken \+= 1;\s*loading\.value = false;\s*detailLoading\.value = false;\s*npcAuditLoading\.value = false;\s*loadError\.value = '';\s*detailError\.value = '';\s*npcAuditError\.value = '';\s*}/
   );
   assert.match(
     npcPanelScript,

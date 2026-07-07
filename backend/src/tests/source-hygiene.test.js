@@ -14,6 +14,8 @@ const frontendConsoleLogPattern = /(?:^|[^\w$])console\s*\.\s*log\s*\(/;
 const frontendDebugConsolePattern = /(?:^|[^\w$])console\s*\.\s*(?:debug|trace)\s*\(/;
 const frontendConsoleOutputPattern = /(?:^|[^\w$])console\s*\.\s*(?:debug|error|log|trace|warn)\s*\(/;
 const qualitySuppressionCommentPattern = /(?:\/\/|\/\*)\s*(?:eslint-disable(?:-next-line|-line)?|@ts-(?:expect-error|ignore|nocheck))\b/;
+const emptyCatchPattern = /\bcatch\s*(?:\([^)]*\))?\s*\{\s*\}/;
+const silentPromiseCatchPattern = /\.catch\s*\(\s*(?:\([^)]*\)|[A-Za-z_$][\w$]*)\s*=>\s*(?:null|undefined|false|true)\s*\)/;
 
 function isSourceFile(filePath) {
   return sourceExtensions.has(path.extname(filePath));
@@ -814,6 +816,29 @@ test('source hygiene detects frontend raw console output', () => {
   ]);
 });
 
+test('source hygiene detects silent catch blocks and promise catches', () => {
+  const sample = [
+    "try { risky(); } catch {}",
+    "try { risky(); } catch (error) {}",
+    "load().catch(() => null);",
+    "load().catch(error => undefined);",
+    "try { risky(); } catch (error) { recordDiagnostic(error); }",
+    "load().catch((error) => recordDiagnostic(error));",
+    "const fixture = 'catch {}';",
+    "// load().catch(() => null);"
+  ].join('\n');
+  const sourceFiles = [createSourceFile('sample.js', sample)];
+
+  assert.deepEqual(findSourceViolations(sourceFiles, emptyCatchPattern, 'silently catches errors'), [
+    'sample.js:1 silently catches errors',
+    'sample.js:2 silently catches errors'
+  ]);
+  assert.deepEqual(findSourceViolations(sourceFiles, silentPromiseCatchPattern, 'silently catches promise errors'), [
+    'sample.js:3 silently catches promise errors',
+    'sample.js:4 silently catches promise errors'
+  ]);
+});
+
 test('source hygiene scans frontend entry inline scripts for console output', () => {
   const sample = [
     '<!doctype html>',
@@ -1150,6 +1175,11 @@ test('source and frontend entry files do not contain quality-suppression comment
     findSourceCommentViolations(sourceAndEntryFiles, qualitySuppressionCommentPattern, 'contains a quality-suppression comment'),
     []
   );
+});
+
+test('source files do not silently catch errors', () => {
+  assert.deepEqual(findSourceViolations([...backendSourceFiles, ...frontendSourceFiles], emptyCatchPattern, 'silently catches errors'), []);
+  assert.deepEqual(findSourceViolations([...backendSourceFiles, ...frontendSourceFiles], silentPromiseCatchPattern, 'silently catches promise errors'), []);
 });
 
 test('backend source does not contain unused imports', () => {

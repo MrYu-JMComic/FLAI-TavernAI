@@ -1,12 +1,15 @@
 <script setup>
 import { computed } from 'vue';
-import { ChevronDown, Save, Upload, X } from '@lucide/vue';
+import { ChevronDown, Image as ImageIcon, Save, Upload, X } from '@lucide/vue';
 import { parseStatusTemplateToken } from '../../../../shared/statusTemplateTokens.js';
 import { buildModelSelectOptions } from '../../services/modelCatalog';
 
 const props = defineProps({
   open: { type: Boolean, default: false },
   conversation: { type: Object, default: null },
+  sending: { type: Boolean, default: false },
+  imageGenerationEnabled: { type: Boolean, default: true },
+  canToggleImageGeneration: { type: Boolean, default: false },
   authorChatAppearance: { type: Object, default: () => ({}) },
   chatAppearanceForm: { type: Object, default: () => ({}) },
   appearanceSaving: { type: Boolean, default: false },
@@ -29,6 +32,7 @@ const props = defineProps({
 
 const emit = defineEmits([
   'close',
+  'toggle-image-generation',
   'save-appearance',
   'reset-appearance',
   'update:chatLorebookId',
@@ -359,6 +363,31 @@ function requestClose() {
 
       <section class="chat-settings-section">
         <div class="settings-section-title">
+          <h3>回复模式</h3>
+          <p>图像生成模型会按这里的开关决定是否进入生图流程。</p>
+        </div>
+        <label class="chat-setting-toggle image-generation-setting">
+          <input
+            class="chat-setting-toggle-input"
+            type="checkbox"
+            :checked="canToggleImageGeneration && imageGenerationEnabled"
+            :disabled="sending || !canToggleImageGeneration"
+            :aria-busy="sending"
+            @change="emit('toggle-image-generation')"
+          />
+          <span class="chat-setting-toggle-control" aria-hidden="true"></span>
+          <span class="chat-setting-toggle-copy">
+            <strong>
+              <ImageIcon :size="15" />
+              <span>{{ canToggleImageGeneration && imageGenerationEnabled ? '生成图片' : '文字回复' }}</span>
+            </strong>
+            <small>{{ canToggleImageGeneration ? '开启后发送会调用图像生成能力。' : '当前模型不支持图像生成。' }}</small>
+          </span>
+        </label>
+      </section>
+
+      <section class="chat-settings-section">
+        <div class="settings-section-title">
           <h3>聊天背景</h3>
           <p>电脑端和手机端可以分别设置，留空则回退到默认暖色背景。</p>
         </div>
@@ -419,6 +448,32 @@ function requestClose() {
           <h3>内置 CSS</h3>
           <p>只会作用于当前会话。可以写动画、布局和局部样式，留空则不生效。</p>
         </div>
+        <label class="chat-setting-toggle">
+          <input
+            v-model="chatAppearanceForm.customCssEnabled"
+            class="chat-setting-toggle-input"
+            type="checkbox"
+            :disabled="appearanceSaving"
+          />
+          <span class="chat-setting-toggle-control" aria-hidden="true"></span>
+          <span class="chat-setting-toggle-copy">
+            <strong>启用当前会话 CSS</strong>
+            <small>确认后才会应用下面的样式文本。</small>
+          </span>
+        </label>
+        <label class="chat-setting-toggle">
+          <input
+            v-model="chatAppearanceForm.customCssRiskAccepted"
+            class="chat-setting-toggle-input"
+            type="checkbox"
+            :disabled="appearanceSaving"
+          />
+          <span class="chat-setting-toggle-control" aria-hidden="true"></span>
+          <span class="chat-setting-toggle-copy">
+            <strong>确认 CSS 风险</strong>
+            <small>勾选后，已启用的样式才会生效。</small>
+          </span>
+        </label>
         <textarea
           v-model="chatAppearanceForm.customCss"
           class="chat-code-textarea"
@@ -434,6 +489,32 @@ function requestClose() {
           <h3>内置 JS</h3>
           <p>可读取当前会话、消息区和聊天容器。脚本可返回清理函数，留空则不执行。</p>
         </div>
+        <label class="chat-setting-toggle">
+          <input
+            v-model="chatAppearanceForm.customJsEnabled"
+            class="chat-setting-toggle-input"
+            type="checkbox"
+            :disabled="appearanceSaving"
+          />
+          <span class="chat-setting-toggle-control" aria-hidden="true"></span>
+          <span class="chat-setting-toggle-copy">
+            <strong>启用当前会话 JS</strong>
+            <small>确认后才会执行下面的脚本文本。</small>
+          </span>
+        </label>
+        <label class="chat-setting-toggle">
+          <input
+            v-model="chatAppearanceForm.customJsRiskAccepted"
+            class="chat-setting-toggle-input"
+            type="checkbox"
+            :disabled="appearanceSaving"
+          />
+          <span class="chat-setting-toggle-control" aria-hidden="true"></span>
+          <span class="chat-setting-toggle-copy">
+            <strong>确认 JS 风险</strong>
+            <small>勾选后，已启用的脚本才会执行。</small>
+          </span>
+        </label>
         <textarea
           v-model="chatAppearanceForm.customJs"
           class="chat-code-textarea code-js"

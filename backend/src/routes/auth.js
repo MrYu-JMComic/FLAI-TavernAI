@@ -34,7 +34,7 @@ export function createAuthRouter(ctx) {
 
     const sessionId = createSession(db, userId);
     setSessionCookie(response, sessionId);
-    response.status(201).json({ user: publicUser(db, { id: userId, username, created_at: nowIso() }) });
+    response.status(201).json({ user: publicUser({ id: userId, username, created_at: nowIso() }) });
   }));
 
   router.post('/login', validate(loginSchema), asyncRoute(async (request, response) => {

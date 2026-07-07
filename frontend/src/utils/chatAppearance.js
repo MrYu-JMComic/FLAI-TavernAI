@@ -4,7 +4,11 @@ const defaultAppearance = () => ({
   desktopBackgroundUrl: '',
   mobileBackgroundUrl: '',
   customCss: '',
+  customCssEnabled: false,
+  customCssRiskAccepted: false,
   customJs: '',
+  customJsEnabled: false,
+  customJsRiskAccepted: false,
   statusBarPrompt: '',
   showWorldBookMatches: true
 });
@@ -22,7 +26,11 @@ export function normalizeChatAppearance(input = {}) {
       input.mobileBackgroundUrl ?? input.mobile_background_url ?? ''
     ),
     customCss: normalizeOptionalText(input.customCss ?? input.custom_css ?? ''),
+    customCssEnabled: normalizeBoolean(input.customCssEnabled ?? input.custom_css_enabled, false),
+    customCssRiskAccepted: normalizeBoolean(input.customCssRiskAccepted ?? input.custom_css_risk_accepted, false),
     customJs: normalizeOptionalText(input.customJs ?? input.custom_js ?? ''),
+    customJsEnabled: normalizeBoolean(input.customJsEnabled ?? input.custom_js_enabled, false),
+    customJsRiskAccepted: normalizeBoolean(input.customJsRiskAccepted ?? input.custom_js_risk_accepted, false),
     statusBarPrompt: normalizeOptionalText(input.statusBarPrompt ?? input.status_bar_prompt ?? ''),
     showWorldBookMatches: normalizeBoolean(input.showWorldBookMatches ?? input.show_world_book_matches, true)
   };
@@ -34,8 +42,20 @@ export function mergeChatAppearance(author = {}, user = {}) {
   return {
     desktopBackgroundUrl: userSettings.desktopBackgroundUrl || authorSettings.desktopBackgroundUrl,
     mobileBackgroundUrl: userSettings.mobileBackgroundUrl || authorSettings.mobileBackgroundUrl,
-    customCss: mergeAppearanceText(authorSettings.customCss, userSettings.customCss),
-    customJs: mergeAppearanceText(authorSettings.customJs, userSettings.customJs),
+    customCss: mergeAppearanceText(
+      enabledAppearanceText(authorSettings.customCss, authorSettings.customCssEnabled, authorSettings.customCssRiskAccepted),
+      enabledAppearanceText(userSettings.customCss, userSettings.customCssEnabled, userSettings.customCssRiskAccepted)
+    ),
+    customCssEnabled: isRiskAcceptedEnabled(authorSettings.customCssEnabled, authorSettings.customCssRiskAccepted) ||
+      isRiskAcceptedEnabled(userSettings.customCssEnabled, userSettings.customCssRiskAccepted),
+    customCssRiskAccepted: Boolean(authorSettings.customCssRiskAccepted || userSettings.customCssRiskAccepted),
+    customJs: mergeAppearanceText(
+      enabledAppearanceText(authorSettings.customJs, authorSettings.customJsEnabled, authorSettings.customJsRiskAccepted),
+      enabledAppearanceText(userSettings.customJs, userSettings.customJsEnabled, userSettings.customJsRiskAccepted)
+    ),
+    customJsEnabled: isRiskAcceptedEnabled(authorSettings.customJsEnabled, authorSettings.customJsRiskAccepted) ||
+      isRiskAcceptedEnabled(userSettings.customJsEnabled, userSettings.customJsRiskAccepted),
+    customJsRiskAccepted: Boolean(authorSettings.customJsRiskAccepted || userSettings.customJsRiskAccepted),
     statusBarPrompt: mergeAppearanceText(authorSettings.statusBarPrompt, userSettings.statusBarPrompt),
     showWorldBookMatches: hasOwnSetting(user, 'showWorldBookMatches', 'show_world_book_matches')
       ? userSettings.showWorldBookMatches
@@ -321,6 +341,14 @@ function prefixCssSelectors(source, scopeSelector) {
     const selectors = scopeCssSelectorList(selectorText, scopeSelector);
     return `${prefix}\n${selectors} {`;
   });
+}
+
+function enabledAppearanceText(value, enabled, riskAccepted) {
+  return isRiskAcceptedEnabled(enabled, riskAccepted) ? value : '';
+}
+
+function isRiskAcceptedEnabled(enabled, riskAccepted) {
+  return Boolean(enabled && riskAccepted);
 }
 
 function scopeCssSelectorList(selectorText, scopeSelector) {

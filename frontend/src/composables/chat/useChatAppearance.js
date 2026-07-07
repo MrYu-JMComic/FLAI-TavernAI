@@ -1,5 +1,6 @@
 import { computed, reactive, ref } from 'vue';
-import { fetchWorldBooks, saveConversationSettings } from '../../api.js';
+import { saveConversationSettings } from '../../api/chat.js';
+import { fetchWorldBooks } from '../../api/worldBooks.js';
 import { isPhoneViewport } from '../useViewport.js';
 import { readFileAsDataUrl } from '../../utils/fileReaders.js';
 import {
@@ -137,7 +138,11 @@ export function useChatAppearance({
         desktopBackgroundUrl: chatAppearanceForm.desktopBackgroundUrl,
         mobileBackgroundUrl: chatAppearanceForm.mobileBackgroundUrl,
         customCss: chatAppearanceForm.customCss,
+        customCssEnabled: chatAppearanceForm.customCssEnabled,
+        customCssRiskAccepted: chatAppearanceForm.customCssRiskAccepted,
         customJs: chatAppearanceForm.customJs,
+        customJsEnabled: chatAppearanceForm.customJsEnabled,
+        customJsRiskAccepted: chatAppearanceForm.customJsRiskAccepted,
         statusBarPrompt: chatAppearanceForm.statusBarPrompt,
         showWorldBookMatches: chatAppearanceForm.showWorldBookMatches,
         chatLorebookId: chatLorebookId.value
@@ -187,11 +192,11 @@ export function useChatAppearance({
     }
 
     const activeAppearance = effectiveChatAppearance.value;
-    const style = buildScopedChatCss(activeAppearance.customCss, chatScopeSelector.value);
+    const style = buildScopedChatCss(activeAppearance.customCssEnabled ? activeAppearance.customCss : '', chatScopeSelector.value);
     syncCustomAppearanceStyle(style);
 
     try {
-      const cleanup = await runChatCustomScript(activeAppearance.customJs, {
+      const cleanup = await runChatCustomScript(activeAppearance.customJsEnabled ? activeAppearance.customJs : '', {
         conversation: conversation.value,
         character: activeCharacter(),
         user: user.value,

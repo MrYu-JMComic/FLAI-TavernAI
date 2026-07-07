@@ -25,16 +25,20 @@ test('ChatComposer locks configuration controls while sending', () => {
   assert.match(chatComposerTemplate, /<form class="deep-composer" :aria-busy="sending" @submit\.prevent="submitComposer\(\{ isEnter: false \}\)">/);
   assert.match(chatComposerTemplate, /@keydown\.enter\.exact="submitComposer\(\{ isEnter: true, event: \$event \}\)"/);
   assert.match(chatComposerScript, /function submitComposer\(payload\) {\s*emit\('submit', payload\);\s*}/);
-  assert.match(chatComposerTemplate, /class="visually-hidden"[\s\S]*type="file"[\s\S]*aria-label="选择聊天图片"[\s\S]*@change="onAttachmentChange"/);
+  assert.match(chatComposerTemplate, /class="visually-hidden"[\s\S]*type="file"[\s\S]*aria-label="选择聊天图片"[\s\S]*:disabled="!canAddAttachments"[\s\S]*@change="onAttachmentChange"/);
+  assert.match(chatComposerTemplate, /class="mode-pill attachment-pill"[\s\S]*:disabled="sending \|\| attachmentBusy \|\| !canAddAttachments"[\s\S]*@click="openAttachmentPicker"/);
   assert.match(chatComposerTemplate, /class="preset-select"[\s\S]*:disabled="sending"[\s\S]*@change="onPresetChange"/);
   assert.match(chatComposerScript, /const modelSwitchLocked = computed\(\(\) => props\.sending \|\| props\.modelSaving\);/);
   assert.match(chatComposerTemplate, /class="model-quick-select"[\s\S]*:disabled="modelSwitchLocked \|\| !canQuickSwitchModel"[\s\S]*@change="onQuickModelChange"/);
   assert.match(chatComposerTemplate, /v-if="!quickModelOptions\.length"[\s\S]*class="mode-pill model-switch-pill"[\s\S]*:disabled="sending"[\s\S]*:aria-busy="sending"[\s\S]*@click="emit\('open-model-switcher'\)"/);
-  assert.match(chatComposerTemplate, /:aria-pressed="String\(useStream\)"[\s\S]*:disabled="sending"[\s\S]*:aria-busy="sending"[\s\S]*@click="emit\('toggle-stream'\)"/);
+  assert.match(chatComposerTemplate, /:aria-pressed="String\(canUseStream && useStream\)"[\s\S]*:disabled="sending \|\| !canUseStream"[\s\S]*:aria-busy="sending"[\s\S]*@click="emit\('toggle-stream'\)"/);
   assert.match(chatComposerTemplate, /:disabled="sending \|\| !canToggleThinking"[\s\S]*:aria-busy="sending"[\s\S]*@click="emit\('toggle-thinking'\)"/);
+  assert.doesNotMatch(chatComposerTemplate, /image-generation-pill|continue-pill|toggle-image-generation|continue-generation/);
+  assert.doesNotMatch(chatComposerScript, /canContinue:|canToggleImageGeneration:|imageGenerationEnabled:/);
 
-  assert.match(chatSubmitSource, /function toggleUseStream\(\)\s*{\s*if \(sending\.value\) {\s*return;\s*}/);
+  assert.match(chatSubmitSource, /function toggleUseStream\(\)\s*{\s*if \(sending\.value \|\| !canUseStream\.value\) {\s*return;\s*}/);
   assert.match(chatSubmitSource, /function toggleThinking\(\)\s*{\s*if \(sending\.value \|\| !canToggleThinking\.value\) {\s*return;\s*}/);
+  assert.match(chatSubmitSource, /function toggleImageGeneration\(\)\s*{\s*if \(sending\.value \|\| !canToggleImageGeneration\.value\) {\s*return;\s*}/);
 });
 
 test('ChatComposer input handlers tolerate missing event targets', () => {
@@ -58,6 +62,15 @@ test('ChatComposer input handlers tolerate missing event targets', () => {
   assert.match(chatComposerTemplate, /@change="onPresetChange"/);
   assert.match(chatComposerTemplate, /@change="onQuickModelChange"/);
   assert.doesNotMatch(chatComposerTemplate, /\$event\.target\.value/);
+});
+
+test('ChatComposer previews both fresh and persisted image attachments', () => {
+  assert.match(
+    chatComposerScript,
+    /function attachmentPreviewUrl\(attachment = \{\}\) \{\s*return attachment\.dataUrl \|\| attachment\.url \|\| '';\s*}/
+  );
+  assert.match(chatComposerTemplate, /<img :src="attachmentPreviewUrl\(attachment\)" :alt="attachmentLabel\(attachment\)" \/>/);
+  assert.doesNotMatch(chatComposerTemplate, /<img :src="attachment\.dataUrl"/);
 });
 
 test('ChatComposer keeps the composer single-path without shortcut toolbar chrome', () => {
@@ -85,10 +98,12 @@ test('ChatComposer exposes an inline quick model selector with deduped options',
   assert.match(chatComposerTemplate, /<label v-if="quickModelOptions\.length" class="model-quick-select"/);
   assert.match(chatComposerTemplate, /aria-label="快速切换聊天模型"/);
   assert.match(chatComposerTemplate, /<option v-for="model in quickModelOptions" :key="model\.id" :value="model\.id">/);
-  assert.match(chatComposerTemplate, /<span v-if="currentModelSupportsReasoning" class="model-ability-chip">推理<\/span>/);
+  assert.match(chatComposerScript, /const normalizedModelCapabilities = computed\(\(\) => props\.modelCapabilities && typeof props\.modelCapabilities === 'object'/);
+  assert.match(chatComposerScript, /const modelCapabilityChips = computed\(\(\) => \{[\s\S]*chips\.push\(\{ key: 'reasoning', label: '推理' \}\);[\s\S]*chips\.push\(\{ key: 'vision', label: '视觉' \}\);[\s\S]*chips\.push\(\{ key: 'imageGeneration', label: '绘图' \}\);[\s\S]*chips\.push\(\{ key: 'streaming', label: '流式' \}\);[\s\S]*return chips;[\s\S]*\}\);/);
+  assert.match(chatComposerTemplate, /<span v-for="chip in modelCapabilityChips" :key="chip\.key" class="model-ability-chip">\{\{ chip\.label \}\}<\/span>/);
   assert.match(chatComposerTemplate, /class="mode-pill stream-pill"/);
   assert.match(chatComposerTemplate, /class="mode-pill thinking-pill"/);
-  assert.doesNotMatch(chatComposerTemplate, /image-generation-pill|toggle-image-generation|imageGenerationEnabled/);
+  assert.doesNotMatch(chatComposerTemplate, /image-generation-pill|continue-pill/);
   assert.doesNotMatch(chatComposerScript, /modelOptions\.map\(/);
   assert.doesNotMatch(chatComposerScript, /return\s+\[\.\.\.byId\.values\(\)\];/);
 });
@@ -106,7 +121,7 @@ test('ChatComposer keeps mobile model switching to one stable control with dark 
 
   const composerPhoneStart = stylesSource.indexOf('grid-template-columns: minmax(0, 1fr) repeat(3, 40px) 44px;');
   assert.notEqual(composerPhoneStart, -1, 'missing phone composer grid marker');
-  const composerPhoneBlockStart = stylesSource.lastIndexOf('@media (max-width: 480px) {', composerPhoneStart);
+  const composerPhoneBlockStart = stylesSource.lastIndexOf('@media (max-width: 620px) {', composerPhoneStart);
   const composerPhoneBlockEnd = stylesSource.indexOf('  .model-picker {', composerPhoneStart);
   assert.notEqual(composerPhoneBlockStart, -1, 'missing phone composer block start');
   assert.notEqual(composerPhoneBlockEnd, -1, 'missing phone composer block end');
@@ -120,7 +135,7 @@ test('ChatComposer keeps mobile model switching to one stable control with dark 
   assert.match(phoneBlock, /\.stream-pill\s*{[\s\S]*grid-column:\s*3;/);
   assert.match(phoneBlock, /\.thinking-pill\s*{[\s\S]*grid-column:\s*4;/);
   assert.match(phoneBlock, /\.round-send\s*{[\s\S]*grid-column:\s*5;/);
-  assert.doesNotMatch(phoneBlock, /\.image-generation-pill/);
+  assert.doesNotMatch(phoneBlock, /image-generation-pill|continue-pill/);
   assert.doesNotMatch(phoneBlock, /\.model-switch-pill\s*{[^}]*display:\s*none;/);
 });
 
@@ -155,17 +170,26 @@ test('ChatView ignores model switcher open events while sending', () => {
 });
 
 test('ChatView routes preset selection through the guarded submit setter', () => {
-  assert.match(chatViewScript, /submit, stop,[\s\S]*setSelectedPresetId, toggleUseStream, toggleThinking/);
+  assert.match(chatViewScript, /submit, continueGeneration, stop,[\s\S]*setSelectedPresetId, toggleUseStream, toggleThinking, toggleImageGeneration/);
+  assert.match(chatViewScript, /canSend, canContinueGeneration, canToggleThinking, canToggleImageGeneration/);
+  assert.match(chatViewTemplate, /<ChatSettingsDrawer[\s\S]*:image-generation-enabled="imageGenerationEnabled"[\s\S]*:can-toggle-image-generation="canToggleImageGeneration"[\s\S]*@toggle-image-generation="toggleImageGeneration"/);
+  assert.match(chatViewTemplate, /<ChatMessageItem[\s\S]*:can-continue="canContinueGeneration && latestMessage\?\.id === message\.id"[\s\S]*@continue-generation="continueGeneration"/);
   assert.match(chatViewTemplate, /@update:selected-preset-id="setSelectedPresetId"/);
+  assert.doesNotMatch(chatViewTemplate, /<ChatComposer[\s\S]*:can-continue=/);
+  assert.doesNotMatch(chatViewTemplate, /<ChatComposer[\s\S]*@continue-generation=/);
+  assert.doesNotMatch(chatViewTemplate, /<ChatComposer[\s\S]*:image-generation-enabled=/);
+  assert.doesNotMatch(chatViewTemplate, /<ChatComposer[\s\S]*@toggle-image-generation=/);
   assert.doesNotMatch(chatViewTemplate, /@update:selected-preset-id="\([^"]+\) => selectedPresetId =/);
-  assert.doesNotMatch(chatViewScript, /imageGenerationEnabled|toggleImageGeneration/);
-  assert.doesNotMatch(chatViewTemplate, /image-generation-enabled|toggle-image-generation/);
 });
 
 test('ChatView wires composer quick model changes through the guarded model save path', () => {
   assert.match(chatViewTemplate, /:model-options="providerModels"/);
   assert.match(chatViewTemplate, /:model-saving="modelSwitcherSaving"/);
-  assert.match(chatViewTemplate, /:current-model-supports-reasoning="Boolean\(provider\?\.supportsReasoning\)"/);
+  assert.match(chatViewScript, /canSend, canContinueGeneration, canToggleThinking, canToggleImageGeneration, canUseStream, canAddAttachments, chatProviderCapabilities/);
+  assert.match(chatViewTemplate, /:can-use-stream="canUseStream"/);
+  assert.match(chatViewTemplate, /:can-add-attachments="canAddAttachments"/);
+  assert.match(chatViewTemplate, /:model-capabilities="chatProviderCapabilities"/);
+  assert.match(chatViewTemplate, /:current-model-supports-reasoning="Boolean\(chatProviderCapabilities\?\.reasoning\)"/);
   assert.match(chatViewTemplate, /@quick-model-change="saveQuickModel"/);
   assert.match(chatViewScript, /async function saveQuickModel\(model\)\s*{\s*if \(modelSwitcherSaving\.value\)/);
 });

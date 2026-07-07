@@ -82,6 +82,23 @@ export function initializeDatabase(database) {
       UNIQUE(owner_type, owner_id)
     );
 
+    CREATE TABLE IF NOT EXISTS assets (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      owner_type TEXT NOT NULL DEFAULT '',
+      owner_id TEXT NOT NULL DEFAULT '',
+      kind TEXT NOT NULL DEFAULT 'generic',
+      mime_type TEXT NOT NULL,
+      name TEXT NOT NULL DEFAULT '',
+      alt TEXT NOT NULL DEFAULT '',
+      base64_data TEXT NOT NULL,
+      byte_size INTEGER NOT NULL,
+      metadata_json TEXT NOT NULL DEFAULT '{}',
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    );
+
     CREATE TABLE IF NOT EXISTS characters (
       id TEXT PRIMARY KEY,
       user_id TEXT NOT NULL,
@@ -151,6 +168,25 @@ export function initializeDatabase(database) {
       FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
     );
 
+    CREATE TABLE IF NOT EXISTS conversation_memories (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      conversation_id TEXT NOT NULL,
+      memory_type TEXT NOT NULL DEFAULT 'event',
+      subject TEXT NOT NULL DEFAULT '',
+      content TEXT NOT NULL DEFAULT '',
+      confidence REAL NOT NULL DEFAULT 1,
+      source_message_id TEXT NOT NULL DEFAULT '',
+      source_kind TEXT NOT NULL DEFAULT 'manual',
+      source_excerpt TEXT NOT NULL DEFAULT '',
+      enabled INTEGER NOT NULL DEFAULT 1,
+      archived INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+      FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
+    );
+
   `);
   ensureColumn(database, 'users', 'display_name', "TEXT NOT NULL DEFAULT ''");
   ensureColumn(database, 'users', 'permission_group', "TEXT NOT NULL DEFAULT 'user'");
@@ -165,6 +201,8 @@ export function initializeDatabase(database) {
   ensureColumn(database, 'conversations', 'user_advanced_settings', "TEXT NOT NULL DEFAULT '{}'");
   ensureColumn(database, 'conversations', 'chat_lorebook_id', 'TEXT');
   ensureColumn(database, 'messages', 'attachments_json', "TEXT NOT NULL DEFAULT '[]'");
+  ensureColumn(database, 'conversation_memories', 'source_kind', "TEXT NOT NULL DEFAULT 'manual'");
+  ensureColumn(database, 'conversation_memories', 'source_excerpt', "TEXT NOT NULL DEFAULT ''");
   database.exec(`
     CREATE TABLE IF NOT EXISTS character_likes (
       user_id TEXT NOT NULL,
@@ -343,6 +381,17 @@ export function initializeDatabase(database) {
       FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
     );
 
+    CREATE TABLE IF NOT EXISTS status_bar_templates (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      name TEXT NOT NULL DEFAULT '状态栏模板',
+      variables TEXT NOT NULL DEFAULT '[]',
+      template TEXT NOT NULL DEFAULT '',
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    );
+
     CREATE TABLE IF NOT EXISTS mods (
       id TEXT PRIMARY KEY,
       user_id TEXT NOT NULL,
@@ -393,6 +442,32 @@ export function initializeDatabase(database) {
       updated_at TEXT NOT NULL,
       FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE,
       UNIQUE(conversation_id, npc_name)
+    );
+
+    CREATE TABLE IF NOT EXISTS npc_profile_audit (
+      id TEXT PRIMARY KEY,
+      conversation_id TEXT NOT NULL,
+      npc_name TEXT NOT NULL,
+      action TEXT NOT NULL DEFAULT 'update',
+      actor TEXT NOT NULL DEFAULT 'system',
+      before_json TEXT NOT NULL DEFAULT 'null',
+      after_json TEXT NOT NULL DEFAULT 'null',
+      created_at TEXT NOT NULL,
+      FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS npc_item_audit (
+      id TEXT PRIMARY KEY,
+      conversation_id TEXT NOT NULL,
+      npc_name TEXT NOT NULL,
+      item_type TEXT NOT NULL DEFAULT 'memory',
+      item_id TEXT NOT NULL DEFAULT '',
+      action TEXT NOT NULL DEFAULT 'update',
+      actor TEXT NOT NULL DEFAULT 'system',
+      before_json TEXT NOT NULL DEFAULT 'null',
+      after_json TEXT NOT NULL DEFAULT 'null',
+      created_at TEXT NOT NULL,
+      FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
     );
 
     CREATE TABLE IF NOT EXISTS economy_accounts (
@@ -457,6 +532,7 @@ export function initializeDatabase(database) {
   ensureColumn(database, 'npc_registry', 'aliases', "TEXT NOT NULL DEFAULT '[]'");
   ensureColumn(database, 'npc_registry', 'memory_sealed', 'INTEGER NOT NULL DEFAULT 0');
   ensureColumn(database, 'npc_registry', 'current_location', "TEXT NOT NULL DEFAULT ''");
+  ensureColumn(database, 'npc_registry', 'relationship', "TEXT NOT NULL DEFAULT ''");
   ensureColumn(database, 'mods', 'scope', "TEXT NOT NULL DEFAULT 'global'");
   ensureColumn(database, 'mods', 'character_ids', "TEXT NOT NULL DEFAULT '[]'");
 

@@ -7,11 +7,13 @@ import SaveLoadPanel from '../components/SaveLoadPanel.vue';
 import StatusBar from '../components/StatusBar.vue';
 import ChatSidebar from '../components/chat/ChatSidebar.vue';
 import ChatSettingsDrawer from '../components/chat/ChatSettingsDrawer.vue';
+import ChatContextInspector from '../components/chat/ChatContextInspector.vue';
 import ChatHeader from '../components/chat/ChatHeader.vue';
 import ChatMessageItem from '../components/chat/ChatMessageItem.vue';
 import ChatModelSwitcher from '../components/chat/ChatModelSwitcher.vue';
 import ChatComposer from '../components/chat/ChatComposer.vue';
-import { fetchConversationMessages, fetchConversationNpcs, saveProviderSettings } from '../api';
+import { fetchConversationMessages, fetchConversationNpcs } from '../api/chat.js';
+import { saveProviderSettings } from '../api/providers.js';
 import { useNotify } from '../composables/useNotify';
 import { useChatConversation } from '../composables/chat/useChatConversation';
 import { useChatAccessory } from '../composables/chat/useChatAccessory';
@@ -42,6 +44,7 @@ const modelSwitcherOpen = ref(false);
 const modelSwitcherRefreshing = ref(false);
 const modelSwitcherSaving = ref(false);
 const worldBookMatchDialogOpen = ref(false);
+const contextInspectorOpen = ref(false);
 const statusBarUpdateStatus = ref('not-updated');
 const statusBarCollapseRequest = ref(0);
 const npcUpdateStatus = ref('not-updated');
@@ -143,11 +146,11 @@ const {
   toggleReasoning, expandReasoning, reasoningOpen,
   isReasoningTyping, isContentTyping, messagePlaceholder,
   messageAuthorName, messageAuthorInitial, messageAvatarUrl,
-  canEditMessage, canDeleteMessage, canBranchMessage,
+  canEditMessage, canDeleteMessage, canRerunMessageEdit, canBranchMessage,
   beginEditMessage, cancelEditMessage,
-  setEditingMessageContent, saveMessageEdit, removeMessage, copyMessage,
+  setEditingMessageContent, saveMessageEdit, prepareMessageEditRerun, removeMessage, copyMessage,
   messageSwipeState, swipeLoading, initMessageSwipes, swipeMessagePrev, swipeMessageNext, getSwipeDisplay,
-  branchBusy, loadConversationBranches, handleBranchMessage,
+  conversationBranches, branchBusy, loadConversationBranches, handleBranchMessage,
   resetMessageUiState, cleanup: cleanupMessageActions
 } = useChatMessageActions({
   messages, messageScroller, route: props.route,
@@ -178,12 +181,12 @@ function prepareExpandedStatusBarForSubmit() {
 }
 
 const {
-  input, chatAttachments, attachmentBusy, useStream, thinkingEnabled,
+  input, chatAttachments, attachmentBusy, useStream, thinkingEnabled, imageGenerationEnabled,
   sending, usage, lastFailure, latestWorldBookMatches,
-  canSend, canToggleThinking,
-  submit, stop, restoreLastFailureInput, retryLastFailure, dismissLastFailure,
+  canSend, canContinueGeneration, canToggleThinking, canToggleImageGeneration, canUseStream, canAddAttachments, chatProviderCapabilities,
+  submitDraft, submit, continueGeneration, stop, restoreLastFailureInput, retryLastFailure, dismissLastFailure,
   addChatAttachmentFiles, removeChatAttachment, clearChatAttachments,
-  setSelectedPresetId, toggleUseStream, toggleThinking,
+  setSelectedPresetId, toggleUseStream, toggleThinking, toggleImageGeneration,
   cleanup: cleanupSubmit
 } = useChatSubmit({
   route: props.route, messages, provider: computed(() => props.provider),
@@ -203,6 +206,7 @@ const {
 });
 const { providerModels, syncProviderModels } = useProviderModels(computed(() => props.provider));
 const chatRenderPlugins = computed(() => activeRenderPlugins());
+const composerHasDraft = computed(() => Boolean(input.value.trim() || chatAttachments.value.length));
 const activeChatFailure = computed(() => {
   const failure = lastFailure.value;
   return failure?.conversationId === props.route.params.id ? failure : null;
@@ -242,6 +246,17 @@ function openWorldBookMatchDialog(message) {
 
 function closeWorldBookMatchDialog() {
   worldBookMatchDialogOpen.value = false;
+}
+
+function openContextInspector() {
+  if (!conversationReady.value) {
+    return;
+  }
+  contextInspectorOpen.value = true;
+}
+
+function closeContextInspector() {
+  contextInspectorOpen.value = false;
 }
 
 function worldBookPositionLabel(position) {
@@ -284,6 +299,32 @@ function restoreFailureToComposer() {
 
 async function retryFailureFromPanel() {
   await retryLastFailure();
+  scheduleComposerLayoutUpdate({ focus: true });
+}
+
+function canSaveMessageEditAndRerun(message) {
+  return canRerunMessageEdit(message)
+    && !sending.value
+    && !attachmentBusy.value;
+}
+
+async function saveMessageEditAndRerun(message) {
+  if (sending.value || attachmentBusy.value) {
+    return;
+  }
+  if (composerHasDraft.value) {
+    notify.warning('请先处理输入框草稿后再重跑。');
+    scheduleComposerLayoutUpdate({ focus: true });
+    return;
+  }
+  const draft = await prepareMessageEditRerun(message);
+  if (!draft) {
+    return;
+  }
+  const submitted = await submitDraft(draft.content, draft.attachments);
+  if (!submitted) {
+    notify.warning('重跑未开始，请检查输入框状态。');
+  }
   scheduleComposerLayoutUpdate({ focus: true });
 }
 
@@ -756,6 +797,10 @@ function handleGlobalKeydown(event) {
     closeWorldBookMatchDialog();
     return;
   }
+  if (event.key === 'Escape' && contextInspectorOpen.value) {
+    closeContextInspector();
+    return;
+  }
   if (event.key === 'Escape' && modelSwitcherOpen.value) {
     closeModelSwitcher();
     return;
@@ -1018,6 +1063,17 @@ const latestAssistantMessage = computed(() => {
   return null;
 });
 
+const latestMessage = computed(() => {
+  const messageList = Array.isArray(messages.value) ? messages.value : [];
+  for (let index = messageList.length - 1; index >= 0; index -= 1) {
+    const message = messageList[index];
+    if (message?.id) {
+      return message;
+    }
+  }
+  return null;
+});
+
 const hasStatusBarVisible = computed(() => {
   if (hasStatusBarContent.value) return true;
   const cfg = statusBarTemplateConfig.value;
@@ -1121,6 +1177,7 @@ watch(() => conversation.value?.id || '', (conversationId, previousConversationI
   }
   resetMessageUiState();
   closeWorldBookMatchDialog();
+  closeContextInspector();
   closeAccessoryPanels();
 });
 
@@ -1159,6 +1216,7 @@ watch(showNpcFeature, (active) => {
       :selected-conversation-count="selectedConversationCount"
       :conversation-action-busy="conversationActionBusy"
       :start-conversation-busy="startConversationBusy"
+      :conversation-branches="conversationBranches"
       :sidebar-load-error="sidebarLoadError"
       :sidebar-loading="sidebarLoading"
       :route="route"
@@ -1176,10 +1234,13 @@ watch(showNpcFeature, (active) => {
       @open-settings="openSettings"
     />
 
-    <ChatSettingsDrawer
-      :open="settingsDrawerOpen"
-      :conversation="conversation"
-      :author-chat-appearance="authorChatAppearance"
+      <ChatSettingsDrawer
+        :open="settingsDrawerOpen"
+        :conversation="conversation"
+        :sending="sending"
+        :image-generation-enabled="imageGenerationEnabled"
+        :can-toggle-image-generation="canToggleImageGeneration"
+        :author-chat-appearance="authorChatAppearance"
       :chat-appearance-form="chatAppearanceForm"
       :appearance-saving="appearanceSaving"
       :chat-lorebook-id="chatLorebookId"
@@ -1197,8 +1258,9 @@ watch(showNpcFeature, (active) => {
       :status-bar-template-mode="statusBarTemplateMode"
       :status-bar-template-issues="statusBarTemplateIssues"
       :status-bar-template-cfg="statusBarTemplateCfg"
-      @close="closeSettings"
-      @save-appearance="saveConversationAppearanceChanges"
+        @close="closeSettings"
+        @toggle-image-generation="toggleImageGeneration"
+        @save-appearance="saveConversationAppearanceChanges"
       @update:chat-lorebook-id="setChatLorebookId"
       @reset-appearance="resetConversationAppearance(conversation?.settings)"
       @background-upload="handleSettingsBackgroundUpload"
@@ -1229,6 +1291,7 @@ watch(showNpcFeature, (active) => {
         @navigate="(page) => emit('navigate', page)"
         @toggle-theme="emit('toggle-theme')"
         @open-sidebar="openSidebar"
+        @open-context="openContextInspector"
         @open-economy="openEconomyPanel"
         @open-npc="openNpcPanel"
         @open-saves="openSavePanel"
@@ -1279,6 +1342,8 @@ watch(showNpcFeature, (active) => {
             :avatar-url="messageAvatarUrl(message)"
             :can-edit="canEditMessage(message)"
             :can-delete="canDeleteMessage(message)"
+            :can-rerun-edit="canSaveMessageEditAndRerun(message)"
+            :can-continue="canContinueGeneration && latestMessage?.id === message.id"
             :branch-can="canBranchMessage(message)"
             :message-action-busy="messageActionBusy === message.id || branchBusy"
             :copy-busy="copyBusy"
@@ -1293,6 +1358,8 @@ watch(showNpcFeature, (active) => {
             @begin-edit="beginEditMessage"
             @cancel-edit="cancelEditMessage"
             @save-edit="saveMessageEdit"
+            @save-edit-rerun="saveMessageEditAndRerun"
+            @continue-generation="continueGeneration"
             @delete="removeMessage"
             @copy="copyMessage"
             @update:editing-message-content="setEditingMessageContent"
@@ -1364,6 +1431,9 @@ watch(showNpcFeature, (active) => {
         :use-stream="useStream"
         :thinking-enabled="thinkingEnabled"
         :can-toggle-thinking="canToggleThinking"
+        :can-use-stream="canUseStream"
+        :can-add-attachments="canAddAttachments"
+        :model-capabilities="chatProviderCapabilities"
         :chat-viewport-is-phone="chatViewportIsPhone"
         :show-scroll-bottom-button="showScrollBottomButton"
         :usage="usage"
@@ -1374,7 +1444,7 @@ watch(showNpcFeature, (active) => {
         :current-model="provider?.model || ''"
         :model-options="providerModels"
         :model-saving="modelSwitcherSaving"
-        :current-model-supports-reasoning="Boolean(provider?.supportsReasoning)"
+        :current-model-supports-reasoning="Boolean(chatProviderCapabilities?.reasoning)"
         @update:input="(val) => input = val"
         @submit="handleComposerEnterFromComposer"
         @stop="stop"
@@ -1434,6 +1504,14 @@ watch(showNpcFeature, (active) => {
         @close="closeModelSwitcher"
         @refresh="refreshQuickModels"
         @save="saveQuickModel"
+      />
+      <ChatContextInspector
+        :open="contextInspectorOpen"
+        :conversation-id="conversation?.id || ''"
+        :draft-content="input"
+        :draft-attachments="chatAttachments"
+        :preset-id="selectedPresetId"
+        @close="closeContextInspector"
       />
     </section>
 

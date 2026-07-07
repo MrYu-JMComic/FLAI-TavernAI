@@ -6,6 +6,7 @@ import crypto from 'crypto';
 import path from 'node:path';
 import express from 'express';
 import rateLimit, { ipKeyGenerator } from 'express-rate-limit';
+import { appConfig } from './config.js';
 import { db } from './db.js';
 import {
   newId,
@@ -30,30 +31,22 @@ import { createSettingsRouter } from './routes/settings.js';
 import { createRegexRouter } from './routes/regex.js';
 import { createSwipesRouter } from './routes/swipes.js';
 import { createBranchesRouter } from './routes/branches.js';
+import { createUpgradeRouter } from './routes/upgrade.js';
 import { getChatProviderSettingsFromContext } from './routes/helpers.js';
 import { createBackup, listBackups, scheduleDailyBackup } from './services/backup.js';
 import { csrfProtection, csrfTokenEndpoint } from './services/csrf.js';
+import { sanitizeDiagnosticText } from './services/diagnosticRedaction.js';
+import { buildRuntimeHealth } from './services/runtimeHealth.js';
 
 const app = express();
-const port = Number(process.env.PORT || 3001);
-const clientOrigins = (process.env.CLIENT_ORIGIN || 'http://127.0.0.1:5173,http://localhost:5173')
-  .split(',')
-  .map((origin) => origin.trim())
-  .filter(Boolean);
-const allowPrivateNetworkOrigins = process.env.ALLOW_PRIVATE_NETWORK_ORIGINS !== 'false';
-const apiRateLimitWindowMs = readPositiveInteger(process.env.API_RATE_LIMIT_WINDOW_MS, 60 * 1000);
-const apiRateLimitMax = readPositiveInteger(process.env.API_RATE_LIMIT_MAX, 240);
-const authenticatedApiRateLimitMax = readPositiveInteger(
-  process.env.AUTHENTICATED_API_RATE_LIMIT_MAX ?? process.env.API_AUTHENTICATED_RATE_LIMIT_MAX,
-  Math.max(apiRateLimitMax, 900)
-);
-const authRateLimitWindowMs = readPositiveInteger(process.env.AUTH_RATE_LIMIT_WINDOW_MS, 60 * 1000);
-const authRateLimitMax = readPositiveInteger(process.env.AUTH_RATE_LIMIT_MAX, 20);
-
-function readPositiveInteger(value, fallback) {
-  const parsed = Number(value);
-  return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : fallback;
-}
+const port = appConfig.port;
+const clientOrigins = appConfig.clientOrigins;
+const allowPrivateNetworkOrigins = appConfig.allowPrivateNetworkOrigins;
+const apiRateLimitWindowMs = appConfig.apiRateLimitWindowMs;
+const apiRateLimitMax = appConfig.apiRateLimitMax;
+const authenticatedApiRateLimitMax = appConfig.authenticatedApiRateLimitMax;
+const authRateLimitWindowMs = appConfig.authRateLimitWindowMs;
+const authRateLimitMax = appConfig.authRateLimitMax;
 
 function isAuthAttemptPath(request) {
   const pathName = String(request.path || '');
@@ -110,7 +103,9 @@ app.use(compression({
 // ── Cookie Parser (用于 CSRF 校验) ──
 app.use(cookieParser());
 
-app.use(express.json({ limit: '8mb' }));
+app.use(express.json({ limit: appConfig.jsonBodyLimit }));
+app.use(attachRequestId);
+app.use(attachApiErrorEnvelope);
 migrateLegacyAvatarUploads(db);
 app.use(attachAuth);
 
@@ -192,6 +187,27 @@ function withListCache(request, response, data) {
 
 // ── Shared middleware & helpers ──
 
+function attachRequestId(request, response, next) {
+  request.requestId = crypto.randomUUID();
+  response.setHeader('X-Request-Id', request.requestId);
+  next();
+}
+
+function attachApiErrorEnvelope(request, response, next) {
+  const originalJson = response.json.bind(response);
+  response.json = (body) => {
+    if (body && typeof body === 'object' && body.error && !body.requestId) {
+      return originalJson({
+        ...body,
+        code: normalizeApiErrorCode(response.statusCode, body.code),
+        requestId: request.requestId
+      });
+    }
+    return originalJson(body);
+  };
+  next();
+}
+
 function attachAuth(request, _response, next) {
   request.auth = resolveSession(db, request);
   next();
@@ -209,6 +225,21 @@ function asyncRoute(handler) {
   return (request, response, next) => {
     Promise.resolve(handler(request, response, next)).catch(next);
   };
+}
+
+function normalizeApiErrorCode(status, explicitCode = '') {
+  if (explicitCode) {
+    return String(explicitCode);
+  }
+  if (status === 401) return 'UNAUTHORIZED';
+  if (status === 403) return 'FORBIDDEN';
+  if (status === 404) return 'NOT_FOUND';
+  if (status === 409) return 'CONFLICT';
+  if (status === 413) return 'PAYLOAD_TOO_LARGE';
+  if (status === 419) return 'CSRF_TOKEN_INVALID';
+  if (status === 429) return 'RATE_LIMITED';
+  if (status >= 500) return 'INTERNAL_ERROR';
+  return 'BAD_REQUEST';
 }
 
 // ── Character helpers (shared between routes) ──
@@ -236,7 +267,12 @@ function getProviderRow(userId) {
 }
 
 function getChatProviderSettings(userId) {
-  return getChatProviderSettingsFromContext({ providerWithSecret, hasUsableProvider, getProviderRow }, userId);
+  return getChatProviderSettingsFromContext({
+    providerWithSecret,
+    hasUsableProvider,
+    getProviderRow,
+    mockProviderEnabled: appConfig.mockProviderEnabled
+  }, userId);
 }
 
 // ── User helpers ──
@@ -281,16 +317,14 @@ const ctx = {
   getProviderRow,
   getChatProviderSettings,
   providerWithSecret,
-  hasUsableProvider
+  hasUsableProvider,
+  mockProviderEnabled: appConfig.mockProviderEnabled
 };
 
 // ── Health check ──
 
 app.get('/api/health', (_request, response) => {
-  response.json({
-    ok: true,
-    service: 'flai-tavern-backend'
-  });
+  response.json(buildRuntimeHealth(db));
 });
 
 // ── Mount route modules ──
@@ -307,6 +341,7 @@ app.use('/api/talent-pools', createTalentsRouter(ctx));
 app.use('/api/regex-rules', createRegexRouter(ctx));
 app.use('/api/messages', createSwipesRouter(ctx));
 app.use('/api/conversations', createBranchesRouter(ctx));
+app.use('/api', createUpgradeRouter(ctx));
 app.use('/api', createSettingsRouter(ctx));
 
 // ── Admin backup endpoint ──
@@ -343,17 +378,24 @@ app.get('/api/admin/backups', requireAuth, asyncRoute(async (request, response) 
 
 // ── Error handler ──
 
-app.use((error, _request, response, _next) => {
+app.use((error, request, response, _next) => {
   const message = error?.message || '服务器错误';
   if (response.headersSent) {
     return;
   }
-  // Log error details for production debugging
-  console.error('[error]', error);
-  // Determine appropriate HTTP status: use explicit status, 500 for server/DB errors, else 400
   const status = error?.status
     || (/SQLITE|database|disk/i.test(message) ? 500 : 400);
-  response.status(status).json({ error: message });
+  const code = normalizeApiErrorCode(status, error?.code);
+  console.error('[error]', {
+    requestId: request.requestId,
+    method: request.method,
+    path: request.originalUrl || request.url,
+    status,
+    code,
+    message: sanitizeDiagnosticText(message),
+    stack: sanitizeDiagnosticText(error?.stack)
+  });
+  response.status(status).json({ error: message, code, requestId: request.requestId });
 });
 
 // ── Start ──

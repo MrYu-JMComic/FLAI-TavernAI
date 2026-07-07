@@ -7,7 +7,7 @@ import {
   fetchCharacterImages,
   reorderCharacterImages,
   updateCharacterImage
-} from '../api';
+} from '../api/characters.js';
 import { useNotify } from '../composables/useNotify';
 import { readFileAsDataUrl } from '../utils/fileReaders';
 

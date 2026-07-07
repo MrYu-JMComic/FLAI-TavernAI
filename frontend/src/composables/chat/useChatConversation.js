@@ -4,10 +4,10 @@ import {
   createConversation,
   deleteConversation,
   deleteConversations,
-  fetchCharacters,
-  fetchConversations,
-  fetchPresets
-} from '../../api.js';
+  fetchConversations
+} from '../../api/chat.js';
+import { fetchCharacters } from '../../api/characters.js';
+import { fetchPresets } from '../../api/presets.js';
 
 export function useChatConversation({ route, emit, showError }) {
   const conversation = ref(null);

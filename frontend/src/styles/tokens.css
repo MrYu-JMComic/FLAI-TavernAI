@@ -1,0 +1,69 @@
+:root {
+  color: #20241f;
+  background: #eef2ed;
+  font-family:
+    Inter, "Microsoft YaHei", "PingFang SC", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
+    "Segoe UI", sans-serif;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  --bg: #eef2ed;
+  --surface: #fbfaf6;
+  --surface-strong: #edf5ef;
+  --line: rgba(44, 57, 48, 0.14);
+  --text: #20241f;
+  --muted: #657064;
+  --primary: #8d4a43;
+  --primary-strong: #713932;
+  --primary-soft: #efe1dc;
+  --green: #2f6d5a;
+  --green-soft: #dfeee8;
+  --danger: #b33d3a;
+  --shadow: 0 18px 48px rgba(38, 52, 44, 0.13);
+  --app-bg:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.72) 0%, rgba(240, 246, 241, 0.58) 42%, rgba(226, 235, 230, 0.82) 100%),
+    linear-gradient(135deg, rgba(47, 109, 90, 0.1) 0%, transparent 34%, rgba(141, 74, 67, 0.06) 76%, transparent 100%),
+    var(--bg);
+  --chat-shell-bg:
+    linear-gradient(180deg, #fbfaf6 0%, #eef4ef 48%, #e6eee9 100%);
+  --chat-sidebar-bg: color-mix(in srgb, var(--surface) 88%, var(--green-soft));
+  --touch-min: 44px;
+  --scrollbar-size: 10px;
+  --scrollbar-track: color-mix(in srgb, var(--surface-strong) 58%, transparent);
+  --scrollbar-track-hover: color-mix(in srgb, var(--surface-strong) 76%, transparent);
+  --scrollbar-track-border: color-mix(in srgb, var(--line) 72%, transparent);
+  --scrollbar-thumb: color-mix(in srgb, var(--green) 50%, var(--primary));
+  --scrollbar-thumb-end: color-mix(in srgb, var(--primary) 62%, var(--surface));
+  --scrollbar-thumb-hover: color-mix(in srgb, var(--green) 66%, var(--primary));
+  --scrollbar-thumb-hover-end: color-mix(in srgb, var(--primary) 76%, var(--surface));
+}
+
+:root[data-theme="dark"] {
+  color: #f1f5ee;
+  background: #111614;
+  --bg: #111614;
+  --surface: #1a211e;
+  --surface-strong: #222c27;
+  --line: rgba(218, 233, 222, 0.14);
+  --text: #f1f5ee;
+  --muted: #b7c4ba;
+  --primary: #d98775;
+  --primary-strong: #f0a18e;
+  --primary-soft: rgba(217, 135, 117, 0.19);
+  --green: #82b8a2;
+  --green-soft: rgba(130, 184, 162, 0.17);
+  --danger: #ff8c82;
+  --shadow: 0 18px 48px rgba(0, 0, 0, 0.28);
+  --app-bg:
+    linear-gradient(180deg, rgba(30, 37, 33, 0.96) 0%, rgba(16, 22, 19, 0.98) 100%),
+    var(--bg);
+  --chat-shell-bg:
+    linear-gradient(180deg, #18201d 0%, #111614 100%);
+  --chat-sidebar-bg: #1a211e;
+  --scrollbar-track: color-mix(in srgb, var(--surface-strong) 72%, #050806 18%);
+  --scrollbar-track-hover: color-mix(in srgb, var(--surface-strong) 84%, #050806 12%);
+  --scrollbar-track-border: color-mix(in srgb, var(--line) 78%, #000 12%);
+  --scrollbar-thumb: color-mix(in srgb, var(--green) 58%, var(--primary));
+  --scrollbar-thumb-end: color-mix(in srgb, var(--primary) 58%, var(--surface));
+  --scrollbar-thumb-hover: color-mix(in srgb, var(--green) 70%, var(--primary));
+  --scrollbar-thumb-hover-end: color-mix(in srgb, var(--primary) 72%, var(--surface));
+}

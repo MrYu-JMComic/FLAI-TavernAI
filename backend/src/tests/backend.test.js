@@ -51,6 +51,7 @@ const {
   streamToolCompletion,
   summarizeUsageSnapshots
 } = await import('../services/providers.js');
+const { buildExportEnvelope, importExportEnvelope } = await import('../services/exportEnvelopes.js');
 const {
   conversationBackgroundOwnerTypes,
   getAvatarAssetForViewer,
@@ -422,11 +423,15 @@ test('applyRegexRules skips null rule items', () => {
 
 test('applyRegexRules applies sorted rules without spread/filter/reduce pipelines', () => {
   const source = fs.readFileSync(new URL('../modules/characters.js', import.meta.url), 'utf8');
-  const match = source.match(/export function applyRegexRules[\s\S]*?\n}\n\nfunction normalizeCharacterPayload/);
+  const match = source.match(/export function applyRegexRules[\s\S]*?\r?\n}\r?\n\r?\nfunction collectRegexRules/);
   assert.ok(match);
   assert.match(match[0], /for \(let index = 0; index < sorted\.length; index \+= 1\)/);
-  assert.match(match[0], /for \(const rule of rules\)/);
   assert.doesNotMatch(match[0], /\[\.\.\.rules\]|\.filter\(|\.reduce\(/);
+
+  const collectorMatch = source.match(/function collectRegexRules[\s\S]*?\r?\n}\r?\n\r?\nfunction normalizeCharacterPayload/);
+  assert.ok(collectorMatch);
+  assert.match(collectorMatch[0], /for \(const rule of rules\)/);
+  assert.doesNotMatch(collectorMatch[0], /\[\.\.\.rules\]|\.filter\(|\.reduce\(/);
 });
 
 test('regex partial reorder keeps priorities unique', () => {
@@ -463,7 +468,7 @@ test('regex partial reorder keeps priorities unique', () => {
 
 test('regex reorder scans ids directly without transient arrays', () => {
   const source = fs.readFileSync(new URL('../modules/characters.js', import.meta.url), 'utf8');
-  const match = source.match(/export function reorderRegexRules[\s\S]*?\n}\n\nexport function testRegexRule/);
+  const match = source.match(/export function reorderRegexRules[\s\S]*?\r?\n}\r?\n\r?\nexport function testRegexRule/);
   assert.ok(match);
   assert.match(match[0], /const existingIds = new Set\(\);\s*for \(const row of current\) \{\s*existingIds\.add\(row\.id\);/);
   assert.match(match[0], /let index = 0;\s*for \(const id of nextIds\) \{[\s\S]*changed \+= result\.changes;[\s\S]*index \+= 1;/);
@@ -970,20 +975,21 @@ test('character world book route normalizes non-finite order index', async () =>
 
 test('character routes normalize string boolean flags', async () => {
   const database = createAppDatabase(':memory:');
+  const userId = 'boolean-route-user';
   database.prepare('INSERT INTO users (id, username, password_hash, created_at) VALUES (?, ?, ?, ?)').run(
-    'boolean-route-user',
+    userId,
     'booleanrouteuser',
     'hash',
     new Date().toISOString()
   );
-  const character = createCharacter(database, 'boolean-route-user', { name: 'Boolean Route Character' });
+  const character = createCharacter(database, userId, { name: 'Boolean Route Character' });
 
   const app = express();
   app.use(express.json());
   app.use('/api/characters', createCharactersRouter({
     db: database,
     requireAuth: (request, _response, next) => {
-      request.auth = { user: { id: 'boolean-route-user', username: 'booleanrouteuser' } };
+      request.auth = { user: { id: userId, username: 'booleanrouteuser' } };
       next();
     },
     asyncRoute: (handler) => (request, response, next) => Promise.resolve(handler(request, response, next)).catch(next),
@@ -1044,10 +1050,20 @@ test('character routes normalize string boolean flags', async () => {
     const defaultImageResponse = await fetch(`${baseUrl}/api/characters/${character.id}/images`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ imageUrl: 'https://example.test/default.png', isDefault: 'true' })
+      body: JSON.stringify({
+        imageUrl: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=',
+        name: 'default.png',
+        sceneTag: '日常',
+        isDefault: 'true'
+      })
     });
     const defaultImage = await defaultImageResponse.json();
     assert.equal(defaultImage.isDefault, true);
+    assert.match(defaultImage.imageUrl, /^\/api\/assets\//);
+    assert.equal(defaultImage.imageUrl.includes('data:image'), false);
+    const galleryAsset = database.prepare('SELECT * FROM assets WHERE user_id = ? AND kind = ?').get(userId, 'character-gallery');
+    assert.equal(galleryAsset.owner_type, 'character');
+    assert.equal(galleryAsset.owner_id, character.id);
 
     const unsetDefaultResponse = await fetch(`${baseUrl}/api/characters/${character.id}/images/${defaultImage.id}`, {
       method: 'PUT',
@@ -1055,6 +1071,13 @@ test('character routes normalize string boolean flags', async () => {
       body: JSON.stringify({ isDefault: 'false' })
     });
     assert.equal((await unsetDefaultResponse.json()).isDefault, false);
+
+    const deleteImageResponse = await fetch(`${baseUrl}/api/characters/${character.id}/images/${defaultImage.id}`, {
+      method: 'DELETE'
+    });
+    assert.equal(deleteImageResponse.status, 200);
+    const assetCount = database.prepare('SELECT COUNT(*) AS count FROM assets WHERE user_id = ?').get(userId).count;
+    assert.equal(assetCount, 0);
   } finally {
     await new Promise((resolve) => server.close(resolve));
   }
@@ -2509,27 +2532,29 @@ test('avatars are stored as base64 assets and exposed through short URLs', () =>
     new Date().toISOString()
   );
 
-  const dataUrl = 'data:image/png;base64,AQIDBA==';
+  const pngBase64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=';
+  const dataUrl = `data:image/png;base64,${pngBase64}`;
   const character = createCharacter(database, 'owner-1', {
     name: 'Avatar Test',
     avatarUrl: dataUrl,
     visibility: 'private'
   });
-  assert.match(character.avatarUrl, /^\/api\/avatars\/[-0-9a-f]+$/);
+  assert.match(character.avatarUrl, /^\/api\/assets\/[-0-9a-f]+$/);
 
   const assetId = character.avatarUrl.split('/').pop();
-  const assetRow = database.prepare('SELECT * FROM avatar_assets WHERE id = ?').get(assetId);
+  const assetRow = database.prepare('SELECT * FROM assets WHERE id = ?').get(assetId);
   assert.equal(assetRow.owner_type, 'character');
   assert.equal(assetRow.owner_id, character.id);
-  assert.equal(assetRow.base64_data, 'AQIDBA==');
+  assert.equal(assetRow.kind, 'avatar');
+  assert.equal(assetRow.base64_data, pngBase64);
   assert.equal(assetRow.mime_type, 'image/png');
   assert.equal(database.prepare('SELECT avatar_url FROM characters WHERE id = ?').get(character.id).avatar_url, character.avatarUrl);
 
-  assert.equal(getAvatarAssetForViewer(database, 'owner-1', assetId).base64Data, 'AQIDBA==');
+  assert.equal(getAvatarAssetForViewer(database, 'owner-1', assetId).base64Data, pngBase64);
   assert.equal(getAvatarAssetForViewer(database, 'viewer-1', assetId), null);
 
   updateCharacter(database, 'owner-1', character.id, { visibility: 'public' });
-  assert.equal(getAvatarAssetForViewer(database, 'viewer-1', assetId).base64Data, 'AQIDBA==');
+  assert.equal(getAvatarAssetForViewer(database, 'viewer-1', assetId).base64Data, pngBase64);
 
   const userAvatarUrl = saveAvatarInput(database, {
     userId: 'owner-1',
@@ -2537,7 +2562,7 @@ test('avatars are stored as base64 assets and exposed through short URLs', () =>
     ownerId: 'owner-1',
     value: dataUrl
   });
-  assert.match(userAvatarUrl, /^\/api\/avatars\/[-0-9a-f]+$/);
+  assert.match(userAvatarUrl, /^\/api\/assets\/[-0-9a-f]+$/);
   assert.equal(getUserAvatarUrl(database, 'owner-1'), userAvatarUrl);
   assert.equal(getAvatarAssetForViewer(database, 'viewer-1', userAvatarUrl.split('/').pop()), null);
 });
@@ -2569,6 +2594,16 @@ test('avatar data URLs reject malformed base64 payloads', () => {
     }),
     /Invalid avatar image data/
   );
+  assert.throws(
+    () => saveAvatarInput(database, {
+      userId: 'owner-1',
+      ownerType: 'user',
+      ownerId: 'owner-1',
+      value: 'data:image/png;base64,AAAA'
+    }),
+    /Invalid avatar image data/
+  );
+  assert.equal(database.prepare('SELECT COUNT(*) AS count FROM assets').get().count, 0);
   assert.equal(database.prepare('SELECT COUNT(*) AS count FROM avatar_assets').get().count, 0);
 });
 
@@ -2604,19 +2639,28 @@ test('conversation appearance settings persist empty values and custom code', ()
     timestamp
   );
 
+  const pngBase64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=';
   const saved = saveConversationAppearance(database, 'owner-1', conversationId, {
-    desktopBackgroundUrl: 'data:image/png;base64,AQID',
+    desktopBackgroundUrl: `data:image/png;base64,${pngBase64}`,
     mobileBackgroundUrl: '',
     customCss: ' .deep-bubble { border-radius: 24px; } ',
-    customJs: 'return () => {}'
+    customCssEnabled: true,
+    customCssRiskAccepted: true,
+    customJs: 'return () => {}',
+    customJsEnabled: true,
+    customJsRiskAccepted: true
   });
 
-  assert.match(saved.desktopBackgroundUrl, /^\/api\/avatars\/[-0-9a-f]+$/i);
+  assert.match(saved.desktopBackgroundUrl, /^\/api\/assets\/[-0-9a-f]+$/i);
   assert.deepEqual(saved, {
     desktopBackgroundUrl: saved.desktopBackgroundUrl,
     mobileBackgroundUrl: '',
     customCss: ' .deep-bubble { border-radius: 24px; } ',
+    customCssEnabled: true,
+    customCssRiskAccepted: true,
     customJs: 'return () => {}',
+    customJsEnabled: true,
+    customJsRiskAccepted: true,
     showWorldBookMatches: true
   });
 
@@ -2626,8 +2670,8 @@ test('conversation appearance settings persist empty values and custom code', ()
     .get(conversationId);
   const asset = database
     .prepare(
-      `SELECT owner_type, owner_id, mime_type, base64_data, byte_size
-       FROM avatar_assets
+      `SELECT owner_type, owner_id, kind, mime_type, base64_data, byte_size
+       FROM assets
        WHERE owner_type = ? AND owner_id = ?`
     )
     .get(conversationBackgroundOwnerTypes.desktop, conversationId);
@@ -2636,18 +2680,23 @@ test('conversation appearance settings persist empty values and custom code', ()
   assert.equal(row.mobile_background_url, '');
   assert.equal(asset.owner_type, conversationBackgroundOwnerTypes.desktop);
   assert.equal(asset.owner_id, conversationId);
+  assert.equal(asset.kind, 'background');
   assert.equal(asset.mime_type, 'image/png');
-  assert.equal(asset.base64_data, 'AQID');
-  assert.equal(asset.byte_size, 3);
+  assert.equal(asset.base64_data, pngBase64);
+  assert.equal(asset.byte_size, Buffer.from(pngBase64, 'base64').length);
 
   const cleared = saveConversationAppearance(database, 'owner-1', conversationId, {
     desktopBackgroundUrl: '',
     mobileBackgroundUrl: '',
     customCss: saved.customCss,
-    customJs: saved.customJs
+    customCssEnabled: saved.customCssEnabled,
+    customCssRiskAccepted: saved.customCssRiskAccepted,
+    customJs: saved.customJs,
+    customJsEnabled: saved.customJsEnabled,
+    customJsRiskAccepted: saved.customJsRiskAccepted
   });
   const remainingAssets = database
-    .prepare('SELECT COUNT(*) AS count FROM avatar_assets WHERE owner_type = ? AND owner_id = ?')
+    .prepare('SELECT COUNT(*) AS count FROM assets WHERE owner_type = ? AND owner_id = ?')
     .get(conversationBackgroundOwnerTypes.desktop, conversationId);
 
   assert.equal(cleared.desktopBackgroundUrl, '');
@@ -2659,7 +2708,11 @@ test('conversation appearance treats null input as defaults', () => {
     desktopBackgroundUrl: '',
     mobileBackgroundUrl: '',
     customCss: '',
+    customCssEnabled: false,
+    customCssRiskAccepted: false,
     customJs: '',
+    customJsEnabled: false,
+    customJsRiskAccepted: false,
     statusBarPrompt: '',
     showWorldBookMatches: true
   });
@@ -2674,6 +2727,10 @@ test('conversation settings schema accepts large background data URLs', () => {
 
   assert.equal(parsed.desktopBackgroundUrl, dataUrl);
   assert.equal(parsed.mobileBackgroundUrl, dataUrl);
+  assert.equal(parsed.customCssEnabled, false);
+  assert.equal(parsed.customCssRiskAccepted, false);
+  assert.equal(parsed.customJsEnabled, false);
+  assert.equal(parsed.customJsRiskAccepted, false);
   assert.equal(parsed.showWorldBookMatches, true);
   assert.equal(saveConversationSettingsSchema.parse({ showWorldBookMatches: 'false' }).showWorldBookMatches, false);
 });
@@ -3100,15 +3157,20 @@ test('OpenAI-compatible parser merges multiple thinking tags without array joins
     assert.equal(result.content, 'answer');
     assert.equal(result.reasoning, 'first plan\n\nsecond plan\n\ntail plan');
 
-    const providerSource = fs.readFileSync(
-      new URL('../services/providers.js', import.meta.url),
+    const providerChatSource = fs.readFileSync(
+      new URL('../services/providerChatCompletions.js', import.meta.url),
       'utf8'
     );
-    assert.match(providerSource, /function splitThinkingTags\(text\) \{/);
-    assert.match(providerSource, /reasoning = appendReasoning\(reasoning, inner\);/);
-    assert.doesNotMatch(providerSource, /const reasoning = \[\];\r?\n  let content = value\.replace/);
-    assert.doesNotMatch(providerSource, /reasoning\.push\(/);
-    assert.doesNotMatch(providerSource, /reasoning\.join\('\\n\\n'\)/);
+    const providerContentSource = fs.readFileSync(
+      new URL('../services/providerContent.js', import.meta.url),
+      'utf8'
+    );
+    assert.match(providerContentSource, /function splitThinkingTags\(text\) \{/);
+    assert.match(providerContentSource, /reasoning = appendReasoning\(reasoning, inner\);/);
+    assert.doesNotMatch(providerContentSource, /const reasoning = \[\];\r?\n  let content = value\.replace/);
+    assert.doesNotMatch(providerContentSource, /reasoning\.push\(/);
+    assert.doesNotMatch(providerContentSource, /reasoning\.join\('\\n\\n'\)/);
+    assert.match(providerChatSource, /splitThinkingTags\(extractText\(message\.content\)\)/);
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -3523,15 +3585,15 @@ test('OpenAI Responses parser reads output content text with direct loops', asyn
 
     assert.equal(result.content, 'hello world');
 
-    const providerSource = fs.readFileSync(
-      new URL('../services/providers.js', import.meta.url),
+    const providerResponsesSource = fs.readFileSync(
+      new URL('../services/providerOpenAiResponses.js', import.meta.url),
       'utf8'
     );
-    assert.match(providerSource, /function extractOpenAiOutputText\(json\) \{/);
-    assert.match(providerSource, /for \(const item of json\.output\)/);
-    assert.doesNotMatch(providerSource, /\.flatMap\(\(item\) => item\.content \|\| \[\]\)/);
-    assert.doesNotMatch(providerSource, /\.map\(\(item\) => item\.text \|\| ''\)/);
-    assert.doesNotMatch(providerSource, /\.join\(''\)/);
+    assert.match(providerResponsesSource, /function extractOpenAiOutputText\(json\) \{/);
+    assert.match(providerResponsesSource, /for \(const item of json\.output\)/);
+    assert.doesNotMatch(providerResponsesSource, /\.flatMap\(\(item\) => item\.content \|\| \[\]\)/);
+    assert.doesNotMatch(providerResponsesSource, /\.map\(\(item\) => item\.text \|\| ''\)/);
+    assert.doesNotMatch(providerResponsesSource, /\.join\(''\)/);
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -3573,15 +3635,19 @@ test('OpenAI Responses parser merges reasoning output without item arrays', asyn
     assert.equal(result.content, 'answer');
     assert.equal(result.reasoning, 'summary plan\n\ncontent plan\n\nfield plan\n\nresponse plan');
 
-    const providerSource = fs.readFileSync(
-      new URL('../services/providers.js', import.meta.url),
+    const providerResponsesSource = fs.readFileSync(
+      new URL('../services/providerOpenAiResponses.js', import.meta.url),
       'utf8'
     );
-    assert.match(providerSource, /function appendReasoning\(merged, item\) \{/);
-    assert.match(providerSource, /let reasoning = '';\r?\n  if \(Array\.isArray\(json\.output\)\) \{/);
-    assert.doesNotMatch(providerSource, /const items = \[\];\r?\n  for \(const item of json\.output \|\| \[\]\)/);
-    assert.doesNotMatch(providerSource, /items\.push\(extractText/);
-    assert.doesNotMatch(providerSource, /return mergeReasoning\(\.\.\.items\);/);
+    const providerContentSource = fs.readFileSync(
+      new URL('../services/providerContent.js', import.meta.url),
+      'utf8'
+    );
+    assert.match(providerContentSource, /function appendReasoning\(merged, item\) \{/);
+    assert.match(providerResponsesSource, /let reasoning = '';\r?\n  if \(Array\.isArray\(json\.output\)\) \{/);
+    assert.doesNotMatch(providerResponsesSource, /const items = \[\];\r?\n  for \(const item of json\.output \|\| \[\]\)/);
+    assert.doesNotMatch(providerResponsesSource, /items\.push\(extractText/);
+    assert.doesNotMatch(providerResponsesSource, /return mergeReasoning\(\.\.\.items\);/);
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -4006,8 +4072,8 @@ test('custom proxy auth retry only trusts parsed private IPv4 hosts', async () =
     );
     assert.deepEqual(externalAuthorizations, ['Bearer sk-wrong']);
 
-    const providerSource = fs.readFileSync(
-      new URL('../services/providers.js', import.meta.url),
+    const providerHttpSource = fs.readFileSync(
+      new URL('../services/providerHttp.js', import.meta.url),
       'utf8'
     );
     assert.equal(isLocalOrPrivateBaseUrl('http://127.0.0.1:8317/v1'), true);
@@ -4015,10 +4081,10 @@ test('custom proxy auth retry only trusts parsed private IPv4 hosts', async () =
     assert.equal(isLocalOrPrivateBaseUrl('http://172.31.255.1/v1'), true);
     assert.equal(isLocalOrPrivateBaseUrl('http://172.32.0.1/v1'), false);
     assert.equal(isLocalOrPrivateBaseUrl('http://127.evil.test/v1'), false);
-    assert.match(providerSource, /from '..\/..\/..\/shared\/privateNetwork\.js'/);
-    assert.doesNotMatch(providerSource, /function parseIpv4Address\(host\) \{/);
-    assert.doesNotMatch(providerSource, /host\.startsWith\('127\.'\)/);
-    assert.doesNotMatch(providerSource, /host\.split\('\\.'\)\.map/);
+    assert.match(providerHttpSource, /from '..\/..\/..\/shared\/privateNetwork\.js'/);
+    assert.doesNotMatch(providerHttpSource, /function parseIpv4Address\(host\) \{/);
+    assert.doesNotMatch(providerHttpSource, /host\.startsWith\('127\.'\)/);
+    assert.doesNotMatch(providerHttpSource, /host\.split\('\\.'\)\.map/);
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -5064,6 +5130,16 @@ function sseStream(lines) {
       controller.close();
     }
   });
+}
+
+async function waitForTestCondition(predicate, attempts = 20) {
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    if (predicate()) {
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+  assert.equal(predicate(), true);
 }
 
 function jsonResponse(value) {
@@ -6531,7 +6607,7 @@ function encryptWithSecret(value, secret) {
   return `v1:${iv.toString('base64')}:${tag.toString('base64')}:${encrypted.toString('base64')}`;
 }
 
-test('character export includes character, regex rules, tags and world book', () => {
+test('character envelope export includes character regex rules tags and world book references', () => {
   const database = createAppDatabase(':memory:');
   const userId = 'export-user';
   database.prepare('INSERT INTO users (id, username, password_hash, created_at) VALUES (?, ?, ?, ?)').run(
@@ -6550,12 +6626,11 @@ test('character export includes character, regex rules, tags and world book', ()
   });
   setCharacterTags(database, userId, character.id, ['温柔', '助手']);
 
-  // Create a world book linked to the character
   const book = createWorldBook(database, userId, {
     name: '世界观',
-    description: '测试世界书',
-    characterId: character.id
+    description: '测试世界书'
   });
+  assert.equal(linkWorldBookToCharacter(database, book.id, character.id, 2, userId), true);
   createEntry(database, userId, book.id, {
     name: '魔法',
     triggerKeys: '魔法',
@@ -6576,53 +6651,25 @@ test('character export includes character, regex rules, tags and world book', ()
     '2025-01-01T00:00:00.000Z'
   );
 
-  // Simulate export logic
-  const regexRules = getRegexRules(database, userId, character.id);
-  const characterTags = database
-    .prepare(
-      `SELECT tags.name FROM character_tags
-       JOIN tags ON tags.id = character_tags.tag_id
-       WHERE character_tags.character_id = ?`
-    )
-    .all(character.id);
-  const worldBookRow = database.prepare('SELECT id, name, description FROM world_books WHERE character_id = ?').get(character.id);
-  let worldBook = null;
-  if (worldBookRow) {
-    const entries = database
-      .prepare(
-        `SELECT name, trigger_keys, content, position, enabled, order_index
-         FROM world_book_entries WHERE world_book_id = ? ORDER BY order_index ASC, rowid ASC`
-      )
-      .all(worldBookRow.id);
-    worldBook = { name: worldBookRow.name, description: worldBookRow.description, entries };
-  }
+  const envelope = buildExportEnvelope(database, userId, 'characters', { ids: [character.id] });
+  const item = envelope.items[0];
 
-  const exportData = {
-    _flai_export_version: 1,
-    character: {
-      name: character.name,
-      gender: character.gender,
-      persona: character.persona,
-      visibility: character.visibility
-    },
-    regex_rules: regexRules,
-    tags: characterTags.map((t) => t.name),
-    world_book: worldBook
-  };
-
-  assert.equal(exportData._flai_export_version, 1);
-  assert.equal(exportData.character.name, '导出测试');
-  assert.equal(exportData.character.gender, '女');
-  assert.equal(exportData.regex_rules.length, 1);
-  assert.equal(exportData.regex_rules[0].pattern, '猫');
-  assert.deepEqual([...exportData.tags].sort(), ['助手', '温柔'].sort());
-  assert.equal(exportData.world_book.name, '世界观');
-  assert.equal(exportData.world_book.entries.length, 2);
-  assert.equal(exportData.world_book.entries[0].name, '魔法');
-  assert.equal(exportData.world_book.entries[1].name, '同序号目');
+  assert.equal(envelope.version, 1);
+  assert.equal(envelope.kind, 'characters');
+  assert.equal(envelope.items.length, 1);
+  assert.equal(item.name, '导出测试');
+  assert.equal(item.gender, '女');
+  assert.equal(item.persona, '温柔的助手');
+  assert.equal(item.regexRules.length, 1);
+  assert.equal(item.regexRules[0].pattern, '猫');
+  assert.deepEqual([...item.tags].sort(), ['助手', '温柔'].sort());
+  assert.equal(item.worldBooks.length, 1);
+  assert.equal(item.worldBooks[0].id, book.id);
+  assert.equal(item.worldBooks[0].linkOrder, 2);
+  assert.equal(envelope.dependencies.worldBooks[0].name, '世界观');
 });
 
-test('character export tags use deterministic name order', async () => {
+test('character envelope export tags use deterministic name order', () => {
   const database = createAppDatabase(':memory:');
   const userId = 'export-tag-order-user';
   const timestamp = '2026-01-01T00:00:00.000Z';
@@ -6639,43 +6686,12 @@ test('character export tags use deterministic name order', async () => {
   insertLink.run(character.id, 'tag-alpha-lower');
   insertLink.run(character.id, 'tag-alpha-upper');
 
-  const app = express();
-  app.use(express.json());
-  app.use('/api/characters', createCharactersRouter({
-    db: database,
-    requireAuth: (request, _response, next) => {
-      request.auth = { user: { id: userId, username: 'exporttagorder' } };
-      next();
-    },
-    asyncRoute: (handler) => (request, response, next) => Promise.resolve(handler(request, response, next)).catch(next),
-    withCharacterTags: (routeCharacter) => routeCharacter,
-    withWorldBookId: (routeCharacter) => routeCharacter,
-    hasUsableProvider: () => false,
-    getChatProviderSettings: () => ({ ok: false, error: 'unused' }),
-    withEtag: (_request, response, data) => response.json(data),
-    withListCache: (_request, response, data) => response.json(data),
-    nowIso: () => timestamp
-  }));
-  app.use((error, _request, response, _next) => {
-    response.status(500).json({ error: error.message });
-  });
+  const envelope = buildExportEnvelope(database, userId, 'characters', { ids: [character.id] });
 
-  const server = await new Promise((resolve) => {
-    const listener = app.listen(0, () => resolve(listener));
-  });
-  try {
-    const baseUrl = `http://127.0.0.1:${server.address().port}`;
-    const response = await fetch(`${baseUrl}/api/characters/${character.id}/export`);
-    const body = await response.json();
-
-    assert.equal(response.status, 200);
-    assert.deepEqual(body.tags, ['Alpha', 'alpha', 'beta']);
-  } finally {
-    await new Promise((resolve) => server.close(resolve));
-  }
+  assert.deepEqual(envelope.items[0].tags, ['Alpha', 'alpha', 'beta']);
 });
 
-test('character import creates new character with new ID', () => {
+test('character envelope import accepts legacy character card payloads', () => {
   const database = createAppDatabase(':memory:');
   const userId = 'import-user';
   database.prepare('INSERT INTO users (id, username, password_hash, created_at) VALUES (?, ?, ?, ?)').run(
@@ -6698,19 +6714,11 @@ test('character import creates new character with new ID', () => {
     tags: ['冒险', '勇敢']
   };
 
-  // Simulate import logic
-  const character = createCharacter(database, userId, {
-    name: importData.character.name,
-    gender: importData.character.gender,
-    persona: importData.character.persona,
-    background: importData.character.background,
-    openingMessage: importData.character.openingMessage,
-    visibility: 'private',
-    regexRules: importData.regex_rules,
-    tags: importData.tags
-  });
-  setCharacterTags(database, userId, character.id, importData.tags);
+  const result = importExportEnvelope(database, userId, 'characters', importData);
+  assert.equal(result.imported, 1);
+  assert.equal(result.skipped.length, 0);
 
+  const character = getCharacter(database, userId, result.items[0].id);
   assert.equal(character.name, '导入角色');
   assert.equal(character.gender, '男');
   assert.equal(character.persona, '勇敢的冒险者');
@@ -6727,7 +6735,7 @@ test('character import creates new character with new ID', () => {
   assert.equal(all[0].name, '导入角色');
 });
 
-test('character import with world book creates book and entries', () => {
+test('character envelope import with legacy world book creates book and entries', () => {
   const database = createAppDatabase(':memory:');
   const userId = 'import-wb-user';
   database.prepare('INSERT INTO users (id, username, password_hash, created_at) VALUES (?, ?, ?, ?)').run(
@@ -6748,53 +6756,35 @@ test('character import with world book creates book and entries', () => {
     }
   };
 
-  const character = createCharacter(database, userId, {
-    name: importData.character.name,
-    visibility: 'private',
-    regexRules: [],
-    tags: []
-  });
-
-  const book = createWorldBook(database, userId, {
-    name: importData.world_book.name,
-    description: importData.world_book.description,
-    characterId: character.id
-  });
-
-  for (const entry of importData.world_book.entries) {
-    createEntry(database, userId, book.id, {
-      name: entry.name,
-      triggerKeys: entry.trigger_keys,
-      content: entry.content,
-      position: entry.position,
-      enabled: entry.enabled
-    });
-  }
+  const result = importExportEnvelope(database, userId, 'characters', importData);
+  assert.equal(result.imported, 1);
+  const importedCharacterId = result.items[0].id;
+  const book = listWorldBooks(database, userId).find((item) => item.name === '导入的世界书');
 
   const retrieved = getWorldBook(database, userId, book.id);
   assert.equal(retrieved.name, '导入的世界书');
-  assert.equal(retrieved.characterId, character.id);
+  assert.equal(retrieved.characterId, importedCharacterId);
   assert.equal(retrieved.entries.length, 2);
   assert.equal(retrieved.entries[0].name, '条目1');
   assert.equal(retrieved.entries[1].triggerKeys, '关键词2');
+  assert.equal(listCharacterWorldBooks(database, importedCharacterId).length, 1);
 });
 
-test('character import validates required name field', () => {
+test('character envelope import reports skipped legacy cards without names', () => {
   const database = createAppDatabase(':memory:');
   const userId = 'import-validate';
   database.prepare('INSERT INTO users (id, username, password_hash, created_at) VALUES (?, ?, ?, ?)').run(
     userId, 'validator', 'hash', new Date().toISOString()
   );
 
-  // Import with empty name should fail
-  assert.throws(
-    () => createCharacter(database, userId, { name: '', visibility: 'private' }),
-    /角色名长度/
-  );
+  const result = importExportEnvelope(database, userId, 'characters', {
+    character: { name: '' },
+    tags: []
+  });
 
-  // Import with valid name should succeed
-  const character = createCharacter(database, userId, { name: '有效名称', visibility: 'private' });
-  assert.equal(character.name, '有效名称');
+  assert.equal(result.imported, 0);
+  assert.equal(result.skipped.length, 1);
+  assert.match(result.skipped[0].reason, /角色名长度|name/i);
 });
 
 test('mods CRUD with type and ordering', () => {
@@ -7174,6 +7164,10 @@ test('advanced settings normalize status bar blueprint', () => {
 test('advanced settings helpers treat null inputs as defaults', () => {
   const normalized = normalizeAdvancedSettings(null);
   assert.equal(normalized.desktopBackgroundUrl, '');
+  assert.equal(normalized.customCssEnabled, false);
+  assert.equal(normalized.customCssRiskAccepted, false);
+  assert.equal(normalized.customJsEnabled, false);
+  assert.equal(normalized.customJsRiskAccepted, false);
   assert.equal(normalized.statusBarPrompt, '');
   assert.equal(normalized.showWorldBookMatches, true);
   assert.equal(normalized.statusBarBlueprint.variables.length, 0);
@@ -7313,7 +7307,11 @@ test('conversation settings invalid lorebook rolls back appearance inside transa
         desktopBackgroundUrl: '',
         mobileBackgroundUrl: '',
         customCss: '',
+        customCssEnabled: false,
+        customCssRiskAccepted: false,
         customJs: '',
+        customJsEnabled: false,
+        customJsRiskAccepted: false,
         showWorldBookMatches: true
       });
 
@@ -7383,6 +7381,8 @@ test('conversation settings save succeeds inside an existing transaction', async
         body: JSON.stringify({
           desktopBackgroundUrl: '/nested-settings.png',
           customCss: '.nested-settings { color: green; }',
+          customCssEnabled: true,
+          customCssRiskAccepted: true,
           chatLorebookId: book.id
         })
       });
@@ -7395,7 +7395,11 @@ test('conversation settings save succeeds inside an existing transaction', async
         desktopBackgroundUrl: '/nested-settings.png',
         mobileBackgroundUrl: '',
         customCss: '.nested-settings { color: green; }',
+        customCssEnabled: true,
+        customCssRiskAccepted: true,
         customJs: '',
+        customJsEnabled: false,
+        customJsRiskAccepted: false,
         showWorldBookMatches: true
       });
       assert.equal(
@@ -7410,7 +7414,11 @@ test('conversation settings save succeeds inside an existing transaction', async
       desktopBackgroundUrl: '',
       mobileBackgroundUrl: '',
       customCss: '',
+      customCssEnabled: false,
+      customCssRiskAccepted: false,
       customJs: '',
+      customJsEnabled: false,
+      customJsRiskAccepted: false,
       showWorldBookMatches: true
     });
     assert.equal(
@@ -7682,9 +7690,9 @@ test('conversation messages preserve insertion order when timestamps tie', async
       ['First tied message', 'Second tied message', 'Third tied message']
     );
 
-    const routeSource = fs.readFileSync(new URL('../routes/conversations.js', import.meta.url), 'utf8');
-    const start = routeSource.indexOf('function getMessages(userId, conversationId) {');
-    const end = routeSource.indexOf('\n  function getMessage', start);
+    const routeSource = fs.readFileSync(new URL('../routes/helpers.js', import.meta.url), 'utf8');
+    const start = routeSource.indexOf('export function listConversationMessages(db, userId, conversationId) {');
+    const end = routeSource.indexOf('\n\nexport function getConversationMessage', start);
     assert.notEqual(start, -1);
     assert.notEqual(end, -1);
     const snippet = routeSource.slice(start, end);
@@ -7772,9 +7780,9 @@ test('chat prompt history keeps latest tied-timestamp messages in insertion orde
     );
     assert.equal(providerBody.messages.at(-1).content, 'new prompt');
 
-    const routeSource = fs.readFileSync(new URL('../routes/conversations.js', import.meta.url), 'utf8');
-    const start = routeSource.indexOf('function getRecentMessages(userId, conversationId) {');
-    const end = routeSource.indexOf('\n  function insertMessage', start);
+    const routeSource = fs.readFileSync(new URL('../routes/helpers.js', import.meta.url), 'utf8');
+    const start = routeSource.indexOf('export function listRecentConversationMessageRows(db, userId, conversationId) {');
+    const end = routeSource.indexOf('\n\nexport function createConversationMessage', start);
     assert.notEqual(start, -1);
     assert.notEqual(end, -1);
     const snippet = routeSource.slice(start, end);
@@ -10226,6 +10234,54 @@ test('streamCompletion skips invalid JSON in SSE data lines without crashing', a
   }
 });
 
+test('streamCompletion waits for async emit before consuming the next SSE payload', async () => {
+  const originalFetch = globalThis.fetch;
+  try {
+    globalThis.fetch = async () =>
+      new Response(sseStream([
+        'data: {"choices":[{"delta":{"content":"one"}}]}',
+        'data: {"choices":[{"delta":{"content":"two"}}]}',
+        'data: [DONE]'
+      ]), {
+        headers: { 'Content-Type': 'text/event-stream' }
+      });
+
+    const emitted = [];
+    const releases = [];
+    const completion = streamCompletion(
+      {
+        providerType: 'deepseek',
+        gatewayName: 'DeepSeek',
+        baseUrl: 'https://example.test',
+        model: 'deepseek-chat',
+        apiKey: 'sk-test',
+        supportsReasoning: false,
+        extraBody: {}
+      },
+      [{ role: 'user', content: 'hi' }],
+      async (_event, data) => {
+        emitted.push(data.text);
+        await new Promise((resolve) => releases.push(resolve));
+      }
+    );
+
+    await waitForTestCondition(() => emitted.length === 1);
+    assert.deepEqual(emitted, ['one']);
+    await Promise.resolve();
+    assert.deepEqual(emitted, ['one']);
+
+    releases.shift()();
+    await waitForTestCondition(() => emitted.length === 2);
+    assert.deepEqual(emitted, ['one', 'two']);
+
+    releases.shift()();
+    const result = await completion;
+    assert.equal(result.content, 'onetwo');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test('streamCompletion parses final SSE event without trailing blank line', async () => {
   const originalFetch = globalThis.fetch;
   try {
@@ -10303,18 +10359,18 @@ test('streamCompletion scans split CRLF SSE separators without regex or split al
     globalThis.fetch = originalFetch;
   }
 
-  const providerSource = fs.readFileSync(new URL('../services/providers.js', import.meta.url), 'utf8');
+  const providerSseSource = fs.readFileSync(new URL('../services/providerSse.js', import.meta.url), 'utf8');
   const sharedLines = [];
   forEachSseLine('data: first\r\ndata: second', (line) => sharedLines.push(line));
   assert.deepEqual(sharedLines, ['data: first', 'data: second']);
   assert.deepEqual(findSseBlockSeparator('a\r\n\r\nb'), { index: 1, length: 4 });
-  assert.match(providerSource, /from '..\/..\/..\/shared\/sse\.js'/);
-  assert.match(providerSource, /let separator = findSseBlockSeparator\(buffer\);/);
-  assert.match(providerSource, /forEachSseLine\(block, \(line\) => \{/);
-  assert.doesNotMatch(providerSource, /function findSseBlockSeparator\(text\)/);
-  assert.doesNotMatch(providerSource, /function forEachSseLine\(text, visit\)/);
-  assert.doesNotMatch(providerSource, /buffer\.match\(\s*\/\\r\?\\n\\r\?\\n\//);
-  assert.doesNotMatch(providerSource, /block\.split\(\s*\/\\r\?\\n\//);
+  assert.match(providerSseSource, /from '..\/..\/..\/shared\/sse\.js'/);
+  assert.match(providerSseSource, /let separator = findSseBlockSeparator\(buffer\);/);
+  assert.match(providerSseSource, /forEachSseLine\(block, \(line\) => \{/);
+  assert.doesNotMatch(providerSseSource, /function findSseBlockSeparator\(text\)/);
+  assert.doesNotMatch(providerSseSource, /function forEachSseLine\(text, visit\)/);
+  assert.doesNotMatch(providerSseSource, /buffer\.match\(\s*\/\\r\?\\n\\r\?\\n\//);
+  assert.doesNotMatch(providerSseSource, /block\.split\(\s*\/\\r\?\\n\//);
 });
 
 test('streamCompletion returns empty content for immediately closed empty stream', async () => {

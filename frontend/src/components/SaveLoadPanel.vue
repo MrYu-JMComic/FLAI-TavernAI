@@ -14,7 +14,7 @@ import {
   fetchSaves,
   loadSave,
   renameSave
-} from '../api';
+} from '../api/chat.js';
 import { useNotify } from '../composables/useNotify';
 
 const props = defineProps({

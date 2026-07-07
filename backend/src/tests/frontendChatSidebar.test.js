@@ -31,6 +31,17 @@ test('ChatSidebar search input tolerates missing event targets', () => {
   assert.doesNotMatch(chatSidebarTemplate, /\$event\.target\.value/);
 });
 
+test('ChatSidebar shows loaded conversation branches in the left rail', () => {
+  assert.match(chatSidebarScript, /conversationBranches: \{ type: Array, default: \(\) => \[\] \}/);
+  assert.match(chatSidebarScript, /function branchMeta\(branch = \{\}\) \{[\s\S]*createdAt\.slice\(0, 16\)\.replace\('T', ' '\);[\s\S]*\}/);
+  assert.match(chatViewScript, /conversationBranches, branchBusy, loadConversationBranches, handleBranchMessage/);
+  assert.match(chatViewTemplate, /:conversation-branches="conversationBranches"/);
+  assert.match(chatSidebarTemplate, /<template v-if="conversationBranches\.length">[\s\S]*<p class="history-group">分支<\/p>/);
+  assert.match(chatSidebarTemplate, /v-for="branch in conversationBranches"[\s\S]*class="history-row branch-row"[\s\S]*:class="\{ active: branch\.id === route\.params\.id \}"/);
+  assert.match(chatSidebarTemplate, /class="history-item"[\s\S]*:disabled="conversationActionBusy"[\s\S]*@click="emit\('open-conversation', branch\.id\)"/);
+  assert.match(chatSidebarTemplate, /<small>\{\{ branchMeta\(branch\) \}\}<\/small>/);
+});
+
 test('ChatSidebar open conversation handler guards blank or stale ids', () => {
   assert.match(
     chatConversationSource,

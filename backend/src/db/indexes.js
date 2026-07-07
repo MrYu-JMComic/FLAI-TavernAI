@@ -4,6 +4,10 @@ export function createDatabaseIndexes(database) {
     CREATE INDEX IF NOT EXISTS idx_provider_presets_user ON provider_presets(user_id);
     CREATE INDEX IF NOT EXISTS idx_avatar_assets_user ON avatar_assets(user_id);
     CREATE INDEX IF NOT EXISTS idx_avatar_assets_owner ON avatar_assets(owner_type, owner_id);
+    CREATE INDEX IF NOT EXISTS idx_assets_user_kind_created ON assets(user_id, kind, created_at);
+    CREATE INDEX IF NOT EXISTS idx_assets_user_created ON assets(user_id, created_at);
+    CREATE INDEX IF NOT EXISTS idx_assets_owner ON assets(owner_type, owner_id);
+    CREATE INDEX IF NOT EXISTS idx_assets_owner_kind_updated ON assets(owner_type, owner_id, kind, updated_at);
 
     CREATE INDEX IF NOT EXISTS idx_characters_user ON characters(user_id);
     CREATE INDEX IF NOT EXISTS idx_characters_visibility ON characters(visibility);
@@ -22,10 +26,16 @@ export function createDatabaseIndexes(database) {
     CREATE INDEX IF NOT EXISTS idx_conversations_user ON conversations(user_id);
     CREATE INDEX IF NOT EXISTS idx_conversations_user_updated ON conversations(user_id, updated_at);
     CREATE INDEX IF NOT EXISTS idx_conversations_branch_user_created ON conversations(branched_from_id, user_id, created_at);
+    CREATE INDEX IF NOT EXISTS idx_conversations_character_user_updated ON conversations(character_id, user_id, updated_at);
 
     CREATE INDEX IF NOT EXISTS idx_messages_conversation ON messages(conversation_id);
     CREATE INDEX IF NOT EXISTS idx_messages_user_conversation_created ON messages(user_id, conversation_id, created_at);
     CREATE INDEX IF NOT EXISTS idx_messages_conversation_created ON messages(conversation_id, created_at);
+    CREATE INDEX IF NOT EXISTS idx_messages_conversation_user_role_created ON messages(conversation_id, user_id, role, created_at);
+    CREATE INDEX IF NOT EXISTS idx_conversation_memories_conversation_enabled ON conversation_memories(conversation_id, enabled, archived, updated_at);
+    CREATE INDEX IF NOT EXISTS idx_conversation_memories_user_type ON conversation_memories(user_id, memory_type, updated_at);
+    CREATE INDEX IF NOT EXISTS idx_conversation_memories_source ON conversation_memories(user_id, conversation_id, source_kind, archived);
+    CREATE INDEX IF NOT EXISTS idx_conversation_memories_user_conversation_archived_enabled ON conversation_memories(user_id, conversation_id, archived, enabled, updated_at);
 
     CREATE INDEX IF NOT EXISTS idx_message_swipes_message ON message_swipes(message_id);
     CREATE INDEX IF NOT EXISTS idx_message_swipes_message_user_created ON message_swipes(message_id, user_id, created_at);
@@ -36,6 +46,7 @@ export function createDatabaseIndexes(database) {
 
     CREATE INDEX IF NOT EXISTS idx_world_book_entries_book ON world_book_entries(world_book_id);
     CREATE INDEX IF NOT EXISTS idx_world_book_entries_book_order ON world_book_entries(world_book_id, order_index);
+    CREATE INDEX IF NOT EXISTS idx_world_book_entries_book_order_created ON world_book_entries(world_book_id, order_index, created_at);
 
     CREATE INDEX IF NOT EXISTS idx_cwb_character ON character_world_books(character_id);
     CREATE INDEX IF NOT EXISTS idx_cwb_book ON character_world_books(world_book_id);
@@ -53,6 +64,7 @@ export function createDatabaseIndexes(database) {
     CREATE INDEX IF NOT EXISTS idx_presets_user_default_updated ON presets(user_id, is_default, updated_at);
 
     CREATE INDEX IF NOT EXISTS idx_status_bars_conversation ON status_bars(conversation_id);
+    CREATE INDEX IF NOT EXISTS idx_status_bar_templates_user_updated ON status_bar_templates(user_id, updated_at);
 
     CREATE INDEX IF NOT EXISTS idx_mods_user ON mods(user_id);
     CREATE INDEX IF NOT EXISTS idx_mods_user_order ON mods(user_id, order_index, created_at);
@@ -60,13 +72,18 @@ export function createDatabaseIndexes(database) {
     CREATE INDEX IF NOT EXISTS idx_npc_memories_conversation ON npc_memories(conversation_id);
     CREATE INDEX IF NOT EXISTS idx_npc_memories_npc ON npc_memories(conversation_id, npc_name);
     CREATE INDEX IF NOT EXISTS idx_npc_memories_conversation_npc_created ON npc_memories(conversation_id, npc_name, created_at);
+    CREATE INDEX IF NOT EXISTS idx_npc_memories_conversation_created ON npc_memories(conversation_id, created_at);
 
     CREATE INDEX IF NOT EXISTS idx_npc_behaviors_conversation ON npc_behaviors(conversation_id);
     CREATE INDEX IF NOT EXISTS idx_npc_behaviors_npc ON npc_behaviors(conversation_id, npc_name);
     CREATE INDEX IF NOT EXISTS idx_npc_behaviors_conversation_npc_priority ON npc_behaviors(conversation_id, npc_name, priority, created_at);
+    CREATE INDEX IF NOT EXISTS idx_npc_behaviors_conversation_enabled_priority ON npc_behaviors(conversation_id, enabled, priority, created_at);
 
     CREATE INDEX IF NOT EXISTS idx_npc_registry_conversation ON npc_registry(conversation_id);
     CREATE INDEX IF NOT EXISTS idx_npc_registry_hidden ON npc_registry(conversation_id, hidden);
+    CREATE INDEX IF NOT EXISTS idx_npc_profile_audit_npc_created ON npc_profile_audit(conversation_id, npc_name, created_at);
+    CREATE INDEX IF NOT EXISTS idx_npc_item_audit_npc_created ON npc_item_audit(conversation_id, npc_name, created_at);
+    CREATE INDEX IF NOT EXISTS idx_npc_item_audit_item ON npc_item_audit(item_type, item_id);
 
     CREATE INDEX IF NOT EXISTS idx_economy_accounts_conversation ON economy_accounts(conversation_id);
     CREATE INDEX IF NOT EXISTS idx_economy_accounts_user ON economy_accounts(user_id);

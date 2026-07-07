@@ -1,73 +1,58 @@
-# FLAI TavernAI Autonomous Iteration Guide
+# FLAI TavernAI Agent Guide
 
-This project may be maintained by AI agents. Follow these rules before changing code.
-
-## Governance - Three-Office Workflow
-
-See `governance.md` for the full framework. Keep this file ASCII-only unless the user explicitly approves otherwise, so every agent and terminal can read it without encoding ambiguity.
-
-### Separation Of Duties
-
-| Office | Holder | Duties |
-|---|---|---|
-| Planning Office (Zhongshu) | Le (human) | Approve initiatives, write plans, maintain backlog |
-| Review Office (Menxia) | Automation | Run tests, generate reports, decide pass/fail |
-| Implementation Office (Shangshu) | OpenCode / Claude Code | Write code and edit files |
-
-### Core Rules
-
-- No approved planning item -> Implementation Office must not act.
-- No Review Office approval -> changes must not be merged.
-- No person or agent may serve as both Planning Office and Review Office.
-- Review Office gate command: `powershell -ExecutionPolicy Bypass -File scripts/review-gate.ps1`
-
-### Encoding Rules
-
-- All source and Markdown files must be UTF-8. Do not save files with GBK, ANSI, or PowerShell's default legacy encoding.
-- Keep `AGENTS.md` ASCII-only by default because it is the cross-agent entry point.
-- On Windows, prefer Node `fs.readFileSync/writeFileSync(..., 'utf8')`, editor UTF-8 mode, or PowerShell `Set-Content -Encoding utf8` when writing files.
-- Never paste mojibake or replacement-character text into source files.
-- Run `node scripts/check-encoding.mjs` before reporting that a code change is complete.
-
-## Mission
-
-Improve FLAI TavernAI in small, verified iterations. Prefer fixes and product polish that make the app more reliable, easier to use, and easier to maintain.
-
-## Implementation Hygiene - Old Code Cleanup
-
-- Do not only layer patches on top of old behavior. When a fix or new flow replaces an older UI entry, component branch, helper, style rule, test expectation, or dead branch, identify the replaced path and clean it up in the same small iteration when safe.
-- Prefer simplifying the existing path over adding another permanent workaround.
-- Avoid duplicate controls, overlapping responsive rules, parallel implementations, and avoidable compatibility branches that make the app harder to maintain.
-- If cleanup cannot be done safely because it would touch unrelated user work, widen risk, or require separate design, record the reason, retained scope, and exact follow-up task in the iteration report.
+This repository may be maintained by AI agents. Follow this file before making
+changes. Keep this file ASCII-only unless the user explicitly asks otherwise.
 
 ## Project Shape
 
 - Frontend: `frontend`, Vue + Vite.
 - Backend: `backend`, Express + Node 24 with `node:sqlite`.
-- Backend tests: `backend`, `npm test`.
-- Frontend verification: `frontend`, `npm run build`.
+- Backend tests: run from `backend` with `npm test`.
+- Frontend build: run from `frontend` with `npm run build`.
+- Review gate: `powershell -ExecutionPolicy Bypass -File scripts/review-gate.ps1`.
 
 ## Safety Rules
 
-- Do not edit `backend/data`, `backend/uploads`, `.env`, `.env.*`, `node_modules`, or generated build output.
-- Do not delete files, reset Git state, force checkout, publish, deploy, push, or create external PRs unless the user explicitly asks.
-- If `git status --short` shows unrelated or unclear user changes, do not overwrite them. Either work only in new files or stop with a report.
-- Keep each autonomous change small enough to review in one sitting.
-- Run the relevant validation before declaring success.
-- Record every autonomous run in `automation/reports`.
+- Do not edit `backend/data`, `backend/uploads`, `.env`, `.env.*`,
+  `node_modules`, or generated build output.
+- Do not reset Git state, force checkout, publish, deploy, push, or create
+  external PRs unless the user explicitly asks.
+- Do not delete files unless the user explicitly asks. If deletion is requested,
+  verify the resolved paths stay inside the workspace before deleting.
+- Preserve unrelated user changes. If `git status --short` shows unrelated or
+  unclear work, avoid overwriting it.
+- Keep each change small enough to review in one sitting.
+- Do not write secrets to the repository.
 
-## Iteration Loop
+## Encoding
 
-1. Read `automation/backlog.md`.
-2. Inspect the current project state and Git status.
-3. Pick one high-signal task that can be completed safely.
-4. Make the smallest useful change.
-5. Run backend tests and frontend build when relevant.
-6. Write an iteration report with changed files, validation results, and next recommended task.
+- Save source and Markdown files as UTF-8.
+- Do not paste mojibake or replacement-character text into source files.
+- Prefer tools and editors that write UTF-8 explicitly on Windows.
+- Run `node scripts/check-encoding.mjs` before reporting code or Markdown edits
+  complete.
 
-## Definition Of Done
+## Implementation Hygiene
 
-- No secrets are written to the repository.
-- Existing user changes are preserved.
-- Validation status is clear.
-- The report explains exactly what changed and what still needs attention.
+- Read the existing code before editing.
+- Prefer the repository's existing patterns and helpers over new abstractions.
+- When a new path replaces an old path, remove the obsolete branch, helper,
+  style, test expectation, or documentation reference when it is safe.
+- Avoid duplicate controls, parallel implementations, and permanent workarounds.
+- If cleanup is unsafe, report the reason and the follow-up task.
+
+## Validation
+
+- For backend changes, run `npm test` in `backend`.
+- For frontend changes, run `npm run build` in `frontend`.
+- For any text/source change, run `node scripts/check-encoding.mjs`.
+- For broad changes, run the review gate command.
+- If a validation command cannot be run, report exactly what was skipped and why.
+
+## Autonomous Work
+
+- Prefer small, verified iterations.
+- Inspect current project state and Git status before editing.
+- Make the smallest useful change.
+- Validate the relevant surface before declaring success.
+- Summarize changed files, validation results, and any remaining risks.

@@ -176,105 +176,26 @@ test('character world book unlink rejects foreign legacy junction rows', async (
   assert.equal(getCharacterWorldBookId(database, character.id), null);
 });
 
-test('character export ignores foreign legacy direct world book rows', async () => {
+test('character routes no longer expose legacy import or export branches', async () => {
   const database = createAppDatabase(':memory:');
-  const ownerId = 'character-route-export-owner';
-  const otherId = 'character-route-export-other';
+  const ownerId = 'character-route-no-legacy-import-export';
   insertUser(database, ownerId);
-  insertUser(database, otherId);
   const character = createCharacter(database, ownerId, {
-    name: 'Export Owner Character'
+    name: 'Envelope Only Character'
   });
-  const timestamp = new Date().toISOString();
-  database
-    .prepare(
-      `INSERT INTO world_books (id, user_id, name, description, character_id, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`
-    )
-    .run(
-      'foreign-export-world-book',
-      otherId,
-      'Foreign Export Book',
-      'Should not be exported',
-      character.id,
-      timestamp,
-      timestamp
-    );
 
   const app = createCharacterRoutesApp(database, ownerId);
 
   await withServer(app, async (baseUrl) => {
-    const response = await fetch(`${baseUrl}/api/characters/${character.id}/export`);
-    const body = await response.json();
-    assert.equal(response.status, 200);
-    assert.equal(body.character.name, 'Export Owner Character');
-    assert.equal(body.world_book, null);
-  });
-});
+    const exportResponse = await fetch(`${baseUrl}/api/characters/${character.id}/export`);
+    assert.equal(exportResponse.status, 404);
 
-test('character export picks newest legacy direct world book deterministically', async () => {
-  const database = createAppDatabase(':memory:');
-  const ownerId = 'character-route-export-order-owner';
-  insertUser(database, ownerId);
-  const character = createCharacter(database, ownerId, {
-    name: 'Export Ordered Character'
-  });
-  const insertBook = database.prepare(
-    `INSERT INTO world_books (id, user_id, name, description, character_id, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?)`
-  );
-  insertBook.run(
-    'old-export-world-book',
-    ownerId,
-    'Old Export Book',
-    '',
-    character.id,
-    '2026-01-01T00:00:00.000Z',
-    '2026-01-01T00:00:00.000Z'
-  );
-  insertBook.run(
-    'new-export-world-book',
-    ownerId,
-    'New Export Book',
-    '',
-    character.id,
-    '2026-01-01T00:00:00.000Z',
-    '2026-01-02T00:00:00.000Z'
-  );
-
-  const app = createCharacterRoutesApp(database, ownerId);
-
-  await withServer(app, async (baseUrl) => {
-    const response = await fetch(`${baseUrl}/api/characters/${character.id}/export`);
-    const body = await response.json();
-    assert.equal(response.status, 200);
-    assert.equal(body.world_book.name, 'New Export Book');
-  });
-});
-
-test('character export prefers linked world book before legacy direct fallback', async () => {
-  const database = createAppDatabase(':memory:');
-  const ownerId = 'character-route-export-linked-owner';
-  insertUser(database, ownerId);
-  const character = createCharacter(database, ownerId, {
-    name: 'Export Linked Character'
-  });
-  createWorldBook(database, ownerId, {
-    name: 'Legacy Direct Export Book',
-    characterId: character.id
-  });
-  const linkedBook = createWorldBook(database, ownerId, {
-    name: 'Linked Export Book'
-  });
-  assert.equal(linkWorldBookToCharacter(database, linkedBook.id, character.id, 0, ownerId), true);
-
-  const app = createCharacterRoutesApp(database, ownerId);
-
-  await withServer(app, async (baseUrl) => {
-    const response = await fetch(`${baseUrl}/api/characters/${character.id}/export`);
-    const body = await response.json();
-    assert.equal(response.status, 200);
-    assert.equal(body.world_book.name, 'Linked Export Book');
+    const importResponse = await fetch(`${baseUrl}/api/characters/import`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ character: { name: 'Legacy Import' } })
+    });
+    assert.equal(importResponse.status, 404);
   });
 });
 

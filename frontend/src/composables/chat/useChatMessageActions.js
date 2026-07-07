@@ -1,5 +1,5 @@
 import { computed, nextTick, reactive, ref, triggerRef } from 'vue';
-import { deleteMessage, updateMessage, fetchMessageSwipes, createMessageSwipe, branchConversation, fetchConversationBranches } from '../../api.js';
+import { branchConversation, createMessageSwipe, deleteMessage, fetchConversationBranches, fetchMessageSwipes, updateMessage } from '../../api/chat.js';
 
 export function useChatMessageActions({
   messages,
@@ -134,6 +134,10 @@ export function useChatMessageActions({
     return canPersistMessage(message) && !isMessageMutationLocked();
   }
 
+  function canRerunMessageEdit(message) {
+    return message?.role === 'user' && canEditMessage(message);
+  }
+
   function canBranchMessage(message) {
     return canPersistMessage(message) && !isMessageMutationLocked();
   }
@@ -266,6 +270,104 @@ export function useChatMessageActions({
         messageActionBusy.value = '';
       }
     }
+  }
+
+  async function prepareMessageEditRerun(message) {
+    const content = editingMessageContent.value.trim();
+    if (!content) {
+      showActionNotice('消息内容不能为空', 'warning');
+      return null;
+    }
+    if (!canRerunMessageEdit(message)) {
+      return null;
+    }
+    const messageId = getPersistedMessageActionId(message);
+    const currentMessage = findMessageListItem(messageId);
+    if (!messageId || !currentMessage || currentMessage.role !== 'user') {
+      return null;
+    }
+
+    const conversationId = route.params.id;
+    const tailMessageIds = collectPersistedMessageIdsFrom(messageId);
+    if (!tailMessageIds.length) {
+      return null;
+    }
+
+    const attachments = cloneRerunAttachments(currentMessage.attachments);
+    const actionToken = ++messageActionToken;
+    messageActionBusy.value = messageId;
+    try {
+      for (let index = tailMessageIds.length - 1; index >= 0; index -= 1) {
+        const targetId = tailMessageIds[index];
+        await deleteMessage(conversationId, targetId);
+        if (!isCurrentMessageAction(actionToken, conversationId)) {
+          return null;
+        }
+        removeMessageFromListIfPresent(targetId);
+      }
+      if (!isCurrentMessageAction(actionToken, conversationId)) {
+        return null;
+      }
+      clearMessageEdit();
+      resetMessageSwipeState();
+      void loadSidebarData();
+      return { content, attachments };
+    } catch (err) {
+      if (isCurrentMessageAction(actionToken, conversationId)) {
+        showError(err.message);
+      }
+      return null;
+    } finally {
+      if (isCurrentMessageAction(actionToken, conversationId)) {
+        messageActionBusy.value = '';
+      }
+    }
+  }
+
+  function collectPersistedMessageIdsFrom(messageId) {
+    const targetId = normalizeMessageUiId(messageId);
+    if (!targetId) {
+      return [];
+    }
+    const messageList = Array.isArray(messages.value) ? messages.value : [];
+    const ids = [];
+    let collecting = false;
+    for (const item of messageList) {
+      const itemId = getPersistedMessageListItemId(item);
+      if (!collecting && itemId === targetId) {
+        collecting = true;
+      }
+      if (collecting && itemId) {
+        ids.push(itemId);
+      }
+    }
+    return ids;
+  }
+
+  function cloneRerunAttachments(attachments = []) {
+    const source = Array.isArray(attachments) ? attachments : [];
+    const cloned = [];
+    for (const attachment of source) {
+      const dataUrl = String(attachment?.dataUrl || '').trim();
+      const url = String(attachment?.url || '').trim();
+      if (!dataUrl && !url) {
+        continue;
+      }
+      cloned.push({
+        id: normalizeMessageUiId(attachment?.id) || `rerun-attachment-${cloned.length}`,
+        type: 'image',
+        dataUrl,
+        url,
+        mimeType: String(attachment?.mimeType || '').trim(),
+        name: String(attachment?.name || '').trim(),
+        alt: String(attachment?.alt || attachment?.name || '').trim(),
+        size: Number.isFinite(Number(attachment?.size)) ? Number(attachment.size) : 0
+      });
+      if (cloned.length >= 4) {
+        break;
+      }
+    }
+    return cloned;
   }
 
   async function removeMessage(message) {
@@ -904,12 +1006,14 @@ export function useChatMessageActions({
     messageAvatarUrl,
     canEditMessage,
     canDeleteMessage,
+    canRerunMessageEdit,
     canBranchMessage,
     beginEditMessage,
     cancelEditMessage,
     setEditingMessageContent,
     clearMessageEdit,
     saveMessageEdit,
+    prepareMessageEditRerun,
     removeMessage,
     copyMessage,
     messageSwipeState,

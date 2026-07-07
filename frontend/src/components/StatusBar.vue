@@ -3,6 +3,7 @@ import { computed, onBeforeUnmount, ref, watch } from 'vue';
 import { ChevronDown } from '@lucide/vue';
 import { parseStatusTemplateToken } from '../../../shared/statusTemplateTokens.js';
 import { buildScopedChatCss } from '../utils/chatAppearance';
+import { recordFrontendDiagnostic } from '../diagnostics.js';
 import {
   STATUS_BAR_TEMPLATE_ALLOWED_TAGS,
   escapeStatusBarTemplateHtml as escapeHtml,
@@ -204,7 +205,9 @@ function parseSafeStyle(css) {
       }
       return style;
     }
-  } catch (_) { /* not JSON, parse as CSS text */ }
+  } catch (error) {
+    recordFrontendDiagnostic('statusBar.safeStyle.jsonFallback', error, { parser: 'JSON.parse' });
+  }
   applySafeStyleText(style, css);
   return style;
 }

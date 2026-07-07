@@ -8,7 +8,7 @@ import {
   RefreshCw,
   X
 } from '@lucide/vue';
-import { fetchConversationEconomy, fetchEconomyHistory } from '../api';
+import { fetchConversationEconomy, fetchEconomyHistory } from '../api/chat.js';
 import { useNotify } from '../composables/useNotify';
 
 const props = defineProps({

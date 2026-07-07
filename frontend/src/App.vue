@@ -1,25 +1,16 @@
 <script setup>
-import { computed, defineAsyncComponent, onBeforeUnmount, onMounted, provide, ref, watch } from 'vue';
+import { computed, onBeforeUnmount, onMounted, provide, ref, watch } from 'vue';
+import { RouterView, useRoute, useRouter } from 'vue-router';
 import BaseLayout from './components/BaseLayout.vue';
 import MessageToasts from './components/MessageToasts.vue';
-import { getMe, getProviderSettings, logout as logoutRequest } from './api';
+import { getMe, logout as logoutRequest } from './api/auth.js';
+import { getProviderSettings } from './api/providers.js';
+import { recordFrontendDiagnostic } from './diagnostics.js';
+import { normalizeAppRoute } from './router.js';
 import { samePlainValue } from './utils/plainValues';
 
-const views = {
-  home: defineAsyncComponent(() => import('./views/HomeView.vue')),
-  login: defineAsyncComponent(() => import('./views/LoginView.vue')),
-  register: defineAsyncComponent(() => import('./views/RegisterView.vue')),
-  settings: defineAsyncComponent(() => import('./views/SettingsView.vue')),
-  extensions: defineAsyncComponent(() => import('./views/SettingsView.vue')),
-  characterNew: defineAsyncComponent(() => import('./views/CharacterFormView.vue')),
-  characterEdit: defineAsyncComponent(() => import('./views/CharacterFormView.vue')),
-  chat: defineAsyncComponent(() => import('./views/ChatView.vue')),
-  worldBooks: defineAsyncComponent(() => import('./views/WorldBookView.vue')),
-  worldBookDetail: defineAsyncComponent(() => import('./views/WorldBookView.vue')),
-  presets: defineAsyncComponent(() => import('./views/PresetView.vue'))
-};
-
-const route = ref(parseRoute());
+const router = useRouter();
+const vueRoute = useRoute();
 const user = ref(null);
 const provider = ref(null);
 const booting = ref(true);
@@ -37,8 +28,8 @@ const rippleSelector = [
   '[role="tab"]',
   '[data-ripple]'
 ].join(',');
+const route = computed(() => normalizeAppRoute(vueRoute));
 const isAuthRoute = computed(() => ['login', 'register'].includes(route.value.name));
-const currentView = computed(() => views[route.value.name] || views.home);
 const routeKey = computed(() => getRouteKey(route.value));
 const notificationFallbackMessages = {
   error: '操作失败，请稍后重试。',
@@ -65,27 +56,18 @@ watch(
 );
 
 onMounted(async () => {
-  window.addEventListener('hashchange', syncRouteFromHash);
   window.addEventListener('pointerdown', handleInteractionRipple, { passive: true });
+  await router.isReady();
   await refreshSession();
 });
 
 onBeforeUnmount(() => {
   resetAuthScope();
-  window.removeEventListener('hashchange', syncRouteFromHash);
   window.removeEventListener('pointerdown', handleInteractionRipple);
   clearNotifications();
   rippleTimers.forEach((timer) => window.clearTimeout(timer));
   rippleTimers.clear();
 });
-
-function syncRouteFromHash() {
-  const nextRoute = parseRoute();
-  if (getRouteKey(route.value) === getRouteKey(nextRoute)) {
-    return;
-  }
-  route.value = nextRoute;
-}
 
 async function refreshSession() {
   const authScope = resetAuthScope();
@@ -128,7 +110,12 @@ async function refreshSession() {
 
 async function refreshProvider(authScope = authScopeVersion) {
   const requestId = ++providerRequestId;
-  const nextProvider = await getProviderSettings().catch(() => null);
+  let nextProvider = null;
+  try {
+    nextProvider = await getProviderSettings();
+  } catch (error) {
+    recordFrontendDiagnostic('app.provider.refresh', error, { requestId });
+  }
   if (requestId !== providerRequestId || !isCurrentAuthScope(authScope) || !user.value) {
     return false;
   }
@@ -160,7 +147,11 @@ async function handleLogout() {
   setUserIfChanged(null);
   setProviderIfChanged(null);
   navigate('login');
-  await logoutRequest().catch(() => null);
+  try {
+    await logoutRequest();
+  } catch (error) {
+    recordFrontendDiagnostic('app.auth.logout', error, { authScope });
+  }
   if (!isCurrentAuthScope(authScope)) {
     return;
   }
@@ -197,12 +188,9 @@ function getRouteKey(value) {
 }
 
 function navigate(name, params = {}) {
-  const nextHash = routeToHash(name, params);
-  if (window.location.hash === nextHash) {
-    syncRouteFromHash();
-    return;
-  }
-  window.location.hash = nextHash;
+  router.push({ name, params }).catch((error) => {
+    recordFrontendDiagnostic('app.router.navigate', error, { name });
+  });
 }
 
 function toggleTheme() {
@@ -410,81 +398,6 @@ function clearNotifications() {
   }
 }
 
-function parseRoute() {
-  const parts = readRoutePathSegments(window.location.hash);
-
-  if (!parts.length) {
-    return { name: 'home', params: {} };
-  }
-  if (parts[0] === 'login') {
-    return { name: 'login', params: {} };
-  }
-  if (parts[0] === 'register') {
-    return { name: 'register', params: {} };
-  }
-  if (parts[0] === 'settings') {
-    return { name: 'settings', params: {} };
-  }
-  if (parts[0] === 'extensions') {
-    return { name: 'extensions', params: {} };
-  }
-  if (parts[0] === 'characters' && parts[1] === 'new') {
-    return { name: 'characterNew', params: {} };
-  }
-  if (parts[0] === 'characters' && parts[2] === 'edit') {
-    return { name: 'characterEdit', params: { id: parts[1] } };
-  }
-  if (parts[0] === 'chat' && parts[1]) {
-    return { name: 'chat', params: { id: parts[1] } };
-  }
-  if (parts[0] === 'world-books' && parts[1]) {
-    return { name: 'worldBookDetail', params: { id: parts[1] } };
-  }
-  if (parts[0] === 'world-books') {
-    return { name: 'worldBooks', params: {} };
-  }
-  if (parts[0] === 'presets') {
-    return { name: 'presets', params: {} };
-  }
-
-  return { name: 'home', params: {} };
-}
-
-function readRoutePathSegments(hashValue = '') {
-  const path = String(hashValue || '').replace(/^#\/?/, '').replace(/\/$/, '');
-  const parts = [];
-  let segmentStart = -1;
-  for (let index = 0; index <= path.length; index += 1) {
-    if (index < path.length && path[index] !== '/') {
-      if (segmentStart < 0) {
-        segmentStart = index;
-      }
-      continue;
-    }
-    if (segmentStart >= 0) {
-      parts.push(path.slice(segmentStart, index));
-      segmentStart = -1;
-    }
-  }
-  return parts;
-}
-
-function routeToHash(name, params = {}) {
-  const routes = {
-    home: '#/',
-    login: '#/login',
-    register: '#/register',
-    settings: '#/settings',
-    extensions: '#/extensions',
-    characterNew: '#/characters/new',
-    characterEdit: `#/characters/${params.id}/edit`,
-    chat: `#/chat/${params.id}`,
-    worldBooks: '#/world-books',
-    worldBookDetail: `#/world-books/${params.id}`,
-    presets: '#/presets'
-  };
-  return routes[name] || '#/';
-}
 </script>
 
 <template>
@@ -494,37 +407,39 @@ function routeToHash(name, params = {}) {
       <p>正在进入 FLAI Tavern AI...</p>
     </div>
 
-    <component
-      v-else-if="isAuthRoute"
-      :is="currentView"
-      :key="routeKey"
-      @authenticated="handleAuthenticated"
-      @navigate="navigate"
-    />
-
-    <BaseLayout
-      v-else
-      :user="user"
-      :provider="provider"
-      :current-route="route.name"
-      :theme="theme"
-      @navigate="navigate"
-      @logout="handleLogout"
-      @toggle-theme="toggleTheme"
-    >
+    <RouterView v-else v-slot="{ Component }">
       <component
-        :is="currentView"
+        v-if="isAuthRoute"
+        :is="Component"
         :key="routeKey"
-        :route="route"
+        @authenticated="handleAuthenticated"
+        @navigate="navigate"
+      />
+
+      <BaseLayout
+        v-else
         :user="user"
         :provider="provider"
+        :current-route="route.name"
         :theme="theme"
         @navigate="navigate"
+        @logout="handleLogout"
         @toggle-theme="toggleTheme"
-        @provider-saved="refreshProvider"
-        @profile-saved="handleProfileSaved"
-      />
-    </BaseLayout>
+      >
+        <component
+          :is="Component"
+          :key="routeKey"
+          :route="route"
+          :user="user"
+          :provider="provider"
+          :theme="theme"
+          @navigate="navigate"
+          @toggle-theme="toggleTheme"
+          @provider-saved="refreshProvider"
+          @profile-saved="handleProfileSaved"
+        />
+      </BaseLayout>
+    </RouterView>
 
     <MessageToasts :items="notifications" @dismiss="dismissNotification" />
   </div>

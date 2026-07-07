@@ -15,6 +15,8 @@ param(
 
   [switch]$Portable,
 
+  [switch]$SkipReviewGate,
+
   [switch]$KeepBuildScratch
 )
 
@@ -39,6 +41,14 @@ function Get-NpmCommand {
     return $npmCmd.Source
   }
   return (Get-Command 'npm' -ErrorAction Stop).Source
+}
+
+function Get-PowerShellCommand {
+  $powerShellCmd = Get-Command 'powershell.exe' -ErrorAction SilentlyContinue
+  if ($powerShellCmd) {
+    return $powerShellCmd.Source
+  }
+  return (Get-Command 'powershell' -ErrorAction Stop).Source
 }
 
 function Invoke-CheckedCommand {
@@ -67,6 +77,22 @@ function Assert-Node24 {
     throw "Node 24 or newer is required. Current node reports $versionText."
   }
   Write-Host "Using local Node $versionText for build commands." -ForegroundColor Green
+}
+
+function Invoke-PrePackageReviewGate {
+  if ($SkipReviewGate) {
+    Write-Host 'Skipped pre-package review gate because -SkipReviewGate was supplied.' -ForegroundColor Yellow
+    return
+  }
+
+  Write-Host 'Running pre-package review gate...' -ForegroundColor Cyan
+  $powerShell = Get-PowerShellCommand
+  Invoke-CheckedCommand -FilePath $powerShell -Arguments @(
+    '-ExecutionPolicy',
+    'Bypass',
+    '-File',
+    (Join-Path $repoRoot 'scripts\review-gate.ps1')
+  ) -WorkingDirectory $repoRoot
 }
 
 function Reset-Directory {
@@ -181,7 +207,9 @@ function Write-RuntimeMarker {
     source = 'scripts/package-windows.ps1'
   } | ConvertTo-Json
 
-  Set-Content -LiteralPath (Join-Path $Destination '.flai-runtime-source.json') -Value $marker -Encoding utf8
+  $markerPath = Join-Path $Destination '.flai-runtime-source.json'
+  $utf8NoBom = [System.Text.UTF8Encoding]::new($false)
+  [System.IO.File]::WriteAllText($markerPath, $marker, $utf8NoBom)
 }
 
 Assert-Node24
@@ -198,6 +226,8 @@ if (-not $SkipNpmInstall) {
     throw 'frontend/node_modules is missing. Re-run without -SkipNpmInstall.'
   }
 }
+
+Invoke-PrePackageReviewGate
 
 Reset-Directory -Path $stageRoot
 New-Item -ItemType Directory -Path $releaseDir -Force | Out-Null

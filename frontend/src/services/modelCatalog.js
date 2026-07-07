@@ -1,4 +1,4 @@
-import { fetchProviderModels } from '../api.js';
+import { fetchProviderModels } from '../api/providers.js';
 
 const CACHE_PREFIX = 'flai-provider-models:v1:';
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000;

@@ -3,6 +3,7 @@ import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue';
 import {
   Brain,
   Check,
+  History,
   MapPin,
   Pencil,
   Plus,
@@ -10,6 +11,7 @@ import {
   SlidersHorizontal,
   Sparkles,
   Trash2,
+  Undo2,
   Users,
   X,
   Zap
@@ -20,15 +22,17 @@ import {
   deleteNpcBehavior,
   deleteNpcMemory,
   fetchConversationNpcs,
+  fetchNpcAudit,
   fetchNpcBehaviors,
   fetchNpcMemories,
   hideConversationNpc,
   hideEmptyConversationNpcs,
+  rollbackNpcAudit as rollbackNpcAuditRequest,
   streamNpcOrganizer,
   updateConversationNpc,
   updateNpcMemory,
   updateNpcBehavior
-} from '../api';
+} from '../api/chat.js';
 import { useNotify } from '../composables/useNotify';
 import { appendAiToolList, cloneAiToolList } from '../utils/aiToolLists';
 
@@ -47,9 +51,12 @@ const npcs = ref([]);
 const selectedNpc = ref('');
 const memories = ref([]);
 const behaviors = ref([]);
+const npcAudit = ref([]);
 const detailTab = ref('memories');
 const detailLoading = ref(false);
 const detailError = ref('');
+const npcAuditLoading = ref(false);
+const npcAuditError = ref('');
 const addMemoryOpen = ref(false);
 const addBehaviorOpen = ref(false);
 const editingMemoryId = ref('');
@@ -65,6 +72,7 @@ const organizerError = ref('');
 const organizerAbortController = ref(null);
 let npcLoadToken = 0;
 let npcDetailToken = 0;
+let npcAuditToken = 0;
 let npcMutationToken = 0;
 let npcPanelDisposed = false;
 const memoryForm = reactive({ memoryType: 'event', content: '' });
@@ -87,6 +95,7 @@ const npcMetaForm = reactive({
   status: 'active',
   customStatus: '',
   currentLocation: '',
+  relationship: '',
   aliasesText: '',
   memorySealed: false
 });
@@ -112,7 +121,7 @@ const npcPanelSummary = computed(() => {
     const behaviorCount = Number(npc?.behaviorCount || 0);
     stats.memoryCount += memoryCount;
     stats.behaviorCount += behaviorCount;
-    if (memoryCount === 0 && behaviorCount === 0 && !npc?.currentLocation) {
+    if (memoryCount === 0 && behaviorCount === 0 && !npc?.currentLocation && !npc?.relationship) {
       emptyNpcNames.push(npc?.name);
     }
   }
@@ -198,14 +207,17 @@ function requestClose() {
 function resetNpcState() {
   npcLoadToken += 1;
   npcDetailToken += 1;
+  npcAuditToken += 1;
   npcMutationToken += 1;
   cancelNpcOrganizer();
   setNpcsIfChanged([]);
   setSelectedNpc('');
   setMemoriesIfChanged([]);
   setBehaviorsIfChanged([]);
+  setNpcAuditIfChanged([]);
   loadError.value = '';
   detailError.value = '';
+  npcAuditError.value = '';
   addMemoryOpen.value = false;
   addBehaviorOpen.value = false;
   editingMemoryId.value = '';
@@ -220,15 +232,19 @@ function resetNpcState() {
   resetNpcForms();
   loading.value = false;
   detailLoading.value = false;
+  npcAuditLoading.value = false;
 }
 
 function cancelNpcPanelLoad() {
   npcLoadToken += 1;
   npcDetailToken += 1;
+  npcAuditToken += 1;
   loading.value = false;
   detailLoading.value = false;
+  npcAuditLoading.value = false;
   loadError.value = '';
   detailError.value = '';
+  npcAuditError.value = '';
 }
 
 function cancelNpcOrganizer() {
@@ -251,6 +267,7 @@ function setSelectedNpc(name) {
 function resetNpcForms() {
   editingMemoryId.value = '';
   editingBehaviorId.value = '';
+  npcAuditError.value = '';
   memoryForm.memoryType = 'event';
   memoryForm.content = '';
   behaviorForm.behaviorType = 'reaction';
@@ -280,6 +297,7 @@ function resetNpcMetaForm() {
   npcMetaForm.status = 'active';
   npcMetaForm.customStatus = '';
   npcMetaForm.currentLocation = '';
+  npcMetaForm.relationship = '';
   npcMetaForm.aliasesText = '';
   npcMetaForm.memorySealed = false;
 }
@@ -292,6 +310,7 @@ function syncNpcMetaForm(npc) {
   npcMetaForm.status = npc.status || 'active';
   npcMetaForm.customStatus = npc.customStatus || '';
   npcMetaForm.currentLocation = npc.currentLocation || '';
+  npcMetaForm.relationship = npc.relationship || '';
   npcMetaForm.aliasesText = Array.isArray(npc.aliases) ? npc.aliases.join('\n') : '';
   npcMetaForm.memorySealed = Boolean(npc.memorySealed);
 }
@@ -363,6 +382,10 @@ function behaviorDeleteActionId(behaviorId) {
   return `behavior-delete:${behaviorId}`;
 }
 
+function npcAuditRollbackActionId(auditId) {
+  return `npc-audit-rollback:${auditId}`;
+}
+
 function getCurrentMemory(memoryId) {
   const sourceMemories = Array.isArray(memories.value) ? memories.value : [];
   for (let index = 0; index < sourceMemories.length; index += 1) {
@@ -388,6 +411,21 @@ function getCurrentBehavior(behaviorId) {
       && behavior?.npcName === selectedNpc.value
     ) {
       return behavior;
+    }
+  }
+  return null;
+}
+
+function getCurrentNpcAudit(auditId) {
+  const sourceAudit = Array.isArray(npcAudit.value) ? npcAudit.value : [];
+  for (let index = 0; index < sourceAudit.length; index += 1) {
+    const audit = sourceAudit[index];
+    if (
+      audit?.id === auditId
+      && audit?.conversationId === props.conversationId
+      && audit?.npcName === selectedNpc.value
+    ) {
+      return audit;
     }
   }
   return null;
@@ -425,6 +463,16 @@ function setBehaviorsIfChanged(nextBehaviors) {
   return true;
 }
 
+function setNpcAuditIfChanged(nextAudit) {
+  const normalizedAudit = Array.isArray(nextAudit) ? nextAudit : [];
+  const currentAudit = Array.isArray(npcAudit.value) ? npcAudit.value : [];
+  if (sameListItems(currentAudit, normalizedAudit, sameNpcAuditSummary)) {
+    return false;
+  }
+  npcAudit.value = normalizedAudit;
+  return true;
+}
+
 function sameListItems(currentItems, nextItems, sameItem) {
   if (currentItems === nextItems) {
     return true;
@@ -450,6 +498,7 @@ function sameNpcSummary(current = {}, next = {}) {
     && String(current?.status || '') === String(next?.status || '')
     && String(current?.customStatus || '') === String(next?.customStatus || '')
     && String(current?.currentLocation || '') === String(next?.currentLocation || '')
+    && String(current?.relationship || '') === String(next?.relationship || '')
     && Boolean(current?.memorySealed) === Boolean(next?.memorySealed)
     && Boolean(current?.memorySealActive) === Boolean(next?.memorySealActive)
     && sameStringList(current?.aliases, next?.aliases);
@@ -474,6 +523,47 @@ function sameBehaviorSummary(current = {}, next = {}) {
     && Number(current?.priority || 0) === Number(next?.priority || 0)
     && Boolean(current?.enabled) === Boolean(next?.enabled)
     && current?.createdAt === next?.createdAt;
+}
+
+function sameNpcAuditSummary(current = {}, next = {}) {
+  return current?.id === next?.id
+    && current?.conversationId === next?.conversationId
+    && current?.npcName === next?.npcName
+    && current?.targetType === next?.targetType
+    && current?.targetId === next?.targetId
+    && current?.action === next?.action
+    && current?.actor === next?.actor
+    && current?.createdAt === next?.createdAt
+    && sameNpcAuditSnapshot(current?.before, next?.before)
+    && sameNpcAuditSnapshot(current?.after, next?.after);
+}
+
+function sameNpcAuditSnapshot(current = null, next = null) {
+  if (current === next) {
+    return true;
+  }
+  if (!current || !next) {
+    return false;
+  }
+  return String(current?.name || '') === String(next?.name || '')
+    && String(current?.source || '') === String(next?.source || '')
+    && String(current?.evidence || '') === String(next?.evidence || '')
+    && Number(current?.confidence || 0) === Number(next?.confidence || 0)
+    && Boolean(current?.hidden) === Boolean(next?.hidden)
+    && String(current?.status || '') === String(next?.status || '')
+    && String(current?.customStatus || '') === String(next?.customStatus || '')
+    && String(current?.currentLocation || '') === String(next?.currentLocation || '')
+    && String(current?.relationship || '') === String(next?.relationship || '')
+    && Boolean(current?.memorySealed) === Boolean(next?.memorySealed)
+    && sameStringList(current?.aliases, next?.aliases)
+    && String(current?.memoryType || '') === String(next?.memoryType || '')
+    && String(current?.content || '') === String(next?.content || '')
+    && String(current?.behaviorType || '') === String(next?.behaviorType || '')
+    && String(current?.triggerCondition || '') === String(next?.triggerCondition || '')
+    && String(current?.action || '') === String(next?.action || '')
+    && Number(current?.priority || 0) === Number(next?.priority || 0)
+    && Boolean(current?.enabled) === Boolean(next?.enabled)
+    && String(current?.createdAt || '') === String(next?.createdAt || '');
 }
 
 function sameStringList(currentItems, nextItems) {
@@ -706,7 +796,9 @@ async function selectNpc(name) {
   setSelectedNpc(name);
   setMemoriesIfChanged([]);
   setBehaviorsIfChanged([]);
+  setNpcAuditIfChanged([]);
   detailError.value = '';
+  npcAuditError.value = '';
   addMemoryOpen.value = false;
   addBehaviorOpen.value = false;
   await loadNpcDetail();
@@ -721,6 +813,7 @@ async function loadNpcDetail(options = {}) {
     detailError.value = '';
     setMemoriesIfChanged([]);
     setBehaviorsIfChanged([]);
+    setNpcAuditIfChanged([]);
     return;
   }
   if (!allowWhileBusy && npcActionBusy.value) return;
@@ -736,6 +829,7 @@ async function loadNpcDetail(options = {}) {
     detailError.value = '';
     setMemoriesIfChanged(mem);
     setBehaviorsIfChanged(beh);
+    await loadNpcAudit({ allowWhileBusy: true });
   } catch (err) {
     if (npcPanelDisposed || requestToken !== npcDetailToken || conversationId !== props.conversationId || npcName !== selectedNpc.value) return;
     detailError.value = err.message || '加载 NPC 详情失败';
@@ -743,6 +837,36 @@ async function loadNpcDetail(options = {}) {
   } finally {
     if (!npcPanelDisposed && requestToken === npcDetailToken && conversationId === props.conversationId && npcName === selectedNpc.value) {
       detailLoading.value = false;
+    }
+  }
+}
+
+async function loadNpcAudit(options = {}) {
+  if (npcPanelDisposed) return;
+  const allowWhileBusy = Boolean(options.allowWhileBusy);
+  const conversationId = props.conversationId;
+  const npcName = selectedNpc.value;
+  if (!conversationId || !npcName) {
+    npcAuditError.value = '';
+    setNpcAuditIfChanged([]);
+    return;
+  }
+  if (!allowWhileBusy && npcActionBusy.value) return;
+  const requestToken = ++npcAuditToken;
+  npcAuditLoading.value = true;
+  npcAuditError.value = '';
+  try {
+    const audit = await fetchNpcAudit(conversationId, npcName, { limit: 30 });
+    if (npcPanelDisposed || requestToken !== npcAuditToken || conversationId !== props.conversationId || npcName !== selectedNpc.value) return;
+    npcAuditError.value = '';
+    setNpcAuditIfChanged(audit);
+  } catch (err) {
+    if (npcPanelDisposed || requestToken !== npcAuditToken || conversationId !== props.conversationId || npcName !== selectedNpc.value) return;
+    npcAuditError.value = err.message || '加载审计记录失败';
+    notify.error(npcAuditError.value);
+  } finally {
+    if (!npcPanelDisposed && requestToken === npcAuditToken && conversationId === props.conversationId && npcName === selectedNpc.value) {
+      npcAuditLoading.value = false;
     }
   }
 }
@@ -760,6 +884,7 @@ async function submitNpcMeta() {
       status: npcMetaForm.status,
       customStatus: npcMetaForm.customStatus.trim(),
       currentLocation: npcMetaForm.currentLocation.trim(),
+      relationship: npcMetaForm.relationship.trim(),
       aliases: parseNpcAliasesText(npcMetaForm.aliasesText),
       memorySealed: npcMetaForm.memorySealed
     });
@@ -1058,12 +1183,46 @@ async function removeSelectedNpc() {
     setSelectedNpc('');
     setMemoriesIfChanged([]);
     setBehaviorsIfChanged([]);
+    setNpcAuditIfChanged([]);
     await loadNpcs({ allowWhileBusy: true });
     if (!isCurrentNpcMutation(mutationToken, conversationId)) return;
     notify.success('NPC 已从列表移除');
   } catch (err) {
     if (!isCurrentNpcMutation(mutationToken, conversationId, npcName)) return;
     notify.error(err.message || '移除 NPC 失败');
+  } finally {
+    finishNpcAction(actionId, mutationToken, conversationId);
+  }
+}
+
+async function rollbackNpcAudit(auditId) {
+  if (npcPanelDisposed) return;
+  const conversationId = props.conversationId;
+  const npcName = selectedNpc.value;
+  const currentAudit = getCurrentNpcAudit(auditId);
+  if (!conversationId || !npcName || !currentAudit) return;
+  if (!window.confirm('回滚到这条审计记录之前的 NPC 资料？记忆和行为规则不会被删除。')) {
+    return;
+  }
+  const actionId = npcAuditRollbackActionId(currentAudit.id);
+  if (!startNpcAction(actionId)) return;
+  const mutationToken = npcMutationToken;
+  try {
+    const result = await rollbackNpcAuditRequest(conversationId, npcName, currentAudit.id);
+    if (!isCurrentNpcMutation(mutationToken, conversationId, npcName)) return;
+    if (result?.npc) {
+      updateNpcByNameIfChanged(npcName, result.npc);
+      syncNpcMetaForm(result.npc);
+    }
+    await loadNpcs({ allowWhileBusy: true });
+    if (selectedNpc.value) {
+      await loadNpcDetail({ allowWhileBusy: true });
+    }
+    if (!isCurrentNpcMutation(mutationToken, conversationId)) return;
+    notify.success(result?.rolledBack === false ? 'NPC 资料无需回滚' : 'NPC 资料已回滚');
+  } catch (err) {
+    if (!isCurrentNpcMutation(mutationToken, conversationId, npcName)) return;
+    notify.error(err.message || '回滚 NPC 资料失败');
   } finally {
     finishNpcAction(actionId, mutationToken, conversationId);
   }
@@ -1089,6 +1248,7 @@ async function removeEmptyNpcs() {
       setSelectedNpc('');
       setMemoriesIfChanged([]);
       setBehaviorsIfChanged([]);
+      setNpcAuditIfChanged([]);
     }
     await loadNpcs({ allowWhileBusy: true });
     if (!isCurrentNpcMutation(mutationToken, conversationId)) return;
@@ -1279,6 +1439,125 @@ function organizerToolResultLabel(result = {}) {
     return result.summary;
   }
   return '完成';
+}
+
+function npcAuditActionLabel(action) {
+  const value = String(action || '');
+  if (value === 'create') return '创建';
+  if (value === 'hide') return '隐藏';
+  if (value === 'restore') return '恢复';
+  if (value === 'rollback') return '回滚';
+  if (value === 'delete') return '删除';
+  return '更新';
+}
+
+function npcAuditActorLabel(actor) {
+  const value = String(actor || '');
+  if (value === 'agent') return 'AI';
+  if (value === 'hidden') return '隐藏';
+  if (value === 'memory') return '记忆';
+  if (value === 'behavior') return '行为';
+  if (value === 'scan') return '扫描';
+  if (value === 'rollback') return '回滚';
+  if (value === 'manual') return '手动';
+  return '系统';
+}
+
+function npcAuditTargetLabel(record = {}) {
+  const targetType = String(record.targetType || 'profile');
+  if (targetType === 'memory') return '记忆';
+  if (targetType === 'behavior') return '行为';
+  return '档案';
+}
+
+function formatNpcAuditSnapshot(record = {}, snapshot) {
+  if (!snapshot) {
+    return `无${npcAuditTargetLabel(record)}`;
+  }
+  const targetType = String(record.targetType || 'profile');
+  if (targetType === 'memory') {
+    return formatNpcMemoryAuditSnapshot(snapshot);
+  }
+  if (targetType === 'behavior') {
+    return formatNpcBehaviorAuditSnapshot(snapshot);
+  }
+  return formatNpcProfileAuditSnapshot(snapshot);
+}
+
+function formatNpcProfileAuditSnapshot(snapshot) {
+  let summary = '';
+  if (snapshot.hidden) {
+    summary = appendAuditSummaryPart(summary, '隐藏');
+  }
+  const status = npcStatusLabel(snapshot);
+  if (status) {
+    summary = appendAuditSummaryPart(summary, `状态 ${status}`);
+  }
+  if (snapshot.currentLocation) {
+    summary = appendAuditSummaryPart(summary, `位置 ${snapshot.currentLocation}`);
+  }
+  if (snapshot.relationship) {
+    summary = appendAuditSummaryPart(summary, `关系 ${truncateAuditText(snapshot.relationship, 64)}`);
+  }
+  const aliasCount = countAuditAliases(snapshot.aliases);
+  if (aliasCount) {
+    summary = appendAuditSummaryPart(summary, `${aliasCount} 个别名`);
+  }
+  if (snapshot.memorySealed) {
+    summary = appendAuditSummaryPart(summary, '记忆封存');
+  }
+  if (snapshot.evidence) {
+    summary = appendAuditSummaryPart(summary, `证据 ${snapshot.evidence}`);
+  }
+  return summary || '默认资料';
+}
+
+function formatNpcMemoryAuditSnapshot(snapshot) {
+  let summary = '';
+  summary = appendAuditSummaryPart(summary, memoryTypeLabel(snapshot.memoryType));
+  if (snapshot.content) {
+    summary = appendAuditSummaryPart(summary, truncateAuditText(snapshot.content, 80));
+  }
+  return summary || '空记忆';
+}
+
+function formatNpcBehaviorAuditSnapshot(snapshot) {
+  let summary = '';
+  summary = appendAuditSummaryPart(summary, behaviorTypeLabel(snapshot.behaviorType));
+  if (snapshot.triggerCondition) {
+    summary = appendAuditSummaryPart(summary, `触发 ${truncateAuditText(snapshot.triggerCondition, 48)}`);
+  }
+  if (snapshot.action) {
+    summary = appendAuditSummaryPart(summary, truncateAuditText(snapshot.action, 80));
+  }
+  summary = appendAuditSummaryPart(summary, `P${Number(snapshot.priority || 0)}`);
+  if (!snapshot.enabled) {
+    summary = appendAuditSummaryPart(summary, '禁用');
+  }
+  return summary || '空行为';
+}
+
+function truncateAuditText(value, limit) {
+  const text = String(value || '').trim();
+  if (text.length <= limit) {
+    return text;
+  }
+  return `${text.slice(0, limit)}...`;
+}
+
+function appendAuditSummaryPart(summary, part) {
+  return summary ? `${summary} · ${part}` : part;
+}
+
+function countAuditAliases(aliases) {
+  const source = Array.isArray(aliases) ? aliases : [];
+  let count = 0;
+  for (let index = 0; index < source.length; index += 1) {
+    if (String(source[index] || '').trim()) {
+      count += 1;
+    }
+  }
+  return count;
 }
 
 function memoryTypeLabel(type) {
@@ -1533,6 +1812,9 @@ function formatTime(iso) {
                         <MapPin :size="11" />
                         <span>{{ npc.currentLocation }}</span>
                       </span>
+                      <span v-if="npc.relationship" class="npc-relationship-pill" title="关系摘要">
+                        <span>{{ npc.relationship }}</span>
+                      </span>
                     </span>
                     <span class="npc-item-counts">
                       <span title="记忆数" class="npc-badge">🧠 {{ npc.memoryCount }}</span>
@@ -1555,6 +1837,7 @@ function formatTime(iso) {
                     <MapPin :size="12" />
                     <span>{{ selectedNpcData.currentLocation }}</span>
                   </span>
+                  <span v-if="selectedNpcData?.relationship">{{ selectedNpcData.relationship }}</span>
                   <span v-if="selectedNpcMemorySealActive">记忆封存</span>
                   <span>{{ selectedNpcStats.memoryCount }} 记忆</span>
                   <span>{{ selectedNpcStats.behaviorCount }} 行为</span>
@@ -1609,6 +1892,15 @@ function formatTime(iso) {
                   <Zap :size="15" />
                   <span>行为 ({{ behaviors.length }})</span>
                 </button>
+                <button
+                  class="npc-tab"
+                  :class="{ active: detailTab === 'audit' }"
+                  type="button"
+                  @click="detailTab = 'audit'"
+                >
+                  <History :size="15" />
+                  <span>审计 ({{ npcAudit.length }})</span>
+                </button>
               </div>
 
               <div v-if="detailLoading" class="npc-empty">加载中...</div>
@@ -1639,6 +1931,18 @@ function formatTime(iso) {
                       maxlength="80"
                       placeholder="例如：潜伏、被囚禁、养伤"
                       aria-label="NPC 自定义状态"
+                      :disabled="npcActionBusy"
+                    />
+                  </label>
+                  <label class="npc-field-label">
+                    <span>关系</span>
+                    <textarea
+                      v-model="npcMetaForm.relationship"
+                      class="npc-textarea"
+                      rows="3"
+                      maxlength="240"
+                      placeholder="如：欠主角人情、信任同伴、与城主敌对"
+                      aria-label="NPC 关系摘要"
                       :disabled="npcActionBusy"
                     />
                   </label>
@@ -1978,6 +2282,50 @@ function formatTime(iso) {
                       触发：{{ beh.triggerCondition }}
                     </p>
                     <p v-if="editingBehaviorId !== beh.id" class="npc-card-content">{{ beh.action }}</p>
+                  </div>
+                </div>
+              </template>
+
+              <!-- Audit Tab -->
+              <template v-else-if="detailTab === 'audit'">
+                <div v-if="npcAuditLoading" class="npc-empty">加载中...</div>
+                <div v-else-if="npcAuditError" class="npc-empty npc-error-state">
+                  <p>{{ npcAuditError }}</p>
+                  <button class="npc-retry-button" type="button" :disabled="npcAuditLoading || npcActionBusy" @click="loadNpcAudit">
+                    <RefreshCw :size="14" />
+                    <span>重试</span>
+                  </button>
+                </div>
+                <div v-else-if="!npcAudit.length" class="npc-empty">
+                  暂无审计记录
+                </div>
+                <div v-else class="npc-list npc-audit-list">
+                  <div v-for="record in npcAudit" :key="record.id" class="npc-card npc-audit-card">
+                    <div class="npc-card-header">
+                      <span class="npc-card-type target">{{ npcAuditTargetLabel(record) }}</span>
+                      <span class="npc-card-type">{{ npcAuditActionLabel(record.action) }}</span>
+                      <span class="npc-card-type muted">{{ npcAuditActorLabel(record.actor) }}</span>
+                      <span class="npc-card-time">{{ formatTime(record.createdAt) }}</span>
+                      <button
+                        class="npc-card-rollback"
+                        type="button"
+                        title="回滚"
+                        :aria-label="`回滚 NPC ${npcAuditTargetLabel(record)}`"
+                        :disabled="npcActionBusy"
+                        :aria-busy="isNpcActionBusy(npcAuditRollbackActionId(record.id))"
+                        @click="rollbackNpcAudit(record.id)"
+                      >
+                        <Undo2 :size="14" />
+                      </button>
+                    </div>
+                    <p class="npc-audit-change">
+                      <span>之前</span>
+                      <strong>{{ formatNpcAuditSnapshot(record, record.before) }}</strong>
+                    </p>
+                    <p class="npc-audit-change">
+                      <span>之后</span>
+                      <strong>{{ formatNpcAuditSnapshot(record, record.after) }}</strong>
+                    </p>
                   </div>
                 </div>
               </template>
@@ -2435,6 +2783,28 @@ function formatTime(iso) {
 }
 
 .npc-location-pill span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.npc-relationship-pill {
+  max-width: 180px;
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  overflow: hidden;
+  padding: 1px 6px;
+  border: 1px solid color-mix(in srgb, var(--accent, #6b7fd7) 28%, transparent);
+  border-radius: 999px;
+  color: var(--accent, #6b7fd7);
+  background: color-mix(in srgb, var(--accent, #6b7fd7) 10%, transparent);
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.npc-relationship-pill span {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -2907,6 +3277,18 @@ function formatTime(iso) {
   font-weight: 800;
 }
 
+.npc-card-type.muted {
+  border-color: color-mix(in srgb, var(--line, rgba(44, 57, 48, 0.14)) 82%, transparent);
+  color: var(--muted, #657064);
+  background: color-mix(in srgb, var(--surface-strong, #edf5ef) 68%, transparent);
+}
+
+.npc-card-type.target {
+  border-color: color-mix(in srgb, var(--accent, #818cf8) 28%, transparent);
+  color: var(--accent, #818cf8);
+  background: color-mix(in srgb, var(--accent, #818cf8) 9%, transparent);
+}
+
 .npc-card-time {
   font-size: 11px;
   color: var(--muted, #657064);
@@ -2921,7 +3303,8 @@ function formatTime(iso) {
 
 .npc-card-edit,
 .npc-card-toggle,
-.npc-card-delete {
+.npc-card-delete,
+.npc-card-rollback {
   background: none;
   border: none;
   color: color-mix(in srgb, var(--muted, #657064) 72%, transparent);
@@ -2943,7 +3326,8 @@ function formatTime(iso) {
 .npc-close:disabled,
 .npc-card-edit:disabled,
 .npc-card-toggle:disabled,
-.npc-card-delete:disabled {
+.npc-card-delete:disabled,
+.npc-card-rollback:disabled {
   opacity: 0.48;
   cursor: not-allowed;
 }
@@ -2955,6 +3339,9 @@ function formatTime(iso) {
 }
 .npc-card-delete:hover:not(:disabled) {
   color: #ef4444;
+}
+.npc-card-rollback:hover:not(:disabled) {
+  color: var(--accent, #818cf8);
 }
 
 .npc-card-trigger {
@@ -2969,6 +3356,35 @@ function formatTime(iso) {
   font-size: 13px;
   line-height: 1.5;
   white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.npc-audit-list {
+  gap: 8px;
+}
+
+.npc-audit-card {
+  display: grid;
+  gap: 8px;
+}
+
+.npc-audit-change {
+  display: grid;
+  gap: 3px;
+  margin: 0;
+}
+
+.npc-audit-change span {
+  color: var(--muted, #657064);
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.npc-audit-change strong {
+  color: var(--text, #20241f);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.45;
   word-break: break-word;
 }
 

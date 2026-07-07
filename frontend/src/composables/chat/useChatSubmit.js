@@ -1,19 +1,17 @@
 import { computed, nextTick, ref, triggerRef } from 'vue';
-import { fetchConversationMessages, sendMessage, streamMessage } from '../../api.js';
+import {
+  continueMessage,
+  fetchConversationMessages,
+  sendMessage,
+  streamContinueMessage,
+  streamMessage
+} from '../../api/chat.js';
 import { readFileAsDataUrl } from '../../utils/fileReaders.js';
 import { samePlainValue } from '../../utils/plainValues.js';
+import { resolveProviderModelCapabilities } from '../../../../shared/providerCapabilities.js';
 
 const CHAT_IMAGE_LIMIT = 4;
 const CHAT_IMAGE_MAX_BYTES = 4 * 1024 * 1024;
-const IMAGE_GENERATION_MODELS_BY_PROVIDER = {
-  openai: new Set(['gpt-image-2']),
-  xai: new Set(['grok-imagine-image', 'grok-imagine-image-quality']),
-  gemini: new Set([
-    'gemini-3.1-flash-image',
-    'gemini-3-pro-image',
-    'gemini-2.5-flash-image'
-  ])
-};
 
 export function useChatSubmit({
   route,
@@ -40,6 +38,7 @@ export function useChatSubmit({
   const input = ref('');
   const useStream = ref(readLocalBoolean('flai-chat-use-stream', true));
   const thinkingEnabled = ref(readLocalBoolean('flai-chat-thinking-enabled', false));
+  const imageGenerationEnabled = ref(readLocalBoolean('flai-chat-image-generation-enabled', true));
   const chatAttachments = ref([]);
   const attachmentBusy = ref(false);
   const sending = ref(false);
@@ -63,8 +62,24 @@ export function useChatSubmit({
   const streamIdleTimeoutMs = 60000;
   const accessoryRefreshDelays = [1200, 4000, 9000, 16000, 25000, 38000, 55000];
 
-  const canSend = computed(() => Boolean((input.value.trim() || chatAttachments.value.length) && !sending.value && !attachmentBusy.value));
-  const canToggleThinking = computed(() => Boolean(provider.value?.supportsReasoning));
+  const chatProviderCapabilities = computed(() => resolveProviderModelCapabilities(provider.value || {}));
+  const canUseStream = computed(() => Boolean(chatProviderCapabilities.value.streaming));
+  const canAddAttachments = computed(() => Boolean(chatProviderCapabilities.value.vision));
+  const canGenerateImages = computed(() => Boolean(chatProviderCapabilities.value.imageGeneration));
+  const canToggleImageGeneration = computed(() => Boolean(canGenerateImages.value));
+  const canSend = computed(() => Boolean(
+    (input.value.trim() || chatAttachments.value.length)
+    && !sending.value
+    && !attachmentBusy.value
+    && (!chatAttachments.value.length || canAddAttachments.value)
+  ));
+  const canContinueGeneration = computed(() => Boolean(
+    !sending.value
+    && !attachmentBusy.value
+    && normalizeConversationId(route.params.id)
+    && hasContinuableAssistantMessage(messages.value)
+  ));
+  const canToggleThinking = computed(() => Boolean(chatProviderCapabilities.value.reasoning));
 
   function readLocalBoolean(key, fallback) {
     if (typeof window === 'undefined') {
@@ -93,35 +108,8 @@ export function useChatSubmit({
     }
   }
 
-  function isAutomaticImageGenerationModel(currentProvider = {}) {
-    const providerType = String(currentProvider?.providerType || '').trim();
-    const model = normalizeChatProviderModel(providerType, currentProvider?.model);
-    if (!model) {
-      return false;
-    }
-    const providerModels = IMAGE_GENERATION_MODELS_BY_PROVIDER[providerType];
-    if (providerModels) {
-      return providerModels.has(model);
-    }
-    return providerType === 'custom' && isKnownImageGenerationModel(model);
-  }
-
-  function isKnownImageGenerationModel(model) {
-    return IMAGE_GENERATION_MODELS_BY_PROVIDER.openai.has(model) ||
-      IMAGE_GENERATION_MODELS_BY_PROVIDER.xai.has(model) ||
-      IMAGE_GENERATION_MODELS_BY_PROVIDER.gemini.has(model);
-  }
-
-  function normalizeChatProviderModel(providerType, model) {
-    const value = String(model || '').trim();
-    if (providerType === 'deepseek' && (value === 'deepseek-chat' || value === 'deepseek-reasoner')) {
-      return 'deepseek-v4-flash';
-    }
-    return value;
-  }
-
   function toggleUseStream() {
-    if (sending.value) {
+    if (sending.value || !canUseStream.value) {
       return;
     }
     useStream.value = !useStream.value;
@@ -136,6 +124,14 @@ export function useChatSubmit({
     writeLocalBoolean('flai-chat-thinking-enabled', thinkingEnabled.value);
   }
 
+  function toggleImageGeneration() {
+    if (sending.value || !canToggleImageGeneration.value) {
+      return;
+    }
+    imageGenerationEnabled.value = !imageGenerationEnabled.value;
+    writeLocalBoolean('flai-chat-image-generation-enabled', imageGenerationEnabled.value);
+  }
+
   function setSelectedPresetId(value) {
     if (sending.value || submitDisposed) {
       return;
@@ -143,11 +139,34 @@ export function useChatSubmit({
     selectedPresetId.value = value || '';
   }
 
+  async function submitDraft(content, attachments = []) {
+    if (sending.value || attachmentBusy.value || submitDisposed) {
+      return false;
+    }
+    const normalizedContent = normalizeMessageText(content);
+    const normalizedAttachments = normalizeChatAttachments(attachments);
+    if (!normalizedContent && !normalizedAttachments.length) {
+      return false;
+    }
+    if (normalizeMessageText(input.value) || chatAttachments.value.length) {
+      return false;
+    }
+    input.value = normalizedContent;
+    setChatAttachments(normalizedAttachments);
+    await nextTick();
+    await submit();
+    return true;
+  }
+
   async function submit() {
     const content = input.value.trim();
     const attachments = normalizeChatAttachments(chatAttachments.value);
     const conversationId = normalizeConversationId(route.params.id);
     if ((!content && !attachments.length) || sending.value || attachmentBusy.value || submitDisposed || !conversationId) {
+      return;
+    }
+    if (attachments.length && !canAddAttachments.value) {
+      showError('当前模型不支持图片输入，请切换支持视觉的模型后再发送。');
       return;
     }
     clearLastFailure();
@@ -196,7 +215,7 @@ export function useChatSubmit({
       stickToBottomIfNeeded(true);
     }
 
-    const shouldGenerateImage = isAutomaticImageGenerationModel(provider.value);
+    const shouldGenerateImage = canToggleImageGeneration.value && imageGenerationEnabled.value;
     const requestPayload = {
       content,
       attachments,
@@ -227,7 +246,7 @@ export function useChatSubmit({
     };
 
     try {
-      if (useStream.value && !shouldGenerateImage) {
+      if (useStream.value && canUseStream.value && !shouldGenerateImage) {
         streamController = new AbortController();
         controller.value = streamController;
         refreshStreamTimer();
@@ -608,6 +627,239 @@ export function useChatSubmit({
     showError(message);
   }
 
+  async function continueGeneration() {
+    const conversationId = normalizeConversationId(route.params.id);
+    if (!canContinueGeneration.value || submitDisposed || !conversationId) {
+      return false;
+    }
+    clearLastFailure();
+    setLatestWorldBookMatches([]);
+    const submitId = ++submitRunId;
+    const anchorAssistantReply = isPinnedToBottom() && prepareExpandedStatusBarForSubmit();
+    const assistantDraft = {
+      id: `local-assistant-continue-${Date.now()}`,
+      role: 'assistant',
+      content: '',
+      reasoning: '',
+      createdAt: new Date().toISOString(),
+      streaming: true,
+      reasoningStreaming: false,
+      contentStreaming: false
+    };
+    appendMessageItems(assistantDraft);
+    sending.value = true;
+    await nextTick();
+    if (!isCurrentSubmit(submitId, conversationId)) {
+      removeMessageItemsByReferenceIfPresent(assistantDraft);
+      sending.value = false;
+      return false;
+    }
+    const assistantReplyAnchored = shouldAnchorAssistantReply(anchorAssistantReply) && scrollToAssistantReply(assistantDraft, true);
+    if (!assistantReplyAnchored) {
+      stickToBottomIfNeeded(true);
+    }
+
+    const requestPayload = {
+      thinkingEnabled: canToggleThinking.value ? thinkingEnabled.value : true
+    };
+    if (selectedPresetId.value) {
+      requestPayload.presetId = selectedPresetId.value;
+    }
+    cancelAccessoryRefresh();
+    let streamFinished = false;
+    let streamTimedOut = false;
+    let streamTimer = null;
+    let streamController = null;
+
+    const clearStreamTimer = () => {
+      if (streamTimer) {
+        window.clearTimeout(streamTimer);
+        streamTimer = null;
+      }
+    };
+    const refreshStreamTimer = () => {
+      clearStreamTimer();
+      streamTimer = window.setTimeout(() => {
+        streamTimedOut = true;
+        streamController?.abort();
+      }, streamIdleTimeoutMs);
+    };
+
+    try {
+      if (useStream.value && canUseStream.value) {
+        streamController = new AbortController();
+        controller.value = streamController;
+        refreshStreamTimer();
+        const streamResult = await streamContinueMessage(
+          conversationId,
+          requestPayload,
+          {
+            meta(data) {
+              if (!isCurrentSubmit(submitId, conversationId)) return;
+              setProviderMetaIfChanged(data);
+              setLatestWorldBookMatches(data?.worldBookMatches);
+              refreshStreamTimer();
+            },
+            async reasoning(data) {
+              if (!isCurrentSubmit(submitId, conversationId)) return;
+              const currentAssistant = getMessageListItemOrDraft(assistantDraft);
+              if (!currentAssistant.reasoning) {
+                expandReasoning(currentAssistant.id);
+              }
+              setMessageStreamingState(assistantDraft, { reasoningStreaming: true });
+              refreshStreamTimer();
+              await appendStreamText(
+                assistantDraft,
+                'reasoning',
+                data.text,
+                anchorAssistantReply,
+                () => isCurrentSubmit(submitId, conversationId)
+              );
+            },
+            async content(data) {
+              if (!isCurrentSubmit(submitId, conversationId)) return;
+              setMessageStreamingState(assistantDraft, {
+                reasoningStreaming: false,
+                contentStreaming: true
+              });
+              refreshStreamTimer();
+              await appendStreamText(
+                assistantDraft,
+                'content',
+                data.text,
+                anchorAssistantReply,
+                () => isCurrentSubmit(submitId, conversationId)
+              );
+            },
+            tool(data) {
+              if (!isCurrentSubmit(submitId, conversationId)) return;
+              if (data?.result?.statusBar) {
+                updateStatusBar(data.result.statusBar);
+              }
+            },
+            skill_result(data) {
+              if (!isCurrentSubmit(submitId, conversationId)) return;
+              handleSkillResult(withConversationContext(data, conversationId));
+            },
+            async done(data) {
+              if (!isCurrentSubmit(submitId, conversationId)) return;
+              streamFinished = true;
+              clearStreamTimer();
+              const currentAssistant = getMessageListItemOrDraft(assistantDraft);
+              if (stoppingByUser || !currentAssistant.streaming) {
+                return;
+              }
+              if (!data.assistantMessage && !hasMessagePayload(currentAssistant)) {
+                finishAssistantDraft(assistantDraft);
+                showError('模型没有返回正文，请重试或检查当前模型/网关是否支持该对话格式。');
+                return;
+              }
+              const finalizedAssistant = finalizeStreamedAssistant(assistantDraft, data.assistantMessage);
+              await reconcilePersistedStreamDrafts(conversationId, null, assistantDraft);
+              setUsageIfChanged(data.usage || data.assistantMessage?.usage || null);
+              setProviderMetaIfChanged({
+                ...(providerMeta.value || {}),
+                provider: data.provider || providerMeta.value?.provider
+              });
+              setLatestWorldBookMatches(data?.worldBookMatches);
+              if (data.statusBar) {
+                updateStatusBar(data.statusBar);
+              }
+              if (data.accessoryBackground) {
+                scheduleAccessoryRefresh(conversationId);
+              }
+              if (shouldAnchorAssistantReply(anchorAssistantReply)) {
+                await nextTick();
+                if (isCurrentSubmit(submitId, conversationId)) {
+                  scrollToAssistantReply(finalizedAssistant || getMessageListItemOrDraft(assistantDraft), false);
+                }
+              }
+            },
+            error(data) {
+              if (!isCurrentSubmit(submitId, conversationId)) return;
+              streamFinished = true;
+              clearStreamTimer();
+              finishAssistantDraft(assistantDraft);
+              if (!stoppingByUser) {
+                showError(data.error || '生成失败');
+              }
+            }
+          },
+          streamController.signal
+        );
+        clearStreamTimer();
+        if (!isCurrentSubmit(submitId, conversationId)) {
+          return false;
+        }
+        if (streamResult?.aborted || !streamFinished) {
+          const shouldReconcileInterruptedDraft = stoppingByUser && hasCurrentMessagePayload(assistantDraft);
+          finishAssistantDraft(assistantDraft);
+          if (shouldReconcileInterruptedDraft) {
+            await reconcileInterruptedStreamDrafts(conversationId, null, assistantDraft);
+          }
+          if (streamTimedOut && !stoppingByUser) {
+            showError('模型响应超时，请检查网络、余额或模型状态后重试。');
+          } else if (!stoppingByUser && !streamFinished && !hasCurrentMessagePayload(assistantDraft)) {
+            showError('连接已结束，但没有收到模型回复。请检查 API Key、余额或网关状态后重试。');
+          }
+        }
+        if (!streamResult?.aborted) {
+          if (stoppingByUser && hasCurrentMessagePayload(assistantDraft)) {
+            await reconcileInterruptedStreamDrafts(conversationId, null, assistantDraft);
+          } else if (!stoppingByUser) {
+            await reconcilePersistedStreamDrafts(conversationId, null, assistantDraft);
+          }
+        }
+      } else {
+        const result = await continueMessage(conversationId, requestPayload);
+        if (!isCurrentSubmit(submitId, conversationId)) {
+          return false;
+        }
+        const finalizedAssistant = finalizeStreamedAssistant(assistantDraft, result.assistantMessage);
+        setUsageIfChanged(result.usage || null);
+        setProviderMetaIfChanged({ provider: result.provider });
+        setLatestWorldBookMatches(result.worldBookMatches);
+        if (result.statusBar) {
+          updateStatusBar(result.statusBar);
+        }
+        if (result.accessoryBackground) {
+          scheduleAccessoryRefresh(conversationId);
+        }
+        if (shouldAnchorAssistantReply(anchorAssistantReply)) {
+          await nextTick();
+          if (isCurrentSubmit(submitId, conversationId)) {
+            scrollToAssistantReply(finalizedAssistant || getMessageListItemOrDraft(assistantDraft), false);
+          }
+        }
+      }
+      if (isCurrentSubmit(submitId, conversationId)) {
+        refreshConversationChrome();
+      }
+      return true;
+    } catch (err) {
+      clearStreamTimer();
+      if (!isCurrentSubmit(submitId, conversationId)) {
+        return false;
+      }
+      if (streamTimedOut && !stoppingByUser) {
+        showError('模型响应超时，请检查网络、余额或模型状态后重试。');
+      } else if (err.name !== 'AbortError' && !stoppingByUser) {
+        showError(err.message || '生成失败');
+      }
+      finishAssistantDraft(assistantDraft);
+      return false;
+    } finally {
+      clearStreamTimer();
+      if (isActiveSubmit(submitId)) {
+        sending.value = false;
+        if (!streamController || controller.value === streamController) {
+          controller.value = null;
+        }
+        stoppingByUser = false;
+      }
+    }
+  }
+
   function restoreFailedContentToInput(content, conversationId, attachments = []) {
     const normalizedContent = normalizeMessageText(content);
     const normalizedAttachments = normalizeChatAttachments(attachments);
@@ -727,6 +979,18 @@ export function useChatSubmit({
       }
     }
     return null;
+  }
+
+  function hasContinuableAssistantMessage(messageList = []) {
+    const sourceMessages = Array.isArray(messageList) ? messageList : [];
+    for (let index = sourceMessages.length - 1; index >= 0; index -= 1) {
+      const message = sourceMessages[index];
+      if (!hasMessagePayload(message)) {
+        continue;
+      }
+      return message.role === 'assistant' && !message.streaming;
+    }
+    return false;
   }
 
   function appendMessageItems(...items) {
@@ -1157,6 +1421,10 @@ export function useChatSubmit({
     if (sending.value || attachmentBusy.value || submitDisposed) {
       return false;
     }
+    if (!canAddAttachments.value) {
+      showError('当前模型不支持图片输入，请切换支持视觉的模型后再添加图片。');
+      return false;
+    }
     const fileList = collectChatImageFiles(files);
     if (!fileList.length) {
       return false;
@@ -1245,20 +1513,27 @@ export function useChatSubmit({
     const source = Array.isArray(attachments) ? attachments : [];
     const normalized = [];
     for (const attachment of source) {
-      const dataUrl = String(attachment?.dataUrl || '').trim();
-      const mimeType = String(attachment?.mimeType || '').trim();
-      if (!dataUrl || !isSupportedChatImageType(mimeType)) {
+      const rawUrl = String(attachment?.url || '').trim();
+      const dataUrl = String(attachment?.dataUrl || (isSupportedChatImageDataUrl(rawUrl) ? rawUrl : '')).trim();
+      const url = dataUrl ? '' : rawUrl;
+      const mimeType = normalizeChatImageMimeType(attachment?.mimeType || mimeTypeFromImageDataUrl(dataUrl));
+      if ((!dataUrl && !url) || !isSupportedChatImageType(mimeType)) {
         continue;
       }
-      normalized.push({
+      const normalizedAttachment = {
         id: normalizeMessageId(attachment.id) || `chat-image-${normalized.length}`,
         type: 'image',
-        dataUrl,
         mimeType,
         name: String(attachment.name || '').trim(),
         alt: String(attachment.alt || attachment.name || '').trim(),
         size: Number.isFinite(Number(attachment.size)) ? Number(attachment.size) : 0
-      });
+      };
+      if (dataUrl) {
+        normalizedAttachment.dataUrl = dataUrl;
+      } else {
+        normalizedAttachment.url = url;
+      }
+      normalized.push(normalizedAttachment);
       if (normalized.length >= CHAT_IMAGE_LIMIT) {
         break;
       }
@@ -1270,12 +1545,27 @@ export function useChatSubmit({
     return type === 'image/png' || type === 'image/jpeg' || type === 'image/webp';
   }
 
+  function normalizeChatImageMimeType(value) {
+    const mimeType = String(value || '').trim().toLowerCase();
+    return isSupportedChatImageType(mimeType) ? mimeType : '';
+  }
+
+  function mimeTypeFromImageDataUrl(value) {
+    const match = /^data:(image\/(?:png|jpeg|webp));base64,/i.exec(String(value || '').trim());
+    return match ? match[1].toLowerCase() : '';
+  }
+
+  function isSupportedChatImageDataUrl(value) {
+    return Boolean(mimeTypeFromImageDataUrl(value));
+  }
+
   return {
     input,
     chatAttachments,
     attachmentBusy,
     useStream,
     thinkingEnabled,
+    imageGenerationEnabled,
     sending,
     controller,
     usage,
@@ -1283,8 +1573,15 @@ export function useChatSubmit({
     lastFailure,
     latestWorldBookMatches,
     canSend,
+    canContinueGeneration,
+    canUseStream,
+    canAddAttachments,
+    chatProviderCapabilities,
     canToggleThinking,
+    canToggleImageGeneration,
+    submitDraft,
     submit,
+    continueGeneration,
     stop,
     restoreLastFailureInput,
     retryLastFailure,
@@ -1295,6 +1592,7 @@ export function useChatSubmit({
     setSelectedPresetId,
     toggleUseStream,
     toggleThinking,
+    toggleImageGeneration,
     finishAssistantDraft,
     cleanup
   };

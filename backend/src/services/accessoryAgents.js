@@ -121,7 +121,10 @@ async function runStatusBarAgent({ db, userId, conversation, assistantMessage, o
         return { ok: false, error: `Unsupported tool: ${toolName}` };
       },
       { maxRounds: 2, thinkingEnabled: false }
-    ).catch(() => null);
+    ).catch((error) => {
+      logAccessoryAgentFailure('status-bar', error);
+      return null;
+    });
 
     if (skippedUpdate) {
       return { statusBar, updates: [], skipped: true };
@@ -213,7 +216,10 @@ async function runNpcAgent({ db, userId, conversation, character, assistantMessa
         return { ok: false, error: `Unsupported tool: ${toolName}` };
       },
       { maxRounds: 3, thinkingEnabled: false }
-    ).catch(() => null);
+    ).catch((error) => {
+      logAccessoryAgentFailure('npc', error);
+      return null;
+    });
   }
 
   return { npcs, memories: recorded, behaviors };
@@ -238,7 +244,10 @@ async function runEconomyAgent({ db, userId, conversation, assistantMessage, obs
         return { ok: true, transaction: result?.transaction || null };
       },
       { maxRounds: 3, thinkingEnabled: false }
-    ).catch(() => null);
+    ).catch((error) => {
+      logAccessoryAgentFailure('economy', error);
+      return null;
+    });
   }
 
   if (!transactions.length) {
@@ -259,6 +268,10 @@ async function runCgSceneAgent({ db, character, assistantMessage }) {
     emotionTag,
     image: findBestMatch(images, sceneTag, emotionTag)
   };
+}
+
+function logAccessoryAgentFailure(agentName, error) {
+  console.error(`[accessory-agent:${agentName}] failed`, error);
 }
 
 function withModelOverride(settings, skill = {}) {
@@ -690,7 +703,8 @@ function addNpcMemoryIfNew(db, userId, conversationId, npcName, payload) {
   }
   return addNpcMemory(db, userId, conversationId, name, {
     memoryType: payload.memoryType || 'event',
-    content
+    content,
+    auditActor: 'agent'
   });
 }
 
@@ -722,7 +736,8 @@ function addNpcBehaviorIfNew(db, userId, conversationId, npcName, payload) {
     triggerCondition,
     action,
     priority: payload.priority ?? 0,
-    enabled: payload.enabled ?? true
+    enabled: payload.enabled ?? true,
+    auditActor: 'agent'
   });
 }
 

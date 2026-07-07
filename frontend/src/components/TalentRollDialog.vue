@@ -1,7 +1,8 @@
 <script setup>
 import { computed, onBeforeUnmount, ref, watch } from 'vue';
 import { Dice6, Sparkles, Trash2, X } from '@lucide/vue';
-import { deleteAllCharacterTalents, deleteCharacterTalent, fetchCharacterTalents, fetchTalentPools, rollCharacterTalent } from '../api';
+import { deleteAllCharacterTalents, deleteCharacterTalent, fetchCharacterTalents, rollCharacterTalent } from '../api/characters.js';
+import { fetchTalentPools } from '../api/talents.js';
 import TalentBadge from './TalentBadge.vue';
 import { useNotify } from '../composables/useNotify';
 

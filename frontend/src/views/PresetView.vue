@@ -6,7 +6,7 @@ import {
   updatePreset,
   deletePreset,
   setDefaultPreset
-} from '../api';
+} from '../api/presets.js';
 import { useNotify } from '../composables/useNotify';
 import {
   SlidersHorizontal,

@@ -16,8 +16,12 @@ const {
   hideConversationNpc,
   hideEmptyConversationNpcs,
   listConversationNpcs,
+  listNpcAudit,
   listNpcBehaviors,
   listNpcMemories,
+  listNpcProfileAudit,
+  rollbackNpcAudit,
+  rollbackNpcProfileAudit,
   scanNpcsFromMessages,
   upsertConversationNpc,
   updateConversationNpc,
@@ -522,6 +526,199 @@ test('NPC current location is listed, prompt-injected, and protects cleanup', ()
   const cleanup = hideEmptyConversationNpcs(database, userId, conversationId, '');
   assert.equal(cleanup.count, 0);
   assert.ok(listConversationNpcs(database, userId, conversationId, '').some((npc) => npc.name === 'Scout'));
+});
+
+test('NPC relationship summary is listed, prompt-injected, audited, and protects cleanup', () => {
+  const { database, userId, conversationId } = setupDatabase();
+
+  const updated = updateConversationNpc(database, userId, conversationId, 'Mira', {
+    relationship: 'Trusts the protagonist after the cellar rescue'
+  });
+  assert.equal(updated.relationship, 'Trusts the protagonist after the cellar rescue');
+
+  const listed = listConversationNpcs(database, userId, conversationId, '')
+    .find((npc) => npc.name === 'Mira');
+  assert.equal(listed.relationship, 'Trusts the protagonist after the cellar rescue');
+
+  const prompt = buildNpcBehaviorPrompt(database, conversationId);
+  assert.ok(prompt.includes('Relationship: Trusts the protagonist after the cellar rescue'));
+  assert.ok(prompt.includes('relationship summary'));
+  assert.ok(prompt.includes('stable interpersonal state'));
+
+  const cleanup = hideEmptyConversationNpcs(database, userId, conversationId, '');
+  assert.equal(cleanup.count, 0);
+  assert.ok(listConversationNpcs(database, userId, conversationId, '').some((npc) => npc.name === 'Mira'));
+
+  updateConversationNpc(database, userId, conversationId, 'Mira', {
+    relationship: 'Suspicious after the broken promise',
+    currentLocation: 'Taproom'
+  });
+  const updateAudit = listNpcProfileAudit(database, userId, conversationId, 'Mira')[0];
+  assert.equal(updateAudit.before.relationship, 'Trusts the protagonist after the cellar rescue');
+  assert.equal(updateAudit.after.relationship, 'Suspicious after the broken promise');
+
+  const rollback = rollbackNpcProfileAudit(database, userId, conversationId, 'Mira', updateAudit.id);
+  assert.equal(rollback.rolledBack, true);
+  assert.equal(rollback.npc.relationship, 'Trusts the protagonist after the cellar rescue');
+  assert.equal(rollback.npc.currentLocation, '');
+});
+
+test('NPC profile audit records effective profile writes only', () => {
+  const { database, userId, conversationId } = setupDatabase();
+
+  const created = upsertConversationNpc(database, userId, conversationId, {
+    npcName: 'Audited NPC',
+    source: 'agent',
+    evidence: 'first sighting',
+    confidence: 81,
+    currentLocation: 'Gate'
+  });
+  assert.equal(created.name, 'Audited NPC');
+
+  let audit = listNpcProfileAudit(database, userId, conversationId, 'Audited NPC');
+  assert.equal(audit.length, 1);
+  assert.equal(audit[0].action, 'create');
+  assert.equal(audit[0].actor, 'agent');
+  assert.equal(audit[0].before, null);
+  assert.equal(audit[0].after.currentLocation, 'Gate');
+
+  upsertConversationNpc(database, userId, conversationId, {
+    npcName: 'Audited NPC',
+    source: 'agent',
+    evidence: 'first sighting',
+    confidence: 81,
+    currentLocation: 'Gate'
+  });
+  audit = listNpcProfileAudit(database, userId, conversationId, 'Audited NPC');
+  assert.equal(audit.length, 1);
+
+  updateConversationNpc(database, userId, conversationId, 'Audited NPC', {
+    currentLocation: 'Tower',
+    aliases: ['Watcher']
+  });
+  audit = listNpcProfileAudit(database, userId, conversationId, 'Audited NPC');
+  assert.equal(audit.length, 2);
+  assert.equal(audit[0].action, 'update');
+  assert.equal(audit[0].actor, 'manual');
+  assert.equal(audit[0].before.currentLocation, 'Gate');
+  assert.equal(audit[0].after.currentLocation, 'Tower');
+  assert.deepEqual(audit[0].after.aliases, ['Watcher']);
+
+  hideConversationNpc(database, userId, conversationId, 'Audited NPC');
+  audit = listNpcProfileAudit(database, userId, conversationId, 'Audited NPC');
+  assert.equal(audit.length, 3);
+  assert.equal(audit[0].action, 'hide');
+  assert.equal(audit[0].actor, 'hidden');
+  assert.equal(audit[0].before.hidden, false);
+  assert.equal(audit[0].after.hidden, true);
+});
+
+test('NPC profile audit rollback restores the previous profile snapshot', () => {
+  const { database, userId, conversationId } = setupDatabase();
+
+  upsertConversationNpc(database, userId, conversationId, {
+    npcName: 'Rollback NPC',
+    source: 'agent',
+    evidence: 'arrived',
+    confidence: 70,
+    currentLocation: 'Dock'
+  });
+  updateConversationNpc(database, userId, conversationId, 'Rollback NPC', {
+    status: 'following',
+    currentLocation: 'Market',
+    aliases: ['Guide'],
+    memorySealed: true
+  });
+
+  const updateAudit = listNpcProfileAudit(database, userId, conversationId, 'Rollback NPC')[0];
+  assert.equal(updateAudit.action, 'update');
+
+  const result = rollbackNpcProfileAudit(database, userId, conversationId, 'Rollback NPC', updateAudit.id);
+  assert.equal(result.rolledBack, true);
+  assert.equal(result.npc.currentLocation, 'Dock');
+  assert.equal(result.npc.status, 'active');
+  assert.deepEqual(result.npc.aliases, []);
+  assert.equal(result.npc.memorySealed, false);
+
+  const audit = listNpcProfileAudit(database, userId, conversationId, 'Rollback NPC');
+  assert.equal(audit[0].action, 'rollback');
+  assert.equal(audit[0].before.currentLocation, 'Market');
+  assert.equal(audit[0].after.currentLocation, 'Dock');
+});
+
+test('NPC item audit records memory and behavior writes', () => {
+  const { database, userId, conversationId } = setupDatabase();
+
+  const memory = addNpcMemory(database, userId, conversationId, 'Audit Items', {
+    memoryType: 'event',
+    content: 'met at the inn'
+  });
+  updateNpcMemory(database, userId, conversationId, memory.id, {
+    memoryType: 'relationship',
+    content: 'trusts the user'
+  }, 'Audit Items');
+
+  const behavior = addNpcBehavior(database, userId, conversationId, 'Audit Items', {
+    behaviorType: 'dialogue',
+    triggerCondition: 'user greets',
+    action: 'answer warmly',
+    priority: 10,
+    enabled: true
+  });
+  deleteNpcBehavior(database, userId, conversationId, behavior.id, 'Audit Items');
+
+  const audit = listNpcAudit(database, userId, conversationId, 'Audit Items');
+  assert.equal(audit.length, 4);
+  assert.equal(audit[0].targetType, 'behavior');
+  assert.equal(audit[0].action, 'delete');
+  assert.equal(audit[0].before.action, 'answer warmly');
+  assert.equal(audit[0].after, null);
+  assert.equal(audit[1].targetType, 'behavior');
+  assert.equal(audit[1].action, 'create');
+  assert.equal(audit[2].targetType, 'memory');
+  assert.equal(audit[2].action, 'update');
+  assert.equal(audit[2].before.content, 'met at the inn');
+  assert.equal(audit[2].after.content, 'trusts the user');
+  assert.equal(audit[3].targetType, 'memory');
+  assert.equal(audit[3].action, 'create');
+});
+
+test('NPC item audit rollback restores memory updates and deleted behaviors', () => {
+  const { database, userId, conversationId } = setupDatabase();
+
+  const memory = addNpcMemory(database, userId, conversationId, 'Rollback Items', {
+    content: 'first memory'
+  });
+  updateNpcMemory(database, userId, conversationId, memory.id, {
+    content: 'changed memory'
+  }, 'Rollback Items');
+
+  let audit = listNpcAudit(database, userId, conversationId, 'Rollback Items');
+  const memoryUpdateAudit = audit[0];
+  assert.equal(memoryUpdateAudit.targetType, 'memory');
+  assert.equal(memoryUpdateAudit.action, 'update');
+
+  const memoryRollback = rollbackNpcAudit(database, userId, conversationId, 'Rollback Items', memoryUpdateAudit.id);
+  assert.equal(memoryRollback.targetType, 'memory');
+  assert.equal(memoryRollback.rolledBack, true);
+  assert.equal(memoryRollback.memory.content, 'first memory');
+  assert.equal(listNpcMemories(database, userId, conversationId, 'Rollback Items')[0].content, 'first memory');
+
+  const behavior = addNpcBehavior(database, userId, conversationId, 'Rollback Items', {
+    action: 'guard the door',
+    priority: 7
+  });
+  deleteNpcBehavior(database, userId, conversationId, behavior.id, 'Rollback Items');
+  audit = listNpcAudit(database, userId, conversationId, 'Rollback Items');
+  const behaviorDeleteAudit = audit[0];
+  assert.equal(behaviorDeleteAudit.targetType, 'behavior');
+  assert.equal(behaviorDeleteAudit.action, 'delete');
+
+  const behaviorRollback = rollbackNpcAudit(database, userId, conversationId, 'Rollback Items', behaviorDeleteAudit.id);
+  assert.equal(behaviorRollback.targetType, 'behavior');
+  assert.equal(behaviorRollback.rolledBack, true);
+  assert.equal(behaviorRollback.behavior.action, 'guard the door');
+  assert.equal(listNpcBehaviors(database, userId, conversationId, 'Rollback Items')[0].action, 'guard the door');
 });
 
 test('hideEmptyConversationNpcs hides NPCs without memories or behaviors only', () => {

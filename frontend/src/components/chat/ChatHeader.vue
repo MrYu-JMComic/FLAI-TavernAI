@@ -1,5 +1,5 @@
 <script setup>
-import { Coins, Home, Menu, Moon, Save, Sun, Users } from '@lucide/vue';
+import { Brain, Coins, Home, Menu, Moon, Save, Sun, Users } from '@lucide/vue';
 
 defineProps({
   showEconomyFeature: { type: Boolean, default: false },
@@ -8,7 +8,7 @@ defineProps({
   theme: { type: String, default: 'light' }
 });
 
-const emit = defineEmits(['navigate', 'toggle-theme', 'open-sidebar', 'open-economy', 'open-npc', 'open-saves']);
+const emit = defineEmits(['navigate', 'toggle-theme', 'open-sidebar', 'open-context', 'open-economy', 'open-npc', 'open-saves']);
 </script>
 
 <template>
@@ -32,6 +32,9 @@ const emit = defineEmits(['navigate', 'toggle-theme', 'open-sidebar', 'open-econ
       >
         <Moon v-if="theme === 'light'" :size="18" aria-hidden="true" />
         <Sun v-else :size="18" aria-hidden="true" />
+      </button>
+      <button class="deep-icon-button" type="button" aria-label="上下文检查器" title="上下文检查器" :disabled="!conversationReady" :aria-busy="!conversationReady" @click="emit('open-context')">
+        <Brain :size="18" />
       </button>
       <button v-if="showEconomyFeature" class="deep-icon-button" type="button" aria-label="经济系统" title="经济系统" :disabled="!conversationReady" :aria-busy="!conversationReady" @click="emit('open-economy')">
         <Coins :size="18" />

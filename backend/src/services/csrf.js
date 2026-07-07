@@ -13,6 +13,7 @@
  */
 
 import crypto from 'node:crypto';
+import { appConfig } from '../config.js';
 
 const CSRF_COOKIE_NAME = 'flai_csrf';
 const CSRF_HEADER_NAME = 'x-csrf-token';
@@ -32,7 +33,7 @@ function setCsrfCookie(response, token) {
   response.cookie(CSRF_COOKIE_NAME, token, {
     httpOnly: false, // 前端需要读取此 cookie 来设置 header
     sameSite: 'lax',
-    secure: process.env.NODE_ENV === 'production',
+    secure: appConfig.isProduction,
     maxAge: 24 * 60 * 60 * 1000, // 24 小时
     path: '/'
   });

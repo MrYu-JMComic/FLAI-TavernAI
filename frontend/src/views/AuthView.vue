@@ -1,7 +1,7 @@
 <script setup>
 import { computed, onBeforeUnmount, ref, watch } from 'vue';
 import { Eye, EyeOff, LogIn, UserPlus } from '@lucide/vue';
-import { login, register } from '../api';
+import { login, register } from '../api/auth.js';
 import { useNotify } from '../composables/useNotify';
 
 const props = defineProps({

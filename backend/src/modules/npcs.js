@@ -1,5 +1,6 @@
 import { newId, nowIso } from '../security.js';
 import { normalizeBoolean } from '../utils/boolean.js';
+import { parseJson } from '../utils/json.js';
 import { clampInteger } from '../utils/number.js';
 
 const NPC_STATUS_VALUES = new Set([
@@ -47,14 +48,25 @@ export function addNpcMemory(database, userId, conversationId, npcName, payload 
     )
     .run(id, conversationId, npcName, memoryType, content, timestamp);
 
-  return toNpcMemory(database.prepare('SELECT * FROM npc_memories WHERE id = ?').get(id));
+  const memory = toNpcMemory(database.prepare('SELECT * FROM npc_memories WHERE id = ?').get(id));
+  insertNpcItemAudit(database, {
+    conversationId,
+    npcName: memory.npcName,
+    itemType: 'memory',
+    itemId: memory.id,
+    action: 'create',
+    actor: normalizeNpcAuditActor(payload.auditActor || 'manual'),
+    before: null,
+    after: memory
+  });
+  return memory;
 }
 
-export function deleteNpcMemory(database, userId, conversationId, memoryId, npcName = '') {
+export function deleteNpcMemory(database, userId, conversationId, memoryId, npcName = '', options = {}) {
   const scopedNpcName = String(npcName || '');
   const row = database
     .prepare(
-      `SELECT npc_memories.id FROM npc_memories
+      `SELECT npc_memories.* FROM npc_memories
        JOIN conversations ON conversations.id = npc_memories.conversation_id
        WHERE npc_memories.id = ?
          AND npc_memories.conversation_id = ?
@@ -67,6 +79,19 @@ export function deleteNpcMemory(database, userId, conversationId, memoryId, npcN
   const result = database
     .prepare('DELETE FROM npc_memories WHERE id = ? AND conversation_id = ? AND (? = \'\' OR npc_name = ?)')
     .run(memoryId, conversationId, scopedNpcName, scopedNpcName);
+  if (result.changes > 0) {
+    const before = toNpcMemory(row);
+    insertNpcItemAudit(database, {
+      conversationId,
+      npcName: before.npcName,
+      itemType: 'memory',
+      itemId: before.id,
+      action: 'delete',
+      actor: normalizeNpcAuditActor(normalizePayload(options).auditActor || 'manual'),
+      before,
+      after: null
+    });
+  }
   return result.changes > 0;
 }
 
@@ -86,6 +111,7 @@ export function updateNpcMemory(database, userId, conversationId, memoryId, payl
     )
     .get(memoryId, conversationId, userId, scopedNpcName, scopedNpcName);
   if (!existing) return null;
+  const before = toNpcMemory(existing);
 
   const memoryType = payload.memoryType !== undefined ? normalizeMemoryType(payload.memoryType) : existing.memory_type;
   const content = payload.content !== undefined ? normalizeContent(payload.content) : existing.content;
@@ -99,9 +125,22 @@ export function updateNpcMemory(database, userId, conversationId, memoryId, payl
     .run(memoryType, content, memoryId, conversationId, scopedNpcName, scopedNpcName);
   if (result.changes === 0) return null;
 
-  return toNpcMemory(database
+  const updated = toNpcMemory(database
     .prepare('SELECT * FROM npc_memories WHERE id = ? AND conversation_id = ? AND (? = \'\' OR npc_name = ?)')
     .get(memoryId, conversationId, scopedNpcName, scopedNpcName));
+  if (!sameNpcItemSnapshot('memory', before, updated)) {
+    insertNpcItemAudit(database, {
+      conversationId,
+      npcName: updated.npcName,
+      itemType: 'memory',
+      itemId: updated.id,
+      action: 'update',
+      actor: normalizeNpcAuditActor(payload.auditActor || 'manual'),
+      before,
+      after: updated
+    });
+  }
+  return updated;
 }
 
 export function listNpcBehaviors(database, userId, conversationId, npcName) {
@@ -138,7 +177,18 @@ export function addNpcBehavior(database, userId, conversationId, npcName, payloa
     )
     .run(id, conversationId, npcName, behaviorType, triggerCondition, action, priority, enabled, timestamp);
 
-  return toNpcBehavior(database.prepare('SELECT * FROM npc_behaviors WHERE id = ?').get(id));
+  const behavior = toNpcBehavior(database.prepare('SELECT * FROM npc_behaviors WHERE id = ?').get(id));
+  insertNpcItemAudit(database, {
+    conversationId,
+    npcName: behavior.npcName,
+    itemType: 'behavior',
+    itemId: behavior.id,
+    action: 'create',
+    actor: normalizeNpcAuditActor(payload.auditActor || 'manual'),
+    before: null,
+    after: behavior
+  });
+  return behavior;
 }
 
 export function updateNpcBehavior(database, userId, conversationId, behaviorId, payload = {}, npcName = '') {
@@ -155,6 +205,7 @@ export function updateNpcBehavior(database, userId, conversationId, behaviorId, 
     )
     .get(behaviorId, conversationId, userId, scopedNpcName, scopedNpcName);
   if (!existing) return null;
+  const before = toNpcBehavior(existing);
 
   const behaviorType = payload.behaviorType !== undefined ? normalizeBehaviorType(payload.behaviorType) : existing.behavior_type;
   const triggerCondition = payload.triggerCondition !== undefined ? normalizeContent(payload.triggerCondition) : existing.trigger_condition;
@@ -171,16 +222,29 @@ export function updateNpcBehavior(database, userId, conversationId, behaviorId, 
     .run(behaviorType, triggerCondition, action, priority, enabled, behaviorId, conversationId, scopedNpcName, scopedNpcName);
   if (result.changes === 0) return null;
 
-  return toNpcBehavior(database
+  const updated = toNpcBehavior(database
     .prepare('SELECT * FROM npc_behaviors WHERE id = ? AND conversation_id = ? AND (? = \'\' OR npc_name = ?)')
     .get(behaviorId, conversationId, scopedNpcName, scopedNpcName));
+  if (!sameNpcItemSnapshot('behavior', before, updated)) {
+    insertNpcItemAudit(database, {
+      conversationId,
+      npcName: updated.npcName,
+      itemType: 'behavior',
+      itemId: updated.id,
+      action: 'update',
+      actor: normalizeNpcAuditActor(payload.auditActor || 'manual'),
+      before,
+      after: updated
+    });
+  }
+  return updated;
 }
 
-export function deleteNpcBehavior(database, userId, conversationId, behaviorId, npcName = '') {
+export function deleteNpcBehavior(database, userId, conversationId, behaviorId, npcName = '', options = {}) {
   const scopedNpcName = String(npcName || '');
   const row = database
     .prepare(
-      `SELECT npc_behaviors.id FROM npc_behaviors
+      `SELECT npc_behaviors.* FROM npc_behaviors
        JOIN conversations ON conversations.id = npc_behaviors.conversation_id
        WHERE npc_behaviors.id = ?
          AND npc_behaviors.conversation_id = ?
@@ -193,6 +257,19 @@ export function deleteNpcBehavior(database, userId, conversationId, behaviorId, 
   const result = database
     .prepare('DELETE FROM npc_behaviors WHERE id = ? AND conversation_id = ? AND (? = \'\' OR npc_name = ?)')
     .run(behaviorId, conversationId, scopedNpcName, scopedNpcName);
+  if (result.changes > 0) {
+    const before = toNpcBehavior(row);
+    insertNpcItemAudit(database, {
+      conversationId,
+      npcName: before.npcName,
+      itemType: 'behavior',
+      itemId: before.id,
+      action: 'delete',
+      actor: normalizeNpcAuditActor(normalizePayload(options).auditActor || 'manual'),
+      before,
+      after: null
+    });
+  }
   return result.changes > 0;
 }
 
@@ -207,6 +284,7 @@ export function upsertConversationNpc(database, userId, conversationId, payload 
   const existing = database
     .prepare('SELECT * FROM npc_registry WHERE conversation_id = ? AND npc_name = ?')
     .get(conversationId, npcName);
+  const beforeSnapshot = toNpcProfileSnapshot(existing);
   const source = payload.source !== undefined
     ? normalizeNpcSource(payload.source)
     : existing?.source || 'manual';
@@ -230,13 +308,16 @@ export function upsertConversationNpc(database, userId, conversationId, payload 
   const currentLocation = hasCurrentLocationPayload(payload)
     ? normalizeNpcLocation(payload.currentLocation ?? payload.current_location ?? payload.location)
     : normalizeNpcLocation(existing?.current_location || '');
+  const relationship = hasRelationshipPayload(payload)
+    ? normalizeNpcRelationship(payload.relationship ?? payload.relationshipSummary ?? payload.relationship_summary)
+    : normalizeNpcRelationship(existing?.relationship || '');
 
   if (existing) {
     const nextHidden = existing.hidden && !shouldUnhide ? 1 : hidden;
     database
       .prepare(
         `UPDATE npc_registry
-         SET source = ?, evidence = ?, confidence = ?, hidden = ?, status = ?, custom_status = ?, aliases = ?, memory_sealed = ?, current_location = ?, updated_at = ?
+         SET source = ?, evidence = ?, confidence = ?, hidden = ?, status = ?, custom_status = ?, aliases = ?, memory_sealed = ?, current_location = ?, relationship = ?, updated_at = ?
          WHERE conversation_id = ? AND npc_name = ?`
       )
       .run(
@@ -249,6 +330,7 @@ export function upsertConversationNpc(database, userId, conversationId, payload 
         JSON.stringify(aliases),
         memorySealed,
         currentLocation,
+        relationship,
         timestamp,
         conversationId,
         npcName
@@ -256,8 +338,8 @@ export function upsertConversationNpc(database, userId, conversationId, payload 
   } else {
     database
       .prepare(
-        `INSERT INTO npc_registry (id, conversation_id, npc_name, source, evidence, confidence, hidden, status, custom_status, aliases, memory_sealed, current_location, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        `INSERT INTO npc_registry (id, conversation_id, npc_name, source, evidence, confidence, hidden, status, custom_status, aliases, memory_sealed, current_location, relationship, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         newId(),
@@ -272,21 +354,36 @@ export function upsertConversationNpc(database, userId, conversationId, payload 
         JSON.stringify(aliases),
         memorySealed,
         currentLocation,
+        relationship,
         timestamp,
         timestamp
       );
   }
 
-  return toNpcRegistry(database
+  const updatedRow = database
     .prepare('SELECT * FROM npc_registry WHERE conversation_id = ? AND npc_name = ?')
-    .get(conversationId, npcName));
+    .get(conversationId, npcName);
+  const afterSnapshot = toNpcProfileSnapshot(updatedRow);
+  if (!sameNpcProfileSnapshot(beforeSnapshot, afterSnapshot)) {
+    insertNpcProfileAudit(database, {
+      conversationId,
+      npcName,
+      action: resolveNpcAuditAction(payload, beforeSnapshot, afterSnapshot),
+      actor: normalizeNpcAuditActor(payload.auditActor ?? source),
+      before: beforeSnapshot,
+      after: afterSnapshot
+    });
+  }
+  return toNpcRegistry(updatedRow);
 }
 
 export function updateConversationNpc(database, userId, conversationId, npcName, payload = {}) {
+  const normalized = normalizePayload(payload);
   return upsertConversationNpc(database, userId, conversationId, {
-    ...normalizePayload(payload),
+    ...normalized,
     npcName,
-    unhide: payload?.unhide ?? false
+    unhide: normalized.unhide ?? false,
+    auditActor: normalized.auditActor ?? (normalized.source !== undefined ? normalized.source : 'manual')
   });
 }
 
@@ -294,6 +391,8 @@ export function hideConversationNpc(database, userId, conversationId, npcName) {
   return upsertConversationNpc(database, userId, conversationId, {
     npcName,
     source: 'hidden',
+    auditAction: 'hide',
+    auditActor: 'hidden',
     evidence: '',
     confidence: 0,
     hidden: true
@@ -304,7 +403,7 @@ export function hideEmptyConversationNpcs(database, userId, conversationId, main
   const npcs = listConversationNpcs(database, userId, conversationId, mainCharacterName);
   const hidden = [];
   for (const npc of npcs) {
-    if (Number(npc.memoryCount || 0) !== 0 || Number(npc.behaviorCount || 0) !== 0 || npc.currentLocation) {
+    if (Number(npc.memoryCount || 0) !== 0 || Number(npc.behaviorCount || 0) !== 0 || npc.currentLocation || npc.relationship) {
       continue;
     }
     const hiddenNpc = hideConversationNpc(database, userId, conversationId, npc.name);
@@ -327,6 +426,128 @@ export function isConversationNpcHidden(database, conversationId, npcName) {
     .prepare('SELECT hidden FROM npc_registry WHERE conversation_id = ? AND npc_name = ?')
     .get(conversationId, name);
   return Boolean(row?.hidden);
+}
+
+export function listNpcProfileAudit(database, userId, conversationId, npcName, options = {}) {
+  assertConversationAccess(database, userId, conversationId);
+  const normalizedName = normalizeNpcName(npcName);
+  if (!normalizedName) {
+    return [];
+  }
+  const payload = normalizePayload(options);
+  const limit = clampInteger(payload.limit, 1, 100, 25);
+  const offset = clampInteger(payload.offset, 0, 10000, 0);
+  const rows = database
+    .prepare(
+      `SELECT * FROM npc_profile_audit
+       WHERE conversation_id = ? AND npc_name = ?
+       ORDER BY created_at DESC, rowid DESC
+       LIMIT ? OFFSET ?`
+    )
+    .all(conversationId, normalizedName, limit, offset);
+  const audit = [];
+  for (const row of rows) {
+    audit.push(toNpcProfileAudit(row));
+  }
+  return audit;
+}
+
+export function listNpcAudit(database, userId, conversationId, npcName, options = {}) {
+  assertConversationAccess(database, userId, conversationId);
+  const normalizedName = normalizeNpcName(npcName);
+  if (!normalizedName) {
+    return [];
+  }
+  const payload = normalizePayload(options);
+  const limit = clampInteger(payload.limit, 1, 100, 30);
+  const offset = clampInteger(payload.offset, 0, 10000, 0);
+  const rows = database
+    .prepare(
+      `SELECT 'profile' AS target_type, '' AS target_id, id, conversation_id, npc_name, action, actor, before_json, after_json, created_at, rowid AS audit_order
+       FROM npc_profile_audit
+       WHERE conversation_id = ? AND npc_name = ?
+       UNION ALL
+       SELECT item_type AS target_type, item_id AS target_id, id, conversation_id, npc_name, action, actor, before_json, after_json, created_at, rowid AS audit_order
+       FROM npc_item_audit
+       WHERE conversation_id = ? AND npc_name = ?
+       ORDER BY created_at DESC, audit_order DESC
+       LIMIT ? OFFSET ?`
+    )
+    .all(conversationId, normalizedName, conversationId, normalizedName, limit, offset);
+  const audit = [];
+  for (const row of rows) {
+    audit.push(toNpcAudit(row));
+  }
+  return audit;
+}
+
+export function rollbackNpcProfileAudit(database, userId, conversationId, npcName, auditId, options = {}) {
+  assertConversationAccess(database, userId, conversationId);
+  const normalizedName = normalizeNpcName(npcName);
+  const normalizedAuditId = String(auditId || '').trim();
+  if (!normalizedName || !normalizedAuditId) {
+    return null;
+  }
+  const auditRow = database
+    .prepare(
+      `SELECT * FROM npc_profile_audit
+       WHERE id = ? AND conversation_id = ? AND npc_name = ?`
+    )
+    .get(normalizedAuditId, conversationId, normalizedName);
+  if (!auditRow) {
+    return null;
+  }
+
+  const targetSnapshot = normalizeStoredNpcProfileSnapshot(parseJson(auditRow.before_json, null), normalizedName);
+  const currentRow = database
+    .prepare('SELECT * FROM npc_registry WHERE conversation_id = ? AND npc_name = ?')
+    .get(conversationId, normalizedName);
+  const beforeSnapshot = toNpcProfileSnapshot(currentRow);
+  let afterSnapshot = null;
+
+  if (targetSnapshot) {
+    writeNpcProfileSnapshot(database, conversationId, normalizedName, targetSnapshot);
+    afterSnapshot = toNpcProfileSnapshot(database
+      .prepare('SELECT * FROM npc_registry WHERE conversation_id = ? AND npc_name = ?')
+      .get(conversationId, normalizedName));
+  } else {
+    database
+      .prepare('DELETE FROM npc_registry WHERE conversation_id = ? AND npc_name = ?')
+      .run(conversationId, normalizedName);
+  }
+
+  let rollbackAudit = null;
+  if (!sameNpcProfileSnapshot(beforeSnapshot, afterSnapshot)) {
+    rollbackAudit = insertNpcProfileAudit(database, {
+      conversationId,
+      npcName: normalizedName,
+      action: 'rollback',
+      actor: normalizeNpcAuditActor(normalizePayload(options).actor || 'manual'),
+      before: beforeSnapshot,
+      after: afterSnapshot
+    });
+  }
+
+  return {
+    rolledBack: Boolean(rollbackAudit),
+    audit: rollbackAudit,
+    npc: afterSnapshot
+      ? toNpcRegistry(database
+        .prepare('SELECT * FROM npc_registry WHERE conversation_id = ? AND npc_name = ?')
+        .get(conversationId, normalizedName))
+      : null
+  };
+}
+
+export function rollbackNpcAudit(database, userId, conversationId, npcName, auditId, options = {}) {
+  const profileResult = rollbackNpcProfileAudit(database, userId, conversationId, npcName, auditId, options);
+  if (profileResult) {
+    return {
+      targetType: 'profile',
+      ...profileResult
+    };
+  }
+  return rollbackNpcItemAudit(database, userId, conversationId, npcName, auditId, options);
 }
 
 // ── NPC Discovery ──
@@ -412,6 +633,7 @@ export function listConversationNpcs(database, userId, conversationId, mainChara
       status: registry?.status || 'active',
       customStatus: registry?.customStatus || '',
       currentLocation: registry?.currentLocation || '',
+      relationship: registry?.relationship || '',
       aliases: registry?.aliases || [],
       memorySealed: Boolean(registry?.memorySealed),
       memorySealActive: Boolean(registry?.memorySealActive)
@@ -468,6 +690,529 @@ export function buildNpcBehaviorPrompt(database, conversationId) {
 }
 
 // ── Helpers ──
+
+function rollbackNpcItemAudit(database, userId, conversationId, npcName, auditId, options = {}) {
+  assertConversationAccess(database, userId, conversationId);
+  const normalizedName = normalizeNpcName(npcName);
+  const normalizedAuditId = String(auditId || '').trim();
+  if (!normalizedName || !normalizedAuditId) {
+    return null;
+  }
+  const auditRow = database
+    .prepare(
+      `SELECT * FROM npc_item_audit
+       WHERE id = ? AND conversation_id = ? AND npc_name = ?`
+    )
+    .get(normalizedAuditId, conversationId, normalizedName);
+  if (!auditRow) {
+    return null;
+  }
+
+  const itemType = normalizeNpcItemType(auditRow.item_type);
+  const itemId = String(auditRow.item_id || '').trim();
+  const targetSnapshot = normalizeStoredNpcItemSnapshot(
+    itemType,
+    parseJson(auditRow.before_json, null),
+    conversationId,
+    normalizedName,
+    itemId
+  );
+  const currentSnapshot = getNpcItemSnapshot(database, itemType, conversationId, normalizedName, itemId);
+  let afterSnapshot = null;
+
+  if (targetSnapshot) {
+    writeNpcItemSnapshot(database, itemType, conversationId, normalizedName, targetSnapshot);
+    afterSnapshot = getNpcItemSnapshot(database, itemType, conversationId, normalizedName, itemId);
+  } else {
+    deleteNpcItemSnapshot(database, itemType, conversationId, normalizedName, itemId);
+  }
+
+  let rollbackAudit = null;
+  if (!sameNpcItemSnapshot(itemType, currentSnapshot, afterSnapshot)) {
+    rollbackAudit = insertNpcItemAudit(database, {
+      conversationId,
+      npcName: normalizedName,
+      itemType,
+      itemId,
+      action: 'rollback',
+      actor: normalizeNpcAuditActor(normalizePayload(options).actor || 'manual'),
+      before: currentSnapshot,
+      after: afterSnapshot
+    });
+  }
+
+  const result = {
+    targetType: itemType,
+    rolledBack: Boolean(rollbackAudit),
+    audit: rollbackAudit
+  };
+  if (itemType === 'memory') {
+    result.memory = afterSnapshot;
+  } else {
+    result.behavior = afterSnapshot;
+  }
+  return result;
+}
+
+function insertNpcProfileAudit(database, payload = {}) {
+  const id = newId();
+  const timestamp = nowIso();
+  database
+    .prepare(
+      `INSERT INTO npc_profile_audit (id, conversation_id, npc_name, action, actor, before_json, after_json, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+    )
+    .run(
+      id,
+      payload.conversationId,
+      payload.npcName,
+      normalizeNpcAuditAction(payload.action),
+      normalizeNpcAuditActor(payload.actor),
+      JSON.stringify(payload.before ?? null),
+      JSON.stringify(payload.after ?? null),
+      timestamp
+    );
+  return toNpcProfileAudit(database.prepare('SELECT * FROM npc_profile_audit WHERE id = ?').get(id));
+}
+
+function insertNpcItemAudit(database, payload = {}) {
+  const id = newId();
+  const timestamp = nowIso();
+  const itemType = normalizeNpcItemType(payload.itemType);
+  database
+    .prepare(
+      `INSERT INTO npc_item_audit (id, conversation_id, npc_name, item_type, item_id, action, actor, before_json, after_json, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    )
+    .run(
+      id,
+      payload.conversationId,
+      payload.npcName,
+      itemType,
+      String(payload.itemId || ''),
+      normalizeNpcAuditAction(payload.action),
+      normalizeNpcAuditActor(payload.actor),
+      JSON.stringify(payload.before ?? null),
+      JSON.stringify(payload.after ?? null),
+      timestamp
+    );
+  return toNpcItemAudit(database.prepare('SELECT * FROM npc_item_audit WHERE id = ?').get(id));
+}
+
+function writeNpcProfileSnapshot(database, conversationId, npcName, snapshot) {
+  const timestamp = nowIso();
+  const existing = database
+    .prepare('SELECT id FROM npc_registry WHERE conversation_id = ? AND npc_name = ?')
+    .get(conversationId, npcName);
+  if (existing) {
+    database
+      .prepare(
+        `UPDATE npc_registry
+         SET source = ?, evidence = ?, confidence = ?, hidden = ?, status = ?, custom_status = ?, aliases = ?, memory_sealed = ?, current_location = ?, relationship = ?, updated_at = ?
+         WHERE conversation_id = ? AND npc_name = ?`
+      )
+      .run(
+        snapshot.source,
+        snapshot.evidence,
+        snapshot.confidence,
+        snapshot.hidden ? 1 : 0,
+        snapshot.status,
+        snapshot.customStatus,
+        JSON.stringify(snapshot.aliases),
+        snapshot.memorySealed ? 1 : 0,
+        snapshot.currentLocation,
+        snapshot.relationship,
+        timestamp,
+        conversationId,
+        npcName
+      );
+    return;
+  }
+
+  database
+    .prepare(
+      `INSERT INTO npc_registry (id, conversation_id, npc_name, source, evidence, confidence, hidden, status, custom_status, aliases, memory_sealed, current_location, relationship, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    )
+    .run(
+      newId(),
+      conversationId,
+      npcName,
+      snapshot.source,
+      snapshot.evidence,
+      snapshot.confidence,
+      snapshot.hidden ? 1 : 0,
+      snapshot.status,
+      snapshot.customStatus,
+      JSON.stringify(snapshot.aliases),
+      snapshot.memorySealed ? 1 : 0,
+      snapshot.currentLocation,
+      snapshot.relationship,
+      timestamp,
+      timestamp
+    );
+}
+
+function resolveNpcAuditAction(payload, beforeSnapshot, afterSnapshot) {
+  if (payload.auditAction !== undefined) {
+    return normalizeNpcAuditAction(payload.auditAction);
+  }
+  if (!beforeSnapshot && afterSnapshot) {
+    return 'create';
+  }
+  if (beforeSnapshot && !afterSnapshot) {
+    return 'delete';
+  }
+  if (afterSnapshot?.hidden && !beforeSnapshot?.hidden) {
+    return 'hide';
+  }
+  if (!afterSnapshot?.hidden && beforeSnapshot?.hidden) {
+    return 'restore';
+  }
+  return 'update';
+}
+
+function normalizeNpcAuditAction(value) {
+  const normalized = String(value || '').trim().toLowerCase().replace(/[\s-]+/g, '_');
+  return ['create', 'update', 'hide', 'restore', 'rollback', 'delete'].includes(normalized)
+    ? normalized
+    : 'update';
+}
+
+function normalizeNpcAuditActor(value) {
+  const normalized = String(value || '').trim().toLowerCase().replace(/[\s-]+/g, '_');
+  return ['manual', 'agent', 'memory', 'behavior', 'scan', 'hidden', 'system', 'rollback'].includes(normalized)
+    ? normalized
+    : 'system';
+}
+
+function normalizeNpcItemType(value) {
+  const normalized = String(value || '').trim().toLowerCase();
+  return normalized === 'behavior' ? 'behavior' : 'memory';
+}
+
+function toNpcAudit(row) {
+  if (row.target_type === 'profile') {
+    return toNpcProfileAudit(row);
+  }
+  return toNpcItemAudit(row);
+}
+
+function toNpcProfileAudit(row) {
+  return {
+    id: row.id,
+    conversationId: row.conversation_id,
+    npcName: row.npc_name,
+    targetType: 'profile',
+    targetId: '',
+    action: normalizeNpcAuditAction(row.action),
+    actor: normalizeNpcAuditActor(row.actor),
+    before: parseJson(row.before_json, null),
+    after: parseJson(row.after_json, null),
+    createdAt: row.created_at
+  };
+}
+
+function toNpcItemAudit(row) {
+  const itemType = normalizeNpcItemType(row.item_type ?? row.target_type);
+  return {
+    id: row.id,
+    conversationId: row.conversation_id,
+    npcName: row.npc_name,
+    targetType: itemType,
+    targetId: row.item_id ?? row.target_id ?? '',
+    action: normalizeNpcAuditAction(row.action),
+    actor: normalizeNpcAuditActor(row.actor),
+    before: normalizeStoredNpcItemSnapshot(
+      itemType,
+      parseJson(row.before_json, null),
+      row.conversation_id,
+      row.npc_name,
+      row.item_id ?? row.target_id ?? ''
+    ),
+    after: normalizeStoredNpcItemSnapshot(
+      itemType,
+      parseJson(row.after_json, null),
+      row.conversation_id,
+      row.npc_name,
+      row.item_id ?? row.target_id ?? ''
+    ),
+    createdAt: row.created_at
+  };
+}
+
+function toNpcProfileSnapshot(row) {
+  if (!row) {
+    return null;
+  }
+  const registry = toNpcRegistry(row);
+  return {
+    name: registry.name,
+    source: normalizeNpcSource(registry.source),
+    evidence: normalizeEvidence(registry.evidence),
+    confidence: clampInteger(registry.confidence, 0, 100, 0),
+    hidden: Boolean(registry.hidden),
+    status: normalizeNpcStatus(registry.status),
+    customStatus: normalizeCustomStatus(registry.customStatus),
+    currentLocation: normalizeNpcLocation(registry.currentLocation),
+    relationship: normalizeNpcRelationship(registry.relationship),
+    aliases: normalizeNpcAliases(registry.aliases),
+    memorySealed: Boolean(registry.memorySealed)
+  };
+}
+
+function normalizeStoredNpcProfileSnapshot(value, fallbackName) {
+  if (!value || typeof value !== 'object') {
+    return null;
+  }
+  const name = normalizeNpcName(value.name ?? value.npcName ?? value.npc_name ?? fallbackName);
+  if (!name) {
+    return null;
+  }
+  return {
+    name,
+    source: normalizeNpcSource(value.source),
+    evidence: normalizeEvidence(value.evidence),
+    confidence: clampInteger(value.confidence, 0, 100, 0),
+    hidden: normalizeBoolean(value.hidden, false),
+    status: normalizeNpcStatus(value.status),
+    customStatus: normalizeCustomStatus(value.customStatus ?? value.custom_status),
+    currentLocation: normalizeNpcLocation(value.currentLocation ?? value.current_location),
+    relationship: normalizeNpcRelationship(value.relationship ?? value.relationshipSummary ?? value.relationship_summary),
+    aliases: normalizeNpcAliases(value.aliases),
+    memorySealed: normalizeBoolean(value.memorySealed ?? value.memory_sealed, false)
+  };
+}
+
+function sameNpcProfileSnapshot(current, next) {
+  if (current === next) {
+    return true;
+  }
+  if (!current || !next) {
+    return false;
+  }
+  return current.name === next.name
+    && current.source === next.source
+    && current.evidence === next.evidence
+    && Number(current.confidence || 0) === Number(next.confidence || 0)
+    && Boolean(current.hidden) === Boolean(next.hidden)
+    && current.status === next.status
+    && current.customStatus === next.customStatus
+    && current.currentLocation === next.currentLocation
+    && current.relationship === next.relationship
+    && Boolean(current.memorySealed) === Boolean(next.memorySealed)
+    && sameNpcProfileAliases(current.aliases, next.aliases);
+}
+
+function sameNpcProfileAliases(currentAliases, nextAliases) {
+  const current = Array.isArray(currentAliases) ? currentAliases : [];
+  const next = Array.isArray(nextAliases) ? nextAliases : [];
+  if (current.length !== next.length) {
+    return false;
+  }
+  for (let index = 0; index < current.length; index += 1) {
+    if (String(current[index]) !== String(next[index])) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function getNpcItemSnapshot(database, itemType, conversationId, npcName, itemId) {
+  const row = getNpcItemRow(database, itemType, conversationId, npcName, itemId);
+  if (!row) {
+    return null;
+  }
+  return itemType === 'behavior' ? toNpcBehavior(row) : toNpcMemory(row);
+}
+
+function getNpcItemRow(database, itemType, conversationId, npcName, itemId) {
+  if (!itemId) {
+    return null;
+  }
+  if (itemType === 'behavior') {
+    return database
+      .prepare('SELECT * FROM npc_behaviors WHERE id = ? AND conversation_id = ? AND npc_name = ?')
+      .get(itemId, conversationId, npcName);
+  }
+  return database
+    .prepare('SELECT * FROM npc_memories WHERE id = ? AND conversation_id = ? AND npc_name = ?')
+    .get(itemId, conversationId, npcName);
+}
+
+function writeNpcItemSnapshot(database, itemType, conversationId, npcName, snapshot) {
+  if (itemType === 'behavior') {
+    writeNpcBehaviorSnapshot(database, conversationId, npcName, snapshot);
+    return;
+  }
+  writeNpcMemorySnapshot(database, conversationId, npcName, snapshot);
+}
+
+function writeNpcMemorySnapshot(database, conversationId, npcName, snapshot) {
+  const existing = getNpcItemRow(database, 'memory', conversationId, npcName, snapshot.id);
+  if (existing) {
+    database
+      .prepare(
+        `UPDATE npc_memories
+         SET npc_name = ?, memory_type = ?, content = ?, created_at = ?
+         WHERE id = ? AND conversation_id = ?`
+      )
+      .run(
+        snapshot.npcName,
+        normalizeMemoryType(snapshot.memoryType),
+        normalizeContent(snapshot.content),
+        snapshot.createdAt || nowIso(),
+        snapshot.id,
+        conversationId
+      );
+    return;
+  }
+  database
+    .prepare(
+      `INSERT INTO npc_memories (id, conversation_id, npc_name, memory_type, content, created_at)
+       VALUES (?, ?, ?, ?, ?, ?)`
+    )
+    .run(
+      snapshot.id,
+      conversationId,
+      snapshot.npcName || npcName,
+      normalizeMemoryType(snapshot.memoryType),
+      normalizeContent(snapshot.content),
+      snapshot.createdAt || nowIso()
+    );
+}
+
+function writeNpcBehaviorSnapshot(database, conversationId, npcName, snapshot) {
+  const existing = getNpcItemRow(database, 'behavior', conversationId, npcName, snapshot.id);
+  if (existing) {
+    database
+      .prepare(
+        `UPDATE npc_behaviors
+         SET npc_name = ?, behavior_type = ?, trigger_condition = ?, action = ?, priority = ?, enabled = ?, created_at = ?
+         WHERE id = ? AND conversation_id = ?`
+      )
+      .run(
+        snapshot.npcName,
+        normalizeBehaviorType(snapshot.behaviorType),
+        normalizeContent(snapshot.triggerCondition),
+        normalizeContent(snapshot.action),
+        clampInteger(snapshot.priority, 0, 100, 0),
+        normalizeBoolean(snapshot.enabled, true) ? 1 : 0,
+        snapshot.createdAt || nowIso(),
+        snapshot.id,
+        conversationId
+      );
+    return;
+  }
+  database
+    .prepare(
+      `INSERT INTO npc_behaviors (id, conversation_id, npc_name, behavior_type, trigger_condition, action, priority, enabled, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    )
+    .run(
+      snapshot.id,
+      conversationId,
+      snapshot.npcName || npcName,
+      normalizeBehaviorType(snapshot.behaviorType),
+      normalizeContent(snapshot.triggerCondition),
+      normalizeContent(snapshot.action),
+      clampInteger(snapshot.priority, 0, 100, 0),
+      normalizeBoolean(snapshot.enabled, true) ? 1 : 0,
+      snapshot.createdAt || nowIso()
+    );
+}
+
+function deleteNpcItemSnapshot(database, itemType, conversationId, npcName, itemId) {
+  if (!itemId) {
+    return;
+  }
+  if (itemType === 'behavior') {
+    database
+      .prepare('DELETE FROM npc_behaviors WHERE id = ? AND conversation_id = ? AND npc_name = ?')
+      .run(itemId, conversationId, npcName);
+    return;
+  }
+  database
+    .prepare('DELETE FROM npc_memories WHERE id = ? AND conversation_id = ? AND npc_name = ?')
+    .run(itemId, conversationId, npcName);
+}
+
+function normalizeStoredNpcItemSnapshot(itemType, value, conversationId, npcName, itemId) {
+  if (!value || typeof value !== 'object') {
+    return null;
+  }
+  if (itemType === 'behavior') {
+    return normalizeStoredNpcBehaviorSnapshot(value, conversationId, npcName, itemId);
+  }
+  return normalizeStoredNpcMemorySnapshot(value, conversationId, npcName, itemId);
+}
+
+function normalizeStoredNpcMemorySnapshot(value, conversationId, npcName, itemId) {
+  const id = String(value.id || itemId || '').trim();
+  if (!id) {
+    return null;
+  }
+  return {
+    id,
+    conversationId: String(value.conversationId ?? value.conversation_id ?? conversationId),
+    npcName: normalizeNpcName(value.npcName ?? value.npc_name ?? npcName),
+    memoryType: normalizeMemoryType(value.memoryType ?? value.memory_type),
+    content: normalizeContent(value.content),
+    createdAt: String(value.createdAt ?? value.created_at ?? nowIso())
+  };
+}
+
+function normalizeStoredNpcBehaviorSnapshot(value, conversationId, npcName, itemId) {
+  const id = String(value.id || itemId || '').trim();
+  if (!id) {
+    return null;
+  }
+  return {
+    id,
+    conversationId: String(value.conversationId ?? value.conversation_id ?? conversationId),
+    npcName: normalizeNpcName(value.npcName ?? value.npc_name ?? npcName),
+    behaviorType: normalizeBehaviorType(value.behaviorType ?? value.behavior_type),
+    triggerCondition: normalizeContent(value.triggerCondition ?? value.trigger_condition),
+    action: normalizeContent(value.action),
+    priority: clampInteger(value.priority, 0, 100, 0),
+    enabled: normalizeBoolean(value.enabled, true),
+    createdAt: String(value.createdAt ?? value.created_at ?? nowIso())
+  };
+}
+
+function sameNpcItemSnapshot(itemType, current, next) {
+  if (current === next) {
+    return true;
+  }
+  if (!current || !next) {
+    return false;
+  }
+  if (itemType === 'behavior') {
+    return sameNpcBehaviorSnapshot(current, next);
+  }
+  return sameNpcMemorySnapshot(current, next);
+}
+
+function sameNpcMemorySnapshot(current, next) {
+  return current.id === next.id
+    && current.conversationId === next.conversationId
+    && current.npcName === next.npcName
+    && current.memoryType === next.memoryType
+    && current.content === next.content
+    && current.createdAt === next.createdAt;
+}
+
+function sameNpcBehaviorSnapshot(current, next) {
+  return current.id === next.id
+    && current.conversationId === next.conversationId
+    && current.npcName === next.npcName
+    && current.behaviorType === next.behaviorType
+    && current.triggerCondition === next.triggerCondition
+    && current.action === next.action
+    && Number(current.priority || 0) === Number(next.priority || 0)
+    && Boolean(current.enabled) === Boolean(next.enabled)
+    && current.createdAt === next.createdAt;
+}
 
 function buildNpcBehaviorPromptFromRows(database, conversationId, behaviors, memories) {
   const registryRows = database
@@ -556,7 +1301,7 @@ function buildNpcBehaviorPromptFromRows(database, conversationId, behaviors, mem
   if (!promptBody) {
     return '';
   }
-  return `\n[NPC 自主行为引擎 / NPC autonomous behavior engine]\n${promptBody}\nUse the NPC status, current location, exact aliases, behavior rules, and available memories to keep side characters consistent. Treat current location as a continuity constraint: do not make an NPC appear in another place, teleport, or join long-distance dialogue unless the story explicitly moves them, uses a communication channel, or updates their location. Exact aliases identify the same NPC; stable nicknames or titles count only when they uniquely name this NPC. Generic roles, vague references, pronouns, and group labels are not aliases. If an NPC is dead or permanently_left, do not portray them as present or active unless the story explicitly changes that status. Do not invent memories that are not provided.\n`;
+  return `\n[NPC 自主行为引擎 / NPC autonomous behavior engine]\n${promptBody}\nUse the NPC status, current location, relationship summary, exact aliases, behavior rules, and available memories to keep side characters consistent. Treat current location as a continuity constraint: do not make an NPC appear in another place, teleport, or join long-distance dialogue unless the story explicitly moves them, uses a communication channel, or updates their location. Treat relationship summaries as stable interpersonal state, not a license to invent new memories. Exact aliases identify the same NPC; stable nicknames or titles count only when they uniquely name this NPC. Generic roles, vague references, pronouns, and group labels are not aliases. If an NPC is dead or permanently_left, do not portray them as present or active unless the story explicitly changes that status. Do not invent memories that are not provided.\n`;
 }
 
 function buildNpcMetadataPromptLines(registry) {
@@ -569,6 +1314,9 @@ function buildNpcMetadataPromptLines(registry) {
   }
   if (registry.currentLocation) {
     lines.push(`  Current location: ${registry.currentLocation}`);
+  }
+  if (registry.relationship) {
+    lines.push(`  Relationship: ${registry.relationship}`);
   }
   if (registry.aliases.length > 0) {
     lines.push(`  Exact aliases: ${registry.aliases.join(', ')}`);
@@ -585,6 +1333,7 @@ function hasPromptRegistryMetadata(registry) {
       !registry.hidden &&
       ((registry.status && registry.status !== 'active') ||
         registry.currentLocation ||
+        registry.relationship ||
         registry.aliases.length > 0 ||
         isNpcRegistryMemorySealActive(registry))
   );
@@ -665,6 +1414,16 @@ function hasCurrentLocationPayload(payload = {}) {
 
 function normalizeNpcLocation(value) {
   return String(value || '').replace(/\s+/g, ' ').trim().slice(0, 160);
+}
+
+function hasRelationshipPayload(payload = {}) {
+  return (payload.relationship !== undefined && payload.relationship !== null) ||
+    (payload.relationshipSummary !== undefined && payload.relationshipSummary !== null) ||
+    (payload.relationship_summary !== undefined && payload.relationship_summary !== null);
+}
+
+function normalizeNpcRelationship(value) {
+  return String(value || '').replace(/\s+/g, ' ').trim().slice(0, 240);
 }
 
 function parseNpcAliases(value) {
@@ -749,6 +1508,7 @@ function toNpcRegistry(row) {
     status: normalizeNpcStatus(row.status || 'active'),
     customStatus: normalizeCustomStatus(row.custom_status || ''),
     currentLocation: normalizeNpcLocation(row.current_location || ''),
+    relationship: normalizeNpcRelationship(row.relationship || ''),
     aliases: parseNpcAliases(row.aliases),
     memorySealed: Boolean(row.memory_sealed),
     createdAt: row.created_at,

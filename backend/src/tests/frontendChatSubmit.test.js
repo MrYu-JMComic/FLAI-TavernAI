@@ -117,6 +117,213 @@ test('chat submit remembers failed prompts for visible recovery actions', async 
   }
 });
 
+test('chat submitDraft reuses persisted asset URL attachments without overwriting drafts', async () => {
+  const originalFetch = globalThis.fetch;
+  let requestBody = null;
+
+  globalThis.fetch = async (url, request = {}) => {
+    assert.equal(String(url), '/api/conversations/conv-1/messages');
+    requestBody = JSON.parse(request.body);
+    return jsonResponse({
+      userMessage: {
+        id: 'user-rerun-1',
+        role: 'user',
+        content: 'Retry with image',
+        attachments: [
+          {
+            type: 'image',
+            url: '/api/assets/asset-1/content',
+            mimeType: 'image/png',
+            name: 'scene.png'
+          }
+        ]
+      },
+      assistantMessage: {
+        id: 'assistant-rerun-1',
+        role: 'assistant',
+        content: 'Image-aware reply'
+      },
+      provider: 'test-provider',
+      usage: null
+    });
+  };
+
+  try {
+    const { submit } = createSubmitState({
+      provider: refValue({
+        providerType: 'openai',
+        model: 'gpt-4.1',
+        supportsReasoning: false
+      }),
+      selectedPresetId: refValue('')
+    });
+
+    submit.input.value = 'Existing draft';
+    assert.equal(await submit.submitDraft('Blocked rerun', []), false);
+    assert.equal(submit.input.value, 'Existing draft');
+
+    submit.input.value = '';
+    submit.useStream.value = false;
+    assert.equal(await submit.submitDraft('Retry with image', [
+      {
+        type: 'image',
+        url: '/api/assets/asset-1/content',
+        mimeType: 'image/png',
+        name: 'scene.png',
+        alt: 'scene'
+      }
+    ]), true);
+
+    assert.equal(requestBody.stream, false);
+    assert.equal(requestBody.content, 'Retry with image');
+    assert.deepEqual(requestBody.attachments, [
+      {
+        id: 'chat-image-0',
+        type: 'image',
+        mimeType: 'image/png',
+        name: 'scene.png',
+        alt: 'scene',
+        size: 0,
+        url: '/api/assets/asset-1/content'
+      }
+    ]);
+    assert.equal(submit.input.value, '');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('chat continueGeneration appends only an assistant draft and preserves composer drafts', async () => {
+  const originalFetch = globalThis.fetch;
+  const previousUser = { id: 'user-prev', role: 'user', content: 'Open the door' };
+  const previousAssistant = { id: 'assistant-prev', role: 'assistant', content: 'The door opens with a groan.' };
+  const messages = shallowRef([previousUser, previousAssistant]);
+  let requestBody = null;
+
+  globalThis.fetch = async (url, request = {}) => {
+    assert.equal(String(url), '/api/conversations/conv-1/messages/continue');
+    requestBody = JSON.parse(request.body);
+    return jsonResponse({
+      userMessage: null,
+      assistantMessage: {
+        id: 'assistant-continue-1',
+        role: 'assistant',
+        content: 'Cold blue light spills across the floor.'
+      },
+      provider: 'test-provider',
+      usage: null
+    });
+  };
+
+  try {
+    const { submit } = createSubmitState({
+      messages,
+      selectedPresetId: refValue('preset-continue'),
+      provider: refValue({
+        providerType: 'openai',
+        model: 'gpt-4.1',
+        supportsReasoning: false
+      })
+    });
+
+    submit.useStream.value = false;
+    submit.input.value = 'Unsaved draft';
+    submit.chatAttachments.value = [{
+      id: 'draft-image',
+      type: 'image',
+      url: '/api/assets/draft-image',
+      mimeType: 'image/png',
+      name: 'draft.png'
+    }];
+
+    assert.equal(submit.canContinueGeneration.value, true);
+    assert.equal(await submit.continueGeneration(), true);
+
+    assert.equal(requestBody.stream, false);
+    assert.equal(requestBody.content, undefined);
+    assert.equal(requestBody.presetId, 'preset-continue');
+    assert.equal(submit.input.value, 'Unsaved draft');
+    assert.equal(submit.chatAttachments.value.length, 1);
+    assert.deepEqual(messages.value.map((message) => message.role), ['user', 'assistant', 'assistant']);
+    assert.equal(messages.value[2].id, 'assistant-continue-1');
+    assert.equal(messages.value[2].content, 'Cold blue light spills across the floor.');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('chat continueGeneration streams from the continue endpoint without a local user draft', async () => {
+  const originalFetch = globalThis.fetch;
+  const originalWindow = globalThis.window;
+  const previousUser = { id: 'user-prev', role: 'user', content: 'Begin the spell' };
+  const previousAssistant = { id: 'assistant-prev', role: 'assistant', content: 'Silver sparks gather.' };
+  const messages = shallowRef([previousUser, previousAssistant]);
+  const requestedUrls = [];
+
+  globalThis.window = {
+    setTimeout,
+    clearTimeout,
+    localStorage: {
+      getItem() { return null; },
+      setItem() {}
+    }
+  };
+
+  globalThis.fetch = async (url, request = {}) => {
+    const requestUrl = String(url);
+    requestedUrls.push(requestUrl);
+    if (requestUrl === '/api/csrf-token') {
+      return jsonResponse({ csrfToken: 'csrf-continue-test' });
+    }
+    if (requestUrl === '/api/conversations/conv-1/messages/continue' && request.method === 'POST') {
+      assert.equal(JSON.parse(request.body).stream, true);
+      return sseResponse([
+        `event: meta\ndata: ${JSON.stringify({ provider: 'test', model: 'continue-model' })}`,
+        `event: content\ndata: ${JSON.stringify({ text: 'Then the spell blooms.' })}`,
+        `event: done\ndata: ${JSON.stringify({
+          userMessage: null,
+          assistantMessage: { id: 'assistant-continue-2', role: 'assistant', content: 'Then the spell blooms.' },
+          provider: 'test'
+        })}`
+      ], request.signal, { close: true });
+    }
+    if (requestUrl === '/api/conversations/conv-1/messages' && (!request.method || request.method === 'GET')) {
+      return jsonResponse({ conversation: { id: 'conv-1' }, messages: [] });
+    }
+    return jsonResponse({ error: `Unexpected request: ${requestUrl}` }, 500);
+  };
+
+  try {
+    const { submit } = createSubmitState({
+      messages,
+      selectedPresetId: refValue(''),
+      provider: refValue({
+        providerType: 'openai',
+        model: 'gpt-4.1',
+        supportsReasoning: false
+      }),
+      stickToBottomIfNeeded() {}
+    });
+
+    submit.input.value = 'Keep this draft';
+    assert.equal(await submit.continueGeneration(), true);
+
+    assert.equal(requestedUrls.includes('/api/conversations/conv-1/messages/continue'), true);
+    assert.equal(requestedUrls.includes('/api/conversations/conv-1/messages'), false);
+    assert.equal(submit.input.value, 'Keep this draft');
+    assert.deepEqual(messages.value.map((message) => message.role), ['user', 'assistant', 'assistant']);
+    assert.equal(messages.value[2].id, 'assistant-continue-2');
+    assert.equal(messages.value[2].streaming, false);
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalWindow === undefined) {
+      delete globalThis.window;
+    } else {
+      globalThis.window = originalWindow;
+    }
+  }
+});
+
 test('chat submit restores failed stream prompts without removing previous messages', async () => {
   const originalFetch = globalThis.fetch;
   const originalWindow = globalThis.window;
@@ -179,7 +386,7 @@ test('chat submit restores failed stream prompts without removing previous messa
   }
 });
 
-test('chat submit auto-detects image generation models without a manual toggle', async () => {
+test('chat submit enables image generation by default for image-capable models', async () => {
   const originalFetch = globalThis.fetch;
   let requestBody = null;
 
@@ -220,6 +427,55 @@ test('chat submit auto-detects image generation models without a manual toggle',
     assert.equal(requestBody.stream, false);
     assert.equal(requestBody.imageGeneration, true);
     assert.equal(requestBody.content, 'Draw a lantern');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('chat submit image generation switch can explicitly disable image output', async () => {
+  const originalFetch = globalThis.fetch;
+  let requestBody = null;
+
+  globalThis.fetch = async (url, request = {}) => {
+    assert.equal(String(url), '/api/conversations/conv-1/messages');
+    requestBody = JSON.parse(request.body);
+    return jsonResponse({
+      userMessage: {
+        id: 'user-text-1',
+        role: 'user',
+        content: 'Describe a lantern'
+      },
+      assistantMessage: {
+        id: 'assistant-text-1',
+        role: 'assistant',
+        content: 'A brass lantern glows softly.'
+      },
+      provider: 'OpenAI',
+      usage: null
+    });
+  };
+
+  try {
+    const { submit } = createSubmitState({
+      provider: refValue({
+        providerType: 'openai',
+        model: 'gpt-image-2',
+        supportsReasoning: false
+      }),
+      selectedPresetId: refValue('')
+    });
+
+    assert.equal(submit.canToggleImageGeneration.value, true);
+    assert.equal(submit.imageGenerationEnabled.value, true);
+    submit.toggleImageGeneration();
+    assert.equal(submit.imageGenerationEnabled.value, false);
+
+    submit.input.value = 'Describe a lantern';
+    await submit.submit();
+
+    assert.equal(requestBody.stream, false);
+    assert.equal(requestBody.imageGeneration, false);
+    assert.equal(requestBody.content, 'Describe a lantern');
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -631,15 +887,15 @@ test('chat submit skips stream append follow-scroll after stale or stopped appen
   );
 });
 
-test('chat submit image generation mode is derived from the provider model', () => {
+test('chat submit image generation mode is controlled by model capability and switch state', () => {
   assert.match(
     chatSubmitSource,
-    /const shouldGenerateImage = isAutomaticImageGenerationModel\(provider\.value\);[\s\S]*imageGeneration: shouldGenerateImage[\s\S]*if \(useStream\.value && !shouldGenerateImage\)/
+    /const chatProviderCapabilities = computed\(\(\) => resolveProviderModelCapabilities\(provider\.value \|\| \{\}\)\);[\s\S]*const canGenerateImages = computed\(\(\) => Boolean\(chatProviderCapabilities\.value\.imageGeneration\)\);[\s\S]*const canToggleImageGeneration = computed\(\(\) => Boolean\(canGenerateImages\.value\)\);[\s\S]*const shouldGenerateImage = canToggleImageGeneration\.value && imageGenerationEnabled\.value;[\s\S]*imageGeneration: shouldGenerateImage[\s\S]*if \(useStream\.value && canUseStream\.value && !shouldGenerateImage\)/
   );
-  assert.match(chatSubmitSource, /openai:\s*new Set\(\['gpt-image-2'\]\)/);
-  assert.match(chatSubmitSource, /xai:\s*new Set\(\['grok-imagine-image', 'grok-imagine-image-quality'\]\)/);
-  assert.match(chatSubmitSource, /gemini:\s*new Set\(\[[\s\S]*'gemini-3\.1-flash-image'[\s\S]*'gemini-3-pro-image'[\s\S]*'gemini-2\.5-flash-image'[\s\S]*\]\)/);
-  assert.doesNotMatch(chatSubmitSource, /flai-chat-image-generation-enabled|toggleImageGeneration|imageGenerationEnabled/);
+  assert.match(chatSubmitSource, /import \{ resolveProviderModelCapabilities \} from '\.\.\/\.\.\/\.\.\/\.\.\/shared\/providerCapabilities\.js';/);
+  assert.match(chatSubmitSource, /const imageGenerationEnabled = ref\(readLocalBoolean\('flai-chat-image-generation-enabled', true\)\);/);
+  assert.match(chatSubmitSource, /function toggleImageGeneration\(\)\s*{\s*if \(sending\.value \|\| !canToggleImageGeneration\.value\) {\s*return;\s*}[\s\S]*writeLocalBoolean\('flai-chat-image-generation-enabled', imageGenerationEnabled\.value\);[\s\S]*}/);
+  assert.doesNotMatch(chatSubmitSource, /isAutomaticImageGenerationModel|IMAGE_GENERATION_MODELS_BY_PROVIDER/);
 });
 
 test('chat submit persisted draft matching avoids candidate list allocations', () => {

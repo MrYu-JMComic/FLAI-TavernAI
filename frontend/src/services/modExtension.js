@@ -1,6 +1,6 @@
 import { registerExtension, unregisterExtension, getAllExtensions } from './extensions.js';
 import { HOOK_TYPES } from './extensionHooks.js';
-import { apiRequest } from '../api.js';
+import { apiRequest } from '../api/core.js';
 
 export const MOD_EXTENSION_PREFIX = '__mod__';
 

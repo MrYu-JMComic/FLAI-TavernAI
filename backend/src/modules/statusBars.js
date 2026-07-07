@@ -32,9 +32,7 @@ export function upsertStatusBar(database, userId, conversationId, payload) {
     .get(conversationId);
 
   const timestamp = nowIso();
-  const name = normalizeName(payload.name);
-  const template = normalizeTemplate(payload.template);
-  const variables = normalizeVariables(payload.variables, template);
+  const { name, template, variables } = normalizeStatusBarPayload(payload);
 
   if (existing) {
     database
@@ -70,6 +68,13 @@ export function deleteStatusBar(database, userId, conversationId) {
     .prepare('DELETE FROM status_bars WHERE conversation_id = ?')
     .run(conversationId);
   return result.changes > 0;
+}
+
+export function normalizeStatusBarPayload(payload = {}) {
+  const name = normalizeName(payload.name);
+  const template = normalizeTemplate(payload.template);
+  const variables = normalizeVariables(payload.variables, template);
+  return { name, template, variables };
 }
 
 // ── Variable Extraction ──
