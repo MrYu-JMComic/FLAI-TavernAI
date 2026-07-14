@@ -336,128 +336,97 @@ function clampInt(value, min, max) {
 
 <template>
   <section class="page-stack preset-page">
-    <!-- List Mode -->
-    <template v-if="!editing">
-      <div class="section-heading">
-        <div>
-          <p>对话预设管理</p>
-          <h1>预设</h1>
-        </div>
-        <div class="heading-actions">
-          <button class="primary-button" :disabled="presetListActionBusy" :aria-busy="presetListActionBusy" @click="startCreate">
-            <Plus :size="18" />
-            <span>新建预设</span>
-          </button>
-          <button class="ghost-button" @click="emit('navigate', 'home')">
-            <ArrowLeft :size="18" />
-            <span>返回</span>
-          </button>
-        </div>
+    <div class="section-heading">
+      <div>
+        <p>对话预设管理</p>
+        <h1>预设工作台</h1>
       </div>
-
-      <div v-if="loading" class="loading-state">
-        <div class="loading-spinner"></div>
-        <p>正在加载预设...</p>
-      </div>
-
-      <div v-else-if="error" class="empty-state error-state">
-        <AlertCircle :size="48" />
-        <h2>加载失败</h2>
-        <p>{{ error }}</p>
-        <div class="empty-state-actions">
-          <button class="ghost-button" :disabled="loading" :aria-busy="loading" @click="loadPresets">
-            <span>重试</span>
-          </button>
-          <button class="primary-button" :disabled="presetListActionBusy" :aria-busy="presetListActionBusy" @click="startCreate">
-            <Plus :size="18" />
-            <span>新建预设</span>
-          </button>
-          <button class="ghost-button" @click="emit('navigate', 'home')">
-            <span>返回首页</span>
-          </button>
-        </div>
-      </div>
-
-      <div v-else-if="!presets.length" class="empty-state">
-        <SlidersHorizontal :size="48" />
-        <h2>还没有预设</h2>
-        <p>预设可以保存系统提示词和生成参数组合，快速切换对话风格。</p>
+      <div class="heading-actions">
         <button class="primary-button" :disabled="presetListActionBusy" :aria-busy="presetListActionBusy" @click="startCreate">
           <Plus :size="18" />
-          <span>创建第一个预设</span>
+          <span>新建预设</span>
+        </button>
+        <button class="ghost-button" @click="emit('navigate', 'home')">
+          <ArrowLeft :size="18" />
+          <span>返回</span>
         </button>
       </div>
+    </div>
 
-      <div v-else class="preset-grid">
-        <div
-          v-for="preset in presets"
-          :key="preset.id"
-          class="preset-card"
-          :class="{ 'is-default': preset.isDefault, 'is-busy': presetListActionBusy }"
-          :aria-disabled="presetListActionBusy"
-          @click="startEdit(preset)"
-        >
-          <div class="preset-card-header">
-            <strong>{{ preset.name }}</strong>
-            <span v-if="preset.isDefault" class="default-badge">
-              <Star :size="14" />
-              默认
-            </span>
+    <div class="preset-workbench" :class="{ 'editor-open': editing }">
+      <aside class="preset-library" aria-label="预设列表">
+        <div class="preset-library-head">
+          <div>
+            <p>Library</p>
+            <h2>已有预设</h2>
           </div>
-          <p v-if="preset.systemPrompt" class="preset-card-prompt">
-            {{ promptSummary(preset.systemPrompt) }}
-          </p>
-          <p v-else class="preset-card-prompt muted-text">无系统提示词</p>
-          <div class="preset-card-params">
-            <span>T={{ preset.temperature }}</span>
-            <span>Max={{ preset.maxTokens }}</span>
-            <span>TopP={{ preset.topP }}</span>
-          </div>
-          <div class="preset-card-actions" @click.stop>
-            <button
-              v-if="!preset.isDefault"
-              class="icon-button"
-              type="button"
-              title="设为默认"
-              :aria-label="`设为默认预设：${preset.name}`"
-              :disabled="presetListActionBusy"
-              :aria-busy="defaultingPresetId === preset.id"
-              @click="handleSetDefault(preset)"
-            >
-              <Star :size="16" />
-            </button>
-            <button
-              class="icon-button danger"
-              type="button"
-              :title="deletingPresetId === preset.id ? '删除中...' : '删除'"
-              :aria-label="deletingPresetId === preset.id ? `正在删除预设：${preset.name}` : `删除预设：${preset.name}`"
-              :disabled="presetListActionBusy"
-              :aria-busy="deletingPresetId === preset.id"
-              @click="handleDelete(preset)"
-            >
-              <Trash2 :size="16" />
-            </button>
+          <span>{{ presets.length }} 项</span>
+        </div>
+        <div v-if="loading" class="loading-state">
+          <div class="loading-spinner"></div>
+          <p>正在加载预设...</p>
+        </div>
+        <div v-else-if="error" class="empty-state error-state">
+          <AlertCircle :size="40" />
+          <h2>加载失败</h2>
+          <p>{{ error }}</p>
+          <div class="empty-state-actions">
+            <button class="ghost-button" :disabled="loading" :aria-busy="loading" @click="loadPresets">重试</button>
+            <button class="primary-button" :disabled="presetListActionBusy" :aria-busy="presetListActionBusy" @click="startCreate">新建预设</button>
+            <button class="ghost-button" @click="emit('navigate', 'home')">返回首页</button>
           </div>
         </div>
-      </div>
-    </template>
-
-    <!-- Edit/Create Mode -->
-    <template v-else>
-      <div class="section-heading">
-        <div>
-          <p>{{ formTitle }}</p>
-          <h1>{{ isEdit ? form.name || '编辑预设' : '新建预设' }}</h1>
-        </div>
-        <div class="heading-actions">
-          <button class="ghost-button" :disabled="saving" @click="cancelEdit">
-            <ArrowLeft :size="18" />
-            <span>返回列表</span>
+        <div v-else-if="!presets.length" class="empty-state">
+          <SlidersHorizontal :size="42" />
+          <h2>还没有预设</h2>
+          <p>保存系统提示词与生成参数，聊天时即可快速切换。</p>
+          <button class="primary-button" :disabled="presetListActionBusy" :aria-busy="presetListActionBusy" @click="startCreate">
+            <Plus :size="18" />
+            <span>创建第一个预设</span>
           </button>
         </div>
-      </div>
+        <div v-else class="preset-grid preset-library-list">
+          <article
+            v-for="preset in presets"
+            :key="preset.id"
+            class="preset-card"
+            :class="{ 'is-default': preset.isDefault, 'is-busy': presetListActionBusy, active: editing?.id === preset.id }"
+            :aria-disabled="presetListActionBusy"
+            @click="startEdit(preset)"
+          >
+            <div class="preset-card-header">
+              <strong>{{ preset.name }}</strong>
+              <span v-if="preset.isDefault" class="default-badge"><Star :size="14" />默认</span>
+            </div>
+            <p v-if="preset.systemPrompt" class="preset-card-prompt">{{ promptSummary(preset.systemPrompt) }}</p>
+            <p v-else class="preset-card-prompt muted-text">无系统提示词</p>
+            <div class="preset-card-params">
+              <span>T={{ preset.temperature }}</span>
+              <span>Max={{ preset.maxTokens }}</span>
+              <span>TopP={{ preset.topP }}</span>
+            </div>
+            <div class="preset-card-actions" @click.stop>
+              <button v-if="!preset.isDefault" class="icon-button" type="button" title="设为默认" :aria-label="`设为默认预设：${preset.name}`" :disabled="presetListActionBusy" :aria-busy="defaultingPresetId === preset.id" @click="handleSetDefault(preset)">
+                <Star :size="16" />
+              </button>
+              <button class="icon-button danger" type="button" :title="deletingPresetId === preset.id ? '删除中...' : '删除'" :aria-label="deletingPresetId === preset.id ? `正在删除预设：${preset.name}` : `删除预设：${preset.name}`" :disabled="presetListActionBusy" :aria-busy="deletingPresetId === preset.id" @click="handleDelete(preset)">
+                <Trash2 :size="16" />
+              </button>
+            </div>
+          </article>
+        </div>
+      </aside>
 
-      <form class="form-panel preset-form" @submit.prevent="handleSave">
+      <form v-if="editing" class="form-panel preset-form" @submit.prevent="handleSave">
+        <header class="preset-editor-head">
+          <div>
+            <p>{{ formTitle }}</p>
+            <h2>{{ isEdit ? form.name || '编辑预设' : '新建预设' }}</h2>
+          </div>
+          <button class="icon-button" type="button" aria-label="关闭预设编辑器" :disabled="saving" @click="cancelEdit">
+            <X :size="18" />
+          </button>
+        </header>
         <label class="field">
           <span>预设名称</span>
           <input
@@ -556,7 +525,16 @@ function clampInt(value, min, max) {
           </button>
         </div>
       </form>
-    </template>
+      <section v-else class="preset-editor-empty">
+        <SlidersHorizontal :size="46" aria-hidden="true" />
+        <h2>选择一个预设开始编辑</h2>
+        <p>也可以新建预设，为不同故事保存独立的提示词和生成参数。</p>
+        <button class="primary-button" :disabled="presetListActionBusy" :aria-busy="presetListActionBusy" @click="startCreate">
+          <Plus :size="18" />
+          <span>新建预设</span>
+        </button>
+      </section>
+    </div>
   </section>
 </template>
 

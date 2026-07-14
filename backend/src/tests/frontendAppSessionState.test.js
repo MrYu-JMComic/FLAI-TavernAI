@@ -59,3 +59,18 @@ test('App auth boundary resets use stable user and provider setters', () => {
     /} catch \(error\) {[\s\S]*setUserIfChanged\(null\);[\s\S]*setProviderIfChanged\(null\);[\s\S]*clearNotifications\(\);/
   );
 });
+
+test('App refreshes the saved provider model catalog in the background after startup', () => {
+  assert.match(
+    appScript,
+    /import \{ refreshProviderModels \} from '\.\/services\/modelCatalog\.js';/
+  );
+  assert.match(
+    appScript,
+    /async function refreshProvider\(authScope = authScopeVersion\) \{[\s\S]*setProviderIfChanged\(nextProvider\);[\s\S]*void refreshProviderModelCatalog\(nextProvider, authScope, requestId\);[\s\S]*return true;/
+  );
+  assert.match(
+    appScript,
+    /async function refreshProviderModelCatalog\(nextProvider, authScope, requestId\) \{[\s\S]*const canUseSavedCredential = Boolean\(nextProvider\?\.apiKey \|\| nextProvider\?\.apiKeySet\);[\s\S]*const canUseLocalNoAuth = nextProvider\?\.providerType === 'custom'[\s\S]*isLocalOrPrivateBaseUrl\(nextProvider\?\.baseUrl\);[\s\S]*if \(!nextProvider\?\.baseUrl \|\| nextProvider\.apiKeyNeedsReset \|\| \(!canUseSavedCredential && !canUseLocalNoAuth\)\) \{[\s\S]*await refreshProviderModels\(nextProvider, \{ forceRefresh: false \}\);[\s\S]*recordFrontendDiagnostic\('app\.provider\.models\.refresh', error, \{ requestId \}\);/
+  );
+});

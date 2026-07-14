@@ -234,7 +234,7 @@ function percentLabel(value) {
 </script>
 
 <template>
-  <section class="form-panel worldbook-match-lab">
+  <section class="form-panel worldbook-match-lab" aria-label="世界书命中实验室">
     <div class="inline-heading">
       <div>
         <h2>匹配实验室</h2>

@@ -117,6 +117,32 @@ export function getCharacterTagNames(database, characterId, userId = '') {
     .map((row) => row.name);
 }
 
+export function getCharacterTagsMap(database, characterIds = []) {
+  const ids = [...new Set(characterIds.filter(Boolean))];
+  const result = new Map();
+  if (!ids.length) {
+    return result;
+  }
+  const placeholders = ids.map(() => '?').join(', ');
+  const rows = database
+    .prepare(
+      `SELECT character_tags.character_id, tags.user_id, tags.id, tags.name, tags.color FROM character_tags
+       JOIN tags ON tags.id = character_tags.tag_id
+       WHERE character_tags.character_id IN (${placeholders})
+       ORDER BY tags.name COLLATE NOCASE ASC, tags.name ASC, tags.rowid ASC`
+    )
+    .all(...ids);
+  for (const row of rows) {
+    let bucket = result.get(row.character_id);
+    if (!bucket) {
+      bucket = [];
+      result.set(row.character_id, bucket);
+    }
+    bucket.push(row);
+  }
+  return result;
+}
+
 // ── Helpers ──
 
 function normalizeTagName(name) {

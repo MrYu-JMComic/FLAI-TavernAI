@@ -103,8 +103,8 @@ test('PresetView freezes list entry actions while preset work is busy', () => {
     /async function handleSetDefault\(preset\)\s*{\s*if \(presetViewDisposed \|\| presetListActionBusy\.value\)/
   );
 
-  assert.equal(countMatches(presetViewTemplate, /:disabled="presetListActionBusy"/g), 5);
-  assert.equal(countMatches(presetViewTemplate, /:aria-busy="presetListActionBusy"/g), 3);
+  assert.equal(countMatches(presetViewTemplate, /:disabled="presetListActionBusy"/g), 6);
+  assert.equal(countMatches(presetViewTemplate, /:aria-busy="presetListActionBusy"/g), 4);
   assert.match(presetViewTemplate, /'is-busy': presetListActionBusy/);
   assert.match(presetViewTemplate, /:aria-disabled="presetListActionBusy"/);
   assert.match(presetViewTemplate, /:aria-busy="defaultingPresetId === preset\.id"/);

@@ -4,7 +4,7 @@ import test from 'node:test';
 
 const { createAppDatabase } = await import('../db.js');
 const { createCharacter, getCharacter } = await import('../modules/characters.js');
-const { createWorldBook, getCharacterWorldBookId, linkWorldBookToCharacter } = await import('../modules/worldBooks.js');
+const { createWorldBook, getCharacterWorldBookId, getCharacterWorldBookIds, linkWorldBookToCharacter } = await import('../modules/worldBooks.js');
 const { createCharactersRouter } = await import('../routes/characters.js');
 const { insertUser, withServer } = await import('./routeTestUtils.js');
 
@@ -225,6 +225,13 @@ function createCharacterRoutesApp(database, userId) {
     },
     asyncRoute: (handler) => (request, response, next) => Promise.resolve(handler(request, response, next)).catch(next),
     withCharacterTags: (character) => character,
+    withCharacterListExtras: (characters) => {
+      const worldBookIds = getCharacterWorldBookIds(database, characters.map((c) => c.id));
+      return characters.map((character) => ({
+        ...character,
+        worldBookId: worldBookIds.get(character.id) || null
+      }));
+    },
     withWorldBookId: (character) => (
       character ? { ...character, worldBookId: getCharacterWorldBookId(database, character.id) } : character
     ),

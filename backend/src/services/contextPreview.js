@@ -31,6 +31,8 @@ export function buildConversationContextPreview(database, user, conversationId, 
     history: getRecentMessages(database, user.id, conversation.id),
     activePreset,
     contextBudgetCharacters: payload.contextBudgetCharacters ?? payload.contextBudgetChars ?? payload.contextBudget,
+    // Preview must not consume sticky/cooldown/delay state or advance the message counter.
+    persistWorldBookState: false,
     resolveAttachmentsForModel: (attachments) => resolveChatAttachmentsForModel(database, user.id, attachments)
   });
   const providerDiagnostics = buildProviderDiagnostics(database, user.id);

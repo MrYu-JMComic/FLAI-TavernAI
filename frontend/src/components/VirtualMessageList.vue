@@ -1,5 +1,5 @@
 <script setup>
-import { computed, ref, watch } from 'vue';
+import { computed, nextTick, ref, watch } from 'vue';
 import { useVirtualizer } from '@tanstack/vue-virtual';
 
 const props = defineProps({
@@ -14,6 +14,10 @@ const props = defineProps({
   overscan: {
     type: Number,
     default: 5
+  },
+  virtualize: {
+    type: Boolean,
+    default: false
   }
 });
 
@@ -48,7 +52,7 @@ function estimateSize(index) {
 
 const virtualizer = useVirtualizer(
   computed(() => ({
-    count: props.messages.length,
+    count: props.virtualize ? props.messages.length : 0,
     getScrollElement: () => scrollContainerRef.value,
     estimateSize,
     overscan: props.overscan
@@ -58,7 +62,7 @@ const virtualizer = useVirtualizer(
 // Measure actual rendered items
 function measureElement(el) {
   if (!el) return;
-  virtualizer.measureElement?.(el);
+  virtualizer.value?.measureElement?.(el);
 
   const messageId = el.dataset?.messageId;
   if (!messageId) return;
@@ -74,6 +78,13 @@ function getScrollElement() {
 }
 
 function scrollToBottom(smooth = false) {
+  if (props.virtualize && props.messages.length) {
+    virtualizer.value?.scrollToIndex?.(props.messages.length - 1, {
+      align: 'end',
+      behavior: smooth ? 'smooth' : 'auto'
+    });
+    return;
+  }
   const container = scrollContainerRef.value;
   if (!container) return;
   const top = Math.max(0, container.scrollHeight - container.clientHeight);
@@ -88,6 +99,35 @@ function scrollToBottom(smooth = false) {
   }
 }
 
+function scrollToMessage(messageId, options = {}) {
+  const targetId = String(messageId || '');
+  if (!targetId) return false;
+  let targetIndex = -1;
+  for (let index = 0; index < props.messages.length; index += 1) {
+    if (String(props.messages[index]?.id || '') === targetId) {
+      targetIndex = index;
+      break;
+    }
+  }
+  if (targetIndex < 0) return false;
+  if (!props.virtualize) {
+    const target = scrollContainerRef.value?.querySelector?.(`[data-message-id="${cssEscape(targetId)}"]`);
+    target?.scrollIntoView?.({ behavior: options.smooth === false ? 'auto' : 'smooth', block: options.block || 'end' });
+    return Boolean(target);
+  }
+  virtualizer.value?.scrollToIndex?.(targetIndex, {
+    align: options.block === 'start' ? 'start' : options.block === 'center' ? 'center' : 'end',
+    behavior: options.smooth === false ? 'auto' : 'smooth'
+  });
+  nextTick(() => virtualizer.value?.measure?.());
+  return true;
+}
+
+function cssEscape(value) {
+  if (typeof CSS !== 'undefined' && typeof CSS.escape === 'function') return CSS.escape(value);
+  return String(value).replace(/["\\]/g, '\\$&');
+}
+
 function isNearBottom(threshold = 120) {
   const container = scrollContainerRef.value;
   if (!container) return true;
@@ -99,7 +139,8 @@ defineExpose({
   isNearBottom,
   scrollContainerRef,
   getScrollElement,
-  measureElement
+  measureElement,
+  scrollToMessage
 });
 
 function handleScroll(event) {
@@ -128,7 +169,9 @@ function handleTouchmove(event) {
     @touchstart.passive="handleTouchstart"
     @touchmove.passive="handleTouchmove"
   >
+    <slot v-if="!messages.length" name="empty" />
     <div
+      v-if="virtualize && messages.length"
       class="virtual-scroll-spacer"
       :style="{ height: `${virtualizer.getTotalSize()}px`, position: 'relative' }"
     >
@@ -154,6 +197,17 @@ function handleTouchmove(event) {
         />
       </div>
     </div>
+    <template v-else>
+      <div
+        v-for="(message, index) in messages"
+        :key="message.id || index"
+        class="virtual-scroll-static-item"
+        :data-message-id="message.id"
+      >
+        <slot :message="message" :index="index" :measure="measureElement" />
+      </div>
+    </template>
+    <slot name="footer" />
   </div>
 </template>
 
@@ -163,6 +217,7 @@ function handleTouchmove(event) {
   flex-direction: column;
   min-height: 0;
   overflow: auto;
+  overflow-anchor: none;
   overscroll-behavior: contain;
   scrollbar-gutter: stable;
 }
@@ -172,6 +227,10 @@ function handleTouchmove(event) {
 }
 
 .virtual-scroll-item {
+  width: 100%;
+}
+
+.virtual-scroll-static-item {
   width: 100%;
 }
 </style>

@@ -78,12 +78,12 @@ test('ChatContextInspector exposes prompt diagnostics and long-term memory revie
 test('ChatHeader and ChatView wire the context inspector into the chat workspace', () => {
   assert.match(chatHeaderScript, /Brain/);
   assert.match(chatHeaderScript, /'open-context'/);
-  assert.match(chatHeaderTemplate, /aria-label="上下文检查器"[\s\S]*@click="emit\('open-context'\)"/);
-  assert.match(chatViewScript, /import ChatContextInspector from '..\/components\/chat\/ChatContextInspector\.vue'/);
+  assert.match(chatHeaderTemplate, /runMoreAction\('open-context', \$event\)[\s\S]*上下文检查器/);
+  assert.match(chatViewScript, /const ChatContextInspector = defineAsyncComponent\(\(\) => import\('\.\.\/components\/chat\/ChatContextInspector\.vue'\)\);/);
   assert.match(chatViewScript, /const contextInspectorOpen = ref\(false\);/);
   assert.match(chatViewScript, /function openContextInspector\(\)[\s\S]*conversationReady\.value[\s\S]*contextInspectorOpen\.value = true;/);
   assert.match(chatViewScript, /function closeContextInspector\(\)[\s\S]*contextInspectorOpen\.value = false;/);
   assert.match(chatViewScript, /event\.key === 'Escape' && contextInspectorOpen\.value/);
-  assert.match(chatViewTemplate, /@open-context="openContextInspector"/);
-  assert.match(chatViewTemplate, /<ChatContextInspector[\s\S]*:open="contextInspectorOpen"[\s\S]*:draft-content="input"[\s\S]*:draft-attachments="chatAttachments"[\s\S]*:preset-id="selectedPresetId"[\s\S]*@close="closeContextInspector"/);
+  assert.match(chatViewTemplate, /@open-context="\(event\) => openWorkspaceTool\('context', event\)"/);
+  assert.match(chatViewTemplate, /<ChatContextInspector[\s\S]*:open="contextInspectorOpen"[\s\S]*:draft-content="input"[\s\S]*:draft-attachments="chatAttachments"[\s\S]*:preset-id="selectedPresetId"[\s\S]*@close="closeWorkspaceTool\('context'\)"/);
 });

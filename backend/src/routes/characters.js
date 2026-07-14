@@ -38,6 +38,7 @@ export function createCharactersRouter({
   asyncRoute,
   withCharacterTags,
   withWorldBookId,
+  withCharacterListExtras,
   hasUsableProvider,
   getChatProviderSettings,
   withEtag,
@@ -54,7 +55,7 @@ export function createCharactersRouter({
       sort: request.query.sort,
       tag: request.query.tag
     });
-    withListCache(request, response, characters.map((c) => withCharacterTags(withWorldBookId(c))));
+    withListCache(request, response, withCharacterListExtras(characters));
   });
 
   router.post('/', requireAuth, validate(createCharacterSchema), (request, response) => {

@@ -1,17 +1,13 @@
 ﻿<script setup>
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { computed, defineAsyncComponent, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { BookOpen, Bot, Clipboard, RotateCcw, Settings, X } from '@lucide/vue';
-import EconomyPanel from '../components/EconomyPanel.vue';
-import NpcPanel from '../components/NpcPanel.vue';
-import SaveLoadPanel from '../components/SaveLoadPanel.vue';
 import StatusBar from '../components/StatusBar.vue';
+import VirtualMessageList from '../components/VirtualMessageList.vue';
 import ChatSidebar from '../components/chat/ChatSidebar.vue';
-import ChatSettingsDrawer from '../components/chat/ChatSettingsDrawer.vue';
-import ChatContextInspector from '../components/chat/ChatContextInspector.vue';
 import ChatHeader from '../components/chat/ChatHeader.vue';
 import ChatMessageItem from '../components/chat/ChatMessageItem.vue';
-import ChatModelSwitcher from '../components/chat/ChatModelSwitcher.vue';
 import ChatComposer from '../components/chat/ChatComposer.vue';
+import ChatStatusSummary from '../components/chat/ChatStatusSummary.vue';
 import { fetchConversationMessages, fetchConversationNpcs } from '../api/chat.js';
 import { saveProviderSettings } from '../api/providers.js';
 import { useNotify } from '../composables/useNotify';
@@ -21,10 +17,18 @@ import { useChatAppearance } from '../composables/chat/useChatAppearance';
 import { useChatMessageActions } from '../composables/chat/useChatMessageActions';
 import { useChatScroll } from '../composables/chat/useChatScroll';
 import { useChatSubmit } from '../composables/chat/useChatSubmit';
+import { useChatWorkspaceUi } from '../composables/chat/useChatWorkspaceUi';
 import { useProviderModels } from '../composables/useProviderModels';
 import { isPhoneViewport } from '../composables/useViewport';
 import { refreshProviderModels } from '../services/modelCatalog';
 import { callEventMethod } from '../utils/eventMethods';
+
+const EconomyPanel = defineAsyncComponent(() => import('../components/EconomyPanel.vue'));
+const NpcPanel = defineAsyncComponent(() => import('../components/NpcPanel.vue'));
+const SaveLoadPanel = defineAsyncComponent(() => import('../components/SaveLoadPanel.vue'));
+const ChatSettingsDrawer = defineAsyncComponent(() => import('../components/chat/ChatSettingsDrawer.vue'));
+const ChatContextInspector = defineAsyncComponent(() => import('../components/chat/ChatContextInspector.vue'));
+const ChatModelSwitcher = defineAsyncComponent(() => import('../components/chat/ChatModelSwitcher.vue'));
 
 const props = defineProps({
   route: { type: Object, required: true },
@@ -37,6 +41,8 @@ const notify = useNotify();
 
 const chatShellRef = ref(null);
 const messageScroller = ref(null);
+const messageListRef = ref(null);
+const statusToolRailRef = ref(null);
 const composerWrap = ref(null);
 const composerTextarea = ref(null);
 const npcRefreshKey = ref(0);
@@ -46,6 +52,7 @@ const modelSwitcherSaving = ref(false);
 const worldBookMatchDialogOpen = ref(false);
 const contextInspectorOpen = ref(false);
 const statusBarUpdateStatus = ref('not-updated');
+const statusSummaryExpanded = ref(false);
 const statusBarCollapseRequest = ref(0);
 const npcUpdateStatus = ref('not-updated');
 let conversationLoadToken = 0;
@@ -105,6 +112,13 @@ const {
 } = useChatConversation({ route: props.route, emit, showError });
 
 const {
+  activeTool,
+  openTool: setActiveWorkspaceTool,
+  closeTool: clearActiveWorkspaceTool,
+  resetTools: resetWorkspaceTools
+} = useChatWorkspaceUi();
+
+const {
   statusBar, statusBarForm, statusBarEditorOpen, statusBarSaving,
   statusBarTemplateMode, statusBarTemplateConfig, statusBarTemplateIssues, statusBarTemplateCfg,
   accessorySettingsOpen, accessorySaving, accessorySkills, accessorySkillResults,
@@ -160,7 +174,8 @@ const {
 
 const scroll = useChatScroll({
   messageScroller,
-  conversationId: computed(() => props.route.params.id)
+  conversationId: computed(() => props.route.params.id),
+  scrollToMessageFallback: (messageId, options) => messageListRef.value?.scrollToMessage?.(messageId, options)
 });
 
 const {
@@ -171,13 +186,23 @@ const {
   saveMessageScrollPosition, cleanup: cleanupScroll
 } = scroll;
 
+function setMessageListRef(instance) {
+  messageListRef.value = instance || null;
+  messageScroller.value = instance?.getScrollElement?.() || null;
+}
+
 function prepareExpandedStatusBarForSubmit() {
   const statusBarRoot = messageScroller.value?.querySelector('.status-bar-wrapper .status-bar-root');
   const statusBarExpanded = statusBarRoot?.getAttribute('aria-expanded') === 'true';
-  if (statusBarExpanded && chatViewportIsPhone.value) {
-    statusBarCollapseRequest.value += 1;
+  const hasExpandedStatus = statusSummaryExpanded.value || statusBarExpanded;
+  if (hasExpandedStatus && chatViewportIsPhone.value) {
+    if (statusSummaryExpanded.value) {
+      statusSummaryExpanded.value = false;
+    } else {
+      statusBarCollapseRequest.value += 1;
+    }
   }
-  return statusBarExpanded;
+  return hasExpandedStatus;
 }
 
 const {
@@ -257,6 +282,47 @@ function openContextInspector() {
 
 function closeContextInspector() {
   contextInspectorOpen.value = false;
+}
+
+function openWorkspaceTool(key, event) {
+  if (key !== 'appearance' && !conversationReady.value) return;
+  closeWorkspaceToolSurfaces();
+  if (!setActiveWorkspaceTool(key, event)) return;
+  if (key === 'appearance') openSettings();
+  if (key === 'context') openContextInspector();
+  if (key === 'npc') openNpcPanel();
+  if (key === 'economy') openEconomyPanel();
+  if (key === 'saves') openSavePanel();
+}
+
+function closeWorkspaceTool(key = activeTool.value, options = {}) {
+  closeWorkspaceToolSurfaces();
+  clearActiveWorkspaceTool(key, options);
+}
+
+function closeWorkspaceToolSurfaces() {
+  if (settingsDrawerOpen.value) closeSettings();
+  if (contextInspectorOpen.value) closeContextInspector();
+  if (npcPanelOpen.value) closeNpcPanel();
+  if (economyPanelOpen.value) closeEconomyPanel();
+  if (savePanelOpen.value) closeSavePanel();
+}
+
+function handleStatusToolKeydown(event) {
+  if (event.key !== 'Tab') return;
+  const focusable = statusToolRailRef.value?.querySelectorAll?.(
+    'button:not(:disabled), a[href], input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [tabindex]:not([tabindex="-1"])'
+  );
+  if (!focusable?.length) return;
+  const first = focusable[0];
+  const last = focusable[focusable.length - 1];
+  if (event.shiftKey && document.activeElement === first) {
+    event.preventDefault();
+    last.focus();
+  } else if (!event.shiftKey && document.activeElement === last) {
+    event.preventDefault();
+    first.focus();
+  }
 }
 
 function worldBookPositionLabel(position) {
@@ -537,9 +603,9 @@ function appendCopyFallbackToComposer(text) {
 
 function handleNpcPanelOpenUpdate(value) {
   if (value) {
-    openNpcPanel();
+    openWorkspaceTool('npc');
   } else {
-    closeNpcPanel();
+    closeWorkspaceTool('npc');
   }
 }
 
@@ -797,6 +863,10 @@ function handleGlobalKeydown(event) {
     closeWorldBookMatchDialog();
     return;
   }
+  if (event.key === 'Escape' && activeTool.value) {
+    closeWorkspaceTool(activeTool.value);
+    return;
+  }
   if (event.key === 'Escape' && contextInspectorOpen.value) {
     closeContextInspector();
     return;
@@ -830,7 +900,7 @@ function handleGlobalPointerDown(event) {
     return;
   }
   suppressNpcPanelClick = true;
-  closeNpcPanel();
+  closeWorkspaceTool('npc');
   callEventMethod(event, 'preventDefault');
   callEventMethod(event, 'stopPropagation');
 }
@@ -1176,9 +1246,23 @@ watch(() => conversation.value?.id || '', (conversationId, previousConversationI
     return;
   }
   resetMessageUiState();
+  statusSummaryExpanded.value = false;
   closeWorldBookMatchDialog();
-  closeContextInspector();
+  closeWorkspaceToolSurfaces();
+  resetWorkspaceTools();
   closeAccessoryPanels();
+});
+
+watch(activeTool, (tool) => {
+  if (tool !== 'status') return;
+  nextTick(() => statusToolRailRef.value?.querySelector?.('button:not(:disabled)')?.focus());
+});
+
+watch(statusSummaryExpanded, async (expanded) => {
+  if (!expanded) return;
+  await nextTick();
+  const disclosure = messageScroller.value?.querySelector('.chat-status-disclosure');
+  disclosure?.scrollIntoView?.({ block: 'nearest' });
 });
 
 watch([showWorldBookMatchSummary, worldBookMatchSummary], ([shouldShow, matches]) => {
@@ -1203,7 +1287,6 @@ watch(showNpcFeature, (active) => {
     ref="chatShellRef"
     class="deep-chat-shell"
     :class="{ 'sidebar-collapsed': !sidebarOpen }"
-    :data-chat-scope="conversation?.id || 'active'"
   >
     <ChatSidebar
       :open="sidebarOpen"
@@ -1231,7 +1314,7 @@ watch(showNpcFeature, (active) => {
       @delete-one="deleteOneConversation"
       @delete-selected="deleteSelectedConversations"
       @reload-sidebar="reloadSidebarData"
-      @open-settings="openSettings"
+      @open-settings="(event) => openWorkspaceTool('appearance', event)"
     />
 
       <ChatSettingsDrawer
@@ -1258,7 +1341,7 @@ watch(showNpcFeature, (active) => {
       :status-bar-template-mode="statusBarTemplateMode"
       :status-bar-template-issues="statusBarTemplateIssues"
       :status-bar-template-cfg="statusBarTemplateCfg"
-        @close="closeSettings"
+        @close="closeWorkspaceTool('appearance')"
         @toggle-image-generation="toggleImageGeneration"
         @save-appearance="saveConversationAppearanceChanges"
       @update:chat-lorebook-id="setChatLorebookId"
@@ -1282,30 +1365,40 @@ watch(showNpcFeature, (active) => {
       @remove-quick-reply="removeQuickReply"
     />
 
-    <section class="deep-chat-main" :style="chatMainStyle">
+    <section class="deep-chat-main" :style="chatMainStyle" :data-chat-scope="conversation?.id || 'active'">
       <ChatHeader
         :show-economy-feature="showEconomyFeature"
         :show-npc-feature="showNpcFeature"
         :conversation-ready="conversationReady"
         :theme="theme"
+        :conversation="conversation"
+        :provider="provider"
+        :sending="sending"
+        :active-tool="activeTool || ''"
         @navigate="(page) => emit('navigate', page)"
         @toggle-theme="emit('toggle-theme')"
         @open-sidebar="openSidebar"
-        @open-context="openContextInspector"
-        @open-economy="openEconomyPanel"
-        @open-npc="openNpcPanel"
-        @open-saves="openSavePanel"
+        @open-status="(event) => openWorkspaceTool('status', event)"
+        @open-context="(event) => openWorkspaceTool('context', event)"
+        @open-economy="(event) => openWorkspaceTool('economy', event)"
+        @open-npc="(event) => openWorkspaceTool('npc', event)"
+        @open-saves="(event) => openWorkspaceTool('saves', event)"
+        @open-settings="(event) => openWorkspaceTool('appearance', event)"
       />
 
-      <div
-        ref="messageScroller"
+      <VirtualMessageList
+        :ref="setMessageListRef"
         class="deep-message-scroll"
+        :messages="messages"
+        :virtualize="messages.length > 80"
+        :overscan="6"
         aria-live="polite"
         @scroll.passive="handleMessageScroll"
         @wheel.passive="handleWheelScrollIntent"
         @touchstart.passive="handleTouchStart"
         @touchmove.passive="handleTouchMove"
       >
+        <template #empty>
         <article
           v-if="loading"
           class="deep-message assistant chat-loading-notice"
@@ -1325,10 +1418,13 @@ watch(showNpcFeature, (active) => {
             </div>
           </div>
         </article>
-        <template
-          v-for="message in messages"
-          :key="message.id"
-        >
+        <section v-else class="chat-empty-conversation" aria-live="polite">
+          <span aria-hidden="true">F</span>
+          <h2>从这里开始新的故事</h2>
+          <p>输入一条消息，或先从会话设置中选择预设与世界书。</p>
+        </section>
+        </template>
+        <template #default="{ message }">
           <ChatMessageItem
             :message="message"
             :editing-message-id="editingMessageId"
@@ -1368,16 +1464,26 @@ watch(showNpcFeature, (active) => {
             @branch="createBranchFromMessage"
             @open-worldbook-matches="openWorldBookMatchDialog"
           />
-          <div v-if="hasStatusBarVisible && message === latestAssistantMessage" class="status-bar-wrapper">
-            <StatusBar
+          <div v-if="hasStatusBarVisible && message === latestAssistantMessage" class="status-bar-wrapper chat-status-summary-wrapper">
+            <ChatStatusSummary
+              v-model:expanded="statusSummaryExpanded"
               :status-bar="statusBar"
               :template-config="statusBarTemplateConfig"
               :update-status="statusBarUpdateStatus"
-              :collapse-request="statusBarCollapseRequest"
-              @quick-reply="handleStatusBarQuickReply"
-            />
+            >
+              <template #details>
+                <StatusBar
+                  embedded
+                  :status-bar="statusBar"
+                  :template-config="statusBarTemplateConfig"
+                  :update-status="statusBarUpdateStatus"
+                  @quick-reply="handleStatusBarQuickReply"
+                />
+              </template>
+            </ChatStatusSummary>
           </div>
         </template>
+        <template #footer>
         <aside
           v-if="activeChatFailure"
           class="chat-recovery-panel"
@@ -1421,7 +1527,8 @@ watch(showNpcFeature, (active) => {
             </button>
           </div>
         </aside>
-      </div>
+        </template>
+      </VirtualMessageList>
 
       <ChatComposer
         ref="composerWrap"
@@ -1511,31 +1618,59 @@ watch(showNpcFeature, (active) => {
         :draft-content="input"
         :draft-attachments="chatAttachments"
         :preset-id="selectedPresetId"
-        @close="closeContextInspector"
+        @close="closeWorkspaceTool('context')"
       />
     </section>
+
+    <button
+      v-if="activeTool === 'status'"
+      class="chat-tool-backdrop"
+      type="button"
+      aria-label="关闭角色状态"
+      @click="closeWorkspaceTool('status')"
+    ></button>
+    <aside v-if="activeTool === 'status'" ref="statusToolRailRef" class="chat-tool-rail" role="dialog" aria-modal="true" aria-labelledby="chat-status-panel-title" @keydown="handleStatusToolKeydown">
+      <header class="chat-tool-rail-header">
+        <div>
+          <p>当前会话</p>
+          <h2 id="chat-status-panel-title">完整角色状态</h2>
+        </div>
+        <button class="deep-icon-button" type="button" aria-label="关闭角色状态" @click="closeWorkspaceTool('status')">
+          <X :size="18" />
+        </button>
+      </header>
+      <div class="chat-tool-rail-body">
+        <StatusBar
+          :status-bar="statusBar"
+          :template-config="statusBarTemplateConfig"
+          :update-status="statusBarUpdateStatus"
+          :collapse-request="statusBarCollapseRequest"
+          @quick-reply="handleStatusBarQuickReply"
+        />
+      </div>
+    </aside>
 
     <EconomyPanel
       v-if="conversation?.id && showEconomyFeature"
       :conversation-id="conversation.id"
       :open="economyPanelOpen"
-      @close="closeEconomyPanel"
+      @close="closeWorkspaceTool('economy')"
     />
     <NpcPanel
-      v-if="conversation?.id && showNpcFeature"
+      v-if="conversation?.id && (showNpcFeature || npcPanelOpen)"
       :conversation-id="conversation.id"
       :open="npcPanelOpen"
       :refresh-key="npcRefreshKey"
       :update-status="npcUpdateStatus"
       @update:open="handleNpcPanelOpenUpdate"
       @npcs-loaded="handleNpcPanelLoaded"
-      @close="closeNpcPanel"
+      @close="closeWorkspaceTool('npc')"
     />
     <SaveLoadPanel
       v-if="conversation?.id"
       :conversation-id="conversation.id"
       :open="savePanelOpen"
-      @close="closeSavePanel"
+      @close="closeWorkspaceTool('saves')"
       @loaded="onSavesLoaded"
     />
   </section>

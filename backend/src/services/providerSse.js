@@ -8,31 +8,35 @@ export async function* parseSse(stream) {
   const decoder = new TextDecoder();
   let buffer = '';
 
-  while (true) {
-    const { done, value } = await readSseChunk(reader);
-    if (done) {
-      buffer += decoder.decode();
-      break;
+  try {
+    while (true) {
+      const { done, value } = await readSseChunk(reader);
+      if (done) {
+        buffer += decoder.decode();
+        break;
+      }
+
+      buffer += decoder.decode(value, { stream: true });
+      let separator = findSseBlockSeparator(buffer);
+      while (separator) {
+        const block = buffer.slice(0, separator.index);
+        buffer = buffer.slice(separator.index + separator.length);
+        const event = parseSseBlock(block);
+        if (event.data) {
+          yield event;
+        }
+        separator = findSseBlockSeparator(buffer);
+      }
     }
 
-    buffer += decoder.decode(value, { stream: true });
-    let separator = findSseBlockSeparator(buffer);
-    while (separator) {
-      const block = buffer.slice(0, separator.index);
-      buffer = buffer.slice(separator.index + separator.length);
-      const event = parseSseBlock(block);
+    if (buffer.trim()) {
+      const event = parseSseBlock(buffer);
       if (event.data) {
         yield event;
       }
-      separator = findSseBlockSeparator(buffer);
     }
-  }
-
-  if (buffer.trim()) {
-    const event = parseSseBlock(buffer);
-    if (event.data) {
-      yield event;
-    }
+  } finally {
+    await reader.cancel().catch(() => {});
   }
 }
 

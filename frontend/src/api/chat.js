@@ -184,10 +184,11 @@ export function deleteMessage(conversationId, messageId) {
   });
 }
 
-export function sendMessage(conversationId, payload) {
+export function sendMessage(conversationId, payload, signal) {
   return apiRequest(`/api/conversations/${conversationId}/messages`, {
     method: 'POST',
-    body: JSON.stringify({ ...payload, stream: false })
+    body: JSON.stringify({ ...payload, stream: false }),
+    signal
   });
 }
 
@@ -195,10 +196,11 @@ export function streamMessage(conversationId, payload, handlers = {}, signal) {
   return streamSSE(`/api/conversations/${conversationId}/messages`, payload, handlers, signal);
 }
 
-export function continueMessage(conversationId, payload = {}) {
+export function continueMessage(conversationId, payload = {}, signal) {
   return apiRequest(`/api/conversations/${conversationId}/messages/continue`, {
     method: 'POST',
-    body: JSON.stringify({ ...payload, stream: false })
+    body: JSON.stringify({ ...payload, stream: false }),
+    signal
   });
 }
 

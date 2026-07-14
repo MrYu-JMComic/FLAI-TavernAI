@@ -199,11 +199,26 @@ function sortObject(value) {
   return sorted;
 }
 
+export const NON_STREAM_COMPLETION_TIMEOUT_MS = 300_000;
+
+function buildNonStreamSignal(options = {}) {
+  const timeoutMs = Number.isFinite(options.timeoutMs) && options.timeoutMs > 0
+    ? options.timeoutMs
+    : NON_STREAM_COMPLETION_TIMEOUT_MS;
+  const timeoutSignal = AbortSignal.timeout(timeoutMs);
+  return options.signal ? AbortSignal.any([options.signal, timeoutSignal]) : timeoutSignal;
+}
+
 export async function generateCompletion(settings, messages, options = {}) {
   options = options ?? {};
   if (!hasUsableProvider(settings)) {
     return mockCompletion(messages, settings);
   }
+
+  // Non-stream requests otherwise hang forever on a stuck gateway; bound them
+  // with the same 300s ceiling the stream path uses.
+  const signal = buildNonStreamSignal(options);
+  options = { ...options, signal };
 
   if (settings.providerType === 'anthropic') {
     return generateAnthropicMessage(settings, messages, options);
@@ -215,7 +230,8 @@ export async function generateCompletion(settings, messages, options = {}) {
 
   const response = await providerFetch(settings, '/chat/completions', {
     method: 'POST',
-    body: JSON.stringify(buildProviderBody(settings, messages, false, options))
+    body: JSON.stringify(buildProviderBody(settings, messages, false, options)),
+    signal
   });
 
   const json = await readJsonResponse(response);

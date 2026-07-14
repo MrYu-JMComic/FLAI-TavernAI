@@ -15,7 +15,8 @@ import {
 } from './security.js';
 import { migrateLegacyAvatarUploads, getAvatarAssetForViewer } from './services/avatars.js';
 import { providerWithSecret, hasUsableProvider, defaultProviderSettings, normalizeProviderRow } from './services/providers.js';
-import { getCharacterWorldBookId } from './modules/worldBooks.js';
+import { getCharacterWorldBookId, getCharacterWorldBookIds } from './modules/worldBooks.js';
+import { getCharacterTagsMap } from './modules/tags.js';
 import { publicUser, getUserProfile } from './modules/users.js';
 
 // ── Route modules ──
@@ -103,6 +104,14 @@ app.use(compression({
 // ── Cookie Parser (用于 CSRF 校验) ──
 app.use(cookieParser());
 
+// ── 基础安全响应头 ──
+app.use((_request, response, next) => {
+  response.setHeader('X-Content-Type-Options', 'nosniff');
+  response.setHeader('X-Frame-Options', 'SAMEORIGIN');
+  response.setHeader('Referrer-Policy', 'same-origin');
+  next();
+});
+
 app.use(express.json({ limit: appConfig.jsonBodyLimit }));
 app.use(attachRequestId);
 app.use(attachApiErrorEnvelope);
@@ -122,7 +131,7 @@ const apiLimiter = rateLimit({
 
 const authLimiter = rateLimit({
   windowMs: authRateLimitWindowMs,
-  max: authRateLimitMax,
+  limit: authRateLimitMax,
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: '登录尝试过于频繁，请 1 分钟后再试' }
@@ -262,6 +271,23 @@ function withCharacterTags(character) {
   return { ...character, characterTags };
 }
 
+function withCharacterListExtras(characters) {
+  if (!Array.isArray(characters) || !characters.length) {
+    return [];
+  }
+  const ids = characters.map((character) => character.id);
+  const worldBookIds = getCharacterWorldBookIds(db, ids);
+  const tagsByCharacter = getCharacterTagsMap(db, ids);
+
+  return characters.map((character) => ({
+    ...character,
+    worldBookId: worldBookIds.get(character.id) || null,
+    characterTags: (tagsByCharacter.get(character.id) || [])
+      .filter((row) => row.user_id === character.ownerId)
+      .map(({ id, name, color }) => ({ id, name, color }))
+  }));
+}
+
 function getProviderRow(userId) {
   return db.prepare('SELECT * FROM provider_settings WHERE user_id = ?').get(userId);
 }
@@ -312,6 +338,7 @@ const ctx = {
   },
   withWorldBookId,
   withCharacterTags,
+  withCharacterListExtras,
   withEtag,
   withListCache,
   getProviderRow,

@@ -96,19 +96,37 @@ test('HomeView mobile filter controls stick to the internal scroll top', () => {
     stylesSource,
     /@media \(max-width: 760px\) \{[\s\S]*\.home-layout-shell\s*\{[\s\S]*--home-control-sticky-top:\s*0px;[\s\S]*\}[\s\S]*\.home-control-panel\s*\{[\s\S]*grid-template-columns:\s*minmax\(0, 1fr\) minmax\(104px, 128px\);/
   );
-  assert.doesNotMatch(
-    stylesSource,
-    /@media \(max-width: 760px\) \{[\s\S]*\.home-layout-shell\s*\{[\s\S]*--home-control-sticky-top:\s*calc\(76px \+ env\(safe-area-inset-top, 0px\)\);/
+  assert.match(stylesSource, /\.home-layout-shell\s*\{[\s\S]*--home-control-sticky-top:\s*10px;/);
+});
+
+test('HomeView filter panel morphs its corners only after it becomes pinned', () => {
+  assert.match(homeViewScript, /const controlPanelRef = ref\(null\);/);
+  assert.match(homeViewScript, /const isControlPanelPinned = ref\(false\);/);
+  assert.match(
+    homeViewScript,
+    /function updateControlPanelPinnedState\(\) \{[\s\S]*scrollElement\.scrollTop > 0 && panelTop <= scrollTop \+ 1;/
   );
-  assert.doesNotMatch(
+  assert.match(
+    homeViewTemplate,
+    /ref="controlPanelRef"[\s\S]*:class="\{ 'is-pinned': isControlPanelPinned \}"[\s\S]*:data-sticky-state="isControlPanelPinned \? 'pinned' : 'resting'"/
+  );
+  assert.match(
     stylesSource,
-    /@media \(max-width: 760px\) \{[\s\S]*\.home-control-panel\s*\{[\s\S]*top:\s*8px;/
+    /\.home-layout-shell \.home-control-panel\s*\{[^}]*border-radius:\s*var\(--radius-md\);[^}]*transition:[^}]*border-radius var\(--duration-fast\) var\(--ease-standard\),[^}]*\}/
+  );
+  assert.match(
+    stylesSource,
+    /\.home-layout-shell \.home-control-panel\.is-pinned\s*\{[^}]*border-top-color:\s*transparent;[^}]*border-radius:\s*0 0 var\(--radius-md\) var\(--radius-md\);[^}]*\}/
   );
 });
 
 test('HomeView keeps home workbench interactions from changing scrollable overflow', () => {
   const homeWorkbenchIndex = stylesSource.indexOf('HOME WORKBENCH REDESIGN');
-  const homeWorkbenchStyles = stylesSource.slice(homeWorkbenchIndex);
+  const refreshStylesIndex = stylesSource.indexOf('Unified warm workbench refresh.');
+  const homeWorkbenchStyles = stylesSource.slice(
+    homeWorkbenchIndex,
+    refreshStylesIndex > homeWorkbenchIndex ? refreshStylesIndex : undefined
+  );
 
   assert.notEqual(homeWorkbenchIndex, -1);
   assert.equal(countMatches(stylesSource, /\.home-character-card:hover/g), 1);
@@ -181,6 +199,17 @@ test('HomeView desktop layout fills the available page width without a nested ch
   );
 });
 
+test('mobile primary navigation docks edge to edge with only top corners rounded', () => {
+  assert.match(
+    stylesSource,
+    /@media \(max-width: 620px\) \{[\s\S]*\.mobile-bottom-nav\s*\{[^}]*right:\s*0;[^}]*bottom:\s*0;[^}]*left:\s*0;[^}]*padding:\s*6px 6px calc\(6px \+ env\(safe-area-inset-bottom, 0px\)\);[^}]*border-right:\s*0;[^}]*border-bottom:\s*0;[^}]*border-left:\s*0;[^}]*border-radius:\s*var\(--radius-lg\) var\(--radius-lg\) 0 0;/
+  );
+  assert.match(
+    stylesSource,
+    /@media \(max-width: 620px\) \{[\s\S]*\.layout-shell:not\(\.chat-layout-shell\) \.page-shell\s*\{[^}]*padding:\s*18px 14px calc\(92px \+ env\(safe-area-inset-bottom, 0px\)\);/
+  );
+});
+
 test('HomeView virtual rows listen to the page shell scroll container', () => {
   assert.match(homeViewScript, /const pageScrollContainerRef = ref\(null\);/);
   assert.match(homeViewScript, /const virtualScrollMargin = ref\(0\);/);
@@ -191,7 +220,7 @@ test('HomeView virtual rows listen to the page shell scroll container', () => {
   assert.match(homeViewScript, /scrollMargin:\s*virtualScrollMargin\.value,/);
   assert.match(
     homeViewScript,
-    /function syncPageScrollContainer\(\) \{[\s\S]*pageScrollContainerRef\.value = scrollContainerRef\.value\?\.closest\('\.page-shell'\) \|\| scrollContainerRef\.value;[\s\S]*\}/
+    /function syncPageScrollContainer\(\) \{[\s\S]*const nextScrollContainer = controlPanelRef\.value\?\.closest\('\.page-shell'\)[\s\S]*pageScrollContainerRef\.value = nextScrollContainer;[\s\S]*bindControlPanelScrollContainer\(nextScrollContainer\);[\s\S]*\}/
   );
   assert.match(
     homeViewScript,

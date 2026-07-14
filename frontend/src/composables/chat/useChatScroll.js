@@ -1,6 +1,6 @@
 import { computed, ref } from 'vue';
 
-export function useChatScroll({ messageScroller, conversationId }) {
+export function useChatScroll({ messageScroller, conversationId, scrollToMessageFallback }) {
   const isScrollPinned = ref(true);
   const distanceToBottom = ref(0);
 
@@ -126,8 +126,8 @@ export function useChatScroll({ messageScroller, conversationId }) {
       scheduleSaveMessageScrollPosition();
       return;
     }
-    updateScrollState();
     if (userPausedAutoScroll || !isScrollPinned.value) {
+      updateScrollState();
       scheduleSaveMessageScrollPosition();
       return;
     }
@@ -145,6 +145,11 @@ export function useChatScroll({ messageScroller, conversationId }) {
     }
     if (scrollToBottomRafId !== null) {
       cancelScheduledFrame(scrollToBottomRafId);
+      scrollToBottomRafId = null;
+    }
+    if (!smooth) {
+      scrollToBottomNow();
+      return;
     }
     scrollToBottomRafId = scheduleFrame(() => {
       scrollToBottomRafId = null;
@@ -157,15 +162,26 @@ export function useChatScroll({ messageScroller, conversationId }) {
       }
       el.scrollTo({
         top: el.scrollHeight,
-        behavior: smooth ? 'smooth' : 'auto'
+        behavior: 'smooth'
       });
-      if (!smooth) {
-        updateScrollState();
-      } else if (typeof window !== 'undefined') {
+      if (typeof window !== 'undefined') {
         scheduleSmoothScrollStateUpdate();
       }
       scheduleSaveMessageScrollPosition();
     });
+  }
+
+  function scrollToBottomNow() {
+    const el = messageScroller.value;
+    if (!el) {
+      return;
+    }
+    const nextScrollTop = Math.max(0, el.scrollHeight - el.clientHeight);
+    if (Math.abs(el.scrollTop - nextScrollTop) > 0.5) {
+      el.scrollTop = nextScrollTop;
+    }
+    updateScrollState();
+    scheduleSaveMessageScrollPosition();
   }
 
   function scrollToMessage(messageId, options = {}) {
@@ -175,9 +191,20 @@ export function useChatScroll({ messageScroller, conversationId }) {
 
     const el = messageScroller.value;
     const target = findMessageElement(messageId);
-    if (!el || !target) {
+    if (!el) {
       return false;
     }
+
+    if (!target && typeof scrollToMessageFallback === 'function') {
+      const didScroll = scrollToMessageFallback(messageId, options);
+      if (didScroll && options.keepPinned) {
+        lastManualScrollIntentAt = 0;
+        userPausedAutoScroll = false;
+        isScrollPinned.value = true;
+      }
+      return Boolean(didScroll);
+    }
+    if (!target) return false;
 
     if (scrollToBottomRafId !== null) {
       cancelScheduledFrame(scrollToBottomRafId);

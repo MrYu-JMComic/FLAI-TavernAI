@@ -293,25 +293,25 @@ function buildNpcDetailRecords(state) {
   const records = [];
   const seen = new Set();
   if (state.selectedNpc) {
-    pushNpcDetailRecord(records, seen, state, state.selectedNpc);
+    pushNpcDetailRecord(records, seen, state, summaries, state.selectedNpc);
   }
   for (const npc of summaries) {
     if (records.length >= NPC_CONTEXT_LIMIT) {
       break;
     }
-    pushNpcDetailRecord(records, seen, state, npc?.name);
+    pushNpcDetailRecord(records, seen, state, summaries, npc?.name);
   }
   return records;
 }
 
-function pushNpcDetailRecord(records, seen, state, npcName) {
+function pushNpcDetailRecord(records, seen, state, summaries, npcName) {
   const name = String(npcName || '').trim();
   const key = name.toLowerCase();
   if (!name || seen.has(key) || records.length >= NPC_CONTEXT_LIMIT) {
     return;
   }
   seen.add(key);
-  const summary = findNpcSummary(state, name);
+  const summary = findNpcSummary(summaries, name);
   if (!summary) {
     return;
   }
@@ -322,14 +322,8 @@ function pushNpcDetailRecord(records, seen, state, npcName) {
   });
 }
 
-function findNpcSummary(state, npcName) {
-  const summaries = listConversationNpcs(
-    state.database,
-    state.userId,
-    state.conversationId,
-    state.character?.name || state.conversation?.characterName || ''
-  );
-  for (const summary of summaries) {
+function findNpcSummary(summaries, npcName) {
+  for (const summary of Array.isArray(summaries) ? summaries : []) {
     if (summary?.name === npcName) {
       return summary;
     }

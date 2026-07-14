@@ -160,6 +160,14 @@ test('ChatComposer only uses edge-to-edge layout at the phone breakpoint', () =>
   const phoneBlock = readStyleRange('@media (max-width: 620px) {', '.chat-model-switcher-overlay {', phoneSearchStart);
   assert.match(phoneBlock, /\.deep-composer-wrap\s*{[\s\S]*?position:\s*fixed\s*;[\s\S]*?padding:\s*0 0 calc\(var\(--chat-keyboard-inset\) \+ env\(safe-area-inset-bottom, 0px\)\)\s*;/);
   assert.match(phoneBlock, /\.deep-composer\s*{[\s\S]*?width:\s*100%\s*;/);
+  assert.match(
+    stylesSource,
+    /\.deep-composer-wrap\s*\{\s*padding:\s*0 0 calc\(var\(--chat-keyboard-inset\) \+ env\(safe-area-inset-bottom, 0px\)\);[\s\S]*background:\s*color-mix\(in srgb, var\(--surface\) 86%, transparent\);[\s\S]*backdrop-filter:\s*blur\(24px\) saturate\(1\.08\);/
+  );
+  assert.match(
+    stylesSource,
+    /\.deep-composer\s*\{\s*justify-self:\s*stretch;\s*width:\s*100%;\s*max-width:\s*none;[\s\S]*border-right:\s*0;[\s\S]*border-left:\s*0;[\s\S]*background:\s*color-mix\(in srgb, var\(--surface\) 88%, transparent\);/
+  );
 });
 
 test('ChatView ignores model switcher open events while sending', () => {
@@ -240,7 +248,7 @@ test('ChatView composer layout work falls back when animation frames are unavail
 
 test('ChatView requests mobile status bar collapse before assistant-reply anchoring', () => {
   assert.match(chatViewScript, /const statusBarCollapseRequest = ref\(0\)/);
-  assert.match(chatViewScript, /function prepareExpandedStatusBarForSubmit\(\) {[\s\S]*aria-expanded'[\s\S]*statusBarExpanded && chatViewportIsPhone\.value[\s\S]*statusBarCollapseRequest\.value \+= 1;[\s\S]*return statusBarExpanded;/);
+  assert.match(chatViewScript, /function prepareExpandedStatusBarForSubmit\(\) {[\s\S]*aria-expanded'[\s\S]*const hasExpandedStatus = statusSummaryExpanded\.value \|\| statusBarExpanded;[\s\S]*hasExpandedStatus && chatViewportIsPhone\.value[\s\S]*statusSummaryExpanded\.value = false;[\s\S]*statusBarCollapseRequest\.value \+= 1;[\s\S]*return hasExpandedStatus;/);
   assert.match(chatViewScript, /prepareExpandedStatusBarForSubmit,/);
   assert.match(chatViewTemplate, /:collapse-request="statusBarCollapseRequest"/);
   assert.match(statusBarScript, /collapseRequest: \{\s*type: Number,\s*default: 0\s*\}/);

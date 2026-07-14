@@ -73,7 +73,8 @@ test('previews a world book trigger hit in the match lab', async ({ page }) => {
   await page.getByLabel('测试文本').fill(`The scene mentions ${trigger} near the old gate.`);
   await page.getByRole('button', { name: /测试触发/ }).click();
 
-  await expect(page.getByText(`E2E Match Entry ${suffix}`)).toBeVisible();
-  await expect(page.getByText(`关键词：${trigger}`)).toBeVisible();
-  await expect(page.getByText(/1 条命中/)).toBeVisible();
+  const matchLab = page.getByRole('region', { name: '世界书命中实验室' });
+  await expect(matchLab.getByText(`E2E Match Entry ${suffix}`, { exact: true })).toBeVisible();
+  await expect(matchLab.getByText(`关键词：${trigger}`)).toBeVisible();
+  await expect(matchLab.getByText(/1 条命中/)).toBeVisible();
 });

@@ -302,7 +302,7 @@ function resetExtensionAsyncScopes() {
 </script>
 
 <template>
-  <section class="page-stack" :class="isExtensionsPage ? 'extensions-page' : 'narrow-page'">
+  <section class="page-stack settings-workbench" :class="isExtensionsPage ? 'extensions-page' : 'narrow-page'">
     <div class="section-heading">
       <div>
         <p>{{ isExtensionsPage ? '扩展管理' : '个人中心' }}</p>

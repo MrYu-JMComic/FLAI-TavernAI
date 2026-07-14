@@ -13,9 +13,10 @@ import {
 import { renderPromptVariables } from '../services/promptVariables.js';
 import {
   createConversationMessage,
+  emptyUsageSummary,
   getConversationForUser,
+  getConversationUsageSummaries,
   toConversation,
-  withConversationUsage,
   normalizeIdList
 } from './helpers.js';
 import { createConversationEconomyRouter } from './conversationEconomy.js';
@@ -54,7 +55,13 @@ export function createConversationsRouter(ctx) {
       )
       .all(...params);
 
-    response.json(rows.map((row) => withConversationUsage(toConversation(row, db), request.auth.user.id, db)));
+    const usageSummaries = getConversationUsageSummaries(db, request.auth.user.id);
+    response.json(
+      rows.map((row) => ({
+        ...toConversation(row, db),
+        usage: usageSummaries.get(row.id) || emptyUsageSummary()
+      }))
+    );
   });
 
   router.post('/bulk-delete', requireAuth, validate(bulkDeleteSchema), (request, response) => {

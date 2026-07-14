@@ -145,7 +145,40 @@ export function withConversationUsage(conversation, userId, db) {
   };
 }
 
-export function getConversationForUser(db, userId, conversationId) {
+export function getConversationUsageSummaries(db, userId) {
+  const rows = db
+    .prepare(
+      `SELECT conversation_id, usage_json FROM messages
+       WHERE user_id = ? AND usage_json IS NOT NULL`
+    )
+    .all(userId);
+
+  const buckets = new Map();
+  for (const row of rows) {
+    const usage = parseJson(row.usage_json, null);
+    if (!usage) {
+      continue;
+    }
+    let bucket = buckets.get(row.conversation_id);
+    if (!bucket) {
+      bucket = [];
+      buckets.set(row.conversation_id, bucket);
+    }
+    bucket.push(usage);
+  }
+
+  const summaries = new Map();
+  for (const [conversationId, usages] of buckets) {
+    summaries.set(conversationId, summarizeUsageSnapshots(usages));
+  }
+  return summaries;
+}
+
+export function emptyUsageSummary() {
+  return summarizeUsageSnapshots([]);
+}
+
+export function getConversationForUser(db, userId, conversationId, options = {}) {
   const row = db
     .prepare(
       `SELECT conversations.*, characters.name AS character_name, characters.avatar_url, characters.author_advanced_settings
@@ -154,7 +187,16 @@ export function getConversationForUser(db, userId, conversationId) {
        WHERE conversations.user_id = ? AND conversations.id = ?`
     )
     .get(userId, conversationId);
-  return row ? withConversationUsage(toConversation(row, db), userId, db) : null;
+  if (!row) {
+    return null;
+  }
+  const conversation = toConversation(row, db);
+  // The generation hot path only needs authorization + settings; skip the
+  // O(messages) usage aggregation there via includeUsage: false.
+  if (options.includeUsage === false) {
+    return conversation;
+  }
+  return withConversationUsage(conversation, userId, db);
 }
 
 export function toMessage(row) {

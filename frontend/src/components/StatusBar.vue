@@ -49,11 +49,16 @@ const props = defineProps({
   collapseRequest: {
     type: Number,
     default: 0
+  },
+  embedded: {
+    type: Boolean,
+    default: false
   }
 });
 
 const emit = defineEmits(['quick-reply']);
 const collapsed = ref(false);
+const effectiveCollapsed = computed(() => !props.embedded && collapsed.value);
 const templateScopeId = ref(`flai-sb-${Math.random().toString(36).slice(2, 10)}`);
 let customTemplateStyleElement = null;
 
@@ -131,6 +136,7 @@ const hasCustomTemplate = computed(() => Boolean(customTemplateHtml.value));
 
 const wrapperClasses = computed(() => {
   const classes = ['status-bar-container'];
+  if (props.embedded) classes.push('sb-embedded');
   if (cfg.value.variant !== 'default') classes.push(`sb-${cfg.value.variant}`);
   if (cfg.value.density !== 'default') classes.push(`sb-density-${cfg.value.density}`);
   for (const fx of cfg.value.effects) {
@@ -744,10 +750,10 @@ function templateLabelText(value) {
     :style="wrapperStyle"
     :data-status-bar-scope="templateScopeId"
     class="status-bar-root"
-    :aria-expanded="String(!collapsed)"
+    :aria-expanded="String(!effectiveCollapsed)"
   >
     <button
-      v-if="collapsed"
+      v-if="effectiveCollapsed"
       class="flai-statusbar-collapsed-card"
       type="button"
       :title="`展开状态栏：${collapsedSummary}`"
@@ -773,7 +779,7 @@ function templateLabelText(value) {
     </button>
 
     <template v-else>
-      <div class="flai-statusbar-header">
+      <div v-if="!embedded" class="flai-statusbar-header">
         <button
           class="flai-statusbar-summary"
           type="button"

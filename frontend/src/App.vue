@@ -7,7 +7,9 @@ import { getMe, logout as logoutRequest } from './api/auth.js';
 import { getProviderSettings } from './api/providers.js';
 import { recordFrontendDiagnostic } from './diagnostics.js';
 import { normalizeAppRoute } from './router.js';
+import { refreshProviderModels } from './services/modelCatalog.js';
 import { samePlainValue } from './utils/plainValues';
+import { isLocalOrPrivateBaseUrl } from '../../shared/privateNetwork.js';
 
 const router = useRouter();
 const vueRoute = useRoute();
@@ -120,7 +122,24 @@ async function refreshProvider(authScope = authScopeVersion) {
     return false;
   }
   setProviderIfChanged(nextProvider);
+  void refreshProviderModelCatalog(nextProvider, authScope, requestId);
   return true;
+}
+
+async function refreshProviderModelCatalog(nextProvider, authScope, requestId) {
+  const canUseSavedCredential = Boolean(nextProvider?.apiKey || nextProvider?.apiKeySet);
+  const canUseLocalNoAuth = nextProvider?.providerType === 'custom'
+    && isLocalOrPrivateBaseUrl(nextProvider?.baseUrl);
+  if (!nextProvider?.baseUrl || nextProvider.apiKeyNeedsReset || (!canUseSavedCredential && !canUseLocalNoAuth)) {
+    return;
+  }
+  try {
+    await refreshProviderModels(nextProvider, { forceRefresh: false });
+  } catch (error) {
+    if (requestId === providerRequestId && isCurrentAuthScope(authScope)) {
+      recordFrontendDiagnostic('app.provider.models.refresh', error, { requestId });
+    }
+  }
 }
 
 async function handleAuthenticated(result) {

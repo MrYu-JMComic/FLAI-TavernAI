@@ -57,6 +57,9 @@ export async function fetchProviderRequest(url, request) {
   try {
     return await fetch(url, request);
   } catch (error) {
+    if (error?.name === 'TimeoutError') {
+      throw new Error('AI 请求超时，请稍后重试或检查网关状态。', { cause: error });
+    }
     if (error?.name === 'AbortError') {
       throw error;
     }

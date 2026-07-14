@@ -172,6 +172,7 @@ export function useChatSubmit({
     clearLastFailure();
     lastSubmittedAttachments = attachments;
     setLatestWorldBookMatches([]);
+    stoppingByUser = false;
     const submitId = ++submitRunId;
     const anchorAssistantReply = isPinnedToBottom() && prepareExpandedStatusBarForSubmit();
 
@@ -279,11 +280,6 @@ export function useChatSubmit({
                 anchorAssistantReply,
                 () => isCurrentSubmit(submitId, conversationId)
               );
-              if (!isCurrentSubmit(submitId, conversationId)) return;
-              await nextTick();
-              if (isCurrentSubmit(submitId, conversationId)) {
-                followSubmitScroll(getMessageListItemOrDraft(assistant), anchorAssistantReply);
-              }
             },
             async content(data) {
               if (!isCurrentSubmit(submitId, conversationId)) return;
@@ -299,20 +295,17 @@ export function useChatSubmit({
                 anchorAssistantReply,
                 () => isCurrentSubmit(submitId, conversationId)
               );
-              if (!isCurrentSubmit(submitId, conversationId)) return;
-              await nextTick();
-              if (isCurrentSubmit(submitId, conversationId)) {
-                followSubmitScroll(getMessageListItemOrDraft(assistant), anchorAssistantReply);
-              }
             },
             tool(data) {
               if (!isCurrentSubmit(submitId, conversationId)) return;
+              refreshStreamTimer();
               if (data?.result?.statusBar) {
                 updateStatusBar(data.result.statusBar);
               }
             },
             skill_result(data) {
               if (!isCurrentSubmit(submitId, conversationId)) return;
+              refreshStreamTimer();
               handleSkillResult(withConversationContext(data, conversationId));
             },
             skills_done(data) {
@@ -363,7 +356,12 @@ export function useChatSubmit({
               if (!isCurrentSubmit(submitId, conversationId)) return;
               streamFinished = true;
               clearStreamTimer();
-              finishAssistantDraft(assistant);
+              if (data.assistantMessage) {
+                finalizeUserDraft(localUser, data.userMessage);
+                finalizeStreamedAssistant(assistant, data.assistantMessage);
+              } else {
+                finishAssistantDraft(assistant);
+              }
               if (!stoppingByUser) {
                 handleSubmitFailure(data.error || '生成失败', content, conversationId, {
                   diagnosticId: data?.diagnosticId
@@ -397,7 +395,9 @@ export function useChatSubmit({
           }
         }
       } else {
-        const result = await sendMessage(conversationId, requestPayload);
+        const jsonController = new AbortController();
+        controller.value = jsonController;
+        const result = await sendMessage(conversationId, requestPayload, jsonController.signal);
         if (!isCurrentSubmit(submitId, conversationId)) {
           return;
         }
@@ -611,6 +611,9 @@ export function useChatSubmit({
   }
 
   function stop() {
+    if (!sending.value) {
+      return;
+    }
     stoppingByUser = true;
     controller.value?.abort();
     sending.value = false;
@@ -634,6 +637,7 @@ export function useChatSubmit({
     }
     clearLastFailure();
     setLatestWorldBookMatches([]);
+    stoppingByUser = false;
     const submitId = ++submitRunId;
     const anchorAssistantReply = isPinnedToBottom() && prepareExpandedStatusBarForSubmit();
     const assistantDraft = {
@@ -733,12 +737,14 @@ export function useChatSubmit({
             },
             tool(data) {
               if (!isCurrentSubmit(submitId, conversationId)) return;
+              refreshStreamTimer();
               if (data?.result?.statusBar) {
                 updateStatusBar(data.result.statusBar);
               }
             },
             skill_result(data) {
               if (!isCurrentSubmit(submitId, conversationId)) return;
+              refreshStreamTimer();
               handleSkillResult(withConversationContext(data, conversationId));
             },
             async done(data) {
@@ -779,7 +785,11 @@ export function useChatSubmit({
               if (!isCurrentSubmit(submitId, conversationId)) return;
               streamFinished = true;
               clearStreamTimer();
-              finishAssistantDraft(assistantDraft);
+              if (data.assistantMessage) {
+                finalizeStreamedAssistant(assistantDraft, data.assistantMessage);
+              } else {
+                finishAssistantDraft(assistantDraft);
+              }
               if (!stoppingByUser) {
                 showError(data.error || '生成失败');
               }
@@ -811,7 +821,9 @@ export function useChatSubmit({
           }
         }
       } else {
-        const result = await continueMessage(conversationId, requestPayload);
+        const jsonController = new AbortController();
+        controller.value = jsonController;
+        const result = await continueMessage(conversationId, requestPayload, jsonController.signal);
         if (!isCurrentSubmit(submitId, conversationId)) {
           return false;
         }
@@ -1352,6 +1364,12 @@ export function useChatSubmit({
     return hasMessagePayload(getMessageListItemOrDraft(message));
   }
 
+  // Streamed tokens can arrive far faster than the browser can paint. The
+  // first chunk in a frame renders immediately; later chunks only append text
+  // and coalesce into a single trailing re-render + scroll-follow per frame.
+  let pendingStreamRender = null;
+  let streamRenderScheduled = false;
+
   async function appendStreamText(message, field, text, anchorAssistantReply = false, isStillCurrent = () => true) {
     if (submitDisposed) return;
     const currentMessage = findMessageListItem(message?.id);
@@ -1362,12 +1380,43 @@ export function useChatSubmit({
     }
 
     currentMessage[field] += value;
+    if (streamRenderScheduled) {
+      pendingStreamRender = { currentMessage, anchorAssistantReply, isStillCurrent };
+      return;
+    }
+    streamRenderScheduled = true;
+    scheduleStreamRenderFlush();
     triggerRef(messages);
     await nextTick();
     if (submitDisposed || !currentMessage.streaming || !isStillCurrent()) {
       return;
     }
     followSubmitScroll(currentMessage, anchorAssistantReply, false);
+  }
+
+  function scheduleStreamRenderFlush() {
+    const schedule = typeof window !== 'undefined' && typeof window.requestAnimationFrame === 'function'
+      ? window.requestAnimationFrame.bind(window)
+      : (callback) => setTimeout(callback, 16);
+    schedule(() => {
+      const pending = pendingStreamRender;
+      pendingStreamRender = null;
+      if (!pending || submitDisposed) {
+        streamRenderScheduled = false;
+        return;
+      }
+      // Keep the window open one more frame so sustained streams stay at
+      // one re-render per frame.
+      scheduleStreamRenderFlush();
+      void (async () => {
+        triggerRef(messages);
+        await nextTick();
+        if (submitDisposed || !pending.currentMessage.streaming || !pending.isStillCurrent()) {
+          return;
+        }
+        followSubmitScroll(pending.currentMessage, pending.anchorAssistantReply, false);
+      })();
+    });
   }
 
   function setMessageStreamingState(message, nextState = {}) {

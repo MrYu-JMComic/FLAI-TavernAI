@@ -65,6 +65,8 @@ const importError = ref('');
 const importLoading = ref(false);
 const scrollContainerRef = ref(null);
 const pageScrollContainerRef = ref(null);
+const controlPanelRef = ref(null);
+const isControlPanelPinned = ref(false);
 const containerWidth = ref(0);
 const virtualScrollMargin = ref(0);
 const isMobileListLayout = ref(false);
@@ -447,7 +449,11 @@ function measureContainerWidth() {
 }
 
 function syncPageScrollContainer() {
-  pageScrollContainerRef.value = scrollContainerRef.value?.closest('.page-shell') || scrollContainerRef.value;
+  const nextScrollContainer = controlPanelRef.value?.closest('.page-shell')
+    || scrollContainerRef.value?.closest('.page-shell')
+    || scrollContainerRef.value;
+  pageScrollContainerRef.value = nextScrollContainer;
+  bindControlPanelScrollContainer(nextScrollContainer);
 }
 
 function measureVirtualScrollMargin() {
@@ -473,6 +479,53 @@ let chatOpenNavigationToken = 0;
 let searchLoadTimer = null;
 let homeActive = true;
 let filterClearInProgress = false;
+let controlPanelScrollContainer = null;
+let controlPanelScrollRafId = null;
+
+function updateControlPanelPinnedState() {
+  const panel = controlPanelRef.value;
+  const scrollElement = pageScrollContainerRef.value;
+  if (!panel || !scrollElement) {
+    isControlPanelPinned.value = false;
+    return;
+  }
+
+  const panelTop = panel.getBoundingClientRect().top;
+  const scrollTop = scrollElement.getBoundingClientRect().top;
+  isControlPanelPinned.value = scrollElement.scrollTop > 0 && panelTop <= scrollTop + 1;
+}
+
+function scheduleControlPanelPinnedMeasurement() {
+  if (controlPanelScrollRafId !== null) return;
+  if (typeof requestAnimationFrame !== 'function') {
+    updateControlPanelPinnedState();
+    return;
+  }
+  controlPanelScrollRafId = requestAnimationFrame(() => {
+    controlPanelScrollRafId = null;
+    updateControlPanelPinnedState();
+  });
+}
+
+function bindControlPanelScrollContainer(scrollElement) {
+  if (controlPanelScrollContainer === scrollElement) {
+    scheduleControlPanelPinnedMeasurement();
+    return;
+  }
+  controlPanelScrollContainer?.removeEventListener('scroll', scheduleControlPanelPinnedMeasurement);
+  controlPanelScrollContainer = scrollElement;
+  controlPanelScrollContainer?.addEventListener('scroll', scheduleControlPanelPinnedMeasurement, { passive: true });
+  scheduleControlPanelPinnedMeasurement();
+}
+
+function cleanupControlPanelPinnedMeasurement() {
+  controlPanelScrollContainer?.removeEventListener('scroll', scheduleControlPanelPinnedMeasurement);
+  controlPanelScrollContainer = null;
+  if (controlPanelScrollRafId !== null && typeof cancelAnimationFrame === 'function') {
+    cancelAnimationFrame(controlPanelScrollRafId);
+  }
+  controlPanelScrollRafId = null;
+}
 
 function scheduleContainerWidthMeasurement() {
   if (containerMeasureRafId !== null) return;
@@ -547,6 +600,7 @@ async function refreshScrollMeasurementsAfterRender() {
 onMounted(async () => {
   refreshHotTagSeed();
   addMobileLayoutListener();
+  window.addEventListener('resize', scheduleControlPanelPinnedMeasurement, { passive: true });
   await Promise.all([loadCharacters(), loadTags()]);
   if (!isHomeActive()) return;
   await nextTick();
@@ -556,6 +610,8 @@ onMounted(async () => {
 onUnmounted(() => {
   homeActive = false;
   resetHomeAsyncScope();
+  window.removeEventListener('resize', scheduleControlPanelPinnedMeasurement);
+  cleanupControlPanelPinnedMeasurement();
   if (resizeObserver) {
     resizeObserver.disconnect();
     resizeObserver = null;
@@ -1316,7 +1372,13 @@ function formatCount(value) {
       </button>
     </section>
 
-    <section class="home-control-panel" aria-label="角色筛选">
+    <section
+      ref="controlPanelRef"
+      class="home-control-panel"
+      :class="{ 'is-pinned': isControlPanelPinned }"
+      :data-sticky-state="isControlPanelPinned ? 'pinned' : 'resting'"
+      aria-label="角色筛选"
+    >
       <label class="home-search-field">
         <Search :size="18" />
         <input v-model.trim="search" placeholder="搜索名称、标签或人设" aria-label="搜索名称、标签或人设" />

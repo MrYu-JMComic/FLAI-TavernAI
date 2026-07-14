@@ -38,7 +38,9 @@ const CONTINUATION_PROMPT = '请继续上一条回复，保持同一角色、语
 export function createConversationGenerationRouter(ctx) {
   const { db, requireAuth, asyncRoute, newId, nowIso } = ctx;
   const getChatProviderSettings = (userId) => getChatProviderSettingsFromContext(ctx, userId);
-  const getConversation = (userId, conversationId) => getConversationForUser(db, userId, conversationId);
+  // Generation only needs authorization + settings; skip the O(messages) usage scan.
+  const getConversation = (userId, conversationId) =>
+    getConversationForUser(db, userId, conversationId, { includeUsage: false });
   const router = Router({ mergeParams: true });
   const assistantResults = createConversationAssistantResultService({
     db,
@@ -47,6 +49,22 @@ export function createConversationGenerationRouter(ctx) {
     createConversationMessage,
     updateConversationTimestamp
   });
+  // Single-process server: an in-memory set is enough to serialize generation
+  // per conversation and avoid interleaved assistant messages.
+  const generatingConversations = new Set();
+
+  function tryLockGeneration(conversationId, response) {
+    if (generatingConversations.has(conversationId)) {
+      response.status(409).json({ error: '该对话正在生成回复，请等待完成后再试', accepted: false });
+      return false;
+    }
+    generatingConversations.add(conversationId);
+    return true;
+  }
+
+  function unlockGeneration(conversationId) {
+    generatingConversations.delete(conversationId);
+  }
 
   router.post('/messages', requireAuth, validate(sendMessageSchema), asyncRoute(async (request, response) => {
     const conversation = getConversation(request.auth.user.id, request.params.id);
@@ -61,6 +79,17 @@ export function createConversationGenerationRouter(ctx) {
       return;
     }
 
+    if (!tryLockGeneration(conversation.id, response)) {
+      return;
+    }
+    try {
+      await handleSendMessage(request, response, conversation, character);
+    } finally {
+      unlockGeneration(conversation.id);
+    }
+  }));
+
+  async function handleSendMessage(request, response, conversation, character) {
     const userText = String(request.body?.content || request.body?.message || '').trim();
     try {
       validateChatAttachmentsForUpload(request.body?.attachments);
@@ -255,13 +284,14 @@ export function createConversationGenerationRouter(ctx) {
       });
       return;
     }
+    const latestStatusBar = getStatusBar(db, request.auth.user.id, conversation.id);
     response.json({
       userMessage,
       assistantMessage,
       usage: assistantMessage.usage,
       provider: result.provider,
       worldBookMatches,
-      statusBar: getStatusBar(db, request.auth.user.id, conversation.id),
+      statusBar: latestStatusBar,
       accessoryBackground: true
     });
 
@@ -273,9 +303,9 @@ export function createConversationGenerationRouter(ctx) {
       userMessage,
       assistantMessage,
       settings: settings.value,
-      statusBar: getStatusBar(db, request.auth.user.id, conversation.id) || statusBar
+      statusBar: latestStatusBar || statusBar
     });
-  }));
+  }
 
   router.post('/messages/continue', requireAuth, validate(continueMessageSchema), asyncRoute(async (request, response) => {
     const conversation = getConversation(request.auth.user.id, request.params.id);
@@ -290,6 +320,17 @@ export function createConversationGenerationRouter(ctx) {
       return;
     }
 
+    if (!tryLockGeneration(conversation.id, response)) {
+      return;
+    }
+    try {
+      await handleContinueMessage(request, response, conversation, character);
+    } finally {
+      unlockGeneration(conversation.id);
+    }
+  }));
+
+  async function handleContinueMessage(request, response, conversation, character) {
     const history = listRecentConversationMessageRows(db, request.auth.user.id, conversation.id);
     if (!hasContinuableAssistant(history)) {
       response.status(400).json({ error: '没有可继续的回复' });
@@ -407,13 +448,14 @@ export function createConversationGenerationRouter(ctx) {
       });
       return;
     }
+    const latestStatusBar = getStatusBar(db, request.auth.user.id, conversation.id);
     response.json({
       userMessage: null,
       assistantMessage,
       usage: assistantMessage.usage,
       provider: result.provider,
       worldBookMatches,
-      statusBar: getStatusBar(db, request.auth.user.id, conversation.id),
+      statusBar: latestStatusBar,
       accessoryBackground: true
     });
 
@@ -425,9 +467,9 @@ export function createConversationGenerationRouter(ctx) {
       userMessage: null,
       assistantMessage,
       settings: settings.value,
-      statusBar: getStatusBar(db, request.auth.user.id, conversation.id) || statusBar
+      statusBar: latestStatusBar || statusBar
     });
-  }));
+  }
 
   function startAccessoryAgentsInBackground(options) {
     queueMicrotask(() => {

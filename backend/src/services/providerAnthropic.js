@@ -22,7 +22,8 @@ export async function generateAnthropicMessage(settings, messages, options = {})
   const requestBody = buildAnthropicBody(settings, messages, false, options);
   const response = await providerFetch(settings, '/messages', {
     method: 'POST',
-    body: JSON.stringify(requestBody)
+    body: JSON.stringify(requestBody),
+    signal: options.signal
   });
 
   const json = await readJsonResponse(response);
@@ -85,6 +86,12 @@ export async function streamAnthropicMessage(settings, messages, emit, signal, o
       }
     }
 
+    if (json.type === 'message_start' && json.message?.usage) {
+      usage = {
+        ...json.message.usage,
+        ...(usage || {})
+      };
+    }
     if (json.type === 'message_delta' && json.usage) {
       usage = {
         ...(usage || {}),

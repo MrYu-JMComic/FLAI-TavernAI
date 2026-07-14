@@ -26,7 +26,8 @@ export async function generateOpenAiResponse(settings, messages, options = {}) {
       input: convertMessagesForOpenAiResponses(messages),
       reasoning: buildOpenAiReasoning(settings, options),
       stream: false
-    })
+    }),
+    signal: options.signal
   });
 
   const json = await readJsonResponse(response);

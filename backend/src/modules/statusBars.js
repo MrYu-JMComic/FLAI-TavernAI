@@ -120,15 +120,7 @@ export function extractVariablesFromText(text, currentVariables = []) {
     const patterns = [
       new RegExp(`[\\u3010\\[]${varName}[\\u3011\\]]\\s*(\\d+(?:\\.\\d+)?)\\s*(?:/\\s*(\\d+(?:\\.\\d+)?))?`, 'i'),
       new RegExp(`${varName}\\s*[:\\uFF1A]\\s*(\\d+(?:\\.\\d+)?)\\s*(?:/\\s*(\\d+(?:\\.\\d+)?))?`, 'i'),
-      new RegExp(`(?:^|\\s)${varName}\\s+(\\d+(?:\\.\\d+)?)\\s*(?:/\\s*(\\d+(?:\\.\\d+)?))?(?=\\s|$|[,\\uFF0C.\\u3002\\n])`, 'im'),
-      // 【Name】value/max or 【Name】value
-      new RegExp(`【${varName}】\\s*(\\d+(?:\\.\\d+)?)\\s*(?:/\\s*(\\d+(?:\\.\\d+)?))?`, 'i'),
-      // [Name] value/max or [Name] value
-      new RegExp(`\\[${varName}\\]\\s*(\\d+(?:\\.\\d+)?)\\s*(?:/\\s*(\\d+(?:\\.\\d+)?))?`, 'i'),
-      // Name: value/max or Name: value (with colon)
-      new RegExp(`${varName}\\s*[:：]\\s*(\\d+(?:\\.\\d+)?)\\s*(?:/\\s*(\\d+(?:\\.\\d+)?))?`, 'i'),
-      // Name value/max or Name value (space separated, word boundary)
-      new RegExp(`(?:^|\\s)${varName}\\s+(\\d+(?:\\.\\d+)?)\\s*(?:/\\s*(\\d+(?:\\.\\d+)?))?(?=\\s|$|[，。,.\n])`, 'im')
+      new RegExp(`(?:^|\\s)${varName}\\s+(\\d+(?:\\.\\d+)?)\\s*(?:/\\s*(\\d+(?:\\.\\d+)?))?(?=\\s|$|[,\\uFF0C.\\u3002\\n])`, 'im')
     ];
 
     for (const pattern of patterns) {

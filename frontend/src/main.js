@@ -5,5 +5,6 @@ import './styles.css';
 import './styles/settings.css';
 import './styles/status.css';
 import './styles/workspace-home.css';
+import './styles/ui-refresh.css';
 
 createApp(App).use(router).mount('#app');

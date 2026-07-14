@@ -154,8 +154,9 @@ export async function streamAssistantResponse({
       statusBar: latestStatusBar || statusBar
     });
   } catch (error) {
-    if (isAbortError(error) || controller.signal.aborted || response.destroyed) {
-      saveInterruptedAssistantResult({
+    const serverAborted = isAbortError(error) || controller.signal.aborted || response.destroyed;
+    if (serverAborted) {
+      const interruptedMessage = saveInterruptedAssistantResult({
         userId,
         conversation,
         character,
@@ -166,14 +167,37 @@ export async function streamAssistantResponse({
           charName: character.name || ''
         }
       });
-      if (!response.destroyed) {
+      // Client disconnect closes/destroys the response — nothing to emit.
+      // Server-initiated abort (timeout) leaves the socket writable: tell the client why.
+      if (!response.destroyed && !response.writableEnded) {
+        const reason = controller.signal.reason;
+        await emit('error', {
+          error: reason?.message || error?.message || '生成已中断',
+          interrupted: true,
+          ...(interruptedMessage ? { assistantMessage: interruptedMessage } : {})
+        });
+        await streamWrites.wait();
         response.end();
       }
       return;
     }
 
-    if (!response.destroyed) {
-      await emit('error', { error: error?.message || '生成失败' });
+    const interruptedMessage = saveInterruptedAssistantResult({
+      userId,
+      conversation,
+      character,
+      rules,
+      partialAssistant,
+      macroContext: {
+        userName: request.auth?.user?.displayName || request.auth?.user?.username || '用户',
+        charName: character.name || ''
+      }
+    });
+    if (!response.destroyed && !response.writableEnded) {
+      await emit('error', {
+        error: error?.message || '生成失败',
+        ...(interruptedMessage ? { assistantMessage: interruptedMessage } : {})
+      });
       await streamWrites.wait();
       response.end();
     }

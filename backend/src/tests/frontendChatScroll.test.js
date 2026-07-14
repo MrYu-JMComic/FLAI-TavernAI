@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { readRepoText } from './frontendSfcTestUtils.js';
+import { readRepoText, readVueBlocks } from './frontendSfcTestUtils.js';
 
 const { useChatScroll } = await import('../../../frontend/src/composables/chat/useChatScroll.js');
 const chatScrollSource = readRepoText('frontend/src/composables/chat/useChatScroll.js');
+const { source: virtualMessageListSource } = readVueBlocks('frontend/src/components/VirtualMessageList.vue');
 
 function refValue(value) {
   return { value };
@@ -158,11 +159,11 @@ test('chat scroll falls back when animation frames are unavailable', () => {
     });
 
     assert.doesNotThrow(() => scroll.scrollToBottom(false, true));
-    assert.equal(scroller.scrollTop, 1000);
+    assert.equal(scroller.scrollTop, 700);
 
     scroller.scrollTop = 100;
     assert.doesNotThrow(() => scroll.restoreMessageScrollPosition(refValue([{ role: 'user' }])));
-    assert.equal(scroller.scrollTop, 1000);
+    assert.equal(scroller.scrollTop, 700);
 
     scroll.cleanup();
   }));
@@ -206,4 +207,32 @@ test('chat scroll coalesces passive scroll state updates into one animation fram
 
     scroll.cleanup();
   }));
+});
+
+test('chat stream follow stays pinned in the same frame as message growth', () => {
+  withFakeWindow(() => {
+    const scroller = {
+      scrollTop: 700,
+      scrollHeight: 1000,
+      clientHeight: 300
+    };
+
+    const scroll = useChatScroll({
+      messageScroller: refValue(scroller),
+      conversationId: refValue('conv-1')
+    });
+
+    scroller.scrollHeight = 1400;
+    scroll.stickToBottomIfNeeded(false);
+
+    assert.equal(scroller.scrollTop, 1100);
+    assert.equal(scroll.distanceToBottom.value, 0);
+    assert.equal(scroll.isPinnedToBottom(), true);
+    assert.match(
+      virtualMessageListSource,
+      /\.virtual-scroll-container\s*\{[^}]*overflow-anchor:\s*none;/
+    );
+
+    scroll.cleanup();
+  });
 });

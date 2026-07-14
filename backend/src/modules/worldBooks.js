@@ -1,6 +1,7 @@
 import { newId, nowIso } from '../security.js';
 import { normalizeBoolean } from '../utils/boolean.js';
 import { normalizeFiniteNumber } from '../utils/number.js';
+import { withSavepoint } from './savepoint.js';
 
 // ── World Book CRUD ──
 
@@ -175,6 +176,54 @@ export function getCharacterWorldBookId(database, characterId) {
   return direct?.id || null;
 }
 
+export function getCharacterWorldBookIds(database, characterIds = []) {
+  const ids = [...new Set(characterIds.filter(Boolean))];
+  const result = new Map();
+  if (!ids.length) {
+    return result;
+  }
+  const placeholders = ids.map(() => '?').join(', ');
+
+  const linkedRows = database
+    .prepare(
+      `SELECT cwb.character_id, cwb.world_book_id AS id
+       FROM character_world_books cwb
+       JOIN world_books wb ON wb.id = cwb.world_book_id
+       JOIN characters c ON c.id = cwb.character_id
+         AND c.user_id = wb.user_id
+       WHERE cwb.character_id IN (${placeholders})
+       ORDER BY cwb.order_index ASC, cwb.created_at ASC, cwb.rowid ASC`
+    )
+    .all(...ids);
+  for (const row of linkedRows) {
+    if (row?.id && !result.has(row.character_id)) {
+      result.set(row.character_id, row.id);
+    }
+  }
+
+  const remaining = ids.filter((id) => !result.has(id));
+  if (remaining.length) {
+    const remainingPlaceholders = remaining.map(() => '?').join(', ');
+    const directRows = database
+      .prepare(
+        `SELECT world_books.character_id, world_books.id
+         FROM world_books
+         JOIN characters ON characters.id = world_books.character_id
+           AND characters.user_id = world_books.user_id
+         WHERE world_books.character_id IN (${remainingPlaceholders})
+         ORDER BY world_books.updated_at DESC, world_books.rowid DESC`
+      )
+      .all(...remaining);
+    for (const row of directRows) {
+      if (row?.id && !result.has(row.character_id)) {
+        result.set(row.character_id, row.id);
+      }
+    }
+  }
+
+  return result;
+}
+
 export function listCharacterWorldBooks(database, characterId) {
   return database
     .prepare(
@@ -266,13 +315,17 @@ export function matchWorldBookEntries(database, characterId, texts, options = {}
     return [];
   }
 
+  // persistState=false runs a dry match (e.g. context preview): no counter advance,
+  // no world_book_entry_state writes, so sticky/cooldown/delay stay untouched.
+  const persistState = options.persistState !== false;
+
   const filteredTexts = normalizeScanTexts(texts);
   if (!filteredTexts.length) {
     // Still collect always_active entries
   }
 
   // Message count for sticky/cooldown/delay tracking
-  const messageCount = resolveMessageCount(database, options.messageCount);
+  const messageCount = resolveMessageCount(database, options.messageCount, !persistState);
 
   // Collect book IDs from both character_id column and character_world_books junction table
   const bookIdSet = new Set();
@@ -345,12 +398,11 @@ export function matchWorldBookEntries(database, characterId, texts, options = {}
   // Load or create state for all entries
   const entryStates = getEntryStates(database, entryIds);
 
-  // Ensure state rows exist for all entries
+  // Ensure in-memory state for all entries; missing rows are created at persist time.
+  const missingStateEntryIds = new Set();
   for (const entry of entries) {
     if (!entryStates.has(entry.id)) {
-      database
-        .prepare('INSERT OR IGNORE INTO world_book_entry_state (entry_id) VALUES (?)')
-        .run(entry.id);
+      missingStateEntryIds.add(entry.id);
       entryStates.set(entry.id, {
         last_activated_message: 0,
         last_deactivated_message: 0,
@@ -382,7 +434,7 @@ export function matchWorldBookEntries(database, characterId, texts, options = {}
       const delay = normalizeOptionalEntryNumber(entry.delay);
       if (delay != null && delay > 0) {
         if (state.first_seen_message === 0) {
-          database.prepare('UPDATE world_book_entry_state SET first_seen_message = ? WHERE entry_id = ?').run(messageCount, entry.id);
+          // First time seeing this entry — record in memory; persisted in updateEntryStates.
           state.first_seen_message = messageCount;
         }
         if (messageCount - state.first_seen_message < delay) {
@@ -458,8 +510,19 @@ export function matchWorldBookEntries(database, characterId, texts, options = {}
     }
   }
 
-  // Phase 5: Update entry states based on entries that survived final pruning
-  updateEntryStates(database, entries, toMatchedIdSet(matched), entryStates, messageCount);
+  // Phase 5: Update entry states based on entries that survived final pruning,
+  // batched in one savepoint so per-entry writes commit atomically.
+  if (persistState) {
+    withSavepoint(database, 'sp_world_book_entry_state', () => {
+      if (missingStateEntryIds.size) {
+        const insertState = database.prepare('INSERT OR IGNORE INTO world_book_entry_state (entry_id) VALUES (?)');
+        for (const entryId of missingStateEntryIds) {
+          insertState.run(entryId);
+        }
+      }
+      updateEntryStates(database, entries, toMatchedIdSet(matched), entryStates, messageCount);
+    });
+  }
 
   return matched;
 }
@@ -757,31 +820,41 @@ function toMatchedEntry(entry) {
 let _messageCounter = 0;
 let _counterInitialized = false;
 
-function getNextMessageCount(database) {
+function ensureMessageCounterInitialized(database) {
   // Lazy-init: recover counter from persisted state so sticky/cooldown survive restarts
-  if (!_counterInitialized) {
-    _counterInitialized = true;
-    try {
-      const row = database
-        .prepare(
-          `SELECT MAX(last_activated_message) AS a, MAX(last_deactivated_message) AS d,
-                  MAX(first_seen_message) AS f FROM world_book_entry_state`
-        )
-        .get();
-      const maxSeen = Math.max(
-        normalizeMessageCount(row?.a, 0),
-        normalizeMessageCount(row?.d, 0),
-        normalizeMessageCount(row?.f, 0)
-      );
-      if (maxSeen > _messageCounter) {
-        _messageCounter = maxSeen;
-      }
-    } catch {
-      // Table may not exist yet; ignore
-    }
+  if (_counterInitialized) {
+    return;
   }
+  _counterInitialized = true;
+  try {
+    const row = database
+      .prepare(
+        `SELECT MAX(last_activated_message) AS a, MAX(last_deactivated_message) AS d,
+                MAX(first_seen_message) AS f FROM world_book_entry_state`
+      )
+      .get();
+    const maxSeen = Math.max(
+      normalizeMessageCount(row?.a, 0),
+      normalizeMessageCount(row?.d, 0),
+      normalizeMessageCount(row?.f, 0)
+    );
+    if (maxSeen > _messageCounter) {
+      _messageCounter = maxSeen;
+    }
+  } catch {
+    // Table may not exist yet; ignore
+  }
+}
+
+function getNextMessageCount(database) {
+  ensureMessageCounterInitialized(database);
   _messageCounter = normalizeMessageCount(_messageCounter, 0);
   return ++_messageCounter;
+}
+
+function peekNextMessageCount(database) {
+  ensureMessageCounterInitialized(database);
+  return normalizeMessageCount(_messageCounter, 0) + 1;
 }
 
 function getEntryStates(database, entryIds) {
@@ -806,6 +879,12 @@ function getEntryStates(database, entryIds) {
 }
 
 function updateEntryStates(database, entries, matchedIds, entryStates, messageCount) {
+  const persistEntryState = database.prepare(
+    `UPDATE world_book_entry_state
+     SET last_activated_message = ?, last_deactivated_message = ?, first_seen_message = ?,
+         sticky_remaining = ?, was_active = ?
+     WHERE entry_id = ?`
+  );
   for (const entry of entries) {
     const state = entryStates.get(entry.id);
     if (!state) continue;
@@ -823,7 +902,7 @@ function updateEntryStates(database, entries, matchedIds, entryStates, messageCo
         }
         state.last_activated_message = messageCount;
       }
-      // Decrement sticky counter (for entries activated in a prior round still in sticky window)
+      // The activation round counts toward the configured sticky window.
       if (state.sticky_remaining > 0) {
         state.sticky_remaining--;
       }
@@ -839,21 +918,14 @@ function updateEntryStates(database, entries, matchedIds, entryStates, messageCo
     }
 
     // Persist state
-    database
-      .prepare(
-        `UPDATE world_book_entry_state
-         SET last_activated_message = ?, last_deactivated_message = ?, first_seen_message = ?,
-             sticky_remaining = ?, was_active = ?
-         WHERE entry_id = ?`
-      )
-      .run(
-        state.last_activated_message,
-        state.last_deactivated_message,
-        state.first_seen_message,
-        state.sticky_remaining,
-        state.was_active ? 1 : 0,
-        entry.id
-      );
+    persistEntryState.run(
+      state.last_activated_message,
+      state.last_deactivated_message,
+      state.first_seen_message,
+      state.sticky_remaining,
+      state.was_active ? 1 : 0,
+      entry.id
+    );
   }
 }
 
@@ -1045,11 +1117,11 @@ function normalizeContextSize(value) {
   return normalized > 0 ? normalized : null;
 }
 
-function resolveMessageCount(database, value) {
+function resolveMessageCount(database, value, peek = false) {
   if (value == null) {
-    return getNextMessageCount(database);
+    return peek ? peekNextMessageCount(database) : getNextMessageCount(database);
   }
-  return normalizeMessageCount(value, null) ?? getNextMessageCount(database);
+  return normalizeMessageCount(value, null) ?? (peek ? peekNextMessageCount(database) : getNextMessageCount(database));
 }
 
 function normalizeMessageCount(value, fallback = 0) {

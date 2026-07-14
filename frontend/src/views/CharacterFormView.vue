@@ -720,6 +720,7 @@ function characterEnvelopeFileName(item = {}) {
       @skip="skipCharacterWizardStep"
     />
 
+    <div class="character-editor-workbench">
     <nav v-if="!loading && !loadError" ref="sectionNavRef" class="form-section-nav character-section-nav">
       <button
         v-for="section in visibleFormSections"
@@ -880,6 +881,7 @@ function characterEnvelopeFileName(item = {}) {
         </div>
       </div>
     </form>
+    </div>
 
     <CharacterWorldBookDialog
       v-if="showWorldBookDialog"

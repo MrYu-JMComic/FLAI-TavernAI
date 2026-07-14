@@ -7,6 +7,7 @@ import { hasUsableProvider, runToolCompletion } from './providers.js';
 import { parseStatusTemplateToken } from '../../../shared/statusTemplateTokens.js';
 
 const agentTimeoutMs = 20000;
+const agentAbortGraceMs = 5000;
 const AUTO_NPC_BEHAVIOR_LIMIT = 8;
 
 export function getAccessorySkillsPayload(conversation, statusBar = null) {
@@ -46,18 +47,18 @@ export async function runAccessoryAgents({
   const observationWindow = buildObservationWindow(userMessage, assistantMessage);
 
   if (active.statusBarAgent) {
-    jobs.push(runAgentJob('statusBarAgent', skills.statusBarAgent, emit, () =>
-      runStatusBarAgent({ db, userId, conversation, assistantMessage, observationWindow, settings, statusBar, skill: skills.statusBarAgent })
+    jobs.push(runAgentJob('statusBarAgent', skills.statusBarAgent, emit, (signal) =>
+      runStatusBarAgent({ db, userId, conversation, assistantMessage, observationWindow, settings, statusBar, skill: skills.statusBarAgent, signal })
     ));
   }
   if (active.npcAgent) {
-    jobs.push(runAgentJob('npcAgent', skills.npcAgent, emit, () =>
-      runNpcAgent({ db, userId, conversation, character, assistantMessage, observationWindow, settings, skill: skills.npcAgent })
+    jobs.push(runAgentJob('npcAgent', skills.npcAgent, emit, (signal) =>
+      runNpcAgent({ db, userId, conversation, character, assistantMessage, observationWindow, settings, skill: skills.npcAgent, signal })
     ));
   }
   if (active.economyAgent) {
-    jobs.push(runAgentJob('economyAgent', skills.economyAgent, emit, () =>
-      runEconomyAgent({ db, userId, conversation, assistantMessage, observationWindow, settings, skill: skills.economyAgent })
+    jobs.push(runAgentJob('economyAgent', skills.economyAgent, emit, (signal) =>
+      runEconomyAgent({ db, userId, conversation, assistantMessage, observationWindow, settings, skill: skills.economyAgent, signal })
     ));
   }
   if (active.cgScene) {
@@ -84,18 +85,27 @@ export async function runAccessoryAgents({
 
 async function runAgentJob(skill, config, emit, handler) {
   emit?.('skill_start', { skill, model: config?.modelOverride || '' });
+  // Abort the in-flight provider call at the deadline so the handler can fall
+  // through to its cheap non-AI fallback; the outer race is only a backstop
+  // for anything that ignores the signal.
+  const controller = new AbortController();
+  const abortTimer = setTimeout(() => {
+    controller.abort(new Error(`${skill} timed out`));
+  }, agentTimeoutMs);
   let payload;
   try {
-    const result = await withTimeout(handler(), agentTimeoutMs, `${skill} timed out`);
+    const result = await withTimeout(handler(controller.signal), agentTimeoutMs + agentAbortGraceMs, `${skill} timed out`);
     payload = { skill, ok: true, result };
   } catch (error) {
     payload = { skill, ok: false, error: error?.message || `${skill} failed` };
+  } finally {
+    clearTimeout(abortTimer);
   }
   emit?.('skill_result', payload);
   return payload;
 }
 
-async function runStatusBarAgent({ db, userId, conversation, assistantMessage, observationWindow, settings, statusBar, skill }) {
+async function runStatusBarAgent({ db, userId, conversation, assistantMessage, observationWindow, settings, statusBar, skill, signal }) {
   const statusBarPrompt = normalizeAdvancedSettings(conversation?.settings || {}).statusBarPrompt;
   if (!statusBar?.variables?.length && !statusBarPrompt) {
     return { statusBar: null, updates: [] };
@@ -120,7 +130,7 @@ async function runStatusBarAgent({ db, userId, conversation, assistantMessage, o
         }
         return { ok: false, error: `Unsupported tool: ${toolName}` };
       },
-      { maxRounds: 2, thinkingEnabled: false }
+      { maxRounds: 2, thinkingEnabled: false, signal }
     ).catch((error) => {
       logAccessoryAgentFailure('status-bar', error);
       return null;
@@ -156,7 +166,7 @@ async function runStatusBarAgent({ db, userId, conversation, assistantMessage, o
   return { statusBar: nextStatusBar, updates };
 }
 
-async function runNpcAgent({ db, userId, conversation, character, assistantMessage, observationWindow, settings, skill }) {
+async function runNpcAgent({ db, userId, conversation, character, assistantMessage, observationWindow, settings, skill, signal }) {
   const recorded = [];
   const behaviors = [];
   const npcs = [];
@@ -215,7 +225,7 @@ async function runNpcAgent({ db, userId, conversation, character, assistantMessa
         }
         return { ok: false, error: `Unsupported tool: ${toolName}` };
       },
-      { maxRounds: 3, thinkingEnabled: false }
+      { maxRounds: 3, thinkingEnabled: false, signal }
     ).catch((error) => {
       logAccessoryAgentFailure('npc', error);
       return null;
@@ -225,7 +235,7 @@ async function runNpcAgent({ db, userId, conversation, character, assistantMessa
   return { npcs, memories: recorded, behaviors };
 }
 
-async function runEconomyAgent({ db, userId, conversation, assistantMessage, observationWindow, settings, skill }) {
+async function runEconomyAgent({ db, userId, conversation, assistantMessage, observationWindow, settings, skill, signal }) {
   const transactions = [];
 
   if (hasUsableProvider(settings)) {
@@ -243,7 +253,7 @@ async function runEconomyAgent({ db, userId, conversation, assistantMessage, obs
         }
         return { ok: true, transaction: result?.transaction || null };
       },
-      { maxRounds: 3, thinkingEnabled: false }
+      { maxRounds: 3, thinkingEnabled: false, signal }
     ).catch((error) => {
       logAccessoryAgentFailure('economy', error);
       return null;

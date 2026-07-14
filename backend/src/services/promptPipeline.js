@@ -43,7 +43,15 @@ export function buildPromptPipeline(database, options = {}) {
   const recentTexts = buildRecentTexts(history, processedUserText);
   const statusBar = getStatusBar(database, user.id, conversation.id);
   const accessoryState = getAccessorySkillsPayload(conversation, statusBar);
-  const worldBookEntries = matchWorldBookEntries(database, character.id, recentTexts, { conversationId: conversation.id });
+  const contextBudgetCharacters = normalizeContextBudgetCharacters(
+    source.contextBudgetCharacters ?? source.contextBudgetChars ?? source.contextBudget
+  );
+  const worldBookEntries = matchWorldBookEntries(database, character.id, recentTexts, {
+    conversationId: conversation.id,
+    // Preview/dry-run callers pass false so sticky/cooldown/delay state stays untouched.
+    persistState: source.persistWorldBookState !== false,
+    contextSize: Math.ceil(contextBudgetCharacters / TOKEN_CHAR_DIVISOR)
+  });
   const worldBookDiagnostics = buildWorldBookContextDiagnostics(database, {
     userId: user.id,
     characterId: character.id,
@@ -103,7 +111,7 @@ export function buildPromptPipeline(database, options = {}) {
   });
   const budgetedPrompt = applyPromptBudget(
     rawModelMessages,
-    normalizeContextBudgetCharacters(source.contextBudgetCharacters ?? source.contextBudgetChars ?? source.contextBudget)
+    contextBudgetCharacters
   );
   const modelMessages = budgetedPrompt.messages;
 

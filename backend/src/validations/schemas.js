@@ -151,6 +151,16 @@ export const updateMessageSchema = z.object({
   content: z.string().min(1, '消息内容不能为空').max(32000).trim()
 });
 
+export const createSwipeSchema = z.object({
+  content: z.string().min(1, 'content is required').max(64000, '候选内容过长'),
+  reasoning: z.string().max(64000).optional().default(''),
+  usage: z.record(z.any()).nullable().optional().default(null)
+});
+
+export const setActiveSwipeSchema = z.object({
+  swipeId: z.string().min(1, 'swipeId is required').max(160)
+});
+
 export const createAssetSchema = z.object({
   dataUrl: z.string().max(ASSET_IMAGE_INPUT_MAX_LENGTH).trim().optional().default(''),
   url: z.string().max(ASSET_IMAGE_INPUT_MAX_LENGTH).trim().optional().default(''),

@@ -81,6 +81,12 @@ function openUserSettings() {
   emit('navigate', 'settings');
 }
 
+function openExtensions() {
+  userMenuOpen.value = false;
+  mobileNavOpen.value = false;
+  emit('navigate', 'extensions');
+}
+
 function logoutFromMenu() {
   userMenuOpen.value = false;
   mobileNavOpen.value = false;
@@ -198,6 +204,10 @@ function navigateAndClose(name) {
               <KeyRound :size="17" aria-hidden="true" />
               <span>个人中心</span>
             </button>
+            <button class="user-menu-item" type="button" role="menuitem" @click="openExtensions">
+              <Puzzle :size="17" aria-hidden="true" />
+              <span>扩展管理</span>
+            </button>
             <button class="user-menu-item danger" type="button" role="menuitem" @click="logoutFromMenu">
               <LogOut :size="17" aria-hidden="true" />
               <span>退出登录</span>
@@ -210,5 +220,24 @@ function navigateAndClose(name) {
     <main id="main-content" class="page-shell" tabindex="-1">
       <slot />
     </main>
+
+    <nav v-if="!isChatRoute" class="mobile-bottom-nav" aria-label="移动端主导航">
+      <button :class="{ active: currentRoute === 'home' }" type="button" @click="navigateAndClose('home')">
+        <Home :size="20" aria-hidden="true" />
+        <span>首页</span>
+      </button>
+      <button :class="{ active: currentRoute === 'characterNew' }" type="button" @click="navigateAndClose('characterNew')">
+        <Plus :size="20" aria-hidden="true" />
+        <span>创建</span>
+      </button>
+      <button :class="{ active: isWorldBookRoute }" type="button" @click="navigateAndClose('worldBooks')">
+        <BookOpen :size="20" aria-hidden="true" />
+        <span>世界书</span>
+      </button>
+      <button :class="{ active: isPresetsRoute }" type="button" @click="navigateAndClose('presets')">
+        <SlidersHorizontal :size="20" aria-hidden="true" />
+        <span>预设</span>
+      </button>
+    </nav>
   </div>
 </template>
