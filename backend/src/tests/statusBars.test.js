@@ -4,7 +4,7 @@ import test from 'node:test';
 import { createAppDatabase } from '../db.js';
 import { applyVariableUpdates, getStatusBar, updateStatusBarVariables, upsertStatusBar } from '../modules/statusBars.js';
 
-const statusBarsSource = readFileSync(new URL('../modules/statusBars.js', import.meta.url), 'utf8');
+const statusBarsSource = readFileSync(new URL('../modules/statusBars.js', import.meta.url), 'utf8').replaceAll('\r\n', '\n');
 
 function setupConversation(database) {
   const now = new Date().toISOString();

@@ -201,7 +201,7 @@ test('parseCookies skips malformed percent-encoded pairs', () => {
 });
 
 test('parseCookies scans cookie pairs without array pipelines', () => {
-  const source = fs.readFileSync(new URL('../security.js', import.meta.url), 'utf8');
+  const source = fs.readFileSync(new URL('../security.js', import.meta.url), 'utf8').replaceAll('\r\n', '\n');
   const match = source.match(/export function parseCookies[\s\S]*?\n}\n\nfunction safeDecodeCookiePart/);
   assert.ok(match);
   assert.match(match[0], /for \(let index = 0; index <= header\.length; index \+= 1\)/);
@@ -7690,7 +7690,7 @@ test('conversation messages preserve insertion order when timestamps tie', async
       ['First tied message', 'Second tied message', 'Third tied message']
     );
 
-    const routeSource = fs.readFileSync(new URL('../routes/helpers.js', import.meta.url), 'utf8');
+    const routeSource = fs.readFileSync(new URL('../routes/helpers.js', import.meta.url), 'utf8').replaceAll('\r\n', '\n');
     const start = routeSource.indexOf('export function listConversationMessages(db, userId, conversationId) {');
     const end = routeSource.indexOf('\n\nexport function getConversationMessage', start);
     assert.notEqual(start, -1);
@@ -7780,7 +7780,7 @@ test('chat prompt history keeps latest tied-timestamp messages in insertion orde
     );
     assert.equal(providerBody.messages.at(-1).content, 'new prompt');
 
-    const routeSource = fs.readFileSync(new URL('../routes/helpers.js', import.meta.url), 'utf8');
+    const routeSource = fs.readFileSync(new URL('../routes/helpers.js', import.meta.url), 'utf8').replaceAll('\r\n', '\n');
     const start = routeSource.indexOf('export function listRecentConversationMessageRows(db, userId, conversationId) {');
     const end = routeSource.indexOf('\n\nexport function createConversationMessage', start);
     assert.notEqual(start, -1);

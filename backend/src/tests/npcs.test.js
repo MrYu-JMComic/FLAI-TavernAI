@@ -29,7 +29,7 @@ const {
   updateNpcBehavior
 } = await import('../modules/npcs.js');
 
-const npcsSource = readFileSync(new URL('../modules/npcs.js', import.meta.url), 'utf8');
+const npcsSource = readFileSync(new URL('../modules/npcs.js', import.meta.url), 'utf8').replaceAll('\r\n', '\n');
 
 function setupDatabase() {
   const database = createAppDatabase(':memory:');
