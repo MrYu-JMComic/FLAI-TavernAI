@@ -25,6 +25,7 @@ import { callEventMethod } from '../utils/eventMethods';
 
 const EconomyPanel = defineAsyncComponent(() => import('../components/EconomyPanel.vue'));
 const NpcPanel = defineAsyncComponent(() => import('../components/NpcPanel.vue'));
+const ScenePanel = defineAsyncComponent(() => import('../components/ScenePanel.vue'));
 const SaveLoadPanel = defineAsyncComponent(() => import('../components/SaveLoadPanel.vue'));
 const ChatSettingsDrawer = defineAsyncComponent(() => import('../components/chat/ChatSettingsDrawer.vue'));
 const ChatContextInspector = defineAsyncComponent(() => import('../components/chat/ChatContextInspector.vue'));
@@ -123,7 +124,7 @@ const {
   statusBarTemplateMode, statusBarTemplateConfig, statusBarTemplateIssues, statusBarTemplateCfg,
   accessorySettingsOpen, accessorySaving, accessorySkills, accessorySkillResults,
   accessorySkillItems,
-  hasStatusBarContent, showEconomyFeature, showNpcFeature,
+  hasStatusBarContent, showEconomyFeature, showNpcFeature, showSceneFeature,
   loadStatusBar, loadEconomyBalance, loadAccessorySkills,
   syncAccessorySkills, isAccessorySkillActiveLocal,
   saveAccessorySkillChanges, applyStatusBarUpdate, handleSkillResult,
@@ -1369,6 +1370,7 @@ watch(showNpcFeature, (active) => {
       <ChatHeader
         :show-economy-feature="showEconomyFeature"
         :show-npc-feature="showNpcFeature"
+        :show-scene-feature="showSceneFeature"
         :conversation-ready="conversationReady"
         :theme="theme"
         :conversation="conversation"
@@ -1382,6 +1384,7 @@ watch(showNpcFeature, (active) => {
         @open-context="(event) => openWorkspaceTool('context', event)"
         @open-economy="(event) => openWorkspaceTool('economy', event)"
         @open-npc="(event) => openWorkspaceTool('npc', event)"
+        @open-scene="(event) => openWorkspaceTool('scene', event)"
         @open-saves="(event) => openWorkspaceTool('saves', event)"
         @open-settings="(event) => openWorkspaceTool('appearance', event)"
       />
@@ -1665,6 +1668,12 @@ watch(showNpcFeature, (active) => {
       @update:open="handleNpcPanelOpenUpdate"
       @npcs-loaded="handleNpcPanelLoaded"
       @close="closeWorkspaceTool('npc')"
+    />
+    <ScenePanel
+      v-if="conversation?.id && (showSceneFeature || activeTool === 'scene')"
+      :conversation-id="conversation.id"
+      :open="activeTool === 'scene'"
+      @close="closeWorkspaceTool('scene')"
     />
     <SaveLoadPanel
       v-if="conversation?.id"

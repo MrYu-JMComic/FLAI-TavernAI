@@ -1,10 +1,11 @@
 <script setup>
 import { ref } from 'vue';
-import { Activity, Brain, Coins, Home, Menu, MoreHorizontal, Moon, Save, Settings, Sun, Users } from '@lucide/vue';
+import { Activity, Brain, Coins, Home, Map, Menu, MoreHorizontal, Moon, Save, Settings, Sun, Users } from '@lucide/vue';
 
 defineProps({
   showEconomyFeature: { type: Boolean, default: false },
   showNpcFeature: { type: Boolean, default: false },
+  showSceneFeature: { type: Boolean, default: false },
   conversationReady: { type: Boolean, default: false },
   theme: { type: String, default: 'light' },
   conversation: { type: Object, default: null },
@@ -15,7 +16,7 @@ defineProps({
 
 const emit = defineEmits([
   'navigate', 'toggle-theme', 'open-sidebar', 'open-status', 'open-context',
-  'open-economy', 'open-npc', 'open-saves', 'open-settings'
+  'open-economy', 'open-npc', 'open-scene', 'open-saves', 'open-settings'
 ]);
 const moreMenuRef = ref(null);
 
@@ -69,6 +70,9 @@ function runMoreAction(eventName, event) {
       <button v-if="showNpcFeature" class="deep-icon-button chat-header-primary-tool" :class="{ active: activeTool === 'npc' }" type="button" aria-label="NPC 管理" title="NPC 管理" :disabled="!conversationReady" @click="emit('open-npc', $event)">
         <Users :size="18" />
       </button>
+      <button v-if="showSceneFeature" class="deep-icon-button chat-header-primary-tool" :class="{ active: activeTool === 'scene' }" type="button" aria-label="场景构建助手" title="场景构建助手" :disabled="conversationReady === false" @click="emit('open-scene', $event)">
+        <Map :size="18" />
+      </button>
       <details ref="moreMenuRef" class="chat-header-more">
         <summary class="deep-icon-button" aria-label="更多聊天工具" title="更多聊天工具">
           <MoreHorizontal :size="19" />
@@ -86,6 +90,10 @@ function runMoreAction(eventName, event) {
           <button class="chat-header-overflow-tool" type="button" role="menuitem" :disabled="!conversationReady" @click="runMoreAction('open-npc', $event)">
             <Users :size="17" />
             <span>NPC 管理</span>
+          </button>
+          <button v-if="showSceneFeature" class="chat-header-overflow-tool" type="button" role="menuitem" :disabled="conversationReady === false" @click="runMoreAction('open-scene', $event)">
+            <Map :size="17" />
+            <span>场景构建助手</span>
           </button>
           <button v-if="showEconomyFeature" class="chat-header-overflow-tool" type="button" role="menuitem" :disabled="!conversationReady" @click="runMoreAction('open-economy', $event)">
             <Coins :size="17" />

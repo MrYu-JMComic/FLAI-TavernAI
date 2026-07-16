@@ -55,6 +55,33 @@ export function upsertStatusBar(database, userId, conversationId, payload) {
   return getStatusBar(database, userId, conversationId);
 }
 
+export function updateStatusBarVariables(database, userId, conversationId, updates = [], options = {}) {
+  const current = getStatusBar(database, userId, conversationId);
+  if (!current || !Array.isArray(updates) || updates.length === 0) {
+    return current;
+  }
+
+  const nextVariables = applyVariableUpdates(current.variables, updates);
+  const allowCreate = options.allowCreate === true;
+  const mergedVariables = allowCreate
+    ? appendMissingVariableUpdates(nextVariables, updates)
+    : nextVariables;
+  if (mergedVariables === current.variables) {
+    return current;
+  }
+
+  const timestamp = nowIso();
+  database
+    .prepare(
+      `UPDATE status_bars
+       SET variables = ?, updated_at = ?
+       WHERE conversation_id = ?
+         AND EXISTS (SELECT 1 FROM conversations WHERE id = ? AND user_id = ?)`
+    )
+    .run(JSON.stringify(normalizeVariables(mergedVariables, current.template)), timestamp, conversationId, conversationId, userId);
+  return getStatusBar(database, userId, conversationId);
+}
+
 export function deleteStatusBar(database, userId, conversationId) {
   // Verify conversation belongs to user
   const conversation = database
@@ -200,6 +227,26 @@ export function applyVariableUpdates(variables, updates) {
     });
   }
   return changed ? nextVariables : variables;
+}
+
+function appendMissingVariableUpdates(variables, updates) {
+  const nextVariables = variables.slice();
+  const seen = collectVariableKeys(nextVariables);
+  for (const update of updates) {
+    const name = String(update?.name || '').trim();
+    const key = normalizeVariableKey(name);
+    if (!name || !key || seen.has(key) || nextVariables.length >= STATUS_BAR_VARIABLE_LIMIT) {
+      continue;
+    }
+    nextVariables.push({
+      name,
+      value: update.value,
+      ...(hasExplicitMax(update) ? { max: Number(update.max) } : {}),
+      color: normalizeColor(update.color)
+    });
+    seen.add(key);
+  }
+  return nextVariables;
 }
 
 // ── Helpers ──

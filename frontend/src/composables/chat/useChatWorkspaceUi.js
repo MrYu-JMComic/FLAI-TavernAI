@@ -3,6 +3,7 @@ import { nextTick, ref } from 'vue';
 export const CHAT_TOOL_KEYS = Object.freeze([
   'status',
   'npc',
+  'scene',
   'economy',
   'saves',
   'context',

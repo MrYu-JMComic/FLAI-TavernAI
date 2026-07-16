@@ -232,6 +232,10 @@ test('chat stream follow stays pinned in the same frame as message growth', () =
       virtualMessageListSource,
       /\.virtual-scroll-container\s*\{[^}]*overflow-anchor:\s*none;/
     );
+    assert.match(
+      virtualMessageListSource,
+      /\.virtual-scroll-spacer\s*\{[^}]*flex:\s*0 0 auto;/
+    );
 
     scroll.cleanup();
   });

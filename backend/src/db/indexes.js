@@ -85,6 +85,17 @@ export function createDatabaseIndexes(database) {
     CREATE INDEX IF NOT EXISTS idx_npc_item_audit_npc_created ON npc_item_audit(conversation_id, npc_name, created_at);
     CREATE INDEX IF NOT EXISTS idx_npc_item_audit_item ON npc_item_audit(item_type, item_id);
 
+    CREATE INDEX IF NOT EXISTS idx_scene_nodes_conversation_type_name ON scene_nodes(conversation_id, node_type, name, created_at);
+    CREATE INDEX IF NOT EXISTS idx_scene_nodes_parent ON scene_nodes(conversation_id, parent_id);
+    CREATE INDEX IF NOT EXISTS idx_scene_routes_conversation_created ON scene_routes(conversation_id, created_at);
+    CREATE INDEX IF NOT EXISTS idx_scene_routes_endpoints ON scene_routes(conversation_id, from_node_id, to_node_id, bidirectional);
+    CREATE INDEX IF NOT EXISTS idx_scene_items_node_name ON scene_items(conversation_id, node_id, name, created_at);
+    CREATE INDEX IF NOT EXISTS idx_scene_items_owner ON scene_items(conversation_id, owner_type, owner_name, equipped, clothing_slot);
+    CREATE INDEX IF NOT EXISTS idx_scene_items_code ON scene_items(conversation_id, item_code);
+    CREATE INDEX IF NOT EXISTS idx_scene_item_audit_item_created ON scene_item_audit(conversation_id, item_id, created_at);
+    CREATE INDEX IF NOT EXISTS idx_scene_item_audit_before_owner ON scene_item_audit(conversation_id, before_owner_type, before_owner_name, created_at);
+    CREATE INDEX IF NOT EXISTS idx_scene_item_audit_after_owner ON scene_item_audit(conversation_id, after_owner_type, after_owner_name, created_at);
+
     CREATE INDEX IF NOT EXISTS idx_economy_accounts_conversation ON economy_accounts(conversation_id);
     CREATE INDEX IF NOT EXISTS idx_economy_accounts_user ON economy_accounts(user_id);
     CREATE INDEX IF NOT EXISTS idx_economy_transactions_account ON economy_transactions(account_id);

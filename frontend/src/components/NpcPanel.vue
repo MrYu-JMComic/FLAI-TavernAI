@@ -16,19 +16,27 @@ import {
   X,
   Zap
 } from '@lucide/vue';
+import PixelIcon from './PixelIcon.vue';
+import { PIXEL_ICON_CATALOG } from '../../../shared/pixelIconCatalog.js';
 import {
   addNpcBehavior,
   addNpcMemory,
   deleteNpcBehavior,
   deleteNpcMemory,
   fetchConversationNpcs,
+  fetchActorItems,
+  fetchActorItemAudit,
   fetchNpcAudit,
   fetchNpcBehaviors,
   fetchNpcMemories,
   hideConversationNpc,
   hideEmptyConversationNpcs,
   rollbackNpcAudit as rollbackNpcAuditRequest,
+  rollbackActorItemAudit,
   streamNpcOrganizer,
+  createSceneItem,
+  deleteSceneEntity,
+  updateSceneItem,
   updateConversationNpc,
   updateNpcMemory,
   updateNpcBehavior
@@ -49,6 +57,11 @@ const loading = ref(false);
 const loadError = ref('');
 const npcs = ref([]);
 const selectedNpc = ref('');
+const protagonistMode = ref(false);
+const protagonistItems = ref([]);
+const protagonistLoading = ref(false);
+const protagonistItemAudit = ref([]);
+const protagonistAuditLoading = ref(false);
 const memories = ref([]);
 const behaviors = ref([]);
 const npcAudit = ref([]);
@@ -70,10 +83,16 @@ const organizerToolCalls = ref([]);
 const organizerReasoning = ref('');
 const organizerError = ref('');
 const organizerAbortController = ref(null);
+const protagonistItemForm = reactive({
+  name: '', description: '', itemKind: 'item', clothingSlot: 'top',
+  equipped: false, quantity: 1, coverage: [], iconKey: 'item.bag'
+});
 let npcLoadToken = 0;
 let npcDetailToken = 0;
 let npcAuditToken = 0;
 let npcMutationToken = 0;
+let protagonistRequestToken = 0;
+let protagonistMutationToken = 0;
 let npcPanelDisposed = false;
 const memoryForm = reactive({ memoryType: 'event', content: '' });
 const memoryEditForm = reactive({ memoryType: 'event', content: '' });
@@ -139,6 +158,24 @@ const selectedNpcMemorySealActive = computed(() => Boolean(selectedNpcData.value
 const emptyNpcNames = computed(() => npcPanelSummary.value.emptyNpcNames);
 const npcOrganizerBusy = computed(() => organizerLoading.value);
 const npcActionBusy = computed(() => Boolean(npcActionBusyId.value) || npcOrganizerBusy.value);
+const protagonistClothing = computed(() => protagonistItems.value.filter(item => item.itemKind === 'clothing'));
+const protagonistInventory = computed(() => protagonistItems.value.filter(item => item.itemKind !== 'clothing'));
+
+const clothingSlotOptions = [
+  { value: 'upper_underwear', label: '内衣（上）' },
+  { value: 'lower_underwear', label: '内衣（下）' },
+  { value: 'top', label: '衣服' },
+  { value: 'bottom', label: '裤子 / 裙' },
+  { value: 'socks', label: '袜子 / 连裤袜' },
+  { value: 'shoes', label: '鞋子' },
+  { value: 'outfit', label: '连体套装' }
+];
+const coverageOptions = [
+  { value: 'chest', label: '胸部' }, { value: 'abdomen', label: '腹部' },
+  { value: 'groin', label: '裆部' }, { value: 'buttocks', label: '臀部' },
+  { value: 'thighs', label: '大腿' }, { value: 'legs', label: '小腿' }, { value: 'feet', label: '脚部' }
+];
+const pixelIconOptions = PIXEL_ICON_CATALOG;
 
 const memoryTypeOptions = [
   { value: 'event', label: '事件' },
@@ -209,9 +246,16 @@ function resetNpcState() {
   npcDetailToken += 1;
   npcAuditToken += 1;
   npcMutationToken += 1;
+  protagonistRequestToken += 1;
+  protagonistMutationToken += 1;
   cancelNpcOrganizer();
   setNpcsIfChanged([]);
   setSelectedNpc('');
+  protagonistMode.value = false;
+  protagonistItems.value = [];
+  protagonistLoading.value = false;
+  protagonistItemAudit.value = [];
+  protagonistAuditLoading.value = false;
   setMemoriesIfChanged([]);
   setBehaviorsIfChanged([]);
   setNpcAuditIfChanged([]);
@@ -239,9 +283,12 @@ function cancelNpcPanelLoad() {
   npcLoadToken += 1;
   npcDetailToken += 1;
   npcAuditToken += 1;
+  protagonistRequestToken += 1;
   loading.value = false;
   detailLoading.value = false;
   npcAuditLoading.value = false;
+  protagonistLoading.value = false;
+  protagonistAuditLoading.value = false;
   loadError.value = '';
   detailError.value = '';
   npcAuditError.value = '';
@@ -758,10 +805,11 @@ async function loadNpcs(options = {}) {
     loadError.value = '';
     setNpcsIfChanged(nextNpcs);
     emit('npcs-loaded', { conversationId, npcs: nextNpcs });
-    if (selectedNpc.value && !getCurrentNpcByName(selectedNpc.value)) {
+    await loadProtagonistItems();
+    if (!protagonistMode.value && selectedNpc.value && !getCurrentNpcByName(selectedNpc.value)) {
       setSelectedNpc('');
     }
-    if (!selectedNpc.value && npcs.value.length > 0) {
+    if (!protagonistMode.value && !selectedNpc.value && npcs.value.length > 0) {
       setSelectedNpc(npcs.value[0].name);
     }
     if (selectedNpc.value) {
@@ -794,6 +842,7 @@ async function selectNpc(name) {
     npcActionBusyId.value = '';
   }
   setSelectedNpc(name);
+  protagonistMode.value = false;
   setMemoriesIfChanged([]);
   setBehaviorsIfChanged([]);
   setNpcAuditIfChanged([]);
@@ -802,6 +851,156 @@ async function selectNpc(name) {
   addMemoryOpen.value = false;
   addBehaviorOpen.value = false;
   await loadNpcDetail();
+}
+
+async function selectProtagonist() {
+  if (npcPanelDisposed || npcActionBusy.value) return;
+  protagonistMode.value = true;
+  setSelectedNpc('');
+  detailTab.value = 'items';
+  setMemoriesIfChanged([]);
+  setBehaviorsIfChanged([]);
+  setNpcAuditIfChanged([]);
+  await loadProtagonistItems();
+}
+
+async function loadProtagonistItems() {
+  const conversationId = props.conversationId;
+  if (!conversationId) return;
+  const requestToken = ++protagonistRequestToken;
+  protagonistLoading.value = true;
+  protagonistAuditLoading.value = true;
+  try {
+    const [items, audit] = await Promise.all([
+      fetchActorItems(conversationId, 'protagonist'),
+      fetchActorItemAudit(conversationId, 'protagonist')
+    ]);
+    if (!isCurrentProtagonistRequest(requestToken, conversationId)) return;
+    protagonistItems.value = items;
+    protagonistItemAudit.value = audit;
+  } catch (error) {
+    if (!isCurrentProtagonistRequest(requestToken, conversationId)) return;
+    notify.error(error.message || '主角物品加载失败');
+  } finally {
+    if (isCurrentProtagonistRequest(requestToken, conversationId)) {
+      protagonistLoading.value = false;
+      protagonistAuditLoading.value = false;
+    }
+  }
+}
+
+function isCurrentProtagonistRequest(requestToken, conversationId) {
+  return !npcPanelDisposed
+    && requestToken === protagonistRequestToken
+    && conversationId === props.conversationId;
+}
+
+function isCurrentProtagonistMutation(mutationToken, conversationId) {
+  return !npcPanelDisposed
+    && mutationToken === protagonistMutationToken
+    && conversationId === props.conversationId;
+}
+
+async function saveProtagonistItem() {
+  if (!protagonistItemForm.name.trim() || npcActionBusy.value) return;
+  const conversationId = props.conversationId;
+  const mutationToken = ++protagonistMutationToken;
+  const actionId = 'protagonist-item-add';
+  npcActionBusyId.value = actionId;
+  try {
+    const itemKind = protagonistItemForm.itemKind;
+    const item = await createSceneItem(conversationId, {
+      ownerType: 'protagonist',
+      name: protagonistItemForm.name,
+      description: protagonistItemForm.description,
+      itemKind,
+      quantity: Number(protagonistItemForm.quantity || 1),
+      clothingSlot: itemKind === 'clothing' ? protagonistItemForm.clothingSlot : '',
+      equipped: itemKind === 'clothing' && protagonistItemForm.equipped,
+      coverage: itemKind === 'clothing' ? protagonistItemForm.coverage : [],
+      iconKey: protagonistItemForm.iconKey,
+      movable: true
+    });
+    if (!isCurrentProtagonistMutation(mutationToken, conversationId)) return;
+    Object.assign(protagonistItemForm, { name: '', description: '', itemKind: 'item', clothingSlot: 'top', equipped: false, quantity: 1, coverage: [], iconKey: 'item.bag' });
+    notify.success(`已添加唯一物品 ${item.itemCode}`);
+    await loadProtagonistItems();
+  } catch (error) {
+    if (!isCurrentProtagonistMutation(mutationToken, conversationId)) return;
+    notify.error(error.message || '主角物品保存失败');
+  } finally {
+    if (npcActionBusyId.value === actionId) npcActionBusyId.value = '';
+  }
+}
+
+async function toggleProtagonistItemEquipped(item) {
+  if (npcActionBusy.value || item.itemKind !== 'clothing') return;
+  const conversationId = props.conversationId;
+  const mutationToken = ++protagonistMutationToken;
+  const actionId = `protagonist-item-${item.id}`;
+  npcActionBusyId.value = actionId;
+  try {
+    await updateSceneItem(conversationId, item.id, { ...item, equipped: !item.equipped });
+    if (!isCurrentProtagonistMutation(mutationToken, conversationId)) return;
+    await loadProtagonistItems();
+  } catch (error) {
+    if (!isCurrentProtagonistMutation(mutationToken, conversationId)) return;
+    notify.error(error.message || '穿着状态更新失败');
+  } finally {
+    if (npcActionBusyId.value === actionId) npcActionBusyId.value = '';
+  }
+}
+
+async function removeProtagonistItem(item) {
+  if (npcActionBusy.value) return;
+  if (!window.confirm(`移除唯一物品“${item.name}”（${item.itemCode}）？可在物品审计中回滚。`)) return;
+  const conversationId = props.conversationId;
+  const mutationToken = ++protagonistMutationToken;
+  const actionId = `protagonist-item-${item.id}`;
+  npcActionBusyId.value = actionId;
+  try {
+    await deleteSceneEntity(conversationId, 'items', item.id);
+    if (!isCurrentProtagonistMutation(mutationToken, conversationId)) return;
+    await loadProtagonistItems();
+  } catch (error) {
+    if (!isCurrentProtagonistMutation(mutationToken, conversationId)) return;
+    notify.error(error.message || '物品移除失败');
+  } finally {
+    if (npcActionBusyId.value === actionId) npcActionBusyId.value = '';
+  }
+}
+
+async function rollbackProtagonistItem(record) {
+  if (npcActionBusy.value || !record?.id) return;
+  if (!window.confirm('回滚到这次物品变更之前的状态？当前物品状态会保留在新的审计记录中。')) return;
+  const conversationId = props.conversationId;
+  const mutationToken = ++protagonistMutationToken;
+  const actionId = `protagonist-audit-${record.id}`;
+  npcActionBusyId.value = actionId;
+  try {
+    await rollbackActorItemAudit(conversationId, record.id);
+    if (!isCurrentProtagonistMutation(mutationToken, conversationId)) return;
+    await loadProtagonistItems();
+    notify.success('物品状态已回滚');
+  } catch (error) {
+    if (!isCurrentProtagonistMutation(mutationToken, conversationId)) return;
+    notify.error(error.message || '物品状态回滚失败');
+  } finally {
+    if (npcActionBusyId.value === actionId) npcActionBusyId.value = '';
+  }
+}
+
+function clothingSlotLabel(value) {
+  return optionLabel(clothingSlotOptions, value);
+}
+
+function protagonistAuditActionLabel(action) {
+  return { create: '创建', update: '修改', transfer: '转移', delete: '删除', rollback: '回滚' }[action] || action || '变更';
+}
+
+function protagonistAuditItemLabel(record) {
+  const item = record?.after || record?.before;
+  return item ? `${item.name} · ${item.itemCode}` : record?.itemId || '未知物品';
 }
 
 async function loadNpcDetail(options = {}) {
@@ -1299,7 +1498,8 @@ async function runNpcOrganizer() {
       conversationId,
       {
         requirement: organizerRequirement.value.trim(),
-        selectedNpc: selectedNpc.value
+        selectedNpc: selectedNpc.value,
+        selectedActorType: protagonistMode.value ? 'protagonist' : (selectedNpc.value ? 'npc' : '')
       },
       npcOrganizerStreamHandlers(controller, conversationId),
       controller.signal
@@ -1310,7 +1510,9 @@ async function runNpcOrganizer() {
     organizerReasoning.value = result?.reasoning || organizerReasoning.value;
     await loadNpcs({ allowWhileBusy: true });
     if (!isCurrentOrganizerRun(controller, conversationId)) return;
-    if (selectedNpc.value) {
+    if (protagonistMode.value) {
+      await loadProtagonistItems();
+    } else if (selectedNpc.value) {
       await loadNpcDetail({ allowWhileBusy: true });
     }
     if (!isCurrentOrganizerRun(controller, conversationId)) return;
@@ -1605,11 +1807,11 @@ function formatTime(iso) {
 <template>
   <Teleport to="body">
     <div v-if="open" class="npc-panel-overlay" @click.self="requestClose" @pointerdown.self="requestClose">
-      <aside class="npc-panel" role="dialog" aria-label="NPC 管理面板">
+      <aside class="npc-panel" role="dialog" aria-label="角色与 NPC 管理面板">
           <header class="npc-panel-header">
             <div class="npc-panel-title">
               <Users :size="20" />
-              <h2>NPC 管理</h2>
+              <h2>角色与 NPC 管理</h2>
               <span
                 class="npc-update-badge"
                 :class="`is-${updateStatusMeta.key}`"
@@ -1673,10 +1875,13 @@ function formatTime(iso) {
                   v-model="organizerRequirement"
                   class="npc-textarea"
                   rows="3"
-                  placeholder="可选：告诉助手重点整理谁、保留什么、删除什么..."
+                  :placeholder="protagonistMode ? '仅修改主角物品或衣物：可直接写 itemCode、槽位、穿脱或转移要求' : selectedNpc ? `仅修改「${selectedNpc}」：例如只整理记忆 2，保留其他条目` : '整理全部角色：可指定 NPC、主角物品或衣物条目，不会整表覆盖'"
                   aria-label="AI NPC 整理要求"
                   :disabled="organizerLoading"
                 />
+                <p class="npc-meta-note">
+                  {{ protagonistMode ? '当前严格限制为主角物品与衣物；每件物品由唯一 itemCode 标识。' : selectedNpc ? `当前严格限制为「${selectedNpc}」，其他 NPC 不会被修改。` : '选择主角或左侧 NPC 后可锁定单个角色；要求中可直接写条目 ID、itemCode 或现有内容。' }}
+                </p>
                 <div class="npc-form-actions">
                   <button
                     class="npc-save"
@@ -1795,7 +2000,23 @@ function formatTime(iso) {
                 <div v-if="!npcs.length" class="npc-empty">
                   暂无 NPC。AI 回复中出现的角色会自动识别。
                 </div>
-                <div v-else class="npc-list">
+                <div class="npc-list">
+                  <button
+                    class="npc-item npc-protagonist-item"
+                    :class="{ active: protagonistMode }"
+                    type="button"
+                    :disabled="npcActionBusy"
+                    @click="selectProtagonist"
+                  >
+                    <span class="npc-item-main">
+                      <span class="npc-item-name">主角</span>
+                      <span class="npc-status-pill">物品与穿着</span>
+                    </span>
+                    <span class="npc-item-counts">
+                      <span class="npc-badge">📦 {{ protagonistInventory.length }}</span>
+                      <span class="npc-badge">👕 {{ protagonistClothing.length }}</span>
+                    </span>
+                  </button>
                   <button
                     v-for="npc in npcs"
                     :key="npc.name"
@@ -1824,6 +2045,71 @@ function formatTime(iso) {
                   </button>
                 </div>
               </template>
+            </div>
+
+            <div v-if="protagonistMode" class="npc-detail-section protagonist-detail-section">
+              <div class="npc-detail-header">
+                <h3>主角物品与穿着</h3>
+                <div class="npc-detail-metrics">
+                  <span>{{ protagonistInventory.length }} 件物品</span>
+                  <span>{{ protagonistClothing.length }} 件衣物</span>
+                  <span>{{ protagonistClothing.filter(item => item.equipped).length }} 件已穿</span>
+                </div>
+              </div>
+
+              <p class="npc-meta-note">每件实体只有一个 itemCode 和一个当前持有者。衣物逐件记录，遮挡区域会直接影响附近角色能看到什么以及他们的反应。</p>
+
+              <form class="npc-form protagonist-item-form" @submit.prevent="saveProtagonistItem">
+                <div class="npc-form-grid">
+                  <label class="npc-field-label"><span>名称</span><input v-model="protagonistItemForm.name" class="npc-input" maxlength="160" placeholder="物品或衣物名称" /></label>
+                  <label class="npc-field-label"><span>类型</span><select v-model="protagonistItemForm.itemKind" class="npc-select"><option value="item">普通物品</option><option value="clothing">衣物</option></select></label>
+                  <label v-if="protagonistItemForm.itemKind === 'clothing'" class="npc-field-label"><span>衣物槽位</span><select v-model="protagonistItemForm.clothingSlot" class="npc-select"><option v-for="slot in clothingSlotOptions" :key="slot.value" :value="slot.value">{{ slot.label }}</option></select></label>
+                  <label class="npc-field-label"><span>数量</span><input v-model.number="protagonistItemForm.quantity" class="npc-input" type="number" min="1" max="999999" /></label>
+                  <label class="npc-field-label"><span>像素图标</span><select v-model="protagonistItemForm.iconKey" class="npc-select"><option v-for="icon in pixelIconOptions" :key="icon.key" :value="icon.key">{{ icon.label }}</option></select></label>
+                </div>
+                <label class="npc-field-label"><span>描述 / 状态</span><textarea v-model="protagonistItemForm.description" class="npc-textarea" rows="2" maxlength="5000" placeholder="外观、完整度、特殊状态等" /></label>
+                <div v-if="protagonistItemForm.itemKind === 'clothing'" class="protagonist-coverage-grid">
+                  <label v-for="region in coverageOptions" :key="region.value"><input v-model="protagonistItemForm.coverage" type="checkbox" :value="region.value" /><span>{{ region.label }}</span></label>
+                  <label><input v-model="protagonistItemForm.equipped" type="checkbox" /><span>立即穿着</span></label>
+                </div>
+                <button class="npc-save" type="submit" :disabled="npcActionBusy || !protagonistItemForm.name.trim()"><Plus :size="14" />添加独立条目</button>
+              </form>
+
+              <div v-if="protagonistLoading" class="npc-empty">加载主角物品...</div>
+              <div v-else-if="!protagonistItems.length" class="npc-empty">暂无物品。可手动添加，或让 AI 助手从剧情中逐条整理。</div>
+              <div v-else class="protagonist-item-grid">
+                <article v-for="item in protagonistItems" :key="item.id" class="npc-card protagonist-item-card">
+                  <PixelIcon :icon-key="item.iconKey || (item.itemKind === 'clothing' ? 'clothing.outfit' : 'item.bag')" :size="30" />
+                  <div class="protagonist-item-copy">
+                    <div><strong>{{ item.name }}</strong><code>{{ item.itemCode }}</code></div>
+                    <p>{{ item.description || '暂无描述' }}</p>
+                    <div class="protagonist-item-tags">
+                      <span v-if="item.quantity > 1">×{{ item.quantity }}</span>
+                      <span v-if="item.itemKind === 'clothing'">{{ clothingSlotLabel(item.clothingSlot) }}</span>
+                      <span v-for="region in item.coverage" :key="region">遮挡 {{ optionLabel(coverageOptions, region) }}</span>
+                      <span v-if="item.equipped" class="is-equipped">已穿着</span>
+                    </div>
+                  </div>
+                  <div class="protagonist-item-actions">
+                    <button v-if="item.itemKind === 'clothing'" type="button" :disabled="npcActionBusy" @click="toggleProtagonistItemEquipped(item)">{{ item.equipped ? '脱下' : '穿上' }}</button>
+                    <button type="button" class="npc-delete" :disabled="npcActionBusy" :aria-label="`移除物品 ${item.name}`" :title="`移除物品 ${item.name}`" @click="removeProtagonistItem(item)"><Trash2 :size="14" /></button>
+                  </div>
+                </article>
+              </div>
+              <section class="protagonist-audit-section" aria-label="主角物品审计">
+                <div class="npc-list-header"><span>物品审计与回滚</span><small>{{ protagonistItemAudit.length }} 条</small></div>
+                <div v-if="protagonistAuditLoading" class="npc-empty">加载审计记录...</div>
+                <div v-else-if="!protagonistItemAudit.length" class="npc-empty">暂无物品变更记录。</div>
+                <div v-else class="protagonist-audit-list">
+                  <article v-for="record in protagonistItemAudit" :key="record.id" class="npc-card protagonist-audit-card">
+                    <div>
+                      <strong>{{ protagonistAuditActionLabel(record.action) }} · {{ protagonistAuditItemLabel(record) }}</strong>
+                      <small>{{ record.actor }} · {{ formatTime(record.createdAt) }}</small>
+                    </div>
+                    <button type="button" :disabled="npcActionBusy" :aria-label="`回滚 ${protagonistAuditItemLabel(record)}`" @click="rollbackProtagonistItem(record)"><Undo2 :size="13" />回滚</button>
+                  </article>
+                </div>
+              </section>
             </div>
 
             <!-- NPC Detail -->
@@ -3406,6 +3692,20 @@ function formatTime(iso) {
       color-mix(in srgb, var(--surface, #1a211e) 96%, transparent)),
     var(--surface, #1a211e);
 }
+
+.npc-protagonist-item{border-color:color-mix(in srgb,var(--primary,#6757d9) 24%,var(--line,#d8ddd6));background:color-mix(in srgb,var(--primary,#6757d9) 6%,var(--surface,#fff))}
+.protagonist-detail-section{display:grid;gap:12px}
+.protagonist-item-form{padding:14px;border:1px solid var(--line,#d8ddd6);border-radius:12px;background:var(--surface-strong,#f7f8f5)}
+.npc-form-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:9px}
+.protagonist-coverage-grid{display:flex;flex-wrap:wrap;gap:7px}
+.protagonist-coverage-grid label{display:flex;align-items:center;gap:5px;padding:5px 8px;border:1px solid var(--line,#d8ddd6);border-radius:999px;font-size:11px;background:var(--surface,#fff)}
+.protagonist-item-grid{display:grid;gap:9px}
+.protagonist-item-card{display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:start;gap:10px}
+.protagonist-item-copy{min-width:0}.protagonist-item-copy>div:first-child{display:flex;align-items:center;flex-wrap:wrap;gap:7px}.protagonist-item-copy code{color:var(--primary,#6757d9);font-size:10px}.protagonist-item-copy p{margin:5px 0;color:var(--muted,#657064);font-size:12px}
+.protagonist-item-tags{display:flex;flex-wrap:wrap;gap:5px}.protagonist-item-tags span{padding:3px 6px;border-radius:999px;background:var(--surface-strong,#eef0eb);color:var(--muted,#657064);font-size:10px}.protagonist-item-tags .is-equipped{color:#176d52;background:#daf2e8}
+.protagonist-item-actions{display:flex;align-items:center;gap:5px}.protagonist-item-actions button{border:1px solid var(--line,#d8ddd6);border-radius:7px;padding:5px 7px;color:inherit;background:var(--surface,#fff);cursor:pointer}.protagonist-item-actions button:disabled{opacity:.5;cursor:not-allowed}
+.protagonist-audit-section{display:grid;gap:8px;margin-top:5px;padding-top:12px;border-top:1px solid var(--line,#d8ddd6)}.protagonist-audit-list{display:grid;gap:7px}.protagonist-audit-card{display:flex;align-items:center;justify-content:space-between;gap:10px}.protagonist-audit-card>div{display:grid;gap:3px}.protagonist-audit-card small{color:var(--muted,#657064);font-size:10px}.protagonist-audit-card button{display:flex;align-items:center;gap:4px;border:1px solid var(--line,#d8ddd6);border-radius:7px;padding:5px 7px;color:inherit;background:var(--surface,#fff);cursor:pointer}.protagonist-audit-card button:disabled{opacity:.5;cursor:not-allowed}
+@media(max-width:640px){.npc-form-grid{grid-template-columns:1fr}.protagonist-item-card{grid-template-columns:auto minmax(0,1fr)}.protagonist-item-actions{grid-column:1/-1;justify-content:flex-end}}
 
 /* Transition */
 .npc-panel-enter-active,

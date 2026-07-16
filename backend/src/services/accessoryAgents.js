@@ -1,9 +1,12 @@
 import { normalizeAccessorySkills, isAccessorySkillActive, normalizeAdvancedSettings } from '../modules/advancedSettings.js';
 import { processTransactionIntents, createConversationTransaction } from '../modules/economy.js';
 import { addNpcBehavior, addNpcMemory, isConversationNpcHidden, upsertConversationNpc } from '../modules/npcs.js';
-import { STATUS_BAR_VARIABLE_LIMIT, applyVariableUpdates, extractVariablesFromText, upsertStatusBar } from '../modules/statusBars.js';
+import { STATUS_BAR_VARIABLE_LIMIT, extractVariablesFromText, updateStatusBarVariables, upsertStatusBar } from '../modules/statusBars.js';
 import { detectSceneAndEmotion, findBestMatch, listCharacterImages } from '../modules/characterImages.js';
+import { deleteSceneEntity, listSceneWorkspace, upsertSceneItem } from '../modules/scenes.js';
+import { completeSceneOrganization } from './sceneOrganizer.js';
 import { hasUsableProvider, runToolCompletion } from './providers.js';
+import { PIXEL_ICON_KEYS } from '../../../shared/pixelIconCatalog.js';
 import { parseStatusTemplateToken } from '../../../shared/statusTemplateTokens.js';
 
 const agentTimeoutMs = 20000;
@@ -44,6 +47,8 @@ export async function runAccessoryAgents({
 }) {
   const { skills, active } = getAccessorySkillsPayload(conversation, statusBar);
   const jobs = [];
+  let npcAgentFactory = null;
+  let sceneAgentFactory = null;
   const observationWindow = buildObservationWindow(userMessage, assistantMessage);
 
   if (active.statusBarAgent) {
@@ -52,9 +57,9 @@ export async function runAccessoryAgents({
     ));
   }
   if (active.npcAgent) {
-    jobs.push(runAgentJob('npcAgent', skills.npcAgent, emit, (signal) =>
+    npcAgentFactory = () => runAgentJob('npcAgent', skills.npcAgent, emit, (signal) =>
       runNpcAgent({ db, userId, conversation, character, assistantMessage, observationWindow, settings, skill: skills.npcAgent, signal })
-    ));
+    );
   }
   if (active.economyAgent) {
     jobs.push(runAgentJob('economyAgent', skills.economyAgent, emit, (signal) =>
@@ -66,6 +71,23 @@ export async function runAccessoryAgents({
       runCgSceneAgent({ db, character, assistantMessage })
     ));
   }
+  if (active.sceneAgent) {
+    sceneAgentFactory = () => runAgentJob('sceneAgent', skills.sceneAgent, emit, (signal) =>
+      runSceneAgent({ db, userId, conversation, character, assistantMessage, observationWindow, settings, skill: skills.sceneAgent, signal })
+    );
+  }
+
+  // Scene and NPC agents can both update the same stable itemCode. Run them
+  // deterministically instead of racing last-writer-wins updates. Scene facts
+  // are organized first, then actor ownership/clothing applies the final turn
+  // state. Unrelated accessory agents still run in parallel with this sequence.
+  if (sceneAgentFactory && npcAgentFactory) {
+    jobs.push(runAgentSequence([sceneAgentFactory, npcAgentFactory]));
+  } else if (sceneAgentFactory) {
+    jobs.push(sceneAgentFactory());
+  } else if (npcAgentFactory) {
+    jobs.push(npcAgentFactory());
+  }
 
   if (!jobs.length) {
     const results = [];
@@ -74,11 +96,14 @@ export async function runAccessoryAgents({
   }
 
   const settled = await Promise.allSettled(jobs);
-  const results = settled.map((item) => (
-    item.status === 'fulfilled'
+  const results = [];
+  for (const item of settled) {
+    const value = item.status === 'fulfilled'
       ? item.value
-      : { skill: 'unknown', ok: false, error: item.reason?.message || 'Accessory skill failed' }
-  ));
+      : { skill: 'unknown', ok: false, error: item.reason?.message || 'Accessory skill failed' };
+    if (Array.isArray(value)) results.push(...value);
+    else results.push(value);
+  }
   emit?.('skills_done', { results });
   return results;
 }
@@ -153,16 +178,16 @@ async function runStatusBarAgent({ db, userId, conversation, assistantMessage, o
     return { statusBar, updates: [] };
   }
 
-  const nextVariables = mergeStatusVariables(currentStatusBar.variables, updates);
-  if (nextVariables === currentStatusBar.variables) {
+  if (!statusUpdatesChangeVariables(currentStatusBar.variables, updates)) {
     return { statusBar, updates: [] };
   }
-
-  const nextStatusBar = upsertStatusBar(db, userId, conversation.id, {
-    name: currentStatusBar.name,
-    variables: nextVariables,
-    template: currentStatusBar.template
-  });
+  const nextStatusBar = statusBar
+    ? updateStatusBarVariables(db, userId, conversation.id, updates, { allowCreate: true })
+    : upsertStatusBar(db, userId, conversation.id, {
+        name: currentStatusBar.name,
+        variables: updates,
+        template: currentStatusBar.template
+      });
   return { statusBar: nextStatusBar, updates };
 }
 
@@ -170,12 +195,14 @@ async function runNpcAgent({ db, userId, conversation, character, assistantMessa
   const recorded = [];
   const behaviors = [];
   const npcs = [];
+  const items = [];
+  const sceneWorkspace = listSceneWorkspace(db, userId, conversation.id);
 
   if (hasUsableProvider(settings)) {
     await runToolCompletion(
       withModelOverride(settings, skill),
-      buildNpcMessages(character, observationWindow),
-      [npcUpsertTool(), npcMemoryTool(), npcBehaviorTool()],
+      buildNpcMessages(character, observationWindow, sceneWorkspace),
+      [npcUpsertTool(), npcMemoryTool(), npcBehaviorTool(), actorItemTool(), actorItemDeleteTool()],
       async (toolName, args) => {
         if (toolName === 'upsert_npc') {
           const npc = upsertNpcFromAgent(db, userId, conversation.id, args);
@@ -223,6 +250,18 @@ async function runNpcAgent({ db, userId, conversation, character, assistantMessa
           }
           return { ok: true, behavior };
         }
+        if (toolName === 'upsert_actor_item') {
+          const item = upsertSceneItem(db, userId, conversation.id, { ...args, movable: true, auditActor: 'agent' });
+          if (item) items.push(item);
+          return { ok: Boolean(item), item };
+        }
+        if (toolName === 'delete_actor_item') {
+          const item = findWorkspaceItem(sceneWorkspace.items, args);
+          const deleted = item
+            ? deleteSceneEntity(db, userId, conversation.id, 'item', item.id, { actor: 'agent' })
+            : false;
+          return { ok: deleted, deletedId: deleted ? item.id : '' };
+        }
         return { ok: false, error: `Unsupported tool: ${toolName}` };
       },
       { maxRounds: 3, thinkingEnabled: false, signal }
@@ -232,7 +271,15 @@ async function runNpcAgent({ db, userId, conversation, character, assistantMessa
     });
   }
 
-  return { npcs, memories: recorded, behaviors };
+  return { npcs, memories: recorded, behaviors, items };
+}
+
+async function runAgentSequence(factories = []) {
+  const results = [];
+  for (const factory of factories) {
+    results.push(await factory());
+  }
+  return results;
 }
 
 async function runEconomyAgent({ db, userId, conversation, assistantMessage, observationWindow, settings, skill, signal }) {
@@ -265,6 +312,23 @@ async function runEconomyAgent({ db, userId, conversation, assistantMessage, obs
   }
 
   return { transactions };
+}
+
+async function runSceneAgent({ db, userId, conversation, character, assistantMessage, observationWindow, settings, skill, signal }) {
+  const result = await completeSceneOrganization(withModelOverride(settings, skill), {
+    database: db,
+    userId,
+    conversationId: conversation.id,
+    conversation,
+    character,
+    requirement: '仅提取本轮明确出现或变化的场景、路线、房间布局和物品位置；已有物品位置变化时保留原 itemCode。',
+    messages: [{ role: 'user', content: JSON.stringify(observationWindow) }],
+    signal
+  }).catch((error) => {
+    logAccessoryAgentFailure('scene', error);
+    return { ok: false, changes: [], error: error?.message || 'scene agent failed' };
+  });
+  return { ...result, workspace: listSceneWorkspace(db, userId, conversation.id) };
 }
 
 async function runCgSceneAgent({ db, character, assistantMessage }) {
@@ -317,7 +381,8 @@ function buildStatusBarMessages(statusBar, observationWindow, statusBarPrompt = 
         'For each changed text field, return only the new field value, not surrounding prose, separators, or template markup.',
         'Never return raw placeholder text like "{{Variable}}" as a variable value.',
         'If the reply only gives one clear part of a composite row, update only that child variable and preserve the rest.',
-        'You may create a new variable when the guidance asks for it and the reply contains a clear value.',
+        'Update only the named entries that changed. Never rewrite, reorder, rename, or remove unrelated variables.',
+        'You may create a new variable only when the author/session guidance explicitly requests that named variable.',
         'Do not invent changes.',
         statusBarPrompt ? `Additional author/session guidance:\n${statusBarPrompt}` : ''
       ].join('\n')
@@ -414,7 +479,7 @@ function normalizeStatusTemplateText(value = '') {
     .trim();
 }
 
-function buildNpcMessages(character, observationWindow) {
+function buildNpcMessages(character, observationWindow, sceneWorkspace = {}) {
   return [
     {
       role: 'system',
@@ -432,18 +497,83 @@ function buildNpcMessages(character, observationWindow) {
         'Do not create behavior rules for ordinary dialogue, one-time actions, temporary moods, scene movement, or details already covered by memory.',
         'When unsure, skip record_npc_behavior because too many behavior rules can over-constrain the character.',
         'Skip the main character, user/player, generic section titles, status panels, and markdown headings.',
-        'Do not report narrative fragments, pronouns, or UI labels as NPCs.'
+        'Do not report narrative fragments, pronouns, or UI labels as NPCs.',
+        'Call upsert_actor_item only for explicit current-turn possession, transfer, dropping, clothing, dressing, or undressing changes involving the protagonist or an NPC.',
+        'Reuse an existing id or itemCode for the same physical item. One item must never be copied to multiple owners.',
+        'Use ownerType=world with an exact existing nodeId when an item is dropped or left in the scene. Call delete_actor_item only when an item is explicitly consumed, destroyed, or confirmed to no longer exist.',
+        'For clothing, update one entry at a time and set slot, equipped, and coverage. A dress or long top covering groin/buttocks hides lower underwear; underwear is visible when no higher layer covers it.'
       ].join('\n')
     },
     {
       role: 'user',
       content: JSON.stringify({
         mainCharacter: character?.name || '',
+        existingItems: Array.isArray(sceneWorkspace.items) ? sceneWorkspace.items : [],
+        sceneNodes: Array.isArray(sceneWorkspace.nodes) ? sceneWorkspace.nodes : [],
         observationWindow,
         reply: observationWindow.assistant
       })
     }
   ];
+}
+
+function actorItemTool() {
+  return {
+    type: 'function',
+    function: {
+      name: 'upsert_actor_item',
+      description: 'Create or update one uniquely identified protagonist/NPC item when the current turn explicitly changes possession or clothing state.',
+      parameters: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          id: { type: 'string' },
+          itemCode: { type: 'string' },
+          ownerType: { type: 'string', enum: ['world', 'protagonist', 'npc'] },
+          ownerName: { type: 'string' },
+          nodeId: { type: 'string', description: 'Required when ownerType is world.' },
+          name: { type: 'string' },
+          description: { type: 'string' },
+          itemKind: { type: 'string', enum: ['item', 'clothing'] },
+          quantity: { type: 'integer', minimum: 1 },
+          clothingSlot: { type: 'string', enum: ['upper_underwear', 'lower_underwear', 'top', 'bottom', 'socks', 'shoes', 'outfit'] },
+          equipped: { type: 'boolean' },
+          coverage: { type: 'array', items: { type: 'string', enum: ['chest', 'abdomen', 'groin', 'buttocks', 'thighs', 'legs', 'feet'] }, uniqueItems: true },
+          iconKey: { type: 'string', enum: PIXEL_ICON_KEYS },
+          state: { type: 'object' }
+        },
+        required: ['ownerType', 'name', 'itemKind', 'iconKey']
+      }
+    }
+  };
+}
+
+function actorItemDeleteTool() {
+  return {
+    type: 'function',
+    function: {
+      name: 'delete_actor_item',
+      description: 'Delete one existing item only when the current turn explicitly consumes, destroys, or removes it from existence.',
+      parameters: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          id: { type: 'string' },
+          itemCode: { type: 'string' },
+          reason: { type: 'string' }
+        }
+      }
+    }
+  };
+}
+
+function findWorkspaceItem(items, args = {}) {
+  const id = String(args.id || '').trim();
+  const itemCode = String(args.itemCode || '').trim();
+  for (const item of Array.isArray(items) ? items : []) {
+    if ((id && item.id === id) || (itemCode && item.itemCode === itemCode)) return item;
+  }
+  return null;
 }
 
 function npcUpsertTool() {
@@ -634,40 +764,31 @@ function normalizeStatusUpdates(args = {}) {
   return normalized;
 }
 
-function mergeStatusVariables(variables = [], updates = []) {
-  if (!Array.isArray(updates) || updates.length === 0) {
-    return variables;
+function statusUpdatesChangeVariables(variables = [], updates = []) {
+  const current = new Map();
+  for (const variable of Array.isArray(variables) ? variables : []) {
+    const key = statusVariableKey(variable?.name);
+    if (key) {
+      current.set(key, variable);
+    }
   }
-  const sourceVariables = Array.isArray(variables) ? variables : [];
-  const current = applyVariableUpdates(sourceVariables, updates);
-  const seen = new Set();
-  for (const item of current) {
-    seen.add(statusVariableKey(item?.name));
-  }
-
-  let nextVariables = current;
-  for (let index = 0; index < updates.length && nextVariables.length < STATUS_BAR_VARIABLE_LIMIT; index += 1) {
-    const item = updates[index];
-    const key = statusVariableKey(item?.name);
-    if (!item?.name || !key || seen.has(key)) {
+  for (const update of Array.isArray(updates) ? updates : []) {
+    const key = statusVariableKey(update?.name);
+    if (!key) {
       continue;
     }
-    if (nextVariables === current) {
-      nextVariables = current.slice();
+    const variable = current.get(key);
+    if (!variable || !Object.is(variable.value, update.value)) {
+      return true;
     }
-    nextVariables.push({
-      name: item.name,
-      value: item.value,
-      ...(Number.isFinite(Number(item.max))
-        ? { max: Number(item.max) }
-        : typeof item.value === 'number'
-          ? { max: 100 }
-          : {}),
-      color: item.color || ''
-    });
-    seen.add(key);
+    if (Number.isFinite(Number(update.max)) && !Object.is(variable.max, Number(update.max))) {
+      return true;
+    }
+    if (typeof update.color === 'string' && update.color.trim() && variable.color !== update.color.trim()) {
+      return true;
+    }
   }
-  return nextVariables;
+  return false;
 }
 
 function statusVariableKey(value) {

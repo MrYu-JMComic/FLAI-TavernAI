@@ -170,6 +170,16 @@ test('ChatComposer only uses edge-to-edge layout at the phone breakpoint', () =>
   );
 });
 
+test('ChatComposer constrains desktop content to the available width', () => {
+  assert.match(stylesSource, /\.deep-composer-wrap\s*\{[\s\S]*box-sizing:\s*border-box;[\s\S]*max-width:\s*100%;[\s\S]*min-width:\s*0;/);
+  assert.match(stylesSource, /\.deep-composer\s*\{[\s\S]*box-sizing:\s*border-box;[\s\S]*min-width:\s*0;[\s\S]*max-width:\s*100%;/);
+  assert.match(stylesSource, /\.composer-actions\s*\{[\s\S]*min-width:\s*0;[\s\S]*max-width:\s*100%;/);
+  assert.match(stylesSource, /\.preset-select,[\s\S]*\.model-quick-select,[\s\S]*\.model-switch-pill\s*\{\s*min-width:\s*0;/);
+  assert.match(stylesSource, /@media \(min-width: 1180px\) \{[\s\S]*\.deep-chat-shell \.deep-composer-wrap\s*\{[\s\S]*position:\s*fixed;[\s\S]*right:\s*0;[\s\S]*bottom:\s*0;[\s\S]*left:\s*0;/);
+  assert.match(stylesSource, /\.deep-chat-shell:not\(\.sidebar-collapsed\) \.deep-composer-wrap\s*\{[\s\S]*left:\s*var\(--chat-sidebar-drawer-width\);[\s\S]*width:\s*auto;/);
+  assert.match(stylesSource, /@media \(min-width: 1180px\) \{[\s\S]*\.deep-message-scroll::after\s*\{[\s\S]*flex:\s*0 0 calc\(var\(--chat-composer-height\) \+ 38px\);/);
+});
+
 test('ChatView ignores model switcher open events while sending', () => {
   assert.match(
     chatViewScript,

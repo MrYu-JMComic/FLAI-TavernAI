@@ -283,7 +283,8 @@ export function deleteConversationMessage(db, nowIso, userId, conversationId, me
 export function listRecentConversationMessageRows(db, userId, conversationId) {
   const rows = db
     .prepare(
-      `SELECT * FROM messages
+      `SELECT role, content, attachments_json, reasoning, created_at
+       FROM messages
        WHERE user_id = ? AND conversation_id = ?
        ORDER BY created_at DESC, rowid DESC
        LIMIT 20`

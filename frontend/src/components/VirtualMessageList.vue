@@ -223,6 +223,7 @@ function handleTouchmove(event) {
 }
 
 .virtual-scroll-spacer {
+  flex: 0 0 auto;
   width: 100%;
 }
 

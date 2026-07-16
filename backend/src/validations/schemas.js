@@ -34,6 +34,7 @@ const accessorySkillConfigSchema = z.object({
 
 const accessorySkillsSchema = z.object({
   npcAgent: accessorySkillConfigSchema.optional(),
+  sceneAgent: accessorySkillConfigSchema.optional(),
   statusBarAgent: accessorySkillConfigSchema.optional(),
   economyAgent: accessorySkillConfigSchema.optional(),
   talentPrompt: accessorySkillConfigSchema.optional(),
@@ -377,6 +378,53 @@ export const updateNpcSchema = z.object({
 export const npcOrganizerSchema = z.object({
   requirement: z.string().max(4000).trim().optional().default(''),
   selectedNpc: z.string().max(100).trim().optional().default(''),
+  selectedActorType: z.enum(['', 'protagonist', 'npc']).optional().default(''),
+  modelOverride: z.string().max(120).trim().optional().default(''),
+  stream: z.boolean().optional().default(false)
+});
+
+export const sceneNodeSchema = z.object({
+  id: z.string().max(100).trim().optional(),
+  parentId: z.string().max(100).trim().optional().default(''),
+  parentName: z.string().max(160).trim().optional().default(''),
+  nodeType: z.enum(['main_scene', 'map', 'building', 'room', 'area']).optional().default('room'),
+  name: z.string().min(1).max(160).trim(),
+  description: z.string().max(10000).trim().optional().default(''),
+  layout: z.record(z.any()).optional().default({}),
+  tags: z.array(z.string().max(60).trim()).max(50).optional().default([]),
+  permanent: z.boolean().optional().default(true)
+});
+
+export const sceneItemSchema = z.object({
+  id: z.string().max(100).trim().optional(),
+  nodeId: z.string().max(100).trim().optional().default(''),
+  itemCode: z.string().max(80).trim().optional(),
+  name: z.string().min(1).max(160).trim(),
+  description: z.string().max(5000).trim().optional().default(''),
+  state: z.record(z.any()).optional().default({}),
+  position: z.record(z.any()).optional().default({}),
+  movable: z.boolean().optional().default(false),
+  ownerType: z.enum(['world', 'protagonist', 'npc']).optional().default('world'),
+  ownerName: z.string().max(100).trim().optional().default(''),
+  itemKind: z.enum(['item', 'clothing']).optional().default('item'),
+  quantity: z.number().int().min(1).max(999999).optional().default(1),
+  clothingSlot: z.enum(['', 'upper_underwear', 'lower_underwear', 'top', 'bottom', 'socks', 'shoes', 'outfit']).optional().default(''),
+  equipped: z.boolean().optional().default(false),
+  coverage: z.array(z.enum(['chest', 'abdomen', 'groin', 'buttocks', 'thighs', 'legs', 'feet'])).max(7).optional().default([]),
+  iconKey: z.string().max(80).trim().optional().default('')
+});
+
+export const sceneRouteSchema = z.object({
+  id: z.string().max(100).trim().optional(),
+  fromNodeId: z.string().min(1).max(100).trim(),
+  toNodeId: z.string().min(1).max(100).trim(),
+  label: z.string().max(160).trim().optional().default(''),
+  description: z.string().max(2000).trim().optional().default(''),
+  bidirectional: z.boolean().optional().default(true)
+});
+
+export const sceneOrganizerSchema = z.object({
+  requirement: z.string().max(4000).trim().optional().default(''),
   modelOverride: z.string().max(120).trim().optional().default(''),
   stream: z.boolean().optional().default(false)
 });

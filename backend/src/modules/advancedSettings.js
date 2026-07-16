@@ -109,6 +109,9 @@ export function normalizeAccessorySkills(input = {}, fallback = createDefaultAcc
     }
     normalized[key] = normalizeSkillConfig(source[key], fallback[key] || defaults[key]);
   }
+  if (Object.prototype.hasOwnProperty.call(source, 'sceneAgent') || Object.prototype.hasOwnProperty.call(fallback, 'sceneAgent')) {
+    normalized.sceneAgent = normalizeSkillConfig(source.sceneAgent, fallback.sceneAgent || { enabled: false, modelOverride: '' });
+  }
   return normalized;
 }
 

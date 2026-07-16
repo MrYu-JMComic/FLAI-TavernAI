@@ -1170,15 +1170,11 @@
 
   .ai-draft-panel .ai-panel-resize-handle {
     display: block;
-    position: fixed;
-    left: calc(
-      var(--ai-panel-x, 0px) + min(var(--ai-panel-w, 420px), calc(100vw - var(--ai-panel-x, 0px))) - 27px
-    );
-    right: auto;
-    top: calc(
-      var(--ai-panel-y, 0px) + min(var(--ai-panel-h, 640px), calc(100dvh - var(--ai-panel-y, 0px))) - 27px
-    );
-    bottom: auto;
+    position: absolute;
+    right: 7px;
+    bottom: 7px;
+    left: auto;
+    top: auto;
   }
 
   .editor-layout .form-actions {

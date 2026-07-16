@@ -1,9 +1,11 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { readFileSync } from 'node:fs';
+import { DatabaseSync } from 'node:sqlite';
 
 const dbModule = await import('../db.js');
 const { createAppDatabase, initializeDatabase } = dbModule;
+const { resetColumnCache } = await import('../db/schema.js');
 const runtimeModule = await import('../db/runtime.js');
 const { isDatabaseLockedError } = runtimeModule;
 const dbRuntimeSource = readFileSync(new URL('../db/runtime.js', import.meta.url), 'utf8');
@@ -101,6 +103,16 @@ test('database initialization creates expected high-value composite indexes', ()
       idx_npc_memories_conversation_created: ['conversation_id', 'created_at'],
       idx_npc_behaviors_conversation_npc_priority: ['conversation_id', 'npc_name', 'priority', 'created_at'],
       idx_npc_behaviors_conversation_enabled_priority: ['conversation_id', 'enabled', 'priority', 'created_at'],
+      idx_scene_nodes_conversation_type_name: ['conversation_id', 'node_type', 'name', 'created_at'],
+      idx_scene_nodes_parent: ['conversation_id', 'parent_id'],
+      idx_scene_routes_conversation_created: ['conversation_id', 'created_at'],
+      idx_scene_routes_endpoints: ['conversation_id', 'from_node_id', 'to_node_id', 'bidirectional'],
+      idx_scene_items_node_name: ['conversation_id', 'node_id', 'name', 'created_at'],
+      idx_scene_items_owner: ['conversation_id', 'owner_type', 'owner_name', 'equipped', 'clothing_slot'],
+      idx_scene_items_code: ['conversation_id', 'item_code'],
+      idx_scene_item_audit_item_created: ['conversation_id', 'item_id', 'created_at'],
+      idx_scene_item_audit_before_owner: ['conversation_id', 'before_owner_type', 'before_owner_name', 'created_at'],
+      idx_scene_item_audit_after_owner: ['conversation_id', 'after_owner_type', 'after_owner_name', 'created_at'],
       idx_economy_transactions_account_created: ['account_id', 'created_at'],
       idx_character_images_character_order: ['character_id', 'order_index', 'created_at'],
       idx_character_talents_character_rolled: ['character_id', 'rolled_at']
@@ -123,6 +135,38 @@ test('database high-value indexes are idempotent when initializeDatabase runs tw
       indexColumns(database, 'idx_regex_user_character_order'),
       ['user_id', 'character_id', 'priority', 'order_index']
     );
+  } finally {
+    database.close();
+  }
+});
+
+test('database startup migrates the legacy scene item table to owned auditable items', () => {
+  const database = new DatabaseSync(':memory:');
+  try {
+    database.exec(`
+      CREATE TABLE scene_items (
+        id TEXT PRIMARY KEY,
+        conversation_id TEXT NOT NULL,
+        node_id TEXT NOT NULL,
+        item_code TEXT NOT NULL,
+        name TEXT NOT NULL,
+        description TEXT NOT NULL DEFAULT '',
+        state_json TEXT NOT NULL DEFAULT '{}',
+        position_json TEXT NOT NULL DEFAULT '{}',
+        movable INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        UNIQUE(conversation_id, item_code)
+      );
+    `);
+    resetColumnCache();
+    initializeDatabase(database);
+    const columns = new Set(database.prepare('PRAGMA table_info(scene_items)').all().map(row => row.name));
+    assert.equal(columns.has('owner_type'), true);
+    assert.equal(columns.has('clothing_slot'), true);
+    assert.equal(columns.has('coverage_json'), true);
+    assert.equal(columns.has('icon_key'), true);
+    assert.ok(database.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'scene_item_audit'").get());
   } finally {
     database.close();
   }
@@ -214,6 +258,30 @@ test('database query planner uses high-value indexes for representative reads', 
       `SELECT id FROM npc_behaviors
        WHERE conversation_id = ? AND enabled = 1
        ORDER BY priority DESC, created_at ASC, rowid ASC`,
+      'conversation-plan'
+    );
+    assertPlanUsesIndex(
+      database,
+      'idx_scene_nodes_conversation_type_name',
+      `SELECT id FROM scene_nodes
+       WHERE conversation_id = ?
+       ORDER BY node_type, name, created_at`,
+      'conversation-plan'
+    );
+    assertPlanUsesIndex(
+      database,
+      'idx_scene_routes_conversation_created',
+      `SELECT id FROM scene_routes
+       WHERE conversation_id = ?
+       ORDER BY created_at`,
+      'conversation-plan'
+    );
+    assertPlanUsesIndex(
+      database,
+      'idx_scene_items_node_name',
+      `SELECT id FROM scene_items
+       WHERE conversation_id = ?
+       ORDER BY node_id, name, created_at`,
       'conversation-plan'
     );
     assertPlanUsesIndex(

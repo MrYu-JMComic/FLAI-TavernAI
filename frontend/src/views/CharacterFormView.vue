@@ -294,6 +294,7 @@ function isSectionVisible(section) {
 
 const accessorySkillItems = [
   { key: 'npcAgent', label: 'NPC Agent', auto: false },
+  { key: 'sceneAgent', label: '场景构建助手', auto: false },
   { key: 'statusBarAgent', label: '状态栏 Agent', auto: true },
   { key: 'economyAgent', label: '经济识别', auto: false },
   { key: 'talentPrompt', label: '天赋提示', auto: false },

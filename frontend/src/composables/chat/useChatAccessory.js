@@ -23,6 +23,7 @@ const STATUS_BAR_TEMPLATE_ISSUE_LIMIT = 5;
 const ACCESSORY_SKILL_RESULT_LIMIT = 8;
 const ACCESSORY_SKILL_DEFAULTS = [
   { key: 'npcAgent', enabled: false, modelOverride: '' },
+  { key: 'sceneAgent', enabled: false, modelOverride: '' },
   { key: 'statusBarAgent', enabled: 'auto', modelOverride: '' },
   { key: 'economyAgent', enabled: false, modelOverride: '' },
   { key: 'talentPrompt', enabled: false, modelOverride: '' },
@@ -331,6 +332,7 @@ export function useChatAccessory({ conversation, setActiveConversationIfChanged,
 
   const accessorySkillItems = [
     { key: 'npcAgent', label: 'NPC Agent', auto: false },
+    { key: 'sceneAgent', label: '场景构建助手', auto: false },
     { key: 'statusBarAgent', label: '状态栏 Agent', auto: true },
     { key: 'economyAgent', label: '经济识别', auto: false },
     { key: 'talentPrompt', label: '天赋提示', auto: false },
@@ -364,6 +366,7 @@ export function useChatAccessory({ conversation, setActiveConversationIfChanged,
   });
 
   const showNpcFeature = computed(() => isAccessorySkillActiveLocal('npcAgent'));
+  const showSceneFeature = computed(() => isAccessorySkillActiveLocal('sceneAgent'));
 
   async function loadStatusBar() {
     if (accessoryDisposed) return statusBar.value;
@@ -1071,6 +1074,7 @@ export function useChatAccessory({ conversation, setActiveConversationIfChanged,
     hasStatusBarAutomationContext,
     showEconomyFeature,
     showNpcFeature,
+    showSceneFeature,
     loadStatusBar,
     loadEconomyBalance,
     loadAccessorySkills,

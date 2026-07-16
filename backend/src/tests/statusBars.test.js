@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import { createAppDatabase } from '../db.js';
-import { applyVariableUpdates, upsertStatusBar } from '../modules/statusBars.js';
+import { applyVariableUpdates, getStatusBar, updateStatusBarVariables, upsertStatusBar } from '../modules/statusBars.js';
 
 const statusBarsSource = readFileSync(new URL('../modules/statusBars.js', import.meta.url), 'utf8');
 
@@ -129,4 +129,30 @@ test('status bar variable updates preserve unchanged list references', () => {
   assert.match(updateHelper, /let changed = false;/);
   assert.match(updateHelper, /return changed \? nextVariables : variables;/);
   assert.doesNotMatch(updateHelper, /variables\.map\(/);
+});
+
+test('status bar partial updates preserve unselected entries and bar metadata', () => {
+  const database = createAppDatabase(':memory:');
+  setupConversation(database);
+  const original = upsertStatusBar(database, 'status-user-1', 'status-conversation-1', {
+    name: '战斗状态',
+    variables: [
+      { name: 'HP', value: 100, max: 100, color: '#f00' },
+      { name: '地点', value: '酒馆', color: '#fff' }
+    ],
+    template: '<div>{{HP}} · {{地点}}</div>'
+  });
+
+  updateStatusBarVariables(database, 'status-user-1', 'status-conversation-1', [
+    { name: 'HP', value: 72 },
+    { name: '不存在的变量', value: '不得新增' }
+  ]);
+
+  const updated = getStatusBar(database, 'status-user-1', 'status-conversation-1');
+  assert.equal(updated.name, original.name);
+  assert.equal(updated.template, original.template);
+  assert.deepEqual(updated.variables, [
+    { name: 'HP', value: 72, max: 100, color: '#f00' },
+    { name: '地点', value: '酒馆', color: '#fff' }
+  ]);
 });

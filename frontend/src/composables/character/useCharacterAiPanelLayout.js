@@ -107,8 +107,7 @@ export function useCharacterAiPanelLayout({
     return Math.max(
       AI_PANEL_VIEWPORT_GAP,
       readElementBottom('.topbar'),
-      readElementBottom('.section-heading'),
-      readElementBottom('.character-section-nav')
+      readElementBottom('.section-heading')
     );
   }
 

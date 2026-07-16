@@ -7797,7 +7797,7 @@ test('chat prompt history keeps latest tied-timestamp messages in insertion orde
   }
 });
 
-test('chat prompt does not inject status bar context into main model', async () => {
+test('chat prompt injects compact status bar context without author update rules', async () => {
   const database = createAppDatabase(':memory:');
   const { userId, conversationId } = createTestSetup(database);
   database
@@ -7875,8 +7875,9 @@ test('chat prompt does not inject status bar context into main model', async () 
     assert.equal(response.status, 200);
     const promptText = JSON.stringify(providerBody.messages);
     assert.equal(promptText.includes('STATUS_RULE_SENTINEL'), false);
-    assert.equal(promptText.includes('STATUS_VAR_SENTINEL'), false);
-    assert.equal(promptText.includes('STATUS_BAR_NAME_SENTINEL'), false);
+    assert.equal(promptText.includes('STATUS_VAR_SENTINEL'), true);
+    assert.equal(promptText.includes('STATUS_BAR_NAME_SENTINEL'), true);
+    assert.equal(promptText.includes('<div>{{STATUS_VAR_SENTINEL}}</div>'), false);
     assert.equal(providerBody.messages.at(-1).content, 'new prompt');
   } finally {
     globalThis.fetch = originalFetch;

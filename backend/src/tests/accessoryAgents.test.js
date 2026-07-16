@@ -358,19 +358,19 @@ test('status bar agent skips unchanged variable writes and update badges', async
   assert.equal(getStatusBar(env.db, env.userId, env.conversation.id).variables[0].value, 100);
   assert.match(
     accessoryAgentsSource,
-    /const nextVariables = mergeStatusVariables\(currentStatusBar\.variables, updates\);[\s\S]*if \(nextVariables === currentStatusBar\.variables\) \{[\s\S]*return \{ statusBar, updates: \[\] \};/
+    /if \(!statusUpdatesChangeVariables\(currentStatusBar\.variables, updates\)\) \{[\s\S]*return \{ statusBar, updates: \[\] \};[\s\S]*updateStatusBarVariables\(db, userId, conversation\.id, updates, \{ allowCreate: true \}\)/
   );
 
-  const normalizeUpdatesHelper = accessoryAgentsSource.match(/function normalizeStatusUpdates[\s\S]*?\r?\n}\r?\n\r?\nfunction mergeStatusVariables/);
+  const normalizeUpdatesHelper = accessoryAgentsSource.match(/function normalizeStatusUpdates[\s\S]*?\r?\n}\r?\n\r?\nfunction statusUpdatesChangeVariables/);
   assert.ok(normalizeUpdatesHelper);
   assert.match(normalizeUpdatesHelper[0], /const normalized = \[\];/);
   assert.match(normalizeUpdatesHelper[0], /normalized\.length < STATUS_BAR_VARIABLE_LIMIT/);
   assert.doesNotMatch(normalizeUpdatesHelper[0], /\.map\(|\.filter\(|\.slice\(/);
 
-  const mergeHelper = accessoryAgentsSource.match(/function mergeStatusVariables[\s\S]*?\r?\n}\r?\n\r?\nfunction statusVariableKey/);
+  const mergeHelper = accessoryAgentsSource.match(/function statusUpdatesChangeVariables[\s\S]*?\r?\n}\r?\n\r?\nfunction statusVariableKey/);
   assert.ok(mergeHelper);
-  assert.match(mergeHelper[0], /const current = applyVariableUpdates\(sourceVariables, updates\);/);
-  assert.match(mergeHelper[0], /if \(nextVariables === current\) \{[\s\S]*nextVariables = current\.slice\(\);/);
+  assert.match(mergeHelper[0], /const current = new Map\(\);/);
+  assert.match(mergeHelper[0], /if \(!variable \|\| !Object\.is\(variable\.value, update\.value\)\) \{[\s\S]*return true;/);
   assert.doesNotMatch(mergeHelper[0], /current\.map|updates\s*\.\s*filter|updates\s*\.\s*map|\[\.\.\.current/);
 });
 

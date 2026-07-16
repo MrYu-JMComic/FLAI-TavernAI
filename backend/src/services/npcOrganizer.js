@@ -13,6 +13,8 @@ import {
   updateNpcBehavior,
   updateNpcMemory
 } from '../modules/npcs.js';
+import { deleteSceneEntity, listActorItems, listSceneWorkspace, upsertSceneItem } from '../modules/scenes.js';
+import { PIXEL_ICON_KEYS } from '../../../shared/pixelIconCatalog.js';
 
 const NPC_CONTEXT_LIMIT = 24;
 const NPC_DETAIL_LIMIT = 18;
@@ -21,8 +23,55 @@ const RECENT_MESSAGE_LIMIT = 30;
 const npcStatusValues = ['active', 'left', 'permanently_left', 'dead', 'on_mission', 'following', 'custom'];
 const memoryTypeValues = ['event', 'relationship', 'opinion', 'knowledge', 'emotion'];
 const behaviorTypeValues = ['reaction', 'dialogue', 'action', 'emotion', 'movement'];
+const clothingSlotValues = ['upper_underwear', 'lower_underwear', 'top', 'bottom', 'socks', 'shoes', 'outfit'];
+const bodyRegionValues = ['chest', 'abdomen', 'groin', 'buttocks', 'thighs', 'legs', 'feet'];
 
 const npcOrganizerTools = [
+  {
+    type: 'function',
+    function: {
+      name: 'upsert_actor_item',
+      description: 'Create or edit one uniquely identified item held by the protagonist or an NPC. Reuse id or itemCode for transfers and state changes. Never create copies for multiple owners. Clothing must be edited per entry with an exact slot, equipped state, and coverage.',
+      parameters: {
+        type: 'object',
+        properties: {
+          id: { type: 'string' },
+          itemCode: { type: 'string' },
+          ownerType: { type: 'string', enum: ['world', 'protagonist', 'npc'] },
+          ownerName: { type: 'string' },
+          nodeId: { type: 'string', description: 'Required when ownerType is world.' },
+          name: { type: 'string' },
+          description: { type: 'string' },
+          itemKind: { type: 'string', enum: ['item', 'clothing'] },
+          quantity: { type: 'integer', minimum: 1, maximum: 999999 },
+          clothingSlot: { type: 'string', enum: clothingSlotValues },
+          equipped: { type: 'boolean' },
+          coverage: { type: 'array', items: { type: 'string', enum: bodyRegionValues }, uniqueItems: true },
+          iconKey: { type: 'string', enum: PIXEL_ICON_KEYS },
+          state: { type: 'object' }
+        },
+        required: ['ownerType', 'name', 'itemKind', 'iconKey'],
+        additionalProperties: false
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'delete_actor_item',
+      description: 'Delete one incorrect or duplicate actor item by its internal id. Never delete merely because an item was transferred; transfer by updating the same entry instead.',
+      parameters: {
+        type: 'object',
+        properties: {
+          id: { type: 'string' },
+          ownerType: { type: 'string', enum: ['protagonist', 'npc'] },
+          ownerName: { type: 'string' }
+        },
+        required: ['id', 'ownerType'],
+        additionalProperties: false
+      }
+    }
+  },
   {
     type: 'function',
     function: {
@@ -215,11 +264,13 @@ export async function streamNpcOrganization(settings, request = {}) {
   return buildNpcOrganizerResult(state, result);
 }
 
-export function applyNpcOrganizerTool(database, userId, conversationId, name, args = {}) {
+export function applyNpcOrganizerTool(database, userId, conversationId, name, args = {}, options = {}) {
   return executeNpcOrganizerTool(name, args, {
     database,
     userId,
     conversationId,
+    selectedNpc: String(options.selectedNpc || '').trim(),
+    selectedActorType: String(options.selectedActorType || '').trim(),
     finishSummary: ''
   });
 }
@@ -234,6 +285,7 @@ function createNpcOrganizerState(request = {}) {
     character: objectOrEmpty(source.character),
     requirement: String(source.requirement || '').trim(),
     selectedNpc: String(source.selectedNpc || '').trim(),
+    selectedActorType: String(source.selectedActorType || '').trim(),
     signal: source.signal,
     emit: typeof source.emit === 'function' ? source.emit : () => {},
     finishSummary: ''
@@ -252,7 +304,14 @@ function buildNpcOrganizerMessages(state) {
         'Use profile tools for current location, relationship summary, status, exact aliases, and memory sealing. Update current location only when evidence clearly moves or places the NPC. Update relationship only when the conversation gives stable evidence about attitude, trust, allegiance, debt, rivalry, or connection.',
         'Use memory tools for facts, relationships, opinions, knowledge, emotions, and events.',
         'Use behavior tools only for stable portrayal rules that should affect future chat replies.',
+        'Use actor item tools for protagonist/NPC possessions and clothing. Every physical item has one stable itemCode and exactly one current owner. Transfer by updating the same entry, never by creating a second copy.',
+        'Clothing slots are upper underwear, lower underwear, top, bottom/skirt, socks (including tights or pantyhose), shoes, and one-piece outfit. Coverage controls what observers can actually see; a dress or long top covering groin/buttocks hides lower underwear.',
         'Hide NPC profiles only for false positives or entries the user would not expect to see as NPCs.',
+        state.selectedActorType === 'protagonist'
+          ? 'Strict scope: modify only protagonist items and clothing. Never mutate an NPC profile, memory, or behavior.'
+          : state.selectedNpc
+          ? `Strict scope: modify only the selected NPC "${state.selectedNpc}". Never call a mutation tool for another NPC.`
+          : 'No NPC is selected, so you may organize any NPC required by the user request.',
         'For Chinese roleplay, write concise polished Chinese content. Keep memories and behavior actions short enough to be useful in prompt context.',
         'When there is nothing useful to change, call finish_npc_organization with changed=false.'
       ].join('\n')
@@ -268,6 +327,7 @@ function buildNpcOrganizerContext(state) {
   return {
     requirement: state.requirement || '整理当前 NPC 资料、关系、记忆和行为，合并重复项，补足明显缺口，移除错误或空泛项。',
     selectedNpc: state.selectedNpc,
+    selectedActorType: state.selectedActorType,
     conversation: {
       id: state.conversationId,
       title: state.conversation?.title || ''
@@ -279,6 +339,9 @@ function buildNpcOrganizerContext(state) {
       persona: limitText(state.character?.persona, 1200)
     },
     npcs: buildNpcDetailRecords(state),
+    protagonistItems: listActorItems(state.database, state.userId, state.conversationId, 'protagonist'),
+    npcItems: state.selectedNpc ? listActorItems(state.database, state.userId, state.conversationId, 'npc', state.selectedNpc) : [],
+    sceneNodes: listSceneWorkspace(state.database, state.userId, state.conversationId).nodes,
     recentMessages: listRecentMessages(state.database, state.userId, state.conversationId)
   };
 }
@@ -294,6 +357,7 @@ function buildNpcDetailRecords(state) {
   const seen = new Set();
   if (state.selectedNpc) {
     pushNpcDetailRecord(records, seen, state, summaries, state.selectedNpc);
+    return records;
   }
   for (const npc of summaries) {
     if (records.length >= NPC_CONTEXT_LIMIT) {
@@ -368,6 +432,9 @@ function listRecentMessages(database, userId, conversationId) {
 
 function executeNpcOrganizerTool(name, args, state) {
   const toolArgs = objectOrEmpty(args);
+  if (isNpcMutationTool(name) && !isNpcMutationInScope(toolArgs, state)) {
+    return { ok: false, error: `Selected NPC scope only allows changes to ${state.selectedNpc}` };
+  }
   if (name === 'upsert_npc_profile') {
     return upsertNpcProfileTool(toolArgs, state);
   }
@@ -392,11 +459,55 @@ function executeNpcOrganizerTool(name, args, state) {
   if (name === 'delete_npc_behavior') {
     return deleteNpcBehaviorTool(toolArgs, state);
   }
+  if (name === 'upsert_actor_item') {
+    return upsertActorItemTool(toolArgs, state);
+  }
+  if (name === 'delete_actor_item') {
+    return deleteActorItemTool(toolArgs, state);
+  }
   if (name === 'finish_npc_organization') {
     state.finishSummary = limitText(toolArgs.summary, 1000);
     return { ok: true, changed: toolArgs.changed === true, summary: state.finishSummary, stop: true };
   }
   return { ok: false, error: `Unknown NPC organizer tool: ${name}` };
+}
+
+function isNpcMutationTool(name) {
+  return name !== 'finish_npc_organization' && name !== 'upsert_actor_item' && name !== 'delete_actor_item';
+}
+
+function isNpcMutationInScope(args, state) {
+  if (state.selectedActorType === 'protagonist') {
+    return false;
+  }
+  if (!state.selectedNpc) {
+    return true;
+  }
+  return normalizeNpcScopeKey(args.npcName) === normalizeNpcScopeKey(state.selectedNpc);
+}
+
+function actorItemMutationInScope(args, state) {
+  const existing = findActorItemForMutation(args, state);
+  if (state.selectedActorType === 'protagonist') {
+    return args.ownerType === 'protagonist' || existing?.ownerType === 'protagonist';
+  }
+  if (!state.selectedNpc) return true;
+  const targetMatches = args.ownerType === 'npc'
+    && normalizeNpcScopeKey(args.ownerName) === normalizeNpcScopeKey(state.selectedNpc);
+  const existingMatches = existing?.ownerType === 'npc'
+    && normalizeNpcScopeKey(existing.ownerName) === normalizeNpcScopeKey(state.selectedNpc);
+  return targetMatches || existingMatches;
+}
+
+function findActorItemForMutation(args, state) {
+  const workspace = listSceneWorkspace(state.database, state.userId, state.conversationId);
+  const id = String(args.id || '').trim();
+  const itemCode = String(args.itemCode || '').trim();
+  return workspace.items.find(item => (id && item.id === id) || (itemCode && item.itemCode === itemCode)) || null;
+}
+
+function normalizeNpcScopeKey(value) {
+  return String(value || '').trim().toLocaleLowerCase();
 }
 
 function upsertNpcProfileTool(args, state) {
@@ -544,6 +655,63 @@ function deleteNpcBehaviorTool(args, state) {
   }
   const deleted = deleteNpcBehavior(state.database, state.userId, state.conversationId, behaviorId, npcName, { auditActor: 'agent' });
   return deleted ? { ok: true, deletedId: behaviorId } : { ok: false, error: 'Behavior not found' };
+}
+
+function upsertActorItemTool(args, state) {
+  if (!actorItemMutationInScope(args, state)) {
+    return { ok: false, error: 'Actor item mutation is outside the selected actor scope' };
+  }
+  const name = normalizeRequiredText(args.name, 160);
+  if (!name) return { ok: false, error: 'name is required' };
+  const existingItem = findActorItemForMutation(args, state);
+  const itemKind = normalizeEnum(args.itemKind, ['item', 'clothing'], 'item');
+  const clothingSlot = itemKind === 'clothing'
+    ? (args.clothingSlot !== undefined
+        ? normalizeEnum(args.clothingSlot, clothingSlotValues, '')
+        : existingItem?.clothingSlot || '')
+    : '';
+  if (itemKind === 'clothing' && !clothingSlot) {
+    return { ok: false, error: 'clothingSlot is required when creating clothing' };
+  }
+  const ownerType = normalizeEnum(args.ownerType, ['world', 'protagonist', 'npc'], 'protagonist');
+  const payload = {
+    ownerType,
+    ownerName: ownerType === 'npc' ? limitText(args.ownerName ?? existingItem?.ownerName, 100) : '',
+    name,
+    itemKind,
+    clothingSlot,
+    iconKey: normalizeEnum(args.iconKey, PIXEL_ICON_KEYS, itemKind === 'clothing' ? 'clothing.outfit' : 'item.bag'),
+    movable: true,
+    auditActor: 'agent'
+  };
+  if (args.id !== undefined) payload.id = normalizeRequiredText(args.id, 120);
+  if (args.itemCode !== undefined) payload.itemCode = normalizeRequiredText(args.itemCode, 80);
+  if (args.nodeId !== undefined) payload.nodeId = normalizeRequiredText(args.nodeId, 120);
+  if (args.description !== undefined) payload.description = limitText(args.description, 5000);
+  if (args.quantity !== undefined) payload.quantity = normalizeInteger(args.quantity, 1, 999999, 1);
+  if (args.equipped !== undefined) payload.equipped = itemKind === 'clothing' && args.equipped === true;
+  if (args.coverage !== undefined) payload.coverage = normalizeStringList(args.coverage, 7, 20).filter(region => bodyRegionValues.includes(region));
+  if (args.state !== undefined) payload.state = objectOrEmpty(args.state);
+  const item = upsertSceneItem(state.database, state.userId, state.conversationId, payload);
+  return item ? { ok: true, item } : { ok: false, error: 'Invalid actor item or owner' };
+}
+
+function deleteActorItemTool(args, state) {
+  if (!actorItemMutationInScope(args, state)) {
+    return { ok: false, error: 'Actor item mutation is outside the selected actor scope' };
+  }
+  const id = normalizeRequiredText(args.id, 120);
+  if (!id) return { ok: false, error: 'id is required' };
+  const ownedItems = listActorItems(
+    state.database,
+    state.userId,
+    state.conversationId,
+    args.ownerType,
+    args.ownerName || ''
+  );
+  if (!ownedItems.some(item => item.id === id)) return { ok: false, error: 'Actor item not found for owner' };
+  const deleted = deleteSceneEntity(state.database, state.userId, state.conversationId, 'item', id, { actor: 'agent' });
+  return deleted ? { ok: true, deletedId: id } : { ok: false, error: 'Actor item not found' };
 }
 
 function buildNpcOrganizerResult(state, result = {}) {

@@ -1377,8 +1377,9 @@ test('CharacterFormView keeps the floating AI draft panel layout stable on focus
   );
   assert.match(
     characterAiPanelLayoutSource,
-    /function getAiPanelSafeTop\(\) \{[\s\S]*readElementBottom\('\.topbar'\)[\s\S]*readElementBottom\('\.section-heading'\)[\s\S]*readElementBottom\('\.character-section-nav'\)/
+    /function getAiPanelSafeTop\(\) \{[\s\S]*readElementBottom\('\.topbar'\)[\s\S]*readElementBottom\('\.section-heading'\)/
   );
+  assert.doesNotMatch(characterAiPanelLayoutSource, /readElementBottom\('\.character-section-nav'\)/);
   assert.match(
     characterAiPanelLayoutSource,
     /function readElementBottom\(selector\) \{[\s\S]*document\.querySelector\(selector\)\?\.getBoundingClientRect\(\)\.bottom;[\s\S]*Number\.isFinite\(bottom\)/
@@ -1404,6 +1405,11 @@ test('CharacterFormView keeps the floating AI draft panel layout stable on focus
     stylesSource,
     /@media \(min-width: 761px\) \{[\s\S]*\.ai-draft-panel\s*\{[\s\S]*position:\s*fixed;[\s\S]*height:\s*min\(var\(--ai-panel-h, 640px\), calc\(100dvh - var\(--ai-panel-y, 0px\)\)\);[\s\S]*min-width:\s*320px;[\s\S]*min-height:\s*180px;[\s\S]*resize:\s*both;[\s\S]*scrollbar-gutter:\s*stable;/
   );
+  assert.match(
+    stylesSource,
+    /\.ai-draft-panel \.ai-panel-resize-handle\s*\{[^}]*position:\s*absolute;[^}]*right:\s*7px;[^}]*bottom:\s*7px;/
+  );
+  assert.doesNotMatch(stylesSource, /\.ai-draft-panel \.ai-panel-resize-handle\s*\{[^}]*position:\s*fixed;/);
   assert.match(stylesSource, /\.ai-draft-panel \.field textarea\s*\{[^}]*height:\s*124px;[^}]*resize:\s*vertical;/);
   assert.doesNotMatch(stylesSource, /\.ai-draft-panel \.field textarea\s*\{[^}]*resize:\s*none;/);
   assert.match(
@@ -1417,10 +1423,6 @@ test('CharacterFormView keeps the floating AI draft panel layout stable on focus
   assert.match(
     stylesSource,
     /\.ai-draft-panel::-webkit-scrollbar-thumb,\s*\.ai-draft-panel \.field textarea::-webkit-scrollbar-thumb\s*\{[\s\S]*border-radius:\s*999px;[\s\S]*padding-box;/
-  );
-  assert.match(
-    stylesSource,
-    /\.ai-draft-panel \.ai-panel-resize-handle\s*\{[\s\S]*display:\s*block;[\s\S]*position:\s*fixed;[\s\S]*right:\s*auto;[\s\S]*bottom:\s*auto;/
   );
   assert.match(
     stylesSource,

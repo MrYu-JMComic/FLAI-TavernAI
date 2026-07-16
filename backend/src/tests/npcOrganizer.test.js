@@ -132,3 +132,65 @@ test('NPC organizer tools reject empty required mutation fields', () => {
   });
   assert.equal(emptyBehavior.ok, false);
 });
+
+test('NPC organizer selected scope rejects mutations for other NPC entries', () => {
+  const { database, userId, conversationId } = setupDatabase();
+
+  const rejected = applyNpcOrganizerTool(database, userId, conversationId, 'add_npc_memory', {
+    npcName: 'Noah',
+    content: 'This must not be written.'
+  }, { selectedNpc: 'Mira' });
+  const accepted = applyNpcOrganizerTool(database, userId, conversationId, 'add_npc_memory', {
+    npcName: 'Mira',
+    content: 'Only the selected NPC can change.'
+  }, { selectedNpc: 'Mira' });
+
+  assert.equal(rejected.ok, false);
+  assert.match(rejected.error, /Selected NPC scope/);
+  assert.equal(accepted.ok, true);
+  assert.equal(listNpcMemories(database, userId, conversationId, 'Noah').length, 0);
+  assert.equal(listNpcMemories(database, userId, conversationId, 'Mira').length, 1);
+});
+
+test('NPC organizer protagonist scope edits individual items and rejects NPC mutations', () => {
+  const { database, userId, conversationId } = setupDatabase();
+  const itemResult = applyNpcOrganizerTool(database, userId, conversationId, 'upsert_actor_item', {
+    ownerType: 'protagonist',
+    name: '连体泳衣',
+    itemKind: 'clothing',
+    clothingSlot: 'outfit',
+    equipped: true,
+    coverage: ['chest', 'groin', 'buttocks'],
+    iconKey: 'clothing.outfit'
+  }, { selectedActorType: 'protagonist' });
+  const rejectedNpc = applyNpcOrganizerTool(database, userId, conversationId, 'add_npc_memory', {
+    npcName: 'Mira',
+    content: 'Must not change in protagonist scope.'
+  }, { selectedActorType: 'protagonist' });
+
+  assert.equal(itemResult.ok, true);
+  assert.equal(itemResult.item.ownerType, 'protagonist');
+  assert.equal(itemResult.item.clothingSlot, 'outfit');
+  assert.equal(rejectedNpc.ok, false);
+  assert.equal(database.prepare("SELECT COUNT(*) AS count FROM scene_items WHERE conversation_id = ? AND owner_type = 'protagonist'").get(conversationId).count, 1);
+});
+
+test('NPC organizer preserves clothing slots on partial updates and allows scoped transfers away', () => {
+  const { database, userId, conversationId } = setupDatabase();
+  const created = applyNpcOrganizerTool(database, userId, conversationId, 'upsert_actor_item', {
+    ownerType: 'protagonist', name: '百褶裙', itemKind: 'clothing', clothingSlot: 'bottom',
+    equipped: true, coverage: ['groin', 'buttocks', 'thighs'], iconKey: 'clothing.bottom'
+  }, { selectedActorType: 'protagonist' });
+  const updated = applyNpcOrganizerTool(database, userId, conversationId, 'upsert_actor_item', {
+    id: created.item.id, ownerType: 'protagonist', name: '百褶裙', itemKind: 'clothing',
+    equipped: false, iconKey: 'clothing.bottom'
+  }, { selectedActorType: 'protagonist' });
+  const transferred = applyNpcOrganizerTool(database, userId, conversationId, 'upsert_actor_item', {
+    id: created.item.id, ownerType: 'npc', ownerName: 'Mira', name: '百褶裙', itemKind: 'clothing',
+    clothingSlot: 'bottom', equipped: false, iconKey: 'clothing.bottom'
+  }, { selectedActorType: 'protagonist' });
+  assert.equal(updated.item.clothingSlot, 'bottom');
+  assert.equal(transferred.ok, true);
+  assert.equal(transferred.item.ownerType, 'npc');
+  assert.equal(transferred.item.ownerName, 'Mira');
+});

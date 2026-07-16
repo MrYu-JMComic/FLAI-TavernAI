@@ -338,3 +338,51 @@ export function deleteNpcBehavior(conversationId, npcName, behaviorId) {
     method: 'DELETE'
   });
 }
+
+export function fetchConversationScenes(conversationId) {
+  return apiRequest(`/api/conversations/${conversationId}/scenes`);
+}
+
+export function fetchActorItems(conversationId, ownerType = 'protagonist', ownerName = '') {
+  const query = new URLSearchParams({ ownerType });
+  if (ownerName) query.set('ownerName', ownerName);
+  return apiRequest(`/api/conversations/${conversationId}/items?${query.toString()}`);
+}
+
+export function fetchActorItemAudit(conversationId, ownerType = 'protagonist', ownerName = '') {
+  const query = new URLSearchParams({ ownerType });
+  if (ownerName) query.set('ownerName', ownerName);
+  return apiRequest(`/api/conversations/${conversationId}/items/audit?${query.toString()}`);
+}
+
+export function rollbackActorItemAudit(conversationId, auditId) {
+  return apiRequest(`/api/conversations/${conversationId}/items/audit/${encodeURIComponent(auditId)}/rollback`, { method: 'POST' });
+}
+
+export function createSceneNode(conversationId, payload) {
+  return apiRequest(`/api/conversations/${conversationId}/scenes/nodes`, { method: 'POST', body: JSON.stringify(payload) });
+}
+
+export function updateSceneNode(conversationId, nodeId, payload) {
+  return apiRequest(`/api/conversations/${conversationId}/scenes/nodes/${encodeURIComponent(nodeId)}`, { method: 'PUT', body: JSON.stringify(payload) });
+}
+
+export function createSceneItem(conversationId, payload) {
+  return apiRequest(`/api/conversations/${conversationId}/scenes/items`, { method: 'POST', body: JSON.stringify(payload) });
+}
+
+export function updateSceneItem(conversationId, itemId, payload) {
+  return apiRequest(`/api/conversations/${conversationId}/scenes/items/${encodeURIComponent(itemId)}`, { method: 'PUT', body: JSON.stringify(payload) });
+}
+
+export function createSceneRoute(conversationId, payload) {
+  return apiRequest(`/api/conversations/${conversationId}/scenes/routes`, { method: 'POST', body: JSON.stringify(payload) });
+}
+
+export function deleteSceneEntity(conversationId, type, id) {
+  return apiRequest(`/api/conversations/${conversationId}/scenes/${type}/${encodeURIComponent(id)}`, { method: 'DELETE' });
+}
+
+export function organizeScenes(conversationId, payload) {
+  return apiRequest(`/api/conversations/${conversationId}/scenes/organize`, { method: 'POST', body: JSON.stringify(payload) });
+}

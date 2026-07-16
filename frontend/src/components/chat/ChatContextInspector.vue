@@ -277,6 +277,12 @@ const contextSections = computed(() => {
       text: sections.npc?.context || ''
     },
     {
+      key: 'scene',
+      label: '永久场景',
+      active: Boolean(sections.scene?.active),
+      text: sections.scene?.context || ''
+    },
+    {
       key: 'economy',
       label: '经济',
       active: Boolean(sections.economy?.active),

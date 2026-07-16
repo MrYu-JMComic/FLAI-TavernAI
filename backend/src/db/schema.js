@@ -470,6 +470,78 @@ export function initializeDatabase(database) {
       FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
     );
 
+    CREATE TABLE IF NOT EXISTS scene_nodes (
+      id TEXT PRIMARY KEY,
+      conversation_id TEXT NOT NULL,
+      parent_id TEXT,
+      node_type TEXT NOT NULL DEFAULT 'room',
+      name TEXT NOT NULL,
+      description TEXT NOT NULL DEFAULT '',
+      layout_json TEXT NOT NULL DEFAULT '{}',
+      tags_json TEXT NOT NULL DEFAULT '[]',
+      permanent INTEGER NOT NULL DEFAULT 1,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE,
+      FOREIGN KEY (parent_id) REFERENCES scene_nodes(id) ON DELETE SET NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS scene_routes (
+      id TEXT PRIMARY KEY,
+      conversation_id TEXT NOT NULL,
+      from_node_id TEXT NOT NULL,
+      to_node_id TEXT NOT NULL,
+      label TEXT NOT NULL DEFAULT '',
+      description TEXT NOT NULL DEFAULT '',
+      bidirectional INTEGER NOT NULL DEFAULT 1,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE,
+      FOREIGN KEY (from_node_id) REFERENCES scene_nodes(id) ON DELETE CASCADE,
+      FOREIGN KEY (to_node_id) REFERENCES scene_nodes(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS scene_items (
+      id TEXT PRIMARY KEY,
+      conversation_id TEXT NOT NULL,
+      node_id TEXT,
+      item_code TEXT NOT NULL,
+      name TEXT NOT NULL,
+      description TEXT NOT NULL DEFAULT '',
+      state_json TEXT NOT NULL DEFAULT '{}',
+      position_json TEXT NOT NULL DEFAULT '{}',
+      movable INTEGER NOT NULL DEFAULT 0,
+      owner_type TEXT NOT NULL DEFAULT 'world',
+      owner_name TEXT NOT NULL DEFAULT '',
+      item_kind TEXT NOT NULL DEFAULT 'item',
+      quantity INTEGER NOT NULL DEFAULT 1,
+      clothing_slot TEXT NOT NULL DEFAULT '',
+      equipped INTEGER NOT NULL DEFAULT 0,
+      coverage_json TEXT NOT NULL DEFAULT '[]',
+      icon_key TEXT NOT NULL DEFAULT '',
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE,
+      FOREIGN KEY (node_id) REFERENCES scene_nodes(id) ON DELETE SET NULL,
+      UNIQUE(conversation_id, item_code)
+    );
+
+    CREATE TABLE IF NOT EXISTS scene_item_audit (
+      id TEXT PRIMARY KEY,
+      conversation_id TEXT NOT NULL,
+      item_id TEXT NOT NULL,
+      action TEXT NOT NULL DEFAULT 'update',
+      actor TEXT NOT NULL DEFAULT 'manual',
+      before_owner_type TEXT NOT NULL DEFAULT '',
+      before_owner_name TEXT NOT NULL DEFAULT '',
+      after_owner_type TEXT NOT NULL DEFAULT '',
+      after_owner_name TEXT NOT NULL DEFAULT '',
+      before_json TEXT NOT NULL DEFAULT 'null',
+      after_json TEXT NOT NULL DEFAULT 'null',
+      created_at TEXT NOT NULL,
+      FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
+    );
+
     CREATE TABLE IF NOT EXISTS economy_accounts (
       id TEXT PRIMARY KEY,
       user_id TEXT NOT NULL,

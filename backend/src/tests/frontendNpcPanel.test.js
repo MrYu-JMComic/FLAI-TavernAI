@@ -234,8 +234,25 @@ test('NpcPanel selected NPC lookup scans current list directly', () => {
     npcPanelScript,
     /function getCurrentNpcByName\(name, sourceNpcs = npcs\.value\) \{\s*const targetName = String\(name \|\| ''\)\.trim\(\);[\s\S]*if \(!targetName\) \{[\s\S]*return null;[\s\S]*const currentNpcs = Array\.isArray\(sourceNpcs\) \? sourceNpcs : \[\];[\s\S]*for \(const npc of currentNpcs\) \{[\s\S]*if \(npc\?\.name === targetName\) \{[\s\S]*return npc;[\s\S]*return null;[\s\S]*\}/
   );
-  assert.match(npcPanelScript, /if \(selectedNpc\.value && !getCurrentNpcByName\(selectedNpc\.value\)\) \{\s*setSelectedNpc\(''\);/);
+  assert.match(npcPanelScript, /if \(!protagonistMode\.value && selectedNpc\.value && !getCurrentNpcByName\(selectedNpc\.value\)\) \{\s*setSelectedNpc\(''\);/);
   assert.doesNotMatch(npcPanelScript, /npcs\.value\.find/);
+});
+
+test('NpcPanel exposes protagonist inventory and clothing as independently editable items', () => {
+  assert.match(npcPanelScript, /const protagonistItems = ref\(\[\]\);/);
+  assert.match(npcPanelScript, /fetchActorItems\(conversationId, 'protagonist'\)/);
+  assert.match(npcPanelScript, /fetchActorItemAudit\(conversationId, 'protagonist'\)/);
+  assert.match(npcPanelScript, /requestToken === protagonistRequestToken/);
+  assert.match(npcPanelScript, /conversationId === props\.conversationId/);
+  assert.match(npcPanelScript, /rollbackActorItemAudit\(conversationId, record\.id\)/);
+  assert.match(npcPanelScript, /selectedActorType: protagonistMode\.value \? 'protagonist'/);
+  assert.match(npcPanelTemplate, /主角物品与穿着/);
+  assert.match(npcPanelTemplate, /item\.itemCode/);
+  assert.match(npcPanelTemplate, /clothingSlotOptions/);
+  assert.match(npcPanelTemplate, /coverageOptions/);
+  assert.match(npcPanelTemplate, /toggleProtagonistItemEquipped\(item\)/);
+  assert.match(npcPanelTemplate, /物品审计与回滚/);
+  assert.match(npcPanelTemplate, /rollbackProtagonistItem\(record\)/);
 });
 
 test('NpcPanel ignores stale NPC detail item actions', () => {
@@ -452,7 +469,7 @@ test('NpcPanel cancels pending list and detail loads when the panel closes', () 
   );
   assert.match(
     npcPanelScript,
-    /function cancelNpcPanelLoad\(\)\s*{\s*npcLoadToken \+= 1;\s*npcDetailToken \+= 1;\s*npcAuditToken \+= 1;\s*loading\.value = false;\s*detailLoading\.value = false;\s*npcAuditLoading\.value = false;\s*loadError\.value = '';\s*detailError\.value = '';\s*npcAuditError\.value = '';\s*}/
+    /function cancelNpcPanelLoad\(\)\s*{\s*npcLoadToken \+= 1;\s*npcDetailToken \+= 1;\s*npcAuditToken \+= 1;\s*protagonistRequestToken \+= 1;\s*loading\.value = false;\s*detailLoading\.value = false;\s*npcAuditLoading\.value = false;\s*protagonistLoading\.value = false;\s*protagonistAuditLoading\.value = false;\s*loadError\.value = '';\s*detailError\.value = '';\s*npcAuditError\.value = '';\s*}/
   );
   assert.match(
     npcPanelScript,

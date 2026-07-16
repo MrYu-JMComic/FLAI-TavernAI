@@ -5,11 +5,28 @@ import { readRepoText } from './frontendSfcTestUtils.js';
 const accessoryAgentsSource = readRepoText('backend/src/services/accessoryAgents.js');
 
 test('NPC accessory agent can record reusable behavior rules', () => {
-  assert.match(accessoryAgentsSource, /\[npcUpsertTool\(\), npcMemoryTool\(\), npcBehaviorTool\(\)\]/);
+  assert.match(accessoryAgentsSource, /\[npcUpsertTool\(\), npcMemoryTool\(\), npcBehaviorTool\(\), actorItemTool\(\), actorItemDeleteTool\(\)\]/);
   assert.match(accessoryAgentsSource, /toolName === 'record_npc_behavior'/);
   assert.match(accessoryAgentsSource, /function npcBehaviorTool\(\)/);
   assert.match(accessoryAgentsSource, /function addNpcBehaviorIfNew/);
   assert.match(accessoryAgentsSource, /addNpcBehavior\(db, userId, conversationId, name/);
+});
+
+test('NPC accessory agent tracks unique protagonist and NPC items', () => {
+  assert.match(accessoryAgentsSource, /toolName === 'upsert_actor_item'/);
+  assert.match(accessoryAgentsSource, /One item must never be copied to multiple owners/);
+  assert.match(accessoryAgentsSource, /function actorItemTool\(\)/);
+  assert.match(accessoryAgentsSource, /function actorItemDeleteTool\(\)/);
+  assert.match(accessoryAgentsSource, /clothingSlot/);
+  assert.match(accessoryAgentsSource, /coverage/);
+  assert.match(accessoryAgentsSource, /ownerType: \{ type: 'string', enum: \['world', 'protagonist', 'npc'\] \}/);
+});
+
+test('scene and NPC state agents run in deterministic sequence', () => {
+  assert.match(accessoryAgentsSource, /runAgentSequence\(\[sceneAgentFactory, npcAgentFactory\]\)/);
+  assert.match(accessoryAgentsSource, /async function runAgentSequence/);
+  assert.doesNotMatch(accessoryAgentsSource, /jobs\.push\(runAgentJob\('npcAgent'/);
+  assert.doesNotMatch(accessoryAgentsSource, /jobs\.push\(runAgentJob\('sceneAgent'/);
 });
 
 test('NPC accessory agent keeps automatic behavior rules conservative', () => {
