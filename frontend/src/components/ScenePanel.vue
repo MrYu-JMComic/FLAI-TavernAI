@@ -147,10 +147,32 @@ function selectMapNode(node) {
   selectedItemId.value = '';
 }
 
+function preferredMapNode(node) {
+  if (!node) return null;
+  if (node.nodeType === 'map') return node;
+  return childrenOf(node.id).find(child => child.nodeType === 'map') || null;
+}
+
+function openPreferredMap(node) {
+  if (!node) return false;
+  const mapNode = preferredMapNode(node);
+  const container = mapNode || node;
+  const entries = childrenOf(container.id);
+  activeContainerId.value = container.id;
+  selectedNodeId.value = entries[0]?.id || container.id;
+  selectedItemId.value = '';
+  viewMode.value = 'map';
+  return Boolean(mapNode);
+}
+
 function enterNode(node = selectedNode.value) {
   if (!node) return;
   selectedNodeId.value = node.id;
   const children = childrenOf(node.id);
+  if (preferredMapNode(node)) {
+    openPreferredMap(node);
+    return;
+  }
   if (node.nodeType === 'room' || (node.nodeType === 'area' && !children.length)) {
     activeContainerId.value = node.parentId || activeContainerId.value;
     viewMode.value = 'interior';
@@ -162,10 +184,7 @@ function enterNode(node = selectedNode.value) {
 }
 
 function openRootMap(node) {
-  activeContainerId.value = node.id;
-  selectedNodeId.value = node.id;
-  selectedItemId.value = '';
-  viewMode.value = 'map';
+  openPreferredMap(node);
 }
 
 function openUnsortedRooms() {
@@ -211,7 +230,16 @@ function syncSelection() {
   const preferredRoot = structuralRoots.value[0] || orphanRooms.value[0] || workspace.value.nodes[0];
   if (!nodeById(selectedNodeId.value)) selectedNodeId.value = preferredRoot.id;
   if (activeContainerId.value && !nodeById(activeContainerId.value)) activeContainerId.value = '';
-  if (!activeContainerId.value && structuralRoots.value.length) activeContainerId.value = structuralRoots.value[0].id;
+  if (!activeContainerId.value && structuralRoots.value.length) {
+    const root = structuralRoots.value[0];
+    const mapNode = preferredMapNode(root);
+    const container = mapNode || root;
+    activeContainerId.value = container.id;
+    if (selectedNodeId.value === root.id && mapNode) {
+      selectedNodeId.value = childrenOf(container.id)[0]?.id || container.id;
+    }
+    viewMode.value = 'map';
+  }
   if (!structuralRoots.value.length && orphanRooms.value.length) viewMode.value = 'interior';
   nodeForm.value.parentId = selectedNodeId.value;
   routeForm.value.fromNodeId = selectedNodeId.value;
@@ -595,4 +623,334 @@ watch(selectedNodeId, (id) => {
 .scene-map-marker.unresolved .scene-marker-icon{border-style:dashed;opacity:.72}
 .scene-map-marker.unresolved .scene-marker-copy small::after{content:" · 待 AI 定位";color:#e5b56f}
 .scene-icon-picker{display:grid;gap:5px;color:#8998bd;font-size:.64rem}
+
+/* Visual system alignment */
+.scene-overlay {
+  background: color-mix(in srgb, var(--text, #20241f) 36%, transparent);
+  backdrop-filter: blur(8px);
+}
+
+.scene-explorer {
+  --scene-accent: var(--primary, #8d4a43);
+  --scene-accent-soft: color-mix(in srgb, var(--scene-accent) 10%, var(--surface, #fbfaf6));
+  --scene-green: var(--green, #2f6d5a);
+  --scene-surface: var(--surface, #fbfaf6);
+  --scene-surface-strong: var(--surface-strong, #edf1ec);
+  --scene-line: color-mix(in srgb, var(--line, #d8ddd6) 84%, transparent);
+  --scene-text: var(--text, #20241f);
+  --scene-muted: var(--muted, #657064);
+  --scene-map-canvas: color-mix(in srgb, var(--scene-surface-strong) 78%, #e2e9df);
+  border-color: var(--scene-line);
+  background: var(--scene-surface);
+  color: var(--scene-text);
+  box-shadow: 0 28px 84px color-mix(in srgb, var(--text, #20241f) 28%, transparent);
+}
+
+:root[data-theme="dark"] .scene-explorer {
+  --scene-map-canvas: color-mix(in srgb, var(--scene-surface-strong) 84%, #09110e);
+  box-shadow: 0 28px 84px rgba(0, 0, 0, 0.48);
+}
+
+.scene-topbar,
+.scene-sidebar,
+.scene-manager {
+  border-color: var(--scene-line);
+  background: color-mix(in srgb, var(--scene-surface) 96%, transparent);
+}
+
+.scene-topbar {
+  padding: 16px 20px;
+}
+
+.scene-brand-icon {
+  color: var(--scene-accent);
+  background: var(--scene-accent-soft);
+  box-shadow: none;
+}
+
+.scene-brand p,
+.scene-sidebar-title,
+.scene-sidebar-title small,
+.scene-world-card small,
+.scene-ai-prompt span,
+.scene-breadcrumbs,
+.scene-location-heading small,
+.scene-interior-header small,
+.scene-location-card p,
+.scene-location-meta span,
+.scene-room-card small,
+.scene-room-card em,
+.scene-room-empty,
+.scene-floor-label small,
+.scene-room-inspector > small,
+.scene-room-inspector p,
+.scene-room-inspector label,
+.scene-item-state,
+.scene-muted,
+.scene-form-context {
+  color: var(--scene-muted) !important;
+}
+
+.scene-brand h2,
+.scene-stats strong,
+.scene-breadcrumbs strong,
+.scene-map-empty h3,
+.scene-location-heading h3,
+.scene-interior-header h3,
+.scene-floor-label,
+.scene-room-inspector h4,
+.scene-route-list strong,
+.scene-manager header h3,
+.scene-form-title {
+  color: var(--scene-text);
+}
+
+.scene-topbar-actions button,
+.scene-breadcrumbs button,
+.scene-manager header button {
+  border-color: var(--scene-line);
+  color: var(--scene-text);
+  background: color-mix(in srgb, var(--scene-surface-strong) 66%, transparent);
+}
+
+.scene-topbar-actions button:hover:not(:disabled),
+.scene-breadcrumbs button:hover,
+.scene-manager header button:hover {
+  background: var(--scene-accent-soft);
+  color: var(--scene-accent);
+}
+
+.scene-topbar-actions .scene-ai-button,
+.scene-enter-button,
+.scene-map-empty button {
+  border-color: transparent;
+  color: #fff;
+  background: var(--scene-accent);
+  box-shadow: none;
+}
+
+.scene-shell {
+  background: var(--scene-surface);
+}
+
+.scene-stats {
+  background: color-mix(in srgb, var(--scene-surface-strong) 72%, transparent);
+}
+
+.scene-stats span,
+.scene-view-tabs button,
+.scene-world-card,
+.scene-sidebar-empty {
+  color: var(--scene-muted);
+}
+
+.scene-view-tabs,
+.scene-ai-prompt,
+.scene-manager > header,
+.scene-manager form,
+.scene-route-list {
+  border-color: var(--scene-line);
+}
+
+.scene-view-tabs button.active,
+.scene-world-card.active {
+  border-color: color-mix(in srgb, var(--scene-accent) 36%, var(--scene-line));
+  color: var(--scene-accent);
+  background: var(--scene-accent-soft);
+}
+
+.scene-world-card:hover {
+  color: var(--scene-text);
+  background: color-mix(in srgb, var(--scene-surface-strong) 72%, transparent);
+}
+
+.scene-ai-prompt {
+  background: color-mix(in srgb, var(--scene-surface-strong) 58%, transparent);
+}
+
+.scene-ai-prompt textarea,
+.scene-manager input,
+.scene-manager select,
+.scene-manager textarea,
+.scene-room-inspector input {
+  border-color: var(--scene-line);
+  color: var(--scene-text);
+  background: var(--scene-surface);
+}
+
+.scene-ai-prompt textarea:focus,
+.scene-manager input:focus,
+.scene-manager select:focus,
+.scene-manager textarea:focus,
+.scene-room-inspector input:focus {
+  outline: 2px solid color-mix(in srgb, var(--scene-accent) 22%, transparent);
+  border-color: color-mix(in srgb, var(--scene-accent) 52%, var(--scene-line));
+}
+
+.scene-stage {
+  background: color-mix(in srgb, var(--scene-surface-strong) 58%, var(--scene-surface));
+}
+
+.scene-breadcrumbs {
+  border-color: var(--scene-line);
+}
+
+.scene-map-grid {
+  border-color: var(--scene-line);
+  background:
+    radial-gradient(circle at 24% 18%, color-mix(in srgb, var(--scene-green) 10%, transparent), transparent 30%),
+    radial-gradient(circle at 78% 72%, color-mix(in srgb, var(--scene-accent) 8%, transparent), transparent 34%),
+    linear-gradient(color-mix(in srgb, var(--scene-line) 46%, transparent) 1px, transparent 1px),
+    linear-gradient(90deg, color-mix(in srgb, var(--scene-line) 46%, transparent) 1px, transparent 1px),
+    var(--scene-map-canvas);
+  background-size: auto, auto, 34px 34px, 34px 34px, auto;
+  box-shadow: inset 0 0 56px color-mix(in srgb, var(--scene-text) 6%, transparent);
+}
+
+.scene-map-grid::before {
+  border-color: color-mix(in srgb, var(--scene-accent) 18%, transparent);
+}
+
+.scene-map-light {
+  opacity: 0.08;
+}
+
+.light-one,
+.light-two {
+  background: var(--scene-accent);
+}
+
+.scene-route-layer line {
+  stroke: var(--scene-accent);
+  opacity: 0.44;
+}
+
+.scene-map-marker {
+  color: var(--scene-text);
+}
+
+.scene-marker-pulse {
+  border-color: color-mix(in srgb, var(--scene-accent) 38%, transparent);
+}
+
+.scene-marker-icon,
+.type-building .scene-marker-icon,
+.type-room .scene-marker-icon,
+.type-area .scene-marker-icon {
+  border-color: color-mix(in srgb, var(--scene-accent) 34%, var(--scene-line));
+  color: var(--scene-accent);
+  background: var(--scene-surface);
+  box-shadow: 0 5px 14px color-mix(in srgb, var(--scene-text) 14%, transparent);
+}
+
+.scene-map-marker.selected .scene-marker-icon {
+  color: #fff;
+  background: var(--scene-accent);
+}
+
+.scene-marker-copy {
+  text-shadow: 0 1px 2px color-mix(in srgb, var(--scene-surface) 88%, transparent);
+}
+
+.scene-marker-copy small,
+.scene-map-empty {
+  color: var(--scene-muted);
+}
+
+.scene-map-legend,
+.scene-location-card,
+.scene-interior-header,
+.scene-room-card,
+.scene-floorplan,
+.scene-room-inspector {
+  border-color: var(--scene-line);
+  color: var(--scene-text);
+  background: color-mix(in srgb, var(--scene-surface) 94%, transparent);
+  box-shadow: none;
+}
+
+.scene-map-legend {
+  color: var(--scene-muted);
+  backdrop-filter: blur(12px);
+}
+
+.scene-map-legend i,
+.scene-map-legend .legend-building,
+.scene-map-legend .legend-room {
+  background: var(--scene-accent);
+}
+
+.scene-location-heading > span,
+.scene-room-icon {
+  color: var(--scene-accent);
+  background: var(--scene-accent-soft);
+}
+
+.scene-location-meta {
+  border-color: var(--scene-line);
+}
+
+.scene-room-card:hover,
+.scene-room-card.selected,
+.scene-item-marker:hover,
+.scene-item-marker.selected {
+  border-color: color-mix(in srgb, var(--scene-accent) 44%, var(--scene-line));
+  color: var(--scene-accent);
+  background: var(--scene-accent-soft);
+  box-shadow: none;
+}
+
+.scene-floor-grid {
+  display: block;
+  background:
+    linear-gradient(90deg, color-mix(in srgb, var(--scene-line) 54%, transparent) 1px, transparent 1px),
+    linear-gradient(color-mix(in srgb, var(--scene-line) 54%, transparent) 1px, transparent 1px);
+  background-size: 32px 32px;
+}
+
+.scene-floorplan::after {
+  border-color: color-mix(in srgb, var(--scene-accent) 24%, var(--scene-line));
+}
+
+.scene-item-marker {
+  border-color: var(--scene-line);
+  color: var(--scene-text);
+  background: var(--scene-surface);
+}
+
+.scene-room-inspector code,
+.scene-item-state strong {
+  color: var(--scene-accent);
+}
+
+.scene-manager form button {
+  border-color: color-mix(in srgb, var(--scene-accent) 30%, var(--scene-line));
+  color: var(--scene-accent);
+  background: var(--scene-accent-soft);
+}
+
+.scene-manager form button:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--scene-accent) 16%, var(--scene-surface));
+}
+
+@media (max-width: 720px) {
+  .scene-topbar {
+    padding: 12px 14px;
+  }
+
+  .scene-brand-icon {
+    width: 36px;
+    height: 36px;
+    border-radius: 11px;
+  }
+
+  .scene-brand p {
+    display: none;
+  }
+
+  .scene-map-grid {
+    min-height: 460px;
+    border-radius: 14px;
+  }
+}
 </style>

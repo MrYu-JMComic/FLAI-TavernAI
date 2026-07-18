@@ -68,7 +68,6 @@ const {
 } = readVueBlocks('frontend/src/components/character/CharacterTalentPanel.vue');
 const characterAiPreferencesSource = readRepoText('frontend/src/composables/character/useCharacterAiPreferences.js');
 const characterAiGenerationSource = readRepoText('frontend/src/composables/character/useCharacterAiGeneration.js');
-const characterAiPanelLayoutSource = readRepoText('frontend/src/composables/character/useCharacterAiPanelLayout.js');
 const characterCreationWizardSource = readRepoText('frontend/src/composables/character/useCharacterCreationWizard.js');
 const characterFormDraftSource = readRepoText('frontend/src/composables/character/useCharacterFormDraft.js');
 const characterFormOptionsSource = readRepoText('frontend/src/composables/character/useCharacterFormOptions.js');
@@ -124,29 +123,26 @@ test('CharacterFormView locks AI actions behind one shared busy state', () => {
   assert.match(characterAiPreferencesSource, /const assistantModelOptions = computed\(\(\) => providerModelOptionsFor\(assistantModel\.value, '使用全局模型'\)\);/);
   assert.match(characterAiPreferencesSource, /watch\(assistantModel, \(value\) => \{[\s\S]*localStorage\.setItem\(ASSISTANT_MODEL_STORAGE_KEY, String\(value \|\| ''\)\.trim\(\)\);/);
   assert.match(characterAiPreferencesSource, /watch\(aiUseCurrentDraft, \(value\) => \{[\s\S]*localStorage\.setItem\(ASSISTANT_USE_CURRENT_STORAGE_KEY, value \? 'true' : 'false'\);/);
-  assert.match(
-    characterFormScript,
-    /import \{ useCharacterAiPanelLayout \} from '\.\.\/composables\/character\/useCharacterAiPanelLayout';/
-  );
-  assert.match(
-    characterFormScript,
-    /const \{[\s\S]*aiPanelDragging,[\s\S]*aiPanelPos,[\s\S]*aiPanelRef,[\s\S]*aiPanelSize,[\s\S]*onAiPanelDragStart,[\s\S]*onAiPanelResizeStart,[\s\S]*resetAiPanel[\s\S]*\} = useCharacterAiPanelLayout\(\{[\s\S]*getScrollContainer: getCharacterScrollContainer,[\s\S]*scheduleSectionNavSync: scheduleCharacterSectionNavSync[\s\S]*\}\);/
-  );
-  assert.match(characterFormTemplate, /<CharacterAiDraftPanel[\s\S]*v-model:requirement="aiRequirement"[\s\S]*v-model:assistant-model="assistantModel"[\s\S]*v-model:use-current-draft="aiUseCurrentDraft"[\s\S]*:disabled="characterAiActionBusy"[\s\S]*:dragging="aiPanelDragging"[\s\S]*:loading="aiLoading"[\s\S]*:model-options="assistantModelOptions"[\s\S]*:options="aiOptions"[\s\S]*:panel-position="aiPanelPos"[\s\S]*:panel-size="aiPanelSize"[\s\S]*@complete="completeWithAi"[\s\S]*@set-option="setAiOptionValue"[\s\S]*@stop="stopCharacterAi"/);
-  assert.match(characterAiDraftPanelScript, /defineExpose\(\{ getPanelElement \}\);/);
-  assert.match(characterAiDraftPanelTemplate, /ref="panelElement"[\s\S]*class="form-panel ai-draft-panel"[\s\S]*:class="\{ 'ai-panel-dragging': dragging \}"/);
-  assert.match(characterAiDraftPanelTemplate, /@pointerdown="emit\('drag-start', \$event\)"[\s\S]*@click\.stop="emit\('reset-panel'\)"/);
+  assert.doesNotMatch(characterFormScript, /useCharacterAiPanelLayout/);
+  assert.match(characterFormTemplate, /<CharacterAiDraftPanel[\s\S]*v-model:requirement="aiRequirement"[\s\S]*v-model:assistant-model="assistantModel"[\s\S]*v-model:use-current-draft="aiUseCurrentDraft"[\s\S]*:disabled="characterAiActionBusy"[\s\S]*:loading="aiLoading"[\s\S]*:model-options="assistantModelOptions"[\s\S]*:options="aiOptions"[\s\S]*@complete="completeWithAi"[\s\S]*@set-option="setAiOptionValue"[\s\S]*@stop="stopCharacterAi"/);
+  assert.doesNotMatch(characterFormTemplate, /aiPanel(?:Dragging|Pos|Ref|Size)|drag-start|resize-start|reset-panel/);
+  assert.match(characterAiDraftPanelScript, /const hasOutput = computed\(\(\) => \([\s\S]*props\.process\.length > 0[\s\S]*props\.toolCalls\.length > 0[\s\S]*props\.suggestions\.length > 0[\s\S]*\)\);/);
+  assert.match(characterAiDraftPanelTemplate, /class="form-panel ai-draft-panel"[\s\S]*:aria-busy="loading"[\s\S]*aria-labelledby="character-ai-workbench-title"/);
+  assert.match(characterAiDraftPanelTemplate, /class="ai-workbench-header"[\s\S]*class="ai-workbench-status"[\s\S]*class="ai-workbench-grid" :class="\{ 'has-output': hasOutput \}"/);
   assert.match(characterAiDraftPanelTemplate, /<CharacterAiDraftInputs[\s\S]*:requirement="requirement"[\s\S]*:assistant-model="assistantModel"[\s\S]*:use-current-draft="useCurrentDraft"[\s\S]*:disabled="disabled"[\s\S]*:model-options="modelOptions"[\s\S]*:options="options"[\s\S]*@set-option="\(/);
   assert.match(characterAiDraftInputsScript, /const emit = defineEmits\(\[[\s\S]*'set-option'[\s\S]*'update:assistantModel'[\s\S]*'update:requirement'[\s\S]*'update:useCurrentDraft'[\s\S]*\]\);/);
   assert.match(characterAiDraftInputsScript, /const AI_OPTION_LABELS = \{[\s\S]*profile: '基础资料'[\s\S]*modSuggestions: 'Mod 建议'[\s\S]*\};/);
+  assert.match(characterAiDraftInputsScript, /const selectedOptionCount = computed\(\(\) => Object\.values\(props\.options\)\.filter\(Boolean\)\.length\);/);
+  assert.match(characterAiDraftInputsScript, /function setAllOptions\(enabled\) \{[\s\S]*for \(const key of Object\.keys\(props\.options\)\)[\s\S]*emit\('set-option', key, enabled\);/);
   assert.match(characterAiDraftInputsTemplate, /:value="requirement"[\s\S]*@input="emit\('update:requirement', readInputValue\(\$event\)\)"/);
   assert.match(characterAiDraftInputsTemplate, /:value="assistantModel"[\s\S]*@change="emit\('update:assistantModel', readInputValue\(\$event\)\)"[\s\S]*v-for="model in modelOptions"/);
   assert.match(characterAiDraftInputsTemplate, /:checked="useCurrentDraft"[\s\S]*@change="emit\('update:useCurrentDraft', readInputChecked\(\$event\)\)"/);
-  assert.match(characterAiDraftInputsTemplate, /class="ai-scope-grid"[\s\S]*v-for="\(enabled, key\) in options"[\s\S]*@change="emit\('set-option', key, readInputChecked\(\$event\)\)"/);
+  assert.match(characterAiDraftInputsTemplate, /class="ai-scope-disclosure"[\s\S]*selectedOptionCount[\s\S]*setAllOptions\(true\)[\s\S]*setAllOptions\(false\)[\s\S]*class="ai-scope-grid"[\s\S]*v-for="\(enabled, key\) in options"/);
   assert.match(characterAiDraftPanelTemplate, /<CharacterAiDraftActions[\s\S]*:disabled="disabled"[\s\S]*:loading="loading"[\s\S]*@complete="emit\('complete'\)"[\s\S]*@stop="emit\('stop'\)"/);
-  assert.match(characterAiDraftPanelTemplate, /<CharacterAiModSuggestions[\s\S]*v-if="suggestions\.length"[\s\S]*:suggestions="suggestions"[\s\S]*@create="emit\('create-suggested-mods'\)"/);
-  assert.match(characterAiDraftPanelTemplate, /<CharacterAiProcessPanel[\s\S]*v-if="process\.length \|\| toolCalls\.length"[\s\S]*:process="process"[\s\S]*:tool-calls="toolCalls"/);
-  assert.match(characterAiDraftPanelTemplate, /class="ai-panel-resize-handle"[\s\S]*@pointerdown\.stop="emit\('resize-start', \$event\)"/);
+  assert.match(characterAiDraftPanelTemplate, /<aside v-if="hasOutput" class="ai-workbench-results"[\s\S]*<CharacterAiModSuggestions[\s\S]*<CharacterAiProcessPanel/);
+  assert.match(characterAiProcessPanelScript, /const latestSummary = computed\(\(\) => \{[\s\S]*props\.process\.length - 1[\s\S]*step\?\.content \|\| step\?\.reasoning/);
+  assert.match(characterAiProcessPanelTemplate, /class="ai-process-summary"[\s\S]*class="ai-process-disclosure"[\s\S]*class="ai-process-detail-scroll"/);
+  assert.doesNotMatch(characterAiProcessPanelTemplate, /class="ai-(?:process-step|tool-detail)" open/);
   assert.match(characterAiDraftActionsScript, /import \{ WandSparkles \} from '@lucide\/vue';/);
   assert.match(characterAiDraftActionsScript, /const emit = defineEmits\(\['complete', 'stop'\]\);/);
   assert.match(characterAiDraftActionsTemplate, /class="primary-button ai-draft-button"[\s\S]*:disabled="disabled"[\s\S]*:aria-busy="loading"[\s\S]*emit\('complete'\)/);
@@ -289,7 +285,7 @@ test('CharacterFormView exposes compact draft recovery controls', () => {
 
 test('CharacterFormView offers a scoped new-character creation wizard', () => {
   assert.match(characterFormScript, /import \{ computed, onBeforeUnmount, onMounted, reactive, ref, watch \} from 'vue';/);
-  assert.match(characterSectionNavigationSource, /import \{ computed, nextTick, onBeforeUnmount, ref, watch \} from 'vue';/);
+  assert.match(characterSectionNavigationSource, /import \{ computed, nextTick, onBeforeUnmount, onMounted, ref, watch \} from 'vue';/);
   assert.match(characterFormScript, /import \{ useCharacterCreationWizard \} from '\.\.\/composables\/character\/useCharacterCreationWizard';/);
   assert.match(characterCreationWizardSource, /const characterCreationMode = ref\('wizard'\);/);
   assert.match(characterCreationWizardSource, /const characterWizardStepId = ref\('basic'\);/);
@@ -1099,8 +1095,9 @@ test('CharacterFormView preserves unchanged AI process panel references', () => 
   assert.match(characterFormTemplate, /<CharacterAiDraftPanel[\s\S]*:process="aiProcess"[\s\S]*:reasoning="aiReasoning"[\s\S]*:tool-calls="aiToolCalls"/);
   assert.match(characterAiDraftPanelTemplate, /<CharacterAiProcessPanel[\s\S]*v-if="process\.length \|\| toolCalls\.length"[\s\S]*:process="process"[\s\S]*:reasoning="reasoning"[\s\S]*:tool-calls="toolCalls"/);
   assert.match(characterAiProcessPanelTemplate, /class="ai-process-text empty">等待模型返回本轮流程\.\.\.<\/p>/);
-  assert.match(characterAiProcessPanelTemplate, /class="ai-tool-detail" open[\s\S]*<strong>参数<\/strong>[\s\S]*<strong>结果<\/strong>/);
-  assert.match(characterAiProcessPanelTemplate, /class="ai-tool-detail-list standalone"[\s\S]*v-for="\(call, index\) in toolCalls"[\s\S]*class="ai-tool-detail" open/);
+  assert.match(characterAiProcessPanelTemplate, /class="ai-tool-detail"[\s\S]*<strong>参数<\/strong>[\s\S]*<strong>结果<\/strong>/);
+  assert.match(characterAiProcessPanelTemplate, /class="ai-tool-detail-list standalone"[\s\S]*v-for="\(call, index\) in toolCalls"[\s\S]*class="ai-tool-detail"/);
+  assert.doesNotMatch(characterAiProcessPanelTemplate, /class="ai-tool-detail" open/);
   assert.ok(countMatches(characterAiGenerationSource, /setAiProcessIfChanged\(\[\{ round: 1, reasoning: err\?\.message \|\| '[^']+', content: '', tools: \[\] \}\]\);/g) >= 2);
   assert.doesNotMatch(characterAiGenerationSource, /aiToolCalls\.value\s*=(?!=)/);
   assert.doesNotMatch(characterAiGenerationSource, /aiProcess\.value\s*=(?!=)/);
@@ -1122,7 +1119,7 @@ test('CharacterFormView uses granular sticky section navigation', () => {
   );
   assert.match(
     characterFormScript,
-    /const \{[\s\S]*activeSection,[\s\S]*cancelCharacterSectionNavSync,[\s\S]*getCharacterScrollContainer,[\s\S]*scheduleCharacterSectionNavSync,[\s\S]*scrollToSection,[\s\S]*sectionNavRef,[\s\S]*setActiveCharacterSection,[\s\S]*visibleFormSections[\s\S]*\} = useCharacterSectionNavigation\(\{[\s\S]*sections: formSections,[\s\S]*isSectionVisible[\s\S]*\}\);/
+    /const \{[\s\S]*activeSection,[\s\S]*cancelCharacterSectionNavSync,[\s\S]*scheduleCharacterSectionNavSync,[\s\S]*scrollToSection,[\s\S]*sectionNavRef,[\s\S]*setActiveCharacterSection,[\s\S]*visibleFormSections[\s\S]*\} = useCharacterSectionNavigation\(\{[\s\S]*sections: formSections,[\s\S]*isSectionVisible[\s\S]*\}\);/
   );
   assert.match(characterSectionNavigationSource, /const visibleFormSections = computed\(getVisibleFormSections\);/);
   assert.match(
@@ -1139,10 +1136,7 @@ test('CharacterFormView uses granular sticky section navigation', () => {
   assert.doesNotMatch(characterFormScript, /function getCharacterScrollContainer/);
   assert.doesNotMatch(characterFormScript, /function getCharacterSectionTarget/);
   assert.doesNotMatch(characterFormScript, /function syncActiveSectionFromScroll/);
-  assert.match(
-    characterFormScript,
-    /useCharacterAiPanelLayout\(\{[\s\S]*getScrollContainer: getCharacterScrollContainer,[\s\S]*scheduleSectionNavSync: scheduleCharacterSectionNavSync[\s\S]*\}\);/
-  );
+  assert.doesNotMatch(characterFormScript, /getCharacterScrollContainer|useCharacterAiPanelLayout/);
   assert.match(
     characterSectionNavigationSource,
     /function getCharacterScrollContainer\(\) \{[\s\S]*sectionNavRef\.value\?\.closest\?\.\('\.page-shell'\)[\s\S]*document\.querySelector\('\.page-shell'\);[\s\S]*\}/
@@ -1160,7 +1154,7 @@ test('CharacterFormView uses granular sticky section navigation', () => {
     /function getCharacterScrollState\(\) \{[\s\S]*clientHeight: scroller\.clientHeight,[\s\S]*scrollHeight: scroller\.scrollHeight[\s\S]*document\.documentElement\?\.scrollHeight[\s\S]*window\.innerHeight[\s\S]*\}/
   );
   assert.match(
-    characterAiPanelLayoutSource,
+    characterSectionNavigationSource,
     /function syncCharacterScrollListener\(\) \{[\s\S]*characterScrollListenerTarget\.removeEventListener\('scroll', onCharacterScroll\);[\s\S]*characterScrollListenerTarget = nextTarget;[\s\S]*characterScrollListenerTarget\.addEventListener\('scroll', onCharacterScroll, \{ passive: true \}\);[\s\S]*\}/
   );
   assert.match(
@@ -1168,8 +1162,8 @@ test('CharacterFormView uses granular sticky section navigation', () => {
     /onBeforeUnmount\(\(\) => \{[\s\S]*cancelCharacterSectionNavSync\(\);[\s\S]*\}\);/
   );
   assert.match(
-    characterAiPanelLayoutSource,
-    /function disposeAiPanelLayout\(\) \{[\s\S]*stopCharacterScrollListener\(\);[\s\S]*window\.removeEventListener\('resize', onWindowResize\);[\s\S]*\}/
+    characterSectionNavigationSource,
+    /function disposeCharacterSectionNavigation\(\) \{[\s\S]*cancelCharacterSectionNavSync\(\);[\s\S]*stopCharacterScrollListener\(\);[\s\S]*window\.removeEventListener\('resize', onWindowResize\);[\s\S]*\}/
   );
   assert.match(
     characterSectionNavigationSource,
@@ -1215,7 +1209,7 @@ test('CharacterFormView uses granular sticky section navigation', () => {
   assert.match(characterFormTemplate, /v-for="section in visibleFormSections"/);
   assert.match(characterFormTemplate, /:data-section-id="section\.id"/);
   assert.match(characterFormTemplate, /:aria-current="activeSection === section\.id \? 'true' : undefined"/);
-  assert.match(characterFormTemplate, /id="section-ai"[\s\S]*ref="aiPanelRef"/);
+  assert.match(characterFormTemplate, /<CharacterAiDraftPanel[\s\S]*id="section-ai"/);
   assert.match(characterFormTemplate, /id="section-images" class="form-panel character-image-section"/);
   assert.match(characterFormScript, /import CharacterTalentPanel from '\.\.\/components\/character\/CharacterTalentPanel\.vue';/);
   assert.doesNotMatch(characterFormScript, /const showTalentDialog = ref\(false\);/);
@@ -1327,155 +1321,59 @@ test('CharacterFormView uses a flowing card layout and modal status preview', ()
   assert.doesNotMatch(stylesSource, /grid-template-columns:\s*minmax\(0,\s*1fr\)\s*minmax\(300px,\s*430px\)/);
 });
 
-test('CharacterFormView keeps the floating AI draft panel layout stable on focus', () => {
-  assert.match(characterFormScript, /import \{ useCharacterAiPanelLayout \} from '\.\.\/composables\/character\/useCharacterAiPanelLayout';/);
-  assert.match(
-    characterFormScript,
-    /const \{[\s\S]*aiPanelDragging,[\s\S]*aiPanelPos,[\s\S]*aiPanelRef,[\s\S]*aiPanelSize,[\s\S]*onAiPanelDragStart,[\s\S]*onAiPanelResizeStart,[\s\S]*resetAiPanel[\s\S]*\} = useCharacterAiPanelLayout\(\{[\s\S]*getScrollContainer: getCharacterScrollContainer,[\s\S]*scheduleSectionNavSync: scheduleCharacterSectionNavSync[\s\S]*\}\);/
-  );
-  assert.doesNotMatch(characterFormScript, /import \{ callEventMethod \} from '\.\.\/utils\/eventMethods';/);
-  assert.doesNotMatch(characterFormScript, /function readAiPanelPointerPoint/);
-  assert.doesNotMatch(characterFormScript, /function onAiPanelDragMove/);
-  assert.doesNotMatch(characterFormScript, /function syncAiPanelResizeObserver/);
-
-  assert.match(characterAiPanelLayoutSource, /import \{ callEventMethod \} from '\.\.\/\.\.\/utils\/eventMethods';/);
-  assert.match(characterAiPanelLayoutSource, /const AI_PANEL_DRAG_THRESHOLD = 8;/);
-  assert.match(characterAiPanelLayoutSource, /const AI_PANEL_MIN_WIDTH = 320;/);
-  assert.match(characterAiPanelLayoutSource, /const AI_PANEL_MIN_HEIGHT = 180;/);
-  assert.match(characterAiPanelLayoutSource, /let aiPanelLayoutRafId = null;/);
-  assert.match(characterAiPanelLayoutSource, /let aiPanelResizeObserver = null;/);
-  assert.match(characterAiPanelLayoutSource, /let pendingAiPanelSizeSync = false;/);
-  assert.match(
-    characterAiPanelLayoutSource,
-    /function readAiPanelPointerPoint\(event\) \{[\s\S]*const source = event\?\.touches\?\.\[0\] \|\| event;[\s\S]*Number\.isFinite\(clientX\)[\s\S]*Number\.isFinite\(clientY\)[\s\S]*return \{ clientX, clientY \};[\s\S]*\}/
-  );
-  assert.match(
-    characterAiPanelLayoutSource,
-    /function onAiPanelDragStart\(e\) \{[\s\S]*const point = readAiPanelPointerPoint\(e\);[\s\S]*if \(!point\) return;[\s\S]*dragStartX = point\.clientX;[\s\S]*dragOffsetY = point\.clientY - rect\.top;/
-  );
-  assert.match(
-    characterAiPanelLayoutSource,
-    /function onAiPanelDragMove\(e\) \{[\s\S]*callEventMethod\(e, 'preventDefault'\);[\s\S]*const point = readAiPanelPointerPoint\(e\);[\s\S]*if \(!point\) return;[\s\S]*clampAiPanelPos\(point\.clientX - dragOffsetX, point\.clientY - dragOffsetY\);/
-  );
-  assert.match(
-    characterAiPanelLayoutSource,
-    /function onAiPanelResizeStart\(e\) \{[\s\S]*const point = readAiPanelPointerPoint\(e\);[\s\S]*if \(!point\) return;[\s\S]*callEventMethod\(e, 'preventDefault'\);[\s\S]*resizeStartX = point\.clientX;/
-  );
-  assert.match(
-    characterAiPanelLayoutSource,
-    /function onAiPanelResizeMove\(e\) \{[\s\S]*callEventMethod\(e, 'preventDefault'\);[\s\S]*const point = readAiPanelPointerPoint\(e\);[\s\S]*Math\.round\(resizeStartWidth \+ point\.clientX - resizeStartX\)/
-  );
-  assert.match(
-    characterAiPanelLayoutSource,
-    /function syncAiPanelSizeAndPosition\(\) \{[\s\S]*Math\.max\(AI_PANEL_MIN_WIDTH, Math\.round\(rect\.width\)\)[\s\S]*Math\.max\(AI_PANEL_MIN_HEIGHT, Math\.round\(rect\.height\)\)[\s\S]*saveAiPanelState\(\);/
-  );
-  assert.match(characterAiPanelLayoutSource, /function scheduleAiPanelLayoutSync\(\{ includeSize = false \} = \{\}\) \{[\s\S]*requestAnimationFrame\(flushScheduledAiPanelLayout\);/);
-  assert.match(characterAiPanelLayoutSource, /function onObservedAiPanelResize\(\) \{[\s\S]*scheduleAiPanelLayoutSync\(\{ includeSize: true \}\);/);
-  assert.match(
-    characterAiPanelLayoutSource,
-    /function syncAiPanelResizeObserver\(el = getAiPanelElement\(\)\) \{[\s\S]*typeof window\.ResizeObserver !== 'function'[\s\S]*new window\.ResizeObserver\(onObservedAiPanelResize\)/
-  );
-  assert.match(
-    characterAiPanelLayoutSource,
-    /function getAiPanelSafeTop\(\) \{[\s\S]*readElementBottom\('\.topbar'\)[\s\S]*readElementBottom\('\.section-heading'\)/
-  );
-  assert.doesNotMatch(characterAiPanelLayoutSource, /readElementBottom\('\.character-section-nav'\)/);
-  assert.match(
-    characterAiPanelLayoutSource,
-    /function readElementBottom\(selector\) \{[\s\S]*document\.querySelector\(selector\)\?\.getBoundingClientRect\(\)\.bottom;[\s\S]*Number\.isFinite\(bottom\)/
-  );
-  assert.match(characterAiPanelLayoutSource, /function onAiPanelResizeStart\(e\) \{[\s\S]*document\.addEventListener\('pointermove', onAiPanelResizeMove/);
-  assert.match(characterAiPanelLayoutSource, /function onAiPanelResizeEnd\(\) \{[\s\S]*saveAiPanelState\(\);/);
-  assert.match(characterAiPanelLayoutSource, /onBeforeUnmount\(disposeAiPanelLayout\);/);
-  assert.doesNotMatch(characterAiPanelLayoutSource, /e\.preventDefault\(\);/);
-
-  assert.match(characterFormTemplate, /ref="aiPanelRef"/);
-  assert.match(characterFormTemplate, /:dragging="aiPanelDragging"/);
-  assert.match(characterFormTemplate, /:panel-size="aiPanelSize"/);
-  assert.match(characterFormTemplate, /@drag-start="onAiPanelDragStart"/);
-  assert.match(characterFormTemplate, /@reset-panel="resetAiPanel"/);
-  assert.match(characterFormTemplate, /@resize-start="onAiPanelResizeStart"/);
-  assert.match(characterAiDraftPanelTemplate, /:class="\{ 'ai-panel-dragging': dragging \}"/);
-  assert.match(characterAiDraftPanelTemplate, /--ai-panel-h': panelSize\.h \+ 'px'/);
-  assert.match(characterAiDraftPanelTemplate, /class="inline-heading ai-panel-heading" @pointerdown="emit\('drag-start', \$event\)"/);
-  assert.match(characterAiDraftPanelTemplate, /class="ai-panel-reset"[\s\S]*@pointerdown\.stop[\s\S]*@click\.stop="emit\('reset-panel'\)"/);
-  assert.match(characterAiDraftPanelTemplate, /class="ai-panel-resize-handle" aria-hidden="true" @pointerdown\.stop="emit\('resize-start', \$event\)"/);
+test('CharacterFormView uses an inline AI workbench without covering the form', () => {
+  assert.doesNotMatch(characterFormScript, /useCharacterAiPanelLayout|aiPanelDragging|aiPanelSize|aiPanelPos/);
+  assert.doesNotMatch(characterAiDraftPanelScript, /dragging|panelPosition|panelSize|defineExpose/);
+  assert.doesNotMatch(characterAiDraftPanelTemplate, /pointerdown|resize-handle|reset-panel|--ai-panel/);
+  assert.match(characterAiDraftPanelTemplate, /class="ai-workbench-config"[\s\S]*class="ai-workbench-results"/);
+  assert.match(characterAiDraftPanelTemplate, /class="ai-workbench-status" :class="\{ loading \}" aria-live="polite"/);
 
   assert.match(
     stylesSource,
-    /@media \(min-width: 761px\) \{[\s\S]*\.ai-draft-panel\s*\{[\s\S]*position:\s*fixed;[\s\S]*height:\s*min\(var\(--ai-panel-h, 640px\), calc\(100dvh - var\(--ai-panel-y, 0px\)\)\);[\s\S]*min-width:\s*320px;[\s\S]*min-height:\s*180px;[\s\S]*resize:\s*both;[\s\S]*scrollbar-gutter:\s*stable;/
+    /\.ai-draft-panel\s*\{[^}]*position:\s*relative;[^}]*width:\s*100%;[^}]*max-width:\s*100%;[^}]*overflow:\s*hidden;[^}]*padding:\s*0;/
   );
-  assert.match(
-    stylesSource,
-    /\.ai-draft-panel \.ai-panel-resize-handle\s*\{[^}]*position:\s*absolute;[^}]*right:\s*7px;[^}]*bottom:\s*7px;/
-  );
-  assert.doesNotMatch(stylesSource, /\.ai-draft-panel \.ai-panel-resize-handle\s*\{[^}]*position:\s*fixed;/);
-  assert.match(stylesSource, /\.ai-draft-panel \.field textarea\s*\{[^}]*height:\s*124px;[^}]*resize:\s*vertical;/);
-  assert.doesNotMatch(stylesSource, /\.ai-draft-panel \.field textarea\s*\{[^}]*resize:\s*none;/);
-  assert.match(
-    stylesSource,
-    /\.ai-draft-panel,\s*\.ai-draft-panel \.field textarea\s*\{[^}]*scrollbar-width:\s*thin;[^}]*scrollbar-color:/
-  );
-  assert.match(
-    stylesSource,
-    /\.ai-draft-panel::-webkit-scrollbar,\s*\.ai-draft-panel \.field textarea::-webkit-scrollbar\s*\{[^}]*width:\s*10px;[^}]*height:\s*10px;/
-  );
-  assert.match(
-    stylesSource,
-    /\.ai-draft-panel::-webkit-scrollbar-thumb,\s*\.ai-draft-panel \.field textarea::-webkit-scrollbar-thumb\s*\{[\s\S]*border-radius:\s*999px;[\s\S]*padding-box;/
-  );
-  assert.match(
-    stylesSource,
-    /@media \(min-width: 761px\) \{[\s\S]*\.editor-layout \.form-actions\s*\{[\s\S]*flex:\s*1 1 100%;[\s\S]*box-sizing:\s*border-box;[\s\S]*padding-right:\s*min\(444px, 42vw\);/
-  );
-  assert.match(stylesSource, /\.ai-panel-resize-handle\s*\{[\s\S]*cursor:\s*nwse-resize;[\s\S]*touch-action:\s*none;/);
+  assert.doesNotMatch(stylesSource, /\.ai-draft-panel\s*\{[^}]*position:\s*fixed;/);
+  assert.doesNotMatch(stylesSource, /\.ai-draft-panel\s*\{[^}]*resize:\s*both;/);
+  assert.match(stylesSource, /\.editor-layout \.ai-draft-panel\s*\{[^}]*flex:\s*1 1 100%;[^}]*min-width:\s*0;/);
+  assert.match(stylesSource, /\.ai-workbench-grid\s*\{[^}]*display:\s*grid;[^}]*grid-template-columns:\s*minmax\(0, 1fr\);/);
+  assert.match(stylesSource, /@media \(min-width: 980px\) \{[\s\S]*\.ai-workbench-grid\.has-output\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1\.08fr\) minmax\(360px, 0\.92fr\);/);
+  assert.match(stylesSource, /\.ai-workbench-results\s*\{[^}]*border-left:\s*1px solid/);
+  assert.match(stylesSource, /\.ai-draft-panel \.field textarea\s*\{[^}]*height:\s*132px;[^}]*max-height:\s*280px;[^}]*resize:\s*vertical;/);
+  assert.doesNotMatch(stylesSource, /padding-right:\s*min\(444px, 42vw\)/);
 });
 
 test('CharacterFormView keeps mobile AI assistant output inside the viewport', () => {
   assert.match(
     stylesSource,
-    /\.ai-draft-panel\s*\{[^}]*box-sizing:\s*border-box;[^}]*width:\s*100%;[^}]*max-width:\s*100%;[^}]*min-width:\s*0;[^}]*overflow-x:\s*hidden;[^}]*overflow-y:\s*visible;/
+    /\.ai-draft-panel\s*\{[^}]*box-sizing:\s*border-box;[^}]*width:\s*100%;[^}]*max-width:\s*100%;[^}]*min-width:\s*0;[^}]*overflow:\s*hidden;/
   );
   assert.match(
     stylesSource,
-    /\.ai-process-panel\s*\{[^}]*display:\s*grid;[^}]*min-width:\s*0;[^}]*max-width:\s*100%;[^}]*overflow-x:\s*hidden;[^}]*overflow-y:\s*visible;/
-  );
-  assert.doesNotMatch(stylesSource, /\.ai-process-panel\s*\{[^}]*max-height:/);
-  assert.match(
-    stylesSource,
-    /\.ai-action-row\s*\{[^}]*display:\s*flex;[^}]*min-width:\s*0;[^}]*max-width:\s*100%;/
+    /\.ai-process-panel\s*\{[^}]*display:\s*grid;[^}]*min-width:\s*0;[^}]*max-width:\s*100%;[^}]*overflow:\s*hidden;/
   );
   assert.match(
     stylesSource,
-    /\.ai-action-row \.ai-draft-button,\s*\.ai-action-row \.primary-button,\s*\.ai-action-row \.ghost-button:first-child\s*\{[^}]*flex:\s*1 1 auto;[^}]*min-width:\s*0;/
+    /\.ai-process-detail-scroll\s*\{[^}]*display:\s*grid;[^}]*max-height:\s*min\(420px, 48dvh\);[^}]*overflow:\s*auto;/
   );
   assert.match(
     stylesSource,
-    /\.ai-reasoning-box,\s*\.ai-process-step,\s*\.ai-tool-detail\s*\{[^}]*min-width:\s*0;[^}]*max-width:\s*100%;/
+    /\.ai-process-summary\s*\{[^}]*overflow:\s*hidden;[^}]*white-space:\s*pre-wrap;[^}]*overflow-wrap:\s*anywhere;[^}]*-webkit-line-clamp:\s*3;/
   );
   assert.match(
     stylesSource,
-    /\.ai-reasoning-box p,\s*\.ai-process-text\s*\{[^}]*white-space:\s*pre-wrap;[^}]*overflow-wrap:\s*anywhere;[^}]*word-break:\s*break-word;/
+    /\.ai-scope-disclosure\s*\{[^}]*min-width:\s*0;[^}]*overflow:\s*hidden;/
   );
   assert.match(
     stylesSource,
-    /\.ai-tool-detail pre\s*\{[^}]*box-sizing:\s*border-box;[^}]*max-width:\s*calc\(100% - 20px\);[^}]*min-width:\s*0;[\s\S]*overflow-wrap:\s*anywhere;/
+    /@media \(max-width: 900px\) \{[\s\S]*\.ai-workbench-results\s*\{[^}]*border-top:\s*1px solid[^}]*border-left:\s*0;/
   );
   assert.match(
     stylesSource,
-    /\.ai-process-step\[open\] > summary,\s*\.ai-tool-detail\[open\] > summary\s*\{[^}]*border-bottom:\s*1px solid/
+    /\.ai-config-row\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\);/
   );
-  assert.match(stylesSource, /\.ai-process-text\.empty\s*\{[^}]*font-style:\s*italic;/);
-  assert.match(stylesSource, /\.ai-tool-detail-list\.standalone\s*\{[^}]*padding:\s*0;/);
   assert.match(
     stylesSource,
-    /@media \(max-width: 900px\) \{[\s\S]*\.ai-draft-panel\s*\{[\s\S]*width:\s*100%;[\s\S]*max-width:\s*100%;[\s\S]*min-width:\s*0;[\s\S]*overflow-x:\s*hidden;[\s\S]*overflow-y:\s*visible;/
+    /\.character-editor-workbench \.editor-side \.form-actions\s*\{[^}]*position:\s*static;[^}]*bottom:\s*auto;[^}]*background:\s*transparent;[^}]*box-shadow:\s*none;/
   );
-  const aiPanelStyleBlocks = [...stylesSource.matchAll(/\.ai-draft-panel\s*\{[^}]*\}/g)];
-  assert.ok(aiPanelStyleBlocks.length >= 3);
-  for (const [block] of aiPanelStyleBlocks) {
-    assert.doesNotMatch(block, /width:\s*auto;/);
-    assert.doesNotMatch(block, /max-width:\s*none;/);
-    assert.doesNotMatch(block, /overflow:\s*hidden;/);
-  }
+  assert.match(stylesSource, /\.ai-tool-detail pre\s*\{[^}]*max-height:\s*220px;[^}]*overflow:\s*auto;/);
 });

@@ -24,6 +24,10 @@ const ACCESSORY_SKILL_RESULT_LIMIT = 8;
 const ACCESSORY_SKILL_DEFAULTS = [
   { key: 'npcAgent', enabled: false, modelOverride: '' },
   { key: 'sceneAgent', enabled: false, modelOverride: '' },
+  { key: 'worldDirector', enabled: false, modelOverride: '' },
+  { key: 'gameHud', enabled: false, modelOverride: '' },
+  { key: 'encounterMode', enabled: false, modelOverride: '' },
+  { key: 'rewardMode', enabled: false, modelOverride: '' },
   { key: 'statusBarAgent', enabled: 'auto', modelOverride: '' },
   { key: 'economyAgent', enabled: false, modelOverride: '' },
   { key: 'talentPrompt', enabled: false, modelOverride: '' },
@@ -333,6 +337,10 @@ export function useChatAccessory({ conversation, setActiveConversationIfChanged,
   const accessorySkillItems = [
     { key: 'npcAgent', label: 'NPC Agent', auto: false },
     { key: 'sceneAgent', label: '场景构建助手', auto: false },
+    { key: 'worldDirector', label: 'AI 世界导演', auto: false },
+    { key: 'gameHud', label: '游戏驾驶舱 / 地图', auto: false },
+    { key: 'encounterMode', label: '遭遇与回合行动', auto: false },
+    { key: 'rewardMode', label: '战利品与奖励结算', auto: false },
     { key: 'statusBarAgent', label: '状态栏 Agent', auto: true },
     { key: 'economyAgent', label: '经济识别', auto: false },
     { key: 'talentPrompt', label: '天赋提示', auto: false },
@@ -367,6 +375,9 @@ export function useChatAccessory({ conversation, setActiveConversationIfChanged,
 
   const showNpcFeature = computed(() => isAccessorySkillActiveLocal('npcAgent'));
   const showSceneFeature = computed(() => isAccessorySkillActiveLocal('sceneAgent'));
+  const showGameHudFeature = computed(() => isAccessorySkillActiveLocal('gameHud'));
+  const showEncounterFeature = computed(() => isAccessorySkillActiveLocal('encounterMode'));
+  const showRewardFeature = computed(() => isAccessorySkillActiveLocal('rewardMode'));
 
   async function loadStatusBar() {
     if (accessoryDisposed) return statusBar.value;
@@ -1075,6 +1086,9 @@ export function useChatAccessory({ conversation, setActiveConversationIfChanged,
     showEconomyFeature,
     showNpcFeature,
     showSceneFeature,
+    showGameHudFeature,
+    showEncounterFeature,
+    showRewardFeature,
     loadStatusBar,
     loadEconomyBalance,
     loadAccessorySkills,

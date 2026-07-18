@@ -8,7 +8,8 @@ import ChatHeader from '../components/chat/ChatHeader.vue';
 import ChatMessageItem from '../components/chat/ChatMessageItem.vue';
 import ChatComposer from '../components/chat/ChatComposer.vue';
 import ChatStatusSummary from '../components/chat/ChatStatusSummary.vue';
-import { fetchConversationMessages, fetchConversationNpcs } from '../api/chat.js';
+import GameHud from '../components/game/GameHud.vue';
+import { fetchConversationMessages, fetchConversationNpcs, fetchConversationScenes } from '../api/chat.js';
 import { saveProviderSettings } from '../api/providers.js';
 import { useNotify } from '../composables/useNotify';
 import { useChatConversation } from '../composables/chat/useChatConversation';
@@ -124,7 +125,7 @@ const {
   statusBarTemplateMode, statusBarTemplateConfig, statusBarTemplateIssues, statusBarTemplateCfg,
   accessorySettingsOpen, accessorySaving, accessorySkills, accessorySkillResults,
   accessorySkillItems,
-  hasStatusBarContent, showEconomyFeature, showNpcFeature, showSceneFeature,
+  hasStatusBarContent, showEconomyFeature, showNpcFeature, showSceneFeature, showGameHudFeature, showEncounterFeature, showRewardFeature,
   loadStatusBar, loadEconomyBalance, loadAccessorySkills,
   syncAccessorySkills, isAccessorySkillActiveLocal,
   saveAccessorySkillChanges, applyStatusBarUpdate, handleSkillResult,
@@ -136,6 +137,11 @@ const {
   addQuickReply, removeQuickReply,
   closeAccessoryPanels, cleanupAccessory
 } = useChatAccessory({ conversation, setActiveConversationIfChanged, showActionNotice, showError });
+
+const latestWorldDirectorResult = computed(() => {
+  const results = Array.isArray(accessorySkillResults.value) ? accessorySkillResults.value : [];
+  return results.find(item => item?.skill === 'worldDirector') || null;
+});
 
 const {
   chatAppearanceForm, authorChatAppearance, chatViewportIsPhone, appearanceSaving,
@@ -643,7 +649,9 @@ function handleAccessorySkillResult(data = {}) {
   }
   if (data.skill === 'npcAgent') {
     const hasUpdates = (Array.isArray(result.npcs) && result.npcs.length > 0) ||
-      (Array.isArray(result.memories) && result.memories.length > 0);
+      (Array.isArray(result.memories) && result.memories.length > 0) ||
+      (Array.isArray(result.behaviors) && result.behaviors.length > 0) ||
+      (Array.isArray(result.items) && result.items.length > 0);
     npcUpdateStatus.value = data.ok && hasUpdates
       ? ACCESSORY_UPDATED
       : ACCESSORY_NOT_UPDATED;
@@ -702,7 +710,7 @@ async function refreshNpcUpdateStatus(isFinal = false) {
     return false;
   }
   try {
-    const npcs = await fetchConversationNpcs(conversationId);
+    const snapshot = await fetchNpcAccessorySnapshot(conversationId);
     if (
       chatViewDisposed ||
       conversation.value?.id !== conversationId ||
@@ -710,7 +718,7 @@ async function refreshNpcUpdateStatus(isFinal = false) {
     ) {
       return false;
     }
-    const nextFingerprint = serializeNpcSnapshot(npcs);
+    const nextFingerprint = serializeNpcSnapshot(snapshot);
     const npcChanged = nextFingerprint !== accessoryRefreshSnapshot.npc;
     if (npcUpdateStatus.value === ACCESSORY_UPDATING && npcChanged) {
       npcUpdateStatus.value = ACCESSORY_UPDATED;
@@ -743,11 +751,11 @@ async function syncNpcFingerprint(conversationId = conversation.value?.id) {
     return latestNpcFingerprint;
   }
   try {
-    const npcs = await fetchConversationNpcs(conversationId);
+    const snapshot = await fetchNpcAccessorySnapshot(conversationId);
     if (chatViewDisposed || conversation.value?.id !== conversationId) {
       return latestNpcFingerprint;
     }
-    latestNpcFingerprint = serializeNpcSnapshot(npcs);
+    latestNpcFingerprint = serializeNpcSnapshot(snapshot);
   } catch {
     if (!chatViewDisposed && conversation.value?.id === conversationId) {
       latestNpcFingerprint = '';
@@ -764,8 +772,19 @@ function handleNpcPanelLoaded(payload = {}) {
   if (!eventConversationId || eventConversationId !== conversation.value?.id) {
     return;
   }
-  const npcs = Array.isArray(payload?.npcs) ? payload.npcs : [];
-  latestNpcFingerprint = serializeNpcSnapshot(npcs);
+  void syncNpcFingerprint(eventConversationId);
+}
+
+function handleGameQuickAction(text) {
+  const normalizedText = String(text || '').trim();
+  if (!normalizedText) return;
+  const current = input.value.trim();
+  input.value = current ? `${current}\n${normalizedText}` : normalizedText;
+  nextTick(() => {
+    resizeComposerTextarea();
+    const textarea = composerWrap.value?.textareaRef || composerTextarea.value;
+    textarea?.focus?.();
+  });
 }
 
 function resetAccessoryUpdateStatus(options = {}) {
@@ -803,9 +822,24 @@ function serializeStatusBarSnapshot(value = null) {
   return snapshot;
 }
 
+async function fetchNpcAccessorySnapshot(conversationId) {
+  const [npcs, workspace] = await Promise.all([
+    fetchConversationNpcs(conversationId),
+    fetchConversationScenes(conversationId)
+  ]);
+  return {
+    npcs: Array.isArray(npcs) ? npcs : [],
+    items: Array.isArray(workspace?.items) ? workspace.items : []
+  };
+}
+
 function serializeNpcSnapshot(value = []) {
   const items = [];
-  const sourceNpcs = Array.isArray(value) ? value : [];
+  const sourceNpcs = Array.isArray(value)
+    ? value
+    : Array.isArray(value?.npcs)
+      ? value.npcs
+      : [];
   for (let index = 0; index < sourceNpcs.length; index += 1) {
     const npc = sourceNpcs[index];
     const name = String(npc?.name || '');
@@ -816,6 +850,44 @@ function serializeNpcSnapshot(value = []) {
     snapshot = appendSnapshotField(snapshot, npc?.source || '');
     snapshot = appendSnapshotField(snapshot, Number(npc?.confidence || 0));
     snapshot = appendSnapshotField(snapshot, npc?.evidence || '');
+    snapshot = appendSnapshotField(snapshot, npc?.status || 'active');
+    snapshot = appendSnapshotField(snapshot, npc?.customStatus || '');
+    snapshot = appendSnapshotField(snapshot, npc?.currentLocation || '');
+    snapshot = appendSnapshotField(snapshot, npc?.relationship || '');
+    snapshot = appendSnapshotField(snapshot, Boolean(npc?.memorySealed));
+    const aliases = Array.isArray(npc?.aliases) ? npc.aliases.slice() : [];
+    aliases.sort((a, b) => String(a).localeCompare(String(b)));
+    snapshot = appendSnapshotField(snapshot, aliases.length);
+    for (let aliasIndex = 0; aliasIndex < aliases.length; aliasIndex += 1) {
+      snapshot = appendSnapshotField(snapshot, aliases[aliasIndex]);
+    }
+    items.push({ name, snapshot });
+  }
+  const sourceActorItems = !Array.isArray(value) && Array.isArray(value?.items) ? value.items : [];
+  for (let index = 0; index < sourceActorItems.length; index += 1) {
+    const item = sourceActorItems[index];
+    const ownerType = String(item?.ownerType || '');
+    if (ownerType !== 'protagonist' && ownerType !== 'npc') {
+      continue;
+    }
+    const name = `item:${item?.itemCode || item?.id || index}`;
+    let snapshot = '';
+    snapshot = appendSnapshotField(snapshot, name);
+    snapshot = appendSnapshotField(snapshot, ownerType);
+    snapshot = appendSnapshotField(snapshot, item?.ownerName || '');
+    snapshot = appendSnapshotField(snapshot, item?.name || '');
+    snapshot = appendSnapshotField(snapshot, item?.description || '');
+    snapshot = appendSnapshotField(snapshot, item?.itemKind || '');
+    snapshot = appendSnapshotField(snapshot, Number(item?.quantity || 0));
+    snapshot = appendSnapshotField(snapshot, item?.clothingSlot || '');
+    snapshot = appendSnapshotField(snapshot, Boolean(item?.equipped));
+    snapshot = appendSnapshotField(snapshot, item?.updatedAt || '');
+    const coverage = Array.isArray(item?.coverage) ? item.coverage.slice() : [];
+    coverage.sort();
+    snapshot = appendSnapshotField(snapshot, coverage.length);
+    for (let coverageIndex = 0; coverageIndex < coverage.length; coverageIndex += 1) {
+      snapshot = appendSnapshotField(snapshot, coverage[coverageIndex]);
+    }
     items.push({ name, snapshot });
   }
   items.sort((a, b) => a.name.localeCompare(b.name));
@@ -1389,6 +1461,19 @@ watch(showNpcFeature, (active) => {
         @open-settings="(event) => openWorkspaceTool('appearance', event)"
       />
 
+      <GameHud
+        v-if="conversation?.id && showGameHudFeature"
+        :conversation-id="conversation.id"
+        :refresh-key="latestAssistantMessage?.id || messages.length"
+        :enabled="conversationReady"
+        :director-result="latestWorldDirectorResult"
+        :encounter-enabled="showEncounterFeature"
+        :reward-enabled="showRewardFeature"
+        @choose-action="handleGameQuickAction"
+        @open-scene="openWorkspaceTool('scene')"
+        @open-npc="openWorkspaceTool('npc')"
+      />
+
       <VirtualMessageList
         :ref="setMessageListRef"
         class="deep-message-scroll"
@@ -1480,6 +1565,7 @@ watch(showNpcFeature, (active) => {
                   :status-bar="statusBar"
                   :template-config="statusBarTemplateConfig"
                   :update-status="statusBarUpdateStatus"
+                  @collapse="statusSummaryExpanded = false"
                   @quick-reply="handleStatusBarQuickReply"
                 />
               </template>

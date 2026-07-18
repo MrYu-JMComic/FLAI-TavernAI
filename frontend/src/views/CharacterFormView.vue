@@ -17,7 +17,6 @@ import CharacterWorldBookDialog from '../components/character/CharacterWorldBook
 import { useNotify } from '../composables/useNotify';
 import { useCharacterAiGeneration } from '../composables/character/useCharacterAiGeneration';
 import { useCharacterAiPreferences } from '../composables/character/useCharacterAiPreferences';
-import { useCharacterAiPanelLayout } from '../composables/character/useCharacterAiPanelLayout';
 import { useCharacterCreationWizard } from '../composables/character/useCharacterCreationWizard';
 import { useCharacterFormDraft } from '../composables/character/useCharacterFormDraft';
 import { useCharacterFormOptions } from '../composables/character/useCharacterFormOptions';
@@ -252,7 +251,6 @@ const formSections = [
 const {
   activeSection,
   cancelCharacterSectionNavSync,
-  getCharacterScrollContainer,
   scheduleCharacterSectionNavSync,
   scrollToSection,
   sectionNavRef,
@@ -261,19 +259,6 @@ const {
 } = useCharacterSectionNavigation({
   sections: formSections,
   isSectionVisible
-});
-// ---- AI draft panel drag / resize state ----
-const {
-  aiPanelDragging,
-  aiPanelPos,
-  aiPanelRef,
-  aiPanelSize,
-  onAiPanelDragStart,
-  onAiPanelResizeStart,
-  resetAiPanel
-} = useCharacterAiPanelLayout({
-  getScrollContainer: getCharacterScrollContainer,
-  scheduleSectionNavSync: scheduleCharacterSectionNavSync
 });
 
 watch(
@@ -778,17 +763,13 @@ function characterEnvelopeFileName(item = {}) {
         <CharacterAiDraftPanel
           v-if="canEdit && isCharacterSectionVisibleInCurrentMode('ai')"
           id="section-ai"
-          ref="aiPanelRef"
           v-model:requirement="aiRequirement"
           v-model:assistant-model="assistantModel"
           v-model:use-current-draft="aiUseCurrentDraft"
           :disabled="characterAiActionBusy"
-          :dragging="aiPanelDragging"
           :loading="aiLoading"
           :model-options="assistantModelOptions"
           :options="aiOptions"
-          :panel-position="aiPanelPos"
-          :panel-size="aiPanelSize"
           :process="aiProcess"
           :reasoning="aiReasoning"
           :suggested-mods-creating="suggestedModsCreating"
@@ -796,9 +777,6 @@ function characterEnvelopeFileName(item = {}) {
           :tool-calls="aiToolCalls"
           @complete="completeWithAi"
           @create-suggested-mods="createSuggestedMods"
-          @drag-start="onAiPanelDragStart"
-          @reset-panel="resetAiPanel"
-          @resize-start="onAiPanelResizeStart"
           @set-option="setAiOptionValue"
           @stop="stopCharacterAi"
         />

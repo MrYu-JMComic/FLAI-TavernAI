@@ -566,6 +566,193 @@ export function initializeDatabase(database) {
       FOREIGN KEY (account_id) REFERENCES economy_accounts(id) ON DELETE CASCADE
     );
 
+    CREATE TABLE IF NOT EXISTS world_events (
+      id TEXT PRIMARY KEY,
+      conversation_id TEXT NOT NULL,
+      event_type TEXT NOT NULL DEFAULT 'world.changed',
+      source TEXT NOT NULL DEFAULT 'system',
+      title TEXT NOT NULL DEFAULT '',
+      detail TEXT NOT NULL DEFAULT '',
+      entity_type TEXT NOT NULL DEFAULT '',
+      entity_id TEXT NOT NULL DEFAULT '',
+      severity TEXT NOT NULL DEFAULT 'info',
+      payload_json TEXT NOT NULL DEFAULT '{}',
+      created_at TEXT NOT NULL,
+      FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS quests (
+      id TEXT PRIMARY KEY,
+      conversation_id TEXT NOT NULL,
+      title TEXT NOT NULL,
+      description TEXT NOT NULL DEFAULT '',
+      status TEXT NOT NULL DEFAULT 'active',
+      priority INTEGER NOT NULL DEFAULT 0,
+      source TEXT NOT NULL DEFAULT 'manual',
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      completed_at TEXT,
+      FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS quest_objectives (
+      id TEXT PRIMARY KEY,
+      quest_id TEXT NOT NULL,
+      description TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'pending',
+      current_value INTEGER NOT NULL DEFAULT 0,
+      target_value INTEGER NOT NULL DEFAULT 1,
+      order_index INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      FOREIGN KEY (quest_id) REFERENCES quests(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS skill_checks (
+      id TEXT PRIMARY KEY,
+      conversation_id TEXT NOT NULL,
+      actor_name TEXT NOT NULL DEFAULT '',
+      skill TEXT NOT NULL,
+      difficulty INTEGER NOT NULL,
+      modifier INTEGER NOT NULL DEFAULT 0,
+      roll INTEGER NOT NULL,
+      total INTEGER NOT NULL,
+      outcome TEXT NOT NULL,
+      context TEXT NOT NULL DEFAULT '',
+      created_at TEXT NOT NULL,
+      FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS world_clocks (
+      conversation_id TEXT PRIMARY KEY,
+      current_day INTEGER NOT NULL DEFAULT 1,
+      minute_of_day INTEGER NOT NULL DEFAULT 480,
+      weather TEXT NOT NULL DEFAULT '晴朗',
+      updated_at TEXT NOT NULL,
+      FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS npc_activities (
+      id TEXT PRIMARY KEY,
+      conversation_id TEXT NOT NULL,
+      npc_name TEXT NOT NULL,
+      title TEXT NOT NULL,
+      location_node_id TEXT,
+      status TEXT NOT NULL DEFAULT 'scheduled',
+      start_tick INTEGER NOT NULL,
+      end_tick INTEGER NOT NULL,
+      source TEXT NOT NULL DEFAULT 'manual',
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE,
+      FOREIGN KEY (location_node_id) REFERENCES scene_nodes(id) ON DELETE SET NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS world_advances (
+      id TEXT PRIMARY KEY,
+      conversation_id TEXT NOT NULL,
+      from_tick INTEGER NOT NULL,
+      to_tick INTEGER NOT NULL,
+      minutes INTEGER NOT NULL,
+      weather_before TEXT NOT NULL DEFAULT '',
+      weather_after TEXT NOT NULL DEFAULT '',
+      summary_json TEXT NOT NULL DEFAULT '{}',
+      created_at TEXT NOT NULL,
+      FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS player_travel_states (
+      conversation_id TEXT PRIMARY KEY,
+      current_node_id TEXT,
+      updated_at TEXT NOT NULL,
+      FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE,
+      FOREIGN KEY (current_node_id) REFERENCES scene_nodes(id) ON DELETE SET NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS discovered_scene_nodes (
+      conversation_id TEXT NOT NULL,
+      node_id TEXT NOT NULL,
+      discovered_at TEXT NOT NULL,
+      source TEXT NOT NULL DEFAULT 'player',
+      PRIMARY KEY (conversation_id, node_id),
+      FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE,
+      FOREIGN KEY (node_id) REFERENCES scene_nodes(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS encounters (
+      id TEXT PRIMARY KEY,
+      conversation_id TEXT NOT NULL,
+      location_node_id TEXT,
+      title TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'active',
+      round_number INTEGER NOT NULL DEFAULT 1,
+      turn_index INTEGER NOT NULL DEFAULT 0,
+      outcome TEXT NOT NULL DEFAULT '',
+      source TEXT NOT NULL DEFAULT 'player',
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE,
+      FOREIGN KEY (location_node_id) REFERENCES scene_nodes(id) ON DELETE SET NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS encounter_participants (
+      id TEXT PRIMARY KEY,
+      encounter_id TEXT NOT NULL,
+      actor_type TEXT NOT NULL,
+      actor_name TEXT NOT NULL,
+      initiative INTEGER NOT NULL,
+      max_hp INTEGER NOT NULL DEFAULT 10,
+      current_hp INTEGER NOT NULL DEFAULT 10,
+      defense INTEGER NOT NULL DEFAULT 10,
+      status TEXT NOT NULL DEFAULT 'active',
+      conditions_json TEXT NOT NULL DEFAULT '[]',
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      FOREIGN KEY (encounter_id) REFERENCES encounters(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS encounter_actions (
+      id TEXT PRIMARY KEY,
+      encounter_id TEXT NOT NULL,
+      round_number INTEGER NOT NULL,
+      turn_index INTEGER NOT NULL,
+      actor_id TEXT NOT NULL,
+      target_id TEXT,
+      action_type TEXT NOT NULL,
+      skill_check_id TEXT,
+      damage INTEGER NOT NULL DEFAULT 0,
+      result_json TEXT NOT NULL DEFAULT '{}',
+      created_at TEXT NOT NULL,
+      FOREIGN KEY (encounter_id) REFERENCES encounters(id) ON DELETE CASCADE,
+      FOREIGN KEY (actor_id) REFERENCES encounter_participants(id) ON DELETE CASCADE,
+      FOREIGN KEY (target_id) REFERENCES encounter_participants(id) ON DELETE SET NULL,
+      FOREIGN KEY (skill_check_id) REFERENCES skill_checks(id) ON DELETE SET NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS reward_grants (
+      id TEXT PRIMARY KEY,
+      conversation_id TEXT NOT NULL,
+      character_id TEXT NOT NULL,
+      source_type TEXT NOT NULL,
+      source_id TEXT NOT NULL,
+      title TEXT NOT NULL,
+      rewards_json TEXT NOT NULL DEFAULT '{}',
+      status TEXT NOT NULL DEFAULT 'pending',
+      claimed_at TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      UNIQUE (conversation_id, source_type, source_id),
+      FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE,
+      FOREIGN KEY (character_id) REFERENCES characters(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS character_growth (
+      character_id TEXT PRIMARY KEY,
+      growth_points INTEGER NOT NULL DEFAULT 0,
+      updated_at TEXT NOT NULL,
+      FOREIGN KEY (character_id) REFERENCES characters(id) ON DELETE CASCADE
+    );
+
     CREATE TABLE IF NOT EXISTS character_images (
       id TEXT PRIMARY KEY,
       character_id TEXT NOT NULL,

@@ -92,6 +92,10 @@ export function hasStatusBarBlueprint(input = {}) {
 export function createDefaultAccessorySkills() {
   return {
     npcAgent: createSkillConfig(false),
+    worldDirector: createSkillConfig(false),
+    gameHud: createSkillConfig(false),
+    encounterMode: createSkillConfig(false),
+    rewardMode: createSkillConfig(false),
     statusBarAgent: createSkillConfig('auto'),
     economyAgent: createSkillConfig(false),
     talentPrompt: createSkillConfig(false),

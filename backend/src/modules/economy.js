@@ -2,6 +2,7 @@ import { newId, nowIso } from '../security.js';
 import { normalizeBoolean } from '../utils/boolean.js';
 import { normalizeFiniteNumber } from '../utils/number.js';
 import { withSavepoint } from './savepoint.js';
+import { recordWorldEvent } from './worldEvents.js';
 
 // ── Default currency types ──
 
@@ -148,12 +149,23 @@ export function createTransaction(database, userId, accountId, payload) {
       .run(newBalance, timestamp, accountId);
   });
 
-  return {
+  const result = {
     transaction: toTransaction(
       database.prepare('SELECT * FROM economy_transactions WHERE id = ?').get(transactionId)
     ),
     account: toAccount(database.prepare('SELECT * FROM economy_accounts WHERE id = ?').get(accountId))
   };
+  recordWorldEvent(database, userId, account.conversationId, {
+    eventType: 'economy.transaction.created',
+    source: payload.source || payload.auditActor || 'system',
+    title: `${result.transaction.amount >= 0 ? '获得' : '支出'} ${Math.abs(result.transaction.amount)} ${result.account.currencyType}`,
+    detail: result.transaction.description || '',
+    entityType: 'economy_transaction',
+    entityId: result.transaction.id,
+    severity: result.transaction.amount >= 0 ? 'success' : 'warning',
+    payload: { amount: result.transaction.amount, currencyType: result.account.currencyType, balance: result.account.balance }
+  });
+  return result;
 }
 
 /**

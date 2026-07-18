@@ -1328,6 +1328,15 @@ function formatCount(value) {
         </p>
         <h1>角色库</h1>
         <p class="home-hero-copy">管理角色、整理标签，并快速回到正在发生的故事。</p>
+        <p class="home-mobile-summary">
+          <span><strong>{{ characters.length }}</strong> 个角色</span>
+          <span aria-hidden="true">·</span>
+          <span><strong>{{ tags.length }}</strong> 个标签</span>
+          <span aria-hidden="true">·</span>
+          <span class="home-mobile-provider" :class="{ ready: providerReady }" :title="providerLabel">
+            {{ providerReady ? '模型已连接' : '模型未配置' }}
+          </span>
+        </p>
         <div class="home-hero-actions">
           <button class="home-primary-action" type="button" @click="emit('navigate', 'characterNew')">
             <Plus :size="18" />
@@ -1370,6 +1379,16 @@ function formatCount(value) {
         <component :is="action.icon" :size="18" />
         <span>{{ action.label }}</span>
       </button>
+      <label
+        class="home-quick-action quiet home-quick-import"
+        :class="{ disabled: importLoading }"
+        aria-label="导入角色卡"
+        title="导入角色卡"
+      >
+        <Upload :size="18" />
+        <span>导入</span>
+        <input type="file" accept=".json" aria-label="移动端导入角色卡" :disabled="importLoading" @change="handleImportFile" />
+      </label>
     </section>
 
     <section

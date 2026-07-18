@@ -1331,7 +1331,7 @@ test('character assistant completes drafts through multiple tool rounds', async 
     assert.match(statusBlueprintSchema.description, /\{\{体力\.percent\}\}/);
     assert.match(body.messages[0].content, /\{\{变量名\}\}/);
     assert.match(body.messages[0].content, /\.sb-val/);
-    assert.match(body.messages[0].content, /Do not hardcode dynamic fallback text/);
+    assert.match(body.messages[0].content, /可变化文本必须放入 variables\[\]\.value/);
 
     if (calls === 1) {
       return jsonResponse({
@@ -1430,7 +1430,7 @@ test('character assistant respects disabled generation sections', async () => {
   try {
     globalThis.fetch = async (_url, request = {}) => {
       const body = JSON.parse(request.body);
-      assert.match(body.messages[0].content, /Only modify these enabled sections/);
+      assert.match(body.messages[0].content, /允许修改的部分仅限/);
       return jsonResponse({
         choices: [
           {
@@ -1820,10 +1820,10 @@ test('world book assistant includes quality guide in complete and stream prompts
     extraBody: {}
   };
   const requiredGuideLines = [
-    'Break lore into atomic entries',
-    'Trigger keys should be exact names, aliases, locations, factions, items, events, and recurring secrets',
-    'Choose injection positions intentionally',
-    'Use alwaysActive, regexMode, probability, sticky, cooldown, delay, and group sparingly'
+    '把设定拆成原子条目',
+    'triggerKeys 使用能唯一或高精度命中该条目的正式名称',
+    '注入位置必须与用途一致',
+    'alwaysActive、regexMode、probability、sticky、cooldown、delay 和 group 都会改变触发行为'
   ];
 
   try {
@@ -7094,7 +7094,7 @@ test('buildModSystemPrompt combines enabled mod contents', () => {
   assert.match(prompt, /\[文风要求\]/);
   assert.match(prompt, /使用文艺风格/);
   assert.match(prompt, /这是一个魔法世界/);
-  assert.match(prompt, /\[Mod: 自定义\]/);
+  assert.match(prompt, /\[Mod 辅助规则: 自定义\]/);
   assert.match(prompt, /自定义指令/);
 
   // Empty mods list
@@ -8745,7 +8745,7 @@ test('buildTalentSystemPrompt generates prompt from character talents', () => {
 
   const prompt = buildTalentSystemPrompt(database, character.id);
   assert.match(prompt, /\[角色天赋\]/);
-  assert.match(prompt, /该角色拥有以下天赋/);
+  assert.match(prompt, /以下天赋影响角色可尝试的方式/);
   assert.match(prompt, /剑术|智慧/);
 });
 

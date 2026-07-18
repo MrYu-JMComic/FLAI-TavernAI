@@ -542,8 +542,8 @@ test('NPC relationship summary is listed, prompt-injected, audited, and protects
 
   const prompt = buildNpcBehaviorPrompt(database, conversationId);
   assert.ok(prompt.includes('Relationship: Trusts the protagonist after the cellar rescue'));
-  assert.ok(prompt.includes('relationship summary'));
-  assert.ok(prompt.includes('stable interpersonal state'));
+  assert.ok(prompt.includes('Relationship is a stable interpersonal summary'));
+  assert.ok(prompt.includes('not permission to invent new events'));
 
   const cleanup = hideEmptyConversationNpcs(database, userId, conversationId, '');
   assert.equal(cleanup.count, 0);
@@ -644,6 +644,51 @@ test('NPC profile audit rollback restores the previous profile snapshot', () => 
   assert.equal(audit[0].action, 'rollback');
   assert.equal(audit[0].before.currentLocation, 'Market');
   assert.equal(audit[0].after.currentLocation, 'Dock');
+});
+
+test('NPC profile audit rollback is a no-op when the target snapshot is already active', () => {
+  const { database, userId, conversationId } = setupDatabase();
+
+  upsertConversationNpc(database, userId, conversationId, {
+    npcName: 'Idempotent NPC',
+    currentLocation: 'Dock'
+  });
+  updateConversationNpc(database, userId, conversationId, 'Idempotent NPC', {
+    currentLocation: 'Market'
+  });
+
+  const updateAudit = listNpcProfileAudit(database, userId, conversationId, 'Idempotent NPC')[0];
+  const firstRollback = rollbackNpcProfileAudit(database, userId, conversationId, 'Idempotent NPC', updateAudit.id);
+  assert.equal(firstRollback.rolledBack, true);
+  const auditCount = listNpcProfileAudit(database, userId, conversationId, 'Idempotent NPC').length;
+
+  const secondRollback = rollbackNpcProfileAudit(database, userId, conversationId, 'Idempotent NPC', updateAudit.id);
+  assert.equal(secondRollback.rolledBack, false);
+  assert.equal(listNpcProfileAudit(database, userId, conversationId, 'Idempotent NPC').length, auditCount);
+});
+
+test('NPC profile rollback restores data atomically when rollback audit insertion fails', () => {
+  const { database, userId, conversationId } = setupDatabase();
+
+  upsertConversationNpc(database, userId, conversationId, {
+    npcName: 'Atomic NPC',
+    currentLocation: 'Dock'
+  });
+  updateConversationNpc(database, userId, conversationId, 'Atomic NPC', {
+    currentLocation: 'Market'
+  });
+  const updateAudit = listNpcProfileAudit(database, userId, conversationId, 'Atomic NPC')[0];
+  database.exec(`CREATE TRIGGER fail_npc_rollback_audit
+    BEFORE INSERT ON npc_profile_audit
+    WHEN NEW.action = 'rollback'
+    BEGIN SELECT RAISE(ABORT, 'blocked rollback audit'); END`);
+
+  assert.throws(
+    () => rollbackNpcProfileAudit(database, userId, conversationId, 'Atomic NPC', updateAudit.id),
+    /blocked rollback audit/
+  );
+  assert.equal(listConversationNpcs(database, userId, conversationId).find(npc => npc.name === 'Atomic NPC').currentLocation, 'Market');
+  database.exec('DROP TRIGGER fail_npc_rollback_audit');
 });
 
 test('NPC item audit records memory and behavior writes', () => {

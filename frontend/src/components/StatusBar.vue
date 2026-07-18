@@ -28,9 +28,9 @@ const STATUS_LABELS = {
 };
 
 const UPDATE_STATUS_META = {
-  updating: { key: 'updating', label: '更新中' },
-  updated: { key: 'updated', label: '已更新' },
-  'not-updated': { key: 'not-updated', label: '未更新' }
+  updating: { key: 'updating', label: '正在同步' },
+  updated: { key: 'updated', label: '本轮已同步' },
+  'not-updated': { key: 'not-updated', label: '等待新回复' }
 };
 
 const props = defineProps({
@@ -56,7 +56,7 @@ const props = defineProps({
   }
 });
 
-const emit = defineEmits(['quick-reply']);
+const emit = defineEmits(['collapse', 'quick-reply']);
 const collapsed = ref(false);
 const effectiveCollapsed = computed(() => !props.embedded && collapsed.value);
 const templateScopeId = ref(`flai-sb-${Math.random().toString(36).slice(2, 10)}`);
@@ -144,7 +144,7 @@ const wrapperClasses = computed(() => {
   }
   if (hasImmersiveContent.value) classes.push('sb-immersive');
   if (hasCustomTemplate.value) classes.push('sb-custom-mode');
-  if (collapsed.value) classes.push('sb-collapsed');
+  if (effectiveCollapsed.value) classes.push('sb-collapsed');
   return classes;
 });
 
@@ -340,7 +340,15 @@ function onCustomTemplateClick(event) {
     copyTemplateText(text);
     return;
   }
-  if (['collapse', 'toggle-collapse'].includes(action)) {
+  if (action === 'collapse') {
+    requestCollapse();
+    return;
+  }
+  if (action === 'toggle-collapse') {
+    if (props.embedded) {
+      emit('collapse');
+      return;
+    }
     toggleCollapsed();
   }
 }
@@ -375,6 +383,14 @@ async function copyTemplateText(text) {
 
 function toggleCollapsed() {
   setCollapsed(!collapsed.value);
+}
+
+function requestCollapse() {
+  if (props.embedded) {
+    emit('collapse');
+    return;
+  }
+  setCollapsed(true);
 }
 
 function setCollapsed(value) {
@@ -820,6 +836,7 @@ function templateLabelText(value) {
             <span class="status-bar-label">状态同步</span>
             <span class="status-bar-context">关联最新 AI 回复</span>
             <span
+              v-if="embedded"
               class="flai-statusbar-update-badge"
               :class="`is-${updateStatusMeta.key}`"
               role="status"
@@ -905,19 +922,33 @@ function templateLabelText(value) {
 .status-bar-container {
   position: relative;
   display: grid;
-  gap: 10px;
-  border: 1px solid color-mix(in srgb, var(--line, rgba(62,48,38,0.14)) 80%, transparent);
-  border-radius: 14px;
-  padding: 14px 16px;
+  gap: 12px;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--sb-accent, var(--primary, #8f3f2f)) 18%, var(--line, rgba(62,48,38,0.14)));
+  border-radius: 18px;
+  padding: 15px 16px;
   background:
-    linear-gradient(135deg,
-      color-mix(in srgb, var(--surface, #fffaf2) 82%, transparent),
-      color-mix(in srgb, var(--surface, #fffaf2) 64%, transparent));
+    radial-gradient(circle at 100% 0%, color-mix(in srgb, var(--sb-accent, var(--primary, #8f3f2f)) 10%, transparent), transparent 38%),
+    linear-gradient(145deg,
+      color-mix(in srgb, var(--surface, #fffaf2) 96%, transparent),
+      color-mix(in srgb, var(--surface, #fffaf2) 78%, var(--bg, #f5efe6)));
   box-shadow:
-    0 2px 12px rgba(67, 45, 30, 0.06),
-    inset 0 1px 0 color-mix(in srgb, #ffffff 36%, transparent);
-  backdrop-filter: blur(10px);
+    0 10px 28px color-mix(in srgb, var(--text, #241f1b) 8%, transparent),
+    inset 0 1px 0 color-mix(in srgb, #ffffff 48%, transparent);
+  backdrop-filter: blur(14px);
   transition: box-shadow 0.2s ease, border-color 0.2s ease;
+}
+
+.status-bar-container::before {
+  content: '';
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 3px;
+  background: linear-gradient(180deg,
+    var(--sb-accent, var(--primary, #8f3f2f)),
+    color-mix(in srgb, var(--sb-accent, var(--primary, #8f3f2f)) 24%, transparent));
+  opacity: 0.82;
+  pointer-events: none;
 }
 
 .status-bar-container.sb-custom-mode:not(.sb-collapsed) {
@@ -927,6 +958,10 @@ function templateLabelText(value) {
   background: transparent;
   box-shadow: none;
   backdrop-filter: none;
+}
+
+.status-bar-container.sb-custom-mode:not(.sb-collapsed)::before {
+  display: none;
 }
 
 .flai-statusbar-collapsed-card {
@@ -1030,8 +1065,8 @@ function templateLabelText(value) {
   align-items: center;
   justify-content: center;
   gap: 5px;
-  min-height: 22px;
-  padding: 0 8px;
+  min-height: 24px;
+  padding: 0 9px;
   border: 1px solid color-mix(in srgb, var(--muted, #75685e) 22%, transparent);
   border-radius: 999px;
   color: color-mix(in srgb, var(--muted, #75685e) 92%, var(--text, #241f1b));
@@ -1186,9 +1221,9 @@ function templateLabelText(value) {
 /* -- Header -- */
 .status-bar-header {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: 8px;
-  margin-bottom: 10px;
+  margin-bottom: 11px;
 }
 
 .status-bar-label {
@@ -1217,8 +1252,9 @@ function templateLabelText(value) {
 }
 
 .status-bar-name {
+  margin-left: auto;
   font-size: 0.82rem;
-  font-weight: 700;
+  font-weight: 750;
   color: var(--muted, #75685e);
   letter-spacing: 0.02em;
 }
@@ -1232,46 +1268,59 @@ function templateLabelText(value) {
 
 /* -- Variables Grid -- */
 .status-bar-variables {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 12px;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 9px;
 }
 
 .status-bar-variable {
-  flex: 1 1 140px;
-  min-width: 120px;
+  min-width: 0;
+  padding: 10px 11px;
+  border: 1px solid color-mix(in srgb, var(--line, rgba(62,48,38,0.14)) 68%, transparent);
+  border-radius: 11px;
+  background: color-mix(in srgb, var(--surface, #fffaf2) 72%, transparent);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, #fff 28%, transparent);
 }
 
 .variable-header {
   display: flex;
   justify-content: space-between;
   align-items: baseline;
-  margin-bottom: 5px;
+  gap: 8px;
+  margin-bottom: 7px;
 }
 
 .variable-name {
-  font-size: 0.82rem;
-  font-weight: 600;
+  min-width: 0;
+  overflow: hidden;
+  font-size: 0.78rem;
+  font-weight: 750;
   color: var(--text, #241f1b);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .variable-value {
-  font-size: 0.76rem;
-  font-weight: 700;
+  overflow: hidden;
+  font-size: 0.74rem;
+  font-weight: 800;
   color: var(--muted, #75685e);
   font-variant-numeric: tabular-nums;
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .variable-bar-track {
-  height: 7px;
+  height: 6px;
   background: color-mix(in srgb, var(--line, rgba(62,48,38,0.14)) 50%, transparent);
-  border-radius: 4px;
+  border-radius: 999px;
   overflow: hidden;
 }
 
 .variable-bar-fill {
   height: 100%;
-  border-radius: 4px;
+  border-radius: 999px;
   transition: width 0.6s cubic-bezier(0.4, 0, 0.2, 1);
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.1);
 }

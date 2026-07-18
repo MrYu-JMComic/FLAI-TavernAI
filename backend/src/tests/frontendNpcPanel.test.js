@@ -193,7 +193,9 @@ test('NpcPanel exposes unified NPC audit and rollback controls', () => {
   assert.match(npcPanelScript, /fetchNpcAudit\(conversationId, npcName, \{ limit: 30 \}\)/);
   assert.match(npcPanelScript, /async function rollbackNpcAudit\(auditId\)/);
   assert.match(npcPanelScript, /const actionId = npcAuditRollbackActionId\(currentAudit\.id\);/);
+  assert.match(npcPanelScript, /npcAuditRollbackPrompt\(currentAudit\)/);
   assert.match(npcPanelScript, /rollbackNpcAuditRequest\(conversationId, npcName, currentAudit\.id\)/);
+  assert.match(npcPanelScript, /npcAuditRollbackResultMessage\(currentAudit, result\?\.rolledBack !== false\)/);
   assert.match(npcPanelScript, /await loadNpcs\(\{ allowWhileBusy: true \}\);[\s\S]*await loadNpcDetail\(\{ allowWhileBusy: true \}\);/);
   assert.match(npcPanelScript, /function npcAuditTargetLabel\(record = \{\}\)/);
   assert.match(npcPanelScript, /function formatNpcMemoryAuditSnapshot\(snapshot\)/);

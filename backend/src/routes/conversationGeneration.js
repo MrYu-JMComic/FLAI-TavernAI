@@ -33,7 +33,11 @@ import {
 } from './helpers.js';
 import { continueMessageSchema, sendMessageSchema, validate } from '../validations/schemas.js';
 
-const CONTINUATION_PROMPT = '请继续上一条回复，保持同一角色、语气和场景推进，不要重复已经写过的内容。';
+const CONTINUATION_PROMPT = [
+  '从上一条 assistant 回复的末尾直接续写尚未完成的内容。',
+  '保持相同的角色身份、叙事视角、时态、语气和场景连续性。',
+  '不要复述、改写或总结已经输出的段落；不要添加“继续”“接下来”等说明，也不要把本指令写进剧情。'
+].join('\n');
 
 export function createConversationGenerationRouter(ctx) {
   const { db, requireAuth, asyncRoute, newId, nowIso } = ctx;

@@ -1,4 +1,4 @@
-import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 
 export function useCharacterSectionNavigation({
   sections = [],
@@ -8,6 +8,7 @@ export function useCharacterSectionNavigation({
   const sectionNavRef = ref(null);
   const visibleFormSections = computed(getVisibleFormSections);
   let sectionNavRafId = null;
+  let characterScrollListenerTarget = null;
 
   watch(
     visibleFormSections,
@@ -20,7 +21,22 @@ export function useCharacterSectionNavigation({
     { flush: 'post' }
   );
 
-  onBeforeUnmount(cancelCharacterSectionNavSync);
+  watch(
+    sectionNavRef,
+    () => {
+      syncCharacterScrollListener();
+      scheduleCharacterSectionNavSync();
+    },
+    { flush: 'post' }
+  );
+
+  onMounted(() => {
+    syncCharacterScrollListener();
+    window.addEventListener('resize', onWindowResize);
+    scheduleCharacterSectionNavSync();
+  });
+
+  onBeforeUnmount(disposeCharacterSectionNavigation);
 
   function getVisibleFormSections() {
     const nextSections = [];
@@ -145,6 +161,37 @@ export function useCharacterSectionNavigation({
     nav.style.setProperty('--character-section-nav-top', `${getTopbarBottom()}px`);
   }
 
+  function onCharacterScroll() {
+    scheduleCharacterSectionNavSync();
+  }
+
+  function syncCharacterScrollListener() {
+    const nextTarget = getCharacterScrollContainer() || (typeof window !== 'undefined' ? window : null);
+    if (characterScrollListenerTarget === nextTarget) {
+      return;
+    }
+    if (characterScrollListenerTarget) {
+      characterScrollListenerTarget.removeEventListener('scroll', onCharacterScroll);
+    }
+    characterScrollListenerTarget = nextTarget;
+    if (characterScrollListenerTarget) {
+      characterScrollListenerTarget.addEventListener('scroll', onCharacterScroll, { passive: true });
+    }
+  }
+
+  function stopCharacterScrollListener() {
+    if (!characterScrollListenerTarget) {
+      return;
+    }
+    characterScrollListenerTarget.removeEventListener('scroll', onCharacterScroll);
+    characterScrollListenerTarget = null;
+  }
+
+  function onWindowResize() {
+    syncCharacterScrollListener();
+    scheduleCharacterSectionNavSync();
+  }
+
   function getCharacterSectionActivationOffset() {
     const navBottom = sectionNavRef.value?.getBoundingClientRect().bottom;
     if (Number.isFinite(navBottom)) {
@@ -209,6 +256,12 @@ export function useCharacterSectionNavigation({
       cancelAnimationFrame(sectionNavRafId);
     }
     sectionNavRafId = null;
+  }
+
+  function disposeCharacterSectionNavigation() {
+    cancelCharacterSectionNavSync();
+    stopCharacterScrollListener();
+    window.removeEventListener('resize', onWindowResize);
   }
 
   return {

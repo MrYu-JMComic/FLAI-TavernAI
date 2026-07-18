@@ -9,6 +9,7 @@ const props = defineProps({
 });
 
 const icon = computed(() => findPixelIcon(props.iconKey) || findPixelIcon('item.chest'));
+const gridSize = computed(() => Number(icon.value?.gridSize || 12));
 const pixels = computed(() => {
   const result = [];
   const rows = icon.value?.pixels || [];
@@ -25,7 +26,7 @@ const pixels = computed(() => {
 <template>
   <svg
     class="pixel-icon"
-    viewBox="0 0 8 8"
+    :viewBox="`0 0 ${gridSize} ${gridSize}`"
     :width="size"
     :height="size"
     shape-rendering="crispEdges"
@@ -37,5 +38,10 @@ const pixels = computed(() => {
 </template>
 
 <style scoped>
-.pixel-icon{display:block;image-rendering:pixelated;filter:drop-shadow(0 1px 0 rgba(0,0,0,.3))}
+.pixel-icon {
+  display: block;
+  overflow: visible;
+  image-rendering: pixelated;
+  filter: drop-shadow(0 1px 0 rgba(8, 12, 24, 0.42));
+}
 </style>

@@ -21,6 +21,7 @@ import {
 } from './helpers.js';
 import { createConversationEconomyRouter } from './conversationEconomy.js';
 import { createConversationGenerationRouter } from './conversationGeneration.js';
+import { createConversationGameplayRouter } from './conversationGameplay.js';
 import { createConversationMessagesRouter } from './conversationMessages.js';
 import { createConversationNpcRouter } from './conversationNpcs.js';
 import { createConversationSettingsRouter } from './conversationSettings.js';
@@ -125,6 +126,7 @@ export function createConversationsRouter(ctx) {
   router.use('/:id', createConversationMessagesRouter(ctx));
   router.use('/:id', createConversationSettingsRouter(ctx));
   router.use('/:id/economy', createConversationEconomyRouter(ctx));
+  router.use('/:id/gameplay', createConversationGameplayRouter(ctx));
   router.use('/:id/saves', createConversationSavesRouter(ctx));
   router.use('/:id', createConversationNpcRouter(ctx));
 

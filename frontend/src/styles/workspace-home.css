@@ -63,6 +63,11 @@
   line-height: 1.7;
 }
 
+.home-mobile-summary,
+.home-quick-row .home-quick-import {
+  display: none;
+}
+
 .home-hero-actions,
 .home-empty-actions,
 .home-card-actions {
@@ -943,26 +948,75 @@
     height: 100svh;
   }
 
-  .home-workbench {
-    gap: 13px;
+  .page-stack.home-workbench {
+    gap: 10px;
   }
 
   .home-hero {
+    display: block;
     min-height: 0;
-    padding: 18px;
+    padding: 14px 16px;
+    border-color: color-mix(in srgb, var(--line) 82%, transparent);
+    background: color-mix(in srgb, var(--surface) 92%, var(--green-soft));
+    box-shadow: 0 8px 22px rgba(48, 56, 64, 0.07);
   }
 
   .home-hero h1 {
-    font-size: 2rem;
+    font-size: 1.65rem;
   }
 
+  .home-eyebrow {
+    gap: 5px;
+    margin-bottom: 4px;
+    font-size: 0.72rem;
+  }
+
+  .home-eyebrow svg {
+    width: 14px;
+    height: 14px;
+  }
+
+  .home-hero-copy,
   .home-hero-actions,
+  .home-hero-aside {
+    display: none;
+  }
+
+  .home-mobile-summary {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+    margin: 7px 0 0;
+    overflow: hidden;
+    color: var(--muted);
+    font-size: 0.76rem;
+    white-space: nowrap;
+  }
+
+  .home-mobile-summary strong {
+    color: var(--text);
+    font-size: 0.82rem;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .home-mobile-provider {
+    min-width: 0;
+    overflow: hidden;
+    color: var(--primary);
+    font-weight: 800;
+    text-overflow: ellipsis;
+  }
+
+  .home-mobile-provider.ready {
+    color: var(--green);
+  }
+
   .home-empty-actions {
     align-items: stretch;
     flex-direction: column;
   }
 
-  .home-hero-actions > *,
   .home-empty-actions > * {
     width: 100%;
   }
@@ -972,8 +1026,28 @@
   }
 
   .home-quick-row {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: repeat(4, minmax(0, 1fr));
     gap: 6px;
+  }
+
+  .home-quick-row .home-quick-import {
+    position: relative;
+    display: inline-flex;
+    overflow: hidden;
+  }
+
+  .home-quick-import input {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    opacity: 0;
+    cursor: pointer;
+  }
+
+  .home-quick-import.disabled {
+    opacity: 0.58;
+    pointer-events: none;
   }
 
   .home-quick-action {
@@ -1087,15 +1161,15 @@
   }
 
   .home-quick-row {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: repeat(4, minmax(0, 1fr));
     gap: 5px;
   }
 
   .home-quick-action {
-    gap: 4px;
+    gap: 3px;
     min-height: 38px;
-    padding: 0 6px;
-    font-size: 0.8rem;
+    padding: 0 3px;
+    font-size: 0.76rem;
   }
 
   .home-quick-action svg {

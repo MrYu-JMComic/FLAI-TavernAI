@@ -210,6 +210,33 @@ test('scene item audit records destructive changes and can roll them back', () =
   assert.equal(rollback.rolledBack, true);
   assert.equal(rollback.item.name, '已修改物品');
   assert.equal(listActorItems(fixture.db, fixture.userId, fixture.conversationId, 'protagonist').length, 1);
+
+  const auditCount = listSceneItemAudit(fixture.db, fixture.userId, fixture.conversationId, 'protagonist').length;
+  const repeatedRollback = rollbackSceneItemAudit(fixture.db, fixture.userId, fixture.conversationId, audit[0].id);
+  assert.equal(repeatedRollback.rolledBack, false);
+  assert.equal(listSceneItemAudit(fixture.db, fixture.userId, fixture.conversationId, 'protagonist').length, auditCount);
+});
+
+test('scene item rollback restores data atomically when rollback audit insertion fails', () => {
+  const fixture = createSceneFixture();
+  const item = upsertSceneItem(fixture.db, fixture.userId, fixture.conversationId, {
+    itemCode: 'itm_atomic_audit', name: '原始物品', ownerType: 'protagonist', itemKind: 'item'
+  });
+  upsertSceneItem(fixture.db, fixture.userId, fixture.conversationId, {
+    id: item.id, name: '修改后物品', ownerType: 'protagonist', itemKind: 'item'
+  });
+  const updateAudit = listSceneItemAudit(fixture.db, fixture.userId, fixture.conversationId, 'protagonist')[0];
+  fixture.db.exec(`CREATE TRIGGER fail_scene_rollback_audit
+    BEFORE INSERT ON scene_item_audit
+    WHEN NEW.action = 'rollback'
+    BEGIN SELECT RAISE(ABORT, 'blocked scene rollback audit'); END`);
+
+  assert.throws(
+    () => rollbackSceneItemAudit(fixture.db, fixture.userId, fixture.conversationId, updateAudit.id),
+    /blocked scene rollback audit/
+  );
+  assert.equal(listActorItems(fixture.db, fixture.userId, fixture.conversationId, 'protagonist')[0].name, '修改后物品');
+  fixture.db.exec('DROP TRIGGER fail_scene_rollback_audit');
 });
 
 test('clothing visibility respects underwear, long tops, and one-piece outfits', () => {

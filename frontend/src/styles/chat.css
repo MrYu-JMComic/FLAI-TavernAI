@@ -1776,16 +1776,6 @@
 
 /* Desktop two-column chat layout (>= 1180px) */
 @media (min-width: 1180px) {
-  /* The composer is docked over the page on desktop. Keep a real scrollable
-     spacer after the last message so the virtual list can reach the unobscured
-     bottom instead of stopping underneath the composer. */
-  .deep-message-scroll::after {
-    content: '';
-    display: block;
-    flex: 0 0 calc(var(--chat-composer-height) + 38px);
-    min-height: calc(var(--chat-composer-height) + 38px);
-  }
-
   /* Hide backdrop entirely on desktop - never a grid item or overlay */
   .sidebar-backdrop {
     display: none;
@@ -1795,6 +1785,7 @@
   .deep-chat-shell:not(.sidebar-collapsed) {
     display: grid;
     grid-template-columns: var(--chat-sidebar-drawer-width) minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr);
   }
 
   /* Constrain chat widths when sidebar is open so content does not overflow */
@@ -1809,7 +1800,9 @@
     inset: auto;
     width: var(--chat-sidebar-drawer-width);
     height: 100%;
+    min-height: 0;
     max-height: none;
+    overflow: hidden;
     transform: none;
     visibility: visible;
     box-shadow: none;
@@ -1820,19 +1813,6 @@
   .deep-chat-shell:not(.sidebar-collapsed) .deep-chat-main {
     margin-left: 0;
     min-width: 0;
-  }
-
-  .deep-chat-shell .deep-composer-wrap {
-    position: fixed;
-    right: 0;
-    bottom: 0;
-    left: 0;
-    width: 100%;
-  }
-
-  .deep-chat-shell:not(.sidebar-collapsed) .deep-composer-wrap {
-    left: var(--chat-sidebar-drawer-width);
-    width: auto;
   }
 
   /* Hide hamburger when sidebar is open */

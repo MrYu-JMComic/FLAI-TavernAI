@@ -57,12 +57,20 @@ test('accessory skill payloads build active flags with direct own-key loops', ()
 
   assert.deepEqual(Object.keys(payload.skills), [
     'npcAgent',
+    'worldDirector',
+    'gameHud',
+    'encounterMode',
+    'rewardMode',
     'statusBarAgent',
     'economyAgent',
     'talentPrompt',
     'cgScene'
   ]);
   assert.equal(payload.active.npcAgent, false);
+  assert.equal(payload.active.worldDirector, false);
+  assert.equal(payload.active.gameHud, false);
+  assert.equal(payload.active.encounterMode, false);
+  assert.equal(payload.active.rewardMode, false);
   assert.equal(payload.active.statusBarAgent, true);
   assert.equal(payload.active.economyAgent, true);
   assert.equal(payload.active.talentPrompt, false);
@@ -136,10 +144,18 @@ test('provider-backed accessory agents receive current-turn observation windows'
     for (const body of capturedBodies) {
       const systemMessage = body.messages.find((message) => message.role === 'system');
       const userPayload = JSON.parse(body.messages.find((message) => message.role === 'user').content);
-      assert.match(systemMessage.content, /current turn/i);
+      assert.match(systemMessage.content, /observationWindow/);
+      assert.match(systemMessage.content, /assistant/);
       assert.equal(userPayload.observationWindow.user, 'I pay Mira 5 gold for a room and ask where the cellar is.');
       assert.equal(userPayload.observationWindow.assistant, 'Mira accepts 5 gold and points toward the cellar stairs.');
     }
+    const economyBody = capturedBodies.find((body) => body.tools?.some((tool) => tool.function?.name === 'record_economy_transaction'));
+    const economySchema = economyBody.tools.find((tool) => tool.function?.name === 'record_economy_transaction').function.parameters;
+    assert.deepEqual(economySchema.required, ['amount', 'type', 'currencyType']);
+    assert.equal(economySchema.properties.amount.exclusiveMinimum, 0);
+    const npcBody = capturedBodies.find((body) => body.tools?.some((tool) => tool.function?.name === 'delete_actor_item'));
+    const deleteItemSchema = npcBody.tools.find((tool) => tool.function?.name === 'delete_actor_item').function.parameters;
+    assert.deepEqual(deleteItemSchema.anyOf, [{ required: ['id'] }, { required: ['itemCode'] }]);
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -211,6 +227,38 @@ test('status bar agent auto mode activates when variables or prompt exist and ca
   });
 
   assert.equal(getStatusBar(env.db, env.userId, env.conversation.id).variables[0].value, 75);
+});
+
+test('status bar agent restores a missing persisted bar from the conversation blueprint', async () => {
+  const env = setupConversation({ statusBarAgent: skill('auto') });
+  env.conversation.settings.statusBarBlueprint = {
+    name: '角色状态',
+    variables: [
+      { name: 'HP', value: 100, max: 100, color: '#ef4444' },
+      { name: 'Mood', value: '平静', color: '#60a5fa' }
+    ],
+    template: '<div>HP: {{HP}} / {{HP.max}}</div><div>Mood: {{Mood}}</div>'
+  };
+
+  const payload = getAccessorySkillsPayload(env.conversation, null);
+  assert.equal(payload.active.statusBarAgent, true);
+
+  await runAccessoryAgents({
+    db: env.db,
+    userId: env.userId,
+    conversation: env.conversation,
+    character: env.character,
+    assistantMessage: { content: '战斗结束后，HP: 64/100。' },
+    settings: {},
+    statusBar: null
+  });
+
+  const statusBar = getStatusBar(env.db, env.userId, env.conversation.id);
+  assert.equal(statusBar.name, '角色状态');
+  assert.equal(statusBar.template, '<div>HP: {{HP}} / {{HP.max}}</div><div>Mood: {{Mood}}</div>');
+  assert.equal(statusBar.variables.find((item) => item.name === 'HP')?.value, 64);
+  assert.equal(statusBar.variables.find((item) => item.name === 'Mood')?.value, '平静');
+  assert.equal(statusBar.variables.find((item) => item.name === 'Mood')?.color, '#60a5fa');
 });
 
 test('status bar agent can create variables from prompt guidance', async () => {
@@ -434,7 +482,7 @@ test('status bar agent accepts explicit skip tool without fallback updates', asy
     assert.equal(results[0].result.skipped, true);
     assert.deepEqual(results[0].result.updates, []);
     assert.equal(getStatusBar(env.db, env.userId, env.conversation.id).variables[0].value, 100);
-    assert.match(accessoryAgentsSource, /Call skip_status_bar_update when no status value should change/);
+    assert.match(accessoryAgentsSource, /两种工具每轮只调用一种/);
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -531,7 +579,7 @@ test('status bar agent updates composite placeholder variables', async () => {
     const userMessage = requestBody.messages.find((message) => message.role === 'user');
     const systemMessage = requestBody.messages.find((message) => message.role === 'system');
     const payload = JSON.parse(userMessage.content);
-    assert.match(systemMessage.content, /composite rows/i);
+    assert.match(systemMessage.content, /复合行/);
     assert.equal(payload.template, template);
     assert.deepEqual(payload.templateHints.compositeRows, [
       { label: '\u5730\u70b9', variables: ['\u5927\u5730\u70b9', '\u5177\u4f53\u4f4d\u7f6e'] }

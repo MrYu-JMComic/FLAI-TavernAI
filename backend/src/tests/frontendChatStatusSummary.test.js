@@ -30,11 +30,13 @@ test('ChatView renders the full status bar inside the expanding summary', () => 
   assert.match(chatViewTemplate, /<ChatStatusSummary[\s\S]*v-model:expanded="statusSummaryExpanded"[\s\S]*<template #details>[\s\S]*<StatusBar[\s\S]*embedded/);
   assert.match(chatViewScript, /watch\(statusSummaryExpanded, async \(expanded\) => \{[\s\S]*await nextTick\(\);[\s\S]*querySelector\('\.chat-status-disclosure'\)[\s\S]*scrollIntoView/);
   assert.match(chatViewScript, /if \(statusSummaryExpanded\.value\) \{\s*statusSummaryExpanded\.value = false;/);
+  assert.match(chatViewTemplate, /<StatusBar[\s\S]*embedded[\s\S]*@collapse="statusSummaryExpanded = false"[\s\S]*@quick-reply="handleStatusBarQuickReply"/);
 });
 
 test('StatusBar embedded mode keeps inline details expanded without duplicate collapse chrome', () => {
   assert.match(statusBarScript, /embedded: \{\s*type: Boolean,\s*default: false\s*\}/);
   assert.match(statusBarScript, /const effectiveCollapsed = computed\(\(\) => !props\.embedded && collapsed\.value\);/);
+  assert.match(statusBarScript, /if \(effectiveCollapsed\.value\) classes\.push\('sb-collapsed'\);/);
   assert.match(statusBarTemplate, /:aria-expanded="String\(!effectiveCollapsed\)"/);
   assert.match(statusBarTemplate, /v-if="effectiveCollapsed"/);
   assert.match(statusBarTemplate, /v-if="!embedded" class="flai-statusbar-header"/);

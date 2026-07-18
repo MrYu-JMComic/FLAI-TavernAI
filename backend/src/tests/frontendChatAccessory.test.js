@@ -499,7 +499,7 @@ test('accessory skill sync preserves unchanged nested config references', () => 
   assert.deepEqual(accessory.accessorySkills.npcAgent, { enabled: true, modelOverride: 'model-c' });
   assert.match(
     chatAccessorySource,
-    /const ACCESSORY_SKILL_DEFAULTS = \[[\s\S]*\{ key: 'npcAgent', enabled: false, modelOverride: '' \},[\s\S]*\{ key: 'statusBarAgent', enabled: 'auto', modelOverride: '' \},[\s\S]*\{ key: 'cgScene', enabled: false, modelOverride: '' \}[\s\S]*\];/
+    /const ACCESSORY_SKILL_DEFAULTS = \[[\s\S]*\{ key: 'npcAgent', enabled: false, modelOverride: '' \},[\s\S]*\{ key: 'worldDirector', enabled: false, modelOverride: '' \},[\s\S]*\{ key: 'gameHud', enabled: false, modelOverride: '' \},[\s\S]*\{ key: 'encounterMode', enabled: false, modelOverride: '' \},[\s\S]*\{ key: 'rewardMode', enabled: false, modelOverride: '' \},[\s\S]*\{ key: 'statusBarAgent', enabled: 'auto', modelOverride: '' \},[\s\S]*\{ key: 'cgScene', enabled: false, modelOverride: '' \}[\s\S]*\];/
   );
   assert.match(
     chatAccessorySource,
@@ -921,7 +921,11 @@ test('ChatView serializes accessory refresh snapshots with direct loops', () => 
   );
   assert.match(
     chatViewScript,
-    /function serializeNpcSnapshot\(value = \[\]\) \{[\s\S]*const items = \[\];[\s\S]*const sourceNpcs = Array\.isArray\(value\) \? value : \[\];[\s\S]*for \(let index = 0; index < sourceNpcs\.length; index \+= 1\) \{[\s\S]*const name = String\(npc\?\.name \|\| ''\);[\s\S]*snapshot = appendSnapshotField\(snapshot, Number\(npc\?\.memoryCount \|\| 0\)\);[\s\S]*items\.push\(\{ name, snapshot \}\);[\s\S]*items\.sort\(\(a, b\) => a\.name\.localeCompare\(b\.name\)\);[\s\S]*for \(let index = 0; index < items\.length; index \+= 1\) \{[\s\S]*serialized \+= items\[index\]\.snapshot;[\s\S]*return serialized;[\s\S]*\}/
+    /function serializeNpcSnapshot\(value = \[\]\) \{[\s\S]*const items = \[\];[\s\S]*const sourceNpcs = Array\.isArray\(value\)[\s\S]*Array\.isArray\(value\?\.npcs\)[\s\S]*for \(let index = 0; index < sourceNpcs\.length; index \+= 1\) \{[\s\S]*const name = String\(npc\?\.name \|\| ''\);[\s\S]*snapshot = appendSnapshotField\(snapshot, Number\(npc\?\.memoryCount \|\| 0\)\);[\s\S]*snapshot = appendSnapshotField\(snapshot, npc\?\.currentLocation \|\| ''\);[\s\S]*snapshot = appendSnapshotField\(snapshot, npc\?\.relationship \|\| ''\);[\s\S]*const sourceActorItems = [\s\S]*ownerType !== 'protagonist' && ownerType !== 'npc'[\s\S]*items\.push\(\{ name, snapshot \}\);[\s\S]*items\.sort\(\(a, b\) => a\.name\.localeCompare\(b\.name\)\);[\s\S]*for \(let index = 0; index < items\.length; index \+= 1\) \{[\s\S]*serialized \+= items\[index\]\.snapshot;[\s\S]*return serialized;[\s\S]*\}/
+  );
+  assert.match(
+    chatViewScript,
+    /async function fetchNpcAccessorySnapshot\(conversationId\) \{[\s\S]*fetchConversationNpcs\(conversationId\),[\s\S]*fetchConversationScenes\(conversationId\)[\s\S]*items: Array\.isArray\(workspace\?\.items\) \? workspace\.items : \[\]/
   );
   assert.match(
     chatViewScript,
@@ -998,7 +1002,7 @@ test('ChatView skips NPC accessory refresh completions after unmount', () => {
   );
   assert.match(
     chatViewScript,
-    /const npcs = await fetchConversationNpcs\(conversationId\);[\s\S]*if \(\s*chatViewDisposed \|\|[\s\S]*conversation\.value\?\.id !== conversationId \|\|[\s\S]*accessoryRefreshSnapshot\.conversationId !== conversationId\s*\) \{\s*return false;\s*\}/
+    /const snapshot = await fetchNpcAccessorySnapshot\(conversationId\);[\s\S]*if \(\s*chatViewDisposed \|\|[\s\S]*conversation\.value\?\.id !== conversationId \|\|[\s\S]*accessoryRefreshSnapshot\.conversationId !== conversationId\s*\) \{\s*return false;\s*\}/
   );
   assert.match(
     chatViewScript,
@@ -1031,6 +1035,6 @@ test('ChatView finds the latest assistant message without cloning the message li
 test('ChatView accepts NPC panel loaded events only for the active conversation', () => {
   assert.match(
     chatViewScript,
-    /function handleNpcPanelLoaded\(payload = \{\}\) \{[\s\S]*const eventConversationId = payload\?\.conversationId \|\| '';[\s\S]*if \(!eventConversationId \|\| eventConversationId !== conversation\.value\?\.id\) \{\s*return;\s*\}[\s\S]*const npcs = Array\.isArray\(payload\?\.npcs\) \? payload\.npcs : \[\];[\s\S]*latestNpcFingerprint = serializeNpcSnapshot\(npcs\);/
+    /function handleNpcPanelLoaded\(payload = \{\}\) \{[\s\S]*const eventConversationId = payload\?\.conversationId \|\| '';[\s\S]*if \(!eventConversationId \|\| eventConversationId !== conversation\.value\?\.id\) \{\s*return;\s*\}[\s\S]*void syncNpcFingerprint\(eventConversationId\);/
   );
 });

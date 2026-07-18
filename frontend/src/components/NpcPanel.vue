@@ -5,9 +5,11 @@ import {
   Check,
   History,
   MapPin,
+  Package,
   Pencil,
   Plus,
   RefreshCw,
+  Shirt,
   SlidersHorizontal,
   Sparkles,
   Trash2,
@@ -119,9 +121,9 @@ const npcMetaForm = reactive({
   memorySealed: false
 });
 const UPDATE_STATUS_META = {
-  updating: { key: 'updating', label: '更新中' },
-  updated: { key: 'updated', label: '已更新' },
-  'not-updated': { key: 'not-updated', label: '未更新' }
+  updating: { key: 'updating', label: '正在同步' },
+  updated: { key: 'updated', label: '本轮已同步' },
+  'not-updated': { key: 'not-updated', label: '等待新回复' }
 };
 
 const selectedNpcData = computed(() => getCurrentNpcByName(selectedNpc.value));
@@ -978,10 +980,10 @@ async function rollbackProtagonistItem(record) {
   const actionId = `protagonist-audit-${record.id}`;
   npcActionBusyId.value = actionId;
   try {
-    await rollbackActorItemAudit(conversationId, record.id);
+    const result = await rollbackActorItemAudit(conversationId, record.id);
     if (!isCurrentProtagonistMutation(mutationToken, conversationId)) return;
     await loadProtagonistItems();
-    notify.success('物品状态已回滚');
+    notify.success(result?.rolledBack === false ? '物品状态无需回滚' : '物品状态已回滚');
   } catch (error) {
     if (!isCurrentProtagonistMutation(mutationToken, conversationId)) return;
     notify.error(error.message || '物品状态回滚失败');
@@ -1400,7 +1402,7 @@ async function rollbackNpcAudit(auditId) {
   const npcName = selectedNpc.value;
   const currentAudit = getCurrentNpcAudit(auditId);
   if (!conversationId || !npcName || !currentAudit) return;
-  if (!window.confirm('回滚到这条审计记录之前的 NPC 资料？记忆和行为规则不会被删除。')) {
+  if (!window.confirm(npcAuditRollbackPrompt(currentAudit))) {
     return;
   }
   const actionId = npcAuditRollbackActionId(currentAudit.id);
@@ -1418,10 +1420,10 @@ async function rollbackNpcAudit(auditId) {
       await loadNpcDetail({ allowWhileBusy: true });
     }
     if (!isCurrentNpcMutation(mutationToken, conversationId)) return;
-    notify.success(result?.rolledBack === false ? 'NPC 资料无需回滚' : 'NPC 资料已回滚');
+    notify.success(npcAuditRollbackResultMessage(currentAudit, result?.rolledBack !== false));
   } catch (err) {
     if (!isCurrentNpcMutation(mutationToken, conversationId, npcName)) return;
-    notify.error(err.message || '回滚 NPC 资料失败');
+    notify.error(err.message || `${npcAuditTargetLabel(currentAudit)}回滚失败`);
   } finally {
     finishNpcAction(actionId, mutationToken, conversationId);
   }
@@ -1672,6 +1674,19 @@ function npcAuditTargetLabel(record = {}) {
   return '档案';
 }
 
+function npcAuditRollbackPrompt(record = {}) {
+  const targetLabel = npcAuditTargetLabel(record);
+  if (record?.targetType === 'profile') {
+    return '回滚到这条审计记录之前的 NPC 资料？记忆和行为规则不会被修改。';
+  }
+  return `回滚到这条审计记录之前的${targetLabel}？当前${targetLabel}状态会保留在新的审计记录中。`;
+}
+
+function npcAuditRollbackResultMessage(record = {}, rolledBack = true) {
+  const targetLabel = npcAuditTargetLabel(record);
+  return rolledBack ? `${targetLabel}已回滚` : `${targetLabel}无需回滚`;
+}
+
 function formatNpcAuditSnapshot(record = {}, snapshot) {
   if (!snapshot) {
     return `无${npcAuditTargetLabel(record)}`;
@@ -1810,8 +1825,16 @@ function formatTime(iso) {
       <aside class="npc-panel" role="dialog" aria-label="角色与 NPC 管理面板">
           <header class="npc-panel-header">
             <div class="npc-panel-title">
-              <Users :size="20" />
-              <h2>角色与 NPC 管理</h2>
+              <span class="npc-panel-title-mark" aria-hidden="true">
+                <Users :size="20" />
+              </span>
+              <span class="npc-panel-heading">
+                <span class="npc-panel-eyebrow">NPC ASSISTANT</span>
+                <h2>角色与 NPC 管理</h2>
+                <span class="npc-panel-subtitle">资料、记忆、行为与随身物品保持同步</span>
+              </span>
+            </div>
+            <div class="npc-panel-header-actions">
               <span
                 class="npc-update-badge"
                 :class="`is-${updateStatusMeta.key}`"
@@ -1821,32 +1844,41 @@ function formatTime(iso) {
                 <span class="npc-update-dot" aria-hidden="true"></span>
                 <span>{{ updateStatusMeta.label }}</span>
               </span>
+              <button
+                class="npc-close"
+                type="button"
+                aria-label="关闭 NPC 管理面板"
+                :disabled="npcActionBusy"
+                :aria-busy="npcActionBusy"
+                @pointerdown.stop
+                @click.stop="requestClose"
+              >
+                <X :size="18" />
+              </button>
             </div>
-            <button
-              class="npc-close"
-              type="button"
-              aria-label="关闭 NPC 管理面板"
-              :disabled="npcActionBusy"
-              :aria-busy="npcActionBusy"
-              @pointerdown.stop
-              @click.stop="requestClose"
-            >
-              <X :size="18" />
-            </button>
           </header>
 
           <section class="npc-panel-summary" aria-label="NPC 记忆概览">
             <div class="npc-summary-card">
-              <span>NPC</span>
-              <strong>{{ npcPanelStats.npcCount }}</strong>
+              <span class="npc-summary-icon"><Users :size="17" /></span>
+              <span class="npc-summary-copy">
+                <span>角色档案</span>
+                <strong>{{ npcPanelStats.npcCount }}<small>位</small></strong>
+              </span>
             </div>
             <div class="npc-summary-card memory">
-              <span>记忆</span>
-              <strong>{{ npcPanelStats.memoryCount }}</strong>
+              <span class="npc-summary-icon"><Brain :size="17" /></span>
+              <span class="npc-summary-copy">
+                <span>长期记忆</span>
+                <strong>{{ npcPanelStats.memoryCount }}<small>条</small></strong>
+              </span>
             </div>
             <div class="npc-summary-card behavior">
-              <span>行为</span>
-              <strong>{{ npcPanelStats.behaviorCount }}</strong>
+              <span class="npc-summary-icon"><Zap :size="17" /></span>
+              <span class="npc-summary-copy">
+                <span>行为规则</span>
+                <strong>{{ npcPanelStats.behaviorCount }}<small>条</small></strong>
+              </span>
             </div>
           </section>
 
@@ -2013,8 +2045,8 @@ function formatTime(iso) {
                       <span class="npc-status-pill">物品与穿着</span>
                     </span>
                     <span class="npc-item-counts">
-                      <span class="npc-badge">📦 {{ protagonistInventory.length }}</span>
-                      <span class="npc-badge">👕 {{ protagonistClothing.length }}</span>
+                      <span class="npc-badge"><Package :size="12" />{{ protagonistInventory.length }}</span>
+                      <span class="npc-badge"><Shirt :size="12" />{{ protagonistClothing.length }}</span>
                     </span>
                   </button>
                   <button
@@ -2038,8 +2070,8 @@ function formatTime(iso) {
                       </span>
                     </span>
                     <span class="npc-item-counts">
-                      <span title="记忆数" class="npc-badge">🧠 {{ npc.memoryCount }}</span>
-                      <span title="行为规则数" class="npc-badge">⚡ {{ npc.behaviorCount }}</span>
+                      <span title="记忆数" class="npc-badge"><Brain :size="12" />{{ npc.memoryCount }}</span>
+                      <span title="行为规则数" class="npc-badge"><Zap :size="12" />{{ npc.behaviorCount }}</span>
                       <span v-if="npc.memorySealActive" title="记忆已封存" class="npc-badge">封存</span>
                     </span>
                   </button>
@@ -2638,40 +2670,85 @@ function formatTime(iso) {
 }
 
 .npc-panel {
-  width: min(520px, 94vw);
+  width: min(640px, 96vw);
   height: 100%;
+  --npc-accent: var(--primary, #8d4a43);
+  --npc-accent-soft: color-mix(in srgb, var(--npc-accent) 9%, var(--surface, #fbfaf6));
+  --npc-border: color-mix(in srgb, var(--line, #d8ddd6) 82%, transparent);
   transform: none !important;
-  border-left: 1px solid color-mix(in srgb, var(--line, #2a2a3e) 78%, transparent);
-  background:
-    linear-gradient(180deg,
-      color-mix(in srgb, var(--surface, #1a1a2e) 96%, transparent),
-      color-mix(in srgb, var(--bg, #11111f) 82%, transparent));
+  border-left: 1px solid var(--npc-border);
+  background: color-mix(in srgb, var(--surface, #fbfaf6) 97%, var(--bg, #f3f5f1));
   color: var(--text, #e8e6e3);
   display: flex;
   flex-direction: column;
-  box-shadow: -18px 0 52px rgba(0, 0, 0, 0.26);
+  box-shadow: -16px 0 48px rgba(36, 42, 38, 0.2);
 }
 
 .npc-panel-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 14px;
   padding: 18px 20px 14px;
-  border-bottom: 1px solid color-mix(in srgb, var(--line, #2a2a3e) 70%, transparent);
-  background: color-mix(in srgb, var(--surface, #1a1a2e) 86%, transparent);
+  border-bottom: 1px solid var(--npc-border);
+  background: color-mix(in srgb, var(--surface, #fbfaf6) 96%, transparent);
   backdrop-filter: blur(14px);
 }
 
 .npc-panel-title {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
+  min-width: 0;
+}
+
+.npc-panel-title-mark {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  width: 42px;
+  height: 42px;
+  border: 1px solid color-mix(in srgb, var(--npc-accent) 24%, var(--npc-border));
+  border-radius: 13px;
+  color: var(--npc-accent);
+  background: var(--npc-accent-soft);
+}
+
+.npc-panel-heading {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.npc-panel-eyebrow {
+  color: var(--npc-accent);
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: 0.14em;
+  line-height: 1;
 }
 
 .npc-panel-title h2 {
   margin: 0;
   font-size: 18px;
-  font-weight: 800;
+  font-weight: 850;
+  line-height: 1.25;
+}
+
+.npc-panel-subtitle {
+  overflow: hidden;
+  color: var(--text-muted, #888);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.npc-panel-header-actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 8px;
 }
 
 .npc-update-badge {
@@ -2679,13 +2756,13 @@ function formatTime(iso) {
   align-items: center;
   justify-content: center;
   gap: 5px;
-  min-height: 24px;
-  padding: 0 9px;
+  min-height: 28px;
+  padding: 0 10px;
   border: 1px solid color-mix(in srgb, var(--text-muted, #888) 24%, transparent);
   border-radius: 999px;
   color: var(--text-muted, #888);
   background: color-mix(in srgb, var(--text-muted, #888) 8%, transparent);
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 800;
   line-height: 1;
   white-space: nowrap;
@@ -2716,14 +2793,17 @@ function formatTime(iso) {
 }
 
 .npc-close {
-  background: none;
-  border: none;
+  width: 34px;
+  height: 34px;
+  border: 1px solid color-mix(in srgb, var(--line, #2a2a3e) 70%, transparent);
+  background: color-mix(in srgb, var(--surface, #1a1a2e) 72%, transparent);
   color: var(--text-muted, #888);
   cursor: pointer;
-  padding: 4px;
-  border-radius: 6px;
+  padding: 0;
+  border-radius: 10px;
   display: flex;
   align-items: center;
+  justify-content: center;
 }
 .npc-close:hover:not(:disabled) {
   background: var(--hover, rgba(255,255,255,0.08));
@@ -2753,38 +2833,76 @@ function formatTime(iso) {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 8px;
-  padding: 12px 14px;
-  border-bottom: 1px solid color-mix(in srgb, var(--line, #2a2a3e) 64%, transparent);
-  background: color-mix(in srgb, var(--surface, #1a1a2e) 78%, transparent);
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--npc-border);
+  background: color-mix(in srgb, var(--surface-strong, #eef1ec) 58%, var(--surface, #fbfaf6));
 }
 
 .npc-summary-card {
-  display: grid;
-  gap: 3px;
-  padding: 10px;
-  border: 1px solid color-mix(in srgb, var(--line, #2a2a3e) 72%, transparent);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  padding: 10px 11px;
+  border: 1px solid var(--npc-border);
+  border-radius: 11px;
+  background: color-mix(in srgb, var(--surface, #fbfaf6) 94%, transparent);
+}
+
+.npc-summary-icon {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
   border-radius: 10px;
-  background: color-mix(in srgb, var(--surface, #1a1a2e) 70%, transparent);
+  color: var(--npc-accent);
+  background: var(--npc-accent-soft);
 }
 
-.npc-summary-card span {
+.npc-summary-card.memory .npc-summary-icon {
+  color: var(--npc-accent);
+  background: var(--npc-accent-soft);
+}
+
+.npc-summary-card.behavior .npc-summary-icon {
+  color: var(--npc-accent);
+  background: var(--npc-accent-soft);
+}
+
+.npc-summary-copy {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.npc-summary-copy > span {
   color: var(--text-muted, #888);
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 700;
+  white-space: nowrap;
 }
 
-.npc-summary-card strong {
+.npc-summary-copy strong {
   color: var(--text, #e8e6e3);
-  font-size: 20px;
+  font-size: 21px;
   line-height: 1;
 }
 
-.npc-summary-card.memory strong {
-  color: #8f6ee8;
+.npc-summary-copy strong small {
+  margin-left: 3px;
+  color: var(--text-muted, #888);
+  font-size: 10px;
+  font-weight: 700;
 }
 
-.npc-summary-card.behavior strong {
-  color: #2f9f7b;
+.npc-summary-card.memory .npc-summary-copy strong {
+  color: var(--text, #20241f);
+}
+
+.npc-summary-card.behavior .npc-summary-copy strong {
+  color: var(--text, #20241f);
 }
 
 .npc-list-section {
@@ -2817,10 +2935,10 @@ function formatTime(iso) {
   gap: 5px;
   min-height: 30px;
   padding: 0 10px;
-  border: 1px solid color-mix(in srgb, var(--accent, #818cf8) 34%, var(--line, #2a2a3e));
+  border: 1px solid color-mix(in srgb, var(--npc-accent) 34%, var(--npc-border));
   border-radius: 8px;
-  color: var(--accent, #818cf8);
-  background: color-mix(in srgb, var(--accent, #818cf8) 11%, transparent);
+  color: var(--npc-accent);
+  background: var(--npc-accent-soft);
   font: inherit;
   font-size: 12px;
   font-weight: 800;
@@ -2830,7 +2948,7 @@ function formatTime(iso) {
 
 .npc-organize-button:hover:not(:disabled),
 .npc-organize-button[aria-pressed="true"] {
-  background: color-mix(in srgb, var(--accent, #818cf8) 18%, transparent);
+  background: color-mix(in srgb, var(--npc-accent) 16%, var(--surface, #fbfaf6));
 }
 
 .npc-organizer-panel {
@@ -2992,7 +3110,7 @@ function formatTime(iso) {
 }
 .npc-refresh:hover:not(:disabled) {
   background: var(--hover, rgba(255,255,255,0.08));
-  color: var(--accent, #818cf8);
+  color: var(--npc-accent);
 }
 
 .npc-list {
@@ -3017,13 +3135,18 @@ function formatTime(iso) {
   transition: background 0.15s;
 }
 .npc-item:hover:not(:disabled) {
-  border-color: color-mix(in srgb, var(--accent, #818cf8) 26%, transparent);
+  border-color: color-mix(in srgb, var(--npc-accent) 24%, transparent);
   background: var(--hover, rgba(255,255,255,0.06));
 }
 .npc-item.active {
-  border-color: color-mix(in srgb, var(--accent, #818cf8) 38%, transparent);
-  background: var(--accent-bg, rgba(99, 102, 241, 0.15));
-  color: var(--accent, #818cf8);
+  border-color: color-mix(in srgb, var(--npc-accent) 42%, var(--npc-border));
+  background: var(--npc-accent-soft);
+  color: var(--text, #20241f);
+}
+
+.npc-item.active .npc-item-name {
+  color: var(--npc-accent);
+  font-weight: 850;
 }
 
 .npc-item-name {
@@ -3044,10 +3167,10 @@ function formatTime(iso) {
   text-overflow: ellipsis;
   white-space: nowrap;
   padding: 1px 6px;
-  border: 1px solid color-mix(in srgb, var(--green, #2f6d5a) 34%, transparent);
+  border: 1px solid var(--npc-border);
   border-radius: 999px;
-  color: var(--green, #2f6d5a);
-  background: color-mix(in srgb, var(--green, #2f6d5a) 10%, transparent);
+  color: var(--muted, #657064);
+  background: color-mix(in srgb, var(--surface-strong, #edf1ec) 68%, transparent);
   font-size: 10px;
   font-weight: 800;
 }
@@ -3060,10 +3183,10 @@ function formatTime(iso) {
   gap: 3px;
   overflow: hidden;
   padding: 1px 6px;
-  border: 1px solid color-mix(in srgb, var(--primary, #8d4a43) 28%, transparent);
+  border: 1px solid var(--npc-border);
   border-radius: 999px;
-  color: var(--primary-strong, #713932);
-  background: color-mix(in srgb, var(--primary-soft, #efe1dc) 62%, transparent);
+  color: var(--muted, #657064);
+  background: color-mix(in srgb, var(--surface-strong, #edf1ec) 68%, transparent);
   font-size: 10px;
   font-weight: 800;
 }
@@ -3082,10 +3205,10 @@ function formatTime(iso) {
   align-items: center;
   overflow: hidden;
   padding: 1px 6px;
-  border: 1px solid color-mix(in srgb, var(--accent, #6b7fd7) 28%, transparent);
+  border: 1px solid var(--npc-border);
   border-radius: 999px;
-  color: var(--accent, #6b7fd7);
-  background: color-mix(in srgb, var(--accent, #6b7fd7) 10%, transparent);
+  color: var(--muted, #657064);
+  background: color-mix(in srgb, var(--surface-strong, #edf1ec) 68%, transparent);
   font-size: 10px;
   font-weight: 800;
 }
@@ -3105,8 +3228,12 @@ function formatTime(iso) {
 }
 
 .npc-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  color: var(--muted, #657064);
   font-size: 12px;
-  opacity: 0.7;
+  font-variant-numeric: tabular-nums;
 }
 
 .npc-detail-section {
@@ -3124,12 +3251,18 @@ function formatTime(iso) {
 }
 
 .npc-detail-header h3 {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
   margin: 0;
   font-size: 16px;
   font-weight: 800;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .npc-detail-metrics {
+  flex: 1 1 auto;
   display: flex;
   flex-wrap: wrap;
   justify-content: flex-end;
@@ -3206,8 +3339,9 @@ function formatTime(iso) {
   background: var(--hover, rgba(255,255,255,0.06));
 }
 .npc-tab.active {
-  background: var(--accent-bg, rgba(99, 102, 241, 0.15));
-  color: var(--accent, #818cf8);
+  background: var(--npc-accent-soft);
+  color: var(--npc-accent);
+  font-weight: 850;
 }
 
 .npc-add-button {
@@ -3216,10 +3350,10 @@ function formatTime(iso) {
   gap: 6px;
   margin: 12px 20px;
   padding: 8px 14px;
-  background: var(--accent-bg, rgba(99, 102, 241, 0.12));
-  border: 1px dashed color-mix(in srgb, var(--accent, #818cf8) 70%, transparent);
+  background: var(--npc-accent-soft);
+  border: 1px dashed color-mix(in srgb, var(--npc-accent) 58%, transparent);
   border-radius: 10px;
-  color: var(--accent, #818cf8);
+  color: var(--npc-accent);
   cursor: pointer;
   font-size: 13px;
   transition: background 0.15s;
@@ -3286,7 +3420,7 @@ function formatTime(iso) {
 }
 .npc-range {
   flex: 1;
-  accent-color: var(--accent, #818cf8);
+  accent-color: var(--npc-accent);
 }
 
 .npc-checkbox-label {
@@ -3298,7 +3432,7 @@ function formatTime(iso) {
   cursor: pointer;
 }
 .npc-checkbox-label input {
-  accent-color: var(--accent, #818cf8);
+  accent-color: var(--npc-accent);
 }
 
 .npc-field-label {
@@ -3440,7 +3574,7 @@ function formatTime(iso) {
   transition: background 0.15s;
 }
 .npc-save {
-  background: var(--accent, #818cf8);
+  background: var(--npc-accent);
   color: #fff;
 }
 .npc-save:hover:not(:disabled) {
@@ -3705,7 +3839,185 @@ function formatTime(iso) {
 .protagonist-item-tags{display:flex;flex-wrap:wrap;gap:5px}.protagonist-item-tags span{padding:3px 6px;border-radius:999px;background:var(--surface-strong,#eef0eb);color:var(--muted,#657064);font-size:10px}.protagonist-item-tags .is-equipped{color:#176d52;background:#daf2e8}
 .protagonist-item-actions{display:flex;align-items:center;gap:5px}.protagonist-item-actions button{border:1px solid var(--line,#d8ddd6);border-radius:7px;padding:5px 7px;color:inherit;background:var(--surface,#fff);cursor:pointer}.protagonist-item-actions button:disabled{opacity:.5;cursor:not-allowed}
 .protagonist-audit-section{display:grid;gap:8px;margin-top:5px;padding-top:12px;border-top:1px solid var(--line,#d8ddd6)}.protagonist-audit-list{display:grid;gap:7px}.protagonist-audit-card{display:flex;align-items:center;justify-content:space-between;gap:10px}.protagonist-audit-card>div{display:grid;gap:3px}.protagonist-audit-card small{color:var(--muted,#657064);font-size:10px}.protagonist-audit-card button{display:flex;align-items:center;gap:4px;border:1px solid var(--line,#d8ddd6);border-radius:7px;padding:5px 7px;color:inherit;background:var(--surface,#fff);cursor:pointer}.protagonist-audit-card button:disabled{opacity:.5;cursor:not-allowed}
-@media(max-width:640px){.npc-form-grid{grid-template-columns:1fr}.protagonist-item-card{grid-template-columns:auto minmax(0,1fr)}.protagonist-item-actions{grid-column:1/-1;justify-content:flex-end}}
+@media (max-width: 640px) {
+  .npc-panel {
+    width: 100vw;
+    border-left: 0;
+    box-shadow: none;
+  }
+
+  .npc-panel-header {
+    align-items: center;
+    gap: 10px;
+    padding: 12px 14px 10px;
+  }
+
+  .npc-panel-title-mark {
+    width: 34px;
+    height: 34px;
+    border-radius: 10px;
+  }
+
+  .npc-panel-eyebrow {
+    font-size: 9px;
+  }
+
+  .npc-panel-title h2 {
+    font-size: 16px;
+  }
+
+  .npc-panel-subtitle {
+    display: none;
+  }
+
+  .npc-panel-header-actions {
+    gap: 6px;
+  }
+
+  .npc-update-badge {
+    min-height: 24px;
+    padding: 0 7px;
+    font-size: 10px;
+  }
+
+  .npc-close {
+    width: 32px;
+    height: 32px;
+  }
+
+  .npc-panel-summary {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 0;
+    padding: 0 12px 10px;
+    background: color-mix(in srgb, var(--surface, #fbfaf6) 96%, transparent);
+  }
+
+  .npc-summary-card {
+    display: grid;
+    justify-items: center;
+    gap: 2px;
+    padding: 8px 4px;
+    border: 0;
+    border-right: 1px solid var(--npc-border);
+    border-radius: 0;
+    background: transparent;
+  }
+
+  .npc-summary-card:last-child {
+    border-right: 0;
+  }
+
+  .npc-summary-icon {
+    display: none;
+  }
+
+  .npc-summary-copy {
+    display: contents;
+  }
+
+  .npc-summary-copy > span {
+    font-size: 10px;
+  }
+
+  .npc-summary-copy strong {
+    grid-row: 1;
+    font-size: 18px;
+  }
+
+  .npc-list-section {
+    max-height: 220px;
+  }
+
+  .npc-list-header {
+    gap: 8px;
+    padding: 10px 12px 6px;
+    letter-spacing: 0;
+    text-transform: none;
+  }
+
+  .npc-list-actions {
+    gap: 4px;
+  }
+
+  .npc-organize-button,
+  .npc-empty-remove {
+    min-height: 28px;
+    padding: 0 8px;
+    font-size: 11px;
+  }
+
+  .npc-refresh {
+    width: 28px;
+    height: 28px;
+  }
+
+  .npc-list {
+    gap: 5px;
+    padding: 0 10px 8px;
+  }
+
+  .npc-item {
+    padding: 9px 10px;
+    border-radius: 9px;
+  }
+
+  .npc-detail-header {
+    display: grid;
+    gap: 8px;
+    padding: 14px 14px 4px;
+  }
+
+  .npc-detail-header h3 {
+    font-size: 18px;
+  }
+
+  .npc-detail-metrics {
+    justify-content: flex-start;
+  }
+
+  .npc-detail-remove {
+    width: 26px;
+    min-width: 26px;
+    padding: 0;
+    justify-content: center;
+  }
+
+  .npc-detail-remove span {
+    display: none;
+  }
+
+  .npc-tabs {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 4px;
+    padding: 8px 10px;
+  }
+
+  .npc-tab {
+    justify-content: center;
+    gap: 4px;
+    min-width: 0;
+    padding: 7px 4px;
+    font-size: 11px;
+  }
+
+  .npc-tab svg {
+    flex: 0 0 auto;
+  }
+
+  .npc-form-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .protagonist-item-card {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .protagonist-item-actions {
+    grid-column: 1 / -1;
+    justify-content: flex-end;
+  }
+}
 
 /* Transition */
 .npc-panel-enter-active,

@@ -14,7 +14,7 @@ test('NPC accessory agent can record reusable behavior rules', () => {
 
 test('NPC accessory agent tracks unique protagonist and NPC items', () => {
   assert.match(accessoryAgentsSource, /toolName === 'upsert_actor_item'/);
-  assert.match(accessoryAgentsSource, /One item must never be copied to multiple owners/);
+  assert.match(accessoryAgentsSource, /一个物品不能同时属于多个所有者/);
   assert.match(accessoryAgentsSource, /function actorItemTool\(\)/);
   assert.match(accessoryAgentsSource, /function actorItemDeleteTool\(\)/);
   assert.match(accessoryAgentsSource, /clothingSlot/);
@@ -23,7 +23,18 @@ test('NPC accessory agent tracks unique protagonist and NPC items', () => {
 });
 
 test('scene and NPC state agents run in deterministic sequence', () => {
-  assert.match(accessoryAgentsSource, /runAgentSequence\(\[sceneAgentFactory, npcAgentFactory\]\)/);
+  assert.match(accessoryAgentsSource, /stateAgentFactories\.push\(sceneAgentFactory\)/);
+  assert.match(accessoryAgentsSource, /stateAgentFactories\.push\(npcAgentFactory\)/);
+  assert.match(accessoryAgentsSource, /stateAgentFactories\.push\(worldDirectorFactory\)/);
+  assert.match(accessoryAgentsSource, /runAgentSequence\(stateAgentFactories\)/);
+  assert.ok(
+    accessoryAgentsSource.indexOf('stateAgentFactories.push(sceneAgentFactory)')
+      < accessoryAgentsSource.indexOf('stateAgentFactories.push(npcAgentFactory)'),
+  );
+  assert.ok(
+    accessoryAgentsSource.indexOf('stateAgentFactories.push(npcAgentFactory)')
+      < accessoryAgentsSource.indexOf('stateAgentFactories.push(worldDirectorFactory)'),
+  );
   assert.match(accessoryAgentsSource, /async function runAgentSequence/);
   assert.doesNotMatch(accessoryAgentsSource, /jobs\.push\(runAgentJob\('npcAgent'/);
   assert.doesNotMatch(accessoryAgentsSource, /jobs\.push\(runAgentJob\('sceneAgent'/);
@@ -31,10 +42,11 @@ test('scene and NPC state agents run in deterministic sequence', () => {
 
 test('NPC accessory agent keeps automatic behavior rules conservative', () => {
   assert.match(accessoryAgentsSource, /const AUTO_NPC_BEHAVIOR_LIMIT = 8;/);
-  assert.match(accessoryAgentsSource, /Prefer record_npc_memory for observations, facts, relationship changes/);
-  assert.match(accessoryAgentsSource, /clear trigger condition/);
-  assert.match(accessoryAgentsSource, /too many behavior rules can over-constrain the character/);
-  assert.match(accessoryAgentsSource, /description: 'Record a rare explicit, stable reusable future behavior rule/);
+  assert.match(accessoryAgentsSource, /record_npc_memory 用于本轮产生的可长期复用事实/);
+  assert.match(accessoryAgentsSource, /明确 triggerCondition/);
+  assert.match(accessoryAgentsSource, /无法确定时不要创建行为/);
+  assert.match(accessoryAgentsSource, /description: 'Record one rare stable future behavior rule/);
+  assert.match(accessoryAgentsSource, /required: \['npcName', 'triggerCondition', 'action'\]/);
   assert.match(
     accessoryAgentsSource,
     /if \(!name \|\| !action \|\| !triggerCondition\) \{\s*return null;\s*}/
@@ -47,10 +59,11 @@ test('NPC accessory agent keeps automatic behavior rules conservative', () => {
 });
 
 test('NPC accessory agent prompt describes status aliases and memory sealing', () => {
-  assert.match(accessoryAgentsSource, /Update status when the current turn clearly says an NPC left/);
-  assert.match(accessoryAgentsSource, /Aliases are exact alternate ways this same individual is called/);
-  assert.match(accessoryAgentsSource, /generic (?:section titles|roles)/i);
+  assert.match(accessoryAgentsSource, /status 是持续状态/);
+  assert.match(accessoryAgentsSource, /稳定昵称或唯一称号写入 aliases/);
+  assert.match(accessoryAgentsSource, /泛称职业、群体名称、代词/);
   assert.match(accessoryAgentsSource, /memorySealed/);
-  assert.match(accessoryAgentsSource, /current turn/i);
-  assert.match(accessoryAgentsSource, /Do not convert world lore, prior history, plans, examples, or unchanged state into NPC memory/);
+  assert.match(accessoryAgentsSource, /observationWindow/);
+  assert.match(accessoryAgentsSource, /不得把世界设定、旧历史、计划、示例、假设或未变化状态重复写成记忆/);
+  assert.match(accessoryAgentsSource, /relationship: args\.relationship/);
 });

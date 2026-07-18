@@ -31,9 +31,9 @@ const itemCount = computed(() => {
 });
 
 const updateLabel = computed(() => {
-  if (props.updateStatus === 'updating') return '更新中';
-  if (props.updateStatus === 'updated') return '已更新';
-  return '未更新';
+  if (props.updateStatus === 'updating') return '正在同步';
+  if (props.updateStatus === 'updated') return '本轮已同步';
+  return '等待新回复';
 });
 
 function toggleExpanded() {

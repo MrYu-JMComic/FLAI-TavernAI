@@ -139,6 +139,20 @@ test('StatusBar custom template click handler tolerates missing event targets', 
   assert.doesNotMatch(statusBarScript, /event\.currentTarget\?\.contains\(target\)/);
 });
 
+test('StatusBar forwards custom collapse actions to its embedded disclosure owner', () => {
+  assert.match(statusBarScript, /const emit = defineEmits\(\['collapse', 'quick-reply'\]\);/);
+  assert.match(statusBarScript, /if \(effectiveCollapsed\.value\) classes\.push\('sb-collapsed'\);/);
+  assert.doesNotMatch(statusBarScript, /if \(collapsed\.value\) classes\.push\('sb-collapsed'\);/);
+  assert.match(
+    statusBarScript,
+    /if \(action === 'collapse'\) \{\s*requestCollapse\(\);\s*return;\s*\}[\s\S]*if \(action === 'toggle-collapse'\) \{\s*if \(props\.embedded\) \{\s*emit\('collapse'\);\s*return;/
+  );
+  assert.match(
+    statusBarScript,
+    /function requestCollapse\(\) \{\s*if \(props\.embedded\) \{\s*emit\('collapse'\);\s*return;\s*\}\s*setCollapsed\(true\);\s*\}/
+  );
+});
+
 test('StatusBar copy fallback cleans up temporary textareas when selection throws', () => {
   assert.match(
     statusBarScript,
