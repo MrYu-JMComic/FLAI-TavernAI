@@ -9,7 +9,13 @@ const { createAppDatabase } = await import('../db.js');
 const { mergeAdvancedSettings, normalizeAdvancedSettings } = await import('../modules/advancedSettings.js');
 const { createCharacter } = await import('../modules/characters.js');
 const { getConversationEconomyState, getTransactionHistory } = await import('../modules/economy.js');
-const { hideConversationNpc, listConversationNpcs, listNpcBehaviors } = await import('../modules/npcs.js');
+const {
+  addNpcMemory,
+  hideConversationNpc,
+  listConversationNpcs,
+  listNpcBehaviors,
+  upsertConversationNpc
+} = await import('../modules/npcs.js');
 const { getStatusBar, upsertStatusBar } = await import('../modules/statusBars.js');
 const { getAccessorySkillsPayload, runAccessoryAgents } = await import('../services/accessoryAgents.js');
 const accessoryAgentsSource = readFileSync(new URL('../services/accessoryAgents.js', import.meta.url), 'utf8');
@@ -28,7 +34,6 @@ test('accessory agents stay inactive when skills are disabled', async () => {
     variables: [{ name: 'HP', value: 100, max: 100 }],
     template: ''
   });
-
   const results = await runAccessoryAgents({
     db: env.db,
     userId: env.userId,
@@ -97,6 +102,14 @@ test('provider-backed accessory agents receive current-turn observation windows'
     variables: [{ name: 'HP', value: 100, max: 100 }],
     template: ''
   });
+  upsertConversationNpc(env.db, env.userId, env.conversation.id, {
+    npcName: 'Mira Valen',
+    aliases: ['Mira', 'Little Mi'],
+    currentLocation: 'NPC_LOCATION_MUST_STAY_OUT_OF_INITIAL_PAYLOAD'
+  });
+  addNpcMemory(env.db, env.userId, env.conversation.id, 'Mira Valen', {
+    content: 'NPC_MEMORY_MUST_STAY_OUT_OF_INITIAL_PAYLOAD'
+  });
   const capturedBodies = [];
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async (_url, request) => {
@@ -140,7 +153,11 @@ test('provider-backed accessory agents receive current-turn observation windows'
       statusBar
     });
 
-    assert.equal(capturedBodies.length, 3);
+    assert.equal(capturedBodies.length, 4);
+    assert.equal(
+      capturedBodies.filter((body) => body.tools?.some((tool) => tool.function?.name === 'update_status_bar')).length,
+      2
+    );
     for (const body of capturedBodies) {
       const systemMessage = body.messages.find((message) => message.role === 'system');
       const userPayload = JSON.parse(body.messages.find((message) => message.role === 'user').content);
@@ -156,6 +173,103 @@ test('provider-backed accessory agents receive current-turn observation windows'
     const npcBody = capturedBodies.find((body) => body.tools?.some((tool) => tool.function?.name === 'delete_actor_item'));
     const deleteItemSchema = npcBody.tools.find((tool) => tool.function?.name === 'delete_actor_item').function.parameters;
     assert.deepEqual(deleteItemSchema.anyOf, [{ required: ['id'] }, { required: ['itemCode'] }]);
+    const npcPayload = JSON.parse(npcBody.messages.find((message) => message.role === 'user').content);
+    assert.deepEqual(npcPayload.npcRoster, [
+      { name: 'Mira Valen', aliases: ['Mira', 'Little Mi'], names: ['Mira Valen', 'Mira', 'Little Mi'] }
+    ]);
+    assert.equal(Object.prototype.hasOwnProperty.call(npcPayload, 'existingItems'), false);
+    assert.equal(Object.prototype.hasOwnProperty.call(npcPayload, 'sceneNodes'), false);
+    assert.equal(JSON.stringify(npcPayload).includes('NPC_LOCATION_MUST_STAY_OUT_OF_INITIAL_PAYLOAD'), false);
+    assert.equal(JSON.stringify(npcPayload).includes('NPC_MEMORY_MUST_STAY_OUT_OF_INITIAL_PAYLOAD'), false);
+    assert.ok(npcBody.tools.some((tool) => tool.function?.name === 'get_npc_memories'));
+    assert.ok(npcBody.tools.some((tool) => tool.function?.name === 'get_scene_locations'));
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('NPC agent resolves an alias through lookup tools before recording a new canonical memory', async () => {
+  const env = setupConversation({ npcAgent: skill(true), statusBarAgent: skill(false) });
+  upsertConversationNpc(env.db, env.userId, env.conversation.id, {
+    npcName: 'Mira Valen',
+    aliases: ['Mira', 'Little Mi']
+  });
+  addNpcMemory(env.db, env.userId, env.conversation.id, 'Mira Valen', {
+    memoryType: 'knowledge',
+    content: 'The cellar key is hidden under the blue ledger.'
+  });
+
+  const originalFetch = globalThis.fetch;
+  const requestBodies = [];
+  globalThis.fetch = async (_url, request) => {
+    const body = JSON.parse(request.body);
+    requestBodies.push(body);
+    if (requestBodies.length === 1) {
+      return jsonResponse({
+        choices: [{
+          message: {
+            role: 'assistant',
+            content: null,
+            tool_calls: [{
+              id: 'npc-lookup-memory',
+              type: 'function',
+              function: {
+                name: 'get_npc_memories',
+                arguments: JSON.stringify({ npcName: 'Little Mi' })
+              }
+            }]
+          }
+        }]
+      });
+    }
+    if (requestBodies.length === 2) {
+      return jsonResponse({
+        choices: [{
+          message: {
+            role: 'assistant',
+            content: null,
+            tool_calls: [{
+              id: 'npc-record-new-memory',
+              type: 'function',
+              function: {
+                name: 'record_npc_memory',
+                arguments: JSON.stringify({
+                  npcName: 'Mira Valen',
+                  memoryType: 'event',
+                  content: 'She gave the cellar key to Hero.'
+                })
+              }
+            }]
+          }
+        }]
+      });
+    }
+    return jsonResponse({ choices: [{ message: { role: 'assistant', content: 'done' } }] });
+  };
+
+  try {
+    await runAccessoryAgents({
+      db: env.db,
+      userId: env.userId,
+      conversation: env.conversation,
+      character: env.character,
+      userMessage: { content: 'Little Mi, hand me the key.' },
+      assistantMessage: { content: 'Mira takes the cellar key from under the blue ledger and gives it to Hero.' },
+      settings: providerSettings(),
+      statusBar: null
+    });
+
+    assert.equal(requestBodies.length, 3);
+    const lookupResultMessage = requestBodies[1].messages.find((message) => message.role === 'tool');
+    const lookupResult = JSON.parse(lookupResultMessage.content);
+    assert.equal(lookupResult.npc.name, 'Mira Valen');
+    assert.deepEqual(lookupResult.memories.map((memory) => memory.content), [
+      'The cellar key is hidden under the blue ledger.'
+    ]);
+    const names = listConversationNpcs(env.db, env.userId, env.conversation.id, env.character.name)
+      .map((npc) => npc.name);
+    assert.deepEqual(names, ['Mira Valen']);
+    assert.equal(env.db.prepare("SELECT COUNT(*) AS count FROM npc_memories WHERE npc_name = 'Mira Valen'").get().count, 2);
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -310,6 +424,7 @@ test('status bar agent can create variables from prompt guidance', async () => {
     });
 
     const statusBar = getStatusBar(env.db, env.userId, env.conversation.id);
+    assert.equal(calls, 1);
     assert.equal(statusBar.name, '状态栏');
     assert.equal(statusBar.variables[0].name, 'Mood');
     assert.equal(statusBar.variables[0].value, 72);
@@ -580,7 +695,7 @@ test('status bar agent updates composite placeholder variables', async () => {
     const systemMessage = requestBody.messages.find((message) => message.role === 'system');
     const payload = JSON.parse(userMessage.content);
     assert.match(systemMessage.content, /复合行/);
-    assert.equal(payload.template, template);
+    assert.equal(Object.prototype.hasOwnProperty.call(payload, 'template'), false);
     assert.deepEqual(payload.templateHints.compositeRows, [
       { label: '\u5730\u70b9', variables: ['\u5927\u5730\u70b9', '\u5177\u4f53\u4f4d\u7f6e'] }
     ]);
@@ -589,6 +704,68 @@ test('status bar agent updates composite placeholder variables', async () => {
     const variables = getStatusBar(env.db, env.userId, env.conversation.id).variables;
     assert.equal(variables.find((item) => item.name === '\u5927\u5730\u70b9')?.value, '\u4e5d\u5929\u7384\u5973\u5883');
     assert.equal(variables.find((item) => item.name === '\u5177\u4f53\u4f4d\u7f6e')?.value, '\u7389\u9f0e\u5b97\u79c1\u4ea7');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('status bar agent retries a tool-less response and applies the required update tool', async () => {
+  const env = setupConversation({ statusBarAgent: skill('auto') });
+  const statusBar = upsertStatusBar(env.db, env.userId, env.conversation.id, {
+    name: 'State',
+    variables: [{ name: 'Location', value: '卧室' }],
+    template: '<div>{{Location}}</div>'
+  });
+
+  const originalFetch = globalThis.fetch;
+  const requestBodies = [];
+  globalThis.fetch = async (_url, request) => {
+    requestBodies.push(JSON.parse(request.body));
+    if (requestBodies.length === 1) {
+      return jsonResponse({
+        choices: [{ message: { role: 'assistant', content: '我会分析当前状态。' } }]
+      });
+    }
+    return jsonResponse({
+      choices: [
+        {
+          message: {
+            role: 'assistant',
+            content: null,
+            tool_calls: [
+              {
+                id: 'status-retry-1',
+                type: 'function',
+                function: {
+                  name: 'update_status_bar',
+                  arguments: JSON.stringify({
+                    variables: [{ name: 'Location', value: '浴室' }]
+                  })
+                }
+              }
+            ]
+          }
+        }
+      ]
+    });
+  };
+
+  try {
+    await runAccessoryAgents({
+      db: env.db,
+      userId: env.userId,
+      conversation: env.conversation,
+      character: env.character,
+      userMessage: { content: '她去洗澡。' },
+      assistantMessage: { content: '她关掉卧室的灯，走进浴室并打开热水。' },
+      settings: providerSettings(),
+      statusBar
+    });
+
+    assert.equal(requestBodies.length, 2);
+    const retryMessages = requestBodies[1].messages;
+    assert.match(retryMessages[retryMessages.length - 1].content, /必须且只能调用其中一个工具/);
+    assert.equal(getStatusBar(env.db, env.userId, env.conversation.id).variables[0].value, '浴室');
   } finally {
     globalThis.fetch = originalFetch;
   }

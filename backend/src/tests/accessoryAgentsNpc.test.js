@@ -5,7 +5,8 @@ import { readRepoText } from './frontendSfcTestUtils.js';
 const accessoryAgentsSource = readRepoText('backend/src/services/accessoryAgents.js');
 
 test('NPC accessory agent can record reusable behavior rules', () => {
-  assert.match(accessoryAgentsSource, /\[npcUpsertTool\(\), npcMemoryTool\(\), npcBehaviorTool\(\), actorItemTool\(\), actorItemDeleteTool\(\)\]/);
+  assert.match(accessoryAgentsSource, /npcUpsertTool\(\),[\s\S]*npcMemoryTool\(\),[\s\S]*npcBehaviorTool\(\),[\s\S]*actorItemTool\(\),[\s\S]*actorItemDeleteTool\(\),[\s\S]*buildNpcLookupTools/);
+  assert.match(accessoryAgentsSource, /isNpcLookupTool\(toolName\)/);
   assert.match(accessoryAgentsSource, /toolName === 'record_npc_behavior'/);
   assert.match(accessoryAgentsSource, /function npcBehaviorTool\(\)/);
   assert.match(accessoryAgentsSource, /function addNpcBehaviorIfNew/);

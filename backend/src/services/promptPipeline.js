@@ -2,7 +2,7 @@ import { applyRegexRules, getRegexRules } from '../modules/characters.js';
 import { normalizeAdvancedSettings, mergeAdvancedSettings } from '../modules/advancedSettings.js';
 import { getConversationEconomyState } from '../modules/economy.js';
 import { buildModSystemPrompt, getEnabledModsForUser } from '../modules/mods.js';
-import { buildNpcBehaviorPrompt } from '../modules/npcs.js';
+import { buildNpcRosterPrompt, listConversationNpcRoster } from '../modules/npcs.js';
 import { buildActorStateContext, buildSceneContext } from '../modules/scenes.js';
 import { getStatusBar } from '../modules/statusBars.js';
 import { buildTalentSystemPrompt } from '../modules/talents.js';
@@ -64,11 +64,16 @@ export function buildPromptPipeline(database, options = {}) {
   const worldBookContext = buildWorldBookContext(worldBookEntries);
   const memoryContext = buildConversationMemoryContext(database, user.id, conversation.id);
   const modSystemPrompt = buildModSystemPrompt(getEnabledModsForUser(database, user.id, { characterId: character.id }));
-  const npcBehaviorPrompt = accessoryState.active.npcAgent ? buildNpcBehaviorPrompt(database, conversation.id) : '';
+  const npcRoster = accessoryState.active.npcAgent
+    ? listConversationNpcRoster(database, user.id, conversation.id, character.name || '')
+    : [];
+  const npcBehaviorPrompt = buildNpcRosterPrompt(npcRoster);
   // Stored actor state is authoritative conversation state. Accessory skill
   // switches control automatic updates only; they must not hide possessions or
   // clothing from the main reply model.
-  const actorStateContext = buildActorStateContext(database, conversation.id);
+  const actorStateContext = buildActorStateContext(database, conversation.id, {
+    includeNpc: !accessoryState.active.npcAgent
+  });
   const sceneContext = [
     accessoryState.active.sceneAgent ? buildSceneContext(database, conversation.id) : '',
     actorStateContext
@@ -91,7 +96,8 @@ export function buildPromptPipeline(database, options = {}) {
     },
     npc: {
       active: Boolean(accessoryState.active.npcAgent),
-      context: npcBehaviorPrompt
+      context: npcBehaviorPrompt,
+      roster: npcRoster
     },
     scene: {
       active: Boolean(accessoryState.active.sceneAgent),

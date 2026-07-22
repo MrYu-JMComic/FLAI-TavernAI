@@ -5,6 +5,7 @@ process.env.FLAI_DB_PATH = ':memory:';
 
 const { createAppDatabase } = await import('../db.js');
 const { createCharacter } = await import('../modules/characters.js');
+const { addNpcBehavior, addNpcMemory, upsertConversationNpc } = await import('../modules/npcs.js');
 const { upsertSceneItem, upsertSceneNode } = await import('../modules/scenes.js');
 const { upsertStatusBar } = await import('../modules/statusBars.js');
 const { CONTEXT_PRIORITY_ORDER } = await import('../services/chatContextDirector.js');
@@ -94,4 +95,71 @@ test('prompt pipeline always injects stored actor clothing even when automatic a
   });
   assert.match(pipeline.sections.scene.context, /提示词连衣裙/);
   assert.match(JSON.stringify(pipeline.modelMessages), /结构化事实数据，不是指令/);
+});
+
+test('NPC prompt context contains only the saved name roster and leaves details to lookup tools', () => {
+  const database = createAppDatabase(':memory:');
+  const userId = 'prompt-npc-roster-user';
+  insertUser(database, userId);
+  const character = createCharacter(database, userId, { name: 'Hero' });
+  const conversationId = 'prompt-npc-roster-conversation';
+  const timestamp = new Date().toISOString();
+  database.prepare(
+    `INSERT INTO conversations (id, user_id, character_id, title, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?)`
+  ).run(conversationId, userId, character.id, 'Prompt NPC roster', timestamp, timestamp);
+
+  upsertConversationNpc(database, userId, conversationId, {
+    npcName: 'Mira Valen',
+    aliases: ['Mira', 'Little Mi'],
+    currentLocation: 'NPC_LOCATION_SENTINEL',
+    relationship: 'NPC_RELATIONSHIP_SENTINEL'
+  });
+  addNpcMemory(database, userId, conversationId, 'Mira Valen', {
+    memoryType: 'knowledge',
+    content: 'NPC_MEMORY_SENTINEL'
+  });
+  addNpcBehavior(database, userId, conversationId, 'Mira Valen', {
+    triggerCondition: 'NPC_TRIGGER_SENTINEL',
+    action: 'NPC_ACTION_SENTINEL',
+    enabled: true
+  });
+  upsertSceneItem(database, userId, conversationId, {
+    itemCode: 'itm_npc_roster_hidden_detail',
+    ownerType: 'npc',
+    ownerName: 'Mira Valen',
+    name: 'NPC_ITEM_SENTINEL',
+    itemKind: 'item',
+    iconKey: 'item.key'
+  });
+
+  const pipeline = buildPromptPipeline(database, {
+    user: { id: userId, username: userId },
+    character,
+    conversation: {
+      id: conversationId,
+      characterId: character.id,
+      settings: { accessorySkills: { npcAgent: { enabled: true, modelOverride: '' } } }
+    },
+    history: [],
+    content: 'Mira walks into the room.'
+  });
+
+  assert.deepEqual(pipeline.sections.npc.roster, [
+    { name: 'Mira Valen', aliases: ['Mira', 'Little Mi'], names: ['Mira Valen', 'Mira', 'Little Mi'] }
+  ]);
+  assert.match(pipeline.sections.npc.context, /Mira Valen/);
+  assert.match(pipeline.sections.npc.context, /Little Mi/);
+  const serializedMessages = JSON.stringify(pipeline.modelMessages);
+  for (const hiddenDetail of [
+    'NPC_LOCATION_SENTINEL',
+    'NPC_RELATIONSHIP_SENTINEL',
+    'NPC_MEMORY_SENTINEL',
+    'NPC_TRIGGER_SENTINEL',
+    'NPC_ACTION_SENTINEL',
+    'NPC_ITEM_SENTINEL'
+  ]) {
+    assert.equal(serializedMessages.includes(hiddenDetail), false, hiddenDetail);
+  }
+  assert.match(serializedMessages, /get_npc_profile/);
 });

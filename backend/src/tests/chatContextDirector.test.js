@@ -13,7 +13,7 @@ test('context director includes the approved priority order', () => {
   assert.match(prompt, /2\. User-configured session preset instructions/);
   assert.match(prompt, /3\. Core character card identity and persona/);
   assert.match(prompt, /4\. World book rules/);
-  assert.match(prompt, /5\. Status bar, NPC memory\/state, permanent scene facts, economy, and talents/);
+  assert.match(prompt, /5\. Status bar, on-demand NPC state, permanent scene facts, economy, and talents/);
   assert.match(prompt, /6\. Recent conversation details/);
   assert.match(prompt, /7\. Long-term conversation memory/);
   assert.match(prompt, /8\. Mod instructions/);

@@ -1175,10 +1175,14 @@
 }
 
 .reasoning-block {
+  min-width: 0;
+  max-width: 100%;
   margin-bottom: 14px;
 }
 
 .reasoning-toggle {
+  max-width: 100%;
+  flex-wrap: wrap;
   gap: 8px;
   min-height: 32px;
   border: 0;
@@ -1195,12 +1199,81 @@
 }
 
 .reasoning-body {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
   margin-top: 8px;
-  padding: 0 0 0 18px;
-  border-left: 2px solid #d7e3f8;
+  overflow: hidden;
+  padding: 14px 16px;
+  border: 1px solid color-mix(in srgb, var(--primary) 24%, var(--line));
+  border-radius: 14px;
   color: #6b7280;
+  background: color-mix(in srgb, var(--surface) 78%, transparent);
+  box-shadow:
+    0 12px 30px rgba(67, 45, 30, 0.1),
+    inset 0 0 0 1px color-mix(in srgb, #ffffff 16%, transparent);
+  backdrop-filter: blur(18px) saturate(1.08);
+  -webkit-backdrop-filter: blur(18px) saturate(1.08);
   white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
   line-height: 1.75;
+}
+
+.reasoning-body .markdown-content {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.reasoning-body .markdown-code {
+  box-sizing: border-box;
+  width: 100%;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.html-document-preview {
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--line) 78%, transparent);
+  border-radius: 12px;
+  background: #ffffff;
+}
+
+.html-document-preview-header {
+  display: flex;
+  min-width: 0;
+  min-height: 38px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 12px;
+  border-bottom: 1px solid color-mix(in srgb, var(--line) 78%, transparent);
+  color: var(--text);
+  background: color-mix(in srgb, var(--surface) 92%, transparent);
+}
+
+.html-document-preview-header strong {
+  font-size: 0.84rem;
+}
+
+.html-document-preview-header small {
+  color: var(--muted);
+  font-size: 0.74rem;
+}
+
+.html-document-frame {
+  display: block;
+  width: 100%;
+  height: clamp(420px, 64dvh, 720px);
+  border: 0;
+  background: #ffffff;
 }
 
 :root[data-theme="dark"] .reasoning-body {

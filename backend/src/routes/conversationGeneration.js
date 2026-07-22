@@ -17,6 +17,7 @@ import {
   logAssistantPayloadFailure
 } from '../services/conversationGenerationDiagnostics.js';
 import { streamAssistantResponse } from '../services/conversationStreamResponse.js';
+import { attachNpcLookupTools } from '../services/npcContextTools.js';
 import { buildPromptPipeline } from '../services/promptPipeline.js';
 import {
   generateCompletion,
@@ -204,6 +205,15 @@ export function createConversationGenerationRouter(ctx) {
       return;
     }
 
+    const completionOptions = attachNpcLookupTools(aiOptions, {
+      enabled: promptPipeline.sections.npc.active,
+      roster: promptPipeline.sections.npc.roster,
+      db,
+      userId: request.auth.user.id,
+      conversationId: conversation.id,
+      mainCharacterName: character.name || ''
+    });
+
     if (request.body?.stream !== false) {
       await streamAssistantResponse({
         request,
@@ -217,8 +227,8 @@ export function createConversationGenerationRouter(ctx) {
         userMessage,
         statusBar,
         worldBookMatches,
-        thinkingEnabled: aiOptions.thinkingEnabled,
-        completionOptions: aiOptions,
+        thinkingEnabled: completionOptions.thinkingEnabled,
+        completionOptions,
         writeSse,
         getStatusBar: () => getStatusBar(db, request.auth.user.id, conversation.id),
         saveAssistantResult: assistantResults.saveAssistantResult,
@@ -228,7 +238,7 @@ export function createConversationGenerationRouter(ctx) {
       return;
     }
 
-    const result = await generateCompletion(settings.value, modelMessages, aiOptions);
+    const result = await generateCompletion(settings.value, modelMessages, completionOptions);
     if (!hasAssistantPayload(result)) {
       const diagnosticId = createChatDiagnosticId();
       logAssistantPayloadFailure({
@@ -367,6 +377,14 @@ export function createConversationGenerationRouter(ctx) {
     const worldBookMatches = promptPipeline.worldBookMatches;
     const modelMessages = promptPipeline.modelMessages;
     const statusBar = promptPipeline.statusBar;
+    const completionOptions = attachNpcLookupTools(aiOptions, {
+      enabled: promptPipeline.sections.npc.active,
+      roster: promptPipeline.sections.npc.roster,
+      db,
+      userId: request.auth.user.id,
+      conversationId: conversation.id,
+      mainCharacterName: character.name || ''
+    });
 
     if (request.body?.stream !== false) {
       await streamAssistantResponse({
@@ -381,8 +399,8 @@ export function createConversationGenerationRouter(ctx) {
         userMessage: null,
         statusBar,
         worldBookMatches,
-        thinkingEnabled: aiOptions.thinkingEnabled,
-        completionOptions: aiOptions,
+        thinkingEnabled: completionOptions.thinkingEnabled,
+        completionOptions,
         writeSse,
         getStatusBar: () => getStatusBar(db, request.auth.user.id, conversation.id),
         saveAssistantResult: assistantResults.saveAssistantResult,
@@ -392,7 +410,7 @@ export function createConversationGenerationRouter(ctx) {
       return;
     }
 
-    const result = await generateCompletion(settings.value, modelMessages, aiOptions);
+    const result = await generateCompletion(settings.value, modelMessages, completionOptions);
     if (!hasAssistantPayload(result)) {
       const diagnosticId = createChatDiagnosticId();
       logAssistantPayloadFailure({

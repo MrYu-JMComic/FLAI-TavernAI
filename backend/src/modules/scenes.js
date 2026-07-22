@@ -442,10 +442,13 @@ export function buildSceneContext(database, conversationId) {
   return formatSceneContext(nodes, routes, items);
 }
 
-export function buildActorStateContext(database, conversationId) {
+export function buildActorStateContext(database, conversationId, options = {}) {
+  const ownerFilter = options.includeNpc === false
+    ? "owner_type = 'protagonist'"
+    : "owner_type != 'world'";
   const rows = database.prepare(
     `SELECT * FROM scene_items
-     WHERE conversation_id = ? AND owner_type != 'world'
+     WHERE conversation_id = ? AND ${ownerFilter}
        AND NOT (
          owner_type = 'npc'
          AND EXISTS (

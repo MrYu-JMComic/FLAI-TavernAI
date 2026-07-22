@@ -16,6 +16,11 @@ import {
   streamAnthropicToolCompletion
 } from './providerAnthropic.js';
 import {
+  runOpenAiResponseToolCompletion,
+  streamOpenAiResponseToolCompletion,
+  usesResponsesApi
+} from './providerOpenAiResponses.js';
+import {
   createThinkingTagFilter,
   extractReasoning,
   extractText,
@@ -45,6 +50,9 @@ export async function runToolCompletion(settings, messages, tools, executeTool, 
 
   if (settings.providerType === 'anthropic') {
     return runAnthropicToolCompletion(settings, messages, tools, executeTool, options);
+  }
+  if (usesResponsesApi(settings)) {
+    return runOpenAiResponseToolCompletion(settings, messages, tools, executeTool, options);
   }
 
   const maxRounds = normalizeToolCompletionRounds(options.maxRounds);
@@ -151,6 +159,9 @@ export async function streamToolCompletion(settings, messages, tools, executeToo
 
   if (settings.providerType === 'anthropic') {
     return streamAnthropicToolCompletion(settings, messages, tools, executeTool, emit, signal, options);
+  }
+  if (usesResponsesApi(settings)) {
+    return streamOpenAiResponseToolCompletion(settings, messages, tools, executeTool, emit, signal, options);
   }
 
   const maxRounds = normalizeToolCompletionRounds(options.maxRounds);

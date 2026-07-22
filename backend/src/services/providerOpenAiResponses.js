@@ -10,6 +10,7 @@ import {
 import { normalizeProviderExtraBody } from './providerExtraBody.js';
 import { providerFetch, readJsonResponse, responseErrorText } from './providerHttp.js';
 import { normalizeProviderModel } from './providerModels.js';
+import { normalizeToolCompletionRounds } from './providerNumbers.js';
 import { parseSse } from './providerSse.js';
 import { createStreamEmitQueue } from './providerStreamEmit.js';
 
@@ -110,6 +111,125 @@ export async function streamOpenAiResponse(settings, messages, emit, signal, opt
   };
 }
 
+export async function runOpenAiResponseToolCompletion(settings, messages, tools, executeTool, options = {}) {
+  const maxRounds = normalizeToolCompletionRounds(options.maxRounds);
+  const responseTools = convertToolsForOpenAiResponses(tools);
+  const process = [];
+  const toolCalls = [];
+  let input = convertMessagesForOpenAiResponses(messages);
+  let previousResponseId = '';
+  let finalContent = '';
+  let finalReasoning = '';
+  let usage = null;
+  let finalResponse = null;
+
+  for (let round = 0; round < maxRounds; round += 1) {
+    const response = await providerFetch(settings, '/responses', {
+      method: 'POST',
+      body: JSON.stringify({
+        ...normalizeProviderExtraBody(settings.extraBody),
+        model: resolveProviderModel(settings, options),
+        input,
+        reasoning: buildOpenAiReasoning(settings, options),
+        tools: responseTools,
+        tool_choice: convertToolChoiceForOpenAiResponses(options.toolChoice),
+        ...(previousResponseId ? { previous_response_id: previousResponseId } : {}),
+        stream: false
+      }),
+      signal: options.signal
+    });
+    const json = await readJsonResponse(response);
+    finalResponse = json;
+    usage = json.usage || usage;
+    previousResponseId = json.id || previousResponseId;
+
+    const parsedContent = splitThinkingTags(json.output_text || extractOpenAiOutputText(json));
+    const reasoning = mergeReasoning(extractOpenAiReasoning(json), parsedContent.reasoning);
+    const step = {
+      round: round + 1,
+      content: parsedContent.content,
+      reasoning,
+      tools: []
+    };
+    process.push(step);
+    finalContent = parsedContent.content;
+    finalReasoning = mergeReasoning(finalReasoning, reasoning);
+
+    const calls = normalizeOpenAiResponseFunctionCalls(json.output);
+    if (!calls.length) {
+      const nudge = typeof options.onNoToolCall === 'function'
+        ? options.onNoToolCall({ round: round + 1, content: step.content, process, toolCalls })
+        : '';
+      if (nudge && round + 1 < maxRounds) {
+        input = [{ role: 'user', content: String(nudge) }];
+        continue;
+      }
+      break;
+    }
+
+    input = [];
+    for (const call of calls) {
+      const result = await executeTool(call.name, call.arguments, call);
+      const log = {
+        name: call.name,
+        arguments: call.arguments,
+        result
+      };
+      step.tools.push(log);
+      toolCalls.push(log);
+      input.push({
+        type: 'function_call_output',
+        call_id: call.callId,
+        output: JSON.stringify(result)
+      });
+      if (result?.stop === true) {
+        return buildOpenAiResponseToolResult({
+          settings,
+          content: finalContent,
+          reasoning: finalReasoning,
+          response: finalResponse,
+          usage,
+          toolCalls,
+          process
+        });
+      }
+    }
+  }
+
+  return buildOpenAiResponseToolResult({
+    settings,
+    content: finalContent,
+    reasoning: finalReasoning,
+    response: finalResponse,
+    usage,
+    toolCalls,
+    process
+  });
+}
+
+export async function streamOpenAiResponseToolCompletion(settings, messages, tools, executeTool, emit, signal, options = {}) {
+  const result = await runOpenAiResponseToolCompletion(settings, messages, tools, executeTool, {
+    ...options,
+    signal
+  });
+  const streamEmit = createStreamEmitQueue(emit);
+  for (const step of result.process || []) {
+    await streamEmit.emit('step', step);
+    if (step.reasoning) {
+      await streamEmit.emit('reasoning', { round: step.round, text: step.reasoning });
+    }
+    for (const tool of step.tools || []) {
+      await streamEmit.emit('tool', { round: step.round, ...tool });
+    }
+  }
+  if (result.content) {
+    const finalRound = result.process?.at(-1)?.round || 1;
+    await streamEmit.emit('content', { round: finalRound, text: result.content });
+  }
+  await streamEmit.wait();
+  return result;
+}
+
 function convertMessagesForOpenAiResponses(messages = []) {
   const converted = [];
   if (!messages || typeof messages[Symbol.iterator] !== 'function') {
@@ -122,6 +242,58 @@ function convertMessagesForOpenAiResponses(messages = []) {
     });
   }
   return converted;
+}
+
+function convertToolsForOpenAiResponses(tools = []) {
+  const converted = [];
+  for (const tool of Array.isArray(tools) ? tools : []) {
+    const fn = tool?.function || {};
+    if (!fn.name) continue;
+    converted.push({
+      type: 'function',
+      name: fn.name,
+      description: fn.description || '',
+      parameters: fn.parameters || { type: 'object', properties: {} }
+    });
+  }
+  return converted;
+}
+
+function convertToolChoiceForOpenAiResponses(toolChoice) {
+  if (!toolChoice || toolChoice === 'auto') return 'auto';
+  if (toolChoice === 'none' || toolChoice === 'required') return toolChoice;
+  if (typeof toolChoice === 'string') return { type: 'function', name: toolChoice };
+  const name = toolChoice?.function?.name || toolChoice?.name;
+  return name ? { type: 'function', name } : 'auto';
+}
+
+function normalizeOpenAiResponseFunctionCalls(output = []) {
+  const calls = [];
+  for (const item of Array.isArray(output) ? output : []) {
+    if (item?.type !== 'function_call' || !item.name) continue;
+    calls.push({
+      id: item.id || item.call_id || '',
+      callId: item.call_id || item.id || '',
+      name: item.name,
+      arguments: parseJson(item.arguments || '{}', {}),
+      raw: item
+    });
+  }
+  return calls;
+}
+
+function buildOpenAiResponseToolResult({ settings, content, reasoning, response, usage, toolCalls, process }) {
+  return {
+    content,
+    reasoning,
+    message: response,
+    usage,
+    toolCalls,
+    process,
+    provider: settings.gatewayName,
+    providerType: settings.providerType,
+    model: normalizeProviderModel(settings.providerType, response?.model || settings.model)
+  };
 }
 
 function convertContentForOpenAiResponses(content) {

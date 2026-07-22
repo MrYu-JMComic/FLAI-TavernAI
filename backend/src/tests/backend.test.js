@@ -7885,7 +7885,7 @@ test('chat prompt injects compact status bar context without author update rules
   }
 });
 
-test('chat prompt injects NPC memories and behaviors when NPC agent is active', async () => {
+test('chat prompt injects only the NPC roster and attaches on-demand detail tools', async () => {
   const database = createAppDatabase(':memory:');
   const { userId, conversationId } = createTestSetup(database);
   database
@@ -7988,10 +7988,18 @@ test('chat prompt injects NPC memories and behaviors when NPC agent is active', 
     ));
     assert.ok(providerBody);
     const promptText = JSON.stringify(providerBody.messages);
-    assert.match(promptText, /NPC_MEMORY_SENTINEL/);
-    assert.match(promptText, /NPC_ACTION_SENTINEL/);
-    assert.match(promptText, /NPC_TRIGGER_SENTINEL/);
-    assert.match(promptText, /NPC_MEMORY_ONLY_SENTINEL/);
+    assert.match(promptText, /PromptNpc/);
+    assert.match(promptText, /MemoryOnlyNpc/);
+    assert.doesNotMatch(promptText, /NPC_MEMORY_SENTINEL/);
+    assert.doesNotMatch(promptText, /NPC_ACTION_SENTINEL/);
+    assert.doesNotMatch(promptText, /NPC_TRIGGER_SENTINEL/);
+    assert.doesNotMatch(promptText, /NPC_MEMORY_ONLY_SENTINEL/);
+    assert.deepEqual(providerBody.tools.map((tool) => tool.function.name), [
+      'get_npc_profile',
+      'get_npc_memories',
+      'get_npc_behaviors',
+      'get_actor_items'
+    ]);
     assert.equal(providerBody.messages.at(-1).content, 'new prompt');
     for (let attempt = 0; attempt < 20 && providerBodies.length < 2; attempt += 1) {
       await new Promise((resolve) => setTimeout(resolve, 5));

@@ -14,7 +14,7 @@ const CONTEXT_PRIORITY_LABELS = Object.freeze({
   session_preset: 'User-configured session preset instructions.',
   character_card: 'Core character card identity and persona.',
   world_book: 'World book rules.',
-  npc_status_economy_talent: 'Status bar, NPC memory/state, permanent scene facts, economy, and talents.',
+  npc_status_economy_talent: 'Status bar, on-demand NPC state, permanent scene facts, economy, and talents.',
   recent_conversation: 'Recent conversation details.',
   long_term_memory: 'Long-term conversation memory.',
   mods: 'Mod instructions.'
@@ -65,7 +65,7 @@ export function buildContextDirectorPrompt(context = {}) {
   if (hasText(source.npcBehaviorPrompt)) {
     lines.push(
       '',
-      'Use NPC context to preserve each side character identity, aliases, current status, location, relationship, memories, and stable behavior rules. Do not merge different NPCs or infer a state change from mere mention.'
+      'The NPC context contains an identity roster only. When a listed NPC matters to this reply, use the available NPC lookup tools before relying on status, location, relationship, memories, behavior rules, or possessions. Query only relevant details, do not merge different NPCs, and do not infer a state change from mere mention.'
     );
   }
 

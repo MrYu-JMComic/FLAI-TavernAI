@@ -86,6 +86,156 @@ test('Anthropic streaming reports a friendly error when the response body is mis
   );
 });
 
+test('generateCompletion runs attached tools before returning the final chat reply', async () => {
+  const requests = [];
+  const executions = [];
+  await withMockFetch(
+    async (_url, request = {}) => {
+      const body = JSON.parse(request.body);
+      requests.push(body);
+      if (requests.length === 1) {
+        return jsonResponse({
+          choices: [{
+            message: {
+              role: 'assistant',
+              content: null,
+              tool_calls: [{
+                id: 'profile-call-1',
+                type: 'function',
+                function: {
+                  name: 'get_npc_profile',
+                  arguments: JSON.stringify({ npcName: 'Mira' })
+                }
+              }]
+            }
+          }]
+        });
+      }
+      return jsonResponse({
+        choices: [{ message: { role: 'assistant', content: 'Mira is waiting at the north gate.' } }]
+      });
+    },
+    async () => {
+      const result = await generateCompletion(
+        {
+          providerType: 'openai',
+          gatewayName: 'OpenAI',
+          baseUrl: 'https://api.openai.com/v1',
+          model: 'gpt-test',
+          apiKey: 'sk-test',
+          supportsReasoning: false,
+          extraBody: {}
+        },
+        [{ role: 'user', content: 'Where is Mira?' }],
+        {
+          tools: [{
+            type: 'function',
+            function: {
+              name: 'get_npc_profile',
+              description: 'Get one NPC profile.',
+              parameters: {
+                type: 'object',
+                properties: { npcName: { type: 'string' } },
+                required: ['npcName']
+              }
+            }
+          }],
+          executeTool: async (name, args) => {
+            executions.push({ name, args });
+            return { ok: true, currentLocation: 'north gate' };
+          },
+          maxRounds: 3
+        }
+      );
+
+      assert.equal(result.content, 'Mira is waiting at the north gate.');
+      assert.deepEqual(executions, [{ name: 'get_npc_profile', args: { npcName: 'Mira' } }]);
+      assert.equal(requests.length, 2);
+      assert.equal(requests[0].tools[0].function.name, 'get_npc_profile');
+      assert.equal(requests[1].messages.at(-1).role, 'tool');
+      assert.match(requests[1].messages.at(-1).content, /north gate/);
+    }
+  );
+});
+
+test('generateCompletion keeps Responses API models on native function calls', async () => {
+  const requests = [];
+  const urls = [];
+  await withMockFetch(
+    async (url, request = {}) => {
+      urls.push(String(url));
+      const body = JSON.parse(request.body);
+      requests.push(body);
+      if (requests.length === 1) {
+        return jsonResponse({
+          id: 'resp_tool_round_1',
+          model: 'gpt-5-test',
+          output: [{
+            type: 'function_call',
+            id: 'fc_1',
+            call_id: 'call_1',
+            name: 'get_npc_profile',
+            arguments: JSON.stringify({ npcName: 'Mira' })
+          }],
+          usage: { total_tokens: 5 }
+        });
+      }
+      return jsonResponse({
+        id: 'resp_tool_round_2',
+        model: 'gpt-5-test',
+        output_text: 'Mira is at the north gate.',
+        output: [],
+        usage: { total_tokens: 8 }
+      });
+    },
+    async () => {
+      const result = await generateCompletion(
+        {
+          providerType: 'openai',
+          gatewayName: 'OpenAI',
+          baseUrl: 'https://api.openai.com/v1',
+          model: 'gpt-5-test',
+          apiKey: 'sk-test',
+          supportsReasoning: true,
+          extraBody: {}
+        },
+        [{ role: 'user', content: 'Where is Mira?' }],
+        {
+          tools: [{
+            type: 'function',
+            function: {
+              name: 'get_npc_profile',
+              parameters: {
+                type: 'object',
+                properties: { npcName: { type: 'string' } },
+                required: ['npcName']
+              }
+            }
+          }],
+          executeTool: async () => ({ ok: true, currentLocation: 'north gate' }),
+          maxRounds: 3
+        }
+      );
+
+      assert.equal(result.content, 'Mira is at the north gate.');
+      assert.equal(urls.every((url) => url.endsWith('/responses')), true);
+      assert.deepEqual(requests[0].tools[0], {
+        type: 'function',
+        name: 'get_npc_profile',
+        description: '',
+        parameters: {
+          type: 'object',
+          properties: { npcName: { type: 'string' } },
+          required: ['npcName']
+        }
+      });
+      assert.equal(requests[1].previous_response_id, 'resp_tool_round_1');
+      assert.equal(requests[1].input[0].type, 'function_call_output');
+      assert.match(requests[1].input[0].output, /north gate/);
+    }
+  );
+});
+
 test('Gemini compatible completion reads native candidates parts', async () => {
   await withMockFetch(
     async () => jsonResponse({

@@ -39,6 +39,7 @@ import { buildProviderBody } from './providerRequestBody.js';
 import { defaultProviderSettings } from './providerRegistry.js';
 import { parseSse } from './providerSse.js';
 import { createStreamEmitQueue } from './providerStreamEmit.js';
+import { runToolCompletion, streamToolCompletion } from './providerToolCompletions.js';
 import { trimSlash } from './providerUrls.js';
 
 export { generateImage } from './providerImageGeneration.js';
@@ -49,7 +50,7 @@ export { normalizeProviderExtraBody, normalizeProviderRequestExtraBody } from '.
 export { buildUsageSnapshot, summarizeUsageSnapshots } from './providerUsage.js';
 export { hasUsableProvider } from './providerReadiness.js';
 export { buildProviderBody } from './providerRequestBody.js';
-export { runToolCompletion, streamToolCompletion } from './providerToolCompletions.js';
+export { runToolCompletion, streamToolCompletion };
 
 const providerModelCache = new Map();
 const PROVIDER_MODEL_CACHE_TTL_MS = 30 * 60 * 1000;
@@ -220,6 +221,10 @@ export async function generateCompletion(settings, messages, options = {}) {
   const signal = buildNonStreamSignal(options);
   options = { ...options, signal };
 
+  if (Array.isArray(options.tools) && options.tools.length && typeof options.executeTool === 'function') {
+    return runToolCompletion(settings, messages, options.tools, options.executeTool, options);
+  }
+
   if (settings.providerType === 'anthropic') {
     return generateAnthropicMessage(settings, messages, options);
   }
@@ -245,6 +250,10 @@ export async function streamCompletion(settings, messages, emit, signal, options
     const result = await streamMockCompletion(messages, streamEmit.emit, settings);
     await streamEmit.wait();
     return result;
+  }
+
+  if (Array.isArray(options.tools) && options.tools.length && typeof options.executeTool === 'function') {
+    return streamToolCompletion(settings, messages, options.tools, options.executeTool, emit, signal, options);
   }
 
   if (settings.providerType === 'anthropic') {

@@ -16,6 +16,8 @@ import {
   X
 } from '@lucide/vue';
 import MarkdownContent from '../MarkdownContent.vue';
+import { extractHtmlDocument } from '../../utils/htmlDocument.js';
+import HtmlDocumentPreview from './HtmlDocumentPreview.vue';
 
 const props = defineProps({
   message: { type: Object, required: true },
@@ -63,6 +65,11 @@ const emit = defineEmits([
 const editTextareaRef = ref(null);
 const isEditingCurrentMessage = computed(() => props.editingMessageId === props.message.id);
 const messageAttachments = computed(() => normalizeMessageAttachments(props.message?.attachments));
+const htmlDocumentContent = computed(() => (
+  props.message?.role === 'assistant'
+    ? extractHtmlDocument(props.message?.content)
+    : ''
+));
 
 function emitMessageAction(eventName) {
   emit(eventName, props.message);
@@ -139,7 +146,8 @@ watch(isEditingCurrentMessage, async (active) => {
         :class="{
           'is-typing': isContentTyping,
           'is-waiting': isContentTyping && !message.content && !messageAttachments.length,
-          'is-editing': editingMessageId === message.id
+          'is-editing': editingMessageId === message.id,
+          'has-html-document': Boolean(htmlDocumentContent) && !isContentTyping && editingMessageId !== message.id
         }"
       >
         <div v-if="editingMessageId === message.id" class="message-edit-box" :aria-busy="messageActionBusy">
@@ -187,8 +195,12 @@ watch(isEditingCurrentMessage, async (active) => {
               <img :src="attachment.url" :alt="attachment.alt" />
             </a>
           </div>
+          <HtmlDocumentPreview
+            v-if="htmlDocumentContent && !isContentTyping"
+            :source="htmlDocumentContent"
+          />
           <MarkdownContent
-            v-if="message.content || messagePlaceholder"
+            v-else-if="message.content || messagePlaceholder"
             class="typing-text"
             :text="message.content || messagePlaceholder"
             :render-plugins="renderPlugins"
