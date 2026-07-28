@@ -13,6 +13,7 @@ import { normalizeProviderModel } from './providerModels.js';
 import { normalizeToolCompletionRounds } from './providerNumbers.js';
 import { parseSse } from './providerSse.js';
 import { createStreamEmitQueue } from './providerStreamEmit.js';
+import { executeProviderTool } from './providerToolResults.js';
 
 export function usesResponsesApi(settings = {}) {
   return Boolean(settings.supportsReasoning && ['openai', 'xai'].includes(settings.providerType));
@@ -169,7 +170,14 @@ export async function runOpenAiResponseToolCompletion(settings, messages, tools,
 
     input = [];
     for (const call of calls) {
-      const result = await executeTool(call.name, call.arguments, call);
+      const prepared = await executeProviderTool(
+        executeTool,
+        call.name,
+        call.arguments,
+        call,
+        options.signal
+      );
+      const result = prepared.result;
       const log = {
         name: call.name,
         arguments: call.arguments,
@@ -180,9 +188,9 @@ export async function runOpenAiResponseToolCompletion(settings, messages, tools,
       input.push({
         type: 'function_call_output',
         call_id: call.callId,
-        output: JSON.stringify(result)
+        output: prepared.content
       });
-      if (result?.stop === true) {
+      if (prepared.stop) {
         return buildOpenAiResponseToolResult({
           settings,
           content: finalContent,

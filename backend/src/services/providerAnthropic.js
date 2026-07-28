@@ -17,6 +17,7 @@ import {
 } from './providerNumbers.js';
 import { parseSse } from './providerSse.js';
 import { createStreamEmitQueue } from './providerStreamEmit.js';
+import { executeProviderTool } from './providerToolResults.js';
 
 export async function generateAnthropicMessage(settings, messages, options = {}) {
   const requestBody = buildAnthropicBody(settings, messages, false, options);
@@ -210,7 +211,14 @@ export async function runAnthropicToolCompletion(settings, messages, tools, exec
 
     const toolResults = [];
     for (const call of calls) {
-      const result = await executeTool(call.name, call.arguments, call);
+      const prepared = await executeProviderTool(
+        executeTool,
+        call.name,
+        call.arguments,
+        call,
+        options.signal
+      );
+      const result = prepared.result;
       const log = {
         name: call.name,
         arguments: call.arguments,
@@ -221,9 +229,9 @@ export async function runAnthropicToolCompletion(settings, messages, tools, exec
       toolResults.push({
         type: 'tool_result',
         tool_use_id: call.id,
-        content: JSON.stringify(result)
+        content: prepared.content
       });
-      if (result?.stop === true) {
+      if (prepared.stop) {
         return {
           content: finalContent,
           reasoning: finalReasoning,

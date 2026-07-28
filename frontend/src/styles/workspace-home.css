@@ -382,6 +382,89 @@
   font-variant-numeric: tabular-nums;
 }
 
+.home-town-entry {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  min-height: 92px;
+  padding: 16px 18px;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, #9b6d42 44%, var(--line));
+  border-radius: 12px;
+  color: #fff8e9;
+  background:
+    linear-gradient(90deg, rgba(25, 21, 26, 0.92) 0%, rgba(25, 21, 26, 0.7) 52%, rgba(25, 21, 26, 0.36) 100%),
+    url('/assets/town/bianjing-night-market.webp') center 48% / cover;
+  box-shadow: 0 14px 34px rgba(66, 43, 26, 0.16);
+  text-align: left;
+}
+
+.home-town-entry::after {
+  position: absolute;
+  inset: 0;
+  content: "";
+  border-radius: inherit;
+  box-shadow: inset 0 0 0 1px rgba(255, 230, 183, 0.06);
+  pointer-events: none;
+}
+
+.home-town-entry:hover {
+  border-color: rgba(224, 176, 106, 0.74);
+  box-shadow: 0 14px 34px rgba(66, 43, 26, 0.2);
+}
+
+.home-town-entry-copy,
+.home-town-entry-action {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+}
+
+.home-town-entry-copy {
+  min-width: 0;
+  gap: 12px;
+}
+
+.home-town-entry-copy > svg {
+  flex: 0 0 auto;
+  color: #f0bd70;
+}
+
+.home-town-entry-copy > span {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.home-town-entry-copy strong {
+  font-size: 1rem;
+}
+
+.home-town-entry-copy small {
+  overflow: hidden;
+  color: rgba(255, 248, 233, 0.76);
+  font-size: 0.78rem;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.home-town-entry-action {
+  flex: 0 0 auto;
+  gap: 6px;
+  min-height: 40px;
+  padding: 0 13px;
+  border: 1px solid rgba(255, 235, 196, 0.22);
+  border-radius: 9px;
+  background: rgba(18, 17, 24, 0.42);
+  font-size: 0.8rem;
+  font-weight: 850;
+  backdrop-filter: blur(9px);
+}
+
 .home-quick-row {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -1604,6 +1687,26 @@
 
 
 @media (max-width: 620px) {
+  .home-town-entry {
+    min-height: 82px;
+    padding: 13px 14px;
+  }
+
+  .home-town-entry-copy small {
+    white-space: normal;
+  }
+
+  .home-town-entry-action > span {
+    display: none;
+  }
+
+  .home-town-entry-action {
+    width: 38px;
+    min-height: 38px;
+    justify-content: center;
+    padding: 0;
+  }
+
   .home-command-copy {
     white-space: normal;
   }

@@ -8,6 +8,7 @@ const ROUTE_LABELS = {
   characterNew: '创建角色',
   characterEdit: '编辑角色',
   chat: '角色对话',
+  town: 'AI 虚拟小镇',
   worldBooks: '世界书',
   worldBookDetail: '世界书详情',
   presets: '预设管理',
@@ -37,6 +38,7 @@ const props = defineProps({
 const emit = defineEmits(['navigate', 'logout', 'toggle-theme']);
 
 const isChatRoute = computed(() => props.currentRoute === 'chat');
+const isTownRoute = computed(() => props.currentRoute === 'town');
 const isHomeRoute = computed(() => props.currentRoute === 'home');
 const isWorldBookRoute = computed(() => props.currentRoute === 'worldBooks' || props.currentRoute === 'worldBookDetail');
 const isExtensionsRoute = computed(() => props.currentRoute === 'extensions');
@@ -58,7 +60,7 @@ const pageScrollProgress = ref(0);
 const pageScrollPositions = new Map();
 const { isPhone: isMobileNavViewport } = useViewport({ breakpoint: '(max-width: 620px)' });
 const currentPageLabel = computed(() => ROUTE_LABELS[props.currentRoute] || '工作台');
-const showScrollTop = computed(() => !isChatRoute.value && pageScrollTop.value > 520);
+const showScrollTop = computed(() => !isChatRoute.value && !isTownRoute.value && pageScrollTop.value > 520);
 const scrollProgressStyle = computed(() => ({
   '--page-scroll-progress': pageScrollProgress.value / 100
 }));
@@ -216,10 +218,14 @@ function updateDocumentTitle() {
 </script>
 
 <template>
-  <div class="layout-shell" :class="{ 'chat-layout-shell': isChatRoute, 'home-layout-shell': isHomeRoute, 'workspace-layout-shell': isWorkspaceRoute }">
+  <div
+    class="layout-shell"
+    :class="{ 'chat-layout-shell': isChatRoute, 'home-layout-shell': isHomeRoute, 'workspace-layout-shell': isWorkspaceRoute }"
+    :data-town-layout="isTownRoute ? 'true' : undefined"
+  >
     <a href="#main-content" class="skip-link">跳转到主要内容</a>
 
-    <header v-if="!isChatRoute" class="topbar">
+    <header v-if="!isChatRoute && !isTownRoute" class="topbar">
       <span class="page-scroll-progress" :style="scrollProgressStyle" aria-hidden="true"></span>
 
       <button class="brand-button" type="button" aria-label="FLAI Tavern AI 首页" @click="navigateAndClose('home')">
@@ -353,7 +359,7 @@ function updateDocumentTitle() {
       </button>
     </Transition>
 
-    <nav v-if="!isChatRoute" class="mobile-bottom-nav" aria-label="移动端主导航">
+    <nav v-if="!isChatRoute && !isTownRoute" class="mobile-bottom-nav" aria-label="移动端主导航">
       <button :class="{ active: currentRoute === 'home' }" type="button" :aria-current="currentRoute === 'home' ? 'page' : undefined" @click="navigateAndClose('home')">
         <Home :size="20" aria-hidden="true" />
         <span>首页</span>

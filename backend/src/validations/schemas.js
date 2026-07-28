@@ -440,6 +440,86 @@ export const renameSaveSchema = z.object({
   conversationId: z.string().trim().min(1)
 });
 
+// ── AI 虚拟小镇 ──
+
+export const createTownSchema = z.object({
+  name: z.string().min(1, '小镇名称不能为空').max(120).trim(),
+  description: z.string().max(2000).trim().optional().default(''),
+  creationPrompt: z.string().max(20000).trim().optional().default(''),
+  mapConfig: z.record(z.string(), z.any()).optional().default({}),
+  simulationStatus: z.enum(['paused', 'running']).optional().default('paused'),
+  currentDay: z.number().int().min(1).max(1000000).optional().default(1),
+  minuteOfDay: z.number().int().min(0).max(1439).optional().default(480),
+  settings: z.record(z.string(), z.any()).optional().default({})
+});
+
+export const generateTownSchema = z.object({
+  prompt: z.string().min(1, '请输入你的世界构想').max(20000).trim(),
+  simulationStatus: z.enum(['paused', 'running']).optional().default('paused')
+});
+
+export const updateTownClockSchema = z.object({
+  currentDay: z.number().int().min(1).max(1000000).optional(),
+  minuteOfDay: z.number().int().min(0).max(1439).optional(),
+  simulationStatus: z.enum(['paused', 'running']).optional()
+}).refine((value) => Object.keys(value).length > 0, '至少提供一个时钟字段');
+
+export const advanceTownSchema = z.object({
+  steps: z.number().int().min(1).max(12).optional().default(1)
+});
+
+export const createTownResidentSchema = z.object({
+  name: z.string().min(1, '居民姓名不能为空').max(120).trim(),
+  role: z.string().max(160).trim().optional().default(''),
+  profile: z.record(z.string(), z.any()).optional().default({}),
+  state: z.record(z.string(), z.any()).optional().default({}),
+  currentLocation: z.string().max(200).trim().optional().default(''),
+  reflectionThreshold: z.number().min(1).max(100).optional().default(15)
+});
+
+export const createTownEventSchema = z.object({
+  residentId: z.string().max(160).trim().optional().default(''),
+  eventType: z.string().max(80).trim().optional().default('world.changed'),
+  source: z.string().max(40).trim().optional().default('simulation'),
+  title: z.string().max(200).trim().optional().default(''),
+  detail: z.string().max(4000).trim().optional().default(''),
+  payload: z.record(z.string(), z.any()).optional().default({}),
+  occurredTick: z.number().int().min(0).optional()
+});
+
+export const createTownMemorySchema = z.object({
+  memoryType: z.enum(['observation', 'event', 'relationship', 'plan', 'reflection']).optional().default('observation'),
+  content: z.string().min(1, '记忆内容不能为空').max(8000).trim(),
+  importance: z.number().min(1).max(10).optional().default(5),
+  keywords: z.array(z.string().max(80).trim()).max(80).optional().default([]),
+  sourceEventId: z.string().max(160).trim().optional().default(''),
+  sourceKind: z.string().max(40).trim().optional().default('simulation'),
+  occurredTick: z.number().int().min(0).optional()
+});
+
+export const createTownReflectionSchema = z.object({
+  content: z.string().min(1, '反思内容不能为空').max(8000).trim(),
+  memoryIds: z.array(z.string().min(1).max(160).trim()).max(100).optional().default([]),
+  importance: z.number().min(1).max(10).optional().default(5),
+  keywords: z.array(z.string().max(80).trim()).max(80).optional().default([])
+});
+
+const townScheduleItemSchema = z.object({
+  startMinute: z.number().int().min(0).max(1439),
+  endMinute: z.number().int().min(1).max(1440),
+  activity: z.string().min(1, '日程活动不能为空').max(300).trim(),
+  location: z.string().max(200).trim().optional().default(''),
+  intention: z.string().max(1000).trim().optional().default(''),
+  status: z.enum(['planned', 'active', 'completed', 'skipped']).optional().default('planned')
+});
+
+export const saveTownScheduleSchema = z.object({
+  day: z.number().int().min(1).max(1000000).optional(),
+  goal: z.string().max(1000).trim().optional().default(''),
+  status: z.enum(['planned', 'active', 'completed', 'cancelled']).optional().default('planned'),
+  items: z.array(townScheduleItemSchema).max(96)
+});
+
 // ── 验证中间件工厂 ──
 
 /**

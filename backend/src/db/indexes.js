@@ -125,5 +125,16 @@ export function createDatabaseIndexes(database) {
     CREATE INDEX IF NOT EXISTS idx_character_talents_character ON character_talents(character_id);
     CREATE INDEX IF NOT EXISTS idx_character_talents_pool ON character_talents(pool_id);
     CREATE INDEX IF NOT EXISTS idx_character_talents_character_rolled ON character_talents(character_id, rolled_at);
+
+    CREATE INDEX IF NOT EXISTS idx_town_worlds_user_updated ON town_worlds(user_id, updated_at);
+    CREATE INDEX IF NOT EXISTS idx_town_residents_town_name ON town_residents(town_id, name);
+    CREATE INDEX IF NOT EXISTS idx_town_events_town_tick ON town_events(town_id, occurred_tick, created_at);
+    CREATE INDEX IF NOT EXISTS idx_town_events_resident_tick ON town_events(resident_id, occurred_tick, created_at);
+    CREATE INDEX IF NOT EXISTS idx_town_events_unhandled ON town_events(town_id, handled_at, source, occurred_tick);
+    CREATE INDEX IF NOT EXISTS idx_town_memories_resident_tick ON town_memories(resident_id, occurred_tick DESC, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_town_memories_reflection_queue ON town_memories(resident_id, reflected_at, occurred_tick);
+    CREATE INDEX IF NOT EXISTS idx_town_reflections_resident_created ON town_reflections(resident_id, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_town_schedules_town_day ON town_schedules(town_id, day, resident_id);
+    CREATE INDEX IF NOT EXISTS idx_town_schedule_items_schedule_order ON town_schedule_items(schedule_id, order_index);
   `);
 }

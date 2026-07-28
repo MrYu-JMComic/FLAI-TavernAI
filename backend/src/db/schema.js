@@ -785,6 +785,114 @@ export function initializeDatabase(database) {
       FOREIGN KEY (character_id) REFERENCES characters(id) ON DELETE CASCADE,
       FOREIGN KEY (pool_id) REFERENCES talent_pools(id) ON DELETE SET NULL
     );
+
+    CREATE TABLE IF NOT EXISTS town_worlds (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      name TEXT NOT NULL,
+      description TEXT NOT NULL DEFAULT '',
+      creation_prompt TEXT NOT NULL DEFAULT '',
+      map_config_json TEXT NOT NULL DEFAULT '{}',
+      simulation_status TEXT NOT NULL DEFAULT 'paused',
+      current_day INTEGER NOT NULL DEFAULT 1,
+      minute_of_day INTEGER NOT NULL DEFAULT 480,
+      settings_json TEXT NOT NULL DEFAULT '{}',
+      engine_checkpoint_at TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS town_residents (
+      id TEXT PRIMARY KEY,
+      town_id TEXT NOT NULL,
+      name TEXT NOT NULL,
+      role TEXT NOT NULL DEFAULT '',
+      profile_json TEXT NOT NULL DEFAULT '{}',
+      state_json TEXT NOT NULL DEFAULT '{}',
+      current_location TEXT NOT NULL DEFAULT '',
+      reflection_threshold REAL NOT NULL DEFAULT 15,
+      last_reflection_at TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      FOREIGN KEY (town_id) REFERENCES town_worlds(id) ON DELETE CASCADE,
+      UNIQUE(town_id, name)
+    );
+
+    CREATE TABLE IF NOT EXISTS town_events (
+      id TEXT PRIMARY KEY,
+      town_id TEXT NOT NULL,
+      resident_id TEXT,
+      event_type TEXT NOT NULL DEFAULT 'world.changed',
+      source TEXT NOT NULL DEFAULT 'simulation',
+      title TEXT NOT NULL DEFAULT '',
+      detail TEXT NOT NULL DEFAULT '',
+      payload_json TEXT NOT NULL DEFAULT '{}',
+      occurred_tick INTEGER NOT NULL,
+      handled_at TEXT,
+      created_at TEXT NOT NULL,
+      FOREIGN KEY (town_id) REFERENCES town_worlds(id) ON DELETE CASCADE,
+      FOREIGN KEY (resident_id) REFERENCES town_residents(id) ON DELETE SET NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS town_memories (
+      id TEXT PRIMARY KEY,
+      town_id TEXT NOT NULL,
+      resident_id TEXT NOT NULL,
+      memory_type TEXT NOT NULL DEFAULT 'observation',
+      content TEXT NOT NULL,
+      importance REAL NOT NULL DEFAULT 5,
+      keywords_json TEXT NOT NULL DEFAULT '[]',
+      source_event_id TEXT,
+      source_kind TEXT NOT NULL DEFAULT 'simulation',
+      occurred_tick INTEGER NOT NULL,
+      reflected_at TEXT,
+      last_accessed_at TEXT,
+      access_count INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL,
+      FOREIGN KEY (town_id) REFERENCES town_worlds(id) ON DELETE CASCADE,
+      FOREIGN KEY (resident_id) REFERENCES town_residents(id) ON DELETE CASCADE,
+      FOREIGN KEY (source_event_id) REFERENCES town_events(id) ON DELETE SET NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS town_reflections (
+      id TEXT PRIMARY KEY,
+      town_id TEXT NOT NULL,
+      resident_id TEXT NOT NULL,
+      content TEXT NOT NULL,
+      evidence_memory_ids_json TEXT NOT NULL DEFAULT '[]',
+      importance REAL NOT NULL DEFAULT 5,
+      created_at TEXT NOT NULL,
+      FOREIGN KEY (town_id) REFERENCES town_worlds(id) ON DELETE CASCADE,
+      FOREIGN KEY (resident_id) REFERENCES town_residents(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS town_schedules (
+      id TEXT PRIMARY KEY,
+      town_id TEXT NOT NULL,
+      resident_id TEXT NOT NULL,
+      day INTEGER NOT NULL,
+      goal TEXT NOT NULL DEFAULT '',
+      status TEXT NOT NULL DEFAULT 'planned',
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      FOREIGN KEY (town_id) REFERENCES town_worlds(id) ON DELETE CASCADE,
+      FOREIGN KEY (resident_id) REFERENCES town_residents(id) ON DELETE CASCADE,
+      UNIQUE(resident_id, day)
+    );
+
+    CREATE TABLE IF NOT EXISTS town_schedule_items (
+      id TEXT PRIMARY KEY,
+      schedule_id TEXT NOT NULL,
+      start_minute INTEGER NOT NULL,
+      end_minute INTEGER NOT NULL,
+      activity TEXT NOT NULL,
+      location TEXT NOT NULL DEFAULT '',
+      intention TEXT NOT NULL DEFAULT '',
+      status TEXT NOT NULL DEFAULT 'planned',
+      order_index INTEGER NOT NULL DEFAULT 0,
+      FOREIGN KEY (schedule_id) REFERENCES town_schedules(id) ON DELETE CASCADE
+    );
   `);
   ensureColumn(database, 'npc_registry', 'status', "TEXT NOT NULL DEFAULT 'active'");
   ensureColumn(database, 'npc_registry', 'custom_status', "TEXT NOT NULL DEFAULT ''");
@@ -794,6 +902,20 @@ export function initializeDatabase(database) {
   ensureColumn(database, 'npc_registry', 'relationship', "TEXT NOT NULL DEFAULT ''");
   ensureColumn(database, 'mods', 'scope', "TEXT NOT NULL DEFAULT 'global'");
   ensureColumn(database, 'mods', 'character_ids', "TEXT NOT NULL DEFAULT '[]'");
+  ensureColumn(database, 'town_worlds', 'engine_checkpoint_at', 'TEXT');
+  ensureColumn(database, 'town_worlds', 'creation_prompt', "TEXT NOT NULL DEFAULT ''");
+  ensureColumn(database, 'town_worlds', 'map_config_json', "TEXT NOT NULL DEFAULT '{}'");
+  const townWorldColumns = getCachedTableColumns(database, 'town_worlds');
+  if (townWorldColumns.has('initialization_script')) {
+    database.exec(`
+      UPDATE town_worlds
+      SET creation_prompt = initialization_script
+      WHERE (creation_prompt IS NULL OR creation_prompt = '')
+        AND initialization_script IS NOT NULL
+        AND initialization_script <> ''
+    `);
+  }
+  ensureColumn(database, 'town_events', 'handled_at', 'TEXT');
 
   applyStartupMigrations(database, { getCachedTableColumns });
   createDatabaseIndexes(database);

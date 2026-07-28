@@ -5,11 +5,13 @@ import {
   AlertTriangle,
   BookOpen,
   Bot,
+  ChevronRight,
   Clock3,
   Compass,
   Download,
   Eye,
   Heart,
+  MapPinned,
   MessageSquareText,
   Pencil,
   Plus,
@@ -1366,6 +1368,20 @@ function formatCount(value) {
         </div>
       </div>
     </section>
+
+    <button class="home-town-entry" type="button" @click="emit('navigate', 'town')">
+      <span class="home-town-entry-copy">
+        <MapPinned :size="24" aria-hidden="true" />
+        <span>
+          <strong>AI 虚拟小镇</strong>
+          <small>进入独立玩法，观察居民行动、对话，并向世界投放事件。</small>
+        </span>
+      </span>
+      <span class="home-town-entry-action">
+        <span>进入小镇</span>
+        <ChevronRight :size="18" aria-hidden="true" />
+      </span>
+    </button>
 
     <section class="home-quick-row" aria-label="快捷入口">
       <button

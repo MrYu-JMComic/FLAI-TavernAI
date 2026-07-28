@@ -666,10 +666,40 @@ export function listConversationNpcs(database, userId, conversationId, mainChara
 }
 
 export function listConversationNpcRoster(database, userId, conversationId, mainCharacterName = '') {
+  return listConversationNpcLookupSnapshot(database, userId, conversationId, mainCharacterName).roster;
+}
+
+export function resolveConversationNpcLookup(database, userId, conversationId, reference, mainCharacterName = '') {
+  const snapshot = listConversationNpcLookupSnapshot(database, userId, conversationId, mainCharacterName);
+  const resolution = resolveNpcReferenceFromRoster(snapshot.roster, reference);
+  const summary = resolution.ok
+    ? snapshot.npcs.find((npc) => npc.name.toLowerCase() === resolution.npc.name.toLowerCase()) || null
+    : null;
+  return { resolution, summary };
+}
+
+export function resolveConversationNpcReference(database, userId, conversationId, reference, mainCharacterName = '') {
+  const snapshot = listConversationNpcLookupSnapshot(
+    database,
+    userId,
+    conversationId,
+    mainCharacterName
+  );
+  return resolveNpcReferenceFromRoster(snapshot.roster, reference);
+}
+
+function listConversationNpcLookupSnapshot(database, userId, conversationId, mainCharacterName) {
+  const npcs = listConversationNpcs(database, userId, conversationId, mainCharacterName);
+  return {
+    npcs,
+    roster: buildConversationNpcRoster(database, conversationId, mainCharacterName, npcs)
+  };
+}
+
+function buildConversationNpcRoster(database, conversationId, mainCharacterName, npcs) {
   const mainNameKey = normalizeNpcName(mainCharacterName).toLowerCase();
   const rosterByName = new Map();
   const knownIdentityKeys = new Set();
-  const npcs = listConversationNpcs(database, userId, conversationId, mainCharacterName);
 
   for (const npc of npcs) {
     const name = normalizeNpcName(npc.name);
@@ -721,30 +751,52 @@ export function listConversationNpcRoster(database, userId, conversationId, main
   return [...rosterByName.values()].sort((left, right) => left.name.localeCompare(right.name));
 }
 
-export function resolveConversationNpcReference(database, userId, conversationId, reference, mainCharacterName = '') {
-  const roster = listConversationNpcRoster(database, userId, conversationId, mainCharacterName);
+function resolveNpcReferenceFromRoster(roster, reference) {
   const normalizedReference = normalizeNpcName(reference);
   const referenceKey = normalizedReference.toLowerCase();
   if (!referenceKey) {
     return { ok: false, error: 'NPC_NAME_REQUIRED', roster };
   }
 
-  const canonicalMatches = roster.filter((npc) => npc.name.toLowerCase() === referenceKey);
-  if (canonicalMatches.length === 1) {
-    return { ok: true, npc: canonicalMatches[0], resolvedFrom: normalizedReference, roster };
+  for (const npc of roster) {
+    if (npc.name.toLowerCase() === referenceKey) {
+      return { ok: true, npc, resolvedFrom: normalizedReference, roster };
+    }
   }
 
-  const aliasMatches = roster.filter((npc) => npc.aliases.some((alias) => alias.toLowerCase() === referenceKey));
-  if (aliasMatches.length === 1) {
-    return { ok: true, npc: aliasMatches[0], resolvedFrom: normalizedReference, roster };
+  let aliasMatch = null;
+  let candidates = null;
+  for (const npc of roster) {
+    let matchesAlias = false;
+    for (const alias of npc.aliases) {
+      if (alias.toLowerCase() === referenceKey) {
+        matchesAlias = true;
+        break;
+      }
+    }
+    if (!matchesAlias) {
+      continue;
+    }
+    if (!aliasMatch) {
+      aliasMatch = npc;
+      continue;
+    }
+    if (!candidates) {
+      candidates = [aliasMatch.name];
+    }
+    candidates.push(npc.name);
   }
-  if (aliasMatches.length > 1) {
+
+  if (candidates) {
     return {
       ok: false,
       error: 'NPC_ALIAS_AMBIGUOUS',
-      candidates: aliasMatches.map((npc) => npc.name),
+      candidates,
       roster
     };
+  }
+  if (aliasMatch) {
+    return { ok: true, npc: aliasMatch, resolvedFrom: normalizedReference, roster };
   }
   return { ok: false, error: 'NPC_NOT_FOUND', roster };
 }

@@ -42,6 +42,11 @@ export const routeDefinitions = [
     component: () => import('./views/ChatView.vue')
   },
   {
+    path: '/town',
+    name: 'town',
+    component: () => import('./views/TownView.vue')
+  },
+  {
     path: '/world-books',
     name: 'worldBooks',
     component: () => import('./views/WorldBookView.vue')

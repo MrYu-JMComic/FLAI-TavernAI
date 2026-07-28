@@ -24,6 +24,7 @@ const presetsApi = await import('../../../frontend/src/api/presets.js');
 const settingsApi = await import('../../../frontend/src/api/settings.js');
 const tagsApi = await import('../../../frontend/src/api/tags.js');
 const talentsApi = await import('../../../frontend/src/api/talents.js');
+const townsApi = await import('../../../frontend/src/api/towns.js');
 const worldBooksApi = await import('../../../frontend/src/api/worldBooks.js');
 const frontendApiCoreSource = readFileSync(new URL('../../../frontend/src/api/core.js', import.meta.url), 'utf8');
 
@@ -116,6 +117,67 @@ test('frontend API domain modules back the compatibility exports', () => {
   assert.equal(frontendApi.createTag, tagsApi.createTag);
   assert.equal(frontendApi.fetchTalentPools, talentsApi.fetchTalentPools);
   assert.equal(frontendApi.updateTalentPool, talentsApi.updateTalentPool);
+  assert.equal(frontendApi.advanceTownWithAi, townsApi.advanceTownWithAi);
+  assert.equal(frontendApi.fetchTownResidentCognition, townsApi.fetchTownResidentCognition);
+  assert.equal(frontendApi.planTownResidentCognitionWithAi, townsApi.planTownResidentCognitionWithAi);
+});
+
+test('frontend town API advances a paused world through the dedicated AI route', async () => {
+  const originalFetch = globalThis.fetch;
+  const requests = [];
+  __resetApiCsrfTokenForTests();
+
+  globalThis.fetch = async (url, request = {}) => {
+    requests.push({ url: String(url), request });
+    if (String(url).endsWith('/api/csrf-token')) {
+      return jsonResponse({ csrfToken: 'csrf-for-town-ai-step-test' });
+    }
+    return jsonResponse({ advanced: true, generation: { mode: 'ai-step' } });
+  };
+
+  try {
+    const result = await townsApi.advanceTownWithAi('town/with-space');
+    assert.equal(result.generation.mode, 'ai-step');
+    assert.deepEqual(requests.map(({ url }) => url), [
+      '/api/csrf-token',
+      '/api/towns/town%2Fwith-space/advance-ai'
+    ]);
+    assert.equal(requests[1].request.method, 'POST');
+    assert.equal(requests[1].request.headers['X-CSRF-Token'], 'csrf-for-town-ai-step-test');
+  } finally {
+    globalThis.fetch = originalFetch;
+    __resetApiCsrfTokenForTests();
+  }
+});
+
+test('frontend town API reads and updates one resident cognition through encoded routes', async () => {
+  const originalFetch = globalThis.fetch;
+  const requests = [];
+  __resetApiCsrfTokenForTests();
+
+  globalThis.fetch = async (url, request = {}) => {
+    requests.push({ url: String(url), request });
+    if (String(url).endsWith('/api/csrf-token')) {
+      return jsonResponse({ csrfToken: 'csrf-for-town-cognition-test' });
+    }
+    return jsonResponse({ residentId: 'resident/with-space', generation: { mode: 'ai-cognition' } });
+  };
+
+  try {
+    await townsApi.fetchTownResidentCognition('town/with-space', 'resident/with-space');
+    const result = await townsApi.planTownResidentCognitionWithAi('town/with-space', 'resident/with-space');
+    assert.equal(result.generation.mode, 'ai-cognition');
+    assert.deepEqual(requests.map(({ url }) => url), [
+      '/api/towns/town%2Fwith-space/residents/resident%2Fwith-space/cognition',
+      '/api/csrf-token',
+      '/api/towns/town%2Fwith-space/residents/resident%2Fwith-space/cognition-ai'
+    ]);
+    assert.equal(requests[2].request.method, 'POST');
+    assert.equal(requests[2].request.headers['X-CSRF-Token'], 'csrf-for-town-cognition-test');
+  } finally {
+    globalThis.fetch = originalFetch;
+    __resetApiCsrfTokenForTests();
+  }
 });
 
 test('frontend envelope API uses the unified envelope routes', async () => {

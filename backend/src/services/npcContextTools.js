@@ -1,12 +1,13 @@
 import {
-  listConversationNpcs,
   listNpcBehaviors,
   listNpcMemories,
-  resolveConversationNpcReference
+  resolveConversationNpcLookup
 } from '../modules/npcs.js';
 import { evaluateActorAppearance, listActorItems, listSceneWorkspace } from '../modules/scenes.js';
 
 const NPC_LOOKUP_MAX_ROUNDS = 4;
+const ACTOR_OWNER_TYPES = Object.freeze(['npc', 'protagonist']);
+const ACTOR_OWNER_TYPE_SET = new Set(ACTOR_OWNER_TYPES);
 const NPC_LOOKUP_TOOL_NAMES = new Set([
   'get_npc_profile',
   'get_npc_memories',
@@ -55,28 +56,39 @@ export function executeNpcLookupTool(context = {}, toolName, args = {}) {
     };
   }
 
-  if (toolName === 'get_actor_items' && String(payload.ownerType || 'npc') === 'protagonist') {
-    const items = listActorItems(db, userId, conversationId, 'protagonist', '');
-    return {
-      ok: true,
-      ownerType: 'protagonist',
-      ownerName: mainCharacterName,
-      items,
-      appearance: evaluateActorAppearance(items)
-    };
+  if (toolName === 'get_actor_items') {
+    const ownerType = String(payload.ownerType || '').trim();
+    if (!ACTOR_OWNER_TYPE_SET.has(ownerType)) {
+      return {
+        ok: false,
+        error: 'ACTOR_OWNER_TYPE_INVALID',
+        allowedOwnerTypes: ACTOR_OWNER_TYPES
+      };
+    }
+    if (ownerType === 'protagonist') {
+      const items = listActorItems(db, userId, conversationId, 'protagonist', '');
+      return {
+        ok: true,
+        ownerType: 'protagonist',
+        ownerName: mainCharacterName,
+        items,
+        appearance: evaluateActorAppearance(items)
+      };
+    }
   }
 
   if (!['get_npc_profile', 'get_npc_memories', 'get_npc_behaviors', 'get_actor_items'].includes(toolName)) {
     return { ok: false, error: `Unsupported NPC lookup tool: ${toolName}` };
   }
 
-  const resolution = resolveConversationNpcReference(
+  const lookup = resolveConversationNpcLookup(
     db,
     userId,
     conversationId,
     payload.npcName,
     mainCharacterName
   );
+  const resolution = lookup.resolution;
   if (!resolution.ok) {
     return {
       ok: false,
@@ -87,8 +99,7 @@ export function executeNpcLookupTool(context = {}, toolName, args = {}) {
   }
 
   const canonicalName = resolution.npc.name;
-  const summary = listConversationNpcs(db, userId, conversationId, mainCharacterName)
-    .find((npc) => npc.name.toLowerCase() === canonicalName.toLowerCase());
+  const summary = lookup.summary;
   const identity = {
     name: canonicalName,
     aliases: resolution.npc.aliases,
@@ -252,7 +263,7 @@ function actorItemsLookupTool() {
         type: 'object',
         additionalProperties: false,
         properties: {
-          ownerType: { type: 'string', enum: ['npc', 'protagonist'] },
+          ownerType: { type: 'string', enum: ACTOR_OWNER_TYPES },
           npcName: npcNameProperty()
         },
         required: ['ownerType']

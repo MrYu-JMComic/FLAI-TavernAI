@@ -41,6 +41,7 @@ import { hasUsableProvider } from './providerReadiness.js';
 import { buildProviderBody } from './providerRequestBody.js';
 import { parseSse } from './providerSse.js';
 import { createStreamEmitQueue } from './providerStreamEmit.js';
+import { executeProviderTool } from './providerToolResults.js';
 
 export async function runToolCompletion(settings, messages, tools, executeTool, options = {}) {
   options = options ?? {};
@@ -108,7 +109,14 @@ export async function runToolCompletion(settings, messages, tools, executeTool, 
     });
 
     for (const call of calls) {
-      const result = await executeTool(call.name, call.arguments, call);
+      const prepared = await executeProviderTool(
+        executeTool,
+        call.name,
+        call.arguments,
+        call,
+        options.signal
+      );
+      const result = prepared.result;
       const log = {
         name: call.name,
         arguments: call.arguments,
@@ -119,9 +127,9 @@ export async function runToolCompletion(settings, messages, tools, executeTool, 
       nextMessages.push({
         role: 'tool',
         tool_call_id: call.id,
-        content: JSON.stringify(result)
+        content: prepared.content
       });
-      if (result?.stop === true) {
+      if (prepared.stop) {
         return {
           content: step.content,
           reasoning: step.reasoning,
@@ -200,6 +208,7 @@ export async function streamToolCompletion(settings, messages, tools, executeToo
     }
 
     let roundContent = '';
+    const roundContentChunks = [];
     const pendingToolCalls = new Map();
     const consumeToolPayload = (payload, event = {}) => {
       usage = extractStreamingUsage(payload, usage);
@@ -231,9 +240,8 @@ export async function streamToolCompletion(settings, messages, tools, executeToo
     const thinkingTagFilter = createThinkingTagFilter({
       onContent(text) {
         roundContent += text;
-        finalContent += text;
         step.content += text;
-        streamEmit.emit('content', { round: step.round, text });
+        roundContentChunks.push(text);
       },
       onReasoning(text) {
         finalReasoning += text;
@@ -301,6 +309,11 @@ export async function streamToolCompletion(settings, messages, tools, executeToo
         nextMessages.push({ role: 'user', content: String(nudge) });
         continue;
       }
+      for (const text of roundContentChunks) {
+        finalContent += text;
+        await streamEmit.emit('content', { round: step.round, text });
+      }
+      await streamEmit.wait();
       return {
         content: finalContent,
         reasoning: finalReasoning,
@@ -320,7 +333,8 @@ export async function streamToolCompletion(settings, messages, tools, executeToo
     });
 
     for (const call of calls) {
-      const result = await executeTool(call.name, call.arguments, call);
+      const prepared = await executeProviderTool(executeTool, call.name, call.arguments, call, signal);
+      const result = prepared.result;
       const log = {
         name: call.name,
         arguments: call.arguments,
@@ -332,8 +346,21 @@ export async function streamToolCompletion(settings, messages, tools, executeToo
       nextMessages.push({
         role: 'tool',
         tool_call_id: call.id,
-        content: JSON.stringify(result)
+        content: prepared.content
       });
+      if (prepared.stop) {
+        await streamEmit.wait();
+        return {
+          content: finalContent,
+          reasoning: finalReasoning,
+          usage,
+          toolCalls,
+          process,
+          provider: settings.gatewayName,
+          providerType: settings.providerType,
+          model: normalizeProviderModel(settings.providerType, settings.model)
+        };
+      }
     }
   }
 

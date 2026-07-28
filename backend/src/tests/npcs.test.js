@@ -447,6 +447,20 @@ test('listConversationNpcs aggregates memory and behavior counts without per-row
   assert.doesNotMatch(listSource, /\.filter\(Boolean\)/);
 });
 
+test('NPC reference resolution scans names and aliases without array pipelines', () => {
+  const functionStart = npcsSource.indexOf('function resolveNpcReferenceFromRoster');
+  const functionEnd = npcsSource.indexOf('export function buildNpcRosterPrompt', functionStart);
+  assert.notEqual(functionStart, -1);
+  assert.notEqual(functionEnd, -1);
+  const functionSource = npcsSource.slice(functionStart, functionEnd);
+
+  assert.match(functionSource, /for \(const npc of roster\)/);
+  assert.match(functionSource, /for \(const alias of npc\.aliases\)/);
+  assert.doesNotMatch(functionSource, /\.filter\(/);
+  assert.doesNotMatch(functionSource, /\.some\(/);
+  assert.doesNotMatch(functionSource, /\.map\(/);
+});
+
 test('NPC status aliases and memory seal affect prompt memory injection', () => {
   const { database, userId, conversationId } = setupDatabase();
 

@@ -133,6 +133,27 @@ export {
   updateTalentPool
 } from './api/talents.js';
 export {
+  advanceTown,
+  advanceTownWithAi,
+  createTown,
+  generateTown,
+  createTownEvent,
+  createTownMemory,
+  createTownReflection,
+  createTownResident,
+  fetchTownEvents,
+  fetchTownReflectionStatus,
+  fetchTownResidentCognition,
+  fetchTownResidents,
+  fetchTownSchedule,
+  fetchTownSnapshot,
+  fetchTowns,
+  recallTownMemories,
+  planTownResidentCognitionWithAi,
+  saveTownSchedule,
+  updateTownClock
+} from './api/towns.js';
+export {
   completeWorldBookDraft,
   createWorldBook,
   createWorldBookEntry,
