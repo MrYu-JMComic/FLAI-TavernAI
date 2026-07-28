@@ -175,15 +175,40 @@ schema 已经准备好了：`town_worlds(id)` 上所有外键都是 `ON DELETE C
 
 ## 六、执行顺序
 
-按「先修正确性、再补缺口、最后清理」推进，每步独立可验证、可单独 review：
+按「先修正确性、再补缺口、最后清理」推进，每步独立可验证、可单独 review。
 
-1. **改动 A**：引擎记忆补 `sourceKind: 'engine-ambient'` → `npm test`
-2. **改动 B**：检索溯源意识 + 两段式候选，默认行为不变 → `npm test` + 新增 3 测试
-3. **收紧消费点**：`buildTownTurnContext` 与 `maybeReflect` 排除 ambient → `npm test`
-4. **删除端点**：世界 / 居民 DELETE + 归属校验 + 前端二次确认 → `npm test`
-5. **Tier A 观感**：取模循环改为带权随机（不涉模型调用）→ `npm test`
-6. **清理**：轮询条件化、未用包装的接上或删除
-7.（可选，需先定契约）**Tier A+ 批量 AI 回合**
+**第 1–6 步已完成**（2026-07-28），测试从 1228 增至 1244：
+
+1. ✅ 引擎记忆补 `sourceKind: 'engine-ambient'`（`townEngine.js` 三处）
+2. ✅ `retrieveTownMemories` 新增 `excludeSourceKinds` / `minImportance`，
+   并改为「高价值保底 + 近期补充」两段式候选；不传新参数时行为与原先一致
+3. ✅ `buildTownTurnContext` 排除 ambient 且设 `minImportance: 5`；
+   `maybeReflect` 改为「优先真实记忆，无则回落到 ambient」——
+   直接排除会让纯引擎小镇彻底不再反思，属回归，故不采用
+4. ✅ `deleteTown` / `deleteTownResident` + `DELETE` 路由，含归属校验；
+   删除前先置 `paused`，避免连续引擎在级联期间写入
+5. ✅ 取模循环改为 seeded PRNG（FNV-1a），对 (world, resident, tick) 可复现但不再肉眼成环；
+   同时避免连续重复同一台词/活动
+6. ✅ 前端轮询条件化：仅在 `isRunning` 时轮询，暂停即停
+
+**第 5 步顺带修掉两个真实缺陷**（原计划未预见）：
+
+- **居民自言自语**：旧逻辑 `speaker = residents[stepIndex % len]`、
+  `listener = residents[(stepIndex + 2) % len]`，在**恰好 2 名居民**时，
+  两者对所有社交 tick 恒等——即 100% 的社交事件都是居民对自己说话。
+  已改为从「排除说话者后的集合」中选听者。
+- **单居民干预重复记忆**：`reactToIntervention` 中 responder 与 witness 在单居民时相同，
+  `for (const resident of [responder, witness])` 会给同一人写两条同样的记忆，
+  `participantIds` 也重复。已去重。
+
+**尚未做**：
+
+7.（可选，需先定契约）**Tier A+ 批量 AI 回合**——第二节的设计缺口仍然存在。
+   建议实现前先定「一次调用产出 N 个 tick」的工具契约，再动 `townTurnAssistant.js`。
+
+另：`townDemo.js`（死代码）与 `api/towns.js` 中 9 个未使用包装**仍保留**，
+按 AGENTS.md 需用户明确同意才删除。前端删除按钮的二次确认 UI 亦未接入，
+后端端点已就绪。
 
 每步完成后按 AGENTS.md 要求执行：
 ```
@@ -195,11 +220,35 @@ powershell -ExecutionPolicy Bypass -File scripts/review-gate.ps1
 
 ---
 
-## 七、需要你确认的三件事
+## 七、角色扮演路径顺带修复
 
-1. **本轮范围**：只做 1–3（修记忆正确性，风险最低、收益最直接），还是一路做到 4–6？
-2. **删除功能**：是否要我加 DELETE 端点？这涉及破坏性操作与前端确认流程。
-3. **Tier A+**：批量 AI 回合是否要做？若做，我需要先和你定「一次调用产出 N 个 tick」的契约，
-   再动 `townTurnAssistant.js` 的工具签名。
+在检查对话体验时，于 `backend/src/services/promptPipeline.js` 发现一个影响角色一致性的真实缺陷。
 
-关于删除文件（`townDemo.js`）与未用包装的处理，我不会擅自删除——按 AGENTS.md，需要你明确说要删。
+`omitHistoryMessagesForBudget` 在超出上下文预算时逐条丢弃历史消息，
+但**不保证 user / assistant 成对丢弃**。构造用例：
+
+```
+system / user(2000 字) / assistant("short reply") / user("latest")
+```
+
+预算 300 字时，旧行为丢掉那条大 user 消息、却**保留了它的 assistant 回复**，
+最终发给模型的是 `system -> assistant -> user`——
+模型读到一条「对不存在的问题的回答」。
+
+在长对话（正是预算会生效的场景）里，这会持续损害角色扮演的连贯性：
+模型看到孤立的 assistant 发言，容易搞错谁说过什么、剧情到哪一步。
+
+已改为**按「轮次」丢弃**：丢一条 user 消息时，连同紧随其后的 assistant 回复一起丢，
+包括连续多条 assistant（续写场景）。system 提示与最后一条 user 消息仍受保护、永不丢弃。
+
+回归测试见 `backend/src/tests/promptBudgetPairing.test.js`（4 条）。
+已用「临时还原旧实现」验证：旧代码下其中 2 条失败，新实现下 4 条全过——
+测试确实能捕获该缺陷，而非空跑。
+
+## 八、需要你确认的两件事
+
+1. **Tier A+**：批量 AI 回合是否要做？若做，我需要先和你定
+   「一次调用产出 N 个 tick」的契约，再动 `townTurnAssistant.js` 的工具签名。
+2. **死代码删除**：`townDemo.js` 与 `api/towns.js` 里 9 个未使用包装是否要删？
+   按 AGENTS.md 我不会擅自删除，需要你明确说要删。
+   另外前端「删除小镇 / 居民」的二次确认 UI 要不要我接上（后端端点已就绪）？

@@ -3,6 +3,8 @@ import {
   createTown,
   createTownReflection,
   createTownResident,
+  deleteTown,
+  deleteTownResident,
   evaluateTownReflectionNeed,
   getTown,
   getTownSnapshot,
@@ -116,6 +118,12 @@ export function createTownsRouter(ctx) {
     response.json(town);
   });
 
+  router.delete('/:townId', requireAuth, (request, response) => {
+    const result = deleteTown(db, request.auth.user.id, request.params.townId);
+    if (!result) return notFound(response, '小镇不存在');
+    response.json(result);
+  });
+
   router.get('/:townId/snapshot', requireAuth, (request, response) => {
     const snapshot = getTownSnapshot(db, request.auth.user.id, request.params.townId, {
       eventLimit: request.query.eventLimit
@@ -199,6 +207,17 @@ export function createTownsRouter(ctx) {
     const resident = createTownResident(db, request.auth.user.id, request.params.townId, request.body);
     if (!resident) return notFound(response, '小镇不存在');
     response.status(201).json(resident);
+  });
+
+  router.delete('/:townId/residents/:residentId', requireAuth, (request, response) => {
+    const result = deleteTownResident(
+      db,
+      request.auth.user.id,
+      request.params.townId,
+      request.params.residentId
+    );
+    if (!result) return notFound(response, '居民不存在');
+    response.json(result);
   });
 
   router.get('/:townId/residents/:residentId/cognition', requireAuth, (request, response) => {

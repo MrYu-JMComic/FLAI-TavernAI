@@ -16,6 +16,7 @@ import {
 } from './townSimulation.js';
 
 const DEFAULT_TICK_MINUTES = 15;
+const AMBIENT_SOURCE_KINDS = Object.freeze(['engine-ambient']);
 
 export function buildTownTurnContext(database, userId, townId) {
   const town = getTown(database, userId, townId);
@@ -185,7 +186,9 @@ function buildResidentContext(database, userId, town, resident, eventQuery) {
   ].filter(Boolean).join(' ');
   const memories = retrieveTownMemories(database, userId, town.id, resident.id, query, {
     limit: 5,
-    trackAccess: false
+    trackAccess: false,
+    excludeSourceKinds: AMBIENT_SOURCE_KINDS,
+    minImportance: 5
   }) || [];
   const schedule = getTownSchedule(database, userId, town.id, resident.id, town.currentDay);
   const scheduleItem = schedule?.items.find((item) => (

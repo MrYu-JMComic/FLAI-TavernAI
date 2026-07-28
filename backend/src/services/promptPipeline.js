@@ -421,18 +421,42 @@ function omitHistoryMessagesForBudget(messages, limitCharacters, truncation) {
     if (protectedMessages.has(message)) {
       continue;
     }
-    const removedCharacters = estimatePromptContent(message?.content).characters;
-    truncation.push({
-      index,
-      role: message?.role || 'unknown',
-      reason: 'history_omitted',
-      originalCharacters: removedCharacters,
-      keptCharacters: 0,
-      excerpt: excerptPromptContent(message?.content)
-    });
-    messages.splice(index, 1);
+    // Drop the whole exchange, not just this message. Removing a user turn while
+    // keeping the assistant turn that answered it leaves the model reading a reply
+    // to a question it cannot see, which costs character and plot consistency.
+    const removalCount = countExchangeMessagesToOmit(messages, index, protectedMessages);
+    if (!removalCount) {
+      continue;
+    }
+    for (let offset = 0; offset < removalCount; offset += 1) {
+      const removed = messages[index];
+      truncation.push({
+        index,
+        role: removed?.role || 'unknown',
+        reason: 'history_omitted',
+        originalCharacters: estimatePromptContent(removed?.content).characters,
+        keptCharacters: 0,
+        excerpt: excerptPromptContent(removed?.content)
+      });
+      messages.splice(index, 1);
+    }
     index -= 1;
   }
+}
+
+// Starting at a user turn, an exchange is that turn plus the assistant replies that
+// follow it. Starting anywhere else, only that single message is dropped.
+function countExchangeMessagesToOmit(messages, startIndex, protectedMessages) {
+  const start = messages[startIndex];
+  if (start?.role !== 'user') return 1;
+  let count = 1;
+  for (let index = startIndex + 1; index < messages.length; index += 1) {
+    const candidate = messages[index];
+    if (candidate?.role !== 'assistant') break;
+    if (protectedMessages.has(candidate)) break;
+    count += 1;
+  }
+  return count;
 }
 
 function trimLargestPromptMessagesForBudget(messages, limitCharacters, truncation) {

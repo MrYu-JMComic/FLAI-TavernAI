@@ -47,6 +47,30 @@ export function listTowns(database, userId) {
   ).all(userId).map(toTown);
 }
 
+export function deleteTown(database, userId, townId) {
+  const town = getTown(database, userId, townId);
+  if (!town) return null;
+  withSavepoint(database, 'sp_delete_town', () => {
+    // Pause first so the continuous engine, which selects on simulation_status,
+    // cannot pick this world up while the cascade is in flight.
+    database.prepare(
+      "UPDATE town_worlds SET simulation_status = 'paused', updated_at = ? WHERE id = ? AND user_id = ?"
+    ).run(nowIso(), townId, userId);
+    database.prepare('DELETE FROM town_worlds WHERE id = ? AND user_id = ?').run(townId, userId);
+  });
+  return { id: townId, deleted: true };
+}
+
+export function deleteTownResident(database, userId, townId, residentId) {
+  if (!getResidentContext(database, userId, townId, residentId)) return null;
+  withSavepoint(database, 'sp_delete_town_resident', () => {
+    database.prepare('DELETE FROM town_residents WHERE id = ? AND town_id = ?').run(residentId, townId);
+    database.prepare('UPDATE town_worlds SET updated_at = ? WHERE id = ? AND user_id = ?')
+      .run(nowIso(), townId, userId);
+  });
+  return { id: residentId, deleted: true };
+}
+
 export function updateTownClock(database, userId, townId, payload = {}) {
   const town = getTown(database, userId, townId);
   if (!town) return null;
@@ -210,12 +234,7 @@ export function retrieveTownMemories(database, userId, townId, residentId, query
   const referenceTick = normalizeTick(options.referenceTick, townTick(context.town));
   const weights = normalizeRecallWeights(options.weights);
   const recencyDecay = clampNumber(options.recencyDecay, 0.5, 1, 0.99);
-  const rows = database.prepare(
-    `SELECT * FROM town_memories
-     WHERE town_id = ? AND resident_id = ?
-     ORDER BY occurred_tick DESC, rowid DESC
-     LIMIT ?`
-  ).all(townId, residentId, candidateLimit);
+  const rows = selectRecallCandidates(database, townId, residentId, candidateLimit, options);
   const memories = rows
     .map((row) => scoreTownMemory(toTownMemory(row), query, { referenceTick, weights, recencyDecay }))
     .sort((left, right) => right.score - left.score || right.occurredTick - left.occurredTick)
@@ -490,6 +509,60 @@ function selectReflectionMemoryIds(database, townId, residentId, requestedIds) {
   if (!Array.isArray(requestedIds) || !requestedIds.length) return available;
   const requested = new Set(requestedIds.map((value) => String(value || '').trim()).filter(Boolean));
   return available.filter((id) => requested.has(id));
+}
+
+function selectRecallCandidates(database, townId, residentId, candidateLimit, options = {}) {
+  const excludeSourceKinds = Array.isArray(options.excludeSourceKinds)
+    ? options.excludeSourceKinds.filter((kind) => kind && typeof kind === 'string')
+    : [];
+  const minImportance = options.minImportance != null
+    ? clampNumber(options.minImportance, 1, 10, 1)
+    : null;
+
+  if (!excludeSourceKinds.length && minImportance == null) {
+    return database.prepare(
+      `SELECT * FROM town_memories
+       WHERE town_id = ? AND resident_id = ?
+       ORDER BY occurred_tick DESC, rowid DESC
+       LIMIT ?`
+    ).all(townId, residentId, candidateLimit);
+  }
+
+  const whereClauses = ['town_id = ?', 'resident_id = ?'];
+  const params = [townId, residentId];
+  if (excludeSourceKinds.length) {
+    whereClauses.push(`source_kind NOT IN (${excludeSourceKinds.map(() => '?').join(', ')})`);
+    params.push(...excludeSourceKinds);
+  }
+  if (minImportance != null) {
+    const highValueLimit = Math.ceil(candidateLimit / 2);
+    const recentLimit = candidateLimit - highValueLimit;
+    const highValueRows = database.prepare(
+      `SELECT * FROM town_memories
+       WHERE ${whereClauses.join(' AND ')} AND importance >= ?
+       ORDER BY importance DESC, occurred_tick DESC, rowid DESC
+       LIMIT ?`
+    ).all(...params, minImportance, highValueLimit);
+    const recentRows = database.prepare(
+      `SELECT * FROM town_memories
+       WHERE ${whereClauses.join(' AND ')}
+       ORDER BY occurred_tick DESC, rowid DESC
+       LIMIT ?`
+    ).all(...params, recentLimit);
+    const seen = new Set(highValueRows.map((row) => row.id));
+    const combined = [...highValueRows];
+    for (const row of recentRows) {
+      if (!seen.has(row.id)) combined.push(row);
+    }
+    return combined;
+  }
+
+  return database.prepare(
+    `SELECT * FROM town_memories
+     WHERE ${whereClauses.join(' AND ')}
+     ORDER BY occurred_tick DESC, rowid DESC
+     LIMIT ?`
+  ).all(...params, candidateLimit);
 }
 
 function getResidentContext(database, userId, townId, residentId) {

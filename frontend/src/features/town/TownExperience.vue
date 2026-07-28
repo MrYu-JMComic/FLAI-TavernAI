@@ -148,14 +148,28 @@ const activeConversation = computed(() => {
 
 onMounted(async () => {
   await loadWorlds();
-  simulationTimer = window.setInterval(() => void refreshSnapshot(), 1800);
+  startPollingIfRunning();
 });
 
 onBeforeUnmount(() => {
-  if (simulationTimer) window.clearInterval(simulationTimer);
+  stopPolling();
   if (syncNoticeTimer) window.clearTimeout(syncNoticeTimer);
   mapResizeObserver?.disconnect();
 });
+
+function startPollingIfRunning() {
+  stopPolling();
+  if (isRunning.value) {
+    simulationTimer = window.setInterval(() => void refreshSnapshot(), 1800);
+  }
+}
+
+function stopPolling() {
+  if (simulationTimer) {
+    window.clearInterval(simulationTimer);
+    simulationTimer = null;
+  }
+}
 
 async function loadWorlds(preferredTownId = '') {
   isLoading.value = true;
@@ -200,6 +214,7 @@ function clearWorld() {
   memoriesByResident.value = {};
   cognitionByResident.value = {};
   isRunning.value = false;
+  startPollingIfRunning();
 }
 
 async function refreshSnapshot() {
@@ -226,6 +241,7 @@ function applyTownSnapshot(snapshot) {
   day.value = Number(snapshot.town.currentDay) || 1;
   minute.value = Number(snapshot.town.minuteOfDay) || 0;
   isRunning.value = snapshot.town.simulationStatus === 'running';
+  startPollingIfRunning();
   const residents = Array.isArray(snapshot.residents) ? snapshot.residents : [];
   agents.value = residents.map(toViewAgent);
   events.value = Array.isArray(snapshot.events) ? snapshot.events.map(toViewEvent) : [];
@@ -327,6 +343,7 @@ async function toggleSimulation() {
       simulationStatus: isRunning.value ? 'paused' : 'running'
     });
     isRunning.value = updated.simulationStatus === 'running';
+    startPollingIfRunning();
     showSyncNotice(isRunning.value ? '世界模拟已继续' : '世界模拟已暂停', 1500);
   } catch (error) {
     showSyncNotice(`运行状态更新失败：${error.message}`);
