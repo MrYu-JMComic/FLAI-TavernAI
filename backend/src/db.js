@@ -11,4 +11,5 @@ export {
 } from './db/runtime.js';
 export { initializeDatabase } from './db/schema.js';
 
-export const db = createAppDatabase(appConfig.databasePath || path.join(dataDir, 'flai.sqlite'));
+export const databasePath = appConfig.databasePath || path.join(dataDir, 'flai.sqlite');
+export const db = createAppDatabase(databasePath);

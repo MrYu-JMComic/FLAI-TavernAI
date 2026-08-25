@@ -1,6 +1,7 @@
 import { newId, nowIso } from '../security.js';
 import { parseJson } from '../utils/json.js';
 import { parseStatusTemplateToken } from '../../../shared/statusTemplateTokens.js';
+import { recordWorldEvent } from './worldEvents.js';
 
 export const STATUS_BAR_VARIABLE_LIMIT = 60;
 
@@ -52,7 +53,16 @@ export function upsertStatusBar(database, userId, conversationId, payload) {
       .run(id, conversationId, name, JSON.stringify(variables), template, timestamp, timestamp);
   }
 
-  return getStatusBar(database, userId, conversationId);
+  const statusBar = getStatusBar(database, userId, conversationId);
+  recordWorldEvent(database, userId, conversationId, {
+    eventType: existing ? 'status.updated' : 'status.created',
+    source: payload?.source || payload?.auditActor || 'system',
+    title: existing ? '角色状态已更新' : '角色状态已建立',
+    entityType: 'status_bar',
+    entityId: statusBar?.id || '',
+    payload: { name: statusBar?.name || '', variableCount: statusBar?.variables?.length || 0 }
+  });
+  return statusBar;
 }
 
 export function updateStatusBarVariables(database, userId, conversationId, updates = [], options = {}) {
@@ -79,7 +89,16 @@ export function updateStatusBarVariables(database, userId, conversationId, updat
          AND EXISTS (SELECT 1 FROM conversations WHERE id = ? AND user_id = ?)`
     )
     .run(JSON.stringify(normalizeVariables(mergedVariables, current.template)), timestamp, conversationId, conversationId, userId);
-  return getStatusBar(database, userId, conversationId);
+  const statusBar = getStatusBar(database, userId, conversationId);
+  recordWorldEvent(database, userId, conversationId, {
+    eventType: 'status.variables.changed',
+    source: options.source || options.auditActor || 'system',
+    title: '核心状态发生变化',
+    entityType: 'status_bar',
+    entityId: statusBar?.id || '',
+    payload: { variables: updates.slice(0, 12).map(item => item?.name || '').filter(Boolean) }
+  });
+  return statusBar;
 }
 
 export function deleteStatusBar(database, userId, conversationId) {
@@ -91,9 +110,20 @@ export function deleteStatusBar(database, userId, conversationId) {
     return false;
   }
 
+  const current = getStatusBar(database, userId, conversationId);
   const result = database
     .prepare('DELETE FROM status_bars WHERE conversation_id = ?')
     .run(conversationId);
+  if (result.changes > 0) {
+    recordWorldEvent(database, userId, conversationId, {
+      eventType: 'status.deleted',
+      source: 'manual',
+      title: '角色状态栏已移除',
+      entityType: 'status_bar',
+      entityId: current?.id || '',
+      severity: 'warning'
+    });
+  }
   return result.changes > 0;
 }
 

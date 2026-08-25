@@ -17,6 +17,16 @@ import {
 } from './providerNumbers.js';
 import { parseSse } from './providerSse.js';
 import { createStreamEmitQueue } from './providerStreamEmit.js';
+import {
+  hasProviderStreamError,
+  providerStreamErrorMessage
+} from './providerStreamErrors.js';
+import { executeProviderTool } from './providerToolResults.js';
+import {
+  normalizeThinkingLevel,
+  resolveSupportedThinkingLevel,
+  resolveThinkingControl
+} from '../../../shared/providerThinking.js';
 
 export async function generateAnthropicMessage(settings, messages, options = {}) {
   const requestBody = buildAnthropicBody(settings, messages, false, options);
@@ -54,6 +64,7 @@ export async function streamAnthropicMessage(settings, messages, emit, signal, o
   let content = '';
   let reasoning = '';
   let usage = null;
+  let sawMessageStop = false;
   const streamEmit = createStreamEmitQueue(emit);
   const thinkingTagFilter = createThinkingTagFilter({
     onContent(text) {
@@ -71,19 +82,20 @@ export async function streamAnthropicMessage(settings, messages, emit, signal, o
     if (!json) {
       continue;
     }
+    if (hasProviderStreamError(json, event.event)) {
+      throw new Error(providerStreamErrorMessage(json, 'Anthropic 流式响应失败'));
+    }
 
     if (json.type === 'content_block_delta') {
       const delta = json.delta || {};
       if (delta.type === 'text_delta' && delta.text) {
         thinkingTagFilter.push(delta.text);
       }
-      if ((delta.type === 'thinking_delta' || delta.type === 'signature_delta') && delta.thinking) {
+      if (delta.type === 'thinking_delta' && delta.thinking) {
         reasoning += delta.thinking;
         streamEmit.emit('reasoning', { text: delta.thinking });
       }
-      if (delta.type === 'input_json_delta' && delta.partial_json) {
-        thinkingTagFilter.push(delta.partial_json);
-      }
+      // input_json_delta is tool input, not assistant-visible text.
     }
 
     if (json.type === 'message_start' && json.message?.usage) {
@@ -99,12 +111,16 @@ export async function streamAnthropicMessage(settings, messages, emit, signal, o
       };
     }
     if (json.type === 'message_stop') {
+      sawMessageStop = true;
       break;
     }
     await streamEmit.wait();
   }
   thinkingTagFilter.flush();
   await streamEmit.wait();
+  if (!sawMessageStop) {
+    throw new Error('Anthropic 流式响应在 message_stop 前中断');
+  }
 
   return {
     content,
@@ -210,7 +226,14 @@ export async function runAnthropicToolCompletion(settings, messages, tools, exec
 
     const toolResults = [];
     for (const call of calls) {
-      const result = await executeTool(call.name, call.arguments, call);
+      const prepared = await executeProviderTool(
+        executeTool,
+        call.name,
+        call.arguments,
+        call,
+        options.signal
+      );
+      const result = prepared.result;
       const log = {
         name: call.name,
         arguments: call.arguments,
@@ -221,9 +244,9 @@ export async function runAnthropicToolCompletion(settings, messages, tools, exec
       toolResults.push({
         type: 'tool_result',
         tool_use_id: call.id,
-        content: JSON.stringify(result)
+        content: prepared.content
       });
-      if (result?.stop === true) {
+      if (prepared.stop) {
         return {
           content: finalContent,
           reasoning: finalReasoning,
@@ -285,6 +308,10 @@ function applyAnthropicThinkingSwitch(body, settings = {}, options = {}) {
   if (!settings.supportsReasoning) {
     return;
   }
+  if (hasExplicitThinkingLevel(options)) {
+    applyAnthropicThinkingLevel(body, options);
+    return;
+  }
   if (options.thinkingEnabled === false) {
     delete body.thinking;
     return;
@@ -314,6 +341,83 @@ function applyAnthropicThinkingSwitch(body, settings = {}, options = {}) {
   };
   if (Number(body.max_tokens) <= budgetTokens) {
     body.max_tokens = budgetTokens + 1024;
+  }
+}
+
+function applyAnthropicThinkingLevel(body, options = {}) {
+  const control = resolveThinkingControl('anthropic', body.model, true);
+  const fallback = options.thinkingEnabled === false ? 'off' : control.defaultLevel;
+  const level = resolveSupportedThinkingLevel(
+    normalizeThinkingLevel(options.thinkingLevel, fallback),
+    control,
+    fallback
+  );
+  if (level === 'off') {
+    delete body.thinking;
+    if (body.output_config && typeof body.output_config === 'object') {
+      const outputConfig = { ...body.output_config };
+      delete outputConfig.effort;
+      if (Object.keys(outputConfig).length) {
+        body.output_config = outputConfig;
+      } else {
+        delete body.output_config;
+      }
+    }
+    return;
+  }
+
+  if (control.strategy === 'anthropic-adaptive') {
+    const existingThinking = body.thinking && typeof body.thinking === 'object' ? body.thinking : {};
+    body.thinking = {
+      ...existingThinking,
+      type: 'adaptive',
+      display: existingThinking.display || 'summarized'
+    };
+    delete body.thinking.budget_tokens;
+    body.output_config = {
+      ...(body.output_config && typeof body.output_config === 'object' ? body.output_config : {}),
+      effort: mapAnthropicAdaptiveEffort(level)
+    };
+    return;
+  }
+
+  const budgetTokens = resolveAnthropicThinkingBudget(level);
+  const existingThinking = body.thinking && typeof body.thinking === 'object' ? body.thinking : {};
+  body.thinking = {
+    ...existingThinking,
+    type: 'enabled',
+    budget_tokens: budgetTokens,
+    display: existingThinking.display || 'summarized'
+  };
+  if (Number(body.max_tokens) <= budgetTokens) {
+    body.max_tokens = budgetTokens + 1024;
+  }
+}
+
+function hasExplicitThinkingLevel(options = {}) {
+  return options.thinkingLevel !== undefined && options.thinkingLevel !== null && String(options.thinkingLevel).trim() !== '';
+}
+
+function mapAnthropicAdaptiveEffort(level) {
+  if (level === 'max' || level === 'xhigh') return 'max';
+  if (level === 'minimal') return 'low';
+  return level;
+}
+
+function resolveAnthropicThinkingBudget(level) {
+  switch (level) {
+    case 'minimal':
+      return 1024;
+    case 'low':
+      return 2048;
+    case 'medium':
+      return 4096;
+    case 'max':
+    case 'xhigh':
+      return 16384;
+    case 'high':
+    default:
+      return 8192;
   }
 }
 

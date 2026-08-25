@@ -1,3 +1,7 @@
+export const TOWN_WORLD_GENERATION_TIMEOUT_DEFAULT_MS = 8 * 60 * 1000;
+export const TOWN_WORLD_GENERATION_TIMEOUT_MIN_MS = 60 * 1000;
+export const TOWN_WORLD_GENERATION_TIMEOUT_MAX_MS = 30 * 60 * 1000;
+
 export const appConfig = Object.freeze({
   serviceName: 'flai-tavern-backend',
   version: '0.1.0',
@@ -15,6 +19,12 @@ export const appConfig = Object.freeze({
   ),
   authRateLimitWindowMs: readPositiveInteger(process.env.AUTH_RATE_LIMIT_WINDOW_MS, 60 * 1000),
   authRateLimitMax: readPositiveInteger(process.env.AUTH_RATE_LIMIT_MAX, 20),
+  townWorldGenerationTimeoutMs: readBoundedPositiveInteger(
+    process.env.TOWN_WORLD_GENERATION_TIMEOUT_MS,
+    TOWN_WORLD_GENERATION_TIMEOUT_DEFAULT_MS,
+    TOWN_WORLD_GENERATION_TIMEOUT_MIN_MS,
+    TOWN_WORLD_GENERATION_TIMEOUT_MAX_MS
+  ),
   jsonBodyLimit: process.env.JSON_BODY_LIMIT || '8mb',
   logLevel: readLogLevel(process.env.LOG_LEVEL, 'info'),
   upload: Object.freeze({
@@ -32,6 +42,12 @@ export const appConfig = Object.freeze({
 export function readPositiveInteger(value, fallback) {
   const parsed = Number(value);
   return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : fallback;
+}
+
+export function readBoundedPositiveInteger(value, fallback, min, max) {
+  const boundedFallback = Math.min(max, Math.max(min, readPositiveInteger(fallback, min)));
+  const parsed = readPositiveInteger(value, boundedFallback);
+  return Math.min(max, Math.max(min, parsed));
 }
 
 function readClientOrigins(value) {

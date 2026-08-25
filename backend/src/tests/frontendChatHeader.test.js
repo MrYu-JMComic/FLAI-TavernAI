@@ -42,10 +42,6 @@ test('ChatHeader keeps NPC management reachable from the compact mobile tools me
     /class="chat-header-overflow-tool"[\s\S]*runMoreAction\('open-npc', \$event\)[\s\S]*<span>NPC 管理<\/span>/
   );
   assert.match(
-    chatViewTemplate,
-    /<NpcPanel[\s\S]*v-if="conversation\?\.id && \(showNpcFeature \|\| npcPanelOpen\)"/
-  );
-  assert.match(
     stylesSource,
     /\.chat-header-more-menu \.chat-header-overflow-tool\s*\{\s*display:\s*none;\s*\}/
   );

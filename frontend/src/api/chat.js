@@ -1,4 +1,4 @@
-import { apiRequest, streamAssistantDraft, streamSSE } from './core.js';
+import { apiRequest, streamSSE } from './core.js';
 
 export function fetchConversations({ characterId = '' } = {}) {
   const params = new URLSearchParams();
@@ -250,113 +250,86 @@ export function deleteStatusBar(conversationId) {
   });
 }
 
-export function fetchConversationNpcs(conversationId) {
-  return apiRequest(`/api/conversations/${conversationId}/npcs`);
-}
-
-export function streamNpcOrganizer(conversationId, payload, handlers = {}, signal) {
-  return streamAssistantDraft(`/api/conversations/${conversationId}/npcs/organize`, payload, handlers, signal);
-}
-
-export function hideConversationNpc(conversationId, npcName) {
-  return apiRequest(`/api/conversations/${conversationId}/npcs/${encodeURIComponent(npcName)}`, {
-    method: 'DELETE'
-  });
-}
-
-export function hideEmptyConversationNpcs(conversationId) {
-  return apiRequest(`/api/conversations/${conversationId}/npcs-empty`, {
-    method: 'DELETE'
-  });
-}
-
-export function updateConversationNpc(conversationId, npcName, payload) {
-  return apiRequest(`/api/conversations/${conversationId}/npcs/${encodeURIComponent(npcName)}`, {
-    method: 'PUT',
-    body: JSON.stringify(payload)
-  });
-}
-
-export function fetchNpcAudit(conversationId, npcName, options = {}) {
-  const params = new URLSearchParams();
-  if (options.limit) params.set('limit', options.limit);
-  if (options.offset) params.set('offset', options.offset);
-  const suffix = params.toString() ? `?${params.toString()}` : '';
-  return apiRequest(`/api/conversations/${conversationId}/npcs/${encodeURIComponent(npcName)}/audit${suffix}`);
-}
-
-export function rollbackNpcAudit(conversationId, npcName, auditId) {
-  return apiRequest(`/api/conversations/${conversationId}/npcs/${encodeURIComponent(npcName)}/audit/${auditId}/rollback`, {
-    method: 'POST'
-  });
-}
-
-export function fetchNpcMemories(conversationId, npcName) {
-  return apiRequest(`/api/conversations/${conversationId}/npcs/${encodeURIComponent(npcName)}/memories`);
-}
-
-export function addNpcMemory(conversationId, npcName, payload) {
-  return apiRequest(`/api/conversations/${conversationId}/npcs/${encodeURIComponent(npcName)}/memories`, {
-    method: 'POST',
-    body: JSON.stringify(payload)
-  });
-}
-
-export function updateNpcMemory(conversationId, npcName, memoryId, payload) {
-  return apiRequest(`/api/conversations/${conversationId}/npcs/${encodeURIComponent(npcName)}/memories/${memoryId}`, {
-    method: 'PUT',
-    body: JSON.stringify(payload)
-  });
-}
-
-export function deleteNpcMemory(conversationId, npcName, memoryId) {
-  return apiRequest(`/api/conversations/${conversationId}/npcs/${encodeURIComponent(npcName)}/memories/${memoryId}`, {
-    method: 'DELETE'
-  });
-}
-
-export function fetchNpcBehaviors(conversationId, npcName) {
-  return apiRequest(`/api/conversations/${conversationId}/npcs/${encodeURIComponent(npcName)}/behaviors`);
-}
-
-export function addNpcBehavior(conversationId, npcName, payload) {
-  return apiRequest(`/api/conversations/${conversationId}/npcs/${encodeURIComponent(npcName)}/behaviors`, {
-    method: 'POST',
-    body: JSON.stringify(payload)
-  });
-}
-
-export function updateNpcBehavior(conversationId, npcName, behaviorId, payload) {
-  return apiRequest(`/api/conversations/${conversationId}/npcs/${encodeURIComponent(npcName)}/behaviors/${behaviorId}`, {
-    method: 'PUT',
-    body: JSON.stringify(payload)
-  });
-}
-
-export function deleteNpcBehavior(conversationId, npcName, behaviorId) {
-  return apiRequest(`/api/conversations/${conversationId}/npcs/${encodeURIComponent(npcName)}/behaviors/${behaviorId}`, {
-    method: 'DELETE'
-  });
-}
-
 export function fetchConversationScenes(conversationId) {
   return apiRequest(`/api/conversations/${conversationId}/scenes`);
 }
 
-export function fetchActorItems(conversationId, ownerType = 'protagonist', ownerName = '') {
-  const query = new URLSearchParams({ ownerType });
-  if (ownerName) query.set('ownerName', ownerName);
-  return apiRequest(`/api/conversations/${conversationId}/items?${query.toString()}`);
+export function fetchGameplayDashboard(conversationId) {
+  return apiRequest(`/api/conversations/${conversationId}/gameplay/dashboard`);
 }
 
-export function fetchActorItemAudit(conversationId, ownerType = 'protagonist', ownerName = '') {
-  const query = new URLSearchParams({ ownerType });
-  if (ownerName) query.set('ownerName', ownerName);
-  return apiRequest(`/api/conversations/${conversationId}/items/audit?${query.toString()}`);
+export function travelGameplayToNode(conversationId, destinationNodeId) {
+  return apiRequest(`/api/conversations/${conversationId}/gameplay/travel`, {
+    method: 'POST',
+    body: JSON.stringify({ destinationNodeId, source: 'player' })
+  });
 }
 
-export function rollbackActorItemAudit(conversationId, auditId) {
-  return apiRequest(`/api/conversations/${conversationId}/items/audit/${encodeURIComponent(auditId)}/rollback`, { method: 'POST' });
+export function performGameplayEncounterAction(conversationId, encounterId, payload) {
+  return apiRequest(`/api/conversations/${conversationId}/gameplay/encounters/${encounterId}/actions`, { method: 'POST', body: JSON.stringify(payload) });
+}
+
+export function createGameplayEncounter(conversationId, payload) {
+  return apiRequest(`/api/conversations/${conversationId}/gameplay/encounters`, { method: 'POST', body: JSON.stringify(payload) });
+}
+
+export function endGameplayEncounter(conversationId, encounterId) {
+  return apiRequest(`/api/conversations/${conversationId}/gameplay/encounters/${encounterId}/end`, { method: 'POST', body: '{}' });
+}
+
+export function claimGameplayReward(conversationId, grantId) {
+  return apiRequest(`/api/conversations/${conversationId}/gameplay/rewards/${grantId}/claim`, { method: 'POST', body: '{}' });
+}
+
+export function fetchGameplayEvents(conversationId, options = {}) {
+  const query = new URLSearchParams();
+  if (options.afterCursor) query.set('afterCursor', String(options.afterCursor));
+  if (options.limit) query.set('limit', String(options.limit));
+  if (options.eventType) query.set('eventType', options.eventType);
+  const suffix = query.size ? `?${query.toString()}` : '';
+  return apiRequest(`/api/conversations/${conversationId}/gameplay/events${suffix}`);
+}
+
+export function fetchGameplayQuests(conversationId, status = '') {
+  const query = status ? `?status=${encodeURIComponent(status)}` : '';
+  return apiRequest(`/api/conversations/${conversationId}/gameplay/quests${query}`);
+}
+
+export function createGameplayQuest(conversationId, payload) {
+  return apiRequest(`/api/conversations/${conversationId}/gameplay/quests`, { method: 'POST', body: JSON.stringify(payload) });
+}
+
+export function updateGameplayQuest(conversationId, questId, payload) {
+  return apiRequest(`/api/conversations/${conversationId}/gameplay/quests/${encodeURIComponent(questId)}`, { method: 'PUT', body: JSON.stringify(payload) });
+}
+
+export function updateGameplayObjective(conversationId, questId, objectiveId, payload) {
+  return apiRequest(`/api/conversations/${conversationId}/gameplay/quests/${encodeURIComponent(questId)}/objectives/${encodeURIComponent(objectiveId)}`, { method: 'PUT', body: JSON.stringify(payload) });
+}
+
+export function fetchGameplayBackpack(conversationId) {
+  return apiRequest(`/api/conversations/${conversationId}/gameplay/backpack`);
+}
+
+export function performGameplayCheck(conversationId, payload) {
+  return apiRequest(`/api/conversations/${conversationId}/gameplay/checks`, { method: 'POST', body: JSON.stringify(payload) });
+}
+
+export function advanceGameplayTime(conversationId, minutes) {
+  return apiRequest(`/api/conversations/${conversationId}/gameplay/clock/advance`, { method: 'POST', body: JSON.stringify({ minutes, source: 'player' }) });
+}
+
+export function updateGameplayWeather(conversationId, weather) {
+  return apiRequest(`/api/conversations/${conversationId}/gameplay/clock/weather`, { method: 'PUT', body: JSON.stringify({ weather, source: 'player' }) });
+}
+
+export function fetchGameplayActivities(conversationId, options = {}) {
+  const query = new URLSearchParams();
+  if (options.memberId) query.set('memberId', options.memberId);
+  if (options.memberName) query.set('memberName', options.memberName);
+  if (options.status) query.set('status', options.status);
+  const suffix = query.size ? `?${query.toString()}` : '';
+  return apiRequest(`/api/conversations/${conversationId}/gameplay/activities${suffix}`);
 }
 
 export function createSceneNode(conversationId, payload) {

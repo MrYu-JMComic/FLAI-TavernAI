@@ -63,6 +63,11 @@
   line-height: 1.7;
 }
 
+.home-mobile-summary,
+.home-quick-row .home-quick-import {
+  display: none;
+}
+
 .home-hero-actions,
 .home-empty-actions,
 .home-card-actions {
@@ -375,6 +380,89 @@
   font-size: 1.42rem;
   line-height: 1;
   font-variant-numeric: tabular-nums;
+}
+
+.home-town-entry {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  min-height: 92px;
+  padding: 16px 18px;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, #9b6d42 44%, var(--line));
+  border-radius: 12px;
+  color: #fff8e9;
+  background:
+    linear-gradient(90deg, rgba(25, 21, 26, 0.92) 0%, rgba(25, 21, 26, 0.7) 52%, rgba(25, 21, 26, 0.36) 100%),
+    url('/assets/town/bianjing-night-market.webp') center 48% / cover;
+  box-shadow: 0 14px 34px rgba(66, 43, 26, 0.16);
+  text-align: left;
+}
+
+.home-town-entry::after {
+  position: absolute;
+  inset: 0;
+  content: "";
+  border-radius: inherit;
+  box-shadow: inset 0 0 0 1px rgba(255, 230, 183, 0.06);
+  pointer-events: none;
+}
+
+.home-town-entry:hover {
+  border-color: rgba(224, 176, 106, 0.74);
+  box-shadow: 0 14px 34px rgba(66, 43, 26, 0.2);
+}
+
+.home-town-entry-copy,
+.home-town-entry-action {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+}
+
+.home-town-entry-copy {
+  min-width: 0;
+  gap: 12px;
+}
+
+.home-town-entry-copy > svg {
+  flex: 0 0 auto;
+  color: #f0bd70;
+}
+
+.home-town-entry-copy > span {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.home-town-entry-copy strong {
+  font-size: 1rem;
+}
+
+.home-town-entry-copy small {
+  overflow: hidden;
+  color: rgba(255, 248, 233, 0.76);
+  font-size: 0.78rem;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.home-town-entry-action {
+  flex: 0 0 auto;
+  gap: 6px;
+  min-height: 40px;
+  padding: 0 13px;
+  border: 1px solid rgba(255, 235, 196, 0.22);
+  border-radius: 9px;
+  background: rgba(18, 17, 24, 0.42);
+  font-size: 0.8rem;
+  font-weight: 850;
+  backdrop-filter: blur(9px);
 }
 
 .home-quick-row {
@@ -943,26 +1031,75 @@
     height: 100svh;
   }
 
-  .home-workbench {
-    gap: 13px;
+  .page-stack.home-workbench {
+    gap: 10px;
   }
 
   .home-hero {
+    display: block;
     min-height: 0;
-    padding: 18px;
+    padding: 14px 16px;
+    border-color: color-mix(in srgb, var(--line) 82%, transparent);
+    background: color-mix(in srgb, var(--surface) 92%, var(--green-soft));
+    box-shadow: 0 8px 22px rgba(48, 56, 64, 0.07);
   }
 
   .home-hero h1 {
-    font-size: 2rem;
+    font-size: 1.65rem;
   }
 
+  .home-eyebrow {
+    gap: 5px;
+    margin-bottom: 4px;
+    font-size: 0.72rem;
+  }
+
+  .home-eyebrow svg {
+    width: 14px;
+    height: 14px;
+  }
+
+  .home-hero-copy,
   .home-hero-actions,
+  .home-hero-aside {
+    display: none;
+  }
+
+  .home-mobile-summary {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+    margin: 7px 0 0;
+    overflow: hidden;
+    color: var(--muted);
+    font-size: 0.76rem;
+    white-space: nowrap;
+  }
+
+  .home-mobile-summary strong {
+    color: var(--text);
+    font-size: 0.82rem;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .home-mobile-provider {
+    min-width: 0;
+    overflow: hidden;
+    color: var(--primary);
+    font-weight: 800;
+    text-overflow: ellipsis;
+  }
+
+  .home-mobile-provider.ready {
+    color: var(--green);
+  }
+
   .home-empty-actions {
     align-items: stretch;
     flex-direction: column;
   }
 
-  .home-hero-actions > *,
   .home-empty-actions > * {
     width: 100%;
   }
@@ -972,8 +1109,28 @@
   }
 
   .home-quick-row {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: repeat(4, minmax(0, 1fr));
     gap: 6px;
+  }
+
+  .home-quick-row .home-quick-import {
+    position: relative;
+    display: inline-flex;
+    overflow: hidden;
+  }
+
+  .home-quick-import input {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    opacity: 0;
+    cursor: pointer;
+  }
+
+  .home-quick-import.disabled {
+    opacity: 0.58;
+    pointer-events: none;
   }
 
   .home-quick-action {
@@ -1087,15 +1244,15 @@
   }
 
   .home-quick-row {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: repeat(4, minmax(0, 1fr));
     gap: 5px;
   }
 
   .home-quick-action {
-    gap: 4px;
+    gap: 3px;
     min-height: 38px;
-    padding: 0 6px;
-    font-size: 0.8rem;
+    padding: 0 3px;
+    font-size: 0.76rem;
   }
 
   .home-quick-action svg {
@@ -1530,6 +1687,26 @@
 
 
 @media (max-width: 620px) {
+  .home-town-entry {
+    min-height: 82px;
+    padding: 13px 14px;
+  }
+
+  .home-town-entry-copy small {
+    white-space: normal;
+  }
+
+  .home-town-entry-action > span {
+    display: none;
+  }
+
+  .home-town-entry-action {
+    width: 38px;
+    min-height: 38px;
+    justify-content: center;
+    padding: 0;
+  }
+
   .home-command-copy {
     white-space: normal;
   }

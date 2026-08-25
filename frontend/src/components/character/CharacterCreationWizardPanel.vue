@@ -1,22 +1,15 @@
 <script setup>
-import { ChevronLeft, ChevronRight, ListChecks, Settings } from '@lucide/vue';
+import { ListChecks, Settings } from '@lucide/vue';
 
 defineProps({
   active: { type: Boolean, default: false },
   currentStep: { type: Object, required: true },
   progressText: { type: String, default: '' },
   stepId: { type: String, default: '' },
-  stepIndex: { type: Number, default: 0 },
   steps: { type: Array, default: () => [] }
 });
 
-const emit = defineEmits([
-  'next',
-  'previous',
-  'set-mode',
-  'set-step',
-  'skip'
-]);
+const emit = defineEmits(['set-mode', 'set-step']);
 </script>
 
 <template>
@@ -53,7 +46,7 @@ const emit = defineEmits([
     </div>
     <div v-if="active" class="character-wizard-steps" role="tablist" aria-label="角色创建向导步骤">
       <button
-        v-for="step in steps"
+        v-for="(step, index) in steps"
         :key="step.id"
         class="character-wizard-step"
         :class="{ active: stepId === step.id }"
@@ -61,33 +54,10 @@ const emit = defineEmits([
         role="tab"
         :aria-selected="stepId === step.id"
         :tabindex="stepId === step.id ? 0 : -1"
-        @click="emit('set-step', step.id, { scroll: true })"
+        @click="emit('set-step', step.id)"
       >
+        <span class="character-wizard-step-index">{{ index + 1 }}</span>
         <strong>{{ step.label }}</strong>
-        <span>{{ step.description }}</span>
-      </button>
-    </div>
-    <div v-if="active" class="character-wizard-actions">
-      <button
-        class="ghost-button"
-        type="button"
-        :disabled="stepIndex === 0"
-        @click="emit('previous')"
-      >
-        <ChevronLeft :size="17" />
-        <span>上一步</span>
-      </button>
-      <button class="ghost-button" type="button" @click="emit('skip')">
-        <span>跳过本步</span>
-      </button>
-      <button
-        v-if="stepIndex < steps.length - 1"
-        class="primary-button"
-        type="button"
-        @click="emit('next')"
-      >
-        <span>下一步</span>
-        <ChevronRight :size="17" />
       </button>
     </div>
   </section>

@@ -711,7 +711,8 @@ test('chat completion inserts context director between base and preset system pr
       assert.match(providerBody.messages[1].content, /1\. Explicit user instruction/);
       assert.match(providerBody.messages[1].content, /matched world book entries/i);
       assert.equal(providerBody.messages[2].role, 'system');
-      assert.equal(providerBody.messages[2].content, 'Preset session guidance sentinel.');
+      assert.match(providerBody.messages[2].content, /\[用户配置的会话级指令\]/);
+      assert.match(providerBody.messages[2].content, /Preset session guidance sentinel\./);
       assert.equal(providerBody.messages.at(-1).role, 'user');
       assert.equal(providerBody.messages.at(-1).content, 'approach the moon gate');
     });
@@ -892,7 +893,8 @@ test('chat continue appends an assistant message without storing a user prompt',
       assert.equal(providerBody.messages.at(-2).role, 'assistant');
       assert.equal(providerBody.messages.at(-2).content, 'The hinges groan as the door opens.');
       assert.equal(providerBody.messages.at(-1).role, 'user');
-      assert.match(providerBody.messages.at(-1).content, /请继续上一条回复/);
+      assert.match(providerBody.messages.at(-1).content, /从上一条 assistant 回复的末尾直接续写/);
+      assert.match(providerBody.messages.at(-1).content, /不要复述、改写或总结/);
 
       const messages = database
         .prepare('SELECT role, content FROM messages WHERE conversation_id = ? ORDER BY rowid ASC')

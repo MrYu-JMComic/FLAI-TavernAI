@@ -11,6 +11,7 @@ import {
 } from '../services/chatAttachments.js';
 import { createConversationAssistantResultService } from '../services/conversationAssistantResults.js';
 import { recordAutomaticConversationMemories } from '../services/conversationMemoryExtraction.js';
+import { projectConversationCast } from '../services/cast/castProjector.js';
 import {
   createChatDiagnosticId,
   hasAssistantPayload,
@@ -32,8 +33,13 @@ import {
   writeSse
 } from './helpers.js';
 import { continueMessageSchema, sendMessageSchema, validate } from '../validations/schemas.js';
+import { normalizeThinkingLevel } from '../../../shared/providerThinking.js';
 
-const CONTINUATION_PROMPT = '请继续上一条回复，保持同一角色、语气和场景推进，不要重复已经写过的内容。';
+const CONTINUATION_PROMPT = [
+  '从上一条 assistant 回复的末尾直接续写尚未完成的内容。',
+  '保持相同的角色身份、叙事视角、时态、语气和场景连续性。',
+  '不要复述、改写或总结已经输出的段落；不要添加“继续”“接下来”等说明，也不要把本指令写进剧情。'
+].join('\n');
 
 export function createConversationGenerationRouter(ctx) {
   const { db, requireAuth, asyncRoute, newId, nowIso } = ctx;
@@ -200,6 +206,8 @@ export function createConversationGenerationRouter(ctx) {
       return;
     }
 
+    const completionOptions = aiOptions;
+
     if (request.body?.stream !== false) {
       await streamAssistantResponse({
         request,
@@ -213,8 +221,8 @@ export function createConversationGenerationRouter(ctx) {
         userMessage,
         statusBar,
         worldBookMatches,
-        thinkingEnabled: aiOptions.thinkingEnabled,
-        completionOptions: aiOptions,
+        thinkingEnabled: completionOptions.thinkingEnabled,
+        completionOptions,
         writeSse,
         getStatusBar: () => getStatusBar(db, request.auth.user.id, conversation.id),
         saveAssistantResult: assistantResults.saveAssistantResult,
@@ -224,7 +232,7 @@ export function createConversationGenerationRouter(ctx) {
       return;
     }
 
-    const result = await generateCompletion(settings.value, modelMessages, aiOptions);
+    const result = await generateCompletion(settings.value, modelMessages, completionOptions);
     if (!hasAssistantPayload(result)) {
       const diagnosticId = createChatDiagnosticId();
       logAssistantPayloadFailure({
@@ -363,6 +371,7 @@ export function createConversationGenerationRouter(ctx) {
     const worldBookMatches = promptPipeline.worldBookMatches;
     const modelMessages = promptPipeline.modelMessages;
     const statusBar = promptPipeline.statusBar;
+    const completionOptions = aiOptions;
 
     if (request.body?.stream !== false) {
       await streamAssistantResponse({
@@ -377,8 +386,8 @@ export function createConversationGenerationRouter(ctx) {
         userMessage: null,
         statusBar,
         worldBookMatches,
-        thinkingEnabled: aiOptions.thinkingEnabled,
-        completionOptions: aiOptions,
+        thinkingEnabled: completionOptions.thinkingEnabled,
+        completionOptions,
         writeSse,
         getStatusBar: () => getStatusBar(db, request.auth.user.id, conversation.id),
         saveAssistantResult: assistantResults.saveAssistantResult,
@@ -388,7 +397,7 @@ export function createConversationGenerationRouter(ctx) {
       return;
     }
 
-    const result = await generateCompletion(settings.value, modelMessages, aiOptions);
+    const result = await generateCompletion(settings.value, modelMessages, completionOptions);
     if (!hasAssistantPayload(result)) {
       const diagnosticId = createChatDiagnosticId();
       logAssistantPayloadFailure({
@@ -484,13 +493,30 @@ export function createConversationGenerationRouter(ctx) {
       runAccessoryAgents(options).catch((error) => {
         console.warn('[accessory-agents] background update failed:', error?.message || error);
       });
+      projectConversationCast({
+        database: options.db,
+        userId: options.userId,
+        conversation: options.conversation,
+        userMessage: options.userMessage,
+        assistantMessage: options.assistantMessage,
+        settings: options.settings
+      }).catch((error) => {
+        console.warn('[cast-sync] background update failed:', error?.message || error);
+      });
     });
   }
 
   function buildAiOptions(body = {}, activePreset = null) {
+    const hasThinkingLevel = body?.thinkingLevel !== undefined && body?.thinkingLevel !== null;
+    const thinkingLevel = hasThinkingLevel
+      ? normalizeThinkingLevel(body.thinkingLevel, body?.thinkingEnabled === false ? 'off' : 'high')
+      : '';
     const aiOptions = {
-      thinkingEnabled: body?.thinkingEnabled !== false
+      thinkingEnabled: thinkingLevel ? thinkingLevel !== 'off' : body?.thinkingEnabled !== false
     };
+    if (thinkingLevel) {
+      aiOptions.thinkingLevel = thinkingLevel;
+    }
 
     if (activePreset) {
       aiOptions.temperature = activePreset.temperature;

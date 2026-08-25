@@ -8,6 +8,8 @@ const props = defineProps({
   canSend: { type: Boolean, default: false },
   useStream: { type: Boolean, default: true },
   thinkingEnabled: { type: Boolean, default: false },
+  thinkingLevel: { type: String, default: 'off' },
+  thinkingOptions: { type: Array, default: () => [] },
   canToggleThinking: { type: Boolean, default: false },
   canUseStream: { type: Boolean, default: true },
   canAddAttachments: { type: Boolean, default: true },
@@ -31,6 +33,7 @@ const emit = defineEmits([
   'stop',
   'toggle-stream',
   'toggle-thinking',
+  'update:thinking-level',
   'open-model-switcher',
   'quick-model-change',
   'add-attachments',
@@ -51,8 +54,22 @@ const normalizedModelCapabilities = computed(() => props.modelCapabilities && ty
   : {}
 );
 const currentModelReasoning = computed(() => Boolean(
-  normalizedModelCapabilities.value.reasoning ?? props.currentModelSupportsReasoning
+  normalizedModelCapabilities.value.thinking?.supported ??
+    normalizedModelCapabilities.value.reasoning ??
+    props.currentModelSupportsReasoning
 ));
+const currentThinkingLabel = computed(() => (
+  props.thinkingOptions.find((option) => option?.value === props.thinkingLevel)?.label || props.thinkingLevel || '关闭'
+));
+const currentThinkingShortLabel = computed(() => ({
+  off: '关',
+  minimal: '微',
+  low: '低',
+  medium: '中',
+  high: '高',
+  xhigh: '极',
+  max: '满'
+})[props.thinkingLevel] || '思');
 const modelCapabilityChips = computed(() => {
   const capabilities = normalizedModelCapabilities.value;
   const chips = [];
@@ -100,6 +117,14 @@ function onPresetChange(event) {
     return;
   }
   emit('update:selectedPresetId', value);
+}
+
+function onThinkingLevelChange(event) {
+  const value = readEventTargetValue(event);
+  if (value === undefined) {
+    return;
+  }
+  emit('update:thinking-level', value);
 }
 
 function onQuickModelChange(event) {
@@ -298,7 +323,34 @@ defineExpose({ wrapRef, textareaRef });
           <Sparkles :size="16" />
           <span>流式输出</span>
         </button>
+        <label
+          v-if="thinkingOptions.length"
+          class="mode-pill thinking-pill thinking-level-control"
+          :class="{ active: canToggleThinking && thinkingEnabled, disabled: sending || !canToggleThinking }"
+          :title="`思考强度：${currentThinkingLabel}`"
+        >
+          <Brain class="thinking-level-brain" :size="17" aria-hidden="true" />
+          <span class="thinking-level-copy" aria-hidden="true">
+            <span class="thinking-level-name">思考</span>
+            <strong class="thinking-level-value">{{ currentThinkingLabel }}</strong>
+          </span>
+          <span class="thinking-level-mobile-value" aria-hidden="true">{{ currentThinkingShortLabel }}</span>
+          <select
+            class="thinking-level-select"
+            :value="thinkingLevel"
+            :disabled="sending || !canToggleThinking"
+            :aria-label="`思考强度，当前${currentThinkingLabel}`"
+            :aria-busy="sending"
+            @change="onThinkingLevelChange"
+          >
+            <option v-for="option in thinkingOptions" :key="option.value" :value="option.value">
+              {{ option.label }}
+            </option>
+          </select>
+          <ChevronDown class="thinking-level-chevron" :size="14" aria-hidden="true" />
+        </label>
         <button
+          v-else
           class="mode-pill thinking-pill"
           :class="{ active: canToggleThinking && thinkingEnabled }"
           type="button"
@@ -309,7 +361,7 @@ defineExpose({ wrapRef, textareaRef });
           @click="emit('toggle-thinking')"
         >
           <Brain :size="16" />
-          <span>{{ thinkingEnabled ? '深度思考' : '普通回复' }}</span>
+          <span>{{ canToggleThinking && thinkingEnabled ? '深度思考' : '普通回复' }}</span>
         </button>
         <span v-if="usage" class="token-chip">tokens {{ usage.total_tokens || usage.totalTokens || '-' }}</span>
         <button v-if="sending" class="round-send stop" type="button" aria-label="停止生成" title="停止生成" @click="emit('stop')">

@@ -8,6 +8,11 @@ const { branchConversation } = await import('../modules/branches.js');
 const { createEntry, createWorldBook, linkWorldBookToCharacter } = await import('../modules/worldBooks.js');
 const { publicUser, getUserProfile } = await import('../modules/users.js');
 const { providerWithSecret } = await import('../services/providers.js');
+const {
+  createCastMember,
+  createCastMemory,
+  ensureConversationProtagonist,
+} = await import('../services/cast/castCommandService.js');
 const { createUpgradeRouter } = await import('../routes/upgrade.js');
 const { insertUser, withServer } = await import('./routeTestUtils.js');
 
@@ -455,7 +460,14 @@ test('upgrade world book match preview and diagnostics export are scoped to the 
   const database = createAppDatabase(':memory:');
   const userId = 'upgrade-preview-user';
   insertUser(database, userId);
-  createConversationFixture(database, userId);
+  const { conversationId } = createConversationFixture(database, userId);
+  ensureConversationProtagonist(database, userId, conversationId);
+  const diagnosticMember = createCastMember(database, userId, conversationId, {
+    canonicalName: 'Diagnostic Sentinel',
+  });
+  createCastMemory(database, userId, conversationId, diagnosticMember.id, {
+    content: 'Private diagnostic story text.',
+  });
   const book = createWorldBook(database, userId, { name: 'Preview Book' });
   const signalEntry = createEntry(database, userId, book.id, {
     name: 'Signal Fire',
@@ -543,6 +555,10 @@ test('upgrade world book match preview and diagnostics export are scoped to the 
     assert.equal(diagnostics.version, 1);
     assert.equal(diagnostics.counts.characters, 1);
     assert.equal(diagnostics.counts.conversations, 1);
+    assert.equal(diagnostics.counts.cast.conversations, 1);
+    assert.equal(diagnostics.counts.cast.members, 2);
+    assert.equal(diagnostics.counts.cast.memories, 1);
+    assert.equal(JSON.stringify(diagnostics).includes('Private diagnostic story text.'), false);
   });
 });
 
@@ -553,7 +569,20 @@ test('upgrade project snapshot exports scoped envelope without secrets or binary
   insertUser(database, userId);
   insertUser(database, otherUserId);
   const { conversationId, characterId } = createConversationFixture(database, userId);
-  createConversationFixture(database, otherUserId);
+  const otherFixture = createConversationFixture(database, otherUserId);
+  ensureConversationProtagonist(database, userId, conversationId);
+  ensureConversationProtagonist(database, otherUserId, otherFixture.conversationId);
+  const snapshotMember = createCastMember(database, userId, conversationId, {
+    canonicalName: 'Snapshot Sentinel',
+    currentLocationLabel: 'Archive Hall',
+  });
+  createCastMemory(database, userId, conversationId, snapshotMember.id, {
+    content: 'The archive closes at dusk.',
+    importance: 0.7,
+  });
+  createCastMember(database, otherUserId, otherFixture.conversationId, {
+    canonicalName: 'Other Tenant Sentinel',
+  });
   const timestamp = new Date().toISOString();
   const book = createWorldBook(database, userId, { name: 'Snapshot Lore' });
   createEntry(database, userId, book.id, {
@@ -620,7 +649,7 @@ test('upgrade project snapshot exports scoped envelope without secrets or binary
     const snapshotResponse = await fetch(`${baseUrl}/api/project/snapshot`);
     assert.equal(snapshotResponse.status, 200);
     const snapshot = await snapshotResponse.json();
-    assert.equal(snapshot.version, 1);
+    assert.equal(snapshot.version, 2);
     assert.equal(snapshot.kind, 'project_snapshot');
     assert.equal(snapshot.items.characters.length, 1);
     assert.equal(snapshot.items.characters[0].id, characterId);
@@ -631,6 +660,14 @@ test('upgrade project snapshot exports scoped envelope without secrets or binary
     assert.equal(snapshot.items.presets[0].name, 'Snapshot Preset');
     assert.equal(snapshot.items.mods[0].characterIds[0], characterId);
     assert.equal(snapshot.items.statusBars[0].conversationId, conversationId);
+    assert.equal(snapshot.items.cast.version, 1);
+    assert.equal(snapshot.items.cast.conversations[0].conversationId, conversationId);
+    const castMembers = snapshot.items.cast.conversations[0].members;
+    const exportedMember = castMembers.find(
+      (entry) => entry.member.canonicalName === 'Snapshot Sentinel'
+    );
+    assert.equal(exportedMember.member.currentLocationLabel, 'Archive Hall');
+    assert.equal(exportedMember.memories[0].content, 'The archive closes at dusk.');
     assert.equal(snapshot.dependencies.assets.length, 1);
     assert.equal(snapshot.dependencies.assets[0].url.startsWith('/api/assets/'), true);
     assert.equal(snapshot.dependencies.provider.apiKeySet, true);
@@ -639,6 +676,7 @@ test('upgrade project snapshot exports scoped envelope without secrets or binary
 
     const serialized = JSON.stringify(snapshot);
     assert.equal(serialized.includes(otherUserId), false);
+    assert.equal(serialized.includes('Other Tenant Sentinel'), false);
     assert.equal(serialized.includes('sk-project-secret-plainly-forbidden'), false);
     assert.equal(serialized.includes('encrypted_api_key'), false);
     assert.equal(serialized.includes('base64Data'), false);

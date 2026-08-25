@@ -853,8 +853,10 @@
 .deep-message-scroll {
   display: flex;
   flex-direction: column;
+  min-width: 0;
   min-height: 0;
   overflow: auto;
+  overflow-x: hidden;
   overscroll-behavior: contain;
   padding: 22px 18px calc(var(--chat-composer-height) + 38px);
   scroll-padding-bottom: calc(var(--chat-composer-height) + 38px);
@@ -870,6 +872,8 @@
 
 .deep-message {
   display: flex;
+  min-width: 0;
+  max-width: 100%;
   width: min(var(--chat-readable-width), 100%);
   margin: 0 auto 22px;
 }
@@ -1095,6 +1099,10 @@
 }
 
 .deep-bubble {
+  box-sizing: border-box;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
   border-radius: 18px;
   line-height: 1.75;
   word-break: break-word;
@@ -1175,10 +1183,14 @@
 }
 
 .reasoning-block {
+  min-width: 0;
+  max-width: 100%;
   margin-bottom: 14px;
 }
 
 .reasoning-toggle {
+  max-width: 100%;
+  flex-wrap: wrap;
   gap: 8px;
   min-height: 32px;
   border: 0;
@@ -1195,12 +1207,81 @@
 }
 
 .reasoning-body {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
   margin-top: 8px;
-  padding: 0 0 0 18px;
-  border-left: 2px solid #d7e3f8;
+  overflow: hidden;
+  padding: 14px 16px;
+  border: 1px solid color-mix(in srgb, var(--primary) 24%, var(--line));
+  border-radius: 14px;
   color: #6b7280;
+  background: color-mix(in srgb, var(--surface) 78%, transparent);
+  box-shadow:
+    0 12px 30px rgba(67, 45, 30, 0.1),
+    inset 0 0 0 1px color-mix(in srgb, #ffffff 16%, transparent);
+  backdrop-filter: blur(18px) saturate(1.08);
+  -webkit-backdrop-filter: blur(18px) saturate(1.08);
   white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
   line-height: 1.75;
+}
+
+.reasoning-body .markdown-content {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.reasoning-body .markdown-code {
+  box-sizing: border-box;
+  width: 100%;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.html-document-preview {
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--line) 78%, transparent);
+  border-radius: 12px;
+  background: #ffffff;
+}
+
+.html-document-preview-header {
+  display: flex;
+  min-width: 0;
+  min-height: 38px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 12px;
+  border-bottom: 1px solid color-mix(in srgb, var(--line) 78%, transparent);
+  color: var(--text);
+  background: color-mix(in srgb, var(--surface) 92%, transparent);
+}
+
+.html-document-preview-header strong {
+  font-size: 0.84rem;
+}
+
+.html-document-preview-header small {
+  color: var(--muted);
+  font-size: 0.74rem;
+}
+
+.html-document-frame {
+  display: block;
+  width: 100%;
+  height: clamp(420px, 64dvh, 720px);
+  border: 0;
+  background: #ffffff;
 }
 
 :root[data-theme="dark"] .reasoning-body {
@@ -1374,6 +1455,8 @@
   font-weight: 700;
   white-space: nowrap;
   cursor: pointer;
+  touch-action: manipulation;
+  transition: border-color 180ms ease, background-color 180ms ease, opacity 180ms ease;
 }
 
 .mode-pill.active {
@@ -1382,9 +1465,97 @@
   background: color-mix(in srgb, var(--primary-soft) 78%, var(--surface));
 }
 
-.mode-pill:disabled {
+.mode-pill:disabled,
+.mode-pill.disabled {
   cursor: not-allowed;
   opacity: 0.58;
+}
+
+.mode-pill:not(:disabled):not(.disabled):active {
+  filter: brightness(0.96);
+}
+
+.thinking-level-control {
+  position: relative;
+  min-width: 132px;
+  height: 44px;
+  justify-content: flex-start;
+  gap: 9px;
+  overflow: hidden;
+  border-radius: 10px;
+  padding: 0 10px;
+}
+
+.thinking-level-control:focus-within {
+  outline: 2px solid color-mix(in srgb, var(--primary) 48%, transparent);
+  outline-offset: 2px;
+}
+
+.thinking-level-brain {
+  flex: 0 0 auto;
+}
+
+.thinking-level-copy {
+  display: grid;
+  flex: 1 1 auto;
+  min-width: 0;
+  gap: 2px;
+  text-align: left;
+  line-height: 1;
+  pointer-events: none;
+}
+
+.thinking-level-name {
+  color: var(--muted);
+  font-size: 0.66rem;
+  font-weight: 650;
+  line-height: 1;
+}
+
+.thinking-level-value {
+  overflow: hidden;
+  color: inherit;
+  font-size: 0.8rem;
+  font-weight: 800;
+  line-height: 1.1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.thinking-level-select {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  max-width: none;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  appearance: none;
+  color: inherit;
+  background: transparent;
+  font: inherit;
+  opacity: 0;
+  box-shadow: none;
+  cursor: pointer;
+}
+
+.thinking-level-select:disabled {
+  cursor: not-allowed;
+}
+
+.thinking-level-select option {
+  color: #0f172a;
+  background: #ffffff;
+}
+
+.thinking-level-chevron {
+  flex: 0 0 auto;
+  margin-left: auto;
+  pointer-events: none;
+}
+
+.thinking-level-mobile-value {
+  display: none;
 }
 
 .model-switch-pill {
@@ -1776,16 +1947,6 @@
 
 /* Desktop two-column chat layout (>= 1180px) */
 @media (min-width: 1180px) {
-  /* The composer is docked over the page on desktop. Keep a real scrollable
-     spacer after the last message so the virtual list can reach the unobscured
-     bottom instead of stopping underneath the composer. */
-  .deep-message-scroll::after {
-    content: '';
-    display: block;
-    flex: 0 0 calc(var(--chat-composer-height) + 38px);
-    min-height: calc(var(--chat-composer-height) + 38px);
-  }
-
   /* Hide backdrop entirely on desktop - never a grid item or overlay */
   .sidebar-backdrop {
     display: none;
@@ -1795,6 +1956,7 @@
   .deep-chat-shell:not(.sidebar-collapsed) {
     display: grid;
     grid-template-columns: var(--chat-sidebar-drawer-width) minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr);
   }
 
   /* Constrain chat widths when sidebar is open so content does not overflow */
@@ -1809,7 +1971,9 @@
     inset: auto;
     width: var(--chat-sidebar-drawer-width);
     height: 100%;
+    min-height: 0;
     max-height: none;
+    overflow: hidden;
     transform: none;
     visibility: visible;
     box-shadow: none;
@@ -1820,19 +1984,6 @@
   .deep-chat-shell:not(.sidebar-collapsed) .deep-chat-main {
     margin-left: 0;
     min-width: 0;
-  }
-
-  .deep-chat-shell .deep-composer-wrap {
-    position: fixed;
-    right: 0;
-    bottom: 0;
-    left: 0;
-    width: 100%;
-  }
-
-  .deep-chat-shell:not(.sidebar-collapsed) .deep-composer-wrap {
-    left: var(--chat-sidebar-drawer-width);
-    width: auto;
   }
 
   /* Hide hamburger when sidebar is open */
@@ -2011,6 +2162,15 @@
 :root[data-theme="dark"] .model-quick-select select option:checked {
   color: #f8fafc;
   background: #334155;
+}
+
+:root[data-theme="dark"] .thinking-level-select {
+  color-scheme: dark;
+}
+
+:root[data-theme="dark"] .thinking-level-select option {
+  color: #f8fafc;
+  background: #111827;
 }
 
 .history-item.active,
@@ -2380,14 +2540,14 @@
 
   .composer-actions {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) repeat(3, 40px) 44px;
+    grid-template-columns: minmax(0, 1fr) repeat(3, 44px) 44px;
     align-items: center;
     gap: 8px;
     min-height: 44px;
   }
 
   .composer-actions.has-preset {
-    grid-template-rows: 40px 40px;
+    grid-template-rows: 44px 44px;
   }
 
   .composer-actions.has-preset .preset-select {
@@ -2398,10 +2558,10 @@
   }
 
   .mode-pill {
-    width: 40px;
-    min-width: 40px;
-    height: 40px;
-    min-height: 40px;
+    width: 44px;
+    min-width: 44px;
+    height: 44px;
+    min-height: 44px;
     overflow: hidden;
     padding: 0;
     justify-content: center;
@@ -2413,8 +2573,8 @@
     min-width: 0;
     max-width: none;
     width: 100%;
-    height: 40px;
-    min-height: 40px;
+    height: 44px;
+    min-height: 44px;
     padding: 0 9px;
   }
 
@@ -2454,6 +2614,42 @@
 
   .thinking-pill {
     grid-column: 4;
+  }
+
+  .thinking-level-control {
+    min-width: 44px;
+    gap: 4px;
+    border-radius: 999px;
+    padding: 0;
+  }
+
+  .thinking-level-control .thinking-level-copy {
+    display: none;
+  }
+
+  .thinking-level-control .thinking-level-brain {
+    width: 16px;
+    height: 16px;
+  }
+
+  .composer-actions .thinking-level-control .thinking-level-mobile-value {
+    display: inline;
+    font-size: 0.72rem;
+    line-height: 1;
+  }
+
+  .thinking-level-control .thinking-level-select {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    max-width: none;
+    height: 100%;
+    padding: 0;
+    opacity: 0;
+  }
+
+  .thinking-level-control .thinking-level-chevron {
+    display: none;
   }
 
   .round-send {

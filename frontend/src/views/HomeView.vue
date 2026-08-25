@@ -5,11 +5,13 @@ import {
   AlertTriangle,
   BookOpen,
   Bot,
+  ChevronRight,
   Clock3,
   Compass,
   Download,
   Eye,
   Heart,
+  MapPinned,
   MessageSquareText,
   Pencil,
   Plus,
@@ -43,9 +45,31 @@ const props = defineProps({
 const emit = defineEmits(['navigate']);
 const notify = useNotify();
 
+const CHARACTER_SORT_STORAGE_KEY = 'flai-character-sort';
+
+function readStoredCharacterSort() {
+  try {
+    const stored = localStorage.getItem(CHARACTER_SORT_STORAGE_KEY);
+    if (stored && ['created', 'used', 'name'].includes(stored)) {
+      return stored;
+    }
+  } catch {
+    notify.warning('无法读取角色排序设置');
+  }
+  return 'created';
+}
+
+function saveStoredCharacterSort(value) {
+  try {
+    localStorage.setItem(CHARACTER_SORT_STORAGE_KEY, value);
+  } catch {
+    notify.warning('无法保存角色排序设置');
+  }
+}
+
 const characters = ref([]);
 const search = ref('');
-const sort = ref('created');
+const sort = ref(readStoredCharacterSort());
 const sortOptions = [
   { value: 'created', label: '按创建时间' },
   { value: 'used', label: '按最近使用' },
@@ -623,6 +647,10 @@ onUnmounted(() => {
 watch(search, () => {
   if (filterClearInProgress) return;
   scheduleSearchLoad();
+});
+watch(sort, (newSort) => {
+  if (filterClearInProgress) return;
+  saveStoredCharacterSort(newSort);
 });
 watch([sort, selectedTag], () => {
   if (filterClearInProgress) return;
@@ -1328,6 +1356,15 @@ function formatCount(value) {
         </p>
         <h1>角色库</h1>
         <p class="home-hero-copy">管理角色、整理标签，并快速回到正在发生的故事。</p>
+        <p class="home-mobile-summary">
+          <span><strong>{{ characters.length }}</strong> 个角色</span>
+          <span aria-hidden="true">·</span>
+          <span><strong>{{ tags.length }}</strong> 个标签</span>
+          <span aria-hidden="true">·</span>
+          <span class="home-mobile-provider" :class="{ ready: providerReady }" :title="providerLabel">
+            {{ providerReady ? '模型已连接' : '模型未配置' }}
+          </span>
+        </p>
         <div class="home-hero-actions">
           <button class="home-primary-action" type="button" @click="emit('navigate', 'characterNew')">
             <Plus :size="18" />
@@ -1358,6 +1395,20 @@ function formatCount(value) {
       </div>
     </section>
 
+    <button class="home-town-entry" type="button" @click="emit('navigate', 'town')">
+      <span class="home-town-entry-copy">
+        <MapPinned :size="24" aria-hidden="true" />
+        <span>
+          <strong>AI 虚拟小镇</strong>
+          <small>进入独立玩法，观察居民行动、对话，并向世界投放事件。</small>
+        </span>
+      </span>
+      <span class="home-town-entry-action">
+        <span>进入小镇</span>
+        <ChevronRight :size="18" aria-hidden="true" />
+      </span>
+    </button>
+
     <section class="home-quick-row" aria-label="快捷入口">
       <button
         v-for="action in quickActions"
@@ -1370,6 +1421,16 @@ function formatCount(value) {
         <component :is="action.icon" :size="18" />
         <span>{{ action.label }}</span>
       </button>
+      <label
+        class="home-quick-action quiet home-quick-import"
+        :class="{ disabled: importLoading }"
+        aria-label="导入角色卡"
+        title="导入角色卡"
+      >
+        <Upload :size="18" />
+        <span>导入</span>
+        <input type="file" accept=".json" aria-label="移动端导入角色卡" :disabled="importLoading" @change="handleImportFile" />
+      </label>
     </section>
 
     <section

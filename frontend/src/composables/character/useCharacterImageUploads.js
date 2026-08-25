@@ -1,5 +1,5 @@
 import { reactive } from 'vue';
-import { readFileAsDataUrl } from '../../utils/fileReaders';
+import { readFileAsDataUrl, validateImageDataUrl } from '../../utils/fileReaders';
 
 const ADVANCED_BACKGROUND_FIELDS = new Set(['desktopBackgroundUrl', 'mobileBackgroundUrl']);
 
@@ -46,7 +46,14 @@ export function useCharacterImageUploads({
       if (!isCurrentAvatarUpload(uploadToken)) {
         return;
       }
-      form.avatarUrl = result;
+      const validatedResult = await validateImageDataUrl(
+        result,
+        '头像图片数据无效，请重新选择 PNG、JPG 或 WebP 图片'
+      );
+      if (!isCurrentAvatarUpload(uploadToken)) {
+        return;
+      }
+      form.avatarUrl = validatedResult;
     } catch (err) {
       if (!isCurrentAvatarUpload(uploadToken)) {
         return;
@@ -57,6 +64,14 @@ export function useCharacterImageUploads({
 
   function isCurrentAvatarUpload(uploadToken) {
     return !isDisposed() && uploadToken === avatarUploadToken;
+  }
+
+  function clearAvatar() {
+    if (isDisposed() || !canEdit?.value) {
+      return;
+    }
+    avatarUploadToken += 1;
+    form.avatarUrl = '';
   }
 
   async function handleAdvancedBackground(event, field) {
@@ -136,6 +151,7 @@ export function useCharacterImageUploads({
     backgroundUploading,
     cancelCharacterImageUploads,
     clearAdvancedBackground,
+    clearAvatar,
     handleAdvancedBackground,
     handleAvatar
   };

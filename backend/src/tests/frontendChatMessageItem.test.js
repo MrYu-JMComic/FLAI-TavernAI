@@ -1,9 +1,13 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { extractHtmlDocument } from '../../../frontend/src/utils/htmlDocument.js';
 import { readFrontendStyles, readRepoText, readVueBlocks } from './frontendSfcTestUtils.js';
 
 const { script: chatMessageItemScript, template: chatMessageItemTemplate } = readVueBlocks(
   'frontend/src/components/chat/ChatMessageItem.vue'
+);
+const { source: htmlDocumentPreviewSource } = readVueBlocks(
+  'frontend/src/components/chat/HtmlDocumentPreview.vue'
 );
 const { script: chatViewScript, template: chatViewTemplate } = readVueBlocks('frontend/src/views/ChatView.vue');
 const chatMessageActionsSource = readRepoText('frontend/src/composables/chat/useChatMessageActions.js');
@@ -148,18 +152,47 @@ test('ChatMessageItem focuses the edit textarea when edit mode opens', () => {
   );
 });
 
-test('ChatMessageItem defers Markdown rendering only while a message is typing', () => {
-  assert.match(chatMessageItemScript, /isReasoningTyping: \{ type: Boolean, default: false \}/);
-  assert.match(chatMessageItemScript, /isContentTyping: \{ type: Boolean, default: false \}/);
+test('ChatMessageItem owns typewriter state and follows only committed Markdown renders', () => {
+  assert.match(chatMessageItemScript, /import \{ useTypewriterText \} from '..\/..\/composables\/useTypewriterText\.js';/);
+  assert.match(chatMessageItemScript, /displayedText: displayedReasoning, isTyping: isReasoningTyping/);
+  assert.match(chatMessageItemScript, /displayedText: displayedContent, isTyping: isContentTyping/);
+  assert.match(chatMessageItemScript, /function emitContentRendered\(\) \{\s*if \(isContentTyping\.value\) emit\('typing-progress', props\.message\);\s*}/);
   assert.match(
     chatMessageItemTemplate,
-    /<MarkdownContent class="typing-text" :text="message\.reasoning" :render-plugins="renderPlugins" :defer-updates="isReasoningTyping" \/>/
+    /<MarkdownContent[\s\S]*:text="displayedReasoning"[\s\S]*:defer-updates="isReasoningTyping"[\s\S]*@rendered="emitReasoningRendered"[\s\S]*\/>/
   );
   assert.match(
     chatMessageItemTemplate,
-    /<MarkdownContent[\s\S]*:text="message\.content \|\| messagePlaceholder"[\s\S]*:render-plugins="renderPlugins"[\s\S]*:defer-updates="isContentTyping"[\s\S]*\/>/
+    /<MarkdownContent[\s\S]*:text="displayedContent \|\| messagePlaceholder"[\s\S]*:render-plugins="renderPlugins"[\s\S]*:defer-updates="isContentTyping"[\s\S]*@rendered="emitContentRendered"[\s\S]*\/>/
   );
+  assert.doesNotMatch(chatViewTemplate, /:is-reasoning-typing=|:is-content-typing=|:message-placeholder=/);
+  assert.match(chatViewTemplate, /@typing-progress="handleMessageTypingProgress"/);
+  assert.match(chatViewScript, /function handleMessageTypingProgress\(message\) \{[\s\S]*hasUserPausedAutoScroll\(\)[\s\S]*!isPinnedToBottom\(\)[\s\S]*scrollToMessage\(message\.id, \{ smooth: false, block: 'end', keepPinned: true \}\)/);
   assert.doesNotMatch(chatMessageItemTemplate, /:defer-updates="true"/);
+});
+
+test('ChatMessageItem renders standalone HTML documents as sandboxed web pages', () => {
+  const rawDocument = '<!DOCTYPE html>\n<html><head><title>Demo</title></head><body>Hello</body></html>';
+  assert.equal(extractHtmlDocument(rawDocument), rawDocument);
+  assert.equal(extractHtmlDocument(`\`\`\`html\n${rawDocument}\n\`\`\``), rawDocument);
+  assert.equal(extractHtmlDocument(`说明文字\n\`\`\`html\n${rawDocument}\n\`\`\``), '');
+
+  assert.match(chatMessageItemScript, /import \{ extractHtmlDocument \} from '\.\.\/\.\.\/utils\/htmlDocument\.js';/);
+  assert.match(chatMessageItemScript, /const htmlDocumentContent = computed\(\(\) => \{/);
+  assert.match(chatMessageItemScript, /if \(props\.message\?\.role !== 'assistant' \|\| isContentTyping\.value\) return '';/);
+  assert.match(
+    chatMessageItemTemplate,
+    /<HtmlDocumentPreview[\s\S]*v-if="htmlDocumentContent && !isContentTyping"[\s\S]*:source="htmlDocumentContent"/
+  );
+  assert.match(chatMessageItemTemplate, /v-else-if="displayedContent \|\| messagePlaceholder"/);
+  assert.match(htmlDocumentPreviewSource, /sandbox="allow-scripts"/);
+  assert.match(htmlDocumentPreviewSource, /referrerpolicy="no-referrer"/);
+  assert.match(htmlDocumentPreviewSource, /:srcdoc="source"/);
+});
+
+test('reasoning panels use a blurred readable surface and wrap long text', () => {
+  assert.match(stylesSource, /\.reasoning-body\s*{[\s\S]*backdrop-filter:\s*blur\(18px\)[\s\S]*overflow-wrap:\s*anywhere;[\s\S]*word-break:\s*break-word;/);
+  assert.match(stylesSource, /\.reasoning-body \.markdown-code\s*{[\s\S]*white-space:\s*pre-wrap;[\s\S]*overflow-wrap:\s*anywhere;/);
 });
 
 test('ChatMessageItem renders persisted asset URL attachments', () => {

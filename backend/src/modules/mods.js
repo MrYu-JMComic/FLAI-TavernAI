@@ -168,11 +168,11 @@ export function buildModSystemPrompt(mods) {
   const parts = [];
   for (const mod of mods) {
     if (mod.type === 'prompt_inject') {
-      parts.push(mod.content);
+      parts.push(`[Mod 指令: ${mod.name}]\n${mod.content}`);
     } else if (mod.type === 'style_enhance') {
-      parts.push(`[文风要求]\n${mod.content}`);
+      parts.push(`[文风要求]\nMod: ${mod.name}\n${mod.content}`);
     } else {
-      parts.push(`[Mod: ${mod.name}]\n${mod.content}`);
+      parts.push(`[Mod 辅助规则: ${mod.name}]\n${mod.content}`);
     }
   }
 

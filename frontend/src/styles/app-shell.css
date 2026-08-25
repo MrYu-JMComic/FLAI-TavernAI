@@ -206,6 +206,21 @@
   backdrop-filter: blur(16px);
 }
 
+.page-scroll-progress {
+  position: absolute;
+  right: 0;
+  bottom: -1px;
+  left: 0;
+  height: 2px;
+  z-index: 2;
+  background: linear-gradient(90deg, var(--green), var(--primary));
+  box-shadow: 0 0 12px color-mix(in srgb, var(--primary) 38%, transparent);
+  pointer-events: none;
+  transform: scaleX(var(--page-scroll-progress, 0));
+  transform-origin: left center;
+  transition: transform 0.12s linear;
+}
+
 .brand-button {
   gap: 12px;
   min-width: 0;
@@ -406,6 +421,48 @@
   width: min(1200px, 100%);
   margin: 0 auto;
   padding: 28px 22px 36px;
+}
+
+.page-scroll-top {
+  position: fixed;
+  right: max(22px, env(safe-area-inset-right, 0px));
+  bottom: max(22px, env(safe-area-inset-bottom, 0px));
+  z-index: 54;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-height: var(--touch-min, 44px);
+  padding: 0 14px;
+  border: 1px solid color-mix(in srgb, var(--primary) 26%, var(--line));
+  border-radius: 999px;
+  color: var(--text);
+  background: color-mix(in srgb, var(--surface) 90%, transparent);
+  box-shadow: 0 12px 30px rgba(48, 56, 64, 0.16);
+  backdrop-filter: blur(16px) saturate(1.08);
+  -webkit-backdrop-filter: blur(16px) saturate(1.08);
+}
+
+.page-scroll-top:hover {
+  color: var(--primary);
+  border-color: color-mix(in srgb, var(--primary) 52%, var(--line));
+  background: color-mix(in srgb, var(--primary-soft) 70%, var(--surface));
+  transform: translateY(-2px);
+}
+
+.page-scroll-top:active {
+  transform: translateY(0);
+}
+
+.scroll-top-enter-active,
+.scroll-top-leave-active {
+  transition: opacity 0.18s ease, transform 0.18s ease;
+}
+
+.scroll-top-enter-from,
+.scroll-top-leave-to {
+  opacity: 0;
+  transform: translateY(8px) scale(0.96);
 }
 
 .page-stack {

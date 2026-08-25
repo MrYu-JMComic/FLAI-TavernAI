@@ -1,0 +1,490 @@
+/* =========================================================
+   CHARACTER EDITOR - phone shell (hub list + section sheet)
+
+   Rendered by CharacterEditorMobile.vue, which is chosen in JS via
+   useViewport('(max-width: 760px)'). These rules style a layout of their own;
+   they are not a squeezed version of the desktop studio.
+   ========================================================= */
+
+.character-editor-page.is-mobile {
+  gap: var(--space-3);
+}
+
+/* The global responsive rules stack .section-heading into a tall column. On the
+   phone editor the header should stay a single compact row. */
+.character-editor-page.is-mobile .character-editor-header {
+  display: flex;
+  align-items: center;
+  flex-direction: row;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding-bottom: var(--space-2);
+  text-align: left;
+}
+
+.character-editor-page.is-mobile .character-editor-header > div {
+  min-width: 0;
+}
+
+.character-editor-page.is-mobile .character-editor-header p {
+  margin: 0;
+  font-size: var(--font-xs);
+}
+
+.character-editor-page.is-mobile .character-editor-header h1 {
+  max-width: 100%;
+  margin: 0;
+  font-size: var(--font-lg);
+}
+
+.character-editor-page.is-mobile .character-editor-header .ghost-button {
+  min-width: var(--touch-min);
+  min-height: var(--touch-min);
+  flex: 0 0 auto;
+  padding-inline: var(--space-2);
+}
+
+/* Compact avatar editor: portrait beside its controls instead of stacked. */
+.character-editor-page.is-mobile .avatar-editor {
+  display: grid;
+  grid-template-columns: 72px minmax(0, 1fr);
+  align-items: center;
+  gap: var(--space-3);
+  text-align: left;
+}
+
+.character-editor-page.is-mobile .avatar-editor .large-avatar {
+  width: 72px;
+  height: 72px;
+  margin: 0;
+}
+
+.character-editor-page.is-mobile .avatar-editor-controls {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.character-mobile {
+  min-width: 0;
+}
+
+/* Room for the fixed action bar, which itself clears the app bottom nav. */
+.character-mobile-form {
+  display: grid;
+  gap: var(--space-3);
+  padding-bottom: calc(132px + env(safe-area-inset-bottom, 0px));
+}
+
+/* ---- hub ---- */
+
+.character-mobile-hub {
+  display: grid;
+  gap: var(--space-4);
+  min-width: 0;
+}
+
+.character-mobile-identity {
+  display: grid;
+  grid-template-columns: 56px minmax(0, 1fr);
+  gap: var(--space-3);
+  align-items: center;
+  padding: var(--space-3);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  box-shadow: var(--shadow-xs);
+}
+
+.character-mobile-avatar {
+  display: grid;
+  width: 56px;
+  height: 56px;
+  place-items: center;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--primary) 22%, var(--line));
+  border-radius: var(--radius-sm);
+  color: var(--primary);
+  background: var(--primary-soft);
+  font-size: var(--font-lg);
+  font-weight: 900;
+}
+
+.character-mobile-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.character-mobile-identity-text {
+  min-width: 0;
+}
+
+.character-mobile-identity-text h2 {
+  margin: 0 0 var(--space-1);
+  overflow: hidden;
+  font-size: var(--font-md);
+  line-height: var(--leading-tight);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.character-mobile-visibility {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  color: var(--muted);
+  font-size: var(--font-xs);
+  font-weight: 800;
+}
+
+.character-mobile-progress {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.character-mobile-progress-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  color: var(--muted);
+  font-size: var(--font-xs);
+  font-weight: 800;
+}
+
+.character-mobile-progress-head strong {
+  color: var(--green);
+  font-size: var(--font-sm);
+}
+
+.character-mobile-progress-bar {
+  height: 6px;
+  overflow: hidden;
+  border-radius: 3px;
+  background: var(--surface-strong);
+}
+
+.character-mobile-progress-bar > span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--green);
+  transition: width var(--duration-base) var(--ease-standard);
+}
+
+/* ---- creation wizard on the hub ---- */
+
+.character-mobile-wizard {
+  display: grid;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border: 1px solid color-mix(in srgb, var(--primary) 22%, var(--line));
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--primary-soft) 46%, var(--surface));
+}
+
+.character-mobile-wizard-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  font-size: var(--font-sm);
+}
+
+.character-mobile-wizard-head strong {
+  flex: 0 1 auto;
+  min-width: min-content;
+  white-space: nowrap;
+}
+
+/* `width: 100%` from the narrow-viewport .compact-button rule in chat.css would
+   push this button past the header, so keep it sized to its own label. */
+.character-mobile-wizard-head .ghost-button {
+  width: auto;
+  min-height: 36px;
+  flex: 0 0 auto;
+  padding-inline: var(--space-3);
+  white-space: nowrap;
+}
+
+.character-mobile-wizard-steps {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--space-1);
+}
+
+.character-mobile-wizard-step {
+  display: grid;
+  min-height: var(--touch-min);
+  grid-template-columns: 20px minmax(0, 1fr);
+  align-items: center;
+  gap: var(--space-1);
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-xs);
+  color: var(--muted);
+  background: var(--surface);
+  cursor: pointer;
+  font-size: var(--font-xs);
+  font-weight: 800;
+  text-align: left;
+}
+
+.character-mobile-wizard-step.active {
+  border-color: var(--green);
+  color: var(--text);
+}
+
+.character-mobile-wizard-index {
+  display: grid;
+  width: 20px;
+  height: 20px;
+  place-items: center;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-pill);
+  font-size: 0.68rem;
+}
+
+.character-mobile-wizard-step.active .character-mobile-wizard-index {
+  border-color: var(--green);
+  color: var(--surface);
+  background: var(--green);
+}
+
+.character-mobile-wizard-desc {
+  margin: 0;
+  color: var(--muted);
+  font-size: var(--font-xs);
+  line-height: var(--leading-normal);
+}
+
+/* ---- section list ---- */
+
+.character-mobile-group {
+  display: grid;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.character-mobile-group-label {
+  margin: 0 0 var(--space-1) var(--space-1);
+  color: var(--muted);
+  font-size: 0.7rem;
+  font-weight: 900;
+}
+
+.character-mobile-section-item {
+  display: grid;
+  width: 100%;
+  min-height: 60px;
+  grid-template-columns: minmax(0, 1fr) auto 18px;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  background: var(--surface);
+  cursor: pointer;
+  text-align: left;
+}
+
+.character-mobile-section-item:active {
+  background: var(--surface-hover);
+}
+
+.character-mobile-section-item > svg {
+  color: var(--muted);
+}
+
+.character-mobile-section-text {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.character-mobile-section-text strong {
+  font-size: var(--font-sm);
+}
+
+.character-mobile-section-text small {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: var(--font-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.character-mobile-section-status {
+  flex: 0 0 auto;
+  padding: 2px var(--space-2);
+  border-radius: var(--radius-pill);
+  color: var(--muted);
+  background: var(--surface-strong);
+  font-size: 0.68rem;
+  font-weight: 800;
+}
+
+.character-mobile-section-status.complete {
+  color: var(--green);
+  background: var(--green-soft);
+}
+
+.character-mobile-section-status.partial {
+  color: var(--warning);
+  background: var(--warning-soft);
+}
+
+.character-mobile-manage {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-2);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--line);
+}
+
+.character-mobile-manage .ghost-button,
+.character-mobile-manage .danger-button {
+  min-height: var(--touch-min);
+  min-width: 0;
+  padding-inline: var(--space-2);
+}
+
+/* ---- full-screen section sheet ---- */
+
+.character-mobile-sheet {
+  display: grid;
+  gap: var(--space-3);
+  min-width: 0;
+  align-content: start;
+}
+
+/* Pinned to the top of the scrolling page shell (.page-shell is the scroller and
+   the app topbar sits outside it, so no topbar offset is needed). Sticky resolves
+   `top` against the shell's padding box, so the negative offset - the same one
+   the workspace navs use - cancels the shell's top padding and makes the bar
+   truly hug the top. The background is opaque on purpose: a translucent bar lets
+   the content scrolling underneath show through and reads as if it were not pinned. */
+.character-mobile-sheet-head {
+  position: sticky;
+  top: calc(-1 * var(--workspace-page-padding-top, 18px));
+  z-index: 40;
+  display: grid;
+  grid-template-columns: var(--touch-min) minmax(0, 1fr);
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0 calc(-1 * var(--space-2));
+  padding: var(--space-2);
+  border-bottom: 1px solid var(--line);
+  background: var(--surface);
+  box-shadow: var(--shadow-sm);
+}
+
+.character-mobile-sheet-head h2 {
+  margin: 0;
+  overflow: hidden;
+  font-size: var(--font-md);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The sheet header already names the section - drop the panel's own title. */
+.character-mobile-sheet-body > .form-panel > .character-panel-head h2,
+.character-mobile-sheet-body > .form-panel > .inline-heading h2,
+.character-mobile-sheet-body > .form-panel > .form-section-title {
+  display: none;
+}
+
+.character-mobile-back {
+  width: var(--touch-min);
+  min-width: var(--touch-min);
+  min-height: var(--touch-min);
+  padding: 0;
+}
+
+.character-mobile-sheet-body {
+  display: grid;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.character-mobile-sheet-body > .form-panel {
+  width: 100%;
+  min-width: 0;
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-xs);
+}
+
+/* Everything is single column at this width. */
+.character-editor-page.is-mobile .form-grid.two-col,
+.character-editor-page.is-mobile .advanced-code-grid,
+.character-editor-page.is-mobile .advanced-grid,
+.character-editor-page.is-mobile .accessory-skill-row {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+/* ---- fixed action bar, above the app bottom nav ---- */
+
+.character-mobile-actionbar {
+  position: fixed;
+  right: var(--space-2);
+  bottom: calc(70px + env(safe-area-inset-bottom, 0px));
+  left: var(--space-2);
+  z-index: 54;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid color-mix(in srgb, var(--primary) 24%, var(--line));
+  border-radius: var(--radius-sm);
+  background: var(--surface-glass);
+  box-shadow: var(--shadow-md);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+}
+
+.character-mobile-actionbar > .ghost-button {
+  min-height: var(--touch-min);
+  flex: 0 0 auto;
+}
+
+.character-mobile-save-state {
+  display: flex;
+  flex: 1 1 auto;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  color: var(--muted);
+  font-size: var(--font-xs);
+}
+
+.character-mobile-save-state strong {
+  color: var(--text);
+}
+
+.character-mobile-primary {
+  min-height: 46px;
+  min-width: 128px;
+  margin-left: auto;
+  flex: 0 0 auto;
+}
+
+@media (max-width: 420px) {
+  .character-editor-page.is-mobile .character-editor-header h1 {
+    max-width: 66vw;
+    font-size: var(--font-lg);
+  }
+
+  .character-editor-page.is-mobile .character-editor-header .ghost-button span {
+    display: none;
+  }
+
+  .character-mobile-wizard-steps {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .character-mobile-primary {
+    min-width: 112px;
+    padding-inline: var(--space-2);
+  }
+}

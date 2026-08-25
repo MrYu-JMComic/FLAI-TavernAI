@@ -1,9 +1,10 @@
-import { findSseBlockSeparator, forEachSseLine } from '../../../shared/sse.js';
+import { createSseParser } from '../../../shared/sse.js';
 import { recordFrontendDiagnostic } from '../diagnostics.js';
 
 const jsonHeaders = {
   'Content-Type': 'application/json'
 };
+const PAINT_YIELD_SSE_EVENTS = new Set(['content', 'reasoning', 'tool', 'step', 'nudge', 'ping']);
 
 const MAX_ERROR_BODY_LENGTH = 1000;
 const CONNECTION_RETRY_DELAYS_MS = [150, 450, 900];
@@ -116,16 +117,30 @@ export async function apiRequest(path, options = {}) {
  * @returns {Promise<object|undefined>} - { aborted } or done event data
  */
 export async function streamSSE(path, payload, handlers = {}, signal, options = {}) {
-  const { throwOnError = false, returnDoneData = false } = options;
-  await ensureCsrfToken();
-  const body = JSON.stringify({ ...payload, stream: true });
+  const {
+    throwOnError = false,
+    returnDoneData = false,
+    includeStreamFlag = true,
+    method = 'POST'
+  } = options;
+  const requestMethod = String(method || 'POST').toUpperCase();
+  const isMutation = ['POST', 'PUT', 'PATCH', 'DELETE'].includes(requestMethod);
+  if (isMutation) {
+    await ensureCsrfToken();
+  }
+  const requestPayload = includeStreamFlag
+    ? { ...(payload || {}), stream: true }
+    : payload;
+  const body = ['GET', 'HEAD'].includes(requestMethod)
+    ? undefined
+    : JSON.stringify(requestPayload ?? {});
   const buildRequest = () => ({
-    method: 'POST',
+    method: requestMethod,
     credentials: 'include',
     headers: {
-      ...jsonHeaders,
+      ...(body === undefined ? {} : jsonHeaders),
       Accept: 'text/event-stream',
-      'X-CSRF-Token': getCsrfToken() || ''
+      ...(isMutation ? { 'X-CSRF-Token': getCsrfToken() || '' } : {})
     },
     body,
     signal
@@ -150,7 +165,7 @@ export async function streamSSE(path, payload, handlers = {}, signal, options = 
     }
   }
 
-  if (response.status === 403 || response.status === 419) {
+  if (isMutation && (response.status === 403 || response.status === 419)) {
     const detail = await readResponseBody(response).catch(() => ({}));
     if (isCsrfFailure(response, detail)) {
       await refreshCsrfToken();
@@ -169,10 +184,11 @@ export async function streamSSE(path, payload, handlers = {}, signal, options = 
 
   const reader = getSseReader(response);
   const decoder = new TextDecoder();
-  let buffer = '';
+  const parser = createSseParser();
   let doneData = null;
 
   const handleSseEvent = async (event) => {
+    if (signal?.aborted) return false;
     if (returnDoneData && event.name === 'done') {
       doneData = event.data;
     }
@@ -187,45 +203,45 @@ export async function streamSSE(path, payload, handlers = {}, signal, options = 
       );
     } else if (event.name && handlers[event.name]) {
       await handlers[event.name](event.data);
-    } else if (['content', 'reasoning', 'tool', 'step', 'nudge', 'ping'].includes(event.name)) {
-      await nextPaint();
     }
+    if (PAINT_YIELD_SSE_EVENTS.has(event.name)) {
+      await nextPaint(signal);
+    }
+    return !signal?.aborted;
   };
 
-  while (true) {
-    let chunk;
-    try {
-      chunk = await reader.read();
-    } catch (err) {
-      if (signal?.aborted || err.name === 'AbortError') {
-        return { aborted: true };
+  try {
+    while (true) {
+      let chunk;
+      try {
+        chunk = await reader.read();
+      } catch (error) {
+        if (signal?.aborted || error?.name === 'AbortError') {
+          return { aborted: true };
+        }
+        throwApiError('流式响应中断，请检查网络后重试。', null, {
+          cause: error?.message || String(error)
+        });
       }
-      // Handle stream cancellation from browser/network layer
-      if (err.name === 'TypeError' || /cancel|closed|network/i.test(String(err.message))) {
-        return { aborted: true };
+
+      const { done, value } = chunk;
+      if (done) {
+        break;
       }
-      throw err;
+
+      for (const rawEvent of parser.push(decoder.decode(value, { stream: true }))) {
+        if (!await handleSseEvent(normalizeSseEvent(rawEvent))) return { aborted: true };
+      }
     }
 
-    const { done, value } = chunk;
-    if (done) {
-      break;
+    for (const rawEvent of parser.push(decoder.decode())) {
+      if (!await handleSseEvent(normalizeSseEvent(rawEvent))) return { aborted: true };
     }
-
-    buffer += decoder.decode(value, { stream: true });
-    let separator = findSseBlockSeparator(buffer);
-    while (separator) {
-      const block = buffer.slice(0, separator.index);
-      buffer = buffer.slice(separator.index + separator.length);
-      const event = parseSseBlock(block);
-      await handleSseEvent(event);
-      separator = findSseBlockSeparator(buffer);
+    for (const rawEvent of parser.end()) {
+      if (!await handleSseEvent(normalizeSseEvent(rawEvent))) return { aborted: true };
     }
-  }
-
-  buffer += decoder.decode();
-  if (buffer.trim()) {
-    await handleSseEvent(parseSseBlock(buffer));
+  } finally {
+    await reader.cancel().catch(() => {});
   }
 
   return returnDoneData ? doneData : undefined;
@@ -253,25 +269,10 @@ function getSseReader(response) {
   throwApiError('流式响应不可用，请稍后重试。', response, { error: 'Missing response body' });
 }
 
-function parseSseBlock(block) {
-  let name = 'message';
-  let rawText = '';
-  let hasData = false;
-
-  forEachSseLine(block, (line) => {
-    if (line.startsWith('event:')) {
-      name = line.slice(6).trim();
-    } else if (line.startsWith('data:')) {
-      if (hasData) {
-        rawText += '\n';
-      }
-      rawText += line.slice(5).trimStart();
-      hasData = true;
-    }
-  });
-
+function normalizeSseEvent(event) {
+  const rawText = String(event?.data ?? '');
   return {
-    name,
+    name: event?.event || 'message',
     data: safeJson(rawText),
     rawText
   };
@@ -526,11 +527,29 @@ function throwApiError(message, response, data) {
   throw error;
 }
 
-function nextPaint() {
+function nextPaint(signal) {
   if (typeof window === 'undefined' || typeof window.requestAnimationFrame !== 'function') {
     return Promise.resolve();
   }
+  if (signal?.aborted) return Promise.resolve();
   return new Promise((resolve) => {
-    window.requestAnimationFrame(() => resolve());
+    let settled = false;
+    let frameId = null;
+    const timeoutId = setTimeout(finish, 80);
+    const handleAbort = () => finish();
+
+    function finish() {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeoutId);
+      if (frameId !== null && typeof window.cancelAnimationFrame === 'function') {
+        window.cancelAnimationFrame(frameId);
+      }
+      signal?.removeEventListener?.('abort', handleAbort);
+      resolve();
+    }
+
+    signal?.addEventListener?.('abort', handleAbort, { once: true });
+    frameId = window.requestAnimationFrame(finish);
   });
 }

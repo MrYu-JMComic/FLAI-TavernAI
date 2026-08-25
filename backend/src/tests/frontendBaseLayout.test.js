@@ -55,7 +55,7 @@ test('BaseLayout keeps the home route scroll inside a fixed app shell', () => {
   assert.match(baseLayoutScript, /const isHomeRoute = computed\(\(\) => props\.currentRoute === 'home'\);/);
   assert.match(
     baseLayoutTemplate,
-    /:class="\{ 'chat-layout-shell': isChatRoute, 'home-layout-shell': isHomeRoute, 'workspace-layout-shell': isWorkspaceRoute \}"/
+    /:class="\{ 'chat-layout-shell': isConversationRoute, 'home-layout-shell': isHomeRoute, 'workspace-layout-shell': isWorkspaceRoute \}"/
   );
   assert.match(
     stylesSource,
@@ -106,7 +106,7 @@ test('BaseLayout gives workspace routes a full-width single scroll shell', () =>
   );
   assert.match(
     baseLayoutTemplate,
-    /:class="\{ 'chat-layout-shell': isChatRoute, 'home-layout-shell': isHomeRoute, 'workspace-layout-shell': isWorkspaceRoute \}"/
+    /:class="\{ 'chat-layout-shell': isConversationRoute, 'home-layout-shell': isHomeRoute, 'workspace-layout-shell': isWorkspaceRoute \}"/
   );
   assert.match(
     stylesSource,
@@ -126,6 +126,21 @@ test('BaseLayout gives workspace routes a full-width single scroll shell', () =>
   );
   assert.match(
     stylesSource,
-    /\.workspace-layout-shell \.character-section-nav,\s*\.workspace-layout-shell \.settings-section-nav\s*\{[\s\S]*top:\s*calc\(-1 \* var\(--workspace-page-padding-top, 28px\)\);[\s\S]*\}/
+    /\.workspace-layout-shell \.settings-section-nav\s*\{[\s\S]*top:\s*calc\(-1 \* var\(--workspace-page-padding-top, 28px\)\);[\s\S]*\}/
+  );
+});
+
+test('BaseLayout gives chat and multi-role routes the same unobstructed conversation shell', () => {
+  assert.match(
+    baseLayoutScript,
+    /function usesConversationLayout\(routeName\) \{\s*return routeName === 'chat' \|\| routeName === 'multiAgentChat';\s*\}/
+  );
+  assert.match(
+    baseLayoutTemplate,
+    /<header v-if="!isConversationRoute && !isTownRoute" class="topbar">/
+  );
+  assert.match(
+    baseLayoutTemplate,
+    /<nav v-if="!isConversationRoute && !isTownRoute" class="mobile-bottom-nav"/
   );
 });

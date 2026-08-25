@@ -6,7 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { isLocalOrPrivateBaseUrl } from '../../../shared/privateNetwork.js';
-import { findSseBlockSeparator, forEachSseLine } from '../../../shared/sse.js';
+import { createSseParser } from '../../../shared/sse.js';
 
 process.env.FLAI_DB_PATH = ':memory:';
 process.env.APP_SECRET = 'test-secret';
@@ -1331,7 +1331,7 @@ test('character assistant completes drafts through multiple tool rounds', async 
     assert.match(statusBlueprintSchema.description, /\{\{体力\.percent\}\}/);
     assert.match(body.messages[0].content, /\{\{变量名\}\}/);
     assert.match(body.messages[0].content, /\.sb-val/);
-    assert.match(body.messages[0].content, /Do not hardcode dynamic fallback text/);
+    assert.match(body.messages[0].content, /可变化文本必须放入 variables\[\]\.value/);
 
     if (calls === 1) {
       return jsonResponse({
@@ -1430,7 +1430,7 @@ test('character assistant respects disabled generation sections', async () => {
   try {
     globalThis.fetch = async (_url, request = {}) => {
       const body = JSON.parse(request.body);
-      assert.match(body.messages[0].content, /Only modify these enabled sections/);
+      assert.match(body.messages[0].content, /允许修改的部分仅限/);
       return jsonResponse({
         choices: [
           {
@@ -1820,10 +1820,10 @@ test('world book assistant includes quality guide in complete and stream prompts
     extraBody: {}
   };
   const requiredGuideLines = [
-    'Break lore into atomic entries',
-    'Trigger keys should be exact names, aliases, locations, factions, items, events, and recurring secrets',
-    'Choose injection positions intentionally',
-    'Use alwaysActive, regexMode, probability, sticky, cooldown, delay, and group sparingly'
+    '把设定拆成原子条目',
+    'triggerKeys 使用能唯一或高精度命中该条目的正式名称',
+    '注入位置必须与用途一致',
+    'alwaysActive、regexMode、probability、sticky、cooldown、delay 和 group 都会改变触发行为'
   ];
 
   try {
@@ -2607,6 +2607,46 @@ test('avatar data URLs reject malformed base64 payloads', () => {
   assert.equal(database.prepare('SELECT COUNT(*) AS count FROM avatar_assets').get().count, 0);
 });
 
+test('unchanged legacy avatar data does not block character updates', () => {
+  const database = createAppDatabase(':memory:');
+  const userId = 'legacy-avatar-owner';
+  database.prepare('INSERT INTO users (id, username, password_hash, created_at) VALUES (?, ?, ?, ?)').run(
+    userId,
+    'legacyavatar',
+    'hash',
+    new Date().toISOString()
+  );
+
+  const character = createCharacter(database, userId, {
+    name: 'Legacy Avatar Character',
+    visibility: 'private'
+  });
+  const legacyAvatarUrl = 'data:image/png;base64,AAAA';
+  database.prepare('UPDATE characters SET avatar_url = ? WHERE id = ?').run(legacyAvatarUrl, character.id);
+
+  const updated = updateCharacter(database, userId, character.id, {
+    name: 'Legacy Avatar Updated',
+    avatarUrl: legacyAvatarUrl
+  });
+  assert.equal(updated.name, 'Legacy Avatar Updated');
+  assert.equal(updated.avatarUrl, legacyAvatarUrl);
+  assert.equal(
+    database.prepare('SELECT avatar_url FROM characters WHERE id = ?').get(character.id).avatar_url,
+    legacyAvatarUrl
+  );
+
+  assert.throws(
+    () => updateCharacter(database, userId, character.id, {
+      avatarUrl: 'data:image/png;base64,AA=A'
+    }),
+    /Invalid avatar image data/
+  );
+
+  const cleared = updateCharacter(database, userId, character.id, { avatarUrl: '' });
+  assert.equal(cleared.avatarUrl, '');
+  assert.equal(database.prepare('SELECT avatar_url FROM characters WHERE id = ?').get(character.id).avatar_url, '');
+});
+
 test('conversation appearance settings persist empty values and custom code', () => {
   const database = createAppDatabase(':memory:');
   database.prepare('INSERT INTO users (id, username, password_hash, created_at) VALUES (?, ?, ?, ?)').run(
@@ -2661,7 +2701,8 @@ test('conversation appearance settings persist empty values and custom code', ()
     customJs: 'return () => {}',
     customJsEnabled: true,
     customJsRiskAccepted: true,
-    showWorldBookMatches: true
+    showWorldBookMatches: true,
+    castTracking: { enabled: false }
   });
 
   assert.deepEqual(getConversationAppearance(database, 'owner-1', conversationId), saved);
@@ -2714,7 +2755,8 @@ test('conversation appearance treats null input as defaults', () => {
     customJsEnabled: false,
     customJsRiskAccepted: false,
     statusBarPrompt: '',
-    showWorldBookMatches: true
+    showWorldBookMatches: true,
+    castTracking: { enabled: false }
   });
 });
 
@@ -7094,7 +7136,7 @@ test('buildModSystemPrompt combines enabled mod contents', () => {
   assert.match(prompt, /\[文风要求\]/);
   assert.match(prompt, /使用文艺风格/);
   assert.match(prompt, /这是一个魔法世界/);
-  assert.match(prompt, /\[Mod: 自定义\]/);
+  assert.match(prompt, /\[Mod 辅助规则: 自定义\]/);
   assert.match(prompt, /自定义指令/);
 
   // Empty mods list
@@ -7312,7 +7354,8 @@ test('conversation settings invalid lorebook rolls back appearance inside transa
         customJs: '',
         customJsEnabled: false,
         customJsRiskAccepted: false,
-        showWorldBookMatches: true
+        showWorldBookMatches: true,
+        castTracking: { enabled: false }
       });
 
       database.prepare('UPDATE conversations SET title = ? WHERE id = ?').run('Outer Transaction Still Open', conversationId);
@@ -7400,7 +7443,8 @@ test('conversation settings save succeeds inside an existing transaction', async
         customJs: '',
         customJsEnabled: false,
         customJsRiskAccepted: false,
-        showWorldBookMatches: true
+        showWorldBookMatches: true,
+        castTracking: { enabled: false }
       });
       assert.equal(
         database.prepare('SELECT chat_lorebook_id FROM conversations WHERE id = ?').get(conversationId).chat_lorebook_id,
@@ -7419,7 +7463,8 @@ test('conversation settings save succeeds inside an existing transaction', async
       customJs: '',
       customJsEnabled: false,
       customJsRiskAccepted: false,
-      showWorldBookMatches: true
+      showWorldBookMatches: true,
+      castTracking: { enabled: false }
     });
     assert.equal(
       database.prepare('SELECT chat_lorebook_id FROM conversations WHERE id = ?').get(conversationId).chat_lorebook_id,
@@ -7881,264 +7926,6 @@ test('chat prompt injects compact status bar context without author update rules
     assert.equal(providerBody.messages.at(-1).content, 'new prompt');
   } finally {
     globalThis.fetch = originalFetch;
-    await new Promise((resolve) => server.close(resolve));
-  }
-});
-
-test('chat prompt injects NPC memories and behaviors when NPC agent is active', async () => {
-  const database = createAppDatabase(':memory:');
-  const { userId, conversationId } = createTestSetup(database);
-  database
-    .prepare('UPDATE conversations SET user_advanced_settings = ? WHERE id = ?')
-    .run(
-      JSON.stringify({
-        accessorySkills: { npcAgent: { enabled: true, modelOverride: '' } }
-      }),
-      conversationId
-    );
-  database
-    .prepare(
-      `INSERT INTO npc_memories (id, conversation_id, npc_name, memory_type, content, created_at)
-       VALUES (?, ?, ?, ?, ?, ?)`
-    )
-    .run('npc-route-memory-1', conversationId, 'PromptNpc', 'event', 'NPC_MEMORY_SENTINEL', '2026-01-01T00:00:00.000Z');
-  database
-    .prepare(
-      `INSERT INTO npc_memories (id, conversation_id, npc_name, memory_type, content, created_at)
-       VALUES (?, ?, ?, ?, ?, ?)`
-    )
-    .run('npc-route-memory-only-1', conversationId, 'MemoryOnlyNpc', 'knowledge', 'NPC_MEMORY_ONLY_SENTINEL', '2026-01-01T00:00:01.000Z');
-  database
-    .prepare(
-      `INSERT INTO npc_behaviors (id, conversation_id, npc_name, behavior_type, trigger_condition, action, priority, enabled, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
-    )
-    .run(
-      'npc-route-behavior-1',
-      conversationId,
-      'PromptNpc',
-      'reaction',
-      'NPC_TRIGGER_SENTINEL',
-      'NPC_ACTION_SENTINEL',
-      10,
-      1,
-      '2026-01-01T00:00:00.000Z'
-    );
-
-  const providerBodies = [];
-  const app = express();
-  app.use(express.json());
-  app.use('/api/conversations', createConversationsRouter({
-    db: database,
-    requireAuth: (request, _response, next) => {
-      request.auth = { user: { id: userId, username: 'npc-prompt-user' } };
-      next();
-    },
-    asyncRoute: (handler) => (request, response, next) => Promise.resolve(handler(request, response, next)).catch(next),
-    newId: (() => {
-      let counter = 0;
-      return () => `npc-prompt-${++counter}`;
-    })(),
-    nowIso: () => '2026-01-01T00:00:02.000Z',
-    withEtag: (_request, response, data) => response.json(data),
-    withListCache: (_request, response, data) => response.json(data),
-    providerWithSecret: (row) => row,
-    getProviderRow: () => ({
-      providerType: 'deepseek',
-      gatewayName: 'Test Gateway',
-      baseUrl: 'https://provider.test',
-      model: 'test-model',
-      apiKey: 'sk-test',
-      supportsReasoning: false,
-      extraBody: {}
-    }),
-    hasUsableProvider
-  }));
-  app.use((error, _request, response, _next) => {
-    response.status(500).json({ error: error.message });
-  });
-
-  const server = await new Promise((resolve) => {
-    const listener = app.listen(0, () => resolve(listener));
-  });
-  const originalFetch = globalThis.fetch;
-  globalThis.fetch = async (url, options = {}) => {
-    const href = String(url);
-    if (href.startsWith('http://127.0.0.1:')) {
-      return originalFetch(url, options);
-    }
-    providerBodies.push(JSON.parse(options.body));
-    return jsonResponse({
-      choices: [{ message: { content: 'assistant answer' } }],
-      usage: { total_tokens: 1 }
-    });
-  };
-
-  try {
-    const baseUrl = `http://127.0.0.1:${server.address().port}`;
-    const response = await fetch(`${baseUrl}/api/conversations/${conversationId}/messages`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ content: 'new prompt', stream: false })
-    });
-
-    assert.equal(response.status, 200);
-    const providerBody = providerBodies.find((body) => (
-      Array.isArray(body.messages) && body.messages.at(-1)?.content === 'new prompt'
-    ));
-    assert.ok(providerBody);
-    const promptText = JSON.stringify(providerBody.messages);
-    assert.match(promptText, /NPC_MEMORY_SENTINEL/);
-    assert.match(promptText, /NPC_ACTION_SENTINEL/);
-    assert.match(promptText, /NPC_TRIGGER_SENTINEL/);
-    assert.match(promptText, /NPC_MEMORY_ONLY_SENTINEL/);
-    assert.equal(providerBody.messages.at(-1).content, 'new prompt');
-    for (let attempt = 0; attempt < 20 && providerBodies.length < 2; attempt += 1) {
-      await new Promise((resolve) => setTimeout(resolve, 5));
-    }
-  } finally {
-    globalThis.fetch = originalFetch;
-    await new Promise((resolve) => server.close(resolve));
-  }
-});
-
-test('NPC detail mutation routes are scoped to the route NPC name', async () => {
-  const database = createAppDatabase(':memory:');
-  const userId = 'npc-route-scope-user';
-  const timestamp = '2026-01-01T00:00:00.000Z';
-  database.prepare('INSERT INTO users (id, username, password_hash, created_at) VALUES (?, ?, ?, ?)').run(
-    userId, 'npc-route-scope', 'hash', timestamp
-  );
-  const character = createCharacter(database, userId, { name: 'NpcRouteScope', visibility: 'private' });
-  const conversationId = 'npc-route-scope-conversation';
-  database.prepare(
-    'INSERT INTO conversations (id, user_id, character_id, title, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)'
-  ).run(conversationId, userId, character.id, 'NPC route scope', timestamp, timestamp);
-  database.prepare(
-    'INSERT INTO npc_memories (id, conversation_id, npc_name, memory_type, content, created_at) VALUES (?, ?, ?, ?, ?, ?)'
-  ).run('npc-route-alice-memory', conversationId, 'Alice', 'event', 'Alice memory', timestamp);
-  database.prepare(
-    'INSERT INTO npc_memories (id, conversation_id, npc_name, memory_type, content, created_at) VALUES (?, ?, ?, ?, ?, ?)'
-  ).run('npc-route-bob-memory', conversationId, 'Bob', 'event', 'Bob memory', timestamp);
-  database.prepare(
-    'INSERT INTO npc_behaviors (id, conversation_id, npc_name, behavior_type, trigger_condition, action, priority, enabled, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
-  ).run('npc-route-alice-behavior', conversationId, 'Alice', 'reaction', '', 'Alice action', 0, 1, timestamp);
-  database.prepare(
-    'INSERT INTO npc_behaviors (id, conversation_id, npc_name, behavior_type, trigger_condition, action, priority, enabled, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
-  ).run('npc-route-bob-behavior', conversationId, 'Bob', 'reaction', '', 'Bob action', 0, 1, timestamp);
-
-  const app = express();
-  app.use(express.json());
-  app.use('/api/conversations', createConversationsRouter({
-    db: database,
-    requireAuth: (request, _response, next) => {
-      request.auth = { user: { id: userId, username: 'npc-route-scope' } };
-      next();
-    },
-    asyncRoute: (handler) => (request, response, next) => Promise.resolve(handler(request, response, next)).catch(next),
-    newId,
-    nowIso: () => timestamp,
-    withEtag: (_request, response, data) => response.json(data),
-    withListCache: (_request, response, data) => response.json(data),
-    providerWithSecret: (row) => row,
-    getProviderRow: () => null,
-    hasUsableProvider
-  }));
-  app.use((error, _request, response, _next) => {
-    response.status(500).json({ error: error.message });
-  });
-
-  const server = await new Promise((resolve) => {
-    const listener = app.listen(0, () => resolve(listener));
-  });
-  try {
-    const baseUrl = `http://127.0.0.1:${server.address().port}`;
-    const alicePath = `${baseUrl}/api/conversations/${conversationId}/npcs/Alice`;
-    const bobPath = `${baseUrl}/api/conversations/${conversationId}/npcs/Bob`;
-
-    const wrongMemoryUpdate = await fetch(`${bobPath}/memories/npc-route-alice-memory`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ content: 'wrong memory update' })
-    });
-    assert.equal(wrongMemoryUpdate.status, 404);
-    assert.equal(
-      database.prepare('SELECT content FROM npc_memories WHERE id = ? AND npc_name = ?').get('npc-route-alice-memory', 'Alice').content,
-      'Alice memory'
-    );
-
-    const wrongMemoryDelete = await fetch(`${bobPath}/memories/npc-route-alice-memory`, { method: 'DELETE' });
-    assert.equal(wrongMemoryDelete.status, 404);
-    assert.equal(
-      database.prepare('SELECT COUNT(*) AS count FROM npc_memories WHERE id = ? AND npc_name = ?').get('npc-route-alice-memory', 'Alice').count,
-      1
-    );
-
-    const wrongBehaviorUpdate = await fetch(`${bobPath}/behaviors/npc-route-alice-behavior`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ enabled: false })
-    });
-    assert.equal(wrongBehaviorUpdate.status, 404);
-    assert.equal(
-      database.prepare('SELECT enabled FROM npc_behaviors WHERE id = ? AND npc_name = ?').get('npc-route-alice-behavior', 'Alice').enabled,
-      1
-    );
-
-    const ownerMemoryUpdate = await fetch(`${alicePath}/memories/npc-route-alice-memory`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ memoryType: 'knowledge', content: 'Alice updated memory' })
-    });
-    assert.equal(ownerMemoryUpdate.status, 200);
-    const ownerMemoryRow = database
-      .prepare('SELECT memory_type, content FROM npc_memories WHERE id = ?')
-      .get('npc-route-alice-memory');
-    assert.equal(ownerMemoryRow.memory_type, 'knowledge');
-    assert.equal(ownerMemoryRow.content, 'Alice updated memory');
-
-    const ownerBehaviorToggle = await fetch(`${alicePath}/behaviors/npc-route-alice-behavior`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ enabled: false })
-    });
-    assert.equal(ownerBehaviorToggle.status, 200);
-    const ownerBehaviorRow = database
-      .prepare('SELECT enabled, trigger_condition, action FROM npc_behaviors WHERE id = ?')
-      .get('npc-route-alice-behavior');
-    assert.equal(ownerBehaviorRow.enabled, 0);
-    assert.equal(ownerBehaviorRow.trigger_condition, '');
-    assert.equal(ownerBehaviorRow.action, 'Alice action');
-
-    const wrongBehaviorDelete = await fetch(`${bobPath}/behaviors/npc-route-alice-behavior`, { method: 'DELETE' });
-    assert.equal(wrongBehaviorDelete.status, 404);
-    assert.equal(
-      database.prepare('SELECT COUNT(*) AS count FROM npc_behaviors WHERE id = ? AND npc_name = ?').get('npc-route-alice-behavior', 'Alice').count,
-      1
-    );
-
-    const ownerMemoryDelete = await fetch(`${alicePath}/memories/npc-route-alice-memory`, { method: 'DELETE' });
-    assert.equal(ownerMemoryDelete.status, 200);
-    assert.equal(
-      database.prepare('SELECT COUNT(*) AS count FROM npc_memories WHERE id = ?').get('npc-route-alice-memory').count,
-      0
-    );
-
-    const ownerBehaviorDelete = await fetch(`${alicePath}/behaviors/npc-route-alice-behavior`, { method: 'DELETE' });
-    assert.equal(ownerBehaviorDelete.status, 200);
-    assert.equal(
-      database.prepare('SELECT COUNT(*) AS count FROM npc_behaviors WHERE id = ?').get('npc-route-alice-behavior').count,
-      0
-    );
-    assert.equal(
-      database.prepare('SELECT COUNT(*) AS count FROM npc_memories WHERE id = ? AND npc_name = ?').get('npc-route-bob-memory', 'Bob').count,
-      1
-    );
-    assert.equal(
-      database.prepare('SELECT COUNT(*) AS count FROM npc_behaviors WHERE id = ? AND npc_name = ?').get('npc-route-bob-behavior', 'Bob').count,
-      1
-    );
-  } finally {
     await new Promise((resolve) => server.close(resolve));
   }
 });
@@ -8745,7 +8532,7 @@ test('buildTalentSystemPrompt generates prompt from character talents', () => {
 
   const prompt = buildTalentSystemPrompt(database, character.id);
   assert.match(prompt, /\[角色天赋\]/);
-  assert.match(prompt, /该角色拥有以下天赋/);
+  assert.match(prompt, /以下天赋影响角色可尝试的方式/);
   assert.match(prompt, /剑术|智慧/);
 });
 
@@ -10361,15 +10148,16 @@ test('streamCompletion scans split CRLF SSE separators without regex or split al
   }
 
   const providerSseSource = fs.readFileSync(new URL('../services/providerSse.js', import.meta.url), 'utf8');
-  const sharedLines = [];
-  forEachSseLine('data: first\r\ndata: second', (line) => sharedLines.push(line));
-  assert.deepEqual(sharedLines, ['data: first', 'data: second']);
-  assert.deepEqual(findSseBlockSeparator('a\r\n\r\nb'), { index: 1, length: 4 });
-  assert.match(providerSseSource, /from '..\/..\/..\/shared\/sse\.js'/);
-  assert.match(providerSseSource, /let separator = findSseBlockSeparator\(buffer\);/);
-  assert.match(providerSseSource, /forEachSseLine\(block, \(line\) => \{/);
-  assert.doesNotMatch(providerSseSource, /function findSseBlockSeparator\(text\)/);
-  assert.doesNotMatch(providerSseSource, /function forEachSseLine\(text, visit\)/);
+  const parser = createSseParser();
+  assert.deepEqual(parser.push('\ufeffevent: message\rdata: first\rdata:  second\r\r'), [{
+    event: 'message',
+    data: 'first\n second',
+    id: ''
+  }]);
+  assert.match(providerSseSource, /import \{ createSseParser \} from '..\/..\/..\/shared\/sse\.js';/);
+  assert.match(providerSseSource, /const parser = createSseParser\(\);/);
+  assert.match(providerSseSource, /for \(const event of parser\.end\(\)\)/);
+  assert.doesNotMatch(providerSseSource, /findSseBlockSeparator|forEachSseLine/);
   assert.doesNotMatch(providerSseSource, /buffer\.match\(\s*\/\\r\?\\n\\r\?\\n\//);
   assert.doesNotMatch(providerSseSource, /block\.split\(\s*\/\\r\?\\n\//);
 });

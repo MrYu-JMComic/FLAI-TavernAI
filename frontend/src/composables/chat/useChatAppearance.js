@@ -98,6 +98,9 @@ export function useChatAppearance({
     if (directSettings && hasOwnAppearanceSetting(sourceSettings, 'showWorldBookMatches', 'show_world_book_matches')) {
       userSettings.showWorldBookMatches = directSettings.showWorldBookMatches;
     }
+    if (directSettings && hasOwnAppearanceSetting(sourceSettings, 'castTracking', 'cast_tracking')) {
+      userSettings.castTracking = directSettings.castTracking;
+    }
     const nextChatLorebookId = (sourceSettings?.chatLorebookId ?? conversation.value?.chatLorebookId ?? null) || null;
     const nextSignature = serializeAppearanceSync(authorSettings, userSettings, nextChatLorebookId);
     if (!options.force && nextSignature === lastAppearanceSyncSignature) {
@@ -125,7 +128,7 @@ export function useChatAppearance({
     chatLorebookId.value = value || null;
   }
 
-  async function saveConversationAppearanceChanges() {
+  async function saveConversationAppearanceChanges(options = {}) {
     const conversationId = conversation.value?.id;
     if (appearanceDisposed || !conversationId || appearanceSaving.value) {
       return;
@@ -145,6 +148,7 @@ export function useChatAppearance({
         customJsRiskAccepted: chatAppearanceForm.customJsRiskAccepted,
         statusBarPrompt: chatAppearanceForm.statusBarPrompt,
         showWorldBookMatches: chatAppearanceForm.showWorldBookMatches,
+        castTracking: chatAppearanceForm.castTracking,
         chatLorebookId: chatLorebookId.value
       });
       if (!isCurrentAppearanceSave(requestToken, conversationId)) {
@@ -166,17 +170,32 @@ export function useChatAppearance({
       if (!isCurrentAppearanceSave(requestToken, conversationId)) {
         return;
       }
-      showActionNotice('会话自定义已保存');
+      showActionNotice(options.successMessage || '会话自定义已保存');
+      return saved;
     } catch (err) {
       if (!isCurrentAppearanceSave(requestToken, conversationId)) {
         return;
       }
       showError(err.message);
+      return null;
     } finally {
       if (isCurrentAppearanceSave(requestToken, conversationId)) {
         appearanceSaving.value = false;
       }
     }
+  }
+
+  async function setCastTrackingEnabled(enabled) {
+    const previous = Boolean(chatAppearanceForm.castTracking?.enabled);
+    chatAppearanceForm.castTracking = { enabled: Boolean(enabled) };
+    const saved = await saveConversationAppearanceChanges({
+      successMessage: enabled ? '人物自动同步已开启' : '人物自动同步已关闭'
+    });
+    if (!saved) {
+      chatAppearanceForm.castTracking = { enabled: previous };
+      return false;
+    }
+    return true;
   }
 
   async function applyConversationAppearance() {
@@ -558,6 +577,7 @@ export function useChatAppearance({
     resetConversationAppearance,
     setChatLorebookId,
     saveConversationAppearanceChanges,
+    setCastTrackingEnabled,
     applyConversationAppearance,
     cleanupConversationAppearance,
     disposeConversationAppearance,

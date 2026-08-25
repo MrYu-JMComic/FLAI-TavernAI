@@ -1310,7 +1310,28 @@ fieldset.accessory-skills-grid:disabled {
   }
 }
 
+@media (max-width: 620px) {
+  /* -- Tag bubbles: cap width for 2-per-row mobile packing -- */
+  .tag-manage-bubble {
+    max-width: 155px;
+  }
+
+  .tag-manage-bubble .tag-badge {
+    max-width: min(90px, 38vw);
+  }
+}
+
 @media (max-width: 768px) {
+  /* -- Tag bubbles: allow shrinking for denser tablet packing -- */
+  .tag-manage-bubble {
+    flex-shrink: 1;
+    min-width: 0;
+  }
+
+  .tag-manage-bubble .tag-badge {
+    max-width: min(140px, 42vw);
+  }
+
   /* -- Profile layout: single column -- */
   .profile-layout {
     grid-template-columns: 1fr;
@@ -1362,16 +1383,8 @@ fieldset.accessory-skills-grid:disabled {
     flex-wrap: wrap;
   }
 
-  /* -- Tag manage item: wrap -- */
-  .tag-manage-item {
-    flex-wrap: wrap;
-    gap: 8px;
-  }
-
-  .tag-usage {
-    flex-basis: 100%;
-    order: 3;
-  }
+  /* Dead rule removed: .tag-manage-item doesn't exist, and forcing
+     .tag-usage to flex-basis: 100% made all bubbles uniform width. */
 }
 
 @media (max-width: 480px) {

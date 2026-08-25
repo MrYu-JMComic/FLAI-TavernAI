@@ -150,9 +150,10 @@ test('character assistant prompts include shared quality guidance', async () => 
 
     assert.equal(prompts.length, 2);
     for (const prompt of prompts) {
-      assert.match(prompt, /Persona fields are durable roleplay contracts/);
-      assert.match(prompt, /Opening messages must be playable first scenes/);
-      assert.match(prompt, /Tie extension and status suggestions to observable roleplay use/);
+      assert.match(prompt, /人设字段是长期角色扮演契约/);
+      assert.match(prompt, /开场白必须是可直接互动的第一幕/);
+      assert.match(prompt, /扩展、状态变量、Mod 和渲染插件必须对应明确的实际用途/);
+      assert.match(prompt, /currentCharacter 是现有表单数据/);
     }
   } finally {
     globalThis.fetch = originalFetch;
@@ -167,8 +168,8 @@ test('character assistant formats enabled sections without Object.entries pipeli
     /function formatEnabledSectionList\(enabledSections = \{\}\) \{\s*let sections = '';\s*for \(const key in enabledSections\) \{[\s\S]*sections = sections \? `\$\{sections\}, \$\{key\}` : key;[\s\S]*return sections \|\| 'none';\s*\}/
   );
   assert.equal(
-    source.match(/Only modify these enabled sections: \$\{formatEnabledSectionList\(enabledSections\)\}\./g)?.length,
-    2
+    source.match(/允许修改的部分仅限：\$\{formatEnabledSectionList\(enabledSections\)\}。/g)?.length,
+    1
   );
   assert.doesNotMatch(source, /Object\.entries\(enabledSections\)\.filter\(\(\[, value\]\) => value\)\.map\(\(\[key\]\) => key\)\.join\(', '\)/);
 });

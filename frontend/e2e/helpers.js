@@ -65,3 +65,17 @@ export async function apiRequest(page, path, options = {}) {
     return data;
   }, { path, options });
 }
+
+export async function waitForThemeTransition(page) {
+  await page.evaluate(async () => {
+    await new Promise((resolve) => requestAnimationFrame(resolve));
+    const transitions = document.getAnimations().filter((animation) => (
+      animation.constructor?.name === 'CSSTransition'
+    ));
+    await Promise.race([
+      Promise.allSettled(transitions.map((animation) => animation.finished)),
+      new Promise((resolve) => setTimeout(resolve, 400)),
+    ]);
+    await new Promise((resolve) => requestAnimationFrame(resolve));
+  });
+}

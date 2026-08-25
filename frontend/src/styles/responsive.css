@@ -40,24 +40,9 @@
     grid-template-columns: 1fr;
   }
 
-  .editor-layout {
-    gap: 14px;
-  }
-
-  .ai-draft-panel {
-    position: static;
-    left: auto;
-    top: auto;
-    width: 100%;
-    max-width: 100%;
-    min-width: 0;
-    height: auto;
-    min-height: 0;
-    max-height: none;
-    resize: none;
-    overflow-x: hidden;
-    overflow-y: visible;
-    box-shadow: none;
+  .ai-workbench-results {
+    border-top: 1px solid color-mix(in srgb, var(--line) 82%, transparent);
+    border-left: 0;
   }
 
   .home-toolbar {
@@ -123,6 +108,18 @@
 
   .page-shell {
     padding: 18px 14px 26px;
+  }
+
+  .page-scroll-top {
+    right: max(12px, env(safe-area-inset-right, 0px));
+    bottom: calc(76px + env(safe-area-inset-bottom, 0px));
+    width: var(--touch-min, 44px);
+    min-width: var(--touch-min, 44px);
+    padding: 0;
+  }
+
+  .page-scroll-top span {
+    display: none;
   }
 
   .home-layout-shell .page-shell {
@@ -520,24 +517,23 @@
   }
 
   /* -- Editor layout: tighter phone flow -- */
-  .editor-layout {
-    gap: 14px;
+  .ai-workbench-header {
+    align-items: flex-start;
+    padding: 14px;
   }
 
-  .ai-draft-panel {
-    position: static;
-    left: auto;
-    top: auto;
-    width: 100%;
-    max-width: 100%;
-    min-width: 0;
-    height: auto;
-    min-height: 0;
-    max-height: none;
-    resize: none;
-    overflow-x: hidden;
-    overflow-y: visible;
-    box-shadow: none;
+  .ai-workbench-config,
+  .ai-workbench-results {
+    padding: 14px;
+  }
+
+  .ai-config-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .ai-scope-toolbar {
+    align-items: flex-start;
+    flex-direction: column;
   }
 
   /* -- Form grid: single column on tablet -- */
@@ -731,12 +727,7 @@
     z-index: 10;
   }
 
-  .character-section-nav {
-    top: calc(var(--character-section-nav-top, 112px) + env(safe-area-inset-top, 0px));
-    z-index: 19;
-  }
-
-  .character-draft-note {
+    .character-draft-note {
     align-items: stretch;
     flex-direction: column;
   }
@@ -821,11 +812,7 @@
     top: calc(78px + env(safe-area-inset-top, 0px));
   }
 
-  .character-section-nav {
-    top: calc(var(--character-section-nav-top, 78px) + env(safe-area-inset-top, 0px));
-  }
-
-  section[id^="personal-section-"],
+    section[id^="personal-section-"],
   section[id^="extension-section-"] {
     scroll-margin-top: 132px;
   }
@@ -853,11 +840,7 @@
     top: calc(66px + env(safe-area-inset-top, 0px));
   }
 
-  .character-section-nav {
-    top: calc(var(--character-section-nav-top, 66px) + env(safe-area-inset-top, 0px));
-  }
-
-  section[id^="personal-section-"],
+    section[id^="personal-section-"],
   section[id^="extension-section-"] {
     scroll-margin-top: 120px;
   }

@@ -9,7 +9,6 @@ const { createAppDatabase } = await import('../db.js');
 const { mergeAdvancedSettings, normalizeAdvancedSettings } = await import('../modules/advancedSettings.js');
 const { createCharacter } = await import('../modules/characters.js');
 const { getConversationEconomyState, getTransactionHistory } = await import('../modules/economy.js');
-const { hideConversationNpc, listConversationNpcs, listNpcBehaviors } = await import('../modules/npcs.js');
 const { getStatusBar, upsertStatusBar } = await import('../modules/statusBars.js');
 const { getAccessorySkillsPayload, runAccessoryAgents } = await import('../services/accessoryAgents.js');
 const accessoryAgentsSource = readFileSync(new URL('../services/accessoryAgents.js', import.meta.url), 'utf8');
@@ -17,7 +16,6 @@ const advancedSettingsSource = readFileSync(new URL('../modules/advancedSettings
 
 test('accessory agents stay inactive when skills are disabled', async () => {
   const env = setupConversation({
-    npcAgent: skill(false),
     statusBarAgent: skill(false),
     economyAgent: skill(false),
     talentPrompt: skill(false),
@@ -28,7 +26,6 @@ test('accessory agents stay inactive when skills are disabled', async () => {
     variables: [{ name: 'HP', value: 100, max: 100 }],
     template: ''
   });
-
   const results = await runAccessoryAgents({
     db: env.db,
     userId: env.userId,
@@ -40,14 +37,12 @@ test('accessory agents stay inactive when skills are disabled', async () => {
   });
 
   assert.deepEqual(results, []);
-  assert.equal(env.db.prepare('SELECT COUNT(*) AS count FROM npc_memories').get().count, 0);
   assert.equal(getConversationEconomyState(env.db, env.userId, env.conversation.id, { ensureDefaultAccount: false }).accounts.length, 0);
   assert.equal(getStatusBar(env.db, env.userId, env.conversation.id).variables[0].value, 100);
 });
 
 test('accessory skill payloads build active flags with direct own-key loops', () => {
   const env = setupConversation({
-    npcAgent: skill(false),
     statusBarAgent: skill('auto'),
     economyAgent: skill(true)
   });
@@ -56,17 +51,25 @@ test('accessory skill payloads build active flags with direct own-key loops', ()
   const payload = getAccessorySkillsPayload(env.conversation, null);
 
   assert.deepEqual(Object.keys(payload.skills), [
-    'npcAgent',
+    'worldDirector',
+    'gameHud',
+    'encounterMode',
+    'rewardMode',
     'statusBarAgent',
     'economyAgent',
     'talentPrompt',
-    'cgScene'
+    'cgScene',
+    'sceneAgent'
   ]);
-  assert.equal(payload.active.npcAgent, false);
+  assert.equal(payload.active.worldDirector, false);
+  assert.equal(payload.active.gameHud, false);
+  assert.equal(payload.active.encounterMode, false);
+  assert.equal(payload.active.rewardMode, false);
   assert.equal(payload.active.statusBarAgent, true);
   assert.equal(payload.active.economyAgent, true);
   assert.equal(payload.active.talentPrompt, false);
   assert.equal(payload.active.cgScene, false);
+  assert.equal(payload.active.sceneAgent, false);
   assert.match(advancedSettingsSource, /const normalized = \{\};\r?\n  for \(const key in defaults\) \{/);
   assert.match(advancedSettingsSource, /Object\.prototype\.hasOwnProperty\.call\(defaults, key\)/);
   assert.match(accessoryAgentsSource, /const activeContext = \{/);
@@ -81,7 +84,6 @@ test('accessory skill payloads build active flags with direct own-key loops', ()
 test('provider-backed accessory agents receive current-turn observation windows', async () => {
   const env = setupConversation({
     statusBarAgent: skill(true),
-    npcAgent: skill(true),
     economyAgent: skill(true)
   });
   const statusBar = upsertStatusBar(env.db, env.userId, env.conversation.id, {
@@ -107,11 +109,6 @@ test('provider-backed accessory agents receive current-turn observation windows'
         choices: [{ message: { role: 'assistant', content: null, tool_calls: [] } }]
       });
     }
-    if (toolName === 'upsert_npc') {
-      return jsonResponse({
-        choices: [{ message: { role: 'assistant', content: null, tool_calls: [] } }]
-      });
-    }
     if (toolName === 'record_economy_transaction') {
       return jsonResponse({
         choices: [{ message: { role: 'assistant', content: null, tool_calls: [] } }]
@@ -133,13 +130,22 @@ test('provider-backed accessory agents receive current-turn observation windows'
     });
 
     assert.equal(capturedBodies.length, 3);
+    assert.equal(
+      capturedBodies.filter((body) => body.tools?.some((tool) => tool.function?.name === 'update_status_bar')).length,
+      2
+    );
     for (const body of capturedBodies) {
       const systemMessage = body.messages.find((message) => message.role === 'system');
       const userPayload = JSON.parse(body.messages.find((message) => message.role === 'user').content);
-      assert.match(systemMessage.content, /current turn/i);
+      assert.match(systemMessage.content, /observationWindow/);
+      assert.match(systemMessage.content, /assistant/);
       assert.equal(userPayload.observationWindow.user, 'I pay Mira 5 gold for a room and ask where the cellar is.');
       assert.equal(userPayload.observationWindow.assistant, 'Mira accepts 5 gold and points toward the cellar stairs.');
     }
+    const economyBody = capturedBodies.find((body) => body.tools?.some((tool) => tool.function?.name === 'record_economy_transaction'));
+    const economySchema = economyBody.tools.find((tool) => tool.function?.name === 'record_economy_transaction').function.parameters;
+    assert.deepEqual(economySchema.required, ['amount', 'type', 'currencyType']);
+    assert.equal(economySchema.properties.amount.minimum, 0.0001);
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -213,6 +219,38 @@ test('status bar agent auto mode activates when variables or prompt exist and ca
   assert.equal(getStatusBar(env.db, env.userId, env.conversation.id).variables[0].value, 75);
 });
 
+test('status bar agent restores a missing persisted bar from the conversation blueprint', async () => {
+  const env = setupConversation({ statusBarAgent: skill('auto') });
+  env.conversation.settings.statusBarBlueprint = {
+    name: '角色状态',
+    variables: [
+      { name: 'HP', value: 100, max: 100, color: '#ef4444' },
+      { name: 'Mood', value: '平静', color: '#60a5fa' }
+    ],
+    template: '<div>HP: {{HP}} / {{HP.max}}</div><div>Mood: {{Mood}}</div>'
+  };
+
+  const payload = getAccessorySkillsPayload(env.conversation, null);
+  assert.equal(payload.active.statusBarAgent, true);
+
+  await runAccessoryAgents({
+    db: env.db,
+    userId: env.userId,
+    conversation: env.conversation,
+    character: env.character,
+    assistantMessage: { content: '战斗结束后，HP: 64/100。' },
+    settings: {},
+    statusBar: null
+  });
+
+  const statusBar = getStatusBar(env.db, env.userId, env.conversation.id);
+  assert.equal(statusBar.name, '角色状态');
+  assert.equal(statusBar.template, '<div>HP: {{HP}} / {{HP.max}}</div><div>Mood: {{Mood}}</div>');
+  assert.equal(statusBar.variables.find((item) => item.name === 'HP')?.value, 64);
+  assert.equal(statusBar.variables.find((item) => item.name === 'Mood')?.value, '平静');
+  assert.equal(statusBar.variables.find((item) => item.name === 'Mood')?.color, '#60a5fa');
+});
+
 test('status bar agent can create variables from prompt guidance', async () => {
   const env = setupConversation({ statusBarAgent: skill('auto') });
   env.conversation.settings.statusBarPrompt = '跟踪当前情绪，变量名为 Mood，范围 0-100。';
@@ -262,6 +300,7 @@ test('status bar agent can create variables from prompt guidance', async () => {
     });
 
     const statusBar = getStatusBar(env.db, env.userId, env.conversation.id);
+    assert.equal(calls, 1);
     assert.equal(statusBar.name, '状态栏');
     assert.equal(statusBar.variables[0].name, 'Mood');
     assert.equal(statusBar.variables[0].value, 72);
@@ -434,7 +473,7 @@ test('status bar agent accepts explicit skip tool without fallback updates', asy
     assert.equal(results[0].result.skipped, true);
     assert.deepEqual(results[0].result.updates, []);
     assert.equal(getStatusBar(env.db, env.userId, env.conversation.id).variables[0].value, 100);
-    assert.match(accessoryAgentsSource, /Call skip_status_bar_update when no status value should change/);
+    assert.match(accessoryAgentsSource, /两种工具每轮只调用一种/);
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -531,8 +570,8 @@ test('status bar agent updates composite placeholder variables', async () => {
     const userMessage = requestBody.messages.find((message) => message.role === 'user');
     const systemMessage = requestBody.messages.find((message) => message.role === 'system');
     const payload = JSON.parse(userMessage.content);
-    assert.match(systemMessage.content, /composite rows/i);
-    assert.equal(payload.template, template);
+    assert.match(systemMessage.content, /复合行/);
+    assert.equal(Object.prototype.hasOwnProperty.call(payload, 'template'), false);
     assert.deepEqual(payload.templateHints.compositeRows, [
       { label: '\u5730\u70b9', variables: ['\u5927\u5730\u70b9', '\u5177\u4f53\u4f4d\u7f6e'] }
     ]);
@@ -541,6 +580,68 @@ test('status bar agent updates composite placeholder variables', async () => {
     const variables = getStatusBar(env.db, env.userId, env.conversation.id).variables;
     assert.equal(variables.find((item) => item.name === '\u5927\u5730\u70b9')?.value, '\u4e5d\u5929\u7384\u5973\u5883');
     assert.equal(variables.find((item) => item.name === '\u5177\u4f53\u4f4d\u7f6e')?.value, '\u7389\u9f0e\u5b97\u79c1\u4ea7');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('status bar agent retries a tool-less response and applies the required update tool', async () => {
+  const env = setupConversation({ statusBarAgent: skill('auto') });
+  const statusBar = upsertStatusBar(env.db, env.userId, env.conversation.id, {
+    name: 'State',
+    variables: [{ name: 'Location', value: '卧室' }],
+    template: '<div>{{Location}}</div>'
+  });
+
+  const originalFetch = globalThis.fetch;
+  const requestBodies = [];
+  globalThis.fetch = async (_url, request) => {
+    requestBodies.push(JSON.parse(request.body));
+    if (requestBodies.length === 1) {
+      return jsonResponse({
+        choices: [{ message: { role: 'assistant', content: '我会分析当前状态。' } }]
+      });
+    }
+    return jsonResponse({
+      choices: [
+        {
+          message: {
+            role: 'assistant',
+            content: null,
+            tool_calls: [
+              {
+                id: 'status-retry-1',
+                type: 'function',
+                function: {
+                  name: 'update_status_bar',
+                  arguments: JSON.stringify({
+                    variables: [{ name: 'Location', value: '浴室' }]
+                  })
+                }
+              }
+            ]
+          }
+        }
+      ]
+    });
+  };
+
+  try {
+    await runAccessoryAgents({
+      db: env.db,
+      userId: env.userId,
+      conversation: env.conversation,
+      character: env.character,
+      userMessage: { content: '她去洗澡。' },
+      assistantMessage: { content: '她关掉卧室的灯，走进浴室并打开热水。' },
+      settings: providerSettings(),
+      statusBar
+    });
+
+    assert.equal(requestBodies.length, 2);
+    const retryMessages = requestBodies[1].messages;
+    assert.match(retryMessages[retryMessages.length - 1].content, /必须且只能调用其中一个工具/);
+    assert.equal(getStatusBar(env.db, env.userId, env.conversation.id).variables[0].value, '浴室');
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -668,200 +769,6 @@ test('status bar agent preserves variables beyond first twenty when updating', a
   const variables = getStatusBar(env.db, env.userId, env.conversation.id).variables;
   assert.equal(variables.length, 25);
   assert.equal(variables.find((item) => item.name === 'Var25')?.value, 88);
-});
-
-test('npc agent does not create fallback memories from text patterns', async () => {
-  const env = setupConversation({ npcAgent: skill(true), statusBarAgent: skill(false) });
-  const assistantMessage = { content: '**Lily** says the bridge is closed.' };
-
-  await runAccessoryAgents({
-    db: env.db,
-    userId: env.userId,
-    conversation: env.conversation,
-    character: env.character,
-    assistantMessage,
-    settings: {},
-    statusBar: null
-  });
-  await runAccessoryAgents({
-    db: env.db,
-    userId: env.userId,
-    conversation: env.conversation,
-    character: env.character,
-    assistantMessage,
-    settings: {},
-    statusBar: null
-  });
-
-  const rows = env.db.prepare('SELECT npc_name, content FROM npc_memories').all();
-  assert.equal(rows.length, 0);
-});
-
-test('npc agent upserts structured NPCs and respects hidden names', async () => {
-  const env = setupConversation({ npcAgent: skill(true), statusBarAgent: skill(false) });
-  hideConversationNpc(env.db, env.userId, env.conversation.id, 'FakeTitle');
-  const originalFetch = globalThis.fetch;
-  let calls = 0;
-  globalThis.fetch = async () => {
-    calls += 1;
-    if (calls === 1) {
-      return jsonResponse({
-        choices: [
-          {
-            message: {
-              role: 'assistant',
-              content: null,
-              tool_calls: [
-                {
-                  id: 'npc-1',
-                  type: 'function',
-                  function: {
-                    name: 'upsert_npc',
-                    arguments: JSON.stringify({
-                      npcName: 'Gate Captain',
-                      evidence: 'Gate Captain warned the party at the gate.',
-                      confidence: 92,
-                      currentLocation: 'city gate'
-                    })
-                  }
-                },
-                {
-                  id: 'npc-hidden',
-                  type: 'function',
-                  function: {
-                    name: 'upsert_npc',
-                    arguments: JSON.stringify({
-                      npcName: 'FakeTitle',
-                      evidence: 'A markdown heading.',
-                      confidence: 95
-                    })
-                  }
-                }
-              ]
-            }
-          }
-        ]
-      });
-    }
-    return jsonResponse({ choices: [{ message: { role: 'assistant', content: 'done' } }] });
-  };
-
-  try {
-    const results = await runAccessoryAgents({
-      db: env.db,
-      userId: env.userId,
-      conversation: env.conversation,
-      character: env.character,
-      assistantMessage: { content: '**FakeTitle**\nGate Captain warned them.' },
-      settings: providerSettings(),
-      statusBar: null
-    });
-
-    assert.equal(results[0].ok, true);
-    const npcs = listConversationNpcs(env.db, env.userId, env.conversation.id, env.character.name);
-    assert.ok(npcs.some((npc) => npc.name === 'Gate Captain' && npc.source === 'agent' && npc.confidence === 92));
-    assert.equal(npcs.find((npc) => npc.name === 'Gate Captain')?.currentLocation, 'city gate');
-    assert.ok(!npcs.some((npc) => npc.name === 'FakeTitle'));
-  } finally {
-    globalThis.fetch = originalFetch;
-  }
-});
-
-test('npc agent skips loose or excessive automatic behavior rules', async () => {
-  const env = setupConversation({ npcAgent: skill(true), statusBarAgent: skill(false) });
-  const timestamp = '2026-01-01T00:00:00.000Z';
-  for (let index = 0; index < 8; index += 1) {
-    env.db.prepare(
-      'INSERT INTO npc_behaviors (id, conversation_id, npc_name, behavior_type, trigger_condition, action, priority, enabled, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
-    ).run(
-      `npc-agent-seeded-${index}`,
-      env.conversation.id,
-      'Full Guard',
-      'reaction',
-      `seed trigger ${index}`,
-      `seed action ${index}`,
-      0,
-      1,
-      timestamp
-    );
-  }
-
-  const originalFetch = globalThis.fetch;
-  let calls = 0;
-  globalThis.fetch = async () => {
-    calls += 1;
-    if (calls === 1) {
-      return jsonResponse({
-        choices: [
-          {
-            message: {
-              role: 'assistant',
-              content: null,
-              tool_calls: [
-                {
-                  id: 'loose-behavior',
-                  type: 'function',
-                  function: {
-                    name: 'record_npc_behavior',
-                    arguments: JSON.stringify({
-                      npcName: 'Loose Guard',
-                      action: 'Always smiles politely.',
-                      priority: 3
-                    })
-                  }
-                },
-                {
-                  id: 'explicit-behavior',
-                  type: 'function',
-                  function: {
-                    name: 'record_npc_behavior',
-                    arguments: JSON.stringify({
-                      npcName: 'Explicit Guard',
-                      triggerCondition: 'When the alarm bell rings',
-                      action: 'Blocks the gate and calls for backup.',
-                      priority: 7
-                    })
-                  }
-                },
-                {
-                  id: 'capped-behavior',
-                  type: 'function',
-                  function: {
-                    name: 'record_npc_behavior',
-                    arguments: JSON.stringify({
-                      npcName: 'Full Guard',
-                      triggerCondition: 'When anyone approaches',
-                      action: 'Adds one more automatic rule.',
-                      priority: 1
-                    })
-                  }
-                }
-              ]
-            }
-          }
-        ]
-      });
-    }
-    return jsonResponse({ choices: [{ message: { role: 'assistant', content: 'done' } }] });
-  };
-
-  try {
-    await runAccessoryAgents({
-      db: env.db,
-      userId: env.userId,
-      conversation: env.conversation,
-      character: env.character,
-      assistantMessage: { content: 'The guards react.' },
-      settings: providerSettings(),
-      statusBar: null
-    });
-
-    assert.equal(listNpcBehaviors(env.db, env.userId, env.conversation.id, 'Loose Guard').length, 0);
-    assert.equal(listNpcBehaviors(env.db, env.userId, env.conversation.id, 'Explicit Guard').length, 1);
-    assert.equal(listNpcBehaviors(env.db, env.userId, env.conversation.id, 'Full Guard').length, 8);
-  } finally {
-    globalThis.fetch = originalFetch;
-  }
 });
 
 test('economy agent tool call records a transaction without blocking the reply', async () => {

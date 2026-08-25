@@ -73,6 +73,26 @@ test('chat submit preset selection ignores updates while sending', () => {
   assert.equal(selectedPresetId.value, '');
 });
 
+test('chat thinking preference can be turned off for always-reasoning models', () => {
+  const { submit } = createSubmitState({
+    provider: refValue({
+      providerType: 'xai',
+      model: 'grok-4.6',
+      supportsReasoning: true
+    })
+  });
+
+  assert.deepEqual(
+    submit.thinkingOptions.value.map((option) => option.value),
+    ['off', 'low', 'medium', 'high', 'xhigh']
+  );
+  submit.setThinkingLevel('high');
+  assert.equal(submit.thinkingEnabled.value, true);
+  submit.setThinkingLevel('off');
+  assert.equal(submit.thinkingLevel.value, 'off');
+  assert.equal(submit.thinkingEnabled.value, false);
+});
+
 test('chat submit remembers failed prompts for visible recovery actions', async () => {
   const originalFetch = globalThis.fetch;
   const previousUser = { id: 'old-user', role: 'user', content: 'Old prompt' };
@@ -736,7 +756,7 @@ test('chat submit finishAssistantDraft skips message-list triggers when the assi
   }
 });
 
-test('chat submit finishAssistantDraft still settles active assistant drafts with one message-list trigger', async () => {
+test('chat submit finishAssistantDraft settles active drafts without invalidating the message list ref', async () => {
   const assistant = {
     id: 'assistant-1',
     role: 'assistant',
@@ -762,7 +782,7 @@ test('chat submit finishAssistantDraft still settles active assistant drafts wit
     assert.equal(assistant.reasoningStreaming, false);
     assert.equal(assistant.contentStreaming, false);
     assert.equal(messages.value[0], assistant);
-    assert.equal(messageListTriggers, 1);
+    assert.equal(messageListTriggers, 0);
   } finally {
     stopWatch();
   }
@@ -810,7 +830,7 @@ test('chat submit finishAssistantDraft removes empty drafts without no-op list r
   }
 });
 
-test('chat submit finishAssistantDraft settles current list items for stale same-id drafts', async () => {
+test('chat submit finishAssistantDraft settles current same-id items without invalidating the list ref', async () => {
   const currentAssistant = {
     id: 'assistant-1',
     role: 'assistant',
@@ -848,7 +868,7 @@ test('chat submit finishAssistantDraft settles current list items for stale same
     assert.equal(staleAssistant.reasoningStreaming, true);
     assert.equal(staleAssistant.contentStreaming, true);
     assert.equal(messages.value[0], currentAssistant);
-    assert.equal(messageListTriggers, 1);
+    assert.equal(messageListTriggers, 0);
   } finally {
     stopWatch();
   }
@@ -872,25 +892,28 @@ test('chat submit current-message lookup avoids cloned message-list scans', () =
   assert.doesNotMatch(chatSubmitSource, /messages\.value\.find/);
 });
 
-test('chat submit skips stream append follow-scroll after stale or stopped appends', () => {
+test('chat submit appends only into the active reactive row and leaves scrolling to rendered Markdown', () => {
   assert.match(
     chatSubmitSource,
-    /await appendStreamText\(\s*assistant,\s*'reasoning',\s*data\.text,\s*anchorAssistantReply,\s*\(\) => isCurrentSubmit\(submitId, conversationId\)\s*\);/
+    /appendStreamText\(\s*assistant,\s*'reasoning',\s*data\.text,\s*anchorAssistantReply,\s*\(\) => isCurrentSubmit\(submitId, conversationId\)\s*\);/
   );
   assert.match(
     chatSubmitSource,
-    /await appendStreamText\(\s*assistant,\s*'content',\s*data\.text,\s*anchorAssistantReply,\s*\(\) => isCurrentSubmit\(submitId, conversationId\)\s*\);/
+    /appendStreamText\(\s*assistant,\s*'content',\s*data\.text,\s*anchorAssistantReply,\s*\(\) => isCurrentSubmit\(submitId, conversationId\)\s*\);/
   );
   assert.match(
     chatSubmitSource,
-    /async function appendStreamText\(message, field, text, anchorAssistantReply = false, isStillCurrent = \(\) => true\) \{[\s\S]*currentMessage\[field\] \+= value;[\s\S]*triggerRef\(messages\);[\s\S]*await nextTick\(\);\s*if \(submitDisposed \|\| !currentMessage\.streaming \|\| !isStillCurrent\(\)\) {\s*return;\s*}\s*followSubmitScroll\(currentMessage, anchorAssistantReply, false\);/
+    /function appendStreamText\(message, field, text, anchorAssistantReply = false, isStillCurrent = \(\) => true\) \{[\s\S]*if \(!isStillCurrent\(\)\) return;[\s\S]*currentMessage\[field\] \+= value;[\s\S]*}/
   );
+  assert.doesNotMatch(chatSubmitSource, /triggerRef\(messages\)/);
+  assert.doesNotMatch(chatSubmitSource, /pendingStreamFollow|scheduleStreamFollow|followSubmitScroll\(currentMessage/);
+  assert.match(chatSubmitSource, /content: resolveFinalStreamText\(streamedContent, finalServerMessage\.content\)/);
 });
 
 test('chat submit image generation mode is controlled by model capability and switch state', () => {
   assert.match(
     chatSubmitSource,
-    /const chatProviderCapabilities = computed\(\(\) => resolveProviderModelCapabilities\(provider\.value \|\| \{\}\)\);[\s\S]*const canGenerateImages = computed\(\(\) => Boolean\(chatProviderCapabilities\.value\.imageGeneration\)\);[\s\S]*const canToggleImageGeneration = computed\(\(\) => Boolean\(canGenerateImages\.value\)\);[\s\S]*const shouldGenerateImage = canToggleImageGeneration\.value && imageGenerationEnabled\.value;[\s\S]*imageGeneration: shouldGenerateImage[\s\S]*if \(useStream\.value && canUseStream\.value && !shouldGenerateImage\)/
+    /const chatProviderCapabilities = computed\(\(\) => resolveProviderModelCapabilities\(provider\.value \|\| \{\}\)\);[\s\S]*const canGenerateImages = computed\(\(\) => Boolean\(chatProviderCapabilities\.value\.imageGeneration\)\);[\s\S]*const canToggleImageGeneration = computed\(\(\) => Boolean\(canGenerateImages\.value\)\);[\s\S]*const shouldGenerateImage = canToggleImageGeneration\.value && imageGenerationEnabled\.value;[\s\S]*const willStreamReply = useStream\.value && canUseStream\.value && !shouldGenerateImage;[\s\S]*imageGeneration: shouldGenerateImage[\s\S]*if \(willStreamReply\)/
   );
   assert.match(chatSubmitSource, /import \{ resolveProviderModelCapabilities \} from '\.\.\/\.\.\/\.\.\/\.\.\/shared\/providerCapabilities\.js';/);
   assert.match(chatSubmitSource, /const imageGenerationEnabled = ref\(readLocalBoolean\('flai-chat-image-generation-enabled', true\)\);/);
@@ -947,7 +970,7 @@ test('chat submit refresh and plain metadata comparisons avoid callback allocati
   );
   assert.match(
     chatSubmitSource,
-    /function setMessageStreamingState\(message, nextState = \{\}\) \{[\s\S]*let changed = false;[\s\S]*for \(const key in nextState\) \{[\s\S]*Object\.prototype\.hasOwnProperty\.call\(nextState, key\)[\s\S]*const value = nextState\[key\];[\s\S]*currentMessage\[key\] = value;[\s\S]*triggerRef\(messages\);[\s\S]*return currentMessage;[\s\S]*\}/
+    /function setMessageStreamingState\(message, nextState = \{\}\) \{[\s\S]*for \(const key in nextState\) \{[\s\S]*Object\.prototype\.hasOwnProperty\.call\(nextState, key\)[\s\S]*const value = nextState\[key\];[\s\S]*currentMessage\[key\] = value;[\s\S]*return currentMessage;[\s\S]*\}/
   );
   assert.doesNotMatch(chatSubmitSource, /\.filter\(Boolean\)/);
   assert.doesNotMatch(chatSubmitSource, /current\.every\(/);
@@ -1361,7 +1384,7 @@ test('chat submit scopes non-stream skill results to the active conversation', a
       usage: null,
       skillResults: [
         { skill: 'statusBarAgent', ok: true, result: { updates: ['HP'] } },
-        { conversationId: 'conv-stale', skill: 'npcAgent', ok: true, result: { npcs: [{ name: 'Old' }] } }
+        { conversationId: 'conv-stale', skill: 'sceneAgent', ok: true, result: { changes: [] } }
       ]
     });
   };
@@ -1380,7 +1403,7 @@ test('chat submit scopes non-stream skill results to the active conversation', a
 
     assert.deepEqual(skillResults.map((item) => item.conversationId), ['conv-1', 'conv-1']);
     assert.equal(skillResults[0].skill, 'statusBarAgent');
-    assert.equal(skillResults[1].skill, 'npcAgent');
+    assert.equal(skillResults[1].skill, 'sceneAgent');
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -1795,7 +1818,7 @@ test('chat submit skips persisted stream reconciliation when replaced drafts are
   }
 });
 
-test('chat submit stops anchored stream follow after user pauses auto-scroll', async () => {
+test('chat submit does not scroll for network chunks before Markdown commits', async () => {
   const originalFetch = globalThis.fetch;
   const originalWindow = globalThis.window;
   const messages = refValue([]);
@@ -1866,9 +1889,7 @@ test('chat submit stops anchored stream follow after user pauses auto-scroll', a
     submit.input.value = 'Hello';
     await submit.submit();
 
-    assert.equal(scrollCalls.length, 1);
-    assert.match(scrollCalls[0].messageId, /^local-assistant-/);
-    assert.deepEqual(scrollCalls[0].options, { smooth: true, block: 'end' });
+    assert.equal(scrollCalls.length, 0);
     assert.equal(stickCalls.length > 0, true);
     assert.equal(messages.value[0].id, 'user-1');
     assert.equal(messages.value[1].id, 'assistant-1');

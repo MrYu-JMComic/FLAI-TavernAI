@@ -77,24 +77,6 @@ export function useChatMessageActions({
     return String(messageId ?? '').trim();
   }
 
-  function isReasoningTyping(message) {
-    return message.role === 'assistant' && message.reasoningStreaming === true;
-  }
-
-  function isContentTyping(message) {
-    return message.role === 'assistant' && message.contentStreaming === true;
-  }
-
-  function messagePlaceholder(message) {
-    if (!message.streaming) {
-      return '';
-    }
-    if (message.reasoning && !message.content) {
-      return '正在思考，答案马上开始...';
-    }
-    return '正在生成...';
-  }
-
   function buildMessageIdentity(name, avatarUrl = '') {
     const normalizedName = String(name || '').trim() || 'Message';
     return {
@@ -998,9 +980,6 @@ export function useChatMessageActions({
     toggleReasoning,
     expandReasoning,
     reasoningOpen,
-    isReasoningTyping,
-    isContentTyping,
-    messagePlaceholder,
     messageAuthorName,
     messageAuthorInitial,
     messageAvatarUrl,

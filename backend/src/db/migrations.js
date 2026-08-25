@@ -1,108 +1,13 @@
 import { newId } from '../security.js';
+import { migrateCastDomainV1 } from './migrations/castDomainV1.js';
+import { migrateCastDomainV2 } from './migrations/castDomainV2.js';
 
 export function applyStartupMigrations(database, { getCachedTableColumns }) {
   ensureSchemaMeta(database);
   removeRegexCharacterForeignKey(database);
   migrateTagsToUserScoped(database, getCachedTableColumns);
-  migrateSceneItemsToOwnedItems(database);
-  repairLegacyOrphanWorldItems(database);
-}
-
-function migrateSceneItemsToOwnedItems(database) {
-  const columns = new Set();
-  for (const row of database.prepare('PRAGMA table_info(scene_items)').all()) {
-    columns.add(row.name);
-  }
-  if (!columns.size || columns.has('owner_type')) {
-    return;
-  }
-
-  database.exec('PRAGMA foreign_keys = OFF');
-  database.exec('BEGIN');
-  try {
-    database.exec(`
-      CREATE TABLE scene_items_new (
-        id TEXT PRIMARY KEY,
-        conversation_id TEXT NOT NULL,
-        node_id TEXT,
-        item_code TEXT NOT NULL,
-        name TEXT NOT NULL,
-        description TEXT NOT NULL DEFAULT '',
-        state_json TEXT NOT NULL DEFAULT '{}',
-        position_json TEXT NOT NULL DEFAULT '{}',
-        movable INTEGER NOT NULL DEFAULT 0,
-        owner_type TEXT NOT NULL DEFAULT 'world',
-        owner_name TEXT NOT NULL DEFAULT '',
-        item_kind TEXT NOT NULL DEFAULT 'item',
-        quantity INTEGER NOT NULL DEFAULT 1,
-        clothing_slot TEXT NOT NULL DEFAULT '',
-        equipped INTEGER NOT NULL DEFAULT 0,
-        coverage_json TEXT NOT NULL DEFAULT '[]',
-        icon_key TEXT NOT NULL DEFAULT '',
-        created_at TEXT NOT NULL,
-        updated_at TEXT NOT NULL,
-        FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE,
-        FOREIGN KEY (node_id) REFERENCES scene_nodes(id) ON DELETE SET NULL,
-        UNIQUE(conversation_id, item_code)
-      );
-      INSERT INTO scene_items_new (
-        id, conversation_id, node_id, item_code, name, description,
-        state_json, position_json, movable, created_at, updated_at
-      )
-      SELECT
-        id, conversation_id, node_id, item_code, name, description,
-        state_json, position_json, movable, created_at, updated_at
-      FROM scene_items;
-      DROP TABLE scene_items;
-      ALTER TABLE scene_items_new RENAME TO scene_items;
-    `);
-    database.exec('COMMIT');
-  } catch (error) {
-    database.exec('ROLLBACK');
-    throw error;
-  } finally {
-    database.exec('PRAGMA foreign_keys = ON');
-  }
-}
-
-function repairLegacyOrphanWorldItems(database) {
-  const table = database.prepare(
-    "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'scene_items'"
-  ).get();
-  if (!table) return;
-  const conversations = database.prepare(
-    `SELECT DISTINCT conversation_id FROM scene_items
-     WHERE owner_type = 'world' AND node_id IS NULL`
-  ).all();
-  const timestamp = new Date().toISOString();
-  for (const row of conversations) {
-    let node = database.prepare(
-      `SELECT id FROM scene_nodes
-       WHERE conversation_id = ? AND node_type = 'map' AND name = '未定位物品区'
-       LIMIT 1`
-    ).get(row.conversation_id);
-    if (!node) {
-      node = { id: newId() };
-      database.prepare(
-        `INSERT INTO scene_nodes (
-           id, conversation_id, parent_id, node_type, name, description,
-           layout_json, tags_json, permanent, created_at, updated_at
-         ) VALUES (?, ?, NULL, 'map', '未定位物品区', ?, ?, ?, 0, ?, ?)`
-      ).run(
-        node.id,
-        row.conversation_id,
-        '系统迁移暂存失去原地点的世界物品；请重新确认实际位置。',
-        JSON.stringify({ x: 50, y: 50, iconKey: 'map.district', unresolved: true }),
-        JSON.stringify(['system', 'unresolved-items']),
-        timestamp,
-        timestamp
-      );
-    }
-    database.prepare(
-      `UPDATE scene_items SET node_id = ?, updated_at = ?
-       WHERE conversation_id = ? AND owner_type = 'world' AND node_id IS NULL`
-    ).run(node.id, timestamp, row.conversation_id);
-  }
+  migrateCastDomainV1(database);
+  migrateCastDomainV2(database);
 }
 
 function ensureSchemaMeta(database) {

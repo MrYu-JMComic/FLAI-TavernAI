@@ -7,6 +7,7 @@ defineProps({
   filteredTags: { type: Array, default: () => [] },
   form: { type: Object, required: true },
   hiddenSelectedWorldBookCount: { type: Number, default: 0 },
+  nameError: { type: String, default: '' },
   optionsLoadError: { type: String, default: '' },
   optionsLoading: { type: Boolean, default: false },
   selectedWorldBookIds: { type: Array, default: () => [] },
@@ -19,7 +20,9 @@ defineProps({
 
 const emit = defineEmits([
   'avatar-change',
+  'avatar-clear',
   'create-tag',
+  'name-blur',
   'open-world-book-dialog',
   'retry-options',
   'toggle-tag',
@@ -50,11 +53,22 @@ function readInputValue(event) {
         <img v-if="form.avatarUrl" :src="form.avatarUrl" :alt="form.name" />
         <span v-else>{{ form.name.slice(0, 1) || 'F' }}</span>
       </div>
-      <label v-if="canEdit" class="file-button">
-        <Upload :size="18" />
-        <span>上传头像</span>
-        <input type="file" accept="image/png,image/jpeg,image/webp" @change="emit('avatar-change', $event)" />
-      </label>
+      <div v-if="canEdit" class="avatar-editor-controls">
+        <label class="file-button">
+          <Upload :size="18" />
+          <span>上传头像</span>
+          <input type="file" accept="image/png,image/jpeg,image/webp" @change="emit('avatar-change', $event)" />
+        </label>
+        <button
+          v-if="form.avatarUrl"
+          class="ghost-button avatar-remove-button"
+          type="button"
+          @click="emit('avatar-clear')"
+        >
+          <X :size="18" />
+          <span>移除头像</span>
+        </button>
+      </div>
       <div v-else class="permission-chip">只读展示</div>
     </div>
 
@@ -90,15 +104,20 @@ function readInputValue(event) {
           </label>
         </div>
       </div>
-      <label class="field">
+      <label class="field" :class="{ 'has-error': nameError }">
         <span>角色名</span>
         <input
+          id="character-name"
           :value="form.name"
           required
           maxlength="40"
           :disabled="!canEdit"
+          :aria-invalid="nameError ? 'true' : 'false'"
+          :aria-describedby="nameError ? 'character-name-error' : undefined"
           @input="emit('update-field', 'name', readInputValue($event).trim())"
+          @blur="emit('name-blur')"
         />
+        <small v-if="nameError" id="character-name-error" class="field-error" role="alert">{{ nameError }}</small>
       </label>
       <div v-if="optionsLoading || optionsLoadError" class="field full-span">
         <p v-if="optionsLoading" class="muted-text" aria-live="polite">正在加载标签和世界书选项...</p>

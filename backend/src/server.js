@@ -18,6 +18,7 @@ import { providerWithSecret, hasUsableProvider, defaultProviderSettings, normali
 import { getCharacterWorldBookId, getCharacterWorldBookIds } from './modules/worldBooks.js';
 import { getCharacterTagsMap } from './modules/tags.js';
 import { publicUser, getUserProfile } from './modules/users.js';
+import { startTownSimulationEngine } from './modules/townEngine.js';
 
 // ── Route modules ──
 import { createAuthRouter } from './routes/auth.js';
@@ -28,11 +29,13 @@ import { createPresetsRouter } from './routes/presets.js';
 import { createModsRouter } from './routes/mods.js';
 import { createTagsRouter } from './routes/tags.js';
 import { createTalentsRouter } from './routes/talents.js';
+import { createHMDTRouter } from './routes/hmdt.js';
 import { createSettingsRouter } from './routes/settings.js';
 import { createRegexRouter } from './routes/regex.js';
 import { createSwipesRouter } from './routes/swipes.js';
 import { createBranchesRouter } from './routes/branches.js';
 import { createUpgradeRouter } from './routes/upgrade.js';
+import { createTownsRouter } from './routes/towns.js';
 import { getChatProviderSettingsFromContext } from './routes/helpers.js';
 import { createBackup, listBackups, scheduleDailyBackup } from './services/backup.js';
 import { csrfProtection, csrfTokenEndpoint } from './services/csrf.js';
@@ -345,7 +348,8 @@ const ctx = {
   getChatProviderSettings,
   providerWithSecret,
   hasUsableProvider,
-  mockProviderEnabled: appConfig.mockProviderEnabled
+  mockProviderEnabled: appConfig.mockProviderEnabled,
+  townWorldGenerationTimeoutMs: appConfig.townWorldGenerationTimeoutMs
 };
 
 // ── Health check ──
@@ -367,9 +371,17 @@ app.use('/api/tags', createTagsRouter(ctx));
 app.use('/api/talent-pools', createTalentsRouter(ctx));
 app.use('/api/regex-rules', createRegexRouter(ctx));
 app.use('/api/messages', createSwipesRouter(ctx));
+app.use('/api/towns', createTownsRouter(ctx));
+app.use('/api/hmdt', createHMDTRouter(ctx));
 app.use('/api/conversations', createBranchesRouter(ctx));
 app.use('/api', createUpgradeRouter(ctx));
 app.use('/api', createSettingsRouter(ctx));
+
+startTownSimulationEngine(db, {
+  onError: (error) => {
+    console.error('[town-engine]', sanitizeDiagnosticText(error?.message || error));
+  }
+});
 
 // ── Admin backup endpoint ──
 

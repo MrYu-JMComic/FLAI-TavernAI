@@ -11,10 +11,38 @@ export {
 } from './api/auth.js';
 export { fetchAppBootstrap, exportProjectSnapshot } from './api/app.js';
 export { createAsset, deleteAsset, fetchAssets } from './api/assets.js';
+export {
+  cleanupCastMembers,
+  createCastBehavior,
+  createCastItem,
+  createCastMember,
+  createCastMemory,
+  deleteCastBehavior,
+  deleteCastItem,
+  deleteCastMemory,
+  fetchCastAudit,
+  fetchCastBehaviors,
+  fetchCastItems,
+  fetchCastMember,
+  fetchCastMemories,
+  fetchCastRoster,
+  rollbackCastAudit,
+  streamCastOrganization,
+  streamCastSync,
+  transferCastItem,
+  updateCastAppearance,
+  updateCastBehavior,
+  updateCastItem,
+  updateCastMember,
+  updateCastMemory
+} from './api/cast.js';
 export { exportEnvelope, importEnvelope } from './api/envelopes.js';
 export {
-  addNpcBehavior,
-  addNpcMemory,
+  fetchMultiRoleState,
+  generateMultiRole,
+  updateMultiRoleQueue,
+} from './api/multiRole.js';
+export {
   branchConversation,
   confirmConversationMemory,
   continueMessage,
@@ -28,8 +56,6 @@ export {
   deleteConversations,
   deleteMessage,
   disableConversationMemory,
-  deleteNpcBehavior,
-  deleteNpcMemory,
   deleteSave,
   deleteStatusBar,
   fetchConversationAccessorySkills,
@@ -38,18 +64,13 @@ export {
   fetchConversationEconomy,
   fetchConversationMemories,
   fetchConversationMessages,
-  fetchConversationNpcs,
   fetchConversationSettings,
   fetchConversations,
   fetchEconomyHistory,
   fetchMessageSwipes,
-  fetchNpcBehaviors,
-  fetchNpcMemories,
   fetchSave,
   fetchSaves,
   fetchStatusBar,
-  hideConversationNpc,
-  hideEmptyConversationNpcs,
   loadSave,
   previewConversationContext,
   renameSave,
@@ -60,12 +81,8 @@ export {
   sendMessage,
   streamContinueMessage,
   streamMessage,
-  streamNpcOrganizer,
   updateConversationMemory,
-  updateConversationNpc,
   updateMessage,
-  updateNpcBehavior,
-  updateNpcMemory
 } from './api/chat.js';
 export {
   completeCharacterDraft,
@@ -132,6 +149,18 @@ export {
   fetchTalentPools,
   updateTalentPool
 } from './api/talents.js';
+export {
+  advanceTownWithAi,
+  createTownEvent,
+  fetchTownResidentCognition,
+  fetchTownResidents,
+  fetchTownSnapshot,
+  fetchTowns,
+  generateTown,
+  planTownResidentCognitionWithAi,
+  recallTownMemories,
+  updateTownClock
+} from './api/towns.js';
 export {
   completeWorldBookDraft,
   createWorldBook,

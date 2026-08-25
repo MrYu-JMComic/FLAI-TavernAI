@@ -25,22 +25,39 @@ const emit = defineEmits(['scroll', 'wheel', 'touchstart', 'touchmove']);
 
 const scrollContainerRef = ref(null);
 const measurementCache = new Map();
-const messageIds = computed(() => props.messages.map((message) => String(message?.id || '')).filter(Boolean));
+const messageRenderKeys = new WeakMap();
+let nextMessageRenderKey = 1;
+const activeMessageRenderKeys = computed(() => (
+  props.messages.map((message, index) => getMessageRenderKey(message, index))
+));
 
-watch(messageIds, (ids) => {
-  const activeIds = new Set(ids);
-  for (const messageId of measurementCache.keys()) {
-    if (!activeIds.has(messageId)) {
-      measurementCache.delete(messageId);
+watch(activeMessageRenderKeys, (keys) => {
+  const activeKeys = new Set(keys);
+  for (const renderKey of measurementCache.keys()) {
+    if (!activeKeys.has(renderKey)) {
+      measurementCache.delete(renderKey);
     }
   }
 });
+
+function getMessageRenderKey(message, index) {
+  if (!message || (typeof message !== 'object' && typeof message !== 'function')) {
+    return `message-fallback-${index}`;
+  }
+  let renderKey = messageRenderKeys.get(message);
+  if (!renderKey) {
+    renderKey = `message-${nextMessageRenderKey}`;
+    nextMessageRenderKey += 1;
+    messageRenderKeys.set(message, renderKey);
+  }
+  return renderKey;
+}
 
 function estimateSize(index) {
   const message = props.messages[index];
   if (!message) return props.estimatedHeight;
   
-  const cached = measurementCache.get(message.id);
+  const cached = measurementCache.get(getMessageRenderKey(message, index));
   if (cached) return cached;
   
   // Estimate based on content length
@@ -54,6 +71,7 @@ const virtualizer = useVirtualizer(
   computed(() => ({
     count: props.virtualize ? props.messages.length : 0,
     getScrollElement: () => scrollContainerRef.value,
+    getItemKey: (index) => getMessageRenderKey(props.messages[index], index),
     estimateSize,
     overscan: props.overscan
   }))
@@ -64,12 +82,12 @@ function measureElement(el) {
   if (!el) return;
   virtualizer.value?.measureElement?.(el);
 
-  const messageId = el.dataset?.messageId;
-  if (!messageId) return;
+  const renderKey = el.dataset?.messageRenderKey;
+  if (!renderKey) return;
   
   const height = Math.ceil(el.getBoundingClientRect().height);
   if (height > 0) {
-    measurementCache.set(messageId, height);
+    measurementCache.set(renderKey, height);
   }
 }
 
@@ -79,14 +97,25 @@ function getScrollElement() {
 
 function scrollToBottom(smooth = false) {
   if (props.virtualize && props.messages.length) {
-    virtualizer.value?.scrollToIndex?.(props.messages.length - 1, {
+    const scrollToLastMessage = () => virtualizer.value?.scrollToIndex?.(props.messages.length - 1, {
       align: 'end',
-      behavior: smooth ? 'smooth' : 'auto'
+      behavior: 'auto'
     });
-    return;
+    if (typeof virtualizer.value?.scrollToIndex !== 'function') return false;
+    scrollToLastMessage();
+    nextTick(() => {
+      virtualizer.value?.measure?.();
+      scrollToLastMessage();
+      nextTick(() => scrollContainerToBottom(smooth));
+    });
+    return true;
   }
+  return scrollContainerToBottom(smooth);
+}
+
+function scrollContainerToBottom(smooth) {
   const container = scrollContainerRef.value;
-  if (!container) return;
+  if (!container) return false;
   const top = Math.max(0, container.scrollHeight - container.clientHeight);
   
   if (smooth) {
@@ -97,6 +126,7 @@ function scrollToBottom(smooth = false) {
   } else {
     container.scrollTop = top;
   }
+  return true;
 }
 
 function scrollToMessage(messageId, options = {}) {
@@ -182,6 +212,7 @@ function handleTouchmove(event) {
         class="virtual-scroll-item"
         :data-index="item.index"
         :data-message-id="messages[item.index]?.id"
+        :data-message-render-key="getMessageRenderKey(messages[item.index], item.index)"
         :style="{
           position: 'absolute',
           top: 0,
@@ -200,9 +231,10 @@ function handleTouchmove(event) {
     <template v-else>
       <div
         v-for="(message, index) in messages"
-        :key="message.id || index"
+        :key="getMessageRenderKey(message, index)"
         class="virtual-scroll-static-item"
         :data-message-id="message.id"
+        :data-message-render-key="getMessageRenderKey(message, index)"
       >
         <slot :message="message" :index="index" :measure="measureElement" />
       </div>

@@ -119,15 +119,15 @@ test('ChatComposer keeps mobile model switching to one stable control with dark 
     /:root\[data-theme="dark"\] \.model-quick-select select option\s*{[\s\S]*color:\s*#e5e7eb;[\s\S]*background:\s*#111827;[\s\S]*}/
   );
 
-  const composerPhoneStart = stylesSource.indexOf('grid-template-columns: minmax(0, 1fr) repeat(3, 40px) 44px;');
+  const composerPhoneStart = stylesSource.indexOf('grid-template-columns: minmax(0, 1fr) repeat(3, 44px) 44px;');
   assert.notEqual(composerPhoneStart, -1, 'missing phone composer grid marker');
   const composerPhoneBlockStart = stylesSource.lastIndexOf('@media (max-width: 620px) {', composerPhoneStart);
   const composerPhoneBlockEnd = stylesSource.indexOf('  .model-picker {', composerPhoneStart);
   assert.notEqual(composerPhoneBlockStart, -1, 'missing phone composer block start');
   assert.notEqual(composerPhoneBlockEnd, -1, 'missing phone composer block end');
   const phoneBlock = stylesSource.slice(composerPhoneBlockStart, composerPhoneBlockEnd);
-  assert.match(phoneBlock, /\.composer-actions\s*{[\s\S]*grid-template-columns:\s*minmax\(0, 1fr\) repeat\(3, 40px\) 44px;[\s\S]*gap:\s*8px;/);
-  assert.match(phoneBlock, /\.composer-actions\.has-preset\s*{[\s\S]*grid-template-rows:\s*40px 40px;/);
+  assert.match(phoneBlock, /\.composer-actions\s*{[\s\S]*grid-template-columns:\s*minmax\(0, 1fr\) repeat\(3, 44px\) 44px;[\s\S]*gap:\s*8px;/);
+  assert.match(phoneBlock, /\.composer-actions\.has-preset\s*{[\s\S]*grid-template-rows:\s*44px 44px;/);
   assert.match(phoneBlock, /\.composer-actions\.has-preset \.preset-select\s*{[\s\S]*grid-column:\s*1 \/ -1;[\s\S]*grid-row:\s*1;/);
   assert.match(phoneBlock, /\.model-quick-select\s*{[\s\S]*grid-column:\s*1;[\s\S]*grid-row:\s*1;/);
   assert.match(phoneBlock, /\.composer-actions\.has-preset \.model-quick-select,[\s\S]*\.composer-actions\.has-preset \.model-switch-pill\s*{[\s\S]*grid-row:\s*2;/);
@@ -137,6 +137,17 @@ test('ChatComposer keeps mobile model switching to one stable control with dark 
   assert.match(phoneBlock, /\.round-send\s*{[\s\S]*grid-column:\s*5;/);
   assert.doesNotMatch(phoneBlock, /image-generation-pill|continue-pill/);
   assert.doesNotMatch(phoneBlock, /\.model-switch-pill\s*{[^}]*display:\s*none;/);
+});
+
+test('ChatComposer presents thinking strength as a stable desktop control', () => {
+  assert.match(chatComposerTemplate, /class="thinking-level-brain"/);
+  assert.match(chatComposerTemplate, /class="thinking-level-copy"[\s\S]*class="thinking-level-name">思考<[\s\S]*class="thinking-level-value">\{\{ currentThinkingLabel \}\}/);
+  assert.match(chatComposerTemplate, /class="thinking-level-select"[\s\S]*:aria-label="`思考强度，当前\$\{currentThinkingLabel\}`"/);
+
+  const thinkingControlStyles = readStyleRange('.thinking-level-control {', '.model-switch-pill {');
+  assert.match(thinkingControlStyles, /min-width:\s*132px;/);
+  assert.match(thinkingControlStyles, /\.thinking-level-copy\s*{[\s\S]*display:\s*grid;[\s\S]*text-align:\s*left;/);
+  assert.match(thinkingControlStyles, /\.thinking-level-select\s*{[\s\S]*position:\s*absolute;[\s\S]*inset:\s*0;[\s\S]*width:\s*100%;[\s\S]*height:\s*100%;[\s\S]*opacity:\s*0;/);
 });
 
 test('ChatComposer removed shortcut toolbar styles after removing the toolbar UI', () => {
@@ -175,9 +186,9 @@ test('ChatComposer constrains desktop content to the available width', () => {
   assert.match(stylesSource, /\.deep-composer\s*\{[\s\S]*box-sizing:\s*border-box;[\s\S]*min-width:\s*0;[\s\S]*max-width:\s*100%;/);
   assert.match(stylesSource, /\.composer-actions\s*\{[\s\S]*min-width:\s*0;[\s\S]*max-width:\s*100%;/);
   assert.match(stylesSource, /\.preset-select,[\s\S]*\.model-quick-select,[\s\S]*\.model-switch-pill\s*\{\s*min-width:\s*0;/);
-  assert.match(stylesSource, /@media \(min-width: 1180px\) \{[\s\S]*\.deep-chat-shell \.deep-composer-wrap\s*\{[\s\S]*position:\s*fixed;[\s\S]*right:\s*0;[\s\S]*bottom:\s*0;[\s\S]*left:\s*0;/);
-  assert.match(stylesSource, /\.deep-chat-shell:not\(\.sidebar-collapsed\) \.deep-composer-wrap\s*\{[\s\S]*left:\s*var\(--chat-sidebar-drawer-width\);[\s\S]*width:\s*auto;/);
-  assert.match(stylesSource, /@media \(min-width: 1180px\) \{[\s\S]*\.deep-message-scroll::after\s*\{[\s\S]*flex:\s*0 0 calc\(var\(--chat-composer-height\) \+ 38px\);/);
+  assert.doesNotMatch(stylesSource, /@media \(min-width: 1180px\) \{[\s\S]*\.deep-chat-shell \.deep-composer-wrap\s*\{[\s\S]*position:\s*fixed;/);
+  assert.doesNotMatch(stylesSource, /@media \(min-width: 1180px\) \{[\s\S]*\.deep-message-scroll::after\s*\{[\s\S]*var\(--chat-composer-height\)/);
+  assert.match(stylesSource, /@media \(min-width: 1180px\) \{[\s\S]*\.deep-chat-shell:not\(\.sidebar-collapsed\)\s*\{[\s\S]*grid-template-rows:\s*minmax\(0, 1fr\);/);
 });
 
 test('ChatView ignores model switcher open events while sending', () => {

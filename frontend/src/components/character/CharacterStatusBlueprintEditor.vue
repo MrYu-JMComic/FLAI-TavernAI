@@ -22,7 +22,7 @@ const emit = defineEmits([
 </script>
 
 <template>
-  <div id="section-status-blueprint" class="accessory-defaults-panel status-blueprint-panel">
+  <div class="accessory-defaults-panel status-blueprint-panel">
     <div class="inline-heading compact">
       <div>
         <h3>初始状态栏</h3>

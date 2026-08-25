@@ -202,74 +202,6 @@ p {
   font-weight: 800;
 }
 
-.character-section-nav {
-  position: sticky;
-  top: calc(var(--character-section-nav-top, 78px) + env(safe-area-inset-top, 0px));
-  z-index: 19;
-  min-height: 48px;
-  align-items: center;
-  scroll-padding-inline: 8px;
-  -webkit-overflow-scrolling: touch;
-  scrollbar-width: thin;
-  scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
-  border-color: color-mix(in srgb, var(--line) 82%, var(--primary) 18%);
-  background: color-mix(in srgb, var(--surface-strong) 92%, transparent);
-  box-shadow: 0 12px 30px rgba(67, 45, 30, 0.11);
-  backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
-  animation: character-nav-settle 0.22s ease both;
-}
-
-.character-section-nav::-webkit-scrollbar {
-  display: block;
-  height: 8px;
-}
-
-.character-section-nav::-webkit-scrollbar-track {
-  border-radius: 999px;
-  background: var(--scrollbar-track);
-}
-
-.character-section-nav::-webkit-scrollbar-thumb {
-  border: 2px solid transparent;
-  border-radius: 999px;
-  background:
-    linear-gradient(
-      90deg,
-      var(--scrollbar-thumb),
-      var(--scrollbar-thumb-end)
-    )
-    padding-box;
-}
-
-.character-section-nav .form-section-tab {
-  position: relative;
-  overflow: hidden;
-}
-
-.character-section-nav .form-section-tab::after {
-  position: absolute;
-  right: 12px;
-  bottom: 5px;
-  left: 12px;
-  height: 2px;
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--green) 54%, var(--primary));
-  content: "";
-  opacity: 0;
-  transform: scaleX(0.36);
-  transition: opacity 0.16s ease, transform 0.16s ease;
-}
-
-.character-section-nav .form-section-tab.active {
-  transform: translateY(-1px);
-}
-
-.character-section-nav .form-section-tab.active::after {
-  opacity: 1;
-  transform: scaleX(1);
-}
-
 .settings-section-nav {
   position: sticky;
   align-self: start;
@@ -321,12 +253,6 @@ section[id^="extension-section-"] {
   margin-top: 8px;
   padding-top: 20px;
   border-top: 1px solid color-mix(in srgb, var(--line) 60%, transparent);
-}
-
-.character-main-sections > .form-section-group + .form-section-group {
-  margin-top: 0;
-  padding-top: 0;
-  border-top: 0;
 }
 
 .section-load-status {

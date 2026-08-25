@@ -602,7 +602,7 @@ function requestClose() {
                 <option v-if="item.auto" value="auto">自动</option>
               </select>
             </label>
-            <label class="chat-setting-field compact">
+            <label v-if="item.model !== false" class="chat-setting-field compact">
               <span>模型覆盖</span>
               <select
                 v-model="accessorySkills[item.key].modelOverride"

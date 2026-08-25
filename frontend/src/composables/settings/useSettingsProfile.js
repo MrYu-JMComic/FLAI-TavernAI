@@ -8,7 +8,7 @@ import {
   setListIfChanged,
   setPlainValueIfChanged
 } from './settingsListState.js';
-import { readFileAsDataUrl } from '../../utils/fileReaders';
+import { readFileAsDataUrl, validateImageDataUrl } from '../../utils/fileReaders';
 
 export function useSettingsProfile({ user, isPersonalPage, notify, emitProfileSaved } = {}) {
   const initialUser = readUser(user);
@@ -73,7 +73,12 @@ export function useSettingsProfile({ user, isPersonalPage, notify, emitProfileSa
     try {
       const avatarDataUrl = await readFileAsDataUrl(file, '头像读取失败');
       if (!isCurrentAvatarSave(mutationToken)) return;
-      const result = await saveUserAvatar({ avatarDataUrl });
+      const validatedAvatarDataUrl = await validateImageDataUrl(
+        avatarDataUrl,
+        '头像图片数据无效，请重新选择 PNG、JPG 或 WebP 图片'
+      );
+      if (!isCurrentAvatarSave(mutationToken)) return;
+      const result = await saveUserAvatar({ avatarDataUrl: validatedAvatarDataUrl });
       if (!isCurrentAvatarSave(mutationToken)) return;
       profile.avatarUrl = result.user?.avatarUrl || '';
       notify?.success?.('头像已保存');

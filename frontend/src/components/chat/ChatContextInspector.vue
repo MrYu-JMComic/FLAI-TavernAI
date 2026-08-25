@@ -271,12 +271,6 @@ const contextSections = computed(() => {
       text: sections.memory?.context || ''
     },
     {
-      key: 'npc',
-      label: 'NPC',
-      active: Boolean(sections.npc?.active),
-      text: sections.npc?.context || ''
-    },
-    {
       key: 'scene',
       label: '永久场景',
       active: Boolean(sections.scene?.active),
@@ -547,10 +541,9 @@ function priorityContextLabel(key) {
   if (key === 'character_card') return '角色卡';
   if (key === 'world_book') return '世界书';
   if (key === 'long_term_memory') return '长期记忆';
-  if (key === 'npc_status_economy_talent') return 'NPC/状态/经济/天赋';
+  if (key === 'status_scene_economy_talent') return '状态/场景/经济/天赋';
   if (key === 'recent_conversation') return '近期对话';
   if (key === 'mods') return 'Mod';
-  if (key === 'npc') return 'NPC';
   if (key === 'economy') return '经济';
   if (key === 'talent') return '天赋';
   return String(key || '上下文');

@@ -407,69 +407,6 @@ export function initializeDatabase(database) {
       FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
     );
 
-    CREATE TABLE IF NOT EXISTS npc_memories (
-      id TEXT PRIMARY KEY,
-      conversation_id TEXT NOT NULL,
-      npc_name TEXT NOT NULL,
-      memory_type TEXT NOT NULL DEFAULT 'event',
-      content TEXT NOT NULL DEFAULT '',
-      created_at TEXT NOT NULL,
-      FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
-    );
-
-    CREATE TABLE IF NOT EXISTS npc_behaviors (
-      id TEXT PRIMARY KEY,
-      conversation_id TEXT NOT NULL,
-      npc_name TEXT NOT NULL,
-      behavior_type TEXT NOT NULL DEFAULT 'reaction',
-      trigger_condition TEXT NOT NULL DEFAULT '',
-      action TEXT NOT NULL DEFAULT '',
-      priority INTEGER NOT NULL DEFAULT 0,
-      enabled INTEGER NOT NULL DEFAULT 1,
-      created_at TEXT NOT NULL,
-      FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
-    );
-
-    CREATE TABLE IF NOT EXISTS npc_registry (
-      id TEXT PRIMARY KEY,
-      conversation_id TEXT NOT NULL,
-      npc_name TEXT NOT NULL,
-      source TEXT NOT NULL DEFAULT 'manual',
-      evidence TEXT NOT NULL DEFAULT '',
-      confidence REAL NOT NULL DEFAULT 0,
-      hidden INTEGER NOT NULL DEFAULT 0,
-      created_at TEXT NOT NULL,
-      updated_at TEXT NOT NULL,
-      FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE,
-      UNIQUE(conversation_id, npc_name)
-    );
-
-    CREATE TABLE IF NOT EXISTS npc_profile_audit (
-      id TEXT PRIMARY KEY,
-      conversation_id TEXT NOT NULL,
-      npc_name TEXT NOT NULL,
-      action TEXT NOT NULL DEFAULT 'update',
-      actor TEXT NOT NULL DEFAULT 'system',
-      before_json TEXT NOT NULL DEFAULT 'null',
-      after_json TEXT NOT NULL DEFAULT 'null',
-      created_at TEXT NOT NULL,
-      FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
-    );
-
-    CREATE TABLE IF NOT EXISTS npc_item_audit (
-      id TEXT PRIMARY KEY,
-      conversation_id TEXT NOT NULL,
-      npc_name TEXT NOT NULL,
-      item_type TEXT NOT NULL DEFAULT 'memory',
-      item_id TEXT NOT NULL DEFAULT '',
-      action TEXT NOT NULL DEFAULT 'update',
-      actor TEXT NOT NULL DEFAULT 'system',
-      before_json TEXT NOT NULL DEFAULT 'null',
-      after_json TEXT NOT NULL DEFAULT 'null',
-      created_at TEXT NOT NULL,
-      FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
-    );
-
     CREATE TABLE IF NOT EXISTS scene_nodes (
       id TEXT PRIMARY KEY,
       conversation_id TEXT NOT NULL,
@@ -501,47 +438,6 @@ export function initializeDatabase(database) {
       FOREIGN KEY (to_node_id) REFERENCES scene_nodes(id) ON DELETE CASCADE
     );
 
-    CREATE TABLE IF NOT EXISTS scene_items (
-      id TEXT PRIMARY KEY,
-      conversation_id TEXT NOT NULL,
-      node_id TEXT,
-      item_code TEXT NOT NULL,
-      name TEXT NOT NULL,
-      description TEXT NOT NULL DEFAULT '',
-      state_json TEXT NOT NULL DEFAULT '{}',
-      position_json TEXT NOT NULL DEFAULT '{}',
-      movable INTEGER NOT NULL DEFAULT 0,
-      owner_type TEXT NOT NULL DEFAULT 'world',
-      owner_name TEXT NOT NULL DEFAULT '',
-      item_kind TEXT NOT NULL DEFAULT 'item',
-      quantity INTEGER NOT NULL DEFAULT 1,
-      clothing_slot TEXT NOT NULL DEFAULT '',
-      equipped INTEGER NOT NULL DEFAULT 0,
-      coverage_json TEXT NOT NULL DEFAULT '[]',
-      icon_key TEXT NOT NULL DEFAULT '',
-      created_at TEXT NOT NULL,
-      updated_at TEXT NOT NULL,
-      FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE,
-      FOREIGN KEY (node_id) REFERENCES scene_nodes(id) ON DELETE SET NULL,
-      UNIQUE(conversation_id, item_code)
-    );
-
-    CREATE TABLE IF NOT EXISTS scene_item_audit (
-      id TEXT PRIMARY KEY,
-      conversation_id TEXT NOT NULL,
-      item_id TEXT NOT NULL,
-      action TEXT NOT NULL DEFAULT 'update',
-      actor TEXT NOT NULL DEFAULT 'manual',
-      before_owner_type TEXT NOT NULL DEFAULT '',
-      before_owner_name TEXT NOT NULL DEFAULT '',
-      after_owner_type TEXT NOT NULL DEFAULT '',
-      after_owner_name TEXT NOT NULL DEFAULT '',
-      before_json TEXT NOT NULL DEFAULT 'null',
-      after_json TEXT NOT NULL DEFAULT 'null',
-      created_at TEXT NOT NULL,
-      FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
-    );
-
     CREATE TABLE IF NOT EXISTS economy_accounts (
       id TEXT PRIMARY KEY,
       user_id TEXT NOT NULL,
@@ -564,6 +460,177 @@ export function initializeDatabase(database) {
       related_npc TEXT NOT NULL DEFAULT '',
       created_at TEXT NOT NULL,
       FOREIGN KEY (account_id) REFERENCES economy_accounts(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS world_events (
+      id TEXT PRIMARY KEY,
+      conversation_id TEXT NOT NULL,
+      event_type TEXT NOT NULL DEFAULT 'world.changed',
+      source TEXT NOT NULL DEFAULT 'system',
+      title TEXT NOT NULL DEFAULT '',
+      detail TEXT NOT NULL DEFAULT '',
+      entity_type TEXT NOT NULL DEFAULT '',
+      entity_id TEXT NOT NULL DEFAULT '',
+      severity TEXT NOT NULL DEFAULT 'info',
+      payload_json TEXT NOT NULL DEFAULT '{}',
+      created_at TEXT NOT NULL,
+      FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS quests (
+      id TEXT PRIMARY KEY,
+      conversation_id TEXT NOT NULL,
+      title TEXT NOT NULL,
+      description TEXT NOT NULL DEFAULT '',
+      status TEXT NOT NULL DEFAULT 'active',
+      priority INTEGER NOT NULL DEFAULT 0,
+      source TEXT NOT NULL DEFAULT 'manual',
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      completed_at TEXT,
+      FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS quest_objectives (
+      id TEXT PRIMARY KEY,
+      quest_id TEXT NOT NULL,
+      description TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'pending',
+      current_value INTEGER NOT NULL DEFAULT 0,
+      target_value INTEGER NOT NULL DEFAULT 1,
+      order_index INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      FOREIGN KEY (quest_id) REFERENCES quests(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS skill_checks (
+      id TEXT PRIMARY KEY,
+      conversation_id TEXT NOT NULL,
+      actor_name TEXT NOT NULL DEFAULT '',
+      skill TEXT NOT NULL,
+      difficulty INTEGER NOT NULL,
+      modifier INTEGER NOT NULL DEFAULT 0,
+      roll INTEGER NOT NULL,
+      total INTEGER NOT NULL,
+      outcome TEXT NOT NULL,
+      context TEXT NOT NULL DEFAULT '',
+      created_at TEXT NOT NULL,
+      FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS world_clocks (
+      conversation_id TEXT PRIMARY KEY,
+      current_day INTEGER NOT NULL DEFAULT 1,
+      minute_of_day INTEGER NOT NULL DEFAULT 480,
+      weather TEXT NOT NULL DEFAULT '晴朗',
+      updated_at TEXT NOT NULL,
+      FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS world_advances (
+      id TEXT PRIMARY KEY,
+      conversation_id TEXT NOT NULL,
+      from_tick INTEGER NOT NULL,
+      to_tick INTEGER NOT NULL,
+      minutes INTEGER NOT NULL,
+      weather_before TEXT NOT NULL DEFAULT '',
+      weather_after TEXT NOT NULL DEFAULT '',
+      summary_json TEXT NOT NULL DEFAULT '{}',
+      created_at TEXT NOT NULL,
+      FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS player_travel_states (
+      conversation_id TEXT PRIMARY KEY,
+      current_node_id TEXT,
+      updated_at TEXT NOT NULL,
+      FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE,
+      FOREIGN KEY (current_node_id) REFERENCES scene_nodes(id) ON DELETE SET NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS discovered_scene_nodes (
+      conversation_id TEXT NOT NULL,
+      node_id TEXT NOT NULL,
+      discovered_at TEXT NOT NULL,
+      source TEXT NOT NULL DEFAULT 'player',
+      PRIMARY KEY (conversation_id, node_id),
+      FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE,
+      FOREIGN KEY (node_id) REFERENCES scene_nodes(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS encounters (
+      id TEXT PRIMARY KEY,
+      conversation_id TEXT NOT NULL,
+      location_node_id TEXT,
+      title TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'active',
+      round_number INTEGER NOT NULL DEFAULT 1,
+      turn_index INTEGER NOT NULL DEFAULT 0,
+      outcome TEXT NOT NULL DEFAULT '',
+      source TEXT NOT NULL DEFAULT 'player',
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE,
+      FOREIGN KEY (location_node_id) REFERENCES scene_nodes(id) ON DELETE SET NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS encounter_participants (
+      id TEXT PRIMARY KEY,
+      encounter_id TEXT NOT NULL,
+      actor_type TEXT NOT NULL,
+      actor_name TEXT NOT NULL,
+      initiative INTEGER NOT NULL,
+      max_hp INTEGER NOT NULL DEFAULT 10,
+      current_hp INTEGER NOT NULL DEFAULT 10,
+      defense INTEGER NOT NULL DEFAULT 10,
+      status TEXT NOT NULL DEFAULT 'active',
+      conditions_json TEXT NOT NULL DEFAULT '[]',
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      FOREIGN KEY (encounter_id) REFERENCES encounters(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS encounter_actions (
+      id TEXT PRIMARY KEY,
+      encounter_id TEXT NOT NULL,
+      round_number INTEGER NOT NULL,
+      turn_index INTEGER NOT NULL,
+      actor_id TEXT NOT NULL,
+      target_id TEXT,
+      action_type TEXT NOT NULL,
+      skill_check_id TEXT,
+      damage INTEGER NOT NULL DEFAULT 0,
+      result_json TEXT NOT NULL DEFAULT '{}',
+      created_at TEXT NOT NULL,
+      FOREIGN KEY (encounter_id) REFERENCES encounters(id) ON DELETE CASCADE,
+      FOREIGN KEY (actor_id) REFERENCES encounter_participants(id) ON DELETE CASCADE,
+      FOREIGN KEY (target_id) REFERENCES encounter_participants(id) ON DELETE SET NULL,
+      FOREIGN KEY (skill_check_id) REFERENCES skill_checks(id) ON DELETE SET NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS reward_grants (
+      id TEXT PRIMARY KEY,
+      conversation_id TEXT NOT NULL,
+      character_id TEXT NOT NULL,
+      source_type TEXT NOT NULL,
+      source_id TEXT NOT NULL,
+      title TEXT NOT NULL,
+      rewards_json TEXT NOT NULL DEFAULT '{}',
+      status TEXT NOT NULL DEFAULT 'pending',
+      claimed_at TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      UNIQUE (conversation_id, source_type, source_id),
+      FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE,
+      FOREIGN KEY (character_id) REFERENCES characters(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS character_growth (
+      character_id TEXT PRIMARY KEY,
+      growth_points INTEGER NOT NULL DEFAULT 0,
+      updated_at TEXT NOT NULL,
+      FOREIGN KEY (character_id) REFERENCES characters(id) ON DELETE CASCADE
     );
 
     CREATE TABLE IF NOT EXISTS character_images (
@@ -598,15 +665,135 @@ export function initializeDatabase(database) {
       FOREIGN KEY (character_id) REFERENCES characters(id) ON DELETE CASCADE,
       FOREIGN KEY (pool_id) REFERENCES talent_pools(id) ON DELETE SET NULL
     );
+
+    CREATE TABLE IF NOT EXISTS town_worlds (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      name TEXT NOT NULL,
+      description TEXT NOT NULL DEFAULT '',
+      creation_prompt TEXT NOT NULL DEFAULT '',
+      map_config_json TEXT NOT NULL DEFAULT '{}',
+      simulation_status TEXT NOT NULL DEFAULT 'paused',
+      current_day INTEGER NOT NULL DEFAULT 1,
+      minute_of_day INTEGER NOT NULL DEFAULT 480,
+      settings_json TEXT NOT NULL DEFAULT '{}',
+      engine_checkpoint_at TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS town_residents (
+      id TEXT PRIMARY KEY,
+      town_id TEXT NOT NULL,
+      name TEXT NOT NULL,
+      role TEXT NOT NULL DEFAULT '',
+      profile_json TEXT NOT NULL DEFAULT '{}',
+      state_json TEXT NOT NULL DEFAULT '{}',
+      current_location TEXT NOT NULL DEFAULT '',
+      reflection_threshold REAL NOT NULL DEFAULT 15,
+      last_reflection_at TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      FOREIGN KEY (town_id) REFERENCES town_worlds(id) ON DELETE CASCADE,
+      UNIQUE(town_id, name)
+    );
+
+    CREATE TABLE IF NOT EXISTS town_events (
+      id TEXT PRIMARY KEY,
+      town_id TEXT NOT NULL,
+      resident_id TEXT,
+      event_type TEXT NOT NULL DEFAULT 'world.changed',
+      source TEXT NOT NULL DEFAULT 'simulation',
+      title TEXT NOT NULL DEFAULT '',
+      detail TEXT NOT NULL DEFAULT '',
+      payload_json TEXT NOT NULL DEFAULT '{}',
+      occurred_tick INTEGER NOT NULL,
+      handled_at TEXT,
+      created_at TEXT NOT NULL,
+      FOREIGN KEY (town_id) REFERENCES town_worlds(id) ON DELETE CASCADE,
+      FOREIGN KEY (resident_id) REFERENCES town_residents(id) ON DELETE SET NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS town_memories (
+      id TEXT PRIMARY KEY,
+      town_id TEXT NOT NULL,
+      resident_id TEXT NOT NULL,
+      memory_type TEXT NOT NULL DEFAULT 'observation',
+      content TEXT NOT NULL,
+      importance REAL NOT NULL DEFAULT 5,
+      keywords_json TEXT NOT NULL DEFAULT '[]',
+      source_event_id TEXT,
+      source_kind TEXT NOT NULL DEFAULT 'simulation',
+      occurred_tick INTEGER NOT NULL,
+      reflected_at TEXT,
+      last_accessed_at TEXT,
+      access_count INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL,
+      FOREIGN KEY (town_id) REFERENCES town_worlds(id) ON DELETE CASCADE,
+      FOREIGN KEY (resident_id) REFERENCES town_residents(id) ON DELETE CASCADE,
+      FOREIGN KEY (source_event_id) REFERENCES town_events(id) ON DELETE SET NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS town_reflections (
+      id TEXT PRIMARY KEY,
+      town_id TEXT NOT NULL,
+      resident_id TEXT NOT NULL,
+      content TEXT NOT NULL,
+      evidence_memory_ids_json TEXT NOT NULL DEFAULT '[]',
+      importance REAL NOT NULL DEFAULT 5,
+      created_at TEXT NOT NULL,
+      FOREIGN KEY (town_id) REFERENCES town_worlds(id) ON DELETE CASCADE,
+      FOREIGN KEY (resident_id) REFERENCES town_residents(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS town_schedules (
+      id TEXT PRIMARY KEY,
+      town_id TEXT NOT NULL,
+      resident_id TEXT NOT NULL,
+      day INTEGER NOT NULL,
+      goal TEXT NOT NULL DEFAULT '',
+      status TEXT NOT NULL DEFAULT 'planned',
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      FOREIGN KEY (town_id) REFERENCES town_worlds(id) ON DELETE CASCADE,
+      FOREIGN KEY (resident_id) REFERENCES town_residents(id) ON DELETE CASCADE,
+      UNIQUE(resident_id, day)
+    );
+
+    CREATE TABLE IF NOT EXISTS town_schedule_items (
+      id TEXT PRIMARY KEY,
+      schedule_id TEXT NOT NULL,
+      start_minute INTEGER NOT NULL,
+      end_minute INTEGER NOT NULL,
+      activity TEXT NOT NULL,
+      location TEXT NOT NULL DEFAULT '',
+      intention TEXT NOT NULL DEFAULT '',
+      status TEXT NOT NULL DEFAULT 'planned',
+      order_index INTEGER NOT NULL DEFAULT 0,
+      FOREIGN KEY (schedule_id) REFERENCES town_schedules(id) ON DELETE CASCADE
+    );
   `);
-  ensureColumn(database, 'npc_registry', 'status', "TEXT NOT NULL DEFAULT 'active'");
-  ensureColumn(database, 'npc_registry', 'custom_status', "TEXT NOT NULL DEFAULT ''");
-  ensureColumn(database, 'npc_registry', 'aliases', "TEXT NOT NULL DEFAULT '[]'");
-  ensureColumn(database, 'npc_registry', 'memory_sealed', 'INTEGER NOT NULL DEFAULT 0');
-  ensureColumn(database, 'npc_registry', 'current_location', "TEXT NOT NULL DEFAULT ''");
-  ensureColumn(database, 'npc_registry', 'relationship', "TEXT NOT NULL DEFAULT ''");
   ensureColumn(database, 'mods', 'scope', "TEXT NOT NULL DEFAULT 'global'");
   ensureColumn(database, 'mods', 'character_ids', "TEXT NOT NULL DEFAULT '[]'");
+  ensureColumn(database, 'town_worlds', 'engine_checkpoint_at', 'TEXT');
+  ensureColumn(database, 'town_worlds', 'creation_prompt', "TEXT NOT NULL DEFAULT ''");
+  ensureColumn(database, 'town_worlds', 'map_config_json', "TEXT NOT NULL DEFAULT '{}'");
+  const townWorldColumns = getCachedTableColumns(database, 'town_worlds');
+  if (townWorldColumns.has('initialization_script')) {
+    database.exec(`
+      UPDATE town_worlds
+      SET creation_prompt = initialization_script
+      WHERE (creation_prompt IS NULL OR creation_prompt = '')
+        AND initialization_script IS NOT NULL
+        AND initialization_script <> ''
+    `);
+  }
+  ensureColumn(database, 'town_events', 'handled_at', 'TEXT');
+
+  ensureColumn(database, 'conversation_memories', 'layer', "TEXT NOT NULL DEFAULT 'short_term'");
+  ensureColumn(database, 'conversation_memories', 'importance', 'REAL NOT NULL DEFAULT 0');
+  ensureColumn(database, 'conversation_memories', 'emotional_intensity', 'REAL NOT NULL DEFAULT 0');
 
   applyStartupMigrations(database, { getCachedTableColumns });
   createDatabaseIndexes(database);
