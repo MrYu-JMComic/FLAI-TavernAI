@@ -45,9 +45,31 @@ const props = defineProps({
 const emit = defineEmits(['navigate']);
 const notify = useNotify();
 
+const CHARACTER_SORT_STORAGE_KEY = 'flai-character-sort';
+
+function readStoredCharacterSort() {
+  try {
+    const stored = localStorage.getItem(CHARACTER_SORT_STORAGE_KEY);
+    if (stored && ['created', 'used', 'name'].includes(stored)) {
+      return stored;
+    }
+  } catch {
+    notify.warning('无法读取角色排序设置');
+  }
+  return 'created';
+}
+
+function saveStoredCharacterSort(value) {
+  try {
+    localStorage.setItem(CHARACTER_SORT_STORAGE_KEY, value);
+  } catch {
+    notify.warning('无法保存角色排序设置');
+  }
+}
+
 const characters = ref([]);
 const search = ref('');
-const sort = ref('created');
+const sort = ref(readStoredCharacterSort());
 const sortOptions = [
   { value: 'created', label: '按创建时间' },
   { value: 'used', label: '按最近使用' },
@@ -625,6 +647,10 @@ onUnmounted(() => {
 watch(search, () => {
   if (filterClearInProgress) return;
   scheduleSearchLoad();
+});
+watch(sort, (newSort) => {
+  if (filterClearInProgress) return;
+  saveStoredCharacterSort(newSort);
 });
 watch([sort, selectedTag], () => {
   if (filterClearInProgress) return;

@@ -2,15 +2,28 @@ import { Router } from 'express';
 import { getCharacter } from '../modules/characters.js';
 import { getGameplayDashboard } from '../modules/gameplayDashboard.js';
 import { listWorldEvents } from '../modules/worldEvents.js';
-import { listActorItems } from '../modules/scenes.js';
 import { addQuestObjective, createQuest, deleteQuest, listQuests, updateQuest, updateQuestObjective } from '../modules/quests.js';
 import { listSkillChecks, performSkillCheck } from '../modules/skillChecks.js';
-import { advanceWorldTime, getWorldClock, listNpcActivities, listWorldAdvances, scheduleNpcActivity, setWorldWeather, updateNpcActivity } from '../modules/dynamicWorld.js';
+import {
+  advanceWorldTime,
+  getWorldClock,
+  listWorldActivities,
+  listWorldAdvances,
+  scheduleCastActivity,
+  setWorldWeather,
+  updateWorldActivity,
+} from '../modules/dynamicWorld.js';
 import { getConversationForUser } from './helpers.js';
 import { discoverTravelNode, getTravelMap, travelToNode } from '../modules/travel.js';
-import { createEncounter, endEncounter, getActiveEncounter, performEncounterAction } from '../modules/encounters.js';
 import { normalizeAdvancedSettings, isAccessorySkillActive } from '../modules/advancedSettings.js';
 import { claimRewardGrant, listRewardGrants, proposeRewardGrant } from '../modules/rewards.js';
+import {
+  createEncounter,
+  endEncounter,
+  getActiveEncounter,
+  performEncounterAction,
+} from '../modules/encounters.js';
+import { getCastItems, getProtagonist } from '../services/cast/castQueryService.js';
 
 export function createConversationGameplayRouter(ctx) {
   const { db, requireAuth } = ctx;
@@ -55,41 +68,6 @@ export function createConversationGameplayRouter(ctx) {
     response.json(result);
   });
 
-  router.get('/encounter', requireAuth, (request, response) => {
-    const conversation = getConversationForUser(db, request.auth.user.id, request.params.id);
-    if (!conversation) return response.status(404).json({ error: '对话不存在' });
-    if (!featureEnabled(conversation, 'encounterMode')) return response.json(null);
-    response.json(getActiveEncounter(db, request.auth.user.id, request.params.id));
-  });
-
-  router.post('/encounters', requireAuth, (request, response) => {
-    const conversation = getConversationForUser(db, request.auth.user.id, request.params.id);
-    if (!conversation) return response.status(404).json({ error: '对话不存在' });
-    if (!featureEnabled(conversation, 'encounterMode')) return response.status(403).json({ error: '遭遇功能已关闭' });
-    const character = getCharacter(db, request.auth.user.id, conversation.characterId);
-    const result = createEncounter(db, request.auth.user.id, request.params.id, { ...request.body, playerName: character?.name || '', source: 'player' });
-    if (!result.ok) return response.status(400).json({ error: result.error });
-    response.status(201).json(result.encounter);
-  });
-
-  router.post('/encounters/:encounterId/actions', requireAuth, (request, response) => {
-    const conversation = getConversationForUser(db, request.auth.user.id, request.params.id);
-    if (!conversation) return response.status(404).json({ error: '对话不存在' });
-    if (!featureEnabled(conversation, 'encounterMode')) return response.status(403).json({ error: '遭遇功能已关闭' });
-    const result = performEncounterAction(db, request.auth.user.id, request.params.id, request.params.encounterId, { ...request.body, source: 'player' });
-    if (!result.ok) return response.status(400).json({ error: result.error });
-    response.json(result);
-  });
-
-  router.post('/encounters/:encounterId/end', requireAuth, (request, response) => {
-    const conversation = getConversationForUser(db, request.auth.user.id, request.params.id);
-    if (!conversation) return response.status(404).json({ error: '对话不存在' });
-    if (!featureEnabled(conversation, 'encounterMode')) return response.status(403).json({ error: '遭遇功能已关闭' });
-    const encounter = endEncounter(db, request.auth.user.id, request.params.id, request.params.encounterId, 'ended', 'player');
-    if (!encounter) return response.status(404).json({ error: '遭遇不存在' });
-    response.json(encounter);
-  });
-
   router.get('/quests', requireAuth, (request, response) => {
     const result = listQuests(db, request.auth.user.id, request.params.id, { status: request.query.status });
     if (!result) return response.status(404).json({ error: '对话不存在' });
@@ -125,15 +103,6 @@ export function createConversationGameplayRouter(ctx) {
     response.json(objective);
   });
 
-  router.get('/backpack', requireAuth, (request, response) => {
-    const conversation = getConversationForUser(db, request.auth.user.id, request.params.id);
-    if (!conversation) return response.status(404).json({ error: '对话不存在' });
-    const items = listActorItems(db, request.auth.user.id, request.params.id, 'protagonist', '');
-    let totalQuantity = 0;
-    for (const item of items) totalQuantity += Number(item.quantity || 0);
-    response.json({ items, totalKinds: items.length, totalQuantity });
-  });
-
   router.get('/checks', requireAuth, (request, response) => {
     const checks = listSkillChecks(db, request.auth.user.id, request.params.id, { limit: request.query.limit });
     if (!checks) return response.status(404).json({ error: '对话不存在' });
@@ -164,28 +133,98 @@ export function createConversationGameplayRouter(ctx) {
     response.json(clock);
   });
 
-  router.get('/activities', requireAuth, (request, response) => {
-    const activities = listNpcActivities(db, request.auth.user.id, request.params.id, { npcName: request.query.npcName, status: request.query.status });
-    if (!activities) return response.status(404).json({ error: '对话不存在' });
-    response.json(activities);
-  });
-
-  router.post('/activities', requireAuth, (request, response) => {
-    const result = scheduleNpcActivity(db, request.auth.user.id, request.params.id, request.body || {});
-    if (!result.ok) return response.status(result.error === '对话不存在' ? 404 : 400).json({ error: result.error });
-    response.status(201).json(result.activity);
-  });
-
-  router.put('/activities/:activityId', requireAuth, (request, response) => {
-    const activity = updateNpcActivity(db, request.auth.user.id, request.params.id, request.params.activityId, request.body || {});
-    if (!activity) return response.status(404).json({ error: '活动不存在' });
-    response.json(activity);
-  });
-
   router.get('/advances', requireAuth, (request, response) => {
     const advances = listWorldAdvances(db, request.auth.user.id, request.params.id, request.query.limit);
     if (!advances) return response.status(404).json({ error: '对话不存在' });
     response.json(advances);
+  });
+
+  router.get('/activities', requireAuth, (request, response) => {
+    const conversation = getConversationForUser(db, request.auth.user.id, request.params.id);
+    if (!conversation) return response.status(404).json({ error: '对话不存在' });
+    response.json(listWorldActivities(db, request.auth.user.id, request.params.id, {
+      memberId: request.query.memberId,
+      memberName: request.query.memberName,
+      status: request.query.status,
+    }));
+  });
+
+  router.post('/activities', requireAuth, (request, response) => {
+    const result = scheduleCastActivity(
+      db,
+      request.auth.user.id,
+      request.params.id,
+      { ...request.body, source: 'player' }
+    );
+    if (!result.ok) return response.status(result.error === '对话不存在' ? 404 : 400).json({ error: result.error });
+    response.status(201).json(result.activity);
+  });
+
+  router.patch('/activities/:activityId', requireAuth, (request, response) => {
+    const activity = updateWorldActivity(
+      db,
+      request.auth.user.id,
+      request.params.id,
+      request.params.activityId,
+      { ...request.body, source: 'player' }
+    );
+    if (!activity) return response.status(404).json({ error: '活动不存在或状态变更无效' });
+    response.json(activity);
+  });
+
+  router.get('/backpack', requireAuth, (request, response) => {
+    try {
+      const protagonist = getProtagonist(db, request.auth.user.id, request.params.id);
+      response.json(getCastItems(db, request.auth.user.id, request.params.id, protagonist.id, { limit: 200 }));
+    } catch (error) {
+      response.status(error?.statusCode || 400).json({ error: error?.message || '背包读取失败' });
+    }
+  });
+
+  router.get('/encounters/active', requireAuth, (request, response) => {
+    const conversation = getConversationForUser(db, request.auth.user.id, request.params.id);
+    if (!conversation) return response.status(404).json({ error: '对话不存在' });
+    response.json(getActiveEncounter(db, request.auth.user.id, request.params.id));
+  });
+
+  router.post('/encounters', requireAuth, (request, response) => {
+    const conversation = getConversationForUser(db, request.auth.user.id, request.params.id);
+    if (!conversation) return response.status(404).json({ error: '对话不存在' });
+    if (!featureEnabled(conversation, 'encounterMode')) return response.status(403).json({ error: '遭遇功能已关闭' });
+    const result = createEncounter(db, request.auth.user.id, request.params.id, {
+      ...request.body,
+      source: 'player',
+    });
+    if (!result.ok) return response.status(400).json({ error: result.error });
+    response.status(201).json(result.encounter);
+  });
+
+  router.post('/encounters/:encounterId/actions', requireAuth, (request, response) => {
+    const conversation = getConversationForUser(db, request.auth.user.id, request.params.id);
+    if (!conversation) return response.status(404).json({ error: '对话不存在' });
+    if (!featureEnabled(conversation, 'encounterMode')) return response.status(403).json({ error: '遭遇功能已关闭' });
+    const result = performEncounterAction(
+      db,
+      request.auth.user.id,
+      request.params.id,
+      request.params.encounterId,
+      { ...request.body, source: 'player' }
+    );
+    if (!result.ok) return response.status(400).json({ error: result.error });
+    response.json(result);
+  });
+
+  router.post('/encounters/:encounterId/end', requireAuth, (request, response) => {
+    const encounter = endEncounter(
+      db,
+      request.auth.user.id,
+      request.params.id,
+      request.params.encounterId,
+      request.body?.outcome || 'ended',
+      'player'
+    );
+    if (!encounter) return response.status(404).json({ error: '遭遇不存在' });
+    response.json(encounter);
   });
 
   router.get('/rewards', requireAuth, (request, response) => {

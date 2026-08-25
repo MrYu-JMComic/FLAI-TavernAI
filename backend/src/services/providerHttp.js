@@ -38,11 +38,27 @@ export async function readJsonResponseValue(response, options = {}) {
   }
 
   if (!response.ok) {
-    throw new Error(providerJsonErrorMessage(json) || responseErrorMessage(response, text));
+    const errorMsg = providerJsonErrorMessage(json) || responseErrorMessage(response, text);
+    // 包含响应内容以便诊断
+    const detailedError = new Error(errorMsg);
+    detailedError.response = {
+      status: response.status,
+      statusText: response.statusText,
+      headers: Object.fromEntries(response.headers.entries()),
+      body: text.length > 2000 ? text.substring(0, 2000) + '...(truncated)' : text,
+      json: json
+    };
+    throw detailedError;
   }
 
   if ((Array.isArray(json) && !options.allowArray) || !json || typeof json !== 'object') {
-    throw new Error('AI response JSON must be an object.');
+    const detailedError = new Error('AI response JSON must be an object.');
+    detailedError.response = {
+      status: response.status,
+      body: text.length > 2000 ? text.substring(0, 2000) + '...(truncated)' : text,
+      json: json
+    };
+    throw detailedError;
   }
 
   return json;

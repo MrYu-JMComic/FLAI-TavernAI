@@ -2,8 +2,7 @@ import { applyRegexRules, getRegexRules } from '../modules/characters.js';
 import { normalizeAdvancedSettings, mergeAdvancedSettings } from '../modules/advancedSettings.js';
 import { getConversationEconomyState } from '../modules/economy.js';
 import { buildModSystemPrompt, getEnabledModsForUser } from '../modules/mods.js';
-import { buildNpcRosterPrompt, listConversationNpcRoster } from '../modules/npcs.js';
-import { buildActorStateContext, buildSceneContext } from '../modules/scenes.js';
+import { buildSceneContext } from '../modules/scenes.js';
 import { getStatusBar } from '../modules/statusBars.js';
 import { buildTalentSystemPrompt } from '../modules/talents.js';
 import {
@@ -12,6 +11,7 @@ import {
   matchWorldBookEntries
 } from '../modules/worldBooks.js';
 import { buildConversationMemoryContext } from '../modules/conversationMemories.js';
+import { buildCastContext } from './cast/castContextBuilder.js';
 import { getAccessorySkillsPayload } from './accessoryAgents.js';
 import { CONTEXT_PRIORITY_ORDER, buildContextDirectorPrompt } from './chatContextDirector.js';
 import { renderPromptVariables, resolvePromptUserName } from './promptVariables.js';
@@ -63,21 +63,14 @@ export function buildPromptPipeline(database, options = {}) {
   });
   const worldBookContext = buildWorldBookContext(worldBookEntries);
   const memoryContext = buildConversationMemoryContext(database, user.id, conversation.id);
-  const modSystemPrompt = buildModSystemPrompt(getEnabledModsForUser(database, user.id, { characterId: character.id }));
-  const npcRoster = accessoryState.active.npcAgent
-    ? listConversationNpcRoster(database, user.id, conversation.id, character.name || '')
-    : [];
-  const npcBehaviorPrompt = buildNpcRosterPrompt(npcRoster);
-  // Stored actor state is authoritative conversation state. Accessory skill
-  // switches control automatic updates only; they must not hide possessions or
-  // clothing from the main reply model.
-  const actorStateContext = buildActorStateContext(database, conversation.id, {
-    includeNpc: !accessoryState.active.npcAgent
+  const castContext = buildCastContext(database, user.id, conversation.id, {
+    includeHidden: false,
+    budgetCharacters: Math.min(8_000, Math.max(2_000, Math.floor(contextBudgetCharacters * 0.25)))
   });
-  const sceneContext = [
-    accessoryState.active.sceneAgent ? buildSceneContext(database, conversation.id) : '',
-    actorStateContext
-  ].filter(Boolean).join('\n');
+  const modSystemPrompt = buildModSystemPrompt(getEnabledModsForUser(database, user.id, { characterId: character.id }));
+  const sceneContext = accessoryState.active.sceneAgent
+    ? buildSceneContext(database, user.id, conversation.id)
+    : '';
   const talentPrompt = accessoryState.active.talentPrompt ? buildTalentSystemPrompt(database, character.id) : '';
   const economyContext = accessoryState.active.economyAgent
     ? buildEconomyContext(database, user.id, conversation.id)
@@ -91,13 +84,11 @@ export function buildPromptPipeline(database, options = {}) {
     memory: {
       context: memoryContext
     },
+    cast: {
+      context: castContext
+    },
     mods: {
       context: modSystemPrompt
-    },
-    npc: {
-      active: Boolean(accessoryState.active.npcAgent),
-      context: npcBehaviorPrompt,
-      roster: npcRoster
     },
     scene: {
       active: Boolean(accessoryState.active.sceneAgent),
@@ -298,8 +289,8 @@ function buildPipelineMessages({
     character.persona ? `角色身份、性格、知识边界与表达风格：${renderField(character.persona)}` : '',
     sections.worldBook.context ? `\n[世界书补充信息]\n${sections.worldBook.context}` : '',
     sections.memory.context ? `\n${sections.memory.context}` : '',
+    sections.cast.context ? `\n${sections.cast.context}` : '',
     sections.statusBar.context ? `\n${sections.statusBar.context}` : '',
-    sections.npc.context || '',
     sections.scene.context ? `\n${sections.scene.context}` : '',
     sections.economy.context ? `\n${sections.economy.context}` : '',
     sections.talent.context ? `\n${sections.talent.context}` : '',
@@ -315,9 +306,9 @@ function buildPipelineMessages({
     worldBookContext: sections.worldBook.context,
     worldBookEntries,
     memoryContext: sections.memory.context,
+    castContext: sections.cast.context,
     statusBarContext: sections.statusBar.context,
     modSystemPrompt: sections.mods.context,
-    npcBehaviorPrompt: sections.npc.context,
     sceneContext: sections.scene.context,
     economyContext: sections.economy.context,
     talentPrompt: sections.talent.context
@@ -732,11 +723,11 @@ function buildPriorityExplanation(sections) {
   if (sections.memory.context) {
     activeContext.push('long_term_memory');
   }
+  if (sections.cast.context) {
+    activeContext.push('cast_state');
+  }
   if (sections.statusBar.context) {
     activeContext.push('status_bar');
-  }
-  if (sections.npc.context) {
-    activeContext.push('npc');
   }
   if (sections.scene.context) {
     activeContext.push('scene');

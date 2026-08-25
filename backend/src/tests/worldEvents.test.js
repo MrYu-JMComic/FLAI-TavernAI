@@ -7,7 +7,6 @@ process.env.APP_SECRET = 'test-secret-world-events';
 const { createAppDatabase } = await import('../db.js');
 const { recordWorldEvent, listWorldEvents, deleteConversationWorldEvents } = await import('../modules/worldEvents.js');
 const { createConversationTransaction } = await import('../modules/economy.js');
-const { addNpcBehavior, addNpcMemory, updateConversationNpc } = await import('../modules/npcs.js');
 const { upsertSceneNode } = await import('../modules/scenes.js');
 const { upsertStatusBar } = await import('../modules/statusBars.js');
 const { newId, nowIso } = await import('../security.js');
@@ -39,7 +38,7 @@ test('world events are isolated, normalized and support incremental cursors', ()
     payload: { location: '旧酒馆' }
   });
   const second = recordWorldEvent(database, userId, conversationId, {
-    eventType: 'npc.relationship.changed',
+    eventType: 'cast.relationship.changed',
     source: 'agent',
     title: '莉娅更加信任你',
     severity: 'success'
@@ -67,18 +66,12 @@ test('world events are isolated, normalized and support incremental cursors', ()
 test('world event ledger receives key gameplay mutations', () => {
   const { database, userId, conversationId } = setupTestEnv();
   upsertSceneNode(database, userId, conversationId, { nodeType: 'room', name: '钟楼大厅', auditActor: 'agent' });
-  updateConversationNpc(database, userId, conversationId, '守钟人', { currentLocation: '钟楼大厅', relationship: '警惕', auditActor: 'agent' });
-  addNpcMemory(database, userId, conversationId, '守钟人', { memoryType: 'event', content: '玩家询问了午夜钟声。', auditActor: 'agent' });
-  addNpcBehavior(database, userId, conversationId, '守钟人', { behaviorType: 'reaction', triggerCondition: '午夜', action: '关闭钟楼入口', auditActor: 'agent' });
   upsertStatusBar(database, userId, conversationId, { name: '旅者状态', variables: [{ name: '时间', value: '午夜' }], auditActor: 'agent' });
   createConversationTransaction(database, userId, conversationId, { type: 'reward', amount: 5, description: '守钟人的报酬', auditActor: 'agent' });
 
   const page = listWorldEvents(database, userId, conversationId, { limit: 100 });
   const types = new Set(page.events.map(event => event.eventType));
   assert.ok(types.has('scene.location.discovered'));
-  assert.ok(types.has('npc.profile.changed'));
-  assert.ok(types.has('npc.memory.created'));
-  assert.ok(types.has('npc.behavior.created'));
   assert.ok(types.has('status.created'));
   assert.ok(types.has('economy.transaction.created'));
   database.close();

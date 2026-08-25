@@ -1,9 +1,21 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { dataDir } from '../db.js';
+import { databasePath, db } from '../db.js';
 
-const BACKUP_DIR = path.join(dataDir, 'backups');
+const { sourcePath: SOURCE_PATH, backupDir: BACKUP_DIR } = resolveBackupStorage(databasePath);
 const MAX_BACKUPS = 7;
+
+export function resolveBackupStorage(value) {
+  const normalized = String(value || '').trim();
+  if (!normalized || normalized === ':memory:') {
+    return { sourcePath: '', backupDir: '' };
+  }
+  const sourcePath = path.resolve(normalized);
+  return {
+    sourcePath,
+    backupDir: path.join(path.dirname(sourcePath), 'backups')
+  };
+}
 
 function compareBackupFileNameNewestFirst(current, next) {
   if (current < next) return 1;
@@ -23,7 +35,11 @@ export function getBackupFileNamesNewestFirst(fileNames = []) {
 }
 
 function ensureBackupDir() {
+  if (!BACKUP_DIR) {
+    return false;
+  }
   fs.mkdirSync(BACKUP_DIR, { recursive: true });
+  return true;
 }
 
 function backupFileName() {
@@ -35,31 +51,44 @@ function backupFileName() {
 /**
  * Create a backup of flai.sqlite.
  * Returns the backup file path, or null if the source DB doesn't exist.
+ *
+ * Uses SQLite's `VACUUM INTO`, an online backup that runs through the live
+ * database connection. Unlike copying the file on disk, it needs no OS-level
+ * file handle on the source, so it never hits Windows EBUSY locks, and it
+ * writes a single consolidated file (WAL already folded in) rather than a
+ * separate main/-wal/-shm trio.
  */
 export function createBackup() {
-  const sourcePath = path.join(dataDir, 'flai.sqlite');
-  if (!fs.existsSync(sourcePath)) {
+  if (!SOURCE_PATH || !fs.existsSync(SOURCE_PATH)) {
     return null;
   }
 
-  ensureBackupDir();
+  if (!ensureBackupDir()) {
+    return null;
+  }
   const destPath = path.join(BACKUP_DIR, backupFileName());
 
-  // Copy the main database file (WAL mode ensures consistency)
-  fs.copyFileSync(sourcePath, destPath);
+  // VACUUM INTO refuses to overwrite; clear any prior file for the same day.
+  removeBackupFileGroup(destPath);
 
-  // Also copy WAL and SHM files if they exist
-  const walPath = sourcePath + '-wal';
-  const shmPath = sourcePath + '-shm';
-  if (fs.existsSync(walPath)) {
-    fs.copyFileSync(walPath, destPath + '-wal');
-  }
-  if (fs.existsSync(shmPath)) {
-    fs.copyFileSync(shmPath, destPath + '-shm');
-  }
+  db.exec(`VACUUM INTO '${escapeSqlStringLiteral(destPath)}'`);
 
   pruneOldBackups();
   return destPath;
+}
+
+function escapeSqlStringLiteral(value) {
+  return String(value).replace(/'/g, "''");
+}
+
+function removeBackupFileGroup(backupPath) {
+  for (const suffix of ['', '-wal', '-shm']) {
+    try {
+      fs.rmSync(backupPath + suffix, { force: true });
+    } catch {
+      // Ignore removal errors; VACUUM INTO will surface a real conflict.
+    }
+  }
 }
 
 /**
@@ -91,13 +120,17 @@ let lastBackupDate = '';
 
 export function scheduleDailyBackup() {
   const tryBackup = () => {
-    const today = new Date().toISOString().slice(0, 10);
-    if (lastBackupDate !== today) {
-      const result = createBackup();
-      if (result) {
-        lastBackupDate = today;
-        console.log(`[backup] Daily backup created: ${result}`);
+    try {
+      const today = new Date().toISOString().slice(0, 10);
+      if (lastBackupDate !== today) {
+        const result = createBackup();
+        if (result) {
+          lastBackupDate = today;
+          console.log(`[backup] Daily backup created: ${result}`);
+        }
       }
+    } catch (error) {
+      console.error('[backup] Daily backup failed (non-fatal):', error?.message || error);
     }
   };
 
@@ -112,7 +145,9 @@ export function scheduleDailyBackup() {
  * List available backups (for admin API).
  */
 export function listBackups() {
-  ensureBackupDir();
+  if (!ensureBackupDir()) {
+    return [];
+  }
   const files = readBackupFileNamesNewestFirst();
 
   return files.map((f) => {
@@ -126,7 +161,7 @@ export function listBackups() {
 }
 
 function readBackupFileNamesNewestFirst() {
-  if (!fs.existsSync(BACKUP_DIR)) {
+  if (!BACKUP_DIR || !fs.existsSync(BACKUP_DIR)) {
     return [];
   }
   return getBackupFileNamesNewestFirst(fs.readdirSync(BACKUP_DIR));

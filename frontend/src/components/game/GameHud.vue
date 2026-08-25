@@ -186,7 +186,7 @@ async function startEncounter() {
   if (!props.encounterEnabled || !npc || encounterBusy.value) return;
   encounterBusy.value = true;
   try {
-    await createGameplayEncounter(props.conversationId, { title: `遭遇：${npc.name}`, npcNames: [npc.name] });
+    await createGameplayEncounter(props.conversationId, { title: `遭遇：${npc.name}`, memberIds: [npc.memberId] });
     encounterExpanded.value = true;
     await loadSnapshot();
   } catch (error) {

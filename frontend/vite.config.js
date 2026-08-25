@@ -73,6 +73,10 @@ export default defineConfig({
           if (id.includes('markdown-it') || id.includes('highlight.js')) {
             return 'markdown-renderer';
           }
+          // KaTeX数学公式渲染（较大）
+          if (id.includes('katex')) {
+            return 'katex-math';
+          }
           // DOMPurify安全库
           if (id.includes('dompurify')) {
             return 'dom-sanitizer';

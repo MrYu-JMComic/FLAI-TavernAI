@@ -11,6 +11,8 @@ import {
   upsertStatusBar
 } from '../modules/statusBars.js';
 import { renderPromptVariables } from '../services/promptVariables.js';
+import { ensureConversationProtagonist } from '../services/cast/castCommandService.js';
+import { withSavepoint } from '../modules/savepoint.js';
 import {
   createConversationMessage,
   emptyUsageSummary,
@@ -23,7 +25,9 @@ import { createConversationEconomyRouter } from './conversationEconomy.js';
 import { createConversationGenerationRouter } from './conversationGeneration.js';
 import { createConversationGameplayRouter } from './conversationGameplay.js';
 import { createConversationMessagesRouter } from './conversationMessages.js';
-import { createConversationNpcRouter } from './conversationNpcs.js';
+import { createConversationSceneRouter } from './conversationScenes.js';
+import { createConversationCastRouter } from './conversationCast.js';
+import { createConversationMultiRoleRouter } from './conversationMultiRole.js';
 import { createConversationSettingsRouter } from './conversationSettings.js';
 import { createConversationSavesRouter } from './conversationSaves.js';
 import { createConversationSchema, bulkDeleteSchema, validate } from '../validations/schemas.js';
@@ -85,33 +89,37 @@ export function createConversationsRouter(ctx) {
 
     const conversationId = newId();
     const timestamp = nowIso();
-    db.prepare(
-      `INSERT INTO conversations (id, user_id, character_id, title, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?)`
-    ).run(conversationId, request.auth.user.id, character.id, `${character.name} 的故事`, timestamp, timestamp);
+    const conversation = withSavepoint(db, 'sp_create_conversation', () => {
+      db.prepare(
+        `INSERT INTO conversations (id, user_id, character_id, title, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?)`
+      ).run(conversationId, request.auth.user.id, character.id, `${character.name} 的故事`, timestamp, timestamp);
 
-    const statusBarBlueprint = normalizeAdvancedSettings(character.authorAdvancedSettings || {}).statusBarBlueprint;
-    if (hasStatusBarBlueprint(statusBarBlueprint)) {
-      upsertStatusBar(db, request.auth.user.id, conversationId, {
-        name: statusBarBlueprint.name || '状态栏',
-        variables: statusBarBlueprint.variables,
-        template: statusBarBlueprint.template
-      });
-    }
+      ensureConversationProtagonist(db, request.auth.user.id, conversationId);
+      const statusBarBlueprint = normalizeAdvancedSettings(character.authorAdvancedSettings || {}).statusBarBlueprint;
+      if (hasStatusBarBlueprint(statusBarBlueprint)) {
+        upsertStatusBar(db, request.auth.user.id, conversationId, {
+          name: statusBarBlueprint.name || '状态栏',
+          variables: statusBarBlueprint.variables,
+          template: statusBarBlueprint.template
+        });
+      }
 
-    if (character.openingMessage) {
-      createConversationMessage(db, newId, nowIso, {
-        userId: request.auth.user.id,
-        conversationId,
-        role: 'assistant',
-        content: renderPromptVariables(character.openingMessage, request.auth.user),
-        reasoning: '',
-        usage: null
-      });
-    }
+      if (character.openingMessage) {
+        createConversationMessage(db, newId, nowIso, {
+          userId: request.auth.user.id,
+          conversationId,
+          role: 'assistant',
+          content: renderPromptVariables(character.openingMessage, request.auth.user),
+          reasoning: '',
+          usage: null
+        });
+      }
 
-    touchCharacter(db, request.auth.user.id, character.id);
-    response.status(201).json(getConversation(request.auth.user.id, conversationId));
+      touchCharacter(db, request.auth.user.id, character.id);
+      return getConversation(request.auth.user.id, conversationId);
+    });
+    response.status(201).json(conversation);
   });
 
   router.delete('/:id', requireAuth, (request, response) => {
@@ -128,7 +136,9 @@ export function createConversationsRouter(ctx) {
   router.use('/:id/economy', createConversationEconomyRouter(ctx));
   router.use('/:id/gameplay', createConversationGameplayRouter(ctx));
   router.use('/:id/saves', createConversationSavesRouter(ctx));
-  router.use('/:id', createConversationNpcRouter(ctx));
+  router.use('/:id', createConversationSceneRouter(ctx));
+  router.use('/:id', createConversationCastRouter(ctx));
+  router.use('/:id', createConversationMultiRoleRouter(ctx));
 
   // ── Internal helpers ──
 

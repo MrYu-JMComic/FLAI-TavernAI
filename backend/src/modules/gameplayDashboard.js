@@ -1,28 +1,34 @@
 import { getConversationEconomyState } from './economy.js';
-import { listConversationNpcs } from './npcs.js';
 import { listSceneWorkspace } from './scenes.js';
 import { getStatusBar } from './statusBars.js';
 import { listWorldEvents } from './worldEvents.js';
 import { listQuests } from './quests.js';
-import { getWorldClock, listNpcActivities } from './dynamicWorld.js';
+import { getWorldClock } from './dynamicWorld.js';
 import { getTravelMap } from './travel.js';
-import { getActiveEncounter } from './encounters.js';
 import { getCharacterGrowth, listRewardGrants } from './rewards.js';
+import { getActiveEncounter } from './encounters.js';
+import {
+  getCastActivities,
+  getCastItems,
+  getCastRoster,
+} from '../services/cast/castQueryService.js';
 
 export function getGameplayDashboard(database, userId, conversationId, options = {}) {
   const workspace = listSceneWorkspace(database, userId, conversationId);
-  const npcs = listConversationNpcs(database, userId, conversationId, options.mainCharacterName || '');
   const economy = getConversationEconomyState(database, userId, conversationId, { ensureDefaultAccount: false });
   const statusBar = getStatusBar(database, userId, conversationId);
   const eventPage = listWorldEvents(database, userId, conversationId, { limit: 3 });
   const quests = listQuests(database, userId, conversationId, { status: 'active' }) || [];
-  const backpackItems = workspace.items.filter(item => item.ownerType === 'protagonist');
+  const roster = getCastRoster(database, userId, conversationId, { includeHidden: false });
+  const backpackItems = roster.protagonist
+    ? getCastItems(database, userId, conversationId, roster.protagonist.id, { limit: 200 })
+    : [];
   const worldClock = getWorldClock(database, userId, conversationId);
-  const activities = listNpcActivities(database, userId, conversationId) || [];
   const travelMap = getTravelMap(database, userId, conversationId);
   const location = travelMap?.currentNode || selectRecentLocation(workspace.nodes);
-  const activeNpcs = npcs.filter(npc => !['left', 'permanently_left', 'dead'].includes(npc?.status));
-  const presentNpcs = selectPresentNpcs(activeNpcs, location?.name);
+  const presentNpcs = selectPresentNpcs(roster.npcs, location?.name || '');
+  const activities = getCastActivities(database, userId, conversationId)
+    .filter((activity) => ['scheduled', 'active'].includes(activity.status));
 
   return {
     location,
@@ -30,7 +36,7 @@ export function getGameplayDashboard(database, userId, conversationId, options =
     counts: {
       locations: workspace.nodes.length,
       items: workspace.items.length,
-      npcs: activeNpcs.length,
+      npcs: roster.npcs.length,
       routes: workspace.routes.length
     },
     wallet: Array.isArray(economy?.accounts)
@@ -39,9 +45,14 @@ export function getGameplayDashboard(database, userId, conversationId, options =
     time: worldClock ? `第 ${worldClock.currentDay} 天 ${worldClock.timeLabel}` : findStatusValue(statusBar, ['时间', '时刻', 'time']) || '',
     weather: worldClock?.weather || findStatusValue(statusBar, ['天气', 'weather']) || '',
     worldClock,
-    npcActivities: activities.filter(item => item.status === 'active' || item.status === 'scheduled').slice(0, 4),
+    npcActivities: activities.map((activity) => ({
+      ...activity,
+      npcName: activity.memberName,
+    })),
     travelMap,
-    encounter: options.encounterEnabled ? getActiveEncounter(database, userId, conversationId) : null,
+    encounter: options.encounterEnabled
+      ? getActiveEncounter(database, userId, conversationId)
+      : null,
     rewards: options.rewardEnabled ? (listRewardGrants(database, userId, conversationId, { status: 'pending' }) || []).slice(0, 4) : [],
     growth: options.rewardEnabled ? getCharacterGrowth(database, userId, conversationId) : null,
     coreStatus: selectCoreStatus(statusBar),
@@ -109,16 +120,18 @@ function selectRecentLocation(nodes = []) {
 function selectPresentNpcs(npcs, locationName = '') {
   const normalizedLocation = String(locationName || '').trim();
   const matches = normalizedLocation
-    ? npcs.filter(npc => String(npc?.currentLocation || '').trim() === normalizedLocation)
+    ? npcs.filter(npc => String(npc?.currentLocationLabel || '').trim() === normalizedLocation)
     : [];
   return (matches.length ? matches : npcs).slice(0, 3);
 }
 
 function toNpcSummary(npc) {
   return {
-    name: npc.name,
+    id: npc.id,
+    memberId: npc.id,
+    name: npc.canonicalName,
     status: npc.status,
-    currentLocation: npc.currentLocation || '',
+    currentLocation: npc.currentLocationLabel || '',
     relationship: npc.relationship || ''
   };
 }

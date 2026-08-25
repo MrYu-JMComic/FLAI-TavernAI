@@ -207,6 +207,9 @@ function toConversationMemory(row = {}) {
     enabled: Boolean(row.enabled),
     archived: Boolean(row.archived),
     pending: row.source_kind === 'auto' && !row.enabled && !row.archived,
+    layer: row.layer || 'short_term',
+    importance: row.importance || 0,
+    emotionalIntensity: row.emotional_intensity || 0,
     createdAt: row.created_at,
     updatedAt: row.updated_at
   };

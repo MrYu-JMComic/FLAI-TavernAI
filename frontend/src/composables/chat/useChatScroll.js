@@ -1,6 +1,11 @@
 import { computed, ref } from 'vue';
 
-export function useChatScroll({ messageScroller, conversationId, scrollToMessageFallback }) {
+export function useChatScroll({
+  messageScroller,
+  conversationId,
+  scrollToMessageFallback,
+  scrollToBottomFallback
+}) {
   const isScrollPinned = ref(true);
   const distanceToBottom = ref(0);
 
@@ -54,6 +59,7 @@ export function useChatScroll({ messageScroller, conversationId, scrollToMessage
   }
 
   function pauseAutoScrollForUser() {
+    cancelPendingScrollRestore();
     lastManualScrollIntentAt = Date.now();
     userPausedAutoScroll = true;
     isScrollPinned.value = false;
@@ -156,32 +162,45 @@ export function useChatScroll({ messageScroller, conversationId, scrollToMessage
       if (disposed) {
         return;
       }
-      const el = messageScroller.value;
-      if (!el) {
-        return;
-      }
-      el.scrollTo({
-        top: el.scrollHeight,
-        behavior: 'smooth'
-      });
+      const scrollMode = performBottomScroll(true);
+      if (!scrollMode) return;
+      distanceToBottom.value = 0;
       if (typeof window !== 'undefined') {
         scheduleSmoothScrollStateUpdate();
+      } else {
+        updateScrollState();
       }
-      scheduleSaveMessageScrollPosition();
     });
   }
 
   function scrollToBottomNow() {
-    const el = messageScroller.value;
-    if (!el) {
+    const scrollMode = performBottomScroll(false);
+    if (!scrollMode) return;
+    if (scrollMode === 'fallback') {
+      distanceToBottom.value = 0;
+      scheduleFrame(() => {
+        updateScrollState();
+        scheduleSaveMessageScrollPosition();
+      });
       return;
-    }
-    const nextScrollTop = Math.max(0, el.scrollHeight - el.clientHeight);
-    if (Math.abs(el.scrollTop - nextScrollTop) > 0.5) {
-      el.scrollTop = nextScrollTop;
     }
     updateScrollState();
     scheduleSaveMessageScrollPosition();
+  }
+
+  function performBottomScroll(smooth) {
+    if (typeof scrollToBottomFallback === 'function' && scrollToBottomFallback(smooth) === true) {
+      return 'fallback';
+    }
+    const el = messageScroller.value;
+    if (!el) return '';
+    const nextScrollTop = Math.max(0, el.scrollHeight - el.clientHeight);
+    if (smooth && typeof el.scrollTo === 'function') {
+      el.scrollTo({ top: nextScrollTop, behavior: 'smooth' });
+    } else if (Math.abs(el.scrollTop - nextScrollTop) > 0.5) {
+      el.scrollTop = nextScrollTop;
+    }
+    return 'dom';
   }
 
   function scrollToMessage(messageId, options = {}) {
@@ -325,15 +344,77 @@ export function useChatScroll({ messageScroller, conversationId, scrollToMessage
         return;
       }
 
-      if (saved.pinned) {
+      if (saved.pinned === true) {
         scrollToBottom(false, true);
         return;
       }
 
-      el.scrollTop = Math.min(saved.top || 0, Math.max(0, el.scrollHeight - el.clientHeight));
-      updateScrollState();
-      scheduleSaveMessageScrollPosition();
+      lastManualScrollIntentAt = 0;
+      userPausedAutoScroll = true;
+      isScrollPinned.value = false;
+      const fallbackTop = clampScrollTop(el, saved.top);
+      const anchorMessageId = String(saved.anchorMessageId || '');
+      if (
+        anchorMessageId
+        && scrollToMessage(anchorMessageId, {
+          smooth: false,
+          block: 'start',
+          padding: 0,
+          keepPinned: false
+        })
+      ) {
+        scheduleAnchorRestore(saved, fallbackTop, 2);
+        return;
+      }
+      finishUnpinnedRestore(el, fallbackTop);
     });
+  }
+
+  function scheduleAnchorRestore(saved, fallbackTop, attemptsRemaining) {
+    restoreScrollRafId = scheduleFrame(() => {
+      restoreScrollRafId = null;
+      if (disposed) return;
+      const el = messageScroller.value;
+      if (!el) return;
+      const target = findMessageElement(saved.anchorMessageId);
+      if (!target && attemptsRemaining > 0) {
+        scheduleAnchorRestore(saved, fallbackTop, attemptsRemaining - 1);
+        return;
+      }
+      if (!target) {
+        finishUnpinnedRestore(el, fallbackTop);
+        return;
+      }
+
+      const scrollerRect = el.getBoundingClientRect();
+      const visibleTop = scrollerRect.top + getScrollerInsets(el).top;
+      const targetRect = target.getBoundingClientRect();
+      const anchorOffset = Number.isFinite(Number(saved.anchorOffset))
+        ? Number(saved.anchorOffset)
+        : 0;
+      const correctedTop = el.scrollTop + targetRect.top - visibleTop - anchorOffset;
+      finishUnpinnedRestore(el, clampScrollTop(el, correctedTop));
+    });
+  }
+
+  function cancelPendingScrollRestore() {
+    if (restoreScrollRafId === null) return;
+    cancelScheduledFrame(restoreScrollRafId);
+    restoreScrollRafId = null;
+  }
+
+  function finishUnpinnedRestore(el, scrollTop) {
+    el.scrollTop = scrollTop;
+    updateScrollState();
+    scheduleSaveMessageScrollPosition();
+  }
+
+  function clampScrollTop(el, value) {
+    const top = Number(value);
+    return Math.min(
+      Math.max(0, el.scrollHeight - el.clientHeight),
+      Math.max(0, Number.isFinite(top) ? top : 0)
+    );
   }
 
   function readScrollSnapshot() {
@@ -376,7 +457,38 @@ export function useChatScroll({ messageScroller, conversationId, scrollToMessage
       pinned: !userPausedAutoScroll && getDistanceToBottom(el) <= scrollStickThreshold,
       savedAt: Date.now()
     };
-    window.localStorage.setItem(scrollStorageKey(), JSON.stringify(snapshot));
+    const anchor = getVisibleMessageAnchor(el);
+    if (anchor) {
+      snapshot.anchorMessageId = anchor.messageId;
+      snapshot.anchorOffset = anchor.offset;
+    }
+    try {
+      window.localStorage.setItem(scrollStorageKey(), JSON.stringify(snapshot));
+    } catch {
+      // Storage can be unavailable in private or quota-constrained contexts.
+    }
+  }
+
+  function getVisibleMessageAnchor(el) {
+    if (typeof el.getBoundingClientRect !== 'function' || typeof el.querySelectorAll !== 'function') {
+      return null;
+    }
+    const scrollerRect = el.getBoundingClientRect();
+    const visibleTop = scrollerRect.top + getScrollerInsets(el).top;
+    const elements = el.querySelectorAll('.deep-message');
+    for (let index = 0; index < elements.length; index += 1) {
+      const element = elements[index];
+      const messageId = String(element?.dataset?.messageId || '');
+      if (!messageId || typeof element.getBoundingClientRect !== 'function') continue;
+      const rect = element.getBoundingClientRect();
+      if (rect.bottom > visibleTop) {
+        return {
+          messageId,
+          offset: Math.round(rect.top - visibleTop)
+        };
+      }
+    }
+    return null;
   }
 
   function scrollStorageKey() {
@@ -393,6 +505,7 @@ export function useChatScroll({ messageScroller, conversationId, scrollToMessage
     smoothScrollStateTimer = window.setTimeout(() => {
       smoothScrollStateTimer = null;
       updateScrollState();
+      saveMessageScrollPosition();
     }, 360);
   }
 

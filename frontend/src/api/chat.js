@@ -1,4 +1,4 @@
-import { apiRequest, streamAssistantDraft, streamSSE } from './core.js';
+import { apiRequest, streamSSE } from './core.js';
 
 export function fetchConversations({ characterId = '' } = {}) {
   const params = new URLSearchParams();
@@ -250,95 +250,6 @@ export function deleteStatusBar(conversationId) {
   });
 }
 
-export function fetchConversationNpcs(conversationId) {
-  return apiRequest(`/api/conversations/${conversationId}/npcs`);
-}
-
-export function streamNpcOrganizer(conversationId, payload, handlers = {}, signal) {
-  return streamAssistantDraft(`/api/conversations/${conversationId}/npcs/organize`, payload, handlers, signal);
-}
-
-export function hideConversationNpc(conversationId, npcName) {
-  return apiRequest(`/api/conversations/${conversationId}/npcs/${encodeURIComponent(npcName)}`, {
-    method: 'DELETE'
-  });
-}
-
-export function hideEmptyConversationNpcs(conversationId) {
-  return apiRequest(`/api/conversations/${conversationId}/npcs-empty`, {
-    method: 'DELETE'
-  });
-}
-
-export function updateConversationNpc(conversationId, npcName, payload) {
-  return apiRequest(`/api/conversations/${conversationId}/npcs/${encodeURIComponent(npcName)}`, {
-    method: 'PUT',
-    body: JSON.stringify(payload)
-  });
-}
-
-export function fetchNpcAudit(conversationId, npcName, options = {}) {
-  const params = new URLSearchParams();
-  if (options.limit) params.set('limit', options.limit);
-  if (options.offset) params.set('offset', options.offset);
-  const suffix = params.toString() ? `?${params.toString()}` : '';
-  return apiRequest(`/api/conversations/${conversationId}/npcs/${encodeURIComponent(npcName)}/audit${suffix}`);
-}
-
-export function rollbackNpcAudit(conversationId, npcName, auditId) {
-  return apiRequest(`/api/conversations/${conversationId}/npcs/${encodeURIComponent(npcName)}/audit/${encodeURIComponent(auditId)}/rollback`, {
-    method: 'POST'
-  });
-}
-
-export function fetchNpcMemories(conversationId, npcName) {
-  return apiRequest(`/api/conversations/${conversationId}/npcs/${encodeURIComponent(npcName)}/memories`);
-}
-
-export function addNpcMemory(conversationId, npcName, payload) {
-  return apiRequest(`/api/conversations/${conversationId}/npcs/${encodeURIComponent(npcName)}/memories`, {
-    method: 'POST',
-    body: JSON.stringify(payload)
-  });
-}
-
-export function updateNpcMemory(conversationId, npcName, memoryId, payload) {
-  return apiRequest(`/api/conversations/${conversationId}/npcs/${encodeURIComponent(npcName)}/memories/${memoryId}`, {
-    method: 'PUT',
-    body: JSON.stringify(payload)
-  });
-}
-
-export function deleteNpcMemory(conversationId, npcName, memoryId) {
-  return apiRequest(`/api/conversations/${conversationId}/npcs/${encodeURIComponent(npcName)}/memories/${memoryId}`, {
-    method: 'DELETE'
-  });
-}
-
-export function fetchNpcBehaviors(conversationId, npcName) {
-  return apiRequest(`/api/conversations/${conversationId}/npcs/${encodeURIComponent(npcName)}/behaviors`);
-}
-
-export function addNpcBehavior(conversationId, npcName, payload) {
-  return apiRequest(`/api/conversations/${conversationId}/npcs/${encodeURIComponent(npcName)}/behaviors`, {
-    method: 'POST',
-    body: JSON.stringify(payload)
-  });
-}
-
-export function updateNpcBehavior(conversationId, npcName, behaviorId, payload) {
-  return apiRequest(`/api/conversations/${conversationId}/npcs/${encodeURIComponent(npcName)}/behaviors/${behaviorId}`, {
-    method: 'PUT',
-    body: JSON.stringify(payload)
-  });
-}
-
-export function deleteNpcBehavior(conversationId, npcName, behaviorId) {
-  return apiRequest(`/api/conversations/${conversationId}/npcs/${encodeURIComponent(npcName)}/behaviors/${behaviorId}`, {
-    method: 'DELETE'
-  });
-}
-
 export function fetchConversationScenes(conversationId) {
   return apiRequest(`/api/conversations/${conversationId}/scenes`);
 }
@@ -414,26 +325,11 @@ export function updateGameplayWeather(conversationId, weather) {
 
 export function fetchGameplayActivities(conversationId, options = {}) {
   const query = new URLSearchParams();
-  if (options.npcName) query.set('npcName', options.npcName);
+  if (options.memberId) query.set('memberId', options.memberId);
+  if (options.memberName) query.set('memberName', options.memberName);
   if (options.status) query.set('status', options.status);
   const suffix = query.size ? `?${query.toString()}` : '';
   return apiRequest(`/api/conversations/${conversationId}/gameplay/activities${suffix}`);
-}
-
-export function fetchActorItems(conversationId, ownerType = 'protagonist', ownerName = '') {
-  const query = new URLSearchParams({ ownerType });
-  if (ownerName) query.set('ownerName', ownerName);
-  return apiRequest(`/api/conversations/${conversationId}/items?${query.toString()}`);
-}
-
-export function fetchActorItemAudit(conversationId, ownerType = 'protagonist', ownerName = '') {
-  const query = new URLSearchParams({ ownerType });
-  if (ownerName) query.set('ownerName', ownerName);
-  return apiRequest(`/api/conversations/${conversationId}/items/audit?${query.toString()}`);
-}
-
-export function rollbackActorItemAudit(conversationId, auditId) {
-  return apiRequest(`/api/conversations/${conversationId}/items/audit/${encodeURIComponent(auditId)}/rollback`, { method: 'POST' });
 }
 
 export function createSceneNode(conversationId, payload) {

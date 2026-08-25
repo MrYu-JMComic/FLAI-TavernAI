@@ -20,12 +20,10 @@ const TOWN_COGNITION_TOOL = [
       description: 'Reflect on one resident memories when the supplied threshold is reached and create a causal daily schedule from the current world state.',
       parameters: {
         type: 'object',
-        additionalProperties: false,
         required: ['reflection', 'schedule'],
         properties: {
           reflection: {
             type: 'object',
-            additionalProperties: false,
             required: ['create', 'content', 'evidenceMemoryIds', 'importance'],
             properties: {
               create: { type: 'boolean' },
@@ -41,7 +39,6 @@ const TOWN_COGNITION_TOOL = [
           },
           schedule: {
             type: 'object',
-            additionalProperties: false,
             required: ['goal', 'items'],
             properties: {
               goal: { type: 'string', minLength: 1, maxLength: 500 },
@@ -51,7 +48,6 @@ const TOWN_COGNITION_TOOL = [
                 maxItems: 12,
                 items: {
                   type: 'object',
-                  additionalProperties: false,
                   required: ['startMinute', 'endMinute', 'activity', 'locationId', 'intention'],
                   properties: {
                     startMinute: { type: 'integer', minimum: 0, maximum: 1439 },

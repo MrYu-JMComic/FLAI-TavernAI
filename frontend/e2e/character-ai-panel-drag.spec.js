@@ -1,44 +1,38 @@
 import { expect, test } from '@playwright/test';
 import { registerUser, uniqueSuffix } from './helpers.js';
 
-test('desktop AI draft panel can move vertically', async ({ page }) => {
+test('AI draft workspace stays inline and usable across desktop and mobile', async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   await registerUser(page, uniqueSuffix());
 
   await page.getByRole('button', { name: /创建角色/ }).first().click();
   await expect(page.getByRole('heading', { name: /创建新的 AI 角色/ })).toBeVisible();
   await page.getByRole('button', { name: /完整表单/ }).click();
+  // The editor renders one section at a time, so open the AI section explicitly.
+  await page.locator('.character-studio-nav').getByRole('button', { name: /AI 完善/ }).click();
 
   const panel = page.locator('.ai-draft-panel');
-  const handle = panel.locator('.ai-panel-heading');
   await expect(panel).toBeVisible();
-  await panel.getByRole('button', { name: '重置 AI 完善面板位置' }).click();
-  await page.waitForTimeout(120);
+  await expect(panel.locator('.ai-workbench-header')).toBeVisible();
+  await expect(panel.locator('.ai-workbench-config')).toBeVisible();
+  await expect(panel.locator('.ai-panel-heading, .ai-panel-resize-handle')).toHaveCount(0);
+
+  const desktopLayout = await panel.evaluate((element) => ({
+    parentClass: element.parentElement?.className || '',
+    position: getComputedStyle(element).position,
+    overflow: element.scrollWidth - element.clientWidth,
+    documentOverflow: document.documentElement.scrollWidth - window.innerWidth
+  }));
+  expect(desktopLayout.parentClass).toContain('character-studio-stage');
+  expect(desktopLayout.position).toBe('relative');
+  expect(desktopLayout.overflow).toBeLessThanOrEqual(1);
+  expect(desktopLayout.documentOverflow).toBeLessThanOrEqual(0);
+
+  // On phones the same panel is rendered by the mobile shell's section sheet.
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.locator('.character-mobile-section-item[data-section-id="ai"]').click();
+  await expect(panel).toBeVisible();
+  await expect(panel).toHaveCount(1);
   await expect.poll(() => panel.evaluate((element) => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(1);
-
-  const initialBox = await panel.boundingBox();
-  const initialHandleBox = await handle.boundingBox();
-  expect(initialBox).not.toBeNull();
-  expect(initialHandleBox).not.toBeNull();
-
-  await startDragFromCenter(page, initialHandleBox, 0, 60);
-  await expect(panel).toHaveClass(/ai-panel-dragging/);
-  await page.mouse.up();
-  const movedDownBox = await panel.boundingBox();
-  expect(movedDownBox.y).toBeGreaterThan(initialBox.y + 20);
-
-  const movedHandleBox = await handle.boundingBox();
-  expect(movedHandleBox).not.toBeNull();
-  await startDragFromCenter(page, movedHandleBox, 0, -45);
-  await page.mouse.up();
-  const movedUpBox = await panel.boundingBox();
-  expect(movedUpBox.y).toBeLessThan(movedDownBox.y - 20);
+  await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth)).toBeLessThanOrEqual(0);
 });
-
-async function startDragFromCenter(page, box, deltaX, deltaY) {
-  const startX = box.x + box.width / 2;
-  const startY = box.y + box.height / 2;
-  await page.mouse.move(startX, startY);
-  await page.mouse.down();
-  await page.mouse.move(startX + deltaX, startY + deltaY, { steps: 8 });
-}

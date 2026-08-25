@@ -94,6 +94,228 @@ test('Anthropic streaming reports a friendly error when the response body is mis
   );
 });
 
+test('Anthropic streaming ignores signature deltas and emits only thinking text', async () => {
+  const events = [];
+  await withMockFetch(
+    async () => sseResponse([
+      'event: content_block_delta\ndata: {"type":"content_block_delta","delta":{"type":"thinking_delta","thinking":"plan"}}',
+      'event: content_block_delta\ndata: {"type":"content_block_delta","delta":{"type":"signature_delta","signature":"signed-by-provider"}}',
+      'event: content_block_delta\ndata: {"type":"content_block_delta","delta":{"type":"text_delta","text":"answer"}}',
+      'event: message_stop\ndata: {"type":"message_stop"}'
+    ]),
+    async () => {
+      const result = await streamCompletion(
+        {
+          providerType: 'anthropic',
+          gatewayName: 'Anthropic',
+          baseUrl: 'https://api.anthropic.com/v1',
+          model: 'claude-test',
+          apiKey: 'sk-ant-test',
+          extraBody: {}
+        },
+        [{ role: 'user', content: 'hello' }],
+        (event, data) => events.push({ event, data })
+      );
+
+      assert.equal(result.reasoning, 'plan');
+      assert.equal(result.content, 'answer');
+      assert.deepEqual(events, [
+        { event: 'reasoning', data: { text: 'plan' } },
+        { event: 'content', data: { text: 'answer' } }
+      ]);
+    }
+  );
+});
+
+test('Anthropic streaming keeps tool input JSON out of assistant content', async () => {
+  await withMockFetch(
+    async () => sseResponse([
+      'event: content_block_delta\ndata: {"type":"content_block_delta","delta":{"type":"input_json_delta","partial_json":"{\\"city\\":\\"Paris\\"}"}}',
+      'event: content_block_delta\ndata: {"type":"content_block_delta","delta":{"type":"text_delta","text":"visible answer"}}',
+      'event: message_stop\ndata: {"type":"message_stop"}'
+    ]),
+    async () => {
+      const result = await streamCompletion(
+        {
+          providerType: 'anthropic',
+          gatewayName: 'Anthropic',
+          baseUrl: 'https://api.anthropic.com/v1',
+          model: 'claude-test',
+          apiKey: 'sk-ant-test',
+          extraBody: {}
+        },
+        [{ role: 'user', content: 'hello' }],
+        () => {}
+      );
+      assert.equal(result.content, 'visible answer');
+    }
+  );
+});
+
+test('Anthropic streaming rejects EOF before message_stop', async () => {
+  await withMockFetch(
+    async () => sseResponse([
+      'event: content_block_delta\ndata: {"type":"content_block_delta","delta":{"type":"text_delta","text":"partial"}}'
+    ]),
+    async () => {
+      await assert.rejects(
+        () => streamCompletion(
+          {
+            providerType: 'anthropic',
+            gatewayName: 'Anthropic',
+            baseUrl: 'https://api.anthropic.com/v1',
+            model: 'claude-test',
+            apiKey: 'sk-ant-test',
+            extraBody: {}
+          },
+          [{ role: 'user', content: 'hello' }],
+          () => {}
+        ),
+        /message_stop/
+      );
+    }
+  );
+});
+
+test('Anthropic streaming propagates overloaded error events', async () => {
+  await withMockFetch(
+    async () => sseResponse([
+      'event: error\ndata: {"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}'
+    ]),
+    async () => {
+      await assert.rejects(
+        () => streamCompletion(
+          {
+            providerType: 'anthropic',
+            gatewayName: 'Anthropic',
+            baseUrl: 'https://api.anthropic.com/v1',
+            model: 'claude-test',
+            apiKey: 'sk-ant-test',
+            extraBody: {}
+          },
+          [{ role: 'user', content: 'hello' }],
+          () => {}
+        ),
+        /Overloaded/
+      );
+    }
+  );
+});
+
+test('OpenAI Responses streaming propagates response.failed details', async () => {
+  await withMockFetch(
+    async () => sseResponse([
+      'event: response.failed\ndata: {"type":"response.failed","response":{"error":{"type":"server_error","message":"Response failed upstream"}}}'
+    ]),
+    async () => {
+      await assert.rejects(
+        () => streamCompletion(
+          {
+            providerType: 'openai',
+            gatewayName: 'OpenAI',
+            baseUrl: 'https://api.openai.com/v1',
+            model: 'o4-mini',
+            apiKey: 'sk-openai-test',
+            supportsReasoning: true,
+            extraBody: {}
+          },
+          [{ role: 'user', content: 'hello' }],
+          () => {}
+        ),
+        /Response failed upstream/
+      );
+    }
+  );
+});
+
+test('OpenAI Responses streaming rejects incomplete and unterminated streams', async () => {
+  const settings = {
+    providerType: 'openai',
+    gatewayName: 'OpenAI',
+    baseUrl: 'https://api.openai.com/v1',
+    model: 'gpt-test',
+    apiKey: 'sk-test',
+    supportsReasoning: true,
+    extraBody: {}
+  };
+
+  await withMockFetch(
+    async () => sseResponse([
+      'event: response.incomplete\ndata: {"type":"response.incomplete","response":{"incomplete_details":{"reason":"max_output_tokens"}}}'
+    ]),
+    () => assert.rejects(
+      () => streamCompletion(settings, [{ role: 'user', content: 'hello' }], () => {}),
+      /max_output_tokens/
+    )
+  );
+
+  await withMockFetch(
+    async () => sseResponse([
+      'event: response.output_text.delta\ndata: {"type":"response.output_text.delta","delta":"partial"}'
+    ]),
+    () => assert.rejects(
+      () => streamCompletion(settings, [{ role: 'user', content: 'hello' }], () => {}),
+      /response\.completed/
+    )
+  );
+});
+
+test('tool streaming propagates object and string error envelopes', async () => {
+  const settings = {
+    providerType: 'custom',
+    gatewayName: 'Custom',
+    baseUrl: 'https://provider.test',
+    model: 'custom-model',
+    apiKey: 'sk-test',
+    extraBody: {}
+  };
+  const tools = [{
+    type: 'function',
+    function: { name: 'work', parameters: { type: 'object', properties: {} } }
+  }];
+
+  await withMockFetch(
+    async () => sseResponse(['event: error\ndata: {"error":{"message":"tool overload"}}']),
+    () => assert.rejects(
+      () => streamToolCompletion(settings, [], tools, async () => ({}), () => {}),
+      /tool overload/
+    )
+  );
+
+  await withMockFetch(
+    async () => jsonResponse({ error: 'quota exceeded' }),
+    () => assert.rejects(
+      () => streamToolCompletion(settings, [], tools, async () => ({}), () => {}),
+      /quota exceeded/
+    )
+  );
+});
+
+test('OpenAI-compatible streaming propagates JSON error envelopes', async () => {
+  await withMockFetch(
+    async () => sseResponse([
+      'data: {"error":{"type":"server_error","message":"Compatible provider failed"}}'
+    ]),
+    async () => {
+      await assert.rejects(
+        () => streamCompletion(
+          {
+            providerType: 'deepseek',
+            gatewayName: 'DeepSeek',
+            baseUrl: 'https://api.deepseek.com/v1',
+            model: 'deepseek-chat',
+            apiKey: 'sk-deepseek-test',
+            extraBody: {}
+          },
+          [{ role: 'user', content: 'hello' }],
+          () => {}
+        ),
+        /Compatible provider failed/
+      );
+    }
+  );
+});
+
 test('generateCompletion runs attached tools before returning the final chat reply', async () => {
   const requests = [];
   const executions = [];
@@ -111,7 +333,7 @@ test('generateCompletion runs attached tools before returning the final chat rep
                 id: 'profile-call-1',
                 type: 'function',
                 function: {
-                  name: 'get_npc_profile',
+                  name: 'lookup_reference',
                   arguments: JSON.stringify({ npcName: 'Mira' })
                 }
               }]
@@ -139,8 +361,8 @@ test('generateCompletion runs attached tools before returning the final chat rep
           tools: [{
             type: 'function',
             function: {
-              name: 'get_npc_profile',
-              description: 'Get one NPC profile.',
+              name: 'lookup_reference',
+              description: 'Look up a reference record.',
               parameters: {
                 type: 'object',
                 properties: { npcName: { type: 'string' } },
@@ -157,9 +379,9 @@ test('generateCompletion runs attached tools before returning the final chat rep
       );
 
       assert.equal(result.content, 'Mira is waiting at the north gate.');
-      assert.deepEqual(executions, [{ name: 'get_npc_profile', args: { npcName: 'Mira' } }]);
+      assert.deepEqual(executions, [{ name: 'lookup_reference', args: { npcName: 'Mira' } }]);
       assert.equal(requests.length, 2);
-      assert.equal(requests[0].tools[0].function.name, 'get_npc_profile');
+      assert.equal(requests[0].tools[0].function.name, 'lookup_reference');
       assert.equal(requests[1].messages.at(-1).role, 'tool');
       assert.match(requests[1].messages.at(-1).content, /north gate/);
     }
@@ -182,7 +404,7 @@ test('generateCompletion keeps Responses API models on native function calls', a
             type: 'function_call',
             id: 'fc_1',
             call_id: 'call_1',
-            name: 'get_npc_profile',
+            name: 'lookup_reference',
             arguments: JSON.stringify({ npcName: 'Mira' })
           }],
           usage: { total_tokens: 5 }
@@ -212,7 +434,7 @@ test('generateCompletion keeps Responses API models on native function calls', a
           tools: [{
             type: 'function',
             function: {
-              name: 'get_npc_profile',
+              name: 'lookup_reference',
               parameters: {
                 type: 'object',
                 properties: { npcName: { type: 'string' } },
@@ -229,7 +451,7 @@ test('generateCompletion keeps Responses API models on native function calls', a
       assert.equal(urls.every((url) => url.endsWith('/responses')), true);
       assert.deepEqual(requests[0].tools[0], {
         type: 'function',
-        name: 'get_npc_profile',
+        name: 'lookup_reference',
         description: '',
         parameters: {
           type: 'object',
@@ -527,7 +749,7 @@ test('streamToolCompletion keeps tool-round draft content out of the final strea
                   index: 0,
                   id: 'profile-call-stream',
                   function: {
-                    name: 'get_npc_profile',
+                    name: 'lookup_reference',
                     arguments: JSON.stringify({ npcName: 'Mira' })
                   }
                 }]
@@ -556,7 +778,7 @@ test('streamToolCompletion keeps tool-round draft content out of the final strea
         [{
           type: 'function',
           function: {
-            name: 'get_npc_profile',
+            name: 'lookup_reference',
             parameters: {
               type: 'object',
               properties: { npcName: { type: 'string' } },
@@ -575,7 +797,7 @@ test('streamToolCompletion keeps tool-round draft content out of the final strea
 
       assert.equal(result.content, 'Mira is at the north gate.');
       assert.equal(result.process[0].content, 'Draft before lookup.');
-      assert.deepEqual(executions, [{ name: 'get_npc_profile', args: { npcName: 'Mira' } }]);
+      assert.deepEqual(executions, [{ name: 'lookup_reference', args: { npcName: 'Mira' } }]);
       assert.deepEqual(
         events.filter((event) => event.event === 'content').map((event) => event.data.text),
         ['Mira is at the north gate.']

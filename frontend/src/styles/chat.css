@@ -853,8 +853,10 @@
 .deep-message-scroll {
   display: flex;
   flex-direction: column;
+  min-width: 0;
   min-height: 0;
   overflow: auto;
+  overflow-x: hidden;
   overscroll-behavior: contain;
   padding: 22px 18px calc(var(--chat-composer-height) + 38px);
   scroll-padding-bottom: calc(var(--chat-composer-height) + 38px);
@@ -870,6 +872,8 @@
 
 .deep-message {
   display: flex;
+  min-width: 0;
+  max-width: 100%;
   width: min(var(--chat-readable-width), 100%);
   margin: 0 auto 22px;
 }
@@ -1095,6 +1099,10 @@
 }
 
 .deep-bubble {
+  box-sizing: border-box;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
   border-radius: 18px;
   line-height: 1.75;
   word-break: break-word;
@@ -1447,6 +1455,8 @@
   font-weight: 700;
   white-space: nowrap;
   cursor: pointer;
+  touch-action: manipulation;
+  transition: border-color 180ms ease, background-color 180ms ease, opacity 180ms ease;
 }
 
 .mode-pill.active {
@@ -1455,9 +1465,97 @@
   background: color-mix(in srgb, var(--primary-soft) 78%, var(--surface));
 }
 
-.mode-pill:disabled {
+.mode-pill:disabled,
+.mode-pill.disabled {
   cursor: not-allowed;
   opacity: 0.58;
+}
+
+.mode-pill:not(:disabled):not(.disabled):active {
+  filter: brightness(0.96);
+}
+
+.thinking-level-control {
+  position: relative;
+  min-width: 132px;
+  height: 44px;
+  justify-content: flex-start;
+  gap: 9px;
+  overflow: hidden;
+  border-radius: 10px;
+  padding: 0 10px;
+}
+
+.thinking-level-control:focus-within {
+  outline: 2px solid color-mix(in srgb, var(--primary) 48%, transparent);
+  outline-offset: 2px;
+}
+
+.thinking-level-brain {
+  flex: 0 0 auto;
+}
+
+.thinking-level-copy {
+  display: grid;
+  flex: 1 1 auto;
+  min-width: 0;
+  gap: 2px;
+  text-align: left;
+  line-height: 1;
+  pointer-events: none;
+}
+
+.thinking-level-name {
+  color: var(--muted);
+  font-size: 0.66rem;
+  font-weight: 650;
+  line-height: 1;
+}
+
+.thinking-level-value {
+  overflow: hidden;
+  color: inherit;
+  font-size: 0.8rem;
+  font-weight: 800;
+  line-height: 1.1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.thinking-level-select {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  max-width: none;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  appearance: none;
+  color: inherit;
+  background: transparent;
+  font: inherit;
+  opacity: 0;
+  box-shadow: none;
+  cursor: pointer;
+}
+
+.thinking-level-select:disabled {
+  cursor: not-allowed;
+}
+
+.thinking-level-select option {
+  color: #0f172a;
+  background: #ffffff;
+}
+
+.thinking-level-chevron {
+  flex: 0 0 auto;
+  margin-left: auto;
+  pointer-events: none;
+}
+
+.thinking-level-mobile-value {
+  display: none;
 }
 
 .model-switch-pill {
@@ -2066,6 +2164,15 @@
   background: #334155;
 }
 
+:root[data-theme="dark"] .thinking-level-select {
+  color-scheme: dark;
+}
+
+:root[data-theme="dark"] .thinking-level-select option {
+  color: #f8fafc;
+  background: #111827;
+}
+
 .history-item.active,
 .history-row.active,
 :root[data-theme="dark"] .history-item.active,
@@ -2433,14 +2540,14 @@
 
   .composer-actions {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) repeat(3, 40px) 44px;
+    grid-template-columns: minmax(0, 1fr) repeat(3, 44px) 44px;
     align-items: center;
     gap: 8px;
     min-height: 44px;
   }
 
   .composer-actions.has-preset {
-    grid-template-rows: 40px 40px;
+    grid-template-rows: 44px 44px;
   }
 
   .composer-actions.has-preset .preset-select {
@@ -2451,10 +2558,10 @@
   }
 
   .mode-pill {
-    width: 40px;
-    min-width: 40px;
-    height: 40px;
-    min-height: 40px;
+    width: 44px;
+    min-width: 44px;
+    height: 44px;
+    min-height: 44px;
     overflow: hidden;
     padding: 0;
     justify-content: center;
@@ -2466,8 +2573,8 @@
     min-width: 0;
     max-width: none;
     width: 100%;
-    height: 40px;
-    min-height: 40px;
+    height: 44px;
+    min-height: 44px;
     padding: 0 9px;
   }
 
@@ -2507,6 +2614,42 @@
 
   .thinking-pill {
     grid-column: 4;
+  }
+
+  .thinking-level-control {
+    min-width: 44px;
+    gap: 4px;
+    border-radius: 999px;
+    padding: 0;
+  }
+
+  .thinking-level-control .thinking-level-copy {
+    display: none;
+  }
+
+  .thinking-level-control .thinking-level-brain {
+    width: 16px;
+    height: 16px;
+  }
+
+  .composer-actions .thinking-level-control .thinking-level-mobile-value {
+    display: inline;
+    font-size: 0.72rem;
+    line-height: 1;
+  }
+
+  .thinking-level-control .thinking-level-select {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    max-width: none;
+    height: 100%;
+    padding: 0;
+    opacity: 0;
+  }
+
+  .thinking-level-control .thinking-level-chevron {
+    display: none;
   }
 
   .round-send {

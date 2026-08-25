@@ -51,7 +51,6 @@ export function defaultRenderPlugin() {
 
 export function createDefaultAccessorySkills() {
   return {
-    npcAgent: { enabled: false, modelOverride: '' },
     sceneAgent: { enabled: false, modelOverride: '' },
     worldDirector: { enabled: false, modelOverride: '' },
     gameHud: { enabled: false, modelOverride: '' },

@@ -20,6 +20,10 @@ export function normalizeConversationAppearance(input = {}) {
   const customJsRiskAccepted = normalizeBoolean(input.customJsRiskAccepted ?? input.custom_js_risk_accepted, false);
   const statusBarPrompt = normalizeMultilineText(input.statusBarPrompt ?? input.status_bar_prompt ?? '');
   const showWorldBookMatches = normalizeBoolean(input.showWorldBookMatches ?? input.show_world_book_matches, true);
+  const castTrackingSource = input.castTracking ?? input.cast_tracking ?? {};
+  const castTracking = {
+    enabled: normalizeBoolean(castTrackingSource?.enabled, false)
+  };
 
   return {
     desktopBackgroundUrl,
@@ -31,7 +35,8 @@ export function normalizeConversationAppearance(input = {}) {
     customJsEnabled,
     customJsRiskAccepted,
     statusBarPrompt,
-    showWorldBookMatches
+    showWorldBookMatches,
+    castTracking
   };
 }
 
@@ -135,6 +140,7 @@ function toLegacyAppearance(appearance) {
     customJs: appearance.customJs,
     customJsEnabled: appearance.customJsEnabled,
     customJsRiskAccepted: appearance.customJsRiskAccepted,
-    showWorldBookMatches: appearance.showWorldBookMatches
+    showWorldBookMatches: appearance.showWorldBookMatches,
+    castTracking: appearance.castTracking
   };
 }

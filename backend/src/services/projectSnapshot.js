@@ -2,11 +2,13 @@ import { appConfig } from '../config.js';
 import { listStatusBarTemplates } from '../modules/statusBarTemplates.js';
 import { parseJson } from '../utils/json.js';
 import { listProviderCapabilities } from './providerCapabilities.js';
+import { buildUserCastSnapshot } from './cast/castSnapshot.js';
 
-const snapshotVersion = 1;
+const snapshotVersion = 2;
 
 export function buildProjectSnapshot(database, userId) {
   const createdAt = new Date().toISOString();
+  const conversations = listConversationSummaries(database, userId);
   return stripSecrets({
     version: snapshotVersion,
     kind: 'project_snapshot',
@@ -25,11 +27,13 @@ export function buildProjectSnapshot(database, userId) {
       regexRules: listRegexRules(database, userId),
       statusBars: listStatusBars(database, userId),
       statusBarTemplates: listStatusBarTemplates(database, userId),
-      conversations: listConversationSummaries(database, userId),
+      conversations,
+      cast: buildUserCastSnapshot(
+        database,
+        userId,
+        conversations.map((conversation) => conversation.id)
+      ),
       conversationMemories: listConversationMemories(database, userId),
-      npcRegistry: listNpcRegistry(database, userId),
-      npcMemories: listNpcMemories(database, userId),
-      npcBehaviors: listNpcBehaviors(database, userId),
       economyAccounts: listEconomyAccounts(database, userId),
       saves: listSaveSummaries(database, userId)
     },
@@ -343,77 +347,6 @@ function listConversationMemories(database, userId) {
     archived: Boolean(row.archived),
     createdAt: row.created_at,
     updatedAt: row.updated_at
-  }));
-}
-
-function listNpcRegistry(database, userId) {
-  const rows = database
-    .prepare(
-      `SELECT npc_registry.*
-       FROM npc_registry
-       JOIN conversations ON conversations.id = npc_registry.conversation_id
-       WHERE conversations.user_id = ?
-       ORDER BY npc_registry.conversation_id ASC, npc_registry.npc_name ASC`
-    )
-    .all(userId);
-  return rows.map((row) => ({
-    id: row.id,
-    conversationId: row.conversation_id,
-    npcName: row.npc_name,
-    source: row.source || 'manual',
-    evidence: row.evidence || '',
-    confidence: Number(row.confidence || 0),
-    hidden: Boolean(row.hidden),
-    status: row.status || 'active',
-    customStatus: row.custom_status || '',
-    aliases: parseJson(row.aliases, []),
-    memorySealed: Boolean(row.memory_sealed),
-    currentLocation: row.current_location || '',
-    createdAt: row.created_at,
-    updatedAt: row.updated_at
-  }));
-}
-
-function listNpcMemories(database, userId) {
-  const rows = database
-    .prepare(
-      `SELECT npc_memories.*
-       FROM npc_memories
-       JOIN conversations ON conversations.id = npc_memories.conversation_id
-       WHERE conversations.user_id = ?
-       ORDER BY npc_memories.conversation_id ASC, npc_memories.npc_name ASC, npc_memories.created_at ASC`
-    )
-    .all(userId);
-  return rows.map((row) => ({
-    id: row.id,
-    conversationId: row.conversation_id,
-    npcName: row.npc_name,
-    memoryType: row.memory_type || 'event',
-    content: row.content || '',
-    createdAt: row.created_at
-  }));
-}
-
-function listNpcBehaviors(database, userId) {
-  const rows = database
-    .prepare(
-      `SELECT npc_behaviors.*
-       FROM npc_behaviors
-       JOIN conversations ON conversations.id = npc_behaviors.conversation_id
-       WHERE conversations.user_id = ?
-       ORDER BY npc_behaviors.conversation_id ASC, npc_behaviors.npc_name ASC, npc_behaviors.priority ASC`
-    )
-    .all(userId);
-  return rows.map((row) => ({
-    id: row.id,
-    conversationId: row.conversation_id,
-    npcName: row.npc_name,
-    behaviorType: row.behavior_type || 'reaction',
-    triggerCondition: row.trigger_condition || '',
-    action: row.action || '',
-    priority: Number(row.priority || 0),
-    enabled: Boolean(row.enabled),
-    createdAt: row.created_at
   }));
 }
 

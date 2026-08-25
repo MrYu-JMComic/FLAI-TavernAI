@@ -36,12 +36,10 @@ const TOWN_TURN_TOOL = [
       description: 'Advance the supplied town by one causal turn using only its current residents, locations, memories, events, and rules.',
       parameters: {
         type: 'object',
-        additionalProperties: false,
         required: ['event', 'actions'],
         properties: {
           event: {
             type: 'object',
-            additionalProperties: false,
             required: ['eventType', 'uiType', 'title', 'detail', 'participantIds', 'respondsToEventId'],
             properties: {
               eventType: {
@@ -70,7 +68,6 @@ const TOWN_TURN_TOOL = [
             maxItems: 8,
             items: {
               type: 'object',
-              additionalProperties: false,
               required: ['residentId', 'locationId', 'activity', 'intention', 'mood', 'memory', 'importance'],
               properties: {
                 residentId: { type: 'string', minLength: 1, maxLength: 160 },

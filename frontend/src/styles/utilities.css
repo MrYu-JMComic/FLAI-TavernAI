@@ -125,8 +125,12 @@
 }
 
 .markdown-content {
+  box-sizing: border-box;
+  width: 100%;
   min-width: 0;
   max-width: 100%;
+  overflow-x: hidden;
+  overflow-wrap: anywhere;
   white-space: normal;
 }
 
@@ -139,7 +143,9 @@
 }
 
 .markdown-paragraph {
+  max-width: 100%;
   margin: 0 0 0.72em;
+  overflow-wrap: anywhere;
   white-space: pre-wrap;
 }
 
@@ -311,6 +317,58 @@
   font-weight: 800;
   text-decoration: underline;
   text-underline-offset: 3px;
+}
+
+/* -------------------------------------------------------
+   KATEX MATH RENDERING
+   ------------------------------------------------------- */
+
+.markdown-content .katex {
+  word-break: normal;
+  overflow-wrap: normal;
+  font-size: 1.05em;
+}
+
+.markdown-content .katex-inline-fit {
+  max-width: 100%;
+}
+
+.markdown-content .katex-inline-fit[data-katex-scaled] {
+  display: inline-block;
+  overflow: hidden;
+  line-height: 0;
+  vertical-align: top;
+}
+
+.markdown-content .katex-inline-fit[data-katex-scaled] > .katex-display,
+.markdown-content .katex-inline-fit > .katex {
+  display: inline-block;
+  max-width: none;
+  margin: 0;
+  white-space: nowrap;
+  transform: scale(var(--katex-scale, 1));
+  transform-origin: left top;
+}
+
+.markdown-content .katex-block[data-katex-scaled] > .katex-display,
+.markdown-content .katex-block[data-katex-scaled] > .katex {
+  display: inline-block;
+  max-width: none;
+  margin: 0;
+  white-space: nowrap;
+  transform: scale(var(--katex-scale, 1));
+  transform-origin: left top;
+}
+
+.markdown-content .katex-block {
+  max-width: 100%;
+  margin: 0.35em 0 0.8em;
+  overflow: hidden;
+  white-space: normal;
+}
+
+.markdown-content .katex-error {
+  color: var(--danger);
 }
 
 /* -------------------------------------------------------

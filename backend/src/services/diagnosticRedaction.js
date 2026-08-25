@@ -3,7 +3,7 @@ export const DIAGNOSTIC_REDACTED_VALUE = '[redacted]';
 const SECRET_KEY_PATTERN = /(?:api[_-]?key(?![_-]?(?:set|hint|needs[_-]?reset|error))|apikey(?!set|hint|needsreset|error)|authorization|cookie|set[_-]?cookie|secret|token|password|session|csrf|encrypted)/i;
 const IMAGE_DATA_URL_PATTERN = /\bdata:(image\/[a-z0-9.+-]+);base64,[a-z0-9+/=]+/gi;
 const BEARER_TOKEN_PATTERN = /\bBearer\s+[a-z0-9._~+/=-]+/gi;
-const OPENAI_STYLE_SECRET_PATTERN = /\bsk-[a-z0-9][a-z0-9._-]{5,}\b/gi;
+const OPENAI_STYLE_SECRET_PATTERN = /\bsk-[a-z0-9][a-z0-9._-]{5}\b/gi;
 const HEADER_SECRET_PATTERN = /\b(authorization|cookie|set-cookie|x-csrf-token|csrf-token|x-api-key|api-key|api_key|password|token|secret)\s*[:=]\s*[^,\r\n]+/gi;
 const COOKIE_PAIR_PATTERN = /\b(flai_session|session|sessionid|csrf|csrf_token|csrf-token|x-csrf-token)=([^;\s,]+)/gi;
 

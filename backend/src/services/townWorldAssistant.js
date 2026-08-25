@@ -9,14 +9,12 @@ const BLUEPRINT_TOOL = [
       description: 'Create a complete world blueprint from the user world idea. Do not return a template or a fixed existing story.',
       parameters: {
         type: 'object',
-        additionalProperties: false,
         required: ['name', 'description', 'environment', 'locations', 'residents', 'openingEvents', 'rules'],
         properties: {
           name: { type: 'string', minLength: 1, maxLength: 120 },
           description: { type: 'string', maxLength: 2000 },
           environment: {
             type: 'object',
-            additionalProperties: false,
             required: ['biome', 'atmosphere', 'settlementPattern', 'water'],
             properties: {
               biome: { type: 'string', enum: ['temperate', 'coastal', 'forest', 'desert', 'snow', 'volcanic', 'swamp', 'fantasy'] },
@@ -31,7 +29,6 @@ const BLUEPRINT_TOOL = [
             maxItems: 18,
             items: {
               type: 'object',
-              additionalProperties: false,
               required: ['name', 'kind', 'description', 'importance'],
               properties: {
                 name: { type: 'string', maxLength: 100 },
@@ -47,7 +44,6 @@ const BLUEPRINT_TOOL = [
             maxItems: 18,
             items: {
               type: 'object',
-              additionalProperties: false,
               required: ['name', 'role', 'summary', 'goal', 'mood', 'startingLocation', 'activities', 'dialogue', 'memories'],
               properties: {
                 name: { type: 'string', maxLength: 120 },

@@ -1,10 +1,15 @@
 <script>
-import { defineComponent, h, onBeforeUnmount, shallowRef, watch } from 'vue';
+import { defineComponent, h, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import MarkdownIt from 'markdown-it';
+import markdownItKatex from '@vscode/markdown-it-katex';
+import katex from 'katex';
 import hljs from 'highlight.js/lib/common';
 import DOMPurify from 'dompurify';
 import { normalizeRegexFlags as normalizeSharedRegexFlags } from '../../../shared/regexFlags.js';
 import { recordFrontendDiagnostic } from '../diagnostics.js';
+import { reconcileDomChildren } from '../utils/domReconciler.js';
+import { normalizeKatexSource } from '../utils/katexCompatibility.js';
+import 'katex/dist/katex.min.css';
 
 // Initialize markdown-it with highlight.js
 const md = new MarkdownIt({
@@ -24,6 +29,109 @@ const md = new MarkdownIt({
     const escaped = md.utils.escapeHtml(str);
     return `<pre class="markdown-code"><code>${escaped}</code></pre>`;
   }
+});
+
+// Register KaTeX plugin for $...$ and $$...$$ delimiters.
+// The package is CommonJS, so the callable plugin may sit on `.default`.
+const katexPlugin = typeof markdownItKatex === 'function'
+  ? markdownItKatex
+  : markdownItKatex?.default;
+const compatibleKatex = {
+  renderToString(source, options) {
+    return katex.renderToString(normalizeKatexSource(source), options);
+  }
+};
+
+md.use(katexPlugin, {
+  katex: compatibleKatex,
+  throwOnError: false,
+  strict: false,
+  enableBareBlocks: true
+});
+
+// Keep math readable in responsive containers by scaling only formulas whose
+// natural width is larger than their containing paragraph.
+const originalInlineKatexRenderer = md.renderer.rules.math_inline;
+if (typeof originalInlineKatexRenderer === 'function') {
+  md.renderer.rules.math_inline = (tokens, idx, options, env, self) => (
+    `<span class="katex-inline-fit">${originalInlineKatexRenderer(tokens, idx, options, env, self)}</span>`
+  );
+}
+
+// Character codes for backslash delimiter parsing
+const BACKSLASH_CHAR_CODE = 0x5c;
+const OPEN_PAREN_CHAR_CODE = 0x28;
+const OPEN_BRACKET_CHAR_CODE = 0x5b;
+const INLINE_MATH_CLOSE = '\\)';
+const BLOCK_MATH_CLOSE = '\\]';
+
+// Inline rule for \(...\). Unterminated math falls through to plain text so
+// streaming responses never flash a KaTeX error mid-formula.
+function mathInlineParen(state, silent) {
+  const start = state.pos;
+  if (state.src.charCodeAt(start) !== BACKSLASH_CHAR_CODE) return false;
+  if (state.src.charCodeAt(start + 1) !== OPEN_PAREN_CHAR_CODE) return false;
+  const end = state.src.indexOf(INLINE_MATH_CLOSE, start + 2);
+  if (end === -1) return false;
+  const content = state.src.slice(start + 2, end);
+  if (!content.trim()) return false;
+  if (!silent) {
+    const token = state.push('math_inline', 'math', 0);
+    token.markup = '\\(';
+    token.content = content;
+  }
+  state.pos = end + 2;
+  return true;
+}
+
+// Block rule for \[...\]. Emitting a block token keeps the rendered
+// <p class="katex-block"> at the top level instead of nesting it in a paragraph.
+function mathBlockBracket(state, startLine, endLine, silent) {
+  const start = state.bMarks[startLine] + state.tShift[startLine];
+  const max = state.eMarks[startLine];
+  if (state.sCount[startLine] - state.blkIndent >= 4) return false;
+  if (state.src.charCodeAt(start) !== BACKSLASH_CHAR_CODE) return false;
+  if (state.src.charCodeAt(start + 1) !== OPEN_BRACKET_CHAR_CODE) return false;
+
+  const firstLineTail = state.src.slice(start + 2, max);
+  let content = null;
+  let nextLine = startLine;
+  const closeIndex = firstLineTail.indexOf(BLOCK_MATH_CLOSE);
+  if (closeIndex !== -1) {
+    if (firstLineTail.slice(closeIndex + 2).trim()) return false;
+    content = firstLineTail.slice(0, closeIndex);
+  } else {
+    let buffer = firstLineTail;
+    while (content === null) {
+      nextLine += 1;
+      if (nextLine >= endLine) return false;
+      const lineStart = state.bMarks[nextLine] + state.tShift[nextLine];
+      const lineEnd = state.eMarks[nextLine];
+      const line = state.src.slice(lineStart, lineEnd);
+      const lineClose = line.indexOf(BLOCK_MATH_CLOSE);
+      if (lineClose === -1) {
+        buffer += `\n${line}`;
+        continue;
+      }
+      if (line.slice(lineClose + 2).trim()) return false;
+      content = `${buffer}\n${line.slice(0, lineClose)}`;
+    }
+  }
+  if (!content.trim()) return false;
+  if (silent) return true;
+
+  const token = state.push('math_block', 'math', 0);
+  token.block = true;
+  token.markup = '\\[';
+  token.content = content;
+  token.map = [startLine, nextLine + 1];
+  state.line = nextLine + 1;
+  return true;
+}
+
+md.inline.ruler.before('escape', 'math_inline_paren', mathInlineParen);
+md.block.ruler.before('fence', 'math_block_bracket', mathBlockBracket, {
+  alt: ['paragraph', 'blockquote', 'list']
 });
 
 // Custom fence renderer to wrap code blocks properly
@@ -64,8 +172,11 @@ function getCachedRender(text, renderPlugins = []) {
   
   const rawHtml = renderWithPlugins(text, renderPlugins);
   const html = DOMPurify.sanitize(rawHtml, {
-    ADD_TAGS: ['pre', 'code', 'span', 'details', 'summary', 'div'],
-    ADD_ATTR: ['class', 'data-lang', 'open']
+    // `semantics`/`annotation` carry the original TeX inside KaTeX's MathML and
+    // are not in DOMPurify's default allow-list, so copy-as-LaTeX and screen
+    // readers need them added back explicitly.
+    ADD_TAGS: ['pre', 'code', 'span', 'details', 'summary', 'div', 'semantics', 'annotation'],
+    ADD_ATTR: ['class', 'data-lang', 'open', 'encoding']
   });
   
   // Evict oldest entries if cache is full
@@ -217,23 +328,10 @@ function appendPluginCacheField(cacheKey, value) {
   return `${cacheKey}${text.length}:${text};`;
 }
 
-function scheduleMarkdownFrame(callback) {
-  if (typeof requestAnimationFrame !== 'function') {
-    callback();
-    return null;
-  }
-  return requestAnimationFrame(callback);
-}
-
-function cancelMarkdownFrame(frameId) {
-  if (frameId !== null && typeof cancelAnimationFrame === 'function') {
-    cancelAnimationFrame(frameId);
-  }
-}
-
 export default defineComponent({
   name: 'MarkdownContent',
   inheritAttrs: false,
+  emits: ['rendered'],
   props: {
     text: {
       type: String,
@@ -248,46 +346,108 @@ export default defineComponent({
       default: false
     }
   },
-  setup(props, { attrs }) {
-    const renderedHtml = shallowRef('');
-    let markdownRenderFrame = null;
+  setup(props, { attrs, emit }) {
+    const rootElement = ref(null);
     let pendingMarkdownText = props.text;
     let pendingRenderPlugins = props.renderPlugins;
-
-    function cancelPendingMarkdownFrame() {
-      cancelMarkdownFrame(markdownRenderFrame);
-      markdownRenderFrame = null;
-    }
+    let pendingHtml = '';
+    let appliedHtml = null;
+    let templateElement = null;
+    let katexResizeObserver = null;
+    let katexFitTimeout = null;
 
     function renderMarkdownNow(text, renderPlugins) {
-      renderedHtml.value = getCachedRender(text, renderPlugins);
+      pendingHtml = getCachedRender(text, renderPlugins);
+      reconcileRenderedHtml();
     }
 
-    function flushPendingMarkdownRender() {
-      markdownRenderFrame = null;
-      renderMarkdownNow(pendingMarkdownText, pendingRenderPlugins);
+    function reconcileRenderedHtml() {
+      const root = rootElement.value;
+      if (!root || appliedHtml === pendingHtml || typeof document === 'undefined') return;
+      templateElement ||= document.createElement('template');
+      templateElement.innerHTML = pendingHtml;
+      reconcileDomChildren(root, templateElement.content);
+      appliedHtml = pendingHtml;
+      fitInlineKatex();
+      emit('rendered');
+    }
+
+    function fitInlineKatex() {
+      const root = rootElement.value;
+      if (!root) return;
+
+      const wrappers = root.querySelectorAll('.katex-inline-fit, .katex-block');
+
+      for (const wrapper of wrappers) {
+        wrapper.style.removeProperty('width');
+        wrapper.style.removeProperty('height');
+        wrapper.style.removeProperty('--katex-scale');
+        wrapper.removeAttribute('data-katex-scaled');
+
+        const formula = wrapper.querySelector(':scope > .katex') || wrapper.querySelector('.katex');
+        const parent = wrapper.parentElement;
+        const parentStyle = parent && typeof getComputedStyle === 'function'
+          ? getComputedStyle(parent)
+          : null;
+        const parentWidth = parent?.clientWidth || root.clientWidth;
+        const horizontalPadding = parentStyle
+          ? (parseFloat(parentStyle.paddingLeft) || 0) + (parseFloat(parentStyle.paddingRight) || 0)
+          : 0;
+        const availableWidth = Math.max(1, parentWidth - horizontalPadding);
+        if (!formula || !availableWidth) continue;
+
+        const naturalSize = formula.getBoundingClientRect();
+        // Display-mode KaTeX can stretch its outer box to the paragraph width;
+        // scrollWidth preserves the formula's actual min-content width.
+        const naturalWidth = Math.max(naturalSize.width, formula.scrollWidth || 0);
+        if (!(naturalWidth > availableWidth + 0.5)) continue;
+
+        // Leave a pixel of breathing room for fractional transform rounding.
+        const fittingWidth = Math.max(1, availableWidth - 1);
+        const scale = fittingWidth / naturalWidth;
+        wrapper.style.width = `${availableWidth}px`;
+        wrapper.style.height = `${naturalSize.height * scale}px`;
+        wrapper.style.setProperty('--katex-scale', String(scale));
+        wrapper.dataset.katexScaled = 'true';
+      }
+    }
+
+    function scheduleKatexFit() {
+      if (katexFitTimeout !== null) return;
+      // Defer observer-driven writes to the next task to avoid resize loops.
+      katexFitTimeout = setTimeout(() => {
+        katexFitTimeout = null;
+        fitInlineKatex();
+      }, 0);
     }
 
     function scheduleRenderedMarkdown() {
       pendingMarkdownText = props.text;
       pendingRenderPlugins = props.renderPlugins;
 
-      if (!props.deferUpdates) {
-        cancelPendingMarkdownFrame();
-        renderMarkdownNow(pendingMarkdownText, pendingRenderPlugins);
-        return;
-      }
-
-      if (markdownRenderFrame !== null) {
-        return;
-      }
-      markdownRenderFrame = scheduleMarkdownFrame(flushPendingMarkdownRender);
+      renderMarkdownNow(pendingMarkdownText, pendingRenderPlugins);
     }
 
-    watch(() => props.text, scheduleRenderedMarkdown, { immediate: true });
-    watch(() => buildPluginCacheKey(props.renderPlugins), scheduleRenderedMarkdown);
-    watch(() => props.deferUpdates, scheduleRenderedMarkdown);
-    onBeforeUnmount(cancelPendingMarkdownFrame);
+    // The typewriter owns the visible update cadence. Commit Markdown after
+    // Vue's text update without adding a second animation-frame queue.
+    watch(() => props.text, scheduleRenderedMarkdown, { immediate: true, flush: 'post' });
+    watch(() => buildPluginCacheKey(props.renderPlugins), scheduleRenderedMarkdown, { flush: 'post' });
+    onMounted(() => {
+      reconcileRenderedHtml();
+      fitInlineKatex();
+      if (typeof ResizeObserver === 'function' && rootElement.value) {
+        katexResizeObserver = new ResizeObserver(scheduleKatexFit);
+        katexResizeObserver.observe(rootElement.value);
+      }
+    });
+    onBeforeUnmount(() => {
+      katexResizeObserver?.disconnect();
+      katexResizeObserver = null;
+      if (katexFitTimeout !== null) {
+        clearTimeout(katexFitTimeout);
+        katexFitTimeout = null;
+      }
+    });
     
     return () => {
       const { class: className, ...restAttrs } = attrs;
@@ -295,8 +455,9 @@ export default defineComponent({
         'div',
         {
           ...restAttrs,
+          ref: rootElement,
           class: ['markdown-content', className],
-          innerHTML: renderedHtml.value
+          'data-stream-rendering': props.deferUpdates ? 'true' : undefined
         }
       );
     };

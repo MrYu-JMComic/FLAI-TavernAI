@@ -30,8 +30,7 @@ const characterTools = [
             enum: ['private', 'public'],
             description: '展示权限。默认 private。'
           }
-        },
-        additionalProperties: false
+        }
       }
     }
   },
@@ -54,8 +53,7 @@ const characterTools = [
           },
           enabled: { type: 'boolean', description: '是否启用。' }
         },
-        required: ['label', 'pattern', 'replacement'],
-        additionalProperties: false
+        required: ['label', 'pattern', 'replacement']
       }
     }
   },
@@ -79,13 +77,11 @@ const characterTools = [
                 scope: { type: 'string', enum: ['input', 'output', 'both'] },
                 enabled: { type: 'boolean' }
               },
-              required: ['label', 'pattern', 'replacement'],
-              additionalProperties: false
+              required: ['label', 'pattern', 'replacement']
             }
           }
         },
-        required: ['rules'],
-        additionalProperties: false
+        required: ['rules']
       }
     }
   },
@@ -110,15 +106,13 @@ const characterTools = [
                 titleTemplate: { type: 'string' },
                 enabled: { type: 'boolean' }
               },
-              required: ['label', 'pattern'],
-              additionalProperties: false
+              required: ['label', 'pattern']
             }
           },
           accessorySkills: {
             type: 'object',
             additionalProperties: true,
             properties: {
-              npcAgent: skillConfigSchema(),
               statusBarAgent: skillConfigSchema(),
               economyAgent: skillConfigSchema(),
               talentPrompt: skillConfigSchema(),
@@ -133,7 +127,6 @@ const characterTools = [
               'Text rows should use string values when known, for example {"name":"姓名","value":"待定"}, and template markup like <span class="sb-label">姓名</span><span class="sb-val">{{姓名}}</span>.',
               'Numeric meters should use value/max/color and placeholders such as {{体力}}, {{体力.max}}, {{体力.percent}}, and {{体力.color}}.'
             ].join(' '),
-            additionalProperties: false,
             properties: {
               name: { type: 'string', description: '状态栏名称。' },
               variables: {
@@ -141,7 +134,6 @@ const characterTools = [
                 description: '新会话创建时写入的初始状态变量。',
                 items: {
                   type: 'object',
-                  additionalProperties: false,
                   properties: {
                     name: {
                       type: 'string',
@@ -197,12 +189,10 @@ const characterTools = [
                 content: { type: 'string' },
                 enabled: { type: 'boolean' }
               },
-              required: ['name', 'content'],
-              additionalProperties: false
+              required: ['name', 'content']
             }
           }
-        },
-        additionalProperties: false
+        }
       }
     }
   }
@@ -247,7 +237,7 @@ function buildCharacterAssistantMessages({ requirement, draft, userName, enabled
         ...characterQualityInstructions,
         ...statusBarBlueprintInstructions,
         '除非 requirement 明确要求经济、天赋、CG、立绘或场景图，否则不得启用 economyAgent、talentPrompt 或 cgScene。',
-        '只有存在清晰、可持续更新的状态变量时才建议 statusBarAgent:auto；只有配角记忆会实质影响后续对话时才启用 npcAgent。'
+        '只有存在清晰、可持续更新的状态变量时才建议 statusBarAgent:auto。人物档案由会话人物域独立维护，不属于附属 Agent 配置。'
       ].join('\n')
     },
     {

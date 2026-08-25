@@ -9,10 +9,8 @@ const { executeWorldDirectorProposal } = await import('../services/accessoryAgen
 const { getWorldClock } = await import('../modules/dynamicWorld.js');
 const { listQuests } = await import('../modules/quests.js');
 const { listSkillChecks } = await import('../modules/skillChecks.js');
-const { updateConversationNpc } = await import('../modules/npcs.js');
 const { upsertSceneNode, upsertSceneRoute } = await import('../modules/scenes.js');
 const { getTravelMap } = await import('../modules/travel.js');
-const { getActiveEncounter } = await import('../modules/encounters.js');
 const { listWorldEvents } = await import('../modules/worldEvents.js');
 const { newId, nowIso } = await import('../security.js');
 
@@ -46,24 +44,6 @@ test('world director proposals only mutate through validated rule modules', asyn
   env.db.close();
 });
 
-test('world director cannot bypass routes or terminal NPC rules and records rejection diagnostics', async () => {
-  const env = setupTestEnv();
-  const start = upsertSceneNode(env.db, env.userId, env.conversationId, { nodeType: 'building', name: '酒馆' });
-  const target = upsertSceneNode(env.db, env.userId, env.conversationId, { nodeType: 'building', name: '钟楼' });
-  updateConversationNpc(env.db, env.userId, env.conversationId, '莉娅', { currentLocation: start.name, status: 'active' });
-  const executions = [];
-  const rejected = await executeWorldDirectorProposal({ ...env, toolName: 'schedule_npc_activity', args: { npcName: '莉娅', title: '敲钟', locationNodeId: target.id, durationMinutes: 60 }, executions });
-  assert.equal(rejected.ok, false);
-  assert.match(rejected.error, /没有可用路线/);
-  updateConversationNpc(env.db, env.userId, env.conversationId, '莉娅', { currentLocation: start.name, status: 'dead' });
-  const terminal = await executeWorldDirectorProposal({ ...env, toolName: 'schedule_npc_activity', args: { npcName: '莉娅', title: '巡逻', locationNodeId: start.id }, executions });
-  assert.equal(terminal.ok, false);
-  assert.match(terminal.error, /终止状态/);
-  const rejectedEvents = listWorldEvents(env.db, env.userId, env.conversationId, { eventType: 'director.action.rejected' });
-  assert.equal(rejectedEvents.events.length, 2);
-  env.db.close();
-});
-
 test('world director travel proposals obey the HUD feature switch and direct routes', async () => {
   const env = setupTestEnv();
   const start = upsertSceneNode(env.db, env.userId, env.conversationId, { nodeType: 'building', name: '酒馆' });
@@ -81,29 +61,6 @@ test('world director travel proposals obey the HUD feature switch and direct rou
   const traveled = await executeWorldDirectorProposal({ ...env, toolName: 'travel_to_location', args: { destinationNodeId: middle.id }, travelEnabled: true });
   assert.equal(traveled.ok, true);
   assert.equal(getTravelMap(env.db, env.userId, env.conversationId).currentNode.id, middle.id);
-  env.db.close();
-});
-
-test('world director encounter tools are gated and cannot forge rolls or skip turns', async () => {
-  const env = setupTestEnv();
-  upsertSceneNode(env.db, env.userId, env.conversationId, { nodeType: 'building', name: '酒馆' });
-  updateConversationNpc(env.db, env.userId, env.conversationId, '强盗', { currentLocation: '酒馆', status: 'active' });
-  const disabled = await executeWorldDirectorProposal({ ...env, toolName: 'create_encounter', args: { npcNames: ['强盗'] } });
-  assert.equal(disabled.ok, false);
-  assert.match(disabled.error, /已关闭/);
-  const created = await executeWorldDirectorProposal({ ...env, toolName: 'create_encounter', args: { title: '伏击', npcNames: ['强盗'] }, encounterEnabled: true });
-  assert.equal(created.ok, true);
-  const encounter = getActiveEncounter(env.db, env.userId, env.conversationId);
-  const wrongActor = encounter.participants.find(item => item.id !== encounter.currentActor.id);
-  const skipped = await executeWorldDirectorProposal({ ...env, toolName: 'perform_encounter_action', args: { encounterId: encounter.id, actorId: wrongActor.id, actionType: 'defend' }, encounterEnabled: true });
-  assert.equal(skipped.ok, false);
-  assert.match(skipped.error, /尚未轮到/);
-  const target = encounter.participants.find(item => item.actorType !== encounter.currentActor.actorType);
-  const acted = await executeWorldDirectorProposal({ ...env, toolName: 'perform_encounter_action', args: { encounterId: encounter.id, actorId: encounter.currentActor.id, targetId: target.id, actionType: 'attack', roll: 99, damage: 999 }, encounterEnabled: true });
-  assert.equal(acted.ok, true);
-  assert.ok(acted.result.action.check.roll >= 1 && acted.result.action.check.roll <= 20);
-  assert.notEqual(acted.result.action.check.roll, 99);
-  assert.ok(acted.result.action.damage >= 0 && acted.result.action.damage <= 12);
   env.db.close();
 });
 

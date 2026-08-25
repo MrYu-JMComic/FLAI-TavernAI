@@ -2,7 +2,6 @@ import { parseJson } from '../utils/json.js';
 import {
   appendReasoning,
   createThinkingTagFilter,
-  extractReasoning,
   extractText,
   mergeReasoning,
   splitThinkingTags
@@ -13,7 +12,16 @@ import { normalizeProviderModel } from './providerModels.js';
 import { normalizeToolCompletionRounds } from './providerNumbers.js';
 import { parseSse } from './providerSse.js';
 import { createStreamEmitQueue } from './providerStreamEmit.js';
+import {
+  hasProviderStreamError,
+  providerStreamErrorMessage
+} from './providerStreamErrors.js';
 import { executeProviderTool } from './providerToolResults.js';
+import {
+  normalizeThinkingLevel,
+  resolveSupportedThinkingLevel,
+  resolveThinkingControl
+} from '../../../shared/providerThinking.js';
 
 export function usesResponsesApi(settings = {}) {
   return Boolean(settings.supportsReasoning && ['openai', 'xai'].includes(settings.providerType));
@@ -65,6 +73,7 @@ export async function streamOpenAiResponse(settings, messages, emit, signal, opt
   let content = '';
   let reasoning = '';
   let usage = null;
+  let terminalEvent = '';
   const streamEmit = createStreamEmitQueue(emit);
   const thinkingTagFilter = createThinkingTagFilter({
     onContent(text) {
@@ -83,9 +92,19 @@ export async function streamOpenAiResponse(settings, messages, emit, signal, opt
     if (!json) {
       continue;
     }
+    if (hasProviderStreamError(json, event.event) || type === 'response.failed') {
+      throw new Error(providerStreamErrorMessage(json, 'Responses API 流式响应失败'));
+    }
+    if (type === 'response.incomplete') {
+      const reason = json.response?.incomplete_details?.reason || json.incomplete_details?.reason;
+      throw new Error(reason
+        ? `Responses API 流式响应未完成：${reason}`
+        : 'Responses API 流式响应未完成');
+    }
 
-    if (type === 'response.output_text.delta' && json.delta) {
-      thinkingTagFilter.push(json.delta);
+    const outputTextDelta = extractResponsesOutputTextDelta(type, json);
+    if (outputTextDelta) {
+      thinkingTagFilter.push(outputTextDelta);
     }
 
     const reasoningDelta = extractResponsesReasoningDelta(type, json);
@@ -95,12 +114,16 @@ export async function streamOpenAiResponse(settings, messages, emit, signal, opt
     }
 
     if (type === 'response.completed') {
+      terminalEvent = type;
       usage = json.response?.usage || usage;
     }
     await streamEmit.wait();
   }
   thinkingTagFilter.flush();
   await streamEmit.wait();
+  if (!terminalEvent) {
+    throw new Error('Responses API 流式响应在 response.completed 前中断');
+  }
 
   return {
     content,
@@ -364,23 +387,20 @@ function extractOpenAiReasoning(json) {
 }
 
 export function extractResponsesReasoningDelta(type, json = {}) {
-  const isReasoningEvent = /^response\.(reasoning|reasoning_summary|reasoning_summary_text|reasoning_text|reasoning_content)(\.|$)/.test(String(type || ''));
-  if (isReasoningEvent) {
+  const eventType = String(type || '');
+  if (
+    eventType === 'response.reasoning_text.delta'
+    || eventType === 'response.reasoning_summary_text.delta'
+  ) {
     return extractText(json.delta || json.text || json.reasoning || json.reasoning_content || json.summary || json.output_text || '');
   }
-  return extractReasoning(json);
+  return '';
 }
 
 export function extractResponsesOutputTextDelta(type, json = {}) {
   const eventType = String(type || '');
-  if (/^response\.output_text\.delta$/.test(eventType) && typeof json.delta === 'string') {
+  if (eventType === 'response.output_text.delta' && typeof json.delta === 'string') {
     return json.delta;
-  }
-  if (/^response\.(content|text|message|content_part)\.(added|delta|done)?$/.test(eventType)) {
-    return extractText(json.delta || json.text || json.content || json.output_text || json.part || '');
-  }
-  if (/^response\.output_item\.(added|done)$/.test(eventType)) {
-    return extractText(json.item?.content || json.item?.text || json.output_text || '');
   }
   return '';
 }
@@ -389,10 +409,31 @@ function resolveProviderModel(settings = {}, options = {}) {
   return normalizeProviderModel(settings.providerType, settings.model);
 }
 
-function buildOpenAiReasoning(settings = {}, options = {}) {
-  if (settings.extraBody?.reasoning && typeof settings.extraBody.reasoning === 'object') {
-    return settings.extraBody.reasoning;
+export function buildOpenAiReasoning(settings = {}, options = {}) {
+  const hasExplicitLevel = options.thinkingLevel !== undefined && options.thinkingLevel !== null && String(options.thinkingLevel).trim() !== '';
+  const extraReasoning = settings.extraBody?.reasoning;
+  if (!hasExplicitLevel && extraReasoning && typeof extraReasoning === 'object') {
+    return extraReasoning;
   }
+
+  if (hasExplicitLevel) {
+    const control = resolveThinkingControl(settings.providerType, settings.model, true);
+    const fallback = options.thinkingEnabled === false ? 'off' : control.defaultLevel;
+    const level = resolveSupportedThinkingLevel(
+      normalizeThinkingLevel(options.thinkingLevel, fallback),
+      control,
+      fallback
+    );
+    const effort = mapResponsesEffort(level, settings.providerType);
+    if (extraReasoning && typeof extraReasoning === 'object') {
+      return { ...extraReasoning, effort };
+    }
+    if (settings.providerType === 'xai') {
+      return { effort };
+    }
+    return { effort, summary: 'auto' };
+  }
+
   if (settings.providerType === 'xai') {
     return {
       effort: options.thinkingEnabled === false ? 'none' : 'high'
@@ -402,4 +443,14 @@ function buildOpenAiReasoning(settings = {}, options = {}) {
     effort: options.thinkingEnabled === false ? 'low' : 'medium',
     summary: 'auto'
   };
+}
+
+function mapResponsesEffort(level, providerType) {
+  if (providerType === 'xai') {
+    if (level === 'max' || level === 'xhigh') return 'xhigh';
+    if (level === 'off' || level === 'minimal') return 'low';
+    return level;
+  }
+  if (level === 'off') return 'none';
+  return level;
 }

@@ -9,13 +9,6 @@ const { createAppDatabase } = await import('../db.js');
 const { mergeAdvancedSettings, normalizeAdvancedSettings } = await import('../modules/advancedSettings.js');
 const { createCharacter } = await import('../modules/characters.js');
 const { getConversationEconomyState, getTransactionHistory } = await import('../modules/economy.js');
-const {
-  addNpcMemory,
-  hideConversationNpc,
-  listConversationNpcs,
-  listNpcBehaviors,
-  upsertConversationNpc
-} = await import('../modules/npcs.js');
 const { getStatusBar, upsertStatusBar } = await import('../modules/statusBars.js');
 const { getAccessorySkillsPayload, runAccessoryAgents } = await import('../services/accessoryAgents.js');
 const accessoryAgentsSource = readFileSync(new URL('../services/accessoryAgents.js', import.meta.url), 'utf8');
@@ -23,7 +16,6 @@ const advancedSettingsSource = readFileSync(new URL('../modules/advancedSettings
 
 test('accessory agents stay inactive when skills are disabled', async () => {
   const env = setupConversation({
-    npcAgent: skill(false),
     statusBarAgent: skill(false),
     economyAgent: skill(false),
     talentPrompt: skill(false),
@@ -45,14 +37,12 @@ test('accessory agents stay inactive when skills are disabled', async () => {
   });
 
   assert.deepEqual(results, []);
-  assert.equal(env.db.prepare('SELECT COUNT(*) AS count FROM npc_memories').get().count, 0);
   assert.equal(getConversationEconomyState(env.db, env.userId, env.conversation.id, { ensureDefaultAccount: false }).accounts.length, 0);
   assert.equal(getStatusBar(env.db, env.userId, env.conversation.id).variables[0].value, 100);
 });
 
 test('accessory skill payloads build active flags with direct own-key loops', () => {
   const env = setupConversation({
-    npcAgent: skill(false),
     statusBarAgent: skill('auto'),
     economyAgent: skill(true)
   });
@@ -61,7 +51,6 @@ test('accessory skill payloads build active flags with direct own-key loops', ()
   const payload = getAccessorySkillsPayload(env.conversation, null);
 
   assert.deepEqual(Object.keys(payload.skills), [
-    'npcAgent',
     'worldDirector',
     'gameHud',
     'encounterMode',
@@ -69,9 +58,9 @@ test('accessory skill payloads build active flags with direct own-key loops', ()
     'statusBarAgent',
     'economyAgent',
     'talentPrompt',
-    'cgScene'
+    'cgScene',
+    'sceneAgent'
   ]);
-  assert.equal(payload.active.npcAgent, false);
   assert.equal(payload.active.worldDirector, false);
   assert.equal(payload.active.gameHud, false);
   assert.equal(payload.active.encounterMode, false);
@@ -80,6 +69,7 @@ test('accessory skill payloads build active flags with direct own-key loops', ()
   assert.equal(payload.active.economyAgent, true);
   assert.equal(payload.active.talentPrompt, false);
   assert.equal(payload.active.cgScene, false);
+  assert.equal(payload.active.sceneAgent, false);
   assert.match(advancedSettingsSource, /const normalized = \{\};\r?\n  for \(const key in defaults\) \{/);
   assert.match(advancedSettingsSource, /Object\.prototype\.hasOwnProperty\.call\(defaults, key\)/);
   assert.match(accessoryAgentsSource, /const activeContext = \{/);
@@ -94,21 +84,12 @@ test('accessory skill payloads build active flags with direct own-key loops', ()
 test('provider-backed accessory agents receive current-turn observation windows', async () => {
   const env = setupConversation({
     statusBarAgent: skill(true),
-    npcAgent: skill(true),
     economyAgent: skill(true)
   });
   const statusBar = upsertStatusBar(env.db, env.userId, env.conversation.id, {
     name: 'State',
     variables: [{ name: 'HP', value: 100, max: 100 }],
     template: ''
-  });
-  upsertConversationNpc(env.db, env.userId, env.conversation.id, {
-    npcName: 'Mira Valen',
-    aliases: ['Mira', 'Little Mi'],
-    currentLocation: 'NPC_LOCATION_MUST_STAY_OUT_OF_INITIAL_PAYLOAD'
-  });
-  addNpcMemory(env.db, env.userId, env.conversation.id, 'Mira Valen', {
-    content: 'NPC_MEMORY_MUST_STAY_OUT_OF_INITIAL_PAYLOAD'
   });
   const capturedBodies = [];
   const originalFetch = globalThis.fetch;
@@ -124,11 +105,6 @@ test('provider-backed accessory agents receive current-turn observation windows'
       }
     }
     if (toolName === 'update_status_bar') {
-      return jsonResponse({
-        choices: [{ message: { role: 'assistant', content: null, tool_calls: [] } }]
-      });
-    }
-    if (toolName === 'upsert_npc') {
       return jsonResponse({
         choices: [{ message: { role: 'assistant', content: null, tool_calls: [] } }]
       });
@@ -153,7 +129,7 @@ test('provider-backed accessory agents receive current-turn observation windows'
       statusBar
     });
 
-    assert.equal(capturedBodies.length, 4);
+    assert.equal(capturedBodies.length, 3);
     assert.equal(
       capturedBodies.filter((body) => body.tools?.some((tool) => tool.function?.name === 'update_status_bar')).length,
       2
@@ -169,107 +145,7 @@ test('provider-backed accessory agents receive current-turn observation windows'
     const economyBody = capturedBodies.find((body) => body.tools?.some((tool) => tool.function?.name === 'record_economy_transaction'));
     const economySchema = economyBody.tools.find((tool) => tool.function?.name === 'record_economy_transaction').function.parameters;
     assert.deepEqual(economySchema.required, ['amount', 'type', 'currencyType']);
-    assert.equal(economySchema.properties.amount.exclusiveMinimum, 0);
-    const npcBody = capturedBodies.find((body) => body.tools?.some((tool) => tool.function?.name === 'delete_actor_item'));
-    const deleteItemSchema = npcBody.tools.find((tool) => tool.function?.name === 'delete_actor_item').function.parameters;
-    assert.deepEqual(deleteItemSchema.anyOf, [{ required: ['id'] }, { required: ['itemCode'] }]);
-    const npcPayload = JSON.parse(npcBody.messages.find((message) => message.role === 'user').content);
-    assert.deepEqual(npcPayload.npcRoster, [
-      { name: 'Mira Valen', aliases: ['Mira', 'Little Mi'], names: ['Mira Valen', 'Mira', 'Little Mi'] }
-    ]);
-    assert.equal(Object.prototype.hasOwnProperty.call(npcPayload, 'existingItems'), false);
-    assert.equal(Object.prototype.hasOwnProperty.call(npcPayload, 'sceneNodes'), false);
-    assert.equal(JSON.stringify(npcPayload).includes('NPC_LOCATION_MUST_STAY_OUT_OF_INITIAL_PAYLOAD'), false);
-    assert.equal(JSON.stringify(npcPayload).includes('NPC_MEMORY_MUST_STAY_OUT_OF_INITIAL_PAYLOAD'), false);
-    assert.ok(npcBody.tools.some((tool) => tool.function?.name === 'get_npc_memories'));
-    assert.ok(npcBody.tools.some((tool) => tool.function?.name === 'get_scene_locations'));
-  } finally {
-    globalThis.fetch = originalFetch;
-  }
-});
-
-test('NPC agent resolves an alias through lookup tools before recording a new canonical memory', async () => {
-  const env = setupConversation({ npcAgent: skill(true), statusBarAgent: skill(false) });
-  upsertConversationNpc(env.db, env.userId, env.conversation.id, {
-    npcName: 'Mira Valen',
-    aliases: ['Mira', 'Little Mi']
-  });
-  addNpcMemory(env.db, env.userId, env.conversation.id, 'Mira Valen', {
-    memoryType: 'knowledge',
-    content: 'The cellar key is hidden under the blue ledger.'
-  });
-
-  const originalFetch = globalThis.fetch;
-  const requestBodies = [];
-  globalThis.fetch = async (_url, request) => {
-    const body = JSON.parse(request.body);
-    requestBodies.push(body);
-    if (requestBodies.length === 1) {
-      return jsonResponse({
-        choices: [{
-          message: {
-            role: 'assistant',
-            content: null,
-            tool_calls: [{
-              id: 'npc-lookup-memory',
-              type: 'function',
-              function: {
-                name: 'get_npc_memories',
-                arguments: JSON.stringify({ npcName: 'Little Mi' })
-              }
-            }]
-          }
-        }]
-      });
-    }
-    if (requestBodies.length === 2) {
-      return jsonResponse({
-        choices: [{
-          message: {
-            role: 'assistant',
-            content: null,
-            tool_calls: [{
-              id: 'npc-record-new-memory',
-              type: 'function',
-              function: {
-                name: 'record_npc_memory',
-                arguments: JSON.stringify({
-                  npcName: 'Mira Valen',
-                  memoryType: 'event',
-                  content: 'She gave the cellar key to Hero.'
-                })
-              }
-            }]
-          }
-        }]
-      });
-    }
-    return jsonResponse({ choices: [{ message: { role: 'assistant', content: 'done' } }] });
-  };
-
-  try {
-    await runAccessoryAgents({
-      db: env.db,
-      userId: env.userId,
-      conversation: env.conversation,
-      character: env.character,
-      userMessage: { content: 'Little Mi, hand me the key.' },
-      assistantMessage: { content: 'Mira takes the cellar key from under the blue ledger and gives it to Hero.' },
-      settings: providerSettings(),
-      statusBar: null
-    });
-
-    assert.equal(requestBodies.length, 3);
-    const lookupResultMessage = requestBodies[1].messages.find((message) => message.role === 'tool');
-    const lookupResult = JSON.parse(lookupResultMessage.content);
-    assert.equal(lookupResult.npc.name, 'Mira Valen');
-    assert.deepEqual(lookupResult.memories.map((memory) => memory.content), [
-      'The cellar key is hidden under the blue ledger.'
-    ]);
-    const names = listConversationNpcs(env.db, env.userId, env.conversation.id, env.character.name)
-      .map((npc) => npc.name);
-    assert.deepEqual(names, ['Mira Valen']);
-    assert.equal(env.db.prepare("SELECT COUNT(*) AS count FROM npc_memories WHERE npc_name = 'Mira Valen'").get().count, 2);
+    assert.equal(economySchema.properties.amount.minimum, 0.0001);
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -893,200 +769,6 @@ test('status bar agent preserves variables beyond first twenty when updating', a
   const variables = getStatusBar(env.db, env.userId, env.conversation.id).variables;
   assert.equal(variables.length, 25);
   assert.equal(variables.find((item) => item.name === 'Var25')?.value, 88);
-});
-
-test('npc agent does not create fallback memories from text patterns', async () => {
-  const env = setupConversation({ npcAgent: skill(true), statusBarAgent: skill(false) });
-  const assistantMessage = { content: '**Lily** says the bridge is closed.' };
-
-  await runAccessoryAgents({
-    db: env.db,
-    userId: env.userId,
-    conversation: env.conversation,
-    character: env.character,
-    assistantMessage,
-    settings: {},
-    statusBar: null
-  });
-  await runAccessoryAgents({
-    db: env.db,
-    userId: env.userId,
-    conversation: env.conversation,
-    character: env.character,
-    assistantMessage,
-    settings: {},
-    statusBar: null
-  });
-
-  const rows = env.db.prepare('SELECT npc_name, content FROM npc_memories').all();
-  assert.equal(rows.length, 0);
-});
-
-test('npc agent upserts structured NPCs and respects hidden names', async () => {
-  const env = setupConversation({ npcAgent: skill(true), statusBarAgent: skill(false) });
-  hideConversationNpc(env.db, env.userId, env.conversation.id, 'FakeTitle');
-  const originalFetch = globalThis.fetch;
-  let calls = 0;
-  globalThis.fetch = async () => {
-    calls += 1;
-    if (calls === 1) {
-      return jsonResponse({
-        choices: [
-          {
-            message: {
-              role: 'assistant',
-              content: null,
-              tool_calls: [
-                {
-                  id: 'npc-1',
-                  type: 'function',
-                  function: {
-                    name: 'upsert_npc',
-                    arguments: JSON.stringify({
-                      npcName: 'Gate Captain',
-                      evidence: 'Gate Captain warned the party at the gate.',
-                      confidence: 92,
-                      currentLocation: 'city gate'
-                    })
-                  }
-                },
-                {
-                  id: 'npc-hidden',
-                  type: 'function',
-                  function: {
-                    name: 'upsert_npc',
-                    arguments: JSON.stringify({
-                      npcName: 'FakeTitle',
-                      evidence: 'A markdown heading.',
-                      confidence: 95
-                    })
-                  }
-                }
-              ]
-            }
-          }
-        ]
-      });
-    }
-    return jsonResponse({ choices: [{ message: { role: 'assistant', content: 'done' } }] });
-  };
-
-  try {
-    const results = await runAccessoryAgents({
-      db: env.db,
-      userId: env.userId,
-      conversation: env.conversation,
-      character: env.character,
-      assistantMessage: { content: '**FakeTitle**\nGate Captain warned them.' },
-      settings: providerSettings(),
-      statusBar: null
-    });
-
-    assert.equal(results[0].ok, true);
-    const npcs = listConversationNpcs(env.db, env.userId, env.conversation.id, env.character.name);
-    assert.ok(npcs.some((npc) => npc.name === 'Gate Captain' && npc.source === 'agent' && npc.confidence === 92));
-    assert.equal(npcs.find((npc) => npc.name === 'Gate Captain')?.currentLocation, 'city gate');
-    assert.ok(!npcs.some((npc) => npc.name === 'FakeTitle'));
-  } finally {
-    globalThis.fetch = originalFetch;
-  }
-});
-
-test('npc agent skips loose or excessive automatic behavior rules', async () => {
-  const env = setupConversation({ npcAgent: skill(true), statusBarAgent: skill(false) });
-  const timestamp = '2026-01-01T00:00:00.000Z';
-  for (let index = 0; index < 8; index += 1) {
-    env.db.prepare(
-      'INSERT INTO npc_behaviors (id, conversation_id, npc_name, behavior_type, trigger_condition, action, priority, enabled, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
-    ).run(
-      `npc-agent-seeded-${index}`,
-      env.conversation.id,
-      'Full Guard',
-      'reaction',
-      `seed trigger ${index}`,
-      `seed action ${index}`,
-      0,
-      1,
-      timestamp
-    );
-  }
-
-  const originalFetch = globalThis.fetch;
-  let calls = 0;
-  globalThis.fetch = async () => {
-    calls += 1;
-    if (calls === 1) {
-      return jsonResponse({
-        choices: [
-          {
-            message: {
-              role: 'assistant',
-              content: null,
-              tool_calls: [
-                {
-                  id: 'loose-behavior',
-                  type: 'function',
-                  function: {
-                    name: 'record_npc_behavior',
-                    arguments: JSON.stringify({
-                      npcName: 'Loose Guard',
-                      action: 'Always smiles politely.',
-                      priority: 3
-                    })
-                  }
-                },
-                {
-                  id: 'explicit-behavior',
-                  type: 'function',
-                  function: {
-                    name: 'record_npc_behavior',
-                    arguments: JSON.stringify({
-                      npcName: 'Explicit Guard',
-                      triggerCondition: 'When the alarm bell rings',
-                      action: 'Blocks the gate and calls for backup.',
-                      priority: 7
-                    })
-                  }
-                },
-                {
-                  id: 'capped-behavior',
-                  type: 'function',
-                  function: {
-                    name: 'record_npc_behavior',
-                    arguments: JSON.stringify({
-                      npcName: 'Full Guard',
-                      triggerCondition: 'When anyone approaches',
-                      action: 'Adds one more automatic rule.',
-                      priority: 1
-                    })
-                  }
-                }
-              ]
-            }
-          }
-        ]
-      });
-    }
-    return jsonResponse({ choices: [{ message: { role: 'assistant', content: 'done' } }] });
-  };
-
-  try {
-    await runAccessoryAgents({
-      db: env.db,
-      userId: env.userId,
-      conversation: env.conversation,
-      character: env.character,
-      assistantMessage: { content: 'The guards react.' },
-      settings: providerSettings(),
-      statusBar: null
-    });
-
-    assert.equal(listNpcBehaviors(env.db, env.userId, env.conversation.id, 'Loose Guard').length, 0);
-    assert.equal(listNpcBehaviors(env.db, env.userId, env.conversation.id, 'Explicit Guard').length, 1);
-    assert.equal(listNpcBehaviors(env.db, env.userId, env.conversation.id, 'Full Guard').length, 8);
-  } finally {
-    globalThis.fetch = originalFetch;
-  }
 });
 
 test('economy agent tool call records a transaction without blocking the reply', async () => {

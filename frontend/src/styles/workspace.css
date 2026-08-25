@@ -67,7 +67,6 @@
   margin: 0;
 }
 
-.workspace-layout-shell .character-section-nav,
 .workspace-layout-shell .settings-section-nav {
   top: calc(-1 * var(--workspace-page-padding-top, 28px));
 }

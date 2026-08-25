@@ -123,12 +123,15 @@ export function updateCharacter(database, userId, characterId, payload) {
   }
 
   const data = normalizeCharacterPayload({ ...current, ...payload });
-  data.avatarUrl = saveAvatarInput(database, {
-    userId,
-    ownerType: 'character',
-    ownerId: characterId,
-    value: data.avatarUrl
-  });
+  const currentAvatarUrl = String(current.avatarUrl || '').trim();
+  if (data.avatarUrl !== currentAvatarUrl) {
+    data.avatarUrl = saveAvatarInput(database, {
+      userId,
+      ownerType: 'character',
+      ownerId: characterId,
+      value: data.avatarUrl
+    });
+  }
   data.authorAdvancedSettings = saveCharacterAdvancedBackgrounds(database, {
     userId,
     characterId,

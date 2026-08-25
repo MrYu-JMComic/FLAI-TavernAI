@@ -473,33 +473,33 @@ test('accessory skill sync preserves unchanged nested config references', () => 
   const initialStatusBarAgent = accessory.accessorySkills.statusBarAgent;
 
   accessory.syncAccessorySkills({
-    npcAgent: { enabled: true, modelOverride: 'model-a' },
+    sceneAgent: { enabled: true, modelOverride: 'model-a' },
     economyAgent: { enabled: 'true', model_override: 'model-b' }
   });
 
-  const npcAgent = accessory.accessorySkills.npcAgent;
+  const sceneAgent = accessory.accessorySkills.sceneAgent;
   const economyAgent = accessory.accessorySkills.economyAgent;
   assert.equal(accessory.accessorySkills.statusBarAgent, initialStatusBarAgent);
-  assert.deepEqual(npcAgent, { enabled: true, modelOverride: 'model-a' });
+  assert.deepEqual(sceneAgent, { enabled: true, modelOverride: 'model-a' });
   assert.deepEqual(economyAgent, { enabled: true, modelOverride: 'model-b' });
 
   accessory.syncAccessorySkills({
-    npcAgent: { enabled: true, modelOverride: 'model-a' },
+    sceneAgent: { enabled: true, modelOverride: 'model-a' },
     economyAgent: { enabled: true, modelOverride: 'model-b' }
   });
-  assert.equal(accessory.accessorySkills.npcAgent, npcAgent);
+  assert.equal(accessory.accessorySkills.sceneAgent, sceneAgent);
   assert.equal(accessory.accessorySkills.economyAgent, economyAgent);
 
   accessory.syncAccessorySkills({
-    npcAgent: { enabled: true, modelOverride: 'model-c' },
+    sceneAgent: { enabled: true, modelOverride: 'model-c' },
     economyAgent: { enabled: true, modelOverride: 'model-b' }
   });
-  assert.notEqual(accessory.accessorySkills.npcAgent, npcAgent);
+  assert.notEqual(accessory.accessorySkills.sceneAgent, sceneAgent);
   assert.equal(accessory.accessorySkills.economyAgent, economyAgent);
-  assert.deepEqual(accessory.accessorySkills.npcAgent, { enabled: true, modelOverride: 'model-c' });
+  assert.deepEqual(accessory.accessorySkills.sceneAgent, { enabled: true, modelOverride: 'model-c' });
   assert.match(
     chatAccessorySource,
-    /const ACCESSORY_SKILL_DEFAULTS = \[[\s\S]*\{ key: 'npcAgent', enabled: false, modelOverride: '' \},[\s\S]*\{ key: 'worldDirector', enabled: false, modelOverride: '' \},[\s\S]*\{ key: 'gameHud', enabled: false, modelOverride: '' \},[\s\S]*\{ key: 'encounterMode', enabled: false, modelOverride: '' \},[\s\S]*\{ key: 'rewardMode', enabled: false, modelOverride: '' \},[\s\S]*\{ key: 'statusBarAgent', enabled: 'auto', modelOverride: '' \},[\s\S]*\{ key: 'cgScene', enabled: false, modelOverride: '' \}[\s\S]*\];/
+    /const ACCESSORY_SKILL_DEFAULTS = \[[\s\S]*\{ key: 'sceneAgent', enabled: false, modelOverride: '' \},[\s\S]*\{ key: 'worldDirector', enabled: false, modelOverride: '' \},[\s\S]*\{ key: 'gameHud', enabled: false, modelOverride: '' \},[\s\S]*\{ key: 'encounterMode', enabled: false, modelOverride: '' \},[\s\S]*\{ key: 'rewardMode', enabled: false, modelOverride: '' \},[\s\S]*\{ key: 'statusBarAgent', enabled: 'auto', modelOverride: '' \},[\s\S]*\{ key: 'cgScene', enabled: false, modelOverride: '' \}[\s\S]*\];/
   );
   assert.match(
     chatAccessorySource,
@@ -676,7 +676,7 @@ test('status bar automation context scans settings sources directly', () => {
 test('accessory skill save preserves active conversation references for unchanged settings', async () => {
   const originalFetch = globalThis.fetch;
   const savedSkills = {
-    npcAgent: { enabled: false, modelOverride: '' },
+    sceneAgent: { enabled: false, modelOverride: '' },
     statusBarAgent: { enabled: 'auto', modelOverride: '' },
     economyAgent: { enabled: false, modelOverride: '' },
     talentPrompt: { enabled: false, modelOverride: '' },
@@ -746,7 +746,7 @@ test('accessory skill save keeps stale conversation saving locked until cleanup'
   });
   const saveResponse = deferredJsonResponse({
     skills: {
-      npcAgent: { enabled: true, modelOverride: '' },
+      sceneAgent: { enabled: true, modelOverride: '' },
       statusBarAgent: { enabled: 'auto', modelOverride: '' }
     },
     active: {},
@@ -772,7 +772,7 @@ test('accessory skill save keeps stale conversation saving locked until cleanup'
 
   try {
     const accessory = createAccessory({ conversation });
-    accessory.accessorySkills.npcAgent.enabled = true;
+    accessory.accessorySkills.sceneAgent.enabled = true;
 
     const savePromise = accessory.saveAccessorySkillChanges();
     await accessorySaveStarted;
@@ -921,107 +921,15 @@ test('ChatView serializes accessory refresh snapshots with direct loops', () => 
   );
   assert.match(
     chatViewScript,
-    /function serializeNpcSnapshot\(value = \[\]\) \{[\s\S]*const items = \[\];[\s\S]*const sourceNpcs = Array\.isArray\(value\)[\s\S]*Array\.isArray\(value\?\.npcs\)[\s\S]*for \(let index = 0; index < sourceNpcs\.length; index \+= 1\) \{[\s\S]*const name = String\(npc\?\.name \|\| ''\);[\s\S]*snapshot = appendSnapshotField\(snapshot, Number\(npc\?\.memoryCount \|\| 0\)\);[\s\S]*snapshot = appendSnapshotField\(snapshot, npc\?\.currentLocation \|\| ''\);[\s\S]*snapshot = appendSnapshotField\(snapshot, npc\?\.relationship \|\| ''\);[\s\S]*const sourceActorItems = [\s\S]*ownerType !== 'protagonist' && ownerType !== 'npc'[\s\S]*items\.push\(\{ name, snapshot \}\);[\s\S]*items\.sort\(\(a, b\) => a\.name\.localeCompare\(b\.name\)\);[\s\S]*for \(let index = 0; index < items\.length; index \+= 1\) \{[\s\S]*serialized \+= items\[index\]\.snapshot;[\s\S]*return serialized;[\s\S]*\}/
-  );
-  assert.match(
-    chatViewScript,
-    /async function fetchNpcAccessorySnapshot\(conversationId\) \{[\s\S]*fetchConversationNpcs\(conversationId\),[\s\S]*fetchConversationScenes\(conversationId\)[\s\S]*items: Array\.isArray\(workspace\?\.items\) \? workspace\.items : \[\]/
-  );
-  assert.match(
-    chatViewScript,
     /function appendSnapshotField\(snapshot, value\) \{\s*const text = String\(value \?\? ''\);[\s\S]*return `\$\{snapshot\}\$\{text\.length\}:\$\{text\};`;[\s\S]*\}/
   );
   assert.doesNotMatch(chatViewScript, /value\.variables\.map\(/);
-  assert.doesNotMatch(chatViewScript, /\.map\(\(npc\) =>/);
   assert.doesNotMatch(chatViewScript, /return JSON\.stringify\(\{[\s\S]*variables/);
-  assert.doesNotMatch(chatViewScript, /return JSON\.stringify\(items\.sort/);
 });
 
 test('ChatView clears route status bar state through the stable accessory helper', () => {
   assert.match(chatViewScript, /applyStatusBarUpdate\(null, \{ syncForm: false \}\);/);
   assert.doesNotMatch(chatViewScript, /statusBar\.value\s*=\s*null/);
-});
-
-test('ChatView stops redundant NPC accessory polling after the refresh fingerprint is synced', () => {
-  assert.match(
-    chatViewScript,
-    /let accessoryRefreshSnapshot = \{[\s\S]*npcSynced: true[\s\S]*\};/
-  );
-  assert.match(
-    chatViewScript,
-    /function beginAccessoryRefreshStatus\(\) \{[\s\S]*accessoryRefreshSnapshot = \{[\s\S]*npc: latestNpcFingerprint,[\s\S]*npcSynced: false[\s\S]*\};/
-  );
-  assert.match(
-    chatViewScript,
-    /if \(npcUpdateStatus\.value !== ACCESSORY_UPDATING && accessoryRefreshSnapshot\.npcSynced\) \{\s*return false;\s*\}/
-  );
-  assert.match(
-    chatViewScript,
-    /latestNpcFingerprint = nextFingerprint;\s*accessoryRefreshSnapshot\.npcSynced = true;/
-  );
-  assert.match(
-    chatViewScript,
-    /function resetAccessoryUpdateStatus\(options = \{\}\) \{[\s\S]*accessoryRefreshSnapshot = \{[\s\S]*npc: latestNpcFingerprint,[\s\S]*npcSynced: true[\s\S]*\};/
-  );
-});
-
-test('ChatView exposes pending accessory refresh status to the submit scheduler', () => {
-  assert.match(
-    chatViewScript,
-    /function beginAccessoryRefreshStatus\(\) \{[\s\S]*return hasPendingAccessoryRefresh\(\);\s*\}/
-  );
-  assert.match(
-    chatViewScript,
-    /async function refreshAccessoryPanels\(payload = \{\}\) \{[\s\S]*return hasPendingAccessoryRefresh\(\);\s*\}/
-  );
-  assert.match(
-    chatViewScript,
-    /function hasPendingAccessoryRefresh\(\) \{\s*return statusBarUpdateStatus\.value === ACCESSORY_UPDATING \|\|\s*npcUpdateStatus\.value === ACCESSORY_UPDATING;\s*\}/
-  );
-});
-
-test('ChatView refreshes the NPC panel only after NPC refresh work changes the fingerprint', () => {
-  assert.match(
-    chatViewScript,
-    /const shouldRefreshNpcPanel = await refreshNpcUpdateStatus\(Boolean\(payload\?\.isFinal\)\);[\s\S]*if \(npcPanelOpen\.value && shouldRefreshNpcPanel\) \{\s*npcRefreshKey\.value \+= 1;\s*\}/
-  );
-  assert.match(
-    chatViewScript,
-    /const npcChanged = nextFingerprint !== accessoryRefreshSnapshot\.npc;[\s\S]*if \(npcUpdateStatus\.value === ACCESSORY_UPDATING && npcChanged\) \{[\s\S]*return npcChanged;/
-  );
-  assert.match(
-    chatViewScript,
-    /if \(!showNpcFeature\.value\) \{[\s\S]*return false;[\s\S]*if \(!conversationId \|\| accessoryRefreshSnapshot\.conversationId !== conversationId\) \{[\s\S]*return false;/
-  );
-});
-
-test('ChatView skips NPC accessory refresh completions after unmount', () => {
-  assert.match(
-    chatViewScript,
-    /async function refreshNpcUpdateStatus\(isFinal = false\) \{\s*if \(chatViewDisposed\) \{\s*return false;\s*\}/
-  );
-  assert.match(
-    chatViewScript,
-    /const snapshot = await fetchNpcAccessorySnapshot\(conversationId\);[\s\S]*if \(\s*chatViewDisposed \|\|[\s\S]*conversation\.value\?\.id !== conversationId \|\|[\s\S]*accessoryRefreshSnapshot\.conversationId !== conversationId\s*\) \{\s*return false;\s*\}/
-  );
-  assert.match(
-    chatViewScript,
-    /async function syncNpcFingerprint\(conversationId = conversation\.value\?\.id\) \{\s*if \(chatViewDisposed\) \{\s*return latestNpcFingerprint;\s*\}/
-  );
-});
-
-test('ChatView keeps final NPC accessory cleanup scoped to the active conversation', () => {
-  assert.match(
-    chatViewScript,
-    /if \(\s*isFinal &&\s*!chatViewDisposed &&\s*npcUpdateStatus\.value === ACCESSORY_UPDATING &&\s*conversation\.value\?\.id === conversationId &&\s*accessoryRefreshSnapshot\.conversationId === conversationId\s*\) \{\s*npcUpdateStatus\.value = ACCESSORY_NOT_UPDATED;\s*\}/
-  );
-});
-
-test('ChatView keeps failed NPC fingerprint sync scoped to the active conversation', () => {
-  assert.match(
-    chatViewScript,
-    /async function syncNpcFingerprint\(conversationId = conversation\.value\?\.id\) \{[\s\S]*\} catch \{\s*if \(!chatViewDisposed && conversation\.value\?\.id === conversationId\) \{\s*latestNpcFingerprint = '';\s*\}\s*\}[\s\S]*return latestNpcFingerprint;/
-  );
 });
 
 test('ChatView finds the latest assistant message without cloning the message list', () => {
@@ -1030,11 +938,4 @@ test('ChatView finds the latest assistant message without cloning the message li
     /const latestAssistantMessage = computed\(\(\) => \{\s*for \(let index = messages\.value\.length - 1; index >= 0; index -= 1\) \{[\s\S]*if \(message\?\.role === 'assistant'\) \{\s*return message;\s*\}[\s\S]*return null;\s*\}\);/
   );
   assert.doesNotMatch(chatViewScript, /\[\.\.\.messages\.value\]\.reverse\(\)\.find/);
-});
-
-test('ChatView accepts NPC panel loaded events only for the active conversation', () => {
-  assert.match(
-    chatViewScript,
-    /function handleNpcPanelLoaded\(payload = \{\}\) \{[\s\S]*const eventConversationId = payload\?\.conversationId \|\| '';[\s\S]*if \(!eventConversationId \|\| eventConversationId !== conversation\.value\?\.id\) \{\s*return;\s*\}[\s\S]*void syncNpcFingerprint\(eventConversationId\);/
-  );
 });

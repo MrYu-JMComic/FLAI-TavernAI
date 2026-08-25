@@ -22,7 +22,6 @@ const STATUS_BAR_VARIABLE_LIMIT = 60;
 const STATUS_BAR_TEMPLATE_ISSUE_LIMIT = 5;
 const ACCESSORY_SKILL_RESULT_LIMIT = 8;
 const ACCESSORY_SKILL_DEFAULTS = [
-  { key: 'npcAgent', enabled: false, modelOverride: '' },
   { key: 'sceneAgent', enabled: false, modelOverride: '' },
   { key: 'worldDirector', enabled: false, modelOverride: '' },
   { key: 'gameHud', enabled: false, modelOverride: '' },
@@ -335,7 +334,6 @@ export function useChatAccessory({ conversation, setActiveConversationIfChanged,
   });
 
   const accessorySkillItems = [
-    { key: 'npcAgent', label: 'NPC Agent', auto: false },
     { key: 'sceneAgent', label: '场景构建助手', auto: false },
     { key: 'worldDirector', label: 'AI 世界导演', auto: false },
     { key: 'gameHud', label: '游戏驾驶舱 / 地图', auto: false },
@@ -373,7 +371,7 @@ export function useChatAccessory({ conversation, setActiveConversationIfChanged,
     return isAccessorySkillActiveLocal('economyAgent');
   });
 
-  const showNpcFeature = computed(() => isAccessorySkillActiveLocal('npcAgent'));
+  const showNpcFeature = computed(() => Boolean(conversation.value?.id));
   const showSceneFeature = computed(() => isAccessorySkillActiveLocal('sceneAgent'));
   const showGameHudFeature = computed(() => isAccessorySkillActiveLocal('gameHud'));
   const showEncounterFeature = computed(() => isAccessorySkillActiveLocal('encounterMode'));

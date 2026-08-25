@@ -15,6 +15,7 @@ export function normalizeAdvancedSettings(input = {}) {
     customJsRiskAccepted: normalizeBoolean(source.customJsRiskAccepted ?? source.custom_js_risk_accepted, false),
     statusBarPrompt: normalizeText(source.statusBarPrompt ?? source.status_bar_prompt ?? source.status_bar_prompt_text ?? ''),
     showWorldBookMatches: normalizeBoolean(source.showWorldBookMatches ?? source.show_world_book_matches, true),
+    castTracking: normalizeCastTracking(source.castTracking ?? source.cast_tracking),
     statusBarBlueprint: normalizeStatusBarBlueprint(source.statusBarBlueprint ?? source.status_bar_blueprint ?? {}),
     accessorySkills: normalizeAccessorySkills(source.accessorySkills ?? source.accessory_skills ?? {})
   };
@@ -45,6 +46,9 @@ export function mergeAdvancedSettings(author = {}, user = {}) {
     showWorldBookMatches: hasOwnSetting(userSource, 'showWorldBookMatches', 'show_world_book_matches')
       ? userSettings.showWorldBookMatches
       : authorSettings.showWorldBookMatches,
+    castTracking: hasOwnSetting(userSource, 'castTracking', 'cast_tracking')
+      ? userSettings.castTracking
+      : authorSettings.castTracking,
     statusBarBlueprint: hasStatusBarBlueprint(userSettings.statusBarBlueprint)
       ? userSettings.statusBarBlueprint
       : authorSettings.statusBarBlueprint,
@@ -91,7 +95,6 @@ export function hasStatusBarBlueprint(input = {}) {
 
 export function createDefaultAccessorySkills() {
   return {
-    npcAgent: createSkillConfig(false),
     worldDirector: createSkillConfig(false),
     gameHud: createSkillConfig(false),
     encounterMode: createSkillConfig(false),
@@ -99,7 +102,8 @@ export function createDefaultAccessorySkills() {
     statusBarAgent: createSkillConfig('auto'),
     economyAgent: createSkillConfig(false),
     talentPrompt: createSkillConfig(false),
-    cgScene: createSkillConfig(false)
+    cgScene: createSkillConfig(false),
+    sceneAgent: createSkillConfig(false)
   };
 }
 
@@ -159,6 +163,11 @@ function normalizeBoolean(value, fallback = false) {
     return false;
   }
   return fallback;
+}
+
+function normalizeCastTracking(value) {
+  const source = value && typeof value === 'object' ? value : {};
+  return { enabled: normalizeBoolean(source.enabled, false) };
 }
 
 function hasOwnSetting(source, camelKey, snakeKey) {

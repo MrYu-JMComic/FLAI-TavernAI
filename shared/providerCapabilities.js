@@ -1,3 +1,5 @@
+import { resolveThinkingControl } from './providerThinking.js';
+
 const providerCapabilityDefaults = {
   streaming: true,
   reasoning: false,
@@ -117,6 +119,7 @@ export function resolveProviderModelCapabilities(settings = {}, providerCapabili
   const providerType = normalizeProviderCapabilityType(settings.providerType);
   const capabilities = providerCapabilities || resolveProviderCapabilities(providerType, settings);
   const model = normalizeProviderModelId(providerType, settings.model);
+  const thinking = resolveThinkingControl(providerType, model, capabilities.reasoning);
   const imageGeneration = Boolean(capabilities.imageGeneration && isKnownImageGenerationModel(providerType, model));
   return {
     ...capabilities,
@@ -124,7 +127,9 @@ export function resolveProviderModelCapabilities(settings = {}, providerCapabili
     vision: Boolean(capabilities.vision && !imageGeneration),
     imageGeneration,
     tools: Boolean(capabilities.tools && !imageGeneration),
-    model
+    model,
+    thinking,
+    thinkingLevels: thinking.levels
   };
 }
 

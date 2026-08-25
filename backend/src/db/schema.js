@@ -407,69 +407,6 @@ export function initializeDatabase(database) {
       FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
     );
 
-    CREATE TABLE IF NOT EXISTS npc_memories (
-      id TEXT PRIMARY KEY,
-      conversation_id TEXT NOT NULL,
-      npc_name TEXT NOT NULL,
-      memory_type TEXT NOT NULL DEFAULT 'event',
-      content TEXT NOT NULL DEFAULT '',
-      created_at TEXT NOT NULL,
-      FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
-    );
-
-    CREATE TABLE IF NOT EXISTS npc_behaviors (
-      id TEXT PRIMARY KEY,
-      conversation_id TEXT NOT NULL,
-      npc_name TEXT NOT NULL,
-      behavior_type TEXT NOT NULL DEFAULT 'reaction',
-      trigger_condition TEXT NOT NULL DEFAULT '',
-      action TEXT NOT NULL DEFAULT '',
-      priority INTEGER NOT NULL DEFAULT 0,
-      enabled INTEGER NOT NULL DEFAULT 1,
-      created_at TEXT NOT NULL,
-      FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
-    );
-
-    CREATE TABLE IF NOT EXISTS npc_registry (
-      id TEXT PRIMARY KEY,
-      conversation_id TEXT NOT NULL,
-      npc_name TEXT NOT NULL,
-      source TEXT NOT NULL DEFAULT 'manual',
-      evidence TEXT NOT NULL DEFAULT '',
-      confidence REAL NOT NULL DEFAULT 0,
-      hidden INTEGER NOT NULL DEFAULT 0,
-      created_at TEXT NOT NULL,
-      updated_at TEXT NOT NULL,
-      FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE,
-      UNIQUE(conversation_id, npc_name)
-    );
-
-    CREATE TABLE IF NOT EXISTS npc_profile_audit (
-      id TEXT PRIMARY KEY,
-      conversation_id TEXT NOT NULL,
-      npc_name TEXT NOT NULL,
-      action TEXT NOT NULL DEFAULT 'update',
-      actor TEXT NOT NULL DEFAULT 'system',
-      before_json TEXT NOT NULL DEFAULT 'null',
-      after_json TEXT NOT NULL DEFAULT 'null',
-      created_at TEXT NOT NULL,
-      FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
-    );
-
-    CREATE TABLE IF NOT EXISTS npc_item_audit (
-      id TEXT PRIMARY KEY,
-      conversation_id TEXT NOT NULL,
-      npc_name TEXT NOT NULL,
-      item_type TEXT NOT NULL DEFAULT 'memory',
-      item_id TEXT NOT NULL DEFAULT '',
-      action TEXT NOT NULL DEFAULT 'update',
-      actor TEXT NOT NULL DEFAULT 'system',
-      before_json TEXT NOT NULL DEFAULT 'null',
-      after_json TEXT NOT NULL DEFAULT 'null',
-      created_at TEXT NOT NULL,
-      FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
-    );
-
     CREATE TABLE IF NOT EXISTS scene_nodes (
       id TEXT PRIMARY KEY,
       conversation_id TEXT NOT NULL,
@@ -499,47 +436,6 @@ export function initializeDatabase(database) {
       FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE,
       FOREIGN KEY (from_node_id) REFERENCES scene_nodes(id) ON DELETE CASCADE,
       FOREIGN KEY (to_node_id) REFERENCES scene_nodes(id) ON DELETE CASCADE
-    );
-
-    CREATE TABLE IF NOT EXISTS scene_items (
-      id TEXT PRIMARY KEY,
-      conversation_id TEXT NOT NULL,
-      node_id TEXT,
-      item_code TEXT NOT NULL,
-      name TEXT NOT NULL,
-      description TEXT NOT NULL DEFAULT '',
-      state_json TEXT NOT NULL DEFAULT '{}',
-      position_json TEXT NOT NULL DEFAULT '{}',
-      movable INTEGER NOT NULL DEFAULT 0,
-      owner_type TEXT NOT NULL DEFAULT 'world',
-      owner_name TEXT NOT NULL DEFAULT '',
-      item_kind TEXT NOT NULL DEFAULT 'item',
-      quantity INTEGER NOT NULL DEFAULT 1,
-      clothing_slot TEXT NOT NULL DEFAULT '',
-      equipped INTEGER NOT NULL DEFAULT 0,
-      coverage_json TEXT NOT NULL DEFAULT '[]',
-      icon_key TEXT NOT NULL DEFAULT '',
-      created_at TEXT NOT NULL,
-      updated_at TEXT NOT NULL,
-      FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE,
-      FOREIGN KEY (node_id) REFERENCES scene_nodes(id) ON DELETE SET NULL,
-      UNIQUE(conversation_id, item_code)
-    );
-
-    CREATE TABLE IF NOT EXISTS scene_item_audit (
-      id TEXT PRIMARY KEY,
-      conversation_id TEXT NOT NULL,
-      item_id TEXT NOT NULL,
-      action TEXT NOT NULL DEFAULT 'update',
-      actor TEXT NOT NULL DEFAULT 'manual',
-      before_owner_type TEXT NOT NULL DEFAULT '',
-      before_owner_name TEXT NOT NULL DEFAULT '',
-      after_owner_type TEXT NOT NULL DEFAULT '',
-      after_owner_name TEXT NOT NULL DEFAULT '',
-      before_json TEXT NOT NULL DEFAULT 'null',
-      after_json TEXT NOT NULL DEFAULT 'null',
-      created_at TEXT NOT NULL,
-      FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
     );
 
     CREATE TABLE IF NOT EXISTS economy_accounts (
@@ -630,22 +526,6 @@ export function initializeDatabase(database) {
       weather TEXT NOT NULL DEFAULT '晴朗',
       updated_at TEXT NOT NULL,
       FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
-    );
-
-    CREATE TABLE IF NOT EXISTS npc_activities (
-      id TEXT PRIMARY KEY,
-      conversation_id TEXT NOT NULL,
-      npc_name TEXT NOT NULL,
-      title TEXT NOT NULL,
-      location_node_id TEXT,
-      status TEXT NOT NULL DEFAULT 'scheduled',
-      start_tick INTEGER NOT NULL,
-      end_tick INTEGER NOT NULL,
-      source TEXT NOT NULL DEFAULT 'manual',
-      created_at TEXT NOT NULL,
-      updated_at TEXT NOT NULL,
-      FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE,
-      FOREIGN KEY (location_node_id) REFERENCES scene_nodes(id) ON DELETE SET NULL
     );
 
     CREATE TABLE IF NOT EXISTS world_advances (
@@ -894,12 +774,6 @@ export function initializeDatabase(database) {
       FOREIGN KEY (schedule_id) REFERENCES town_schedules(id) ON DELETE CASCADE
     );
   `);
-  ensureColumn(database, 'npc_registry', 'status', "TEXT NOT NULL DEFAULT 'active'");
-  ensureColumn(database, 'npc_registry', 'custom_status', "TEXT NOT NULL DEFAULT ''");
-  ensureColumn(database, 'npc_registry', 'aliases', "TEXT NOT NULL DEFAULT '[]'");
-  ensureColumn(database, 'npc_registry', 'memory_sealed', 'INTEGER NOT NULL DEFAULT 0');
-  ensureColumn(database, 'npc_registry', 'current_location', "TEXT NOT NULL DEFAULT ''");
-  ensureColumn(database, 'npc_registry', 'relationship', "TEXT NOT NULL DEFAULT ''");
   ensureColumn(database, 'mods', 'scope', "TEXT NOT NULL DEFAULT 'global'");
   ensureColumn(database, 'mods', 'character_ids', "TEXT NOT NULL DEFAULT '[]'");
   ensureColumn(database, 'town_worlds', 'engine_checkpoint_at', 'TEXT');
@@ -916,6 +790,10 @@ export function initializeDatabase(database) {
     `);
   }
   ensureColumn(database, 'town_events', 'handled_at', 'TEXT');
+
+  ensureColumn(database, 'conversation_memories', 'layer', "TEXT NOT NULL DEFAULT 'short_term'");
+  ensureColumn(database, 'conversation_memories', 'importance', 'REAL NOT NULL DEFAULT 0');
+  ensureColumn(database, 'conversation_memories', 'emotional_intensity', 'REAL NOT NULL DEFAULT 0');
 
   applyStartupMigrations(database, { getCachedTableColumns });
   createDatabaseIndexes(database);

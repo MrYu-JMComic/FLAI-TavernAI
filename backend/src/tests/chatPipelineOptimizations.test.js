@@ -153,12 +153,12 @@ test('non-stream completions carry an abort signal with a timeout ceiling', () =
 
 test('accessory agents abort their provider calls at the deadline', () => {
   assert.match(accessoryAgentsSource, /const controller = new AbortController\(\);/);
-  assert.match(accessoryAgentsSource, /const statusBarAgentTimeoutMs = 45000;/);
+  assert.match(accessoryAgentsSource, /const statusBarAgentTimeoutMs = 60000;/);
   assert.match(accessoryAgentsSource, /\{ timeoutMs: statusBarAgentTimeoutMs \}/);
   assert.match(accessoryAgentsSource, /controller\.abort\(new Error\(`\$\{skill\} timed out`\)\);/);
   assert.match(accessoryAgentsSource, /await withTimeout\(handler\(controller\.signal\), timeoutMs \+ agentAbortGraceMs/);
   assert.match(accessoryAgentsSource, /onNoToolCall: statusBarNoToolNudge/);
-  assert.match(accessoryAgentsSource, /\{ maxRounds: 3, thinkingEnabled: false, signal \}/);
+  assert.match(accessoryAgentsSource, /maxRounds:\s*2,[\s\S]{0,80}thinkingEnabled:\s*false,[\s\S]{0,80}signal/);
 });
 
 // ── Swipe input validation ──

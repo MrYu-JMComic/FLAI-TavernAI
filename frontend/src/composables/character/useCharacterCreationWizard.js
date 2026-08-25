@@ -17,17 +17,14 @@ export const CHARACTER_CREATION_WIZARD_STEPS = [
     id: 'advanced',
     label: '高级配置',
     description: '按需设置状态栏、附属技能、渲染插件和正则规则。',
-    sections: ['advanced-settings', 'status-blueprint', 'accessories', 'render-plugins', 'regex']
+    sections: ['advanced-settings', 'status-blueprint', 'accessories', 'custom-code', 'render-plugins', 'regex']
   }
 ];
 
 export function useCharacterCreationWizard({
   isEditing,
   canEdit,
-  setActiveSection = () => {},
-  setVisibleActiveSection = setActiveSection,
-  scheduleSectionNavSync = () => {},
-  scrollToSection = () => {}
+  setActiveSection = () => {}
 } = {}) {
   const characterCreationMode = ref('wizard');
   const characterWizardStepId = ref('basic');
@@ -74,14 +71,13 @@ export function useCharacterCreationWizard({
     }
     characterCreationMode.value = normalizedMode;
     if (normalizedMode === 'wizard') {
-      setCharacterWizardStep(characterWizardStepId.value, { scroll: true });
+      setCharacterWizardStep(characterWizardStepId.value);
       return;
     }
-    setVisibleActiveSection('basic');
-    scheduleSectionNavSync();
+    setActiveSection('basic');
   }
 
-  function setCharacterWizardStep(stepId, { scroll = false } = {}) {
+  function setCharacterWizardStep(stepId) {
     if (!isCharacterCreationWizardAvailable.value || !isValidCharacterWizardStep(stepId)) {
       return;
     }
@@ -89,10 +85,6 @@ export function useCharacterCreationWizard({
     const firstSectionId = getCharacterWizardStepFirstSectionId(stepId);
     if (firstSectionId) {
       setActiveSection(firstSectionId);
-    }
-    scheduleSectionNavSync();
-    if (scroll) {
-      scrollToSection(firstSectionId, { defer: true });
     }
   }
 
@@ -119,7 +111,7 @@ export function useCharacterCreationWizard({
     if (previousIndex < 0) {
       return;
     }
-    setCharacterWizardStep(CHARACTER_CREATION_WIZARD_STEPS[previousIndex].id, { scroll: true });
+    setCharacterWizardStep(CHARACTER_CREATION_WIZARD_STEPS[previousIndex].id);
   }
 
   function goToNextCharacterWizardStep() {
@@ -127,16 +119,7 @@ export function useCharacterCreationWizard({
     if (nextIndex >= CHARACTER_CREATION_WIZARD_STEPS.length) {
       return;
     }
-    setCharacterWizardStep(CHARACTER_CREATION_WIZARD_STEPS[nextIndex].id, { scroll: true });
-  }
-
-  function skipCharacterWizardStep() {
-    const nextIndex = characterWizardStepIndex.value + 1;
-    if (nextIndex >= CHARACTER_CREATION_WIZARD_STEPS.length) {
-      setCharacterCreationMode('full');
-      return;
-    }
-    setCharacterWizardStep(CHARACTER_CREATION_WIZARD_STEPS[nextIndex].id, { scroll: true });
+    setCharacterWizardStep(CHARACTER_CREATION_WIZARD_STEPS[nextIndex].id);
   }
 
   return {
@@ -152,7 +135,6 @@ export function useCharacterCreationWizard({
     isCharacterCreationWizardAvailable,
     isCharacterSectionVisibleInCurrentMode,
     setCharacterCreationMode,
-    setCharacterWizardStep,
-    skipCharacterWizardStep
+    setCharacterWizardStep
   };
 }

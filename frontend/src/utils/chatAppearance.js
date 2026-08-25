@@ -10,7 +10,8 @@ const defaultAppearance = () => ({
   customJsEnabled: false,
   customJsRiskAccepted: false,
   statusBarPrompt: '',
-  showWorldBookMatches: true
+  showWorldBookMatches: true,
+  castTracking: { enabled: false }
 });
 
 export function createDefaultChatAppearance() {
@@ -32,7 +33,8 @@ export function normalizeChatAppearance(input = {}) {
     customJsEnabled: normalizeBoolean(input.customJsEnabled ?? input.custom_js_enabled, false),
     customJsRiskAccepted: normalizeBoolean(input.customJsRiskAccepted ?? input.custom_js_risk_accepted, false),
     statusBarPrompt: normalizeOptionalText(input.statusBarPrompt ?? input.status_bar_prompt ?? ''),
-    showWorldBookMatches: normalizeBoolean(input.showWorldBookMatches ?? input.show_world_book_matches, true)
+    showWorldBookMatches: normalizeBoolean(input.showWorldBookMatches ?? input.show_world_book_matches, true),
+    castTracking: normalizeCastTracking(input.castTracking ?? input.cast_tracking)
   };
 }
 
@@ -59,7 +61,10 @@ export function mergeChatAppearance(author = {}, user = {}) {
     statusBarPrompt: mergeAppearanceText(authorSettings.statusBarPrompt, userSettings.statusBarPrompt),
     showWorldBookMatches: hasOwnSetting(user, 'showWorldBookMatches', 'show_world_book_matches')
       ? userSettings.showWorldBookMatches
-      : authorSettings.showWorldBookMatches
+      : authorSettings.showWorldBookMatches,
+    castTracking: hasOwnSetting(user, 'castTracking', 'cast_tracking')
+      ? userSettings.castTracking
+      : authorSettings.castTracking
   };
 }
 
@@ -268,6 +273,11 @@ function normalizeBoolean(value, fallback = false) {
     return false;
   }
   return fallback;
+}
+
+function normalizeCastTracking(value) {
+  const input = value && typeof value === 'object' ? value : {};
+  return { enabled: normalizeBoolean(input.enabled, false) };
 }
 
 function hasOwnSetting(source, camelKey, snakeKey) {

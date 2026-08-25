@@ -41,6 +41,10 @@ import { hasUsableProvider } from './providerReadiness.js';
 import { buildProviderBody } from './providerRequestBody.js';
 import { parseSse } from './providerSse.js';
 import { createStreamEmitQueue } from './providerStreamEmit.js';
+import {
+  hasProviderStreamError,
+  providerStreamErrorMessage
+} from './providerStreamErrors.js';
 import { executeProviderTool } from './providerToolResults.js';
 
 export async function runToolCompletion(settings, messages, tools, executeTool, options = {}) {
@@ -64,19 +68,47 @@ export async function runToolCompletion(settings, messages, tools, executeTool, 
   let usage = null;
 
   for (let round = 0; round < maxRounds; round += 1) {
-    const response = await providerFetch(settings, '/chat/completions', {
-      method: 'POST',
-      body: JSON.stringify(
-        buildProviderBody(settings, nextMessages, false, {
-          ...options,
-          tools,
-          toolChoice: options.toolChoice || 'auto',
-          thinkingEnabled: options.thinkingEnabled ?? false
-        })
-      ),
-      signal: options.signal
+    const requestBody = buildProviderBody(settings, nextMessages, false, {
+      ...options,
+      tools,
+      toolChoice: options.toolChoice || 'auto',
+      thinkingEnabled: options.thinkingEnabled ?? false
     });
-    const json = await readJsonResponse(response);
+
+    let response;
+    let json;
+
+    try {
+      response = await providerFetch(settings, '/chat/completions', {
+        method: 'POST',
+        body: JSON.stringify(requestBody),
+        signal: options.signal
+      });
+      json = await readJsonResponse(response);
+    } catch (error) {
+      // 增强错误信息：包含请求体和响应
+      console.error('[Tool Completion Error] Round:', round + 1);
+      console.error('[Tool Completion Error] Provider:', settings.providerType);
+      console.error('[Tool Completion Error] Model:', settings.model);
+      console.error('[Tool Completion Error] Tools count:', tools.length);
+      console.error('[Tool Completion Error] Request body:', JSON.stringify({
+        model: requestBody.model,
+        tools: requestBody.tools?.map(t => ({
+          name: t.function?.name,
+          parameters: t.function?.parameters
+        })),
+        toolChoice: requestBody.tool_choice,
+        messages: requestBody.messages.length + ' messages'
+      }, null, 2));
+
+      if (error.response) {
+        console.error('[Tool Completion Error] Response status:', error.response.status);
+        console.error('[Tool Completion Error] Response body:', error.response.body);
+      }
+
+      throw error;
+    }
+
     usage = json.usage || usage;
     const message = extractChatMessage(json);
     finalMessage = message;
@@ -190,21 +222,44 @@ export async function streamToolCompletion(settings, messages, tools, executeToo
     process.push(step);
     await streamEmit.emit('step', step);
 
-    const response = await providerFetch(settings, '/chat/completions', {
-      method: 'POST',
-      body: JSON.stringify(
-        buildProviderBody(settings, nextMessages, true, {
-          ...options,
-          tools,
-          toolChoice: options.toolChoice || 'auto',
-          thinkingEnabled: options.thinkingEnabled ?? false
-        })
-      ),
-      signal
+    const requestBody = buildProviderBody(settings, nextMessages, true, {
+      ...options,
+      tools,
+      toolChoice: options.toolChoice || 'auto',
+      thinkingEnabled: options.thinkingEnabled ?? false
     });
 
-    if (!response.ok) {
-      throw new Error(await responseErrorText(response));
+    let response;
+    try {
+      response = await providerFetch(settings, '/chat/completions', {
+        method: 'POST',
+        body: JSON.stringify(requestBody),
+        signal
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text().catch(() => '');
+        console.error('[Stream Tool Completion Error] Round:', round + 1);
+        console.error('[Stream Tool Completion Error] Provider:', settings.providerType);
+        console.error('[Stream Tool Completion Error] Model:', settings.model);
+        console.error('[Stream Tool Completion Error] Tools count:', tools.length);
+        console.error('[Stream Tool Completion Error] Request body:', JSON.stringify({
+          model: requestBody.model,
+          tools: requestBody.tools?.map(t => ({
+            name: t.function?.name,
+            parameters: t.function?.parameters
+          })),
+          toolChoice: requestBody.tool_choice,
+          messages: requestBody.messages.length + ' messages'
+        }, null, 2));
+        console.error('[Stream Tool Completion Error] Response status:', response.status);
+        console.error('[Stream Tool Completion Error] Response body:', errorText.substring(0, 2000));
+        throw new Error(await responseErrorText(response));
+      }
+    } catch (error) {
+      if (!response || !response.ok) {
+        throw error;
+      }
     }
 
     let roundContent = '';
@@ -252,7 +307,9 @@ export async function streamToolCompletion(settings, messages, tools, executeToo
 
     if (isJsonResponse(response)) {
       const json = await readJsonResponseValue(response, { allowArray: true });
+      assertToolStreamPayload(json);
       for (const payload of collectChatCompletionStreamPayloads(json)) {
+        assertToolStreamPayload(payload);
         consumeToolPayload(payload);
         await streamEmit.wait();
       }
@@ -266,8 +323,10 @@ export async function streamToolCompletion(settings, messages, tools, executeToo
         if (!json) {
           continue;
         }
+        assertToolStreamPayload(json, event.event);
 
         for (const payload of collectChatCompletionStreamPayloads(json)) {
+          assertToolStreamPayload(payload, event.event);
           consumeToolPayload(payload, event);
         }
         await streamEmit.wait();
@@ -374,4 +433,16 @@ export async function streamToolCompletion(settings, messages, tools, executeToo
     providerType: settings.providerType,
     model: normalizeProviderModel(settings.providerType, settings.model)
   };
+}
+
+function assertToolStreamPayload(payload, eventName = '') {
+  if (Array.isArray(payload)) {
+    for (const item of payload) {
+      assertToolStreamPayload(item, eventName);
+    }
+    return;
+  }
+  if (hasProviderStreamError(payload, eventName)) {
+    throw new Error(providerStreamErrorMessage(payload, '工具调用流式响应失败'));
+  }
 }

@@ -69,38 +69,46 @@ export function createDatabaseIndexes(database) {
     CREATE INDEX IF NOT EXISTS idx_mods_user ON mods(user_id);
     CREATE INDEX IF NOT EXISTS idx_mods_user_order ON mods(user_id, order_index, created_at);
 
-    CREATE INDEX IF NOT EXISTS idx_npc_memories_conversation ON npc_memories(conversation_id);
-    CREATE INDEX IF NOT EXISTS idx_npc_memories_npc ON npc_memories(conversation_id, npc_name);
-    CREATE INDEX IF NOT EXISTS idx_npc_memories_conversation_npc_created ON npc_memories(conversation_id, npc_name, created_at);
-    CREATE INDEX IF NOT EXISTS idx_npc_memories_conversation_created ON npc_memories(conversation_id, created_at);
-
-    CREATE INDEX IF NOT EXISTS idx_npc_behaviors_conversation ON npc_behaviors(conversation_id);
-    CREATE INDEX IF NOT EXISTS idx_npc_behaviors_npc ON npc_behaviors(conversation_id, npc_name);
-    CREATE INDEX IF NOT EXISTS idx_npc_behaviors_conversation_npc_priority ON npc_behaviors(conversation_id, npc_name, priority, created_at);
-    CREATE INDEX IF NOT EXISTS idx_npc_behaviors_conversation_enabled_priority ON npc_behaviors(conversation_id, enabled, priority, created_at);
-
-    CREATE INDEX IF NOT EXISTS idx_npc_registry_conversation ON npc_registry(conversation_id);
-    CREATE INDEX IF NOT EXISTS idx_npc_registry_hidden ON npc_registry(conversation_id, hidden);
-    CREATE INDEX IF NOT EXISTS idx_npc_profile_audit_npc_created ON npc_profile_audit(conversation_id, npc_name, created_at);
-    CREATE INDEX IF NOT EXISTS idx_npc_item_audit_npc_created ON npc_item_audit(conversation_id, npc_name, created_at);
-    CREATE INDEX IF NOT EXISTS idx_npc_item_audit_item ON npc_item_audit(item_type, item_id);
-
     CREATE INDEX IF NOT EXISTS idx_scene_nodes_conversation_type_name ON scene_nodes(conversation_id, node_type, name, created_at);
     CREATE INDEX IF NOT EXISTS idx_scene_nodes_parent ON scene_nodes(conversation_id, parent_id);
     CREATE INDEX IF NOT EXISTS idx_scene_routes_conversation_created ON scene_routes(conversation_id, created_at);
     CREATE INDEX IF NOT EXISTS idx_scene_routes_endpoints ON scene_routes(conversation_id, from_node_id, to_node_id, bidirectional);
     CREATE INDEX IF NOT EXISTS idx_discovered_scene_nodes_conversation ON discovered_scene_nodes(conversation_id, discovered_at);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_cast_members_one_protagonist
+      ON cast_members(conversation_id) WHERE member_type = 'protagonist';
+    CREATE INDEX IF NOT EXISTS idx_cast_members_roster
+      ON cast_members(conversation_id, visibility, member_type, canonical_name);
+    CREATE INDEX IF NOT EXISTS idx_cast_aliases_member
+      ON cast_member_aliases(member_id, alias_key);
+    CREATE INDEX IF NOT EXISTS idx_cast_memories_member_created
+      ON cast_memories(conversation_id, member_id, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_cast_memories_reinforcement
+      ON cast_memories(member_id, forgotten_at, importance DESC, last_reinforced_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_cast_behaviors_member_priority
+      ON cast_behaviors(conversation_id, member_id, enabled, priority DESC, created_at);
+    CREATE INDEX IF NOT EXISTS idx_cast_activities_time
+      ON cast_activities(conversation_id, start_tick, end_tick, status);
+    CREATE INDEX IF NOT EXISTS idx_cast_turn_queue_order
+      ON cast_turn_queue(conversation_id, status, order_index, created_at);
+    CREATE INDEX IF NOT EXISTS idx_conversation_turns_order
+      ON conversation_turns(conversation_id, turn_index, created_at);
+    CREATE INDEX IF NOT EXISTS idx_scene_items_world
+      ON scene_items(conversation_id, owner_kind, node_id, name, created_at);
+    CREATE INDEX IF NOT EXISTS idx_scene_items_cast
+      ON scene_items(conversation_id, owner_member_id, equipped, clothing_slot, name);
+    CREATE INDEX IF NOT EXISTS idx_cast_change_batches_status
+      ON cast_change_batches(conversation_id, status, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_cast_audit_member_created
+      ON conversation_audit_events(conversation_id, member_id, created_at DESC, id);
+    CREATE INDEX IF NOT EXISTS idx_cast_audit_subject
+      ON conversation_audit_events(conversation_id, subject_type, subject_id, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_cast_ooc_member_created
+      ON cast_ooc_validations(conversation_id, member_id, created_at DESC);
     CREATE INDEX IF NOT EXISTS idx_encounters_conversation_status ON encounters(conversation_id, status, updated_at);
     CREATE INDEX IF NOT EXISTS idx_encounter_participants_order ON encounter_participants(encounter_id, initiative DESC, created_at);
+    CREATE INDEX IF NOT EXISTS idx_encounter_participants_member ON encounter_participants(member_id, encounter_id);
     CREATE INDEX IF NOT EXISTS idx_encounter_actions_order ON encounter_actions(encounter_id, round_number, turn_index, created_at);
     CREATE INDEX IF NOT EXISTS idx_reward_grants_conversation_status ON reward_grants(conversation_id, status, created_at);
-    CREATE INDEX IF NOT EXISTS idx_scene_items_node_name ON scene_items(conversation_id, node_id, name, created_at);
-    CREATE INDEX IF NOT EXISTS idx_scene_items_owner ON scene_items(conversation_id, owner_type, owner_name, equipped, clothing_slot);
-    CREATE INDEX IF NOT EXISTS idx_scene_items_code ON scene_items(conversation_id, item_code);
-    CREATE INDEX IF NOT EXISTS idx_scene_item_audit_item_created ON scene_item_audit(conversation_id, item_id, created_at);
-    CREATE INDEX IF NOT EXISTS idx_scene_item_audit_before_owner ON scene_item_audit(conversation_id, before_owner_type, before_owner_name, created_at);
-    CREATE INDEX IF NOT EXISTS idx_scene_item_audit_after_owner ON scene_item_audit(conversation_id, after_owner_type, after_owner_name, created_at);
-
     CREATE INDEX IF NOT EXISTS idx_economy_accounts_conversation ON economy_accounts(conversation_id);
     CREATE INDEX IF NOT EXISTS idx_economy_accounts_user ON economy_accounts(user_id);
     CREATE INDEX IF NOT EXISTS idx_economy_transactions_account ON economy_transactions(account_id);
@@ -114,8 +122,6 @@ export function createDatabaseIndexes(database) {
     CREATE INDEX IF NOT EXISTS idx_quest_objectives_quest_order ON quest_objectives(quest_id, order_index, created_at);
     CREATE INDEX IF NOT EXISTS idx_skill_checks_conversation_created ON skill_checks(conversation_id, created_at);
 
-    CREATE INDEX IF NOT EXISTS idx_npc_activities_conversation_time ON npc_activities(conversation_id, start_tick, end_tick, status);
-    CREATE INDEX IF NOT EXISTS idx_npc_activities_npc_time ON npc_activities(conversation_id, npc_name, start_tick, end_tick);
     CREATE INDEX IF NOT EXISTS idx_world_advances_conversation_created ON world_advances(conversation_id, created_at);
 
     CREATE INDEX IF NOT EXISTS idx_character_images_character ON character_images(character_id);
@@ -136,5 +142,8 @@ export function createDatabaseIndexes(database) {
     CREATE INDEX IF NOT EXISTS idx_town_reflections_resident_created ON town_reflections(resident_id, created_at DESC);
     CREATE INDEX IF NOT EXISTS idx_town_schedules_town_day ON town_schedules(town_id, day, resident_id);
     CREATE INDEX IF NOT EXISTS idx_town_schedule_items_schedule_order ON town_schedule_items(schedule_id, order_index);
+
+    CREATE INDEX IF NOT EXISTS idx_conversation_memories_layer ON conversation_memories(conversation_id, layer, importance DESC);
+
   `);
 }

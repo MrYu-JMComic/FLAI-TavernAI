@@ -168,53 +168,11 @@
 
 /* Character, lorebook, presets and settings */
 
-.character-section-nav,
 .settings-section-nav {
   top: calc(84px + env(safe-area-inset-top, 0px));
   border-radius: var(--radius-md);
   background: var(--surface-glass);
   box-shadow: var(--shadow-sm);
-}
-
-.editor-layout {
-  align-items: start;
-  gap: clamp(18px, 2.4vw, 32px);
-}
-
-.character-editor-workbench {
-  display: grid;
-  grid-template-columns: 210px minmax(0, 1fr);
-  gap: clamp(18px, 2.4vw, 30px);
-  align-items: start;
-}
-
-.character-editor-workbench > .character-section-nav {
-  position: sticky;
-  top: calc(-1 * var(--workspace-page-padding-top));
-  display: flex;
-  flex-direction: column;
-  align-items: stretch;
-  max-height: calc(100dvh - 110px);
-  padding: 7px;
-  overflow: auto;
-}
-
-.character-editor-workbench > .character-section-nav .form-section-tab {
-  width: 100%;
-  min-height: 42px;
-  text-align: left;
-}
-
-.character-editor-workbench > .editor-layout {
-  min-width: 0;
-}
-
-.workspace-layout-shell .editor-side {
-  position: sticky;
-  top: calc(-1 * var(--workspace-page-padding-top));
-  max-height: calc(100dvh - 168px);
-  overflow: auto;
-  overscroll-behavior: contain;
 }
 
 .form-actions {
@@ -971,13 +929,11 @@
 }
 
 @media (max-width: 900px) {
-  .character-editor-workbench,
   .settings-workbench {
     display: grid;
     grid-template-columns: minmax(0, 1fr);
   }
 
-  .character-editor-workbench > .character-section-nav,
   .settings-workbench > .settings-section-nav {
     position: sticky;
     grid-column: 1;
@@ -988,22 +944,14 @@
     overflow-x: auto;
   }
 
-  .character-editor-workbench > .character-section-nav .form-section-tab,
   .settings-workbench > .settings-section-nav .form-section-tab {
     width: auto;
     min-height: 40px;
     text-align: center;
   }
 
-  .character-editor-workbench > .editor-layout,
   .settings-workbench > :not(.section-heading):not(.settings-section-nav) {
     grid-column: 1;
-  }
-
-  .editor-side {
-    position: static;
-    max-height: none;
-    overflow: visible;
   }
 
   .preset-workbench {
@@ -1117,36 +1065,8 @@
     -webkit-line-clamp: 3;
   }
 
-  .character-section-nav,
   .settings-section-nav {
     top: 66px;
-  }
-
-  .editor-layout {
-    padding-bottom: 76px;
-  }
-
-  .editor-layout > .editor-side .form-actions,
-  .character-main-sections + .editor-side .form-actions {
-    position: sticky;
-    bottom: calc(74px + env(safe-area-inset-bottom, 0px));
-    z-index: 24;
-    padding: 10px;
-    background: var(--surface-glass);
-    box-shadow: var(--shadow-md);
-    backdrop-filter: blur(18px);
-    -webkit-backdrop-filter: blur(18px);
-  }
-
-  .character-editor-workbench .editor-side .form-actions {
-    position: static;
-    bottom: auto;
-    z-index: auto;
-    padding: 0;
-    background: transparent;
-    box-shadow: none;
-    backdrop-filter: none;
-    -webkit-backdrop-filter: none;
   }
 
   .deep-chat-shell .deep-sidebar {

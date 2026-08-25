@@ -21,6 +21,7 @@ export function useCharacterFormDraft({
   const pendingCharacterDraft = ref(null);
   const characterDraftStatus = ref('idle');
   const characterDraftSavedAt = ref('');
+  const hasUnsavedChanges = ref(false);
   let characterDraftBaselineSerialized = '';
   let characterDraftSaveTimer = null;
   let characterDraftInterval = null;
@@ -59,6 +60,17 @@ export function useCharacterFormDraft({
     characterDraftBaselineSerialized = serializeCharacterDraftSnapshot(buildCharacterDraftSnapshot());
     characterDraftStatus.value = 'idle';
     characterDraftSavedAt.value = '';
+    hasUnsavedChanges.value = false;
+  }
+
+  function refreshCharacterDraftDirtyState() {
+    const serialized = serializeCharacterDraftSnapshot(buildCharacterDraftSnapshot());
+    hasUnsavedChanges.value = Boolean(
+      characterDraftBaselineSerialized
+      && serialized
+      && serialized !== characterDraftBaselineSerialized
+    );
+    return serialized;
   }
 
   function buildCharacterDraftSnapshot() {
@@ -150,6 +162,7 @@ export function useCharacterFormDraft({
     pendingCharacterDraft.value = null;
     characterDraftStatus.value = 'idle';
     characterDraftSavedAt.value = '';
+    hasUnsavedChanges.value = false;
   }
 
   function restoreCharacterDraft() {
@@ -167,6 +180,7 @@ export function useCharacterFormDraft({
     pendingCharacterDraft.value = null;
     characterDraftStatus.value = 'restored';
     characterDraftSavedAt.value = draft.updatedAt || '';
+    refreshCharacterDraftDirtyState();
     scheduleCharacterDraftSave();
   }
 
@@ -176,6 +190,7 @@ export function useCharacterFormDraft({
   }
 
   function scheduleCharacterDraftSave() {
+    refreshCharacterDraftDirtyState();
     if (!canPersistCharacterDraft()) {
       return;
     }
@@ -192,7 +207,7 @@ export function useCharacterFormDraft({
       return false;
     }
     const snapshot = buildCharacterDraftSnapshot();
-    const serialized = serializeCharacterDraftSnapshot(snapshot);
+    const serialized = refreshCharacterDraftDirtyState();
     if (!serialized || serialized === characterDraftBaselineSerialized) {
       removeCharacterDraftFromStorage();
       characterDraftStatus.value = 'idle';
@@ -267,6 +282,7 @@ export function useCharacterFormDraft({
     discardCharacterDraft,
     establishCharacterDraftBaseline,
     flushCharacterDraftBeforeDispose,
+    hasUnsavedChanges,
     initializeCharacterDraftState,
     pendingCharacterDraft,
     restoreCharacterDraft,

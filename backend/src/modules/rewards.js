@@ -2,11 +2,10 @@ import { newId, nowIso } from '../security.js';
 import { parseJson } from '../utils/json.js';
 import { createConversationTransaction } from './economy.js';
 import { listQuests, updateQuestObjective } from './quests.js';
-import { upsertSceneItem } from './scenes.js';
 import { recordWorldEvent } from './worldEvents.js';
 import { withSavepoint } from './savepoint.js';
-
-const MAX_BACKPACK_KINDS = 60;
+import { upsertCastMemberItem } from '../services/cast/castCommandService.js';
+import { getCastItems, getProtagonist } from '../services/cast/castQueryService.js';
 
 export function listRewardGrants(database, userId, conversationId, options = {}) {
   if (!hasAccess(database, userId, conversationId)) return null;
@@ -29,8 +28,6 @@ export function proposeRewardGrant(database, userId, conversationId, payload = {
   if (existing) return { ok: true, grant: toGrant(existing), duplicate: true };
   const rewards = normalizeRewards(payload.rewards);
   if (!rewards.currency.length && !rewards.items.length && !rewards.questProgress.length && rewards.growthPoints === 0) return { ok: false, error: '奖励内容为空' };
-  const ownershipError = validateItemOwnership(database, conversationId, rewards.items);
-  if (ownershipError) return { ok: false, error: ownershipError };
   const id = newId();
   const timestamp = nowIso();
   database.prepare(`INSERT INTO reward_grants (id, conversation_id, character_id, source_type, source_id, title, rewards_json, status, claimed_at, created_at, updated_at)
@@ -48,21 +45,30 @@ export function claimRewardGrant(database, userId, conversationId, grantId, opti
   if (grant.status === 'claimed') return { ok: true, grant, duplicate: true };
   const source = validateSource(database, conversationId, grant.sourceType, grant.sourceId);
   if (!source.ok) return source;
-  const ownershipError = validateItemOwnership(database, conversationId, grant.rewards.items);
-  if (ownershipError) return { ok: false, error: ownershipError };
-  const existingKinds = database.prepare("SELECT COUNT(*) AS count FROM scene_items WHERE conversation_id = ? AND owner_type = 'protagonist'").get(conversationId).count;
-  let newKinds = 0;
-  for (const item of grant.rewards.items) if (!database.prepare('SELECT id FROM scene_items WHERE conversation_id = ? AND item_code = ?').get(conversationId, item.itemCode)) newKinds += 1;
-  if (existingKinds + newKinds > MAX_BACKPACK_KINDS) return { ok: false, error: `背包种类上限为 ${MAX_BACKPACK_KINDS}` };
   return withSavepoint(database, 'sp_claim_reward', () => {
     const claimed = database.prepare("UPDATE reward_grants SET status = 'claimed', claimed_at = ?, updated_at = ? WHERE id = ? AND conversation_id = ? AND status = 'pending'")
       .run(nowIso(), nowIso(), grantId, conversationId);
     if (claimed.changes === 0) return { ok: true, grant: readGrant(database, grantId), duplicate: true };
     const results = { currency: [], items: [], questProgress: [], growthPoints: grant.rewards.growthPoints };
     for (const reward of grant.rewards.currency) results.currency.push(createConversationTransaction(database, userId, conversationId, { amount: reward.amount, type: 'reward', currencyType: reward.currencyType, description: grant.title, source: options.source || 'reward' }));
-    for (const reward of grant.rewards.items) {
-      const existing = database.prepare('SELECT * FROM scene_items WHERE conversation_id = ? AND item_code = ?').get(conversationId, reward.itemCode);
-      results.items.push(upsertSceneItem(database, userId, conversationId, { id: existing?.id, itemCode: reward.itemCode, name: reward.name, description: reward.description, ownerType: 'protagonist', quantity: Number(existing?.quantity || 0) + reward.quantity, itemKind: 'item', iconKey: reward.iconKey || 'item.chest', source: options.source || 'reward' }));
+    if (grant.rewards.items.length) {
+      const protagonist = getProtagonist(database, userId, conversationId);
+      const currentItems = getCastItems(database, userId, conversationId, protagonist.id, { limit: 300 });
+      for (const reward of grant.rewards.items) {
+        const existing = currentItems.find((item) => item.itemCode === reward.itemCode);
+        const item = upsertCastMemberItem(database, userId, conversationId, protagonist.id, {
+          id: existing?.id,
+          revision: existing?.revision,
+          itemCode: reward.itemCode,
+          name: reward.name,
+          description: reward.description,
+          iconKey: reward.iconKey,
+          itemKind: 'item',
+          quantity: Number(existing?.quantity || 0) + reward.quantity,
+        }, { actor: options.source || 'reward' });
+        results.items.push(item);
+        if (!existing) currentItems.push(item);
+      }
     }
     for (const reward of grant.rewards.questProgress) {
       const quests = listQuests(database, userId, conversationId) || [];
@@ -98,20 +104,12 @@ function validateSource(database, conversationId, type, id) {
   return { ok: true, title: row.title };
 }
 
-function validateItemOwnership(database, conversationId, items) {
-  for (const item of items) {
-    const existing = database.prepare('SELECT owner_type, owner_name FROM scene_items WHERE conversation_id = ? AND item_code = ?').get(conversationId, item.itemCode);
-    if (existing && (existing.owner_type !== 'protagonist' || existing.owner_name)) return `唯一物品 ${item.itemCode} 已属于其他所有者`;
-  }
-  return '';
-}
-
 function normalizeRewards(value = {}) {
   const currency = [];
   for (const item of Array.isArray(value.currency) ? value.currency.slice(0, 5) : []) { const amount = positiveInteger(item?.amount, 1000000); if (amount > 0) currency.push({ currencyType: ['gold','silver','copper','gem','credit'].includes(item?.currencyType) ? item.currencyType : 'gold', amount }); }
   const items = [];
   const codes = new Set();
-  for (const item of Array.isArray(value.items) ? value.items.slice(0, 20) : []) { const itemCode = text(item?.itemCode, 80); const name = text(item?.name, 160); const quantity = positiveInteger(item?.quantity, 9999); if (itemCode && name && quantity && !codes.has(itemCode)) { codes.add(itemCode); items.push({ itemCode, name, quantity, description: text(item?.description, 1000), iconKey: text(item?.iconKey, 80) }); } }
+  for (const item of Array.isArray(value.items) ? value.items.slice(0, 20) : []) { const itemCode = text(item?.itemCode, 120); const name = text(item?.name, 160); const quantity = positiveInteger(item?.quantity, 9999); if (itemCode && name && quantity && !codes.has(itemCode)) { codes.add(itemCode); items.push({ itemCode, name, quantity, description: text(item?.description, 1000), iconKey: text(item?.iconKey, 120) }); } }
   const questProgress = [];
   for (const item of Array.isArray(value.questProgress) ? value.questProgress.slice(0, 12) : []) { const questId = text(item?.questId, 160); const objectiveId = text(item?.objectiveId, 160); const delta = positiveInteger(item?.delta, 1000000); if (questId && objectiveId && delta) questProgress.push({ questId, objectiveId, delta }); }
   return { currency, items, questProgress, growthPoints: nonNegativeInteger(value.growthPoints, 1000000) };

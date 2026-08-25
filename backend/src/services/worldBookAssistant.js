@@ -16,8 +16,7 @@ const worldBookTools = [
           description: { type: 'string' },
           scanDepth: { type: 'integer', minimum: 1, maximum: 50 },
           lorebookContextPercent: { type: 'integer', minimum: 1, maximum: 100 }
-        },
-        additionalProperties: false
+        }
       }
     }
   },
@@ -53,13 +52,11 @@ const worldBookTools = [
                 cooldown: { type: ['integer', 'null'], minimum: 0 },
                 delay: { type: ['integer', 'null'], minimum: 0 }
               },
-              required: ['name', 'triggerKeys', 'content'],
-              additionalProperties: false
+              required: ['name', 'triggerKeys', 'content']
             }
           }
         },
-        required: ['entries'],
-        additionalProperties: false
+        required: ['entries']
       }
     }
   }

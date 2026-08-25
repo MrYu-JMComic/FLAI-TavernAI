@@ -1,6 +1,7 @@
 import { appConfig } from '../config.js';
 import { normalizeProviderRow } from './providers.js';
 import { sanitizeDiagnosticValue } from './diagnosticRedaction.js';
+import { buildUserCastDiagnostics } from './cast/castSnapshot.js';
 
 const diagnosticTables = [
   'characters',
@@ -13,14 +14,14 @@ const diagnosticTables = [
   'presets',
   'mods',
   'regex_rules',
-  'status_bars',
-  'npc_registry',
-  'npc_memories',
-  'npc_behaviors'
+  'status_bars'
 ];
 
 export function buildDiagnosticsExport(database, userId) {
   const providerRow = database.prepare('SELECT * FROM provider_settings WHERE user_id = ?').get(userId);
+  const conversationIds = database.prepare(
+    'SELECT id FROM conversations WHERE user_id = ? ORDER BY id'
+  ).all(userId).map((row) => row.id);
   return {
     version: 1,
     generatedAt: new Date().toISOString(),
@@ -37,7 +38,10 @@ export function buildDiagnosticsExport(database, userId) {
       arch: process.arch
     },
     provider: providerRow ? sanitizeDiagnosticValue(normalizeProviderRow(providerRow)) : null,
-    counts: readUserScopedCounts(database, userId)
+    counts: {
+      ...readUserScopedCounts(database, userId),
+      cast: buildUserCastDiagnostics(database, userId, conversationIds)
+    }
   };
 }
 

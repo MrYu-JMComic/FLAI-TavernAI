@@ -1,4 +1,4 @@
-import { findSseBlockSeparator, forEachSseLine } from '../../../shared/sse.js';
+import { createSseParser } from '../../../shared/sse.js';
 
 export async function* parseSse(stream) {
   if (!stream || typeof stream.getReader !== 'function') {
@@ -6,34 +6,25 @@ export async function* parseSse(stream) {
   }
   const reader = stream.getReader();
   const decoder = new TextDecoder();
-  let buffer = '';
+  const parser = createSseParser();
 
   try {
     while (true) {
       const { done, value } = await readSseChunk(reader);
       if (done) {
-        buffer += decoder.decode();
         break;
       }
 
-      buffer += decoder.decode(value, { stream: true });
-      let separator = findSseBlockSeparator(buffer);
-      while (separator) {
-        const block = buffer.slice(0, separator.index);
-        buffer = buffer.slice(separator.index + separator.length);
-        const event = parseSseBlock(block);
-        if (event.data) {
-          yield event;
-        }
-        separator = findSseBlockSeparator(buffer);
+      for (const event of parser.push(decoder.decode(value, { stream: true }))) {
+        yield event;
       }
     }
 
-    if (buffer.trim()) {
-      const event = parseSseBlock(buffer);
-      if (event.data) {
-        yield event;
-      }
+    for (const event of parser.push(decoder.decode())) {
+      yield event;
+    }
+    for (const event of parser.end()) {
+      yield event;
     }
   } finally {
     await reader.cancel().catch(() => {});
@@ -49,24 +40,4 @@ async function readSseChunk(reader) {
     }
     throw new Error('AI 流式响应中断，请稍后重试。', { cause: error });
   }
-}
-
-function parseSseBlock(block) {
-  const event = { event: 'message', data: '' };
-  let hasData = false;
-
-  forEachSseLine(block, (line) => {
-    if (line.startsWith('event:')) {
-      event.event = line.slice(6).trim();
-    }
-    if (line.startsWith('data:')) {
-      if (hasData) {
-        event.data += '\n';
-      }
-      event.data += line.slice(5).trimStart();
-      hasData = true;
-    }
-  });
-
-  return event;
 }

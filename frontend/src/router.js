@@ -42,6 +42,11 @@ export const routeDefinitions = [
     component: () => import('./views/ChatView.vue')
   },
   {
+    path: '/chat/:id/multi-role',
+    name: 'multiAgentChat',
+    component: () => import('./views/MultiRoleChatView.vue')
+  },
+  {
     path: '/town',
     name: 'town',
     component: () => import('./views/TownView.vue')

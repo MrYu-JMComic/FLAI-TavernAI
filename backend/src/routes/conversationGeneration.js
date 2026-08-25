@@ -11,13 +11,13 @@ import {
 } from '../services/chatAttachments.js';
 import { createConversationAssistantResultService } from '../services/conversationAssistantResults.js';
 import { recordAutomaticConversationMemories } from '../services/conversationMemoryExtraction.js';
+import { projectConversationCast } from '../services/cast/castProjector.js';
 import {
   createChatDiagnosticId,
   hasAssistantPayload,
   logAssistantPayloadFailure
 } from '../services/conversationGenerationDiagnostics.js';
 import { streamAssistantResponse } from '../services/conversationStreamResponse.js';
-import { attachNpcLookupTools } from '../services/npcContextTools.js';
 import { buildPromptPipeline } from '../services/promptPipeline.js';
 import {
   generateCompletion,
@@ -33,6 +33,7 @@ import {
   writeSse
 } from './helpers.js';
 import { continueMessageSchema, sendMessageSchema, validate } from '../validations/schemas.js';
+import { normalizeThinkingLevel } from '../../../shared/providerThinking.js';
 
 const CONTINUATION_PROMPT = [
   '从上一条 assistant 回复的末尾直接续写尚未完成的内容。',
@@ -205,14 +206,7 @@ export function createConversationGenerationRouter(ctx) {
       return;
     }
 
-    const completionOptions = attachNpcLookupTools(aiOptions, {
-      enabled: promptPipeline.sections.npc.active,
-      roster: promptPipeline.sections.npc.roster,
-      db,
-      userId: request.auth.user.id,
-      conversationId: conversation.id,
-      mainCharacterName: character.name || ''
-    });
+    const completionOptions = aiOptions;
 
     if (request.body?.stream !== false) {
       await streamAssistantResponse({
@@ -377,14 +371,7 @@ export function createConversationGenerationRouter(ctx) {
     const worldBookMatches = promptPipeline.worldBookMatches;
     const modelMessages = promptPipeline.modelMessages;
     const statusBar = promptPipeline.statusBar;
-    const completionOptions = attachNpcLookupTools(aiOptions, {
-      enabled: promptPipeline.sections.npc.active,
-      roster: promptPipeline.sections.npc.roster,
-      db,
-      userId: request.auth.user.id,
-      conversationId: conversation.id,
-      mainCharacterName: character.name || ''
-    });
+    const completionOptions = aiOptions;
 
     if (request.body?.stream !== false) {
       await streamAssistantResponse({
@@ -506,13 +493,30 @@ export function createConversationGenerationRouter(ctx) {
       runAccessoryAgents(options).catch((error) => {
         console.warn('[accessory-agents] background update failed:', error?.message || error);
       });
+      projectConversationCast({
+        database: options.db,
+        userId: options.userId,
+        conversation: options.conversation,
+        userMessage: options.userMessage,
+        assistantMessage: options.assistantMessage,
+        settings: options.settings
+      }).catch((error) => {
+        console.warn('[cast-sync] background update failed:', error?.message || error);
+      });
     });
   }
 
   function buildAiOptions(body = {}, activePreset = null) {
+    const hasThinkingLevel = body?.thinkingLevel !== undefined && body?.thinkingLevel !== null;
+    const thinkingLevel = hasThinkingLevel
+      ? normalizeThinkingLevel(body.thinkingLevel, body?.thinkingEnabled === false ? 'off' : 'high')
+      : '';
     const aiOptions = {
-      thinkingEnabled: body?.thinkingEnabled !== false
+      thinkingEnabled: thinkingLevel ? thinkingLevel !== 'off' : body?.thinkingEnabled !== false
     };
+    if (thinkingLevel) {
+      aiOptions.thinkingLevel = thinkingLevel;
+    }
 
     if (activePreset) {
       aiOptions.temperature = activePreset.temperature;

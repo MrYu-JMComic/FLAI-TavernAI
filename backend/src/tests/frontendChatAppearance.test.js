@@ -127,7 +127,8 @@ test('chat appearance merges layered text fields without filter arrays', () => {
       customJsEnabled: true,
       customJsRiskAccepted: true,
       statusBarPrompt: 'Author prompt\n\nUser prompt',
-      showWorldBookMatches: false
+      showWorldBookMatches: false,
+      castTracking: { enabled: false }
     }
   );
   assert.match(
@@ -161,7 +162,8 @@ test('chat appearance only applies custom CSS and JS after risk confirmation', (
       customJsEnabled: false,
       customJsRiskAccepted: false,
       statusBarPrompt: '',
-      showWorldBookMatches: true
+      showWorldBookMatches: true,
+      castTracking: { enabled: false }
     }
   );
   assert.equal(
@@ -410,7 +412,8 @@ test('chat appearance save preserves active conversation references for unchange
     customJsEnabled: false,
     customJsRiskAccepted: false,
     statusBarPrompt: '',
-    showWorldBookMatches: true
+    showWorldBookMatches: true,
+    castTracking: { enabled: false }
   };
   const savedSettings = {
     ...normalizedAppearance,

@@ -1,4 +1,4 @@
-import { computed, nextTick, ref, triggerRef } from 'vue';
+import { computed, nextTick, ref } from 'vue';
 import {
   continueMessage,
   fetchConversationMessages,
@@ -9,9 +9,23 @@ import {
 import { readFileAsDataUrl } from '../../utils/fileReaders.js';
 import { samePlainValue } from '../../utils/plainValues.js';
 import { resolveProviderModelCapabilities } from '../../../../shared/providerCapabilities.js';
+import {
+  listThinkingPreferenceLevels,
+  normalizeThinkingLevel,
+  resolveThinkingPreferenceLevel
+} from '../../../../shared/providerThinking.js';
 
 const CHAT_IMAGE_LIMIT = 4;
 const CHAT_IMAGE_MAX_BYTES = 4 * 1024 * 1024;
+const THINKING_LEVEL_LABELS = Object.freeze({
+  off: '关闭',
+  minimal: '最低',
+  low: '低',
+  medium: '中',
+  high: '高',
+  xhigh: '极高',
+  max: '最大'
+});
 
 export function useChatSubmit({
   route,
@@ -37,7 +51,8 @@ export function useChatSubmit({
 }) {
   const input = ref('');
   const useStream = ref(readLocalBoolean('flai-chat-use-stream', true));
-  const thinkingEnabled = ref(readLocalBoolean('flai-chat-thinking-enabled', false));
+  const legacyThinkingEnabled = readLocalBoolean('flai-chat-thinking-enabled', false);
+  const requestedThinkingLevel = ref(readLocalThinkingLevel(legacyThinkingEnabled ? 'high' : 'off'));
   const imageGenerationEnabled = ref(readLocalBoolean('flai-chat-image-generation-enabled', true));
   const chatAttachments = ref([]);
   const attachmentBusy = ref(false);
@@ -63,6 +78,29 @@ export function useChatSubmit({
   const accessoryRefreshDelays = [1200, 4000, 9000, 16000, 25000, 38000, 55000];
 
   const chatProviderCapabilities = computed(() => resolveProviderModelCapabilities(provider.value || {}));
+  const thinkingControl = computed(() => chatProviderCapabilities.value.thinking || {
+    supported: Boolean(chatProviderCapabilities.value.reasoning),
+    levels: chatProviderCapabilities.value.reasoning ? ['off', 'high'] : [],
+    defaultLevel: 'high',
+    canDisable: true
+  });
+  const thinkingLevel = computed(() => resolveThinkingPreferenceLevel(
+    requestedThinkingLevel.value,
+    thinkingControl.value,
+    thinkingControl.value.defaultLevel
+  ));
+  const thinkingEnabled = computed(() => Boolean(thinkingLevel.value && thinkingLevel.value !== 'off'));
+  const thinkingOptions = computed(() => {
+    const control = thinkingControl.value;
+    const preferenceLevels = listThinkingPreferenceLevels(control);
+    const nativeMinimumLevel = (control.levels || [])[0];
+    return preferenceLevels.map((value) => ({
+      value,
+      label: !control.canDisable && value === nativeMinimumLevel && value !== 'minimal'
+        ? `${THINKING_LEVEL_LABELS[value] || value}（最低）`
+        : THINKING_LEVEL_LABELS[value] || value
+    }));
+  });
   const canUseStream = computed(() => Boolean(chatProviderCapabilities.value.streaming));
   const canAddAttachments = computed(() => Boolean(chatProviderCapabilities.value.vision));
   const canGenerateImages = computed(() => Boolean(chatProviderCapabilities.value.imageGeneration));
@@ -79,7 +117,7 @@ export function useChatSubmit({
     && normalizeConversationId(route.params.id)
     && hasContinuableAssistantMessage(messages.value)
   ));
-  const canToggleThinking = computed(() => Boolean(chatProviderCapabilities.value.reasoning));
+  const canToggleThinking = computed(() => Boolean(thinkingControl.value.supported && thinkingOptions.value.length));
 
   function readLocalBoolean(key, fallback) {
     if (typeof window === 'undefined') {
@@ -108,6 +146,28 @@ export function useChatSubmit({
     }
   }
 
+  function readLocalThinkingLevel(fallback) {
+    if (typeof window === 'undefined') {
+      return fallback;
+    }
+    try {
+      return normalizeThinkingLevel(window.localStorage.getItem('flai-chat-thinking-level'), fallback);
+    } catch {
+      return fallback;
+    }
+  }
+
+  function writeLocalString(key, value) {
+    if (typeof window === 'undefined') {
+      return;
+    }
+    try {
+      window.localStorage.setItem(key, String(value));
+    } catch {
+      // Private mode or storage quota exceeded
+    }
+  }
+
   function toggleUseStream() {
     if (sending.value || !canUseStream.value) {
       return;
@@ -120,8 +180,23 @@ export function useChatSubmit({
     if (sending.value || !canToggleThinking.value) {
       return;
     }
-    thinkingEnabled.value = !thinkingEnabled.value;
-    writeLocalBoolean('flai-chat-thinking-enabled', thinkingEnabled.value);
+    const nextLevel = thinkingEnabled.value
+      ? 'off'
+      : thinkingControl.value.defaultLevel;
+    setThinkingLevel(nextLevel);
+  }
+
+  function setThinkingLevel(value) {
+    if (sending.value || !canToggleThinking.value) {
+      return;
+    }
+    const level = resolveThinkingPreferenceLevel(value, thinkingControl.value, thinkingControl.value.defaultLevel);
+    if (!level) {
+      return;
+    }
+    requestedThinkingLevel.value = level;
+    writeLocalString('flai-chat-thinking-level', level);
+    writeLocalBoolean('flai-chat-thinking-enabled', level !== 'off');
   }
 
   function toggleImageGeneration() {
@@ -211,17 +286,22 @@ export function useChatSubmit({
       sending.value = false;
       return;
     }
-    const assistantReplyAnchored = shouldAnchorAssistantReply(anchorAssistantReply) && scrollToAssistantReply(assistant, true);
-    if (!assistantReplyAnchored) {
+    const shouldGenerateImage = canToggleImageGeneration.value && imageGenerationEnabled.value;
+    const willStreamReply = useStream.value && canUseStream.value && !shouldGenerateImage;
+    if (willStreamReply) {
       stickToBottomIfNeeded(true);
+    } else {
+      const assistantReplyAnchored = shouldAnchorAssistantReply(anchorAssistantReply)
+        && scrollToAssistantReply(assistant, true);
+      if (!assistantReplyAnchored) stickToBottomIfNeeded(true);
     }
 
-    const shouldGenerateImage = canToggleImageGeneration.value && imageGenerationEnabled.value;
     const requestPayload = {
       content,
       attachments,
       imageGeneration: shouldGenerateImage,
-      thinkingEnabled: canToggleThinking.value ? thinkingEnabled.value : true
+      thinkingEnabled: canToggleThinking.value && thinkingEnabled.value,
+      thinkingLevel: canToggleThinking.value ? thinkingLevel.value : undefined
     };
     if (selectedPresetId.value) {
       requestPayload.presetId = selectedPresetId.value;
@@ -247,7 +327,7 @@ export function useChatSubmit({
     };
 
     try {
-      if (useStream.value && canUseStream.value && !shouldGenerateImage) {
+      if (willStreamReply) {
         streamController = new AbortController();
         controller.value = streamController;
         refreshStreamTimer();
@@ -265,7 +345,7 @@ export function useChatSubmit({
               if (!isCurrentSubmit(submitId, conversationId)) return;
               finalizeUserDraft(localUser, data.userMessage);
             },
-            async reasoning(data) {
+            reasoning(data) {
               if (!isCurrentSubmit(submitId, conversationId)) return;
               const currentAssistant = getMessageListItemOrDraft(assistant);
               if (!currentAssistant.reasoning) {
@@ -273,7 +353,7 @@ export function useChatSubmit({
               }
               setMessageStreamingState(assistant, { reasoningStreaming: true });
               refreshStreamTimer();
-              await appendStreamText(
+              appendStreamText(
                 assistant,
                 'reasoning',
                 data.text,
@@ -281,14 +361,14 @@ export function useChatSubmit({
                 () => isCurrentSubmit(submitId, conversationId)
               );
             },
-            async content(data) {
+            content(data) {
               if (!isCurrentSubmit(submitId, conversationId)) return;
               setMessageStreamingState(assistant, {
                 reasoningStreaming: false,
                 contentStreaming: true
               });
               refreshStreamTimer();
-              await appendStreamText(
+              appendStreamText(
                 assistant,
                 'content',
                 data.text,
@@ -331,7 +411,7 @@ export function useChatSubmit({
                 return;
               }
               finalizeUserDraft(localUser, data.userMessage);
-              const finalizedAssistant = finalizeStreamedAssistant(assistant, data.assistantMessage);
+              finalizeStreamedAssistant(assistant, data.assistantMessage);
               await reconcilePersistedStreamDrafts(conversationId, localUser, assistant);
               setUsageIfChanged(data.usage || data.assistantMessage?.usage || null);
               setProviderMetaIfChanged({
@@ -344,12 +424,6 @@ export function useChatSubmit({
               }
               if (data.accessoryBackground) {
                 scheduleAccessoryRefresh(conversationId);
-              }
-              if (shouldAnchorAssistantReply(anchorAssistantReply)) {
-                await nextTick();
-                if (isCurrentSubmit(submitId, conversationId)) {
-                  scrollToAssistantReply(finalizedAssistant || getMessageListItemOrDraft(assistant), false);
-                }
               }
             },
             error(data) {
@@ -658,13 +732,18 @@ export function useChatSubmit({
       sending.value = false;
       return false;
     }
-    const assistantReplyAnchored = shouldAnchorAssistantReply(anchorAssistantReply) && scrollToAssistantReply(assistantDraft, true);
-    if (!assistantReplyAnchored) {
+    const willStreamReply = useStream.value && canUseStream.value;
+    if (willStreamReply) {
       stickToBottomIfNeeded(true);
+    } else {
+      const assistantReplyAnchored = shouldAnchorAssistantReply(anchorAssistantReply)
+        && scrollToAssistantReply(assistantDraft, true);
+      if (!assistantReplyAnchored) stickToBottomIfNeeded(true);
     }
 
     const requestPayload = {
-      thinkingEnabled: canToggleThinking.value ? thinkingEnabled.value : true
+      thinkingEnabled: canToggleThinking.value && thinkingEnabled.value,
+      thinkingLevel: canToggleThinking.value ? thinkingLevel.value : undefined
     };
     if (selectedPresetId.value) {
       requestPayload.presetId = selectedPresetId.value;
@@ -690,7 +769,7 @@ export function useChatSubmit({
     };
 
     try {
-      if (useStream.value && canUseStream.value) {
+      if (willStreamReply) {
         streamController = new AbortController();
         controller.value = streamController;
         refreshStreamTimer();
@@ -704,7 +783,7 @@ export function useChatSubmit({
               setLatestWorldBookMatches(data?.worldBookMatches);
               refreshStreamTimer();
             },
-            async reasoning(data) {
+            reasoning(data) {
               if (!isCurrentSubmit(submitId, conversationId)) return;
               const currentAssistant = getMessageListItemOrDraft(assistantDraft);
               if (!currentAssistant.reasoning) {
@@ -712,7 +791,7 @@ export function useChatSubmit({
               }
               setMessageStreamingState(assistantDraft, { reasoningStreaming: true });
               refreshStreamTimer();
-              await appendStreamText(
+              appendStreamText(
                 assistantDraft,
                 'reasoning',
                 data.text,
@@ -720,14 +799,14 @@ export function useChatSubmit({
                 () => isCurrentSubmit(submitId, conversationId)
               );
             },
-            async content(data) {
+            content(data) {
               if (!isCurrentSubmit(submitId, conversationId)) return;
               setMessageStreamingState(assistantDraft, {
                 reasoningStreaming: false,
                 contentStreaming: true
               });
               refreshStreamTimer();
-              await appendStreamText(
+              appendStreamText(
                 assistantDraft,
                 'content',
                 data.text,
@@ -760,7 +839,7 @@ export function useChatSubmit({
                 showError('模型没有返回正文，请重试或检查当前模型/网关是否支持该对话格式。');
                 return;
               }
-              const finalizedAssistant = finalizeStreamedAssistant(assistantDraft, data.assistantMessage);
+              finalizeStreamedAssistant(assistantDraft, data.assistantMessage);
               await reconcilePersistedStreamDrafts(conversationId, null, assistantDraft);
               setUsageIfChanged(data.usage || data.assistantMessage?.usage || null);
               setProviderMetaIfChanged({
@@ -773,12 +852,6 @@ export function useChatSubmit({
               }
               if (data.accessoryBackground) {
                 scheduleAccessoryRefresh(conversationId);
-              }
-              if (shouldAnchorAssistantReply(anchorAssistantReply)) {
-                await nextTick();
-                if (isCurrentSubmit(submitId, conversationId)) {
-                  scrollToAssistantReply(finalizedAssistant || getMessageListItemOrDraft(assistantDraft), false);
-                }
               }
             },
             error(data) {
@@ -1054,9 +1127,6 @@ export function useChatSubmit({
       removeMessageItemsByIdIfPresent(currentMessage.id);
       return;
     }
-    if (stateChanged) {
-      triggerRef(messages);
-    }
   }
 
   function removeMessageItemsByReferenceIfPresent(...targets) {
@@ -1163,29 +1233,22 @@ export function useChatSubmit({
       const assistantReplacement = assistantNeedsReplacement
         ? findPersistedAssistantMessage(persistedMessages, assistantDraft, userReplacement)
         : null;
-      let updatedMessages = false;
-
       if (userReplacement && userNeedsReplacement && currentLocalUser) {
         const localContent = currentLocalUser.content;
         Object.assign(currentLocalUser, userReplacement, {
           content: userReplacement.content || localContent || ''
         });
-        updatedMessages = true;
       }
       if (assistantReplacement && currentAssistant) {
         const streamedContent = currentAssistant.content;
         const streamedReasoning = currentAssistant.reasoning;
         Object.assign(currentAssistant, assistantReplacement, {
-          content: streamedContent || assistantReplacement.content || '',
-          reasoning: streamedReasoning || assistantReplacement.reasoning || '',
+          content: resolveFinalStreamText(streamedContent, assistantReplacement.content),
+          reasoning: resolveFinalStreamText(streamedReasoning, assistantReplacement.reasoning),
           streaming: false,
           reasoningStreaming: false,
           contentStreaming: false
         });
-        updatedMessages = true;
-      }
-      if (updatedMessages) {
-        triggerRef(messages);
       }
       return Boolean(
         (!userNeedsReplacement || userReplacement) &&
@@ -1330,7 +1393,6 @@ export function useChatSubmit({
     Object.assign(currentMessage, serverMessage, {
       content: serverMessage.content || localContent || ''
     });
-    triggerRef(messages);
     return currentMessage;
   }
 
@@ -1342,8 +1404,8 @@ export function useChatSubmit({
     const streamedContent = currentMessage.content;
     const streamedReasoning = currentMessage.reasoning;
     Object.assign(currentMessage, finalServerMessage, {
-      content: streamedContent || finalServerMessage.content || '',
-      reasoning: streamedReasoning || finalServerMessage.reasoning || '',
+      content: resolveFinalStreamText(streamedContent, finalServerMessage.content),
+      reasoning: resolveFinalStreamText(streamedReasoning, finalServerMessage.reasoning),
       streaming: false,
       reasoningStreaming: false,
       contentStreaming: false
@@ -1352,7 +1414,6 @@ export function useChatSubmit({
       finishAssistantDraft(currentMessage);
       return null;
     }
-    triggerRef(messages);
     return currentMessage;
   }
 
@@ -1360,17 +1421,16 @@ export function useChatSubmit({
     return Boolean(String(message.content || '').trim() || String(message.reasoning || '').trim());
   }
 
+  function resolveFinalStreamText(streamedText, serverText) {
+    const persisted = String(serverText ?? '');
+    return persisted ? persisted : String(streamedText ?? '');
+  }
+
   function hasCurrentMessagePayload(message = {}) {
     return hasMessagePayload(getMessageListItemOrDraft(message));
   }
 
-  // Streamed tokens can arrive far faster than the browser can paint. The
-  // first chunk in a frame renders immediately; later chunks only append text
-  // and coalesce into a single trailing re-render + scroll-follow per frame.
-  let pendingStreamRender = null;
-  let streamRenderScheduled = false;
-
-  async function appendStreamText(message, field, text, anchorAssistantReply = false, isStillCurrent = () => true) {
+  function appendStreamText(message, field, text, anchorAssistantReply = false, isStillCurrent = () => true) {
     if (submitDisposed) return;
     const currentMessage = findMessageListItem(message?.id);
     if (!currentMessage) return;
@@ -1379,51 +1439,14 @@ export function useChatSubmit({
       return;
     }
 
+    if (!isStillCurrent()) return;
     currentMessage[field] += value;
-    if (streamRenderScheduled) {
-      pendingStreamRender = { currentMessage, anchorAssistantReply, isStillCurrent };
-      return;
-    }
-    streamRenderScheduled = true;
-    scheduleStreamRenderFlush();
-    triggerRef(messages);
-    await nextTick();
-    if (submitDisposed || !currentMessage.streaming || !isStillCurrent()) {
-      return;
-    }
-    followSubmitScroll(currentMessage, anchorAssistantReply, false);
-  }
-
-  function scheduleStreamRenderFlush() {
-    const schedule = typeof window !== 'undefined' && typeof window.requestAnimationFrame === 'function'
-      ? window.requestAnimationFrame.bind(window)
-      : (callback) => setTimeout(callback, 16);
-    schedule(() => {
-      const pending = pendingStreamRender;
-      pendingStreamRender = null;
-      if (!pending || submitDisposed) {
-        streamRenderScheduled = false;
-        return;
-      }
-      // Keep the window open one more frame so sustained streams stay at
-      // one re-render per frame.
-      scheduleStreamRenderFlush();
-      void (async () => {
-        triggerRef(messages);
-        await nextTick();
-        if (submitDisposed || !pending.currentMessage.streaming || !pending.isStillCurrent()) {
-          return;
-        }
-        followSubmitScroll(pending.currentMessage, pending.anchorAssistantReply, false);
-      })();
-    });
   }
 
   function setMessageStreamingState(message, nextState = {}) {
     if (submitDisposed) return null;
     const currentMessage = findMessageListItem(message?.id);
     if (!currentMessage) return null;
-    let changed = false;
     for (const key in nextState) {
       if (!Object.prototype.hasOwnProperty.call(nextState, key)) {
         continue;
@@ -1431,11 +1454,7 @@ export function useChatSubmit({
       const value = nextState[key];
       if (currentMessage[key] !== value) {
         currentMessage[key] = value;
-        changed = true;
       }
-    }
-    if (changed) {
-      triggerRef(messages);
     }
     return currentMessage;
   }
@@ -1614,6 +1633,8 @@ export function useChatSubmit({
     attachmentBusy,
     useStream,
     thinkingEnabled,
+    thinkingLevel,
+    thinkingOptions,
     imageGenerationEnabled,
     sending,
     controller,
@@ -1641,6 +1662,7 @@ export function useChatSubmit({
     setSelectedPresetId,
     toggleUseStream,
     toggleThinking,
+    setThinkingLevel,
     toggleImageGeneration,
     finishAssistantDraft,
     cleanup

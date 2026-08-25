@@ -39,6 +39,7 @@ import { buildProviderBody } from './providerRequestBody.js';
 import { defaultProviderSettings } from './providerRegistry.js';
 import { parseSse } from './providerSse.js';
 import { createStreamEmitQueue } from './providerStreamEmit.js';
+import { providerStreamErrorMessage } from './providerStreamErrors.js';
 import { runToolCompletion, streamToolCompletion } from './providerToolCompletions.js';
 import { trimSlash } from './providerUrls.js';
 
@@ -305,8 +306,10 @@ export async function streamCompletion(settings, messages, emit, signal, options
       recordStreamEventDiagnostics(diagnostics, event, null);
       continue;
     }
-
     recordStreamEventDiagnostics(diagnostics, event, json);
+    if (event.event === 'error' || json.type === 'error' || json.error) {
+      throw new Error(providerStreamErrorMessage(json));
+    }
     for (const payload of collectChatCompletionStreamPayloads(json)) {
       consumeChatCompletionStreamPayload(payload, event, state, thinkingTagFilter, streamEmit.emit);
     }

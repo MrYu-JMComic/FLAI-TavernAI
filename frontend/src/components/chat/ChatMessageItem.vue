@@ -17,6 +17,7 @@ import {
 } from '@lucide/vue';
 import MarkdownContent from '../MarkdownContent.vue';
 import { extractHtmlDocument } from '../../utils/htmlDocument.js';
+import { useTypewriterText } from '../../composables/useTypewriterText.js';
 import HtmlDocumentPreview from './HtmlDocumentPreview.vue';
 
 const props = defineProps({
@@ -24,9 +25,6 @@ const props = defineProps({
   editingMessageId: { type: String, default: '' },
   editingMessageContent: { type: String, default: '' },
   reasoningOpen: { type: Boolean, default: false },
-  isReasoningTyping: { type: Boolean, default: false },
-  isContentTyping: { type: Boolean, default: false },
-  messagePlaceholder: { type: String, default: '' },
   authorName: { type: String, default: '' },
   authorInitial: { type: String, default: '?' },
   avatarUrl: { type: String, default: '' },
@@ -59,20 +57,50 @@ const emit = defineEmits([
   'swipe-prev',
   'swipe-next',
   'branch',
-  'open-worldbook-matches'
+  'open-worldbook-matches',
+  'typing-progress'
 ]);
 
 const editTextareaRef = ref(null);
 const isEditingCurrentMessage = computed(() => props.editingMessageId === props.message.id);
 const messageAttachments = computed(() => normalizeMessageAttachments(props.message?.attachments));
-const htmlDocumentContent = computed(() => (
-  props.message?.role === 'assistant'
-    ? extractHtmlDocument(props.message?.content)
-    : ''
+const reasoningStreaming = computed(() => (
+  props.message?.role === 'assistant' && props.message?.reasoningStreaming === true
 ));
+const contentStreaming = computed(() => (
+  props.message?.role === 'assistant' && props.message?.contentStreaming === true
+));
+const reasoningSource = computed(() => String(props.message?.reasoning || ''));
+const contentSource = computed(() => String(props.message?.content || ''));
+const { displayedText: displayedReasoning, isTyping: isReasoningTyping } = useTypewriterText(
+  reasoningSource,
+  reasoningStreaming
+);
+const { displayedText: displayedContent, isTyping: isContentTyping } = useTypewriterText(
+  contentSource,
+  contentStreaming
+);
+const messagePlaceholder = computed(() => {
+  if (!props.message?.streaming) return '';
+  return props.message?.reasoning && !props.message?.content
+    ? '正在思考，答案马上开始...'
+    : '正在生成...';
+});
+const htmlDocumentContent = computed(() => {
+  if (props.message?.role !== 'assistant' || isContentTyping.value) return '';
+  return extractHtmlDocument(props.message?.content);
+});
 
 function emitMessageAction(eventName) {
   emit(eventName, props.message);
+}
+
+function emitReasoningRendered() {
+  if (isReasoningTyping.value) emit('typing-progress', props.message);
+}
+
+function emitContentRendered() {
+  if (isContentTyping.value) emit('typing-progress', props.message);
 }
 
 function normalizeMessageAttachments(attachments = []) {
@@ -137,7 +165,13 @@ watch(isEditingCurrentMessage, async (active) => {
           class="reasoning-body"
           :class="{ 'is-typing': isReasoningTyping }"
         >
-          <MarkdownContent class="typing-text" :text="message.reasoning" :render-plugins="renderPlugins" :defer-updates="isReasoningTyping" />
+          <MarkdownContent
+            class="typing-text"
+            :text="displayedReasoning"
+            :render-plugins="renderPlugins"
+            :defer-updates="isReasoningTyping"
+            @rendered="emitReasoningRendered"
+          />
         </div>
       </div>
 
@@ -145,7 +179,7 @@ watch(isEditingCurrentMessage, async (active) => {
         class="deep-bubble"
         :class="{
           'is-typing': isContentTyping,
-          'is-waiting': isContentTyping && !message.content && !messageAttachments.length,
+          'is-waiting': isContentTyping && !displayedContent && !messageAttachments.length,
           'is-editing': editingMessageId === message.id,
           'has-html-document': Boolean(htmlDocumentContent) && !isContentTyping && editingMessageId !== message.id
         }"
@@ -200,11 +234,12 @@ watch(isEditingCurrentMessage, async (active) => {
             :source="htmlDocumentContent"
           />
           <MarkdownContent
-            v-else-if="message.content || messagePlaceholder"
+            v-else-if="displayedContent || messagePlaceholder"
             class="typing-text"
-            :text="message.content || messagePlaceholder"
+            :text="displayedContent || messagePlaceholder"
             :render-plugins="renderPlugins"
             :defer-updates="isContentTyping"
+            @rendered="emitContentRendered"
           />
         </template>
       </div>

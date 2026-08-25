@@ -3,8 +3,8 @@ import test from 'node:test';
 import { countMatches, readFrontendStyles, readRepoText, readVueBlocks } from './frontendSfcTestUtils.js';
 
 const {
-  script: characterFormScript,
-  template: characterFormTemplate
+  script: characterFormViewScript,
+  template: characterFormViewTemplate
 } = readVueBlocks('frontend/src/views/CharacterFormView.vue');
 const {
   script: characterAiDraftActionsScript,
@@ -26,10 +26,16 @@ const {
   script: characterAiModSuggestionsScript,
   template: characterAiModSuggestionsTemplate
 } = readVueBlocks('frontend/src/components/character/CharacterAiModSuggestions.vue');
-const {
-  script: characterAdvancedSettingsPanelScript,
-  template: characterAdvancedSettingsPanelTemplate
-} = readVueBlocks('frontend/src/components/character/CharacterAdvancedSettingsPanel.vue');
+// The former CharacterAdvancedSettingsPanel accordion is now four flat panels,
+// one per section. Assertions about author-side fields hold across the set.
+const advancedPanelBlocks = [
+  'CharacterAuthorSettingsPanel',
+  'CharacterStatusBarPanel',
+  'CharacterAccessorySkillsPanel',
+  'CharacterCustomCodePanel'
+].map((name) => readVueBlocks(`frontend/src/components/character/${name}.vue`));
+const characterAdvancedSettingsPanelScript = advancedPanelBlocks.map((block) => block.script).join('\n');
+const characterAdvancedSettingsPanelTemplate = advancedPanelBlocks.map((block) => block.template).join('\n');
 const {
   script: characterBasicInfoPanelScript,
   template: characterBasicInfoPanelTemplate
@@ -38,6 +44,18 @@ const {
   script: characterCreationWizardPanelScript,
   template: characterCreationWizardPanelTemplate
 } = readVueBlocks('frontend/src/components/character/CharacterCreationWizardPanel.vue');
+const {
+  script: characterEditorDesktopScript,
+  template: characterEditorDesktopTemplate
+} = readVueBlocks('frontend/src/components/character/CharacterEditorDesktop.vue');
+const {
+  script: characterEditorMobileScript,
+  template: characterEditorMobileTemplate
+} = readVueBlocks('frontend/src/components/character/CharacterEditorMobile.vue');
+const {
+  script: characterSectionOutletScript,
+  template: characterSectionOutletTemplate
+} = readVueBlocks('frontend/src/components/character/CharacterSectionOutlet.vue');
 const {
   script: characterRegexPanelScript,
   template: characterRegexPanelTemplate
@@ -76,13 +94,30 @@ const characterImageUploadsSource = readRepoText('frontend/src/composables/chara
 const characterRegexRulesSource = readRepoText('frontend/src/composables/character/useCharacterRegexRules.js');
 const characterRenderPluginsSource = readRepoText('frontend/src/composables/character/useCharacterRenderPlugins.js');
 const characterStatusBlueprintSource = readRepoText('frontend/src/composables/character/useCharacterStatusBlueprint.js');
-const characterSectionNavigationSource = readRepoText('frontend/src/composables/character/useCharacterSectionNavigation.js');
+const characterSectionsSource = readRepoText('frontend/src/composables/character/useCharacterSections.js');
+const characterEditorSource = readRepoText('frontend/src/composables/character/useCharacterEditor.js');
 const characterWorldBookSelectionSource = readRepoText('frontend/src/composables/character/useCharacterWorldBookDialog.js');
 const listReferencesSource = readRepoText('frontend/src/utils/listReferences.js');
+// The editor is split into a shell view, a state composable and two layout
+// shells. These aggregates let the behavioural assertions below stay focused on
+// "the character editor" rather than on which file a line currently lives in.
+const characterFormScript = [
+  characterFormViewScript,
+  characterEditorSource,
+  characterSectionOutletScript,
+  characterEditorDesktopScript,
+  characterEditorMobileScript
+].join('\n');
+const characterFormTemplate = [
+  characterFormViewTemplate,
+  characterEditorDesktopTemplate,
+  characterEditorMobileTemplate,
+  characterSectionOutletTemplate
+].join('\n');
 const stylesSource = readFrontendStyles();
 
 test('CharacterFormView locks AI actions behind one shared busy state', () => {
-  assert.match(characterFormScript, /import \{ useCharacterAiGeneration \} from '\.\.\/composables\/character\/useCharacterAiGeneration';/);
+  assert.match(characterFormScript, /import \{ useCharacterAiGeneration \} from '\.{1,2}\/(?:composables\/character\/)?useCharacterAiGeneration';/);
   assert.match(
     characterFormScript,
     /const \{[\s\S]*aiLoading,[\s\S]*aiRequirement,[\s\S]*aiToolCalls,[\s\S]*aiProcess,[\s\S]*aiReasoning,[\s\S]*aiModSuggestions,[\s\S]*suggestedModsCreating,[\s\S]*advancedAiLoading,[\s\S]*advancedAiRequirement,[\s\S]*characterAiActionBusy,[\s\S]*cancelCharacterAiGeneration,[\s\S]*completeAdvancedSettingsWithAi,[\s\S]*completeWithAi,[\s\S]*createSuggestedMods,[\s\S]*setAiOptionValue,[\s\S]*stopAdvancedAi,[\s\S]*stopCharacterAi[\s\S]*\} = useCharacterAiGeneration\(\{[\s\S]*canEdit,[\s\S]*saving,[\s\S]*form,[\s\S]*aiOptions,[\s\S]*aiUseCurrentDraft,[\s\S]*assistantModel,[\s\S]*buildPayload: toPayload,[\s\S]*applyAdvancedSettingsDraft,[\s\S]*isDisposed: \(\) => characterFormDisposed,[\s\S]*notify[\s\S]*\}\);/
@@ -103,14 +138,14 @@ test('CharacterFormView locks AI actions behind one shared busy state', () => {
   assert.doesNotMatch(characterFormScript, /async function completeAdvancedSettingsWithAi\(\)/);
 
   assert.ok(
-    countMatches(characterFormTemplate, /:disabled="characterAiActionBusy"/g)
-      + countMatches(characterAdvancedSettingsPanelTemplate, /:disabled="characterAiActionBusy"/g) >= 2
+    countMatches(characterFormTemplate, /:disabled="editor\.characterAiActionBusy"/g)
+      + countMatches(characterSectionOutletTemplate, /:character-ai-action-busy="editor\.characterAiActionBusy"/g) >= 2
   );
   assert.ok(countMatches(characterAiDraftPanelTemplate, /:disabled="disabled"/g) >= 2);
   assert.match(characterAiGenerationSource, /function setAiOptionValue\(key, enabled\) \{[\s\S]*Object\.prototype\.hasOwnProperty\.call\(aiOptions, key\)[\s\S]*aiOptions\[key\] = Boolean\(enabled\);[\s\S]*\}/);
   assert.doesNotMatch(characterFormScript, /function setAiOptionValue\(key, enabled\)/);
-  assert.match(characterFormScript, /import CharacterAiDraftPanel from '\.\.\/components\/character\/CharacterAiDraftPanel\.vue';/);
-  assert.match(characterFormScript, /import \{ useCharacterAiPreferences \} from '\.\.\/composables\/character\/useCharacterAiPreferences';/);
+  assert.match(characterFormScript, /import CharacterAiDraftPanel from '\.{1,2}\/(?:components\/character\/)?CharacterAiDraftPanel\.vue';/);
+  assert.match(characterFormScript, /import \{ useCharacterAiPreferences \} from '\.{1,2}\/(?:composables\/character\/)?useCharacterAiPreferences';/);
   assert.match(
     characterFormScript,
     /const \{[\s\S]*aiUseCurrentDraft,[\s\S]*assistantModel,[\s\S]*assistantModelOptions,[\s\S]*providerModelOptionsFor[\s\S]*\} = useCharacterAiPreferences\(computed\(\(\) => props\.provider\)\);/
@@ -124,7 +159,7 @@ test('CharacterFormView locks AI actions behind one shared busy state', () => {
   assert.match(characterAiPreferencesSource, /watch\(assistantModel, \(value\) => \{[\s\S]*localStorage\.setItem\(ASSISTANT_MODEL_STORAGE_KEY, String\(value \|\| ''\)\.trim\(\)\);/);
   assert.match(characterAiPreferencesSource, /watch\(aiUseCurrentDraft, \(value\) => \{[\s\S]*localStorage\.setItem\(ASSISTANT_USE_CURRENT_STORAGE_KEY, value \? 'true' : 'false'\);/);
   assert.doesNotMatch(characterFormScript, /useCharacterAiPanelLayout/);
-  assert.match(characterFormTemplate, /<CharacterAiDraftPanel[\s\S]*v-model:requirement="aiRequirement"[\s\S]*v-model:assistant-model="assistantModel"[\s\S]*v-model:use-current-draft="aiUseCurrentDraft"[\s\S]*:disabled="characterAiActionBusy"[\s\S]*:loading="aiLoading"[\s\S]*:model-options="assistantModelOptions"[\s\S]*:options="aiOptions"[\s\S]*@complete="completeWithAi"[\s\S]*@set-option="setAiOptionValue"[\s\S]*@stop="stopCharacterAi"/);
+  assert.match(characterFormTemplate, /<CharacterAiDraftPanel[\s\S]*v-model:requirement="editor\.aiRequirement"[\s\S]*v-model:assistant-model="editor\.assistantModel"[\s\S]*v-model:use-current-draft="editor\.aiUseCurrentDraft"[\s\S]*:disabled="editor\.characterAiActionBusy"[\s\S]*:loading="editor\.aiLoading"[\s\S]*:model-options="editor\.assistantModelOptions"[\s\S]*:options="editor\.aiOptions"[\s\S]*@complete="editor\.completeWithAi"[\s\S]*@set-option="editor\.setAiOptionValue"[\s\S]*@stop="editor\.stopCharacterAi"/);
   assert.doesNotMatch(characterFormTemplate, /aiPanel(?:Dragging|Pos|Ref|Size)|drag-start|resize-start|reset-panel/);
   assert.match(characterAiDraftPanelScript, /const hasOutput = computed\(\(\) => \([\s\S]*props\.process\.length > 0[\s\S]*props\.toolCalls\.length > 0[\s\S]*props\.suggestions\.length > 0[\s\S]*\)\);/);
   assert.match(characterAiDraftPanelTemplate, /class="form-panel ai-draft-panel"[\s\S]*:aria-busy="loading"[\s\S]*aria-labelledby="character-ai-workbench-title"/);
@@ -153,9 +188,9 @@ test('CharacterFormView locks AI actions behind one shared busy state', () => {
   assert.doesNotMatch(characterFormTemplate, /:disabled="advancedAiLoading \|\| !canEdit"/);
 });
 
-test('CharacterFormView footer actions share one busy state', () => {
-  assert.match(characterFormScript, /import \{ exportEnvelope \} from '\.\.\/api\/envelopes\.js';/);
-  assert.match(characterFormScript, /import \{ downloadJsonFile, todayStamp \} from '\.\.\/utils\/downloadJson\.js';/);
+test('CharacterFormView action rail shares one busy state', () => {
+  assert.match(characterFormScript, /import \{ exportEnvelope \} from '\.\.\/(?:\.\.\/)?api\/envelopes\.js';/);
+  assert.match(characterFormScript, /import \{ downloadJsonFile, todayStamp \} from '\.\.\/(?:\.\.\/)?utils\/downloadJson\.js';/);
   assert.doesNotMatch(characterFormScript, /exportCharacter/);
   assert.match(
     characterFormScript,
@@ -182,25 +217,27 @@ test('CharacterFormView footer actions share one busy state', () => {
     /function characterEnvelopeFileName\(item = \{\}\) \{[\s\S]*return `flai-character-\$\{name\}-\$\{todayStamp\(\)\}\.json`;[\s\S]*}/
   );
 
-  assert.equal(countMatches(characterFormTemplate, /:disabled="characterFooterActionBusy"/g), 3);
-  assert.match(characterFormTemplate, /class="danger-button" type="button" :disabled="characterFooterActionBusy" :aria-busy="deleting"/);
-  assert.match(characterFormTemplate, /class="ghost-button" type="button" :disabled="characterFooterActionBusy" :aria-busy="exporting"/);
-  assert.match(characterFormTemplate, /class="primary-button" type="submit" :disabled="characterFooterActionBusy" :aria-busy="saving"/);
-  assert.doesNotMatch(characterFormTemplate, /:disabled="deleting"/);
-  assert.doesNotMatch(characterFormTemplate, /:disabled="exporting"/);
-  assert.doesNotMatch(characterFormTemplate, /type="submit" :disabled="saving"/);
+  assert.match(characterFormTemplate, /class="character-studio-actions"/);
+  assert.match(characterEditorDesktopTemplate, /:disabled="editor\.saving \|\| editor\.deleting \|\| editor\.exporting"/);
+  assert.ok(countMatches(characterEditorDesktopTemplate, /:disabled="editor\.saving \|\| editor\.deleting \|\| editor\.exporting"/g) >= 4);
+  assert.match(characterEditorDesktopTemplate, /class="primary-button character-primary-action"[\s\S]*type="submit"[\s\S]*保存角色/);
+  assert.match(characterEditorDesktopTemplate, /@click="editor\.handleExport"/);
+  assert.match(characterEditorDesktopTemplate, /@click="editor\.removeCharacter"/);
+  assert.match(characterEditorMobileScript, /const actionBusy = computed\(\(\) => editor\.saving \|\| editor\.deleting \|\| editor\.exporting\);/);
+  assert.match(characterEditorMobileTemplate, /:disabled="actionBusy"/);
 });
 
 test('CharacterFormView autosaves editable local drafts through one scoped path', () => {
-  assert.match(characterFormScript, /import \{ useCharacterFormDraft \} from '\.\.\/composables\/character\/useCharacterFormDraft';/);
+  assert.match(characterFormScript, /import \{ useCharacterFormDraft \} from '\.{1,2}\/(?:composables\/character\/)?useCharacterFormDraft';/);
   assert.match(
     characterFormScript,
-    /const \{[\s\S]*characterDraftStatus,[\s\S]*characterDraftStatusText,[\s\S]*clearCurrentCharacterDraft,[\s\S]*discardCharacterDraft,[\s\S]*establishCharacterDraftBaseline,[\s\S]*flushCharacterDraftBeforeDispose,[\s\S]*initializeCharacterDraftState,[\s\S]*pendingCharacterDraft,[\s\S]*restoreCharacterDraft,[\s\S]*scheduleCharacterDraftSave,[\s\S]*startCharacterDraftInterval[\s\S]*\} = useCharacterFormDraft\(\{[\s\S]*isEditing,[\s\S]*editingCharacterId,[\s\S]*canEdit,[\s\S]*isDisposed: \(\) => characterFormDisposed,[\s\S]*buildPayload: toPayload,[\s\S]*getSelectedWorldBookIds: \(\) => selectedWorldBookIds\.value,[\s\S]*normalizePayload: normalizeCharacterDraftPayload,[\s\S]*normalizeWorldBookIds,[\s\S]*applyPayload: applyCharacterDraftPayload,[\s\S]*setSelectedWorldBookIds: setSelectedWorldBookIdsIfChanged[\s\S]*\}\);/
+    /const \{[\s\S]*characterDraftStatus,[\s\S]*characterDraftStatusText,[\s\S]*clearCurrentCharacterDraft,[\s\S]*discardCharacterDraft,[\s\S]*establishCharacterDraftBaseline,[\s\S]*flushCharacterDraftBeforeDispose,[\s\S]*hasUnsavedChanges,[\s\S]*initializeCharacterDraftState,[\s\S]*pendingCharacterDraft,[\s\S]*restoreCharacterDraft,[\s\S]*scheduleCharacterDraftSave,[\s\S]*startCharacterDraftInterval[\s\S]*\} = useCharacterFormDraft\(\{[\s\S]*isEditing,[\s\S]*editingCharacterId,[\s\S]*canEdit,[\s\S]*isDisposed: \(\) => characterFormDisposed,[\s\S]*buildPayload: toPayload,[\s\S]*getSelectedWorldBookIds: \(\) => selectedWorldBookIds\.value,[\s\S]*normalizePayload: normalizeCharacterDraftPayload,[\s\S]*normalizeWorldBookIds,[\s\S]*applyPayload: applyCharacterDraftPayload,[\s\S]*setSelectedWorldBookIds: setSelectedWorldBookIdsIfChanged[\s\S]*\}\);/
   );
   assert.doesNotMatch(characterFormScript, /const CHARACTER_FORM_DRAFT_STORAGE_PREFIX = 'flai-character-form-draft';/);
   assert.doesNotMatch(characterFormScript, /function getCharacterDraftStorageKey/);
   assert.match(characterFormDraftSource, /const pendingCharacterDraft = ref\(null\);/);
   assert.match(characterFormDraftSource, /const characterDraftStatus = ref\('idle'\);/);
+  assert.match(characterFormDraftSource, /const hasUnsavedChanges = ref\(false\);/);
   assert.match(characterFormDraftSource, /const CHARACTER_FORM_DRAFT_STORAGE_PREFIX = 'flai-character-form-draft';/);
   assert.match(characterFormDraftSource, /const CHARACTER_FORM_DRAFT_AUTOSAVE_MS = 30000;/);
   assert.match(characterFormDraftSource, /const CHARACTER_FORM_DRAFT_DEBOUNCE_MS = 1200;/);
@@ -245,17 +282,21 @@ test('CharacterFormView autosaves editable local drafts through one scoped path'
   );
   assert.match(
     characterFormScript,
-    /onBeforeUnmount\(\(\) => \{\s*flushCharacterDraftBeforeDispose\(\);\s*characterFormDisposed = true;/
+    /onBeforeUnmount\(\(\) => \{[\s\S]*window\.removeEventListener\('beforeunload', handleCharacterBeforeUnload\);[\s\S]*flushCharacterDraftBeforeDispose\(\);[\s\S]*characterFormDisposed = true;/
   );
+  assert.match(characterFormDraftSource, /function refreshCharacterDraftDirtyState\(\) \{[\s\S]*serialized !== characterDraftBaselineSerialized[\s\S]*return serialized;/);
+  assert.match(characterFormScript, /onBeforeRouteLeave\(\(\) => \{[\s\S]*!hasUnsavedChanges\.value[\s\S]*window\.confirm\('角色还有未保存的更改，确定离开吗？'\);/);
+  assert.match(characterFormScript, /function handleCharacterBeforeUnload\(event\) \{[\s\S]*event\.preventDefault\(\);[\s\S]*event\.returnValue = '';/);
+  assert.match(characterFormTemplate, /class="character-studio-aside"[\s\S]*editor\.hasUnsavedChanges/);
 });
 
 test('CharacterFormView exposes compact draft recovery controls', () => {
   assert.match(
     characterFormTemplate,
-    /class="character-draft-note"[\s\S]*:class="\{ pending: pendingCharacterDraft, warning: characterDraftStatus === 'too-large' \|\| characterDraftStatus === 'error' \}"[\s\S]*aria-live="polite"/
+    /class="character-draft-note"[\s\S]*:class="[\s\S]*pending: editor\.pendingCharacterDraft,[\s\S]*editor\.characterDraftStatus === 'too-large' \|\| editor\.characterDraftStatus === 'error'[\s\S]*aria-live="polite"/
   );
-  assert.match(characterFormTemplate, /@click="restoreCharacterDraft"/);
-  assert.match(characterFormTemplate, /@click="discardCharacterDraft"/);
+  assert.match(characterFormTemplate, /@click="editor\.restoreCharacterDraft"/);
+  assert.match(characterFormTemplate, /@click="editor\.discardCharacterDraft"/);
   assert.match(
     characterFormDraftSource,
     /function restoreCharacterDraft\(\) \{[\s\S]*applyPayload\(draft\.payload\);[\s\S]*setSelectedWorldBookIds\(draft\.selectedWorldBookIds\);[\s\S]*pendingCharacterDraft\.value = null;[\s\S]*characterDraftStatus\.value = 'restored';[\s\S]*scheduleCharacterDraftSave\(\);/
@@ -284,90 +325,34 @@ test('CharacterFormView exposes compact draft recovery controls', () => {
 });
 
 test('CharacterFormView offers a scoped new-character creation wizard', () => {
-  assert.match(characterFormScript, /import \{ computed, onBeforeUnmount, onMounted, reactive, ref, watch \} from 'vue';/);
-  assert.match(characterSectionNavigationSource, /import \{ computed, nextTick, onBeforeUnmount, onMounted, ref, watch \} from 'vue';/);
-  assert.match(characterFormScript, /import \{ useCharacterCreationWizard \} from '\.\.\/composables\/character\/useCharacterCreationWizard';/);
+  assert.match(characterFormScript, /import \{ useCharacterCreationWizard \} from '[^']*useCharacterCreationWizard';/);
+  assert.match(characterFormScript, /import \{ configuredSectionStatus, countedSectionStatus, useCharacterSections \} from '[^']*useCharacterSections';/);
   assert.match(characterCreationWizardSource, /const characterCreationMode = ref\('wizard'\);/);
   assert.match(characterCreationWizardSource, /const characterWizardStepId = ref\('basic'\);/);
-  assert.match(
-    characterCreationWizardSource,
-    /export const CHARACTER_CREATION_WIZARD_STEPS = \[[\s\S]*id: 'basic'[\s\S]*sections: \['basic'\][\s\S]*id: 'settings'[\s\S]*sections: \['settings', 'ai'\][\s\S]*id: 'advanced'[\s\S]*sections: \['advanced-settings', 'status-blueprint', 'accessories', 'render-plugins', 'regex'\]/
-  );
-  assert.match(
-    characterCreationWizardSource,
-    /const isCharacterCreationWizardAvailable = computed\(\(\) => !isEditing\?\.value && canEdit\?\.value\);/
-  );
-  assert.match(
-    characterFormScript,
-    /function isSectionVisible\(section\) \{\s*return isCharacterSectionVisibleInCurrentMode\(section\.id\)[\s\S]*typeof section\.visible !== 'function' \|\| section\.visible\(\)/
-  );
-  assert.match(
-    characterCreationWizardSource,
-    /function isCharacterSectionVisibleInCurrentMode\(sectionId\) \{[\s\S]*if \(!isCharacterCreationWizardActive\.value\) \{[\s\S]*return true;[\s\S]*for \(const currentSectionId of step\.sections\) \{[\s\S]*currentSectionId === sectionId/
-  );
-  assert.match(
-    characterCreationWizardSource,
-    /function skipCharacterWizardStep\(\) \{[\s\S]*if \(nextIndex >= CHARACTER_CREATION_WIZARD_STEPS\.length\) \{[\s\S]*setCharacterCreationMode\('full'\);/
-  );
-  assert.match(
-    characterCreationWizardSource,
-    /function setCharacterWizardStep\(stepId, \{ scroll = false \} = \{\}\) \{[\s\S]*const firstSectionId = getCharacterWizardStepFirstSectionId\(stepId\);[\s\S]*scheduleSectionNavSync\(\);[\s\S]*if \(scroll\) \{[\s\S]*scrollToSection\(firstSectionId, \{ defer: true \}\);/
-  );
-  assert.match(
-    characterSectionNavigationSource,
-    /function scrollToSection\(id, \{ defer = false \} = \{\}\) \{[\s\S]*if \(defer\) \{[\s\S]*nextTick\(\(\) => scrollToSection\(id\)\);[\s\S]*return;/
-  );
-  assert.doesNotMatch(characterFormScript, /function scrollToCharacterWizardStep/);
-  assert.doesNotMatch(characterFormScript, /function getCharacterWizardStepIndex/);
-  assert.doesNotMatch(characterFormScript, /function getCurrentCharacterWizardStep/);
-  assert.doesNotMatch(characterFormScript, /function setCharacterWizardStep/);
-  assert.doesNotMatch(characterFormScript, /function skipCharacterWizardStep/);
-  assert.match(
-    characterFormScript,
-    /const \{[\s\S]*CHARACTER_CREATION_WIZARD_STEPS,[\s\S]*characterCreationMode,[\s\S]*setCharacterCreationMode,[\s\S]*setCharacterWizardStep,[\s\S]*skipCharacterWizardStep[\s\S]*\} = useCharacterCreationWizard\(\{[\s\S]*isEditing,[\s\S]*canEdit,[\s\S]*setActiveSection: \(sectionId\) => \{[\s\S]*activeSection\.value = sectionId;[\s\S]*setVisibleActiveSection: \(sectionId\) => setActiveCharacterSection\(sectionId\),[\s\S]*scheduleSectionNavSync: \(\) => scheduleCharacterSectionNavSync\(\),[\s\S]*scrollToSection: \(sectionId, options\) => scrollToSection\(sectionId, options\)[\s\S]*\}\);/
-  );
-
-  assert.match(characterFormScript, /import CharacterCreationWizardPanel from '\.\.\/components\/character\/CharacterCreationWizardPanel\.vue';/);
-  assert.match(
-    characterFormTemplate,
-    /<CharacterCreationWizardPanel[\s\S]*v-if="!loading && !loadError && isCharacterCreationWizardAvailable"[\s\S]*:active="isCharacterCreationWizardActive"[\s\S]*:current-step="currentCharacterWizardStep"[\s\S]*:progress-text="characterWizardProgressText"[\s\S]*:step-id="characterWizardStepId"[\s\S]*:step-index="characterWizardStepIndex"[\s\S]*:steps="CHARACTER_CREATION_WIZARD_STEPS"[\s\S]*@next="goToNextCharacterWizardStep"[\s\S]*@previous="goToPreviousCharacterWizardStep"[\s\S]*@set-mode="setCharacterCreationMode"[\s\S]*@set-step="setCharacterWizardStep"[\s\S]*@skip="skipCharacterWizardStep"/
-  );
-  assert.doesNotMatch(characterFormTemplate, /class="character-wizard-panel"/);
-  assert.doesNotMatch(characterFormTemplate, /role="tablist" aria-label="角色创建向导步骤"/);
-  assert.match(characterCreationWizardPanelScript, /import \{ ChevronLeft, ChevronRight, ListChecks, Settings \} from '@lucide\/vue';/);
-  assert.match(characterCreationWizardPanelScript, /defineProps\(\{[\s\S]*active:[\s\S]*currentStep:[\s\S]*progressText:[\s\S]*stepId:[\s\S]*stepIndex:[\s\S]*steps:/);
-  assert.match(characterCreationWizardPanelScript, /const emit = defineEmits\(\[[\s\S]*'next'[\s\S]*'previous'[\s\S]*'set-mode'[\s\S]*'set-step'[\s\S]*'skip'[\s\S]*\]\);/);
+  assert.match(characterCreationWizardSource, /const isCharacterCreationWizardAvailable = computed\(\(\) => !isEditing\?\.value && canEdit\?\.value\);/);
+  assert.match(characterCreationWizardSource, /id: 'settings'[\s\S]*sections: \['settings', 'ai'\][\s\S]*id: 'advanced'[\s\S]*'custom-code', 'render-plugins', 'regex'/);
+  assert.match(characterCreationWizardSource, /function isCharacterSectionVisibleInCurrentMode\(sectionId\)/);
+  assert.match(characterCreationWizardSource, /function setCharacterWizardStep\(stepId\)/);
+  assert.doesNotMatch(characterCreationWizardSource, /skipCharacterWizardStep/);
+  assert.match(characterFormScript, /useCharacterCreationWizard\(\{[\s\S]*isEditing,[\s\S]*canEdit,[\s\S]*setActiveSection: forceActiveSection/);
+  assert.match(characterFormScript, /useCharacterSections\(\{[\s\S]*sections: formSections,[\s\S]*groups: CHARACTER_SECTION_GROUPS/);
+  assert.match(characterFormTemplate, /<CharacterCreationWizardPanel[\s\S]*v-if="editor\.isCharacterCreationWizardAvailable"[\s\S]*:active="editor\.isCharacterCreationWizardActive"[\s\S]*:current-step="editor\.currentCharacterWizardStep"[\s\S]*:steps="editor\.CHARACTER_CREATION_WIZARD_STEPS"[\s\S]*@set-mode="editor\.setCharacterCreationMode"[\s\S]*@set-step="editor\.setCharacterWizardStep"/);
+  assert.match(characterCreationWizardPanelScript, /const emit = defineEmits\(\['set-mode', 'set-step'\]\);/);
   assert.match(characterCreationWizardPanelTemplate, /class="character-wizard-panel"/);
-  assert.match(characterCreationWizardPanelTemplate, /role="group" aria-label="角色创建模式"/);
   assert.match(characterCreationWizardPanelTemplate, /role="tablist" aria-label="角色创建向导步骤"/);
-  assert.match(characterCreationWizardPanelTemplate, /v-for="step in steps"/);
+  assert.match(characterCreationWizardPanelTemplate, /v-for="\(step, index\) in steps"/);
   assert.match(characterCreationWizardPanelTemplate, /@click="emit\('set-mode', 'full'\)"/);
-  assert.match(characterCreationWizardPanelTemplate, /@click="emit\('skip'\)"/);
-  assert.match(characterCreationWizardPanelTemplate, /@click="emit\('previous'\)"/);
-  assert.match(characterCreationWizardPanelTemplate, /@click="emit\('next'\)"/);
-  assert.match(characterCreationWizardPanelTemplate, /@click="emit\('set-step', step\.id, \{ scroll: true \}\)"/);
-  assert.match(characterFormScript, /import CharacterBasicInfoPanel from '\.\.\/components\/character\/CharacterBasicInfoPanel\.vue';/);
-  assert.match(characterFormTemplate, /<CharacterBasicInfoPanel[\s\S]*v-if="isCharacterSectionVisibleInCurrentMode\('basic'\)"[\s\S]*:form="form"[\s\S]*@update-field="updateCharacterFormField"/);
-  assert.match(characterBasicInfoPanelTemplate, /<section id="section-basic" class="form-panel form-section-group character-basic-panel">/);
-  assert.match(characterFormTemplate, /<CharacterSettingsPanel[\s\S]*v-if="isCharacterSectionVisibleInCurrentMode\('settings'\)"[\s\S]*:form="form"[\s\S]*@insert-user-variable="insertUserVariable"[\s\S]*@update-field="updateCharacterFormField"/);
-  assert.match(characterSettingsPanelTemplate, /<section id="section-settings" class="form-panel form-section-group character-settings-panel">/);
-  assert.match(characterFormTemplate, /v-if="canEdit && isCharacterSectionVisibleInCurrentMode\('ai'\)"/);
-  assert.match(characterFormTemplate, /<CharacterAdvancedSettingsPanel[\s\S]*v-if="isCharacterSectionVisibleInCurrentMode\('advanced-settings'\)"[\s\S]*v-model:advanced-ai-requirement="advancedAiRequirement"[\s\S]*v-model:ai-use-current-draft="aiUseCurrentDraft"/);
-  assert.match(characterAdvancedSettingsPanelTemplate, /<section id="section-advanced-settings" class="form-panel advanced-settings-panel">/);
-  assert.match(characterFormTemplate, /<CharacterRenderPluginPanel[\s\S]*v-if="isCharacterSectionVisibleInCurrentMode\('render-plugins'\)"[\s\S]*:render-plugins="form\.renderPlugins"[\s\S]*@add-plugin="addRenderPlugin\(true\)"[\s\S]*@remove-plugin="removeRenderPlugin"/);
-  assert.match(characterRenderPluginPanelTemplate, /<section id="section-render-plugins" class="form-panel render-plugin-panel">/);
-  assert.match(characterFormTemplate, /<CharacterRegexPanel[\s\S]*v-if="isCharacterSectionVisibleInCurrentMode\('regex'\)"[\s\S]*v-model:preview-input="previewInput"[\s\S]*:rules="form\.regexRules"[\s\S]*@add-rule="addRule"[\s\S]*@remove-rule="removeRule"/);
-  assert.match(characterRegexPanelTemplate, /<section id="section-regex" class="form-panel regex-panel">/);
-
-  assert.match(stylesSource, /\.character-wizard-panel\s*\{[\s\S]*display:\s*grid;[\s\S]*border:\s*1px solid color-mix\(in srgb, var\(--primary\) 28%, var\(--line\)\);/);
-  assert.match(stylesSource, /\.character-wizard-steps\s*\{[\s\S]*grid-template-columns:\s*repeat\(3, minmax\(0, 1fr\)\);/);
-  assert.match(stylesSource, /@media \(max-width: 768px\) \{[\s\S]*\.character-wizard-steps\s*\{[\s\S]*grid-template-columns:\s*minmax\(0, 1fr\);/);
+  assert.match(characterCreationWizardPanelTemplate, /@click="emit\('set-step', step\.id\)"/);
+  assert.match(characterEditorDesktopTemplate, /<CharacterCreationWizardPanel[\s\S]*editor\.isCharacterCreationWizardAvailable/);
+  assert.match(characterEditorMobileTemplate, /class="character-mobile-wizard"/);
+  assert.match(stylesSource, /\.character-wizard-panel\s*\{/);
+  assert.match(stylesSource, /\.character-mobile-wizard\s*\{/);
 });
 
 test('CharacterFormView load error state offers creation and navigation exits', () => {
   assert.match(
     characterFormTemplate,
-    /<section v-else-if="loadError" class="form-panel empty-state error-state" role="alert">[\s\S]*@click="loadEditingCharacter"[\s\S]*@click="emit\('navigate', 'characterNew'\)"[\s\S]*创建新角色[\s\S]*@click="emit\('navigate', 'home'\)"[\s\S]*返回首页/
+    /<section v-else-if="editor\.loadError" class="form-panel empty-state error-state" role="alert">[\s\S]*@click="editor\.loadEditingCharacter"[\s\S]*@click="emit\('navigate', 'characterNew'\)"[\s\S]*创建新角色[\s\S]*@click="editor\.navigateHome"[\s\S]*返回首页/
   );
 });
 
@@ -391,7 +376,7 @@ test('CharacterFormView invalidates route-replacing action tokens before navigat
 });
 
 test('CharacterFormView tag creation freezes tag controls while pending', () => {
-  assert.match(characterFormScript, /import \{ useCharacterFormOptions \} from '\.\.\/composables\/character\/useCharacterFormOptions';/);
+  assert.match(characterFormScript, /import \{ useCharacterFormOptions \} from '\.{1,2}\/(?:composables\/character\/)?useCharacterFormOptions';/);
   assert.match(
     characterFormScript,
     /const \{[\s\S]*canCreateSearchedTag,[\s\S]*cancelCharacterFormOptions,[\s\S]*createAndSelectTag,[\s\S]*filteredTags,[\s\S]*loadFormOptions,[\s\S]*normalizeWorldBookIds,[\s\S]*optionsLoadError,[\s\S]*optionsLoading,[\s\S]*selectedWorldBookIds,[\s\S]*setSelectedWorldBookIdsFromBooksIfChanged,[\s\S]*setSelectedWorldBookIdsIfChanged,[\s\S]*tagCreating,[\s\S]*tagSearch,[\s\S]*toggleTagSelection,[\s\S]*toggleWorldBook,[\s\S]*worldBooks[\s\S]*\} = useCharacterFormOptions\(\{[\s\S]*canEdit,[\s\S]*isDisposed: \(\) => characterFormDisposed,[\s\S]*notify,[\s\S]*selectedTags: computed\(\(\) => form\.selectedTags\)[\s\S]*\}\);/
@@ -429,7 +414,7 @@ test('CharacterFormView tag creation freezes tag controls while pending', () => 
   assert.doesNotMatch(characterFormScript, /async function createAndSelectTag/);
   assert.doesNotMatch(characterFormScript, /function toggleTagSelection/);
 
-  assert.match(characterFormTemplate, /<CharacterBasicInfoPanel[\s\S]*:tag-creating="tagCreating"[\s\S]*@toggle-tag="toggleTagSelection"/);
+  assert.match(characterFormTemplate, /<CharacterBasicInfoPanel[\s\S]*:tag-creating="editor\.tagCreating"[\s\S]*@toggle-tag="editor\.toggleTagSelection"/);
   assert.match(characterBasicInfoPanelTemplate, /<div class="tag-selector" :class="\{ disabled: !canEdit \|\| tagCreating \}">/);
   assert.match(characterBasicInfoPanelTemplate, /@click="canEdit && !tagCreating && emit\('toggle-tag', tagName\)"/);
   assert.match(characterBasicInfoPanelTemplate, /<span v-if="canEdit && !tagCreating" class="tag-remove">/);
@@ -448,10 +433,10 @@ test('CharacterFormView tag creation freezes tag controls while pending', () => 
 });
 
 test('CharacterFormView validates image uploads before invalidating upload tokens', () => {
-  assert.match(characterFormScript, /import \{ useCharacterImageUploads \} from '\.\.\/composables\/character\/useCharacterImageUploads';/);
+  assert.match(characterFormScript, /import \{ useCharacterImageUploads \} from '\.{1,2}\/(?:composables\/character\/)?useCharacterImageUploads';/);
   assert.match(
     characterFormScript,
-    /const \{[\s\S]*backgroundUploading,[\s\S]*cancelCharacterImageUploads,[\s\S]*clearAdvancedBackground,[\s\S]*handleAdvancedBackground,[\s\S]*handleAvatar[\s\S]*\} = useCharacterImageUploads\(\{[\s\S]*canEdit,[\s\S]*form,[\s\S]*isDisposed: \(\) => characterFormDisposed,[\s\S]*notify[\s\S]*\}\);/
+    /const \{[\s\S]*backgroundUploading,[\s\S]*cancelCharacterImageUploads,[\s\S]*clearAdvancedBackground,[\s\S]*clearAvatar,[\s\S]*handleAdvancedBackground,[\s\S]*handleAvatar[\s\S]*\} = useCharacterImageUploads\(\{[\s\S]*canEdit,[\s\S]*form,[\s\S]*isDisposed: \(\) => characterFormDisposed,[\s\S]*notify[\s\S]*\}\);/
   );
   assert.match(characterFormScript, /cancelCharacterImageUploads\(\);/);
 
@@ -469,6 +454,14 @@ test('CharacterFormView validates image uploads before invalidating upload token
   assert.doesNotMatch(
     avatarHandler,
     /const uploadToken = \+\+avatarUploadToken;\s*if \(!file\)/
+  );
+  assert.match(
+    avatarHandler,
+    /const validatedResult = await validateImageDataUrl\([\s\S]*头像图片数据无效[\s\S]*form\.avatarUrl = validatedResult;/
+  );
+  assert.match(
+    characterImageUploadsSource,
+    /function clearAvatar\(\) \{[\s\S]*avatarUploadToken \+= 1;[\s\S]*form\.avatarUrl = '';[\s\S]*\}/
   );
 
   assert.match(
@@ -555,7 +548,7 @@ test('CharacterFormView preserves unchanged option-list references during loads'
 });
 
 test('CharacterFormView uses a searchable paged dialog for world book linking', () => {
-  assert.match(characterFormScript, /import \{ useCharacterWorldBookDialog \} from '\.\.\/composables\/character\/useCharacterWorldBookDialog';/);
+  assert.match(characterFormScript, /import \{ useCharacterWorldBookDialog \} from '\.{1,2}\/(?:composables\/character\/)?useCharacterWorldBookDialog';/);
   assert.match(characterWorldBookSelectionSource, /const showWorldBookDialog = ref\(false\);/);
   assert.match(characterWorldBookSelectionSource, /const worldBookSearch = ref\(''\);/);
   assert.match(characterWorldBookSelectionSource, /const worldBookSort = ref\('updatedDesc'\);/);
@@ -609,13 +602,13 @@ test('CharacterFormView uses a searchable paged dialog for world book linking', 
   assert.doesNotMatch(characterFormScript, /function openWorldBookDialog/);
   assert.doesNotMatch(characterFormScript, /function setWorldBookPage/);
 
-  assert.match(characterFormTemplate, /<CharacterBasicInfoPanel[\s\S]*:selected-world-book-ids="selectedWorldBookIds"[\s\S]*:selected-world-book-preview="selectedWorldBookPreview"[\s\S]*@open-world-book-dialog="openWorldBookDialog"[\s\S]*@toggle-world-book="toggleWorldBook"/);
+  assert.match(characterFormTemplate, /<CharacterBasicInfoPanel[\s\S]*:selected-world-book-ids="editor\.selectedWorldBookIds"[\s\S]*:selected-world-book-preview="editor\.selectedWorldBookPreview"[\s\S]*@open-world-book-dialog="editor\.openWorldBookDialog"[\s\S]*@toggle-world-book="editor\.toggleWorldBook"/);
   assert.match(characterBasicInfoPanelTemplate, /class="field full-span world-book-field"/);
   assert.match(characterBasicInfoPanelTemplate, /class="world-book-picker-button"[\s\S]*@click="emit\('open-world-book-dialog'\)"/);
   assert.match(characterBasicInfoPanelTemplate, /class="world-book-selected-preview"/);
-  assert.match(characterFormTemplate, /<CharacterWorldBookDialog[\s\S]*v-if="showWorldBookDialog"[\s\S]*v-model:search="worldBookSearch"[\s\S]*v-model:sort="worldBookSort"/);
-  assert.match(characterFormTemplate, /:paged-world-books="pagedWorldBooks"[\s\S]*:filtered-world-books="filteredWorldBooks"[\s\S]*:selected-world-book-ids="selectedWorldBookIds"/);
-  assert.match(characterFormTemplate, /@clear-search="clearWorldBookSearch"[\s\S]*@close="closeWorldBookDialog"[\s\S]*@page="setWorldBookPage"[\s\S]*@toggle="toggleWorldBook"/);
+  assert.match(characterFormTemplate, /<CharacterWorldBookDialog[\s\S]*v-if="editor\.showWorldBookDialog"[\s\S]*v-model:search="editor\.worldBookSearch"[\s\S]*v-model:sort="editor\.worldBookSort"/);
+  assert.match(characterFormTemplate, /:paged-world-books="editor\.pagedWorldBooks"[\s\S]*:filtered-world-books="editor\.filteredWorldBooks"[\s\S]*:selected-world-book-ids="editor\.selectedWorldBookIds"/);
+  assert.match(characterFormTemplate, /@clear-search="editor\.clearWorldBookSearch"[\s\S]*@close="editor\.closeWorldBookDialog"[\s\S]*@page="editor\.setWorldBookPage"[\s\S]*@toggle="editor\.toggleWorldBook"/);
   assert.doesNotMatch(characterFormTemplate, /class="world-book-dialog-overlay"/);
   assert.doesNotMatch(characterFormTemplate, /class="world-book-selector"/);
 
@@ -670,7 +663,7 @@ test('CharacterFormView filters tag search results in one pass', () => {
     characterFormOptionsSource,
     /function canCreateTagFromSearch\(tags, rawSearch\) \{\s*const name = String\(rawSearch \|\| ''\)\.trim\(\);[\s\S]*if \(!name\) \{[\s\S]*return false;[\s\S]*for \(const tag of Array\.isArray\(tags\) \? tags : \[\]\) \{[\s\S]*if \(tag\?\.name === name\) \{[\s\S]*return false;[\s\S]*return true;[\s\S]*\}/
   );
-  assert.match(characterFormTemplate, /<CharacterBasicInfoPanel[\s\S]*:can-create-searched-tag="canCreateSearchedTag"/);
+  assert.match(characterFormTemplate, /<CharacterBasicInfoPanel[\s\S]*:can-create-searched-tag="editor\.canCreateSearchedTag"/);
   assert.match(characterBasicInfoPanelTemplate, /v-if="canCreateSearchedTag"[\s\S]*class="ghost-button tag-create-btn"/);
   assert.doesNotMatch(characterFormScript, /availableTags\.value\.filter\(/);
   assert.doesNotMatch(characterFormScript, /function filterTagsBySearch/);
@@ -679,7 +672,7 @@ test('CharacterFormView filters tag search results in one pass', () => {
 });
 
 test('CharacterFormView counts status blueprint variable stats in one pass', () => {
-  assert.match(characterFormScript, /import \{ hasStatusBarBlueprintContent, normalizeStatusBarBlueprintForPayload, useCharacterStatusBlueprint \} from '\.\.\/composables\/character\/useCharacterStatusBlueprint';/);
+  assert.match(characterFormScript, /import \{[\s\S]*hasStatusBarBlueprintContent,[\s\S]*normalizeStatusBarBlueprintForPayload,[\s\S]*useCharacterStatusBlueprint[\s\S]*\} from '\.{1,2}\/(?:composables\/character\/)?useCharacterStatusBlueprint';/);
   assert.match(
     characterFormScript,
     /const \{[\s\S]*addStatusBlueprintVariable,[\s\S]*applyStatusBlueprintSampleTemplate,[\s\S]*clearStatusBlueprintTemplate,[\s\S]*refreshStatusBlueprintVariables,[\s\S]*removeStatusBlueprintVariable,[\s\S]*setColorValueFromEvent,[\s\S]*setStatusBlueprintVariableModeFromEvent,[\s\S]*setStatusBlueprintVariableValueFromEvent,[\s\S]*statusBarBlueprintPreview,[\s\S]*statusBarBlueprintPreviewConfig,[\s\S]*statusBarBlueprintTemplateStats,[\s\S]*statusBlueprintEditorRows[\s\S]*\} = useCharacterStatusBlueprint\(\{[\s\S]*canEdit,[\s\S]*form,[\s\S]*notify[\s\S]*\}\);/
@@ -840,9 +833,9 @@ test('CharacterFormView status blueprint input handlers tolerate missing event t
     characterStatusBlueprintSource,
     /function setColorValueFromEvent\(target, key, event\) {\s*const value = readEventTargetValue\(event\);\s*if \(value === undefined\) {\s*return;\s*}\s*setColorValue\(target, key, value\);\s*}/
   );
-  assert.match(characterFormTemplate, /@set-composite-value="setStatusBlueprintVariableValueFromEvent"/);
-  assert.match(characterFormTemplate, /@set-variable-mode="setStatusBlueprintVariableModeFromEvent"/);
-  assert.match(characterFormTemplate, /@set-color="setColorValueFromEvent"/);
+  assert.match(characterFormTemplate, /@set-composite-value="editor\.setStatusBlueprintVariableValueFromEvent"/);
+  assert.match(characterFormTemplate, /@set-variable-mode="editor\.setStatusBlueprintVariableModeFromEvent"/);
+  assert.match(characterFormTemplate, /@set-color="editor\.setColorValueFromEvent"/);
   assert.match(characterStatusBlueprintEditorTemplate, /@input="emit\('set-composite-value', part\.name, \$event\)"/);
   assert.match(characterStatusBlueprintEditorTemplate, /@change="emit\('set-variable-mode', row\.variable, \$event\)"/);
   assert.match(characterStatusBlueprintEditorTemplate, /@input="emit\('set-color', row\.variable, 'color', \$event\)"/);
@@ -854,7 +847,7 @@ test('CharacterFormView status blueprint input handlers tolerate missing event t
 test('CharacterFormView normalizes accessory skill payloads with a direct defaults loop', () => {
   assert.match(
     characterFormScript,
-    /import \{[\s\S]*emptyCharacter,[\s\S]*hasNonDefaultAccessorySkills,[\s\S]*normalizeAccessorySkillsForPayload,[\s\S]*normalizeAdvancedSettingsForForm,[\s\S]*normalizeCharacterDraftPayload,[\s\S]*normalizeForForm,[\s\S]*parseTagsTextForPayload[\s\S]*\} from '\.\.\/composables\/character\/useCharacterFormPayload';/
+    /import \{[\s\S]*emptyCharacter,[\s\S]*hasNonDefaultAccessorySkills,[\s\S]*normalizeAccessorySkillsForPayload,[\s\S]*normalizeAdvancedSettingsForForm,[\s\S]*normalizeCharacterDraftPayload,[\s\S]*normalizeForForm,[\s\S]*parseTagsTextForPayload[\s\S]*\} from '\.{1,2}\/(?:composables\/character\/)?useCharacterFormPayload';/
   );
   assert.doesNotMatch(characterFormScript, /applyLocalRules/);
   assert.doesNotMatch(characterFormScript, /defaultRenderPlugin/);
@@ -913,7 +906,7 @@ test('CharacterFormView scans AI draft seed fields without key-array callbacks',
 test('CharacterFormView builds render plugin previews with direct loops', () => {
   assert.match(
     characterFormScript,
-    /import \{ useCharacterRenderPlugins \} from '\.\.\/composables\/character\/useCharacterRenderPlugins';/
+    /import \{ useCharacterRenderPlugins \} from '\.{1,2}\/(?:composables\/character\/)?useCharacterRenderPlugins';/
   );
   assert.match(
     characterFormScript,
@@ -954,7 +947,7 @@ test('CharacterFormView builds render plugin previews with direct loops', () => 
 });
 
 test('CharacterFormView applies local regex preview rules with a direct loop', () => {
-  assert.match(characterFormScript, /import \{ useCharacterRegexRules \} from '\.\.\/composables\/character\/useCharacterRegexRules';/);
+  assert.match(characterFormScript, /import \{ useCharacterRegexRules \} from '\.{1,2}\/(?:composables\/character\/)?useCharacterRegexRules';/);
   assert.match(
     characterFormScript,
     /const \{[\s\S]*addRule,[\s\S]*regexPreview,[\s\S]*removeRule[\s\S]*\} = useCharacterRegexRules\(\{ canEdit, form, previewInput \}\);/
@@ -1011,7 +1004,7 @@ test('CharacterFormView normalizes advanced effects and tag names with direct lo
 test('CharacterFormView preserves unchanged AI process panel references', () => {
   assert.match(characterAiProcessPanelScript, /import \{ countOwnObjectKeys \} from '\.\.\/\.\.\/utils\/objectKeys';/);
   assert.match(characterAiGenerationSource, /import \{ samePlainValue \} from '\.\.\/\.\.\/utils\/plainValues';/);
-  assert.match(characterFormScript, /import \{ useCharacterAiGeneration \} from '\.\.\/composables\/character\/useCharacterAiGeneration';/);
+  assert.match(characterFormScript, /import \{ useCharacterAiGeneration \} from '\.{1,2}\/(?:composables\/character\/)?useCharacterAiGeneration';/);
   assert.match(
     characterAiProcessPanelScript,
     /function toolResultLabel\(result = \{\}\) \{[\s\S]*result\?\.applied && typeof result\.applied === 'object'[\s\S]*countOwnObjectKeys\(result\.applied\)[\s\S]*\}/
@@ -1079,7 +1072,7 @@ test('CharacterFormView preserves unchanged AI process panel references', () => 
     characterAiGenerationSource,
     /notify\?\.success\?\.\(`已创建 \$\{suggestions\.length\} 个 Mod`\);\s*setAiModSuggestionsIfChanged\(\[\]\);/
   );
-  assert.match(characterFormTemplate, /<CharacterAiDraftPanel[\s\S]*:suggested-mods-creating="suggestedModsCreating"[\s\S]*:suggestions="aiModSuggestions"[\s\S]*@create-suggested-mods="createSuggestedMods"/);
+  assert.match(characterFormTemplate, /<CharacterAiDraftPanel[\s\S]*:suggested-mods-creating="editor\.suggestedModsCreating"[\s\S]*:suggestions="editor\.aiModSuggestions"[\s\S]*@create-suggested-mods="editor\.createSuggestedMods"/);
   assert.match(characterAiDraftPanelTemplate, /<CharacterAiModSuggestions[\s\S]*v-if="suggestions\.length"[\s\S]*:suggestions="suggestions"[\s\S]*:creating="suggestedModsCreating"[\s\S]*@create="emit\('create-suggested-mods'\)"/);
   assert.match(characterAiModSuggestionsScript, /import \{ ListChecks, Plus \} from '@lucide\/vue';/);
   assert.match(characterAiModSuggestionsScript, /const emit = defineEmits\(\['create'\]\);/);
@@ -1092,7 +1085,7 @@ test('CharacterFormView preserves unchanged AI process panel references', () => 
     characterAiGenerationSource,
     /function aiStreamHandlers\(isCurrent = \(\) => !isDisposed\(\)\) \{[\s\S]*step: \(step = \{\}\) => \{[\s\S]*updateAiProcessStep\(step\.round \|\| 1, \(target\) => \(\{[\s\S]*tools: target\.tools\?\.length \? target\.tools : cloneAiToolList\(step\.tools\)[\s\S]*tool: \(call = \{\}\) => \{[\s\S]*updateAiProcessStep\(call\.round \|\| 1, \(target\) => \(\{[\s\S]*tools: appendAiToolList\(target\.tools, log\)[\s\S]*appendAiToolCall\(log\);/
   );
-  assert.match(characterFormTemplate, /<CharacterAiDraftPanel[\s\S]*:process="aiProcess"[\s\S]*:reasoning="aiReasoning"[\s\S]*:tool-calls="aiToolCalls"/);
+  assert.match(characterFormTemplate, /<CharacterAiDraftPanel[\s\S]*:process="editor\.aiProcess"[\s\S]*:reasoning="editor\.aiReasoning"[\s\S]*:tool-calls="editor\.aiToolCalls"/);
   assert.match(characterAiDraftPanelTemplate, /<CharacterAiProcessPanel[\s\S]*v-if="process\.length \|\| toolCalls\.length"[\s\S]*:process="process"[\s\S]*:reasoning="reasoning"[\s\S]*:tool-calls="toolCalls"/);
   assert.match(characterAiProcessPanelTemplate, /class="ai-process-text empty">等待模型返回本轮流程\.\.\.<\/p>/);
   assert.match(characterAiProcessPanelTemplate, /class="ai-tool-detail"[\s\S]*<strong>参数<\/strong>[\s\S]*<strong>结果<\/strong>/);
@@ -1109,216 +1102,37 @@ test('CharacterFormView preserves unchanged AI process panel references', () => 
   assert.doesNotMatch(characterFormScript, /function setAiToolCallsIfChanged/);
 });
 
-test('CharacterFormView uses granular sticky section navigation', () => {
-  assert.match(characterFormScript, /import \{ useCharacterSectionNavigation \} from '\.\.\/composables\/character\/useCharacterSectionNavigation';/);
-  assert.match(characterSectionNavigationSource, /const sectionNavRef = ref\(null\);/);
-  assert.match(characterSectionNavigationSource, /let sectionNavRafId = null;/);
-  assert.match(
-    characterFormScript,
-    /const formSections = \[[\s\S]*id: 'basic'[\s\S]*id: 'settings'[\s\S]*id: 'ai'[\s\S]*id: 'status-blueprint'[\s\S]*id: 'render-plugins'[\s\S]*id: 'regex'[\s\S]*\];/
-  );
-  assert.match(
-    characterFormScript,
-    /const \{[\s\S]*activeSection,[\s\S]*cancelCharacterSectionNavSync,[\s\S]*scheduleCharacterSectionNavSync,[\s\S]*scrollToSection,[\s\S]*sectionNavRef,[\s\S]*setActiveCharacterSection,[\s\S]*visibleFormSections[\s\S]*\} = useCharacterSectionNavigation\(\{[\s\S]*sections: formSections,[\s\S]*isSectionVisible[\s\S]*\}\);/
-  );
-  assert.match(characterSectionNavigationSource, /const visibleFormSections = computed\(getVisibleFormSections\);/);
-  assert.match(
-    characterSectionNavigationSource,
-    /function getVisibleFormSections\(\) \{[\s\S]*const nextSections = \[\];[\s\S]*for \(const section of sections\) \{[\s\S]*if \(isSectionVisible\(section\)\) \{[\s\S]*nextSections\.push\(section\);[\s\S]*return nextSections;/
-  );
-  assert.match(
-    characterSectionNavigationSource,
-    /function hasVisibleFormSection\(sectionId, nextSections = visibleFormSections\.value\) \{[\s\S]*for \(const section of nextSections\) \{[\s\S]*if \(section\.id === sectionId\) \{[\s\S]*return true;[\s\S]*return false;/
-  );
-  assert.doesNotMatch(characterFormScript, /let characterScrollListenerTarget = null;/);
-  assert.doesNotMatch(characterFormScript, /function getVisibleFormSections/);
-  assert.doesNotMatch(characterFormScript, /function hasVisibleFormSection/);
-  assert.doesNotMatch(characterFormScript, /function getCharacterScrollContainer/);
-  assert.doesNotMatch(characterFormScript, /function getCharacterSectionTarget/);
-  assert.doesNotMatch(characterFormScript, /function syncActiveSectionFromScroll/);
-  assert.doesNotMatch(characterFormScript, /getCharacterScrollContainer|useCharacterAiPanelLayout/);
-  assert.match(
-    characterSectionNavigationSource,
-    /function getCharacterScrollContainer\(\) \{[\s\S]*sectionNavRef\.value\?\.closest\?\.\('\.page-shell'\)[\s\S]*document\.querySelector\('\.page-shell'\);[\s\S]*\}/
-  );
-  assert.match(
-    characterSectionNavigationSource,
-    /function getCharacterScrollTop\(\) \{[\s\S]*const scroller = getCharacterScrollContainer\(\);[\s\S]*return scroller \? scroller\.scrollTop : window\.scrollY \|\| 0;[\s\S]*\}/
-  );
-  assert.match(
-    characterSectionNavigationSource,
-    /function scrollCharacterPageTo\(top\) \{[\s\S]*const roundedTop = Math\.max\(0, Math\.round\(top\)\);[\s\S]*scroller\.scrollTo\(\{ top: roundedTop, behavior: 'smooth' \}\);[\s\S]*window\.scrollTo\(\{ top: roundedTop, behavior: 'smooth' \}\);[\s\S]*\}/
-  );
-  assert.match(
-    characterSectionNavigationSource,
-    /function getCharacterScrollState\(\) \{[\s\S]*clientHeight: scroller\.clientHeight,[\s\S]*scrollHeight: scroller\.scrollHeight[\s\S]*document\.documentElement\?\.scrollHeight[\s\S]*window\.innerHeight[\s\S]*\}/
-  );
-  assert.match(
-    characterSectionNavigationSource,
-    /function syncCharacterScrollListener\(\) \{[\s\S]*characterScrollListenerTarget\.removeEventListener\('scroll', onCharacterScroll\);[\s\S]*characterScrollListenerTarget = nextTarget;[\s\S]*characterScrollListenerTarget\.addEventListener\('scroll', onCharacterScroll, \{ passive: true \}\);[\s\S]*\}/
-  );
-  assert.match(
-    characterFormScript,
-    /onBeforeUnmount\(\(\) => \{[\s\S]*cancelCharacterSectionNavSync\(\);[\s\S]*\}\);/
-  );
-  assert.match(
-    characterSectionNavigationSource,
-    /function disposeCharacterSectionNavigation\(\) \{[\s\S]*cancelCharacterSectionNavSync\(\);[\s\S]*stopCharacterScrollListener\(\);[\s\S]*window\.removeEventListener\('resize', onWindowResize\);[\s\S]*\}/
-  );
-  assert.match(
-    characterSectionNavigationSource,
-    /function scrollToSection\(id, \{ defer = false \} = \{\}\) \{[\s\S]*getCharacterSectionTarget\(id\)[\s\S]*const top = scrollTarget\.getBoundingClientRect\(\)\.top \+ getCharacterScrollTop\(\) - getCharacterSectionActivationOffset\(\);[\s\S]*scrollCharacterPageTo\(top\);/
-  );
-  assert.match(
-    characterCreationWizardSource,
-    /setCharacterWizardStep\(stepId, \{ scroll = false \} = \{\}\) \{[\s\S]*scrollToSection\(firstSectionId, \{ defer: true \}\);/
-  );
-  assert.match(
-    characterSectionNavigationSource,
-    /function getTopbarBottom\(\) \{[\s\S]*document\.querySelector\('\.topbar'\)\?\.getBoundingClientRect\(\)\.bottom;/
-  );
-  assert.match(
-    characterSectionNavigationSource,
-    /function syncCharacterSectionNavMetrics\(\) \{[\s\S]*nav\.style\.setProperty\('--character-section-nav-top', `\$\{getTopbarBottom\(\)\}px`\);/
-  );
-  assert.match(
-    characterSectionNavigationSource,
-    /function syncActiveSectionFromScroll\(\) \{[\s\S]*getCharacterSectionActivationOffset\(\)[\s\S]*setActiveCharacterSection\(nextSectionId\);/
-  );
-  assert.match(
-    characterSectionNavigationSource,
-    /function getCharacterSectionActivationOffset\(\) \{[\s\S]*const navBottom = sectionNavRef\.value\?\.getBoundingClientRect\(\)\.bottom;[\s\S]*if \(Number\.isFinite\(navBottom\)\) \{[\s\S]*return Math\.max\(0, Math\.ceil\(navBottom\)\) \+ 14;[\s\S]*\}/
-  );
-  assert.match(
-    characterSectionNavigationSource,
-    /function syncActiveSectionFromScroll\(\) \{[\s\S]*for \(const section of visibleFormSections\.value\) \{[\s\S]*const target = getCharacterSectionTarget\(section\.id\);[\s\S]*lastSectionId = section\.id;[\s\S]*const scrollState = getCharacterScrollState\(\);[\s\S]*if \(lastSectionId && scrollState\.clientHeight \+ scrollState\.scrollTop >= scrollState\.scrollHeight - 2\) \{[\s\S]*nextSectionId = lastSectionId;/
-  );
-  assert.doesNotMatch(characterFormScript, /window\.addEventListener\('scroll', onWindowScroll/);
-  assert.doesNotMatch(characterFormScript, /window\.removeEventListener\('scroll', onWindowScroll\)/);
-  assert.doesNotMatch(characterSectionNavigationSource, /visibleFormSections\.value\s*\.\s*map/);
-  assert.doesNotMatch(characterSectionNavigationSource, /visibleFormSections\.value[\s\S]{0,120}\.filter/);
-  assert.doesNotMatch(characterSectionNavigationSource, /sections\.filter\(isSectionVisible\)/);
-  assert.doesNotMatch(characterSectionNavigationSource, /visibleFormSections\.value\s*\.\s*some/);
-  assert.doesNotMatch(characterSectionNavigationSource, /sections\.some\(\(section\) => section\.id === activeSection\.value\)/);
-  assert.match(
-    characterSectionNavigationSource,
-    /tab\.scrollIntoView\(\{ behavior: 'auto', block: 'nearest', inline: 'center' \}\);/
-  );
-
-  assert.match(characterFormTemplate, /ref="sectionNavRef" class="form-section-nav character-section-nav"/);
-  assert.match(characterFormTemplate, /v-for="section in visibleFormSections"/);
-  assert.match(characterFormTemplate, /:data-section-id="section\.id"/);
-  assert.match(characterFormTemplate, /:aria-current="activeSection === section\.id \? 'true' : undefined"/);
-  assert.match(characterFormTemplate, /<CharacterAiDraftPanel[\s\S]*id="section-ai"/);
-  assert.match(characterFormTemplate, /id="section-images" class="form-panel character-image-section"/);
-  assert.match(characterFormScript, /import CharacterTalentPanel from '\.\.\/components\/character\/CharacterTalentPanel\.vue';/);
-  assert.doesNotMatch(characterFormScript, /const showTalentDialog = ref\(false\);/);
-  assert.match(characterFormTemplate, /<CharacterTalentPanel[\s\S]*v-if="isEditing && editingCharacterId && isCharacterSectionVisibleInCurrentMode\('talents'\)"[\s\S]*:character-id="editingCharacterId"[\s\S]*:character-name="form\.name"[\s\S]*:can-edit="canEdit"/);
-  assert.match(characterTalentPanelScript, /import \{ Dice6 \} from '@lucide\/vue';/);
-  assert.match(characterTalentPanelScript, /import TalentRollDialog from '\.\.\/TalentRollDialog\.vue';/);
-  assert.match(characterTalentPanelScript, /const showTalentDialog = ref\(false\);/);
-  assert.match(characterTalentPanelTemplate, /id="section-talents" class="form-panel talent-panel"/);
-  assert.match(characterTalentPanelTemplate, /class="ghost-button" type="button" @click="showTalentDialog = true"[\s\S]*<Dice6 :size="17" \/>/);
-  assert.match(characterTalentPanelTemplate, /<TalentRollDialog[\s\S]*v-if="showTalentDialog"[\s\S]*:character-id="characterId"[\s\S]*:character-name="characterName"[\s\S]*:can-edit="canEdit"[\s\S]*@close="showTalentDialog = false"/);
-  assert.match(characterFormTemplate, /<CharacterAdvancedSettingsPanel[\s\S]*:advanced-settings="form\.authorAdvancedSettings"[\s\S]*:status-bar-blueprint-template-stats="statusBarBlueprintTemplateStats"[\s\S]*:status-blueprint-editor-rows="statusBlueprintEditorRows"/);
-  assert.match(characterAdvancedSettingsPanelScript, /import \{ Settings, Upload, WandSparkles \} from '@lucide\/vue';/);
-  assert.match(characterAdvancedSettingsPanelScript, /import CharacterStatusBlueprintEditor from '\.\/CharacterStatusBlueprintEditor\.vue';/);
-  assert.match(characterAdvancedSettingsPanelTemplate, /<section id="section-advanced-settings" class="form-panel advanced-settings-panel">/);
-  assert.match(characterAdvancedSettingsPanelScript, /function readInputValue\(event\) \{[\s\S]*event\?\.target\?\.value[\s\S]*typeof value === 'string' \? value : ''/);
-  assert.match(characterAdvancedSettingsPanelScript, /function readInputChecked\(event\) \{[\s\S]*Boolean\(event\?\.target\?\.checked\)/);
-  assert.match(characterAdvancedSettingsPanelTemplate, /:value="advancedAiRequirement"[\s\S]*@input="emit\('update:advancedAiRequirement', readInputValue\(\$event\)\)"/);
-  assert.match(characterAdvancedSettingsPanelTemplate, /:checked="aiUseCurrentDraft"[\s\S]*@change="emit\('update:aiUseCurrentDraft', readInputChecked\(\$event\)\)"/);
-  assert.match(characterAdvancedSettingsPanelTemplate, /@click="emit\('complete-ai'\)"[\s\S]*<WandSparkles :size="17" \/>/);
-  assert.match(characterAdvancedSettingsPanelTemplate, /v-model="advancedSettings\.desktopBackgroundUrl"[\s\S]*@change="emit\('background-change', \$event, 'desktopBackgroundUrl'\)"/);
-  assert.match(characterAdvancedSettingsPanelTemplate, /v-model="advancedSettings\.customCssEnabled"[\s\S]*type="checkbox"[\s\S]*启用角色自定义 CSS/);
-  assert.match(characterAdvancedSettingsPanelTemplate, /v-model="advancedSettings\.customCssRiskAccepted"[\s\S]*type="checkbox"[\s\S]*确认风险并允许角色 CSS 生效/);
-  assert.match(characterAdvancedSettingsPanelTemplate, /v-model="advancedSettings\.customJsEnabled"[\s\S]*type="checkbox"[\s\S]*启用角色自定义 JS/);
-  assert.match(characterAdvancedSettingsPanelTemplate, /v-model="advancedSettings\.customJsRiskAccepted"[\s\S]*type="checkbox"[\s\S]*确认风险并允许角色 JS 执行/);
-  assert.match(characterFormScript, /customCssEnabled: form\.authorAdvancedSettings\.customCssEnabled/);
-  assert.match(characterFormScript, /customCssRiskAccepted: form\.authorAdvancedSettings\.customCssRiskAccepted/);
-  assert.match(characterFormScript, /customJsEnabled: form\.authorAdvancedSettings\.customJsEnabled/);
-  assert.match(characterFormScript, /customJsRiskAccepted: form\.authorAdvancedSettings\.customJsRiskAccepted/);
-  assert.match(characterFormScript, /'customCssEnabled'[\s\S]*'customJsEnabled'/);
-  assert.match(characterFormScript, /\['customCssRiskAccepted', 'customJsRiskAccepted'\]/);
-  assert.match(characterAdvancedSettingsPanelTemplate, /<CharacterStatusBlueprintEditor[\s\S]*:blueprint="advancedSettings\.statusBarBlueprint"[\s\S]*:rows="statusBlueprintEditorRows"[\s\S]*:stats="statusBarBlueprintTemplateStats"/);
-  assert.match(characterAdvancedSettingsPanelTemplate, /@set-color="\(\.\.\.args\) => emit\('set-color', \.\.\.args\)"/);
-  assert.match(characterAdvancedSettingsPanelTemplate, /@set-composite-value="\(\.\.\.args\) => emit\('set-composite-value', \.\.\.args\)"/);
-  assert.match(characterAdvancedSettingsPanelTemplate, /@set-variable-mode="\(\.\.\.args\) => emit\('set-variable-mode', \.\.\.args\)"/);
-  assert.match(characterStatusBlueprintEditorTemplate, /id="section-status-blueprint" class="accessory-defaults-panel status-blueprint-panel"/);
-  assert.match(characterAdvancedSettingsPanelTemplate, /id="section-accessories" class="accessory-defaults-panel"/);
-  assert.match(characterFormTemplate, /<CharacterRenderPluginPanel[\s\S]*:enabled-render-plugins="enabledRenderPlugins"[\s\S]*:preview-text="renderPluginPreviewText"[\s\S]*:render-plugins="form\.renderPlugins"/);
-  assert.match(characterRenderPluginPanelScript, /import \{ Plus, Trash2 \} from '@lucide\/vue';/);
-  assert.match(characterRenderPluginPanelScript, /import MarkdownContent from '\.\.\/MarkdownContent\.vue';/);
-  assert.match(characterRenderPluginPanelTemplate, /<section id="section-render-plugins" class="form-panel render-plugin-panel">/);
-  assert.match(characterRenderPluginPanelTemplate, /v-for="\(plugin, index\) in renderPlugins"[\s\S]*v-model="plugin\.label"[\s\S]*v-model="plugin\.pattern"[\s\S]*v-model="plugin\.titleTemplate"[\s\S]*v-model="plugin\.flags"/);
-  assert.match(characterRenderPluginPanelTemplate, /@click="emit\('remove-plugin', index\)"[\s\S]*<Trash2 :size="17" \/>/);
-  assert.match(characterRenderPluginPanelTemplate, /<MarkdownContent[\s\S]*v-if="previewText"[\s\S]*:text="previewText"[\s\S]*:render-plugins="enabledRenderPlugins"/);
-  assert.match(characterFormTemplate, /<CharacterRegexPanel[\s\S]*:regex-preview="regexPreview"[\s\S]*:rules="form\.regexRules"/);
-  assert.match(characterRegexPanelScript, /import \{ computed \} from 'vue';/);
-  assert.match(characterRegexPanelScript, /import \{ Plus, Trash2 \} from '@lucide\/vue';/);
-  assert.match(characterRegexPanelScript, /const previewInputModel = computed\(\{[\s\S]*get: \(\) => props\.previewInput,[\s\S]*set: \(value\) => emit\('update:previewInput', value\)[\s\S]*\}\);/);
-  assert.match(characterRegexPanelTemplate, /<section id="section-regex" class="form-panel regex-panel">/);
-  assert.match(characterRegexPanelTemplate, /v-for="\(rule, index\) in rules"[\s\S]*v-model="rule\.label"[\s\S]*v-model="rule\.pattern"[\s\S]*v-model="rule\.replacement"[\s\S]*v-model="rule\.flags"[\s\S]*v-model="rule\.scope"[\s\S]*v-model="rule\.groupName"[\s\S]*v-model\.number="rule\.priority"/);
-  assert.match(characterRegexPanelTemplate, /@click="emit\('remove-rule', index\)"[\s\S]*<Trash2 :size="17" \/>/);
-  assert.match(characterRegexPanelTemplate, /<input v-model="previewInputModel" placeholder="输入一段文本测试正则替换效果" \/>[\s\S]*<p v-if="previewInput\.trim\(\)">\{\{ regexPreview \}\}<\/p>/);
-
-  assert.match(
-    stylesSource,
-    /\.character-section-nav\s*\{[\s\S]*position:\s*sticky;[\s\S]*top:\s*calc\(var\(--character-section-nav-top, 78px\) \+ env\(safe-area-inset-top, 0px\)\);[\s\S]*backdrop-filter:\s*blur\(16px\);/
-  );
-  assert.match(
-    stylesSource,
-    /\.workspace-layout-shell \.character-section-nav,\s*\.workspace-layout-shell \.settings-section-nav\s*\{[\s\S]*top:\s*calc\(-1 \* var\(--workspace-page-padding-top, 28px\)\);[\s\S]*\}/
-  );
-  assert.match(stylesSource, /\.character-section-nav::-webkit-scrollbar\s*\{[^}]*height:\s*8px;/);
-  assert.match(stylesSource, /\.character-section-nav \.form-section-tab::after\s*\{[\s\S]*transform:\s*scaleX\(0\.36\);/);
-  assert.match(stylesSource, /\.character-section-nav \.form-section-tab\.active::after\s*\{[^}]*transform:\s*scaleX\(1\);/);
-  assert.match(stylesSource, /#section-basic,[\s\S]*#section-status-blueprint,[\s\S]*#section-regex\s*\{[^}]*scroll-margin-top:\s*150px;/);
-  assert.match(stylesSource, /@keyframes character-nav-settle/);
+test('CharacterFormView uses single-section navigation', () => {
+  assert.match(characterFormScript, /useCharacterSections\(\{[\s\S]*sections: formSections,[\s\S]*isSectionVisible: \(section\) => isCharacterSectionVisibleInCurrentMode\(section\.id\)/);
+  assert.match(characterSectionsSource, /const activeSection = ref\(sections\[0\]\?\.id \|\| 'basic'\);/);
+  assert.match(characterSectionsSource, /const visibleSections = computed\(getVisibleSections\);/);
+  assert.match(characterSectionsSource, /function setActiveSection\(sectionId\) \{[\s\S]*if \(!hasSection\(sectionId\)\)[\s\S]*activeSection\.value = sectionId;/);
+  assert.match(characterSectionsSource, /function goToPreviousSection\(\)/);
+  assert.match(characterSectionsSource, /function goToNextSection\(\)/);
+  assert.doesNotMatch(characterSectionsSource, /scrollIntoView|sectionNavRef|syncActiveSectionFromScroll|addEventListener\('scroll'/);
+  assert.match(characterEditorDesktopTemplate, /class="character-studio-nav"[\s\S]*editor\.sectionGroups[\s\S]*editor\.activeSection[\s\S]*@click="editor\.setActiveSection\(section\.id\)"/);
+  assert.match(characterEditorDesktopTemplate, /<CharacterSectionOutlet v-if="editor\.activeSection"[\s\S]*:section-id="editor\.activeSection"/);
+  assert.match(characterEditorMobileTemplate, /class="character-mobile-section-item"[\s\S]*@click="enterSection\(section\.id\)"/);
+  assert.match(stylesSource, /\.character-studio-nav\s*\{[\s\S]*position:\s*sticky;[\s\S]*max-height:/);
+  assert.match(stylesSource, /\.character-mobile-sheet-head\s*\{[\s\S]*position:\s*sticky;/);
 });
 
-test('CharacterFormView uses a flowing card layout and modal status preview', () => {
+test('CharacterFormView uses a responsive workbench, live summary, validation, and modal status preview', () => {
   assert.match(characterFormScript, /const showStatusPreviewDialog = ref\(false\);/);
-  assert.match(
-    characterFormScript,
-    /function updateCharacterFormField\(key, value\) \{[\s\S]*Object\.prototype\.hasOwnProperty\.call\(form, key\)[\s\S]*form\[key\] = value;[\s\S]*\}/
-  );
-  assert.match(
-    characterSectionNavigationSource,
-    /function getCharacterSectionTarget\(id\) \{[\s\S]*return el\.getClientRects\(\)\.length[\s\S]*el\.querySelector\('\.form-panel, \.form-section-group, \[id\^="section-"\]'\) \|\| el;/
-  );
-  assert.doesNotMatch(characterFormScript, /function getCharacterSectionTarget/);
-
-  assert.match(characterFormTemplate, /<div class="character-main-sections">/);
-  assert.match(characterFormTemplate, /<CharacterBasicInfoPanel[\s\S]*v-if="isCharacterSectionVisibleInCurrentMode\('basic'\)"[\s\S]*@avatar-change="handleAvatar"[\s\S]*@update-field="updateCharacterFormField"/);
-  assert.match(characterBasicInfoPanelScript, /import \{ ListChecks, Plus, RotateCcw, Upload, X \} from '@lucide\/vue';/);
-  assert.match(characterBasicInfoPanelScript, /const emit = defineEmits\(\[[\s\S]*'avatar-change'[\s\S]*'update-field'[\s\S]*'update:tagSearch'[\s\S]*\]\);/);
-  assert.match(characterBasicInfoPanelTemplate, /<section id="section-basic" class="form-panel form-section-group character-basic-panel">/);
-  assert.match(characterFormTemplate, /<CharacterSettingsPanel[\s\S]*v-if="isCharacterSectionVisibleInCurrentMode\('settings'\)"[\s\S]*@insert-user-variable="insertUserVariable"[\s\S]*@update-field="updateCharacterFormField"/);
-  assert.match(characterSettingsPanelScript, /import VariableEditor from '\.\.\/VariableEditor\.vue';/);
-  assert.match(characterSettingsPanelScript, /const SETTINGS_FIELDS = \[[\s\S]*key: 'background'[\s\S]*key: 'worldview'[\s\S]*key: 'persona'[\s\S]*key: 'openingMessage'/);
-  assert.match(characterSettingsPanelTemplate, /<section id="section-settings" class="form-panel form-section-group character-settings-panel">/);
-  assert.match(characterSettingsPanelTemplate, /v-for="field in SETTINGS_FIELDS"[\s\S]*@click="emit\('insert-user-variable', field\.key\)"[\s\S]*<VariableEditor[\s\S]*:model-value="form\[field\.key\]"[\s\S]*@update:model-value="emit\('update-field', field\.key, \$event\)"/);
-  assert.match(characterFormTemplate, /<div id="section-advanced" class="form-section-group-advanced">/);
-  assert.match(characterFormTemplate, /<CharacterAdvancedSettingsPanel[\s\S]*@preview-status="showStatusPreviewDialog = true"/);
-  assert.match(characterAdvancedSettingsPanelTemplate, /<CharacterStatusBlueprintEditor[\s\S]*@preview="emit\('preview-status'\)"/);
-  assert.match(characterStatusBlueprintEditorTemplate, /class="status-blueprint-heading-actions"[\s\S]*emit\('preview'\)[\s\S]*<Eye :size="16" \/>/);
-  assert.doesNotMatch(characterFormTemplate, /<div class="status-blueprint-preview">/);
-  assert.match(characterFormTemplate, /<CharacterStatusPreviewDialog[\s\S]*v-if="showStatusPreviewDialog"[\s\S]*:status-bar="statusBarBlueprintPreview"[\s\S]*:template-config="statusBarBlueprintPreviewConfig"[\s\S]*@close="showStatusPreviewDialog = false"/);
-  assert.match(characterStatusPreviewDialogScript, /import \{ X \} from '@lucide\/vue';/);
-  assert.match(characterStatusPreviewDialogScript, /import StatusBar from '\.\.\/StatusBar\.vue';/);
-  assert.match(characterStatusPreviewDialogScript, /const emit = defineEmits\(\['close'\]\);/);
-  assert.match(characterStatusPreviewDialogTemplate, /class="status-preview-overlay" @click\.self="emit\('close'\)"/);
-  assert.match(characterStatusPreviewDialogTemplate, /class="status-preview-dialog form-panel"[\s\S]*role="dialog"[\s\S]*aria-modal="true"/);
-  assert.match(characterStatusPreviewDialogTemplate, /aria-label="关闭效果预览"[\s\S]*emit\('close'\)[\s\S]*<X :size="18" \/>/);
-  assert.match(characterStatusPreviewDialogTemplate, /<StatusBar[\s\S]*v-if="statusBar"[\s\S]*:template-config="templateConfig"/);
-
-  assert.match(stylesSource, /\.editor-layout\s*\{[^}]*display:\s*flex;[^}]*flex-wrap:\s*wrap;[^}]*align-items:\s*flex-start;/);
-  assert.match(stylesSource, /\.character-main-sections,\s*\.editor-side,\s*\.form-section-group-advanced\s*\{[^}]*display:\s*contents;/);
-  assert.match(stylesSource, /\.editor-layout \.character-settings-panel,[\s\S]*\.editor-layout \.advanced-settings-panel\s*\{[^}]*flex-basis:\s*640px;/);
-  assert.match(stylesSource, /\.status-preview-overlay\s*\{[^}]*position:\s*fixed;[^}]*place-items:\s*center;/);
-  assert.match(stylesSource, /\.status-preview-dialog\s*\{[^}]*width:\s*min\(720px, calc\(100vw - 32px\)\);[^}]*max-height:/);
-  assert.doesNotMatch(stylesSource, /grid-template-columns:\s*minmax\(0,\s*1fr\)\s*minmax\(300px,\s*430px\)/);
+  assert.match(characterFormScript, /function updateCharacterFormField\(key, value\) \{[\s\S]*Object\.prototype\.hasOwnProperty\.call\(form, key\)[\s\S]*form\[key\] = value;/);
+  assert.match(characterFormTemplate, /<CharacterEditorMobile v-if="isPhone" \/>[\s\S]*<CharacterEditorDesktop v-else \/>/);
+  assert.match(characterEditorDesktopTemplate, /class="character-studio"[\s\S]*class="character-studio-main"[\s\S]*class="character-studio-card"[\s\S]*editor\.completedCount/);
+  assert.match(characterEditorMobileTemplate, /class="character-mobile"[\s\S]*class="character-mobile-hub"[\s\S]*class="character-mobile-sheet"[\s\S]*class="character-mobile-actionbar"/);
+  assert.match(characterSectionOutletTemplate, /<CharacterBasicInfoPanel[\s\S]*:form="editor\.form"[\s\S]*@update-field="editor\.updateCharacterFormField"/);
+  assert.match(characterSectionOutletTemplate, /<CharacterSettingsPanel[\s\S]*:form="editor\.form"[\s\S]*@update-field="editor\.updateCharacterFormField"/);
+  assert.match(characterSectionOutletTemplate, /<CharacterStatusBarPanel[\s\S]*@preview-status="editor\.showStatusPreviewDialog = true"/);
+  assert.match(characterFormTemplate, /<CharacterStatusPreviewDialog[\s\S]*v-if="editor\.showStatusPreviewDialog"[\s\S]*:status-bar="editor\.statusBarBlueprintPreview"[\s\S]*:template-config="editor\.statusBarBlueprintPreviewConfig"/);
+  assert.match(characterStatusPreviewDialogTemplate, /class="status-preview-overlay"[\s\S]*class="status-preview-dialog form-panel"[\s\S]*role="dialog"[\s\S]*aria-modal="true"/);
+  assert.match(stylesSource, /\.character-studio\s*\{[\s\S]*grid-template-columns:/);
+  assert.match(stylesSource, /\.character-studio-main\s*\{[\s\S]*grid-template-columns:/);
+  assert.match(stylesSource, /\.character-mobile-actionbar\s*\{[\s\S]*position:\s*fixed;[\s\S]*bottom:/);
+  assert.match(stylesSource, /\.status-preview-overlay\s*\{[\s\S]*position:\s*fixed;[\s\S]*place-items:\s*center;/);
+  assert.match(stylesSource, /\.status-preview-dialog\s*\{[\s\S]*width:\s*min\(720px, calc\(100vw - 32px\)\)/);
 });
 
 test('CharacterFormView uses an inline AI workbench without covering the form', () => {
@@ -1334,7 +1148,7 @@ test('CharacterFormView uses an inline AI workbench without covering the form', 
   );
   assert.doesNotMatch(stylesSource, /\.ai-draft-panel\s*\{[^}]*position:\s*fixed;/);
   assert.doesNotMatch(stylesSource, /\.ai-draft-panel\s*\{[^}]*resize:\s*both;/);
-  assert.match(stylesSource, /\.editor-layout \.ai-draft-panel\s*\{[^}]*flex:\s*1 1 100%;[^}]*min-width:\s*0;/);
+  assert.match(stylesSource, /\.character-studio-stage > \.form-panel\s*\{[^}]*width:\s*100%;[^}]*min-width:\s*0;/);
   assert.match(stylesSource, /\.ai-workbench-grid\s*\{[^}]*display:\s*grid;[^}]*grid-template-columns:\s*minmax\(0, 1fr\);/);
   assert.match(stylesSource, /@media \(min-width: 980px\) \{[\s\S]*\.ai-workbench-grid\.has-output\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1\.08fr\) minmax\(360px, 0\.92fr\);/);
   assert.match(stylesSource, /\.ai-workbench-results\s*\{[^}]*border-left:\s*1px solid/);
@@ -1373,7 +1187,7 @@ test('CharacterFormView keeps mobile AI assistant output inside the viewport', (
   );
   assert.match(
     stylesSource,
-    /\.character-editor-workbench \.editor-side \.form-actions\s*\{[^}]*position:\s*static;[^}]*bottom:\s*auto;[^}]*background:\s*transparent;[^}]*box-shadow:\s*none;/
+    /\.character-mobile-actionbar\s*\{[^}]*position:\s*fixed;[^}]*env\(safe-area-inset-bottom/
   );
   assert.match(stylesSource, /\.ai-tool-detail pre\s*\{[^}]*max-height:\s*220px;[^}]*overflow:\s*auto;/);
 });

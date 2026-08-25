@@ -1,14 +1,14 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
-import { findSseBlockSeparator, forEachSseLine } from '../../../shared/sse.js';
+import { createSseParser } from '../../../shared/sse.js';
 
 const frontendApi = await import('../../../frontend/src/api.js');
+const { streamSSE } = await import('../../../frontend/src/api/core.js');
 const {
   __resetApiCsrfTokenForTests,
   apiRequest,
   streamCharacterDraft,
-  streamNpcOrganizer,
   updateCharacter
 } = frontendApi;
 const authApi = await import('../../../frontend/src/api/auth.js');
@@ -103,7 +103,6 @@ test('frontend API domain modules back the compatibility exports', () => {
   assert.equal(frontendApi.confirmConversationMemory, chatApi.confirmConversationMemory);
   assert.equal(frontendApi.disableConversationMemory, chatApi.disableConversationMemory);
   assert.equal(frontendApi.rollbackConversationMemory, chatApi.rollbackConversationMemory);
-  assert.equal(frontendApi.streamNpcOrganizer, chatApi.streamNpcOrganizer);
   assert.equal(frontendApi.streamMessage, chatApi.streamMessage);
   assert.equal(frontendApi.continueMessage, chatApi.continueMessage);
   assert.equal(frontendApi.streamContinueMessage, chatApi.streamContinueMessage);
@@ -281,41 +280,7 @@ test('frontend assistant SSE errors preserve plain text payloads', async () => {
   }
 });
 
-test('frontend NPC organizer streams through the conversation NPC organize route', async () => {
-  const originalFetch = globalThis.fetch;
-  const requests = [];
-
-  globalThis.fetch = async (url, request = {}) => {
-    requests.push({ url: String(url), request });
-    if (String(url).endsWith('/api/csrf-token')) {
-      return jsonResponse({ csrfToken: 'csrf-for-npc-organizer-test' });
-    }
-    return sseResponse('event: done\ndata: {"summary":"ok","toolCalls":[]}\n\n');
-  };
-
-  try {
-    const result = await streamNpcOrganizer(
-      'conversation-1',
-      { requirement: '整理 NPC', selectedNpc: 'Mira' }
-    );
-
-    assert.equal(result.summary, 'ok');
-    assert.ok(requests.length >= 1);
-    const streamRequest = requests[requests.length - 1];
-    assert.equal(streamRequest.url, '/api/conversations/conversation-1/npcs/organize');
-    assert.equal(streamRequest.request.method, 'POST');
-    assert.ok(streamRequest.request.headers['X-CSRF-Token']);
-    assert.deepEqual(JSON.parse(streamRequest.request.body), {
-      requirement: '整理 NPC',
-      selectedNpc: 'Mira',
-      stream: true
-    });
-  } finally {
-    globalThis.fetch = originalFetch;
-  }
-});
-
-test('frontend assistant SSE parser scans CRLF data lines without block split allocation', async () => {
+test('frontend assistant SSE parser preserves CRLF multi-line data with the shared incremental parser', async () => {
   const originalFetch = globalThis.fetch;
 
   globalThis.fetch = async (url) => {
@@ -334,19 +299,22 @@ test('frontend assistant SSE parser scans CRLF data lines without block split al
     globalThis.fetch = originalFetch;
   }
 
-  const sharedLines = [];
-  forEachSseLine('event: error\r\ndata: First line', (line) => sharedLines.push(line));
-  assert.deepEqual(sharedLines, ['event: error', 'data: First line']);
-  assert.match(frontendApiCoreSource, /from '..\/..\/..\/shared\/sse\.js'/);
-  assert.match(frontendApiCoreSource, /forEachSseLine\(block, \(line\) => \{/);
-  assert.doesNotMatch(frontendApiCoreSource, /function forEachSseLine\(text, visit\)/);
+  const parser = createSseParser();
+  assert.deepEqual(parser.push('event: error\r\ndata: First line\r\ndata:  Second line\r\n\r\n'), [{
+    event: 'error',
+    data: 'First line\n Second line',
+    id: ''
+  }]);
+  assert.match(frontendApiCoreSource, /import \{ createSseParser \} from '..\/..\/..\/shared\/sse\.js';/);
+  assert.match(frontendApiCoreSource, /const parser = createSseParser\(\);/);
+  assert.match(frontendApiCoreSource, /parser\.push\(decoder\.decode\(value, \{ stream: true \}\)\)/);
   assert.doesNotMatch(frontendApiCoreSource, /block\.split\(\s*\/\\r\?\\n\//);
   assert.doesNotMatch(frontendApiCoreSource, /const dataLines = \[\]/);
   assert.doesNotMatch(frontendApiCoreSource, /dataLines\.push/);
   assert.doesNotMatch(frontendApiCoreSource, /dataLines\.join/);
 });
 
-test('frontend assistant SSE parser scans split CRLF block separators without regex match allocation', async () => {
+test('frontend assistant SSE parser handles CRLF separators split across byte chunks', async () => {
   const originalFetch = globalThis.fetch;
   const encoder = new TextEncoder();
 
@@ -369,12 +337,155 @@ test('frontend assistant SSE parser scans split CRLF block separators without re
     globalThis.fetch = originalFetch;
   }
 
-  assert.deepEqual(findSseBlockSeparator('a\r\n\r\nb'), { index: 1, length: 4 });
-  assert.match(frontendApiCoreSource, /from '..\/..\/..\/shared\/sse\.js'/);
-  assert.match(frontendApiCoreSource, /let separator = findSseBlockSeparator\(buffer\);/);
-  assert.doesNotMatch(frontendApiCoreSource, /function findSseBlockSeparator\(text\)/);
+  const parser = createSseParser();
+  assert.deepEqual(parser.push('event: done\r'), []);
+  assert.deepEqual(parser.push('\ndata: ok\r'), []);
+  assert.deepEqual(parser.push('\n\r'), [{ event: 'done', data: 'ok', id: '' }]);
+  assert.deepEqual(parser.push('\n'), []);
+  assert.match(frontendApiCoreSource, /for \(const rawEvent of parser\.end\(\)\)/);
+  assert.doesNotMatch(frontendApiCoreSource, /findSseBlockSeparator/);
   assert.doesNotMatch(frontendApiCoreSource, /buffer\.match\(\s*\/\\r\?\\n\\r\?\\n\//);
 });
+
+test('frontend SSE streaming yields a paint between handled visual events in one network chunk', async () => {
+  const originalFetch = globalThis.fetch;
+  const originalWindow = globalThis.window;
+  const frames = [];
+  const handled = [];
+  __resetApiCsrfTokenForTests();
+
+  globalThis.window = {
+    requestAnimationFrame(callback) {
+      frames.push(callback);
+      return frames.length;
+    }
+  };
+  globalThis.fetch = async (url) => {
+    if (String(url).endsWith('/api/csrf-token')) {
+      return jsonResponse({ csrfToken: 'csrf-for-frontend-api-paint-yield-test' });
+    }
+    return sseResponse([
+      'event: reasoning\ndata: {"text":"think"}\n\n',
+      'event: content\ndata: {"text":"first"}\n\n',
+      'event: content\ndata: {"text":"second"}\n\n',
+      'event: done\ndata: {}\n\n'
+    ].join(''));
+  };
+
+  try {
+    const streamPromise = streamSSE('/api/test/paint-yield', {}, {
+      reasoning(data) {
+        handled.push(`reasoning:${data.text}`);
+      },
+      content(data) {
+        handled.push(`content:${data.text}`);
+      },
+      done() {
+        handled.push('done');
+      }
+    });
+
+    await waitForCondition(() => frames.length === 1);
+    assert.deepEqual(handled, ['reasoning:think']);
+    frames.shift()();
+    await waitForCondition(() => frames.length === 1);
+    assert.deepEqual(handled, ['reasoning:think', 'content:first']);
+    frames.shift()();
+    await waitForCondition(() => frames.length === 1);
+    assert.deepEqual(handled, ['reasoning:think', 'content:first', 'content:second']);
+    frames.shift()();
+    await streamPromise;
+    assert.deepEqual(handled, ['reasoning:think', 'content:first', 'content:second', 'done']);
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalWindow === undefined) delete globalThis.window;
+    else globalThis.window = originalWindow;
+    __resetApiCsrfTokenForTests();
+  }
+});
+
+test('frontend SSE paint yielding cannot stall forever when animation frames are throttled', async () => {
+  const originalFetch = globalThis.fetch;
+  const originalWindow = globalThis.window;
+  const handled = [];
+  __resetApiCsrfTokenForTests();
+
+  globalThis.window = {
+    requestAnimationFrame() {
+      return 1;
+    },
+    cancelAnimationFrame() {}
+  };
+  globalThis.fetch = async (url) => {
+    if (String(url).endsWith('/api/csrf-token')) {
+      return jsonResponse({ csrfToken: 'csrf-for-frontend-api-throttled-paint-test' });
+    }
+    return sseResponse('event: content\ndata: {"text":"visible"}\n\nevent: done\ndata: {}\n\n');
+  };
+
+  try {
+    let watchdogId;
+    await Promise.race([
+      streamSSE('/api/test/throttled-paint', {}, {
+        content(data) {
+          handled.push(data.text);
+        },
+        done() {
+          handled.push('done');
+        }
+      }),
+      new Promise((_, reject) => {
+        watchdogId = setTimeout(() => reject(new Error('paint yield stalled')), 500);
+      })
+    ]);
+    clearTimeout(watchdogId);
+    assert.deepEqual(handled, ['visible', 'done']);
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalWindow === undefined) delete globalThis.window;
+    else globalThis.window = originalWindow;
+    __resetApiCsrfTokenForTests();
+  }
+});
+
+test('frontend SSE stops queued events when aborted by a visual event handler', async () => {
+  const originalFetch = globalThis.fetch;
+  const controller = new AbortController();
+  const handled = [];
+  __resetApiCsrfTokenForTests();
+
+  globalThis.fetch = async (url) => {
+    if (String(url).endsWith('/api/csrf-token')) {
+      return jsonResponse({ csrfToken: 'csrf-for-frontend-api-handler-abort-test' });
+    }
+    return sseResponse('event: content\ndata: {"text":"stop"}\n\nevent: done\ndata: {}\n\n');
+  };
+
+  try {
+    const result = await streamSSE('/api/test/handler-abort', {}, {
+      content(data) {
+        handled.push(data.text);
+        controller.abort();
+      },
+      done() {
+        handled.push('done');
+      }
+    }, controller.signal);
+    assert.deepEqual(result, { aborted: true });
+    assert.deepEqual(handled, ['stop']);
+  } finally {
+    globalThis.fetch = originalFetch;
+    __resetApiCsrfTokenForTests();
+  }
+});
+
+async function waitForCondition(predicate) {
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    if (predicate()) return;
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  assert.fail('condition was not reached');
+}
 
 test('frontend assistant SSE errors flush truncated trailing UTF-8 bytes', async () => {
   const originalFetch = globalThis.fetch;
