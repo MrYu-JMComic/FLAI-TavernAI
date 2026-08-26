@@ -16,6 +16,7 @@ export async function organizeConversationCast(options = {}) {
     scopeMemberId = '',
     requirement = '',
     messages = [],
+    idempotencyKey = '',
     signal,
     generate = generateCompletion,
     onProgress = async () => {},
@@ -67,7 +68,7 @@ export async function organizeConversationCast(options = {}) {
       sourceKind: 'ai_organize',
       scope,
       scopeMemberId,
-      idempotencyKey: `cast-organize:${newId()}`,
+      idempotencyKey: idempotencyKey || `cast-organize:${newId()}`,
     });
     const summary = {
       summary: plan.summary,
@@ -75,6 +76,10 @@ export async function organizeConversationCast(options = {}) {
       deduplicated: applied.batch.result.deduplicated,
       batchId: applied.batch.id,
       repairAttempted: generatedPlan.attempts > 1,
+      provider: result.provider || settings.gatewayName || '',
+      providerType: result.providerType || settings.providerType || '',
+      model: result.model || settings.model || '',
+      usage: result.usage || null,
     };
     await onProgress('done', summary);
     return summary;

@@ -3723,6 +3723,51 @@ test('provider model list normalizes official /models responses', async () => {
   }
 });
 
+test('Gemini model list uses the native endpoint through DNS fake-IP proxies', async () => {
+  const originalFetch = globalThis.fetch;
+  let requestedUrl = '';
+  let requestedHeaders = null;
+  try {
+    globalThis.fetch = async (url, options) => {
+      requestedUrl = String(url);
+      requestedHeaders = new Headers(options.headers);
+      return new Response(JSON.stringify({
+        models: [
+          {
+            name: 'models/text-embedding-004',
+            displayName: 'Text Embedding 004',
+            supportedGenerationMethods: ['embedContent']
+          },
+          {
+            name: 'models/gemini-2.5-flash',
+            displayName: 'Gemini 2.5 Flash',
+            supportedGenerationMethods: ['generateContent']
+          }
+        ]
+      }), { headers: { 'Content-Type': 'application/json' } });
+    };
+
+    const models = await listProviderModels({
+      providerType: 'gemini',
+      gatewayName: 'Gemini',
+      baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai',
+      model: 'gemini-2.5-flash',
+      apiKey: 'gemini-test-key',
+      lookup: async () => [{ address: '198.18.1.10', family: 4 }]
+    }, { forceRefresh: true });
+
+    assert.equal(requestedUrl, 'https://generativelanguage.googleapis.com/v1beta/models?pageSize=1000');
+    assert.equal(requestedHeaders.get('x-goog-api-key'), 'gemini-test-key');
+    assert.deepEqual(models, [{
+      id: 'gemini-2.5-flash',
+      label: 'Gemini 2.5 Flash',
+      ownedBy: ''
+    }]);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test('provider model list normalizes model rows without source map/filter allocation', async () => {
   const originalFetch = globalThis.fetch;
   const originalMap = Array.prototype.map;
@@ -10269,10 +10314,10 @@ test('streamCompletion handles AbortController signal', async () => {
   try {
     globalThis.fetch = async (_url, options = {}) => {
       fetchCalled = true;
-      assert.equal(options.signal, controller.signal);
+      assert.ok(options.signal instanceof AbortSignal);
       controller.abort();
-      const error = new DOMException('The operation was aborted.', 'AbortError');
-      throw error;
+      assert.equal(options.signal.aborted, true);
+      throw options.signal.reason;
     };
 
     await assert.rejects(
@@ -10374,7 +10419,7 @@ test('provider settings route normalizes string extra body to a plain object', a
   app.use('/api', createSettingsRouter({
     db: database,
     requireAuth: (request, _response, next) => {
-      request.auth = { user: { id: userId } };
+      request.auth = { user: { id: userId, isRootAdmin: true } };
       next();
     },
     asyncRoute: (handler) => (request, response, next) => Promise.resolve(handler(request, response, next)).catch(next),
@@ -10790,6 +10835,26 @@ test('world book regexMode entry matches by regex pattern', () => {
 
   const noMatches = matchWorldBookEntries(database, character.id, '我没有苹果');
   assert.equal(noMatches.length, 0);
+});
+
+test('world book regexMode rejects potentially catastrophic patterns', () => {
+  const database = createAppDatabase(':memory:');
+  database.prepare('INSERT INTO users (id, username, password_hash, created_at) VALUES (?, ?, ?, ?)').run(
+    'user-1', 'tester', 'hash', new Date().toISOString()
+  );
+  const character = createCharacter(database, 'user-1', { name: 'SafeRegex角色', visibility: 'private' });
+  const book = createWorldBook(database, 'user-1', { name: 'SafeRegex测试书' });
+  linkWorldBookToCharacter(database, book.id, character.id);
+
+  createEntry(database, 'user-1', book.id, {
+    name: '危险模式',
+    triggerKeys: '(a+)+$',
+    content: '不应激活',
+    enabled: true,
+    regexMode: true
+  });
+
+  assert.deepEqual(matchWorldBookEntries(database, character.id, 'aaaa!'), []);
 });
 
 test('world book selective NOT logic filters out when secondary key present', () => {

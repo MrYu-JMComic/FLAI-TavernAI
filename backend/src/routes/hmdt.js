@@ -13,7 +13,7 @@ import {
   recordCastOocValidation,
   setCastEmotionState,
   setCastPersonalityAnchor,
-} from '../services/cast/castCommandService.js';
+} from '../services/cast/commands/runtimeCommands.js';
 import {
   getCastCognition,
   getCastEmotionTimeline,
@@ -21,6 +21,7 @@ import {
   getCastMemories,
   getCastOocHistory,
 } from '../services/cast/castQueryService.js';
+import { clampInteger, clampNumber } from '../utils/number.js';
 import { listRecentConversationMessageRows } from './helpers.js';
 
 export function createHMDTRouter(ctx) {
@@ -314,16 +315,4 @@ function runHmdtRequest(response, operation) {
     }
     throw error;
   }
-}
-
-function clampInteger(value, min, max, fallback) {
-  const numeric = Number(value);
-  if (!Number.isFinite(numeric)) return fallback;
-  return Math.min(max, Math.max(min, Math.round(numeric)));
-}
-
-function clampNumber(value, min, max, fallback) {
-  const numeric = Number(value);
-  if (!Number.isFinite(numeric)) return fallback;
-  return Math.min(max, Math.max(min, numeric));
 }

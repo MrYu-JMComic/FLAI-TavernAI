@@ -1,10 +1,13 @@
 import { computed, reactive, ref, watch } from 'vue';
 import {
   checkProviderHealth,
+  createProviderProfile,
+  deleteProviderProfile,
   fetchDeepSeekBalance,
   fetchProviderCapabilities,
-  getProviderSettings,
-  saveProviderSettings
+  listProviderProfiles,
+  selectProviderProfile,
+  updateProviderProfile
 } from '../../api/providers.js';
 import {
   areProviderModelListsEqual,
@@ -102,6 +105,7 @@ const presets = {
 
 export function useSettingsProvider({ isPersonalPage, notify, emitProviderSaved } = {}) {
   const form = reactive({
+    id: '',
     providerType: 'deepseek',
     gatewayName: 'DeepSeek',
     baseUrl: 'https://api.deepseek.com',
@@ -123,11 +127,17 @@ export function useSettingsProvider({ isPersonalPage, notify, emitProviderSaved 
   const balanceLoading = ref(false);
   const modelOptions = ref([]);
   const providerCapabilities = ref([]);
+  const providerProfiles = ref([]);
+  const selectedProviderId = ref('');
   const providerCapabilityLoadError = ref('');
+  const providerActionLoading = ref(false);
   const balance = ref(null);
   const settingsModelOptions = computed(() => buildModelSelectOptions(modelOptions.value, form.model));
-  const providerControlsBusy = computed(() => saving.value || modelLoading.value || modelProbeLoading.value);
+  const providerControlsBusy = computed(() => (
+    saving.value || modelLoading.value || modelProbeLoading.value || providerActionLoading.value
+  ));
   const currentProviderCapability = computed(() => findCurrentProviderCapability());
+  const providerFormDirty = computed(() => !samePlainValue(providerFormSnapshot(), providerFormBaseline));
   const canCheckBalance = computed(() => form.providerType === 'deepseek' && form.apiKeySet && !form.apiKeyNeedsReset);
   const canFetchModels = computed(() => Boolean(
     form.baseUrl && (form.apiKey || form.apiKeySet || canUseNoAuthProvider())
@@ -135,6 +145,8 @@ export function useSettingsProvider({ isPersonalPage, notify, emitProviderSaved 
   let modelLoadToken = 0;
   let providerSaveToken = 0;
   let balanceLoadToken = 0;
+  let providerActionToken = 0;
+  let providerFormBaseline = providerFormSnapshot();
 
   watch(
     () => [
@@ -156,15 +168,15 @@ export function useSettingsProvider({ isPersonalPage, notify, emitProviderSaved 
   );
 
   async function loadProviderSettingsBundle() {
-    const [settings, capabilityResult] = await Promise.all([
-      getProviderSettings(),
+    const [providerBundle, capabilityResult] = await Promise.all([
+      listProviderProfiles(),
       loadProviderCapabilities()
     ]);
-    return { settings, capabilityResult };
+    return { providerBundle, capabilityResult };
   }
 
   function applyProviderSettingsBundle(bundle = {}) {
-    applySettings(bundle.settings || {});
+    applyProviderBundle(bundle.providerBundle || {});
     applyProviderCapabilitiesResult(bundle.capabilityResult);
   }
 
@@ -244,19 +256,112 @@ export function useSettingsProvider({ isPersonalPage, notify, emitProviderSaved 
     }
     const mutationToken = ++providerSaveToken;
     const payload = buildProviderSettingsPayload();
+    const providerId = form.id;
+    if (!providerId) {
+      notify?.error?.('当前供应商不存在');
+      return;
+    }
     saving.value = true;
     try {
-      const saved = await saveProviderSettings(payload);
-      if (!isCurrentProviderSaveResult(mutationToken, payload)) return;
+      const saved = await updateProviderProfile(providerId, payload);
+      if (!isCurrentProviderSaveResult(mutationToken, providerId, payload)) return;
+      replaceProviderProfile(saved);
       applySettings(saved);
       notify?.success?.('设置已保存');
       emitProviderSaved?.();
     } catch (err) {
-      if (!isCurrentProviderSaveResult(mutationToken, payload)) return;
+      if (!isCurrentProviderSaveResult(mutationToken, providerId, payload)) return;
       notify?.error?.(err.message);
     } finally {
       if (isCurrentProviderSaveToken(mutationToken)) {
         saving.value = false;
+      }
+    }
+  }
+
+  async function addProvider() {
+    if (!isProviderPageReady() || providerControlsBusy.value || !confirmDiscardChanges()) {
+      return;
+    }
+    const requestToken = ++providerActionToken;
+    providerActionLoading.value = true;
+    const preset = presets.deepseek;
+    try {
+      const bundle = await createProviderProfile({
+        providerType: 'deepseek',
+        gatewayName: `DeepSeek ${providerProfiles.value.length + 1}`,
+        baseUrl: preset.baseUrl,
+        model: preset.model,
+        supportsReasoning: preset.supportsReasoning,
+        extraBody: preset.extraBody
+      });
+      if (!isCurrentProviderActionToken(requestToken)) return;
+      applyProviderBundle(bundle);
+      notify?.success?.('已添加并启用新的 AI 供应商');
+      emitProviderSaved?.();
+    } catch (err) {
+      if (!isCurrentProviderActionToken(requestToken)) return;
+      notify?.error?.(err.message);
+    } finally {
+      if (isCurrentProviderActionToken(requestToken)) {
+        providerActionLoading.value = false;
+      }
+    }
+  }
+
+  async function switchProvider(providerId) {
+    const nextProviderId = String(providerId || '').trim();
+    if (
+      !nextProviderId
+      || nextProviderId === selectedProviderId.value
+      || !isProviderPageReady()
+      || providerControlsBusy.value
+      || !confirmDiscardChanges()
+    ) {
+      return;
+    }
+    const requestToken = ++providerActionToken;
+    providerActionLoading.value = true;
+    try {
+      const bundle = await selectProviderProfile(nextProviderId);
+      if (!isCurrentProviderActionToken(requestToken)) return;
+      applyProviderBundle(bundle);
+      notify?.success?.(`已启用 ${form.gatewayName}`);
+      emitProviderSaved?.();
+    } catch (err) {
+      if (!isCurrentProviderActionToken(requestToken)) return;
+      notify?.error?.(err.message);
+    } finally {
+      if (isCurrentProviderActionToken(requestToken)) {
+        providerActionLoading.value = false;
+      }
+    }
+  }
+
+  async function removeProvider() {
+    if (
+      !form.id
+      || providerProfiles.value.length <= 1
+      || !isProviderPageReady()
+      || providerControlsBusy.value
+      || !confirmProviderDeletion()
+    ) {
+      return;
+    }
+    const requestToken = ++providerActionToken;
+    providerActionLoading.value = true;
+    try {
+      const bundle = await deleteProviderProfile(form.id);
+      if (!isCurrentProviderActionToken(requestToken)) return;
+      applyProviderBundle(bundle);
+      notify?.success?.('AI 供应商已删除');
+      emitProviderSaved?.();
+    } catch (err) {
+      if (!isCurrentProviderActionToken(requestToken)) return;
+      notify?.error?.(err.message);
+    } finally {
+      if (isCurrentProviderActionToken(requestToken)) {
+        providerActionLoading.value = false;
       }
     }
   }
@@ -291,15 +396,18 @@ export function useSettingsProvider({ isPersonalPage, notify, emitProviderSaved 
   function resetProviderAsyncScope() {
     modelLoadToken += 1;
     providerSaveToken += 1;
+    providerActionToken += 1;
     resetBalanceLoadScope();
     saving.value = false;
     modelLoading.value = false;
     modelProbeLoading.value = false;
+    providerActionLoading.value = false;
     resetProviderProbeStatus();
   }
 
   function buildProviderModelRequest() {
     return {
+      providerId: form.id,
       providerType: form.providerType,
       gatewayName: form.gatewayName,
       baseUrl: form.baseUrl,
@@ -312,7 +420,8 @@ export function useSettingsProvider({ isPersonalPage, notify, emitProviderSaved 
   }
 
   function hasSameProviderModelRequest(request) {
-    return form.providerType === request.providerType
+    return form.id === request.providerId
+      && form.providerType === request.providerType
       && form.gatewayName === request.gatewayName
       && form.baseUrl === request.baseUrl
       && form.model === request.model
@@ -358,8 +467,10 @@ export function useSettingsProvider({ isPersonalPage, notify, emitProviderSaved 
     return mutationToken === providerSaveToken && isProviderPageReady();
   }
 
-  function isCurrentProviderSaveResult(mutationToken, payload) {
-    return isCurrentProviderSaveToken(mutationToken) && hasSameProviderSettingsPayload(payload);
+  function isCurrentProviderSaveResult(mutationToken, providerId, payload) {
+    return isCurrentProviderSaveToken(mutationToken)
+      && form.id === providerId
+      && hasSameProviderSettingsPayload(payload);
   }
 
   function isCurrentBalanceLoadToken(requestToken) {
@@ -377,6 +488,7 @@ export function useSettingsProvider({ isPersonalPage, notify, emitProviderSaved 
 
   function applySettings(settings) {
     Object.assign(form, {
+      id: settings.id || '',
       providerType: settings.providerType,
       gatewayName: settings.gatewayName,
       baseUrl: settings.baseUrl,
@@ -390,7 +502,64 @@ export function useSettingsProvider({ isPersonalPage, notify, emitProviderSaved 
       supportsReasoning: settings.supportsReasoning,
       extraBody: JSON.stringify(settings.extraBody || {}, null, 2)
     });
+    selectedProviderId.value = form.id;
     syncCachedModelOptions();
+    providerFormBaseline = providerFormSnapshot();
+  }
+
+  function applyProviderBundle(bundle = {}) {
+    const profiles = Array.isArray(bundle.providers) ? bundle.providers : [];
+    setProviderListIfChanged(providerProfiles, profiles);
+    const nextSelectedId = String(
+      bundle.selectedProviderId || profiles.find((provider) => provider?.selected)?.id || ''
+    );
+    selectedProviderId.value = nextSelectedId;
+    const selected = profiles.find((provider) => provider?.id === nextSelectedId) || profiles[0];
+    if (selected) {
+      applySettings(selected);
+    }
+    resetBalanceLoadScope();
+    balance.value = null;
+  }
+
+  function replaceProviderProfile(saved) {
+    const nextProfiles = providerProfiles.value.map((provider) => (
+      provider.id === saved.id ? { ...saved, selected: true } : provider
+    ));
+    setProviderListIfChanged(providerProfiles, nextProfiles);
+  }
+
+  function providerFormSnapshot() {
+    return {
+      id: form.id,
+      providerType: form.providerType,
+      gatewayName: form.gatewayName,
+      baseUrl: form.baseUrl,
+      model: form.model,
+      apiKey: form.apiKey,
+      clearApiKey: form.clearApiKey,
+      supportsReasoning: form.supportsReasoning,
+      extraBody: form.extraBody
+    };
+  }
+
+  function confirmDiscardChanges() {
+    if (!providerFormDirty.value || typeof window === 'undefined' || typeof window.confirm !== 'function') {
+      return true;
+    }
+    return window.confirm('当前供应商有未保存的修改，确定放弃这些修改吗？');
+  }
+
+  function confirmProviderDeletion() {
+    if (typeof window === 'undefined' || typeof window.confirm !== 'function') {
+      return true;
+    }
+    const dirtyNotice = providerFormDirty.value ? '未保存的修改也会丢失。' : '';
+    return window.confirm(`确定删除“${form.gatewayName}”吗？${dirtyNotice}`);
+  }
+
+  function isCurrentProviderActionToken(requestToken) {
+    return requestToken === providerActionToken && isProviderPageReady();
   }
 
   async function loadProviderCapabilities() {
@@ -573,6 +742,7 @@ export function useSettingsProvider({ isPersonalPage, notify, emitProviderSaved 
   }
 
   return {
+    addProvider,
     balance,
     balanceLoading,
     canCheckBalance,
@@ -588,13 +758,18 @@ export function useSettingsProvider({ isPersonalPage, notify, emitProviderSaved 
     modelProbeStatus,
     probeProviderConnection,
     providerCapabilityLoadError,
+    providerActionLoading,
     providerControlsBusy,
+    providerProfiles,
+    removeProvider,
     resetProviderAsyncScope,
     applyPreset,
     applyProviderSettingsBundle,
     saving,
+    selectedProviderId,
     settingsModelOptions,
     submit,
+    switchProvider,
     updateProviderFormField
   };
 }

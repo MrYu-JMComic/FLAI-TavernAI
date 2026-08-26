@@ -6,6 +6,13 @@
 import { normalizeAdvancedSettings, mergeAdvancedSettings } from '../modules/advancedSettings.js';
 import { summarizeUsageSnapshots } from '../services/providers.js';
 import { parseJson } from '../utils/json.js';
+import {
+  createCursorScope,
+  decodeCursor,
+  encodeCursor,
+  normalizeCursorLimit
+} from '../services/cursorPagination.js';
+import { measureSync } from '../services/performanceMetrics.js';
 
 export { parseJson };
 
@@ -145,13 +152,18 @@ export function withConversationUsage(conversation, userId, db) {
   };
 }
 
-export function getConversationUsageSummaries(db, userId) {
+export function getConversationUsageSummaries(db, userId, conversationIds = null) {
+  const ids = Array.isArray(conversationIds) ? [...new Set(conversationIds.filter(Boolean))] : null;
+  if (ids && !ids.length) return new Map();
+  const params = [userId];
+  const idClause = ids ? ` AND conversation_id IN (${ids.map(() => '?').join(', ')})` : '';
+  if (ids) params.push(...ids);
   const rows = db
     .prepare(
       `SELECT conversation_id, usage_json FROM messages
-       WHERE user_id = ? AND usage_json IS NOT NULL`
+       WHERE user_id = ? AND usage_json IS NOT NULL${idClause}`
     )
-    .all(userId);
+    .all(...params);
 
   const buckets = new Map();
   for (const row of rows) {
@@ -233,6 +245,40 @@ export function listConversationMessages(db, userId, conversationId) {
     }
   }
   return messages;
+}
+
+export function listConversationMessagePage(db, userId, conversationId, options = {}) {
+  const limit = normalizeCursorLimit(options.limit);
+  const scope = createCursorScope('conversation-messages', { userId, conversationId });
+  const params = [userId, conversationId];
+  let cursorClause = '';
+  if (options.cursor) {
+    const [createdAt, rowId] = decodeCursor(options.cursor, scope, { values: 2 });
+    cursorClause = ' AND (created_at < ? OR (created_at = ? AND rowid < ?))';
+    params.push(createdAt, createdAt, rowId);
+  }
+  params.push(limit + 1);
+  const rows = measureSync('sqlite.messages.list', () => db.prepare(
+    `SELECT *, rowid AS _cursor_rowid FROM messages
+     WHERE user_id = ? AND conversation_id = ?
+       AND (role <> 'assistant' OR TRIM(content) <> '' OR TRIM(reasoning) <> '')
+       ${cursorClause}
+     ORDER BY created_at DESC, rowid DESC
+     LIMIT ?`
+  ).all(...params));
+  const hasMore = rows.length > limit;
+  const pageRows = hasMore ? rows.slice(0, limit) : rows;
+  const oldest = pageRows.at(-1);
+  const messages = [];
+  for (let index = pageRows.length - 1; index >= 0; index -= 1) {
+    messages.push(toMessage(pageRows[index]));
+  }
+  return {
+    messages,
+    nextCursor: hasMore && oldest
+      ? encodeCursor(scope, [oldest.created_at, Number(oldest._cursor_rowid)])
+      : ''
+  };
 }
 
 export function getConversationMessage(db, userId, conversationId, messageId) {

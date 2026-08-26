@@ -1,9 +1,48 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { appConfig } from '../config.js';
-import { avatarUploadDir, backendRoot, dataDir } from '../db.js';
+import { avatarUploadDir, backendRoot, dataDir } from '../db/runtime.js';
 
 const REQUIRED_TABLES = "('users','characters','conversations','messages')";
+
+export function buildRuntimeLiveness(options = {}) {
+  return {
+    ok: true,
+    service: appConfig.serviceName,
+    version: appConfig.version,
+    timestamp: getHealthTimestamp(options),
+    uptimeSeconds: Math.floor(process.uptime())
+  };
+}
+
+export function createReadinessProbe(database, options = {}) {
+  const ttlMs = Math.max(250, Number(options.ttlMs || 5000));
+  const clock = typeof options.clock === 'function' ? options.clock : Date.now;
+  let cached = null;
+  let expiresAt = 0;
+  return () => {
+    const now = Number(clock());
+    if (cached && now < expiresAt) {
+      return cached;
+    }
+    try {
+      const row = database.prepare('SELECT 1 AS ok').get();
+      cached = {
+        ok: row?.ok === 1,
+        service: appConfig.serviceName,
+        timestamp: new Date(now).toISOString()
+      };
+    } catch {
+      cached = {
+        ok: false,
+        service: appConfig.serviceName,
+        timestamp: new Date(now).toISOString()
+      };
+    }
+    expiresAt = now + ttlMs;
+    return cached;
+  };
+}
 
 export function buildRuntimeHealth(database, options = {}) {
   const checks = {

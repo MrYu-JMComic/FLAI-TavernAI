@@ -25,6 +25,7 @@ import {
   listCastTurnQueue,
   listConversationTurns,
 } from '../../repositories/castRuntimeRepository.js';
+import { clampInteger } from '../../utils/number.js';
 
 export function getCastRoster(database, userId, conversationId, options = {}) {
   assertAccess(database, userId, conversationId);
@@ -242,10 +243,4 @@ function assertAccess(database, userId, conversationId) {
   if (!castConversationBelongsToUser(database, userId, conversationId)) {
     throw castNotFound('Conversation not found');
   }
-}
-
-function clampInteger(value, min, max, fallback) {
-  const numeric = Number(value);
-  if (!Number.isFinite(numeric)) return fallback;
-  return Math.min(max, Math.max(min, Math.round(numeric)));
 }

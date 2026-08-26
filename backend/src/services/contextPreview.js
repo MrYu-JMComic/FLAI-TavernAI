@@ -5,6 +5,9 @@ import { parseJson } from '../utils/json.js';
 import { resolveChatAttachmentsForModel } from './chatAttachments.js';
 import { createDiagnosticId } from './conversationGenerationDiagnostics.js';
 import { describeProviderCapabilities } from './providerCapabilities.js';
+import { searchUserContent } from './fullTextSearch.js';
+import { measureSync } from './performanceMetrics.js';
+import { getSelectedProviderProfileRow } from '../repositories/providerProfileRepository.js';
 import {
   PROMPT_PIPELINE_HISTORY_LIMIT,
   buildPromptPipeline,
@@ -12,6 +15,14 @@ import {
 } from './promptPipeline.js';
 
 export function buildConversationContextPreview(database, user, conversationId, payload = {}) {
+  return measureSync(
+    'context.preview',
+    () => buildConversationContextPreviewUnmeasured(database, user, conversationId, payload),
+    { rows: (result) => (result?.messages?.length || 0) + (result?.retrieval?.returned || 0) }
+  );
+}
+
+function buildConversationContextPreviewUnmeasured(database, user, conversationId, payload = {}) {
   const conversation = getConversation(database, user.id, conversationId);
   if (!conversation) {
     return null;
@@ -36,6 +47,11 @@ export function buildConversationContextPreview(database, user, conversationId, 
     resolveAttachmentsForModel: (attachments) => resolveChatAttachmentsForModel(database, user.id, attachments)
   });
   const providerDiagnostics = buildProviderDiagnostics(database, user.id);
+  const retrievalQuery = String(payload.searchQuery || pipeline.input || '').trim();
+  const retrieval = searchUserContent(database, user.id, retrievalQuery, {
+    conversationId: conversation.id,
+    limit: payload.searchLimit || 12
+  });
 
   return {
     conversationId: conversation.id,
@@ -48,6 +64,15 @@ export function buildConversationContextPreview(database, user, conversationId, 
     sections: pipeline.sections,
     priority: pipeline.priority,
     budget: pipeline.budget,
+    retrieval: {
+      query: retrieval.query,
+      evidence: retrieval.results,
+      budget: payload.searchLimit || 12,
+      sources: retrieval.sources,
+      returned: retrieval.results.length,
+      truncated: retrieval.truncated,
+      truncationReason: retrieval.truncationReason
+    },
     providerDiagnostics,
     diagnostics: {
       ...pipeline.diagnostics,
@@ -58,14 +83,7 @@ export function buildConversationContextPreview(database, user, conversationId, 
 }
 
 function buildProviderDiagnostics(database, userId) {
-  const row = database
-    .prepare(
-      `SELECT provider_type, gateway_name, base_url, model, api_key_hint,
-              supports_reasoning, updated_at
-       FROM provider_settings
-       WHERE user_id = ?`
-    )
-    .get(userId);
+  const row = getSelectedProviderProfileRow(database, userId);
   const diagnosticId = createDiagnosticId('context');
   if (!row) {
     return {

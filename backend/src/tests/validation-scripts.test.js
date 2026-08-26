@@ -120,8 +120,10 @@ test('package scripts keep encoding checks wired into backend tests and frontend
   const frontendPackage = readJson('frontend/package.json');
 
   assert.equal(backendPackage.scripts.pretest, 'node ../scripts/check-encoding.mjs');
-  assert.match(backendPackage.scripts.test, /\bnode\s+--test\b/);
-  assert.match(backendPackage.scripts.test, /src\/tests\/\*\.test\.js/);
+  assert.equal(backendPackage.scripts.test, 'node scripts/run-tests.mjs all');
+  assert.equal(backendPackage.scripts['test:backend'], 'node scripts/run-tests.mjs backend');
+  assert.equal(backendPackage.scripts['test:contracts'], 'node scripts/run-tests.mjs contracts');
+  assert.equal(backendPackage.scripts['test:coverage'], 'node scripts/run-tests.mjs backend --coverage');
 
   assert.equal(frontendPackage.scripts.prebuild, 'node ../scripts/check-encoding.mjs');
   assert.equal(frontendPackage.scripts.build, 'vite build');

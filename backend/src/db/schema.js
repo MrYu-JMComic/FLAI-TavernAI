@@ -32,6 +32,7 @@ export function initializeDatabase(database) {
     CREATE TABLE IF NOT EXISTS sessions (
       id TEXT PRIMARY KEY,
       user_id TEXT NOT NULL,
+      token_hash TEXT,
       expires_at INTEGER NOT NULL,
       created_at TEXT NOT NULL,
       FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
@@ -46,6 +47,7 @@ export function initializeDatabase(database) {
       encrypted_api_key TEXT,
       api_key_hint TEXT,
       supports_reasoning INTEGER NOT NULL DEFAULT 0,
+      allow_private_network INTEGER NOT NULL DEFAULT 0,
       extra_body TEXT NOT NULL DEFAULT '{}',
       updated_at TEXT NOT NULL,
       FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
@@ -62,6 +64,7 @@ export function initializeDatabase(database) {
       encrypted_api_key TEXT,
       api_key_hint TEXT,
       supports_reasoning INTEGER NOT NULL DEFAULT 0,
+      allow_private_network INTEGER NOT NULL DEFAULT 0,
       extra_body TEXT NOT NULL DEFAULT '{}',
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL,
@@ -203,6 +206,8 @@ export function initializeDatabase(database) {
   ensureColumn(database, 'messages', 'attachments_json', "TEXT NOT NULL DEFAULT '[]'");
   ensureColumn(database, 'conversation_memories', 'source_kind', "TEXT NOT NULL DEFAULT 'manual'");
   ensureColumn(database, 'conversation_memories', 'source_excerpt', "TEXT NOT NULL DEFAULT ''");
+  ensureColumn(database, 'sessions', 'token_hash', 'TEXT');
+  ensureColumn(database, 'provider_settings', 'allow_private_network', 'INTEGER NOT NULL DEFAULT 0');
   database.exec(`
     CREATE TABLE IF NOT EXISTS character_likes (
       user_id TEXT NOT NULL,

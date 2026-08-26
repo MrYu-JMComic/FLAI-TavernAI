@@ -1030,6 +1030,71 @@ fieldset.accessory-skills-grid:disabled {
 
 /* -- Provider Settings -- */
 
+.provider-profile-toolbar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 14px;
+  align-items: end;
+  padding: 12px 0;
+  border-top: 1px solid color-mix(in srgb, var(--line) 78%, transparent);
+  border-bottom: 1px solid color-mix(in srgb, var(--line) 78%, transparent);
+}
+
+.provider-profile-picker {
+  min-width: 0;
+  margin: 0;
+}
+
+.provider-profile-picker select {
+  width: 100%;
+  min-height: 44px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.provider-profile-actions {
+  display: flex;
+  min-height: 44px;
+  gap: 8px;
+  align-items: center;
+}
+
+.provider-profile-actions .icon-button {
+  width: 44px;
+  height: 44px;
+  flex: 0 0 44px;
+}
+
+.provider-profile-actions .provider-delete-button {
+  color: var(--danger, #b83232);
+}
+
+.provider-active-indicator {
+  display: inline-flex;
+  min-width: 0;
+  gap: 6px;
+  align-items: center;
+  color: var(--green);
+  font-size: 0.82rem;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+@media (max-width: 620px) {
+  .provider-profile-toolbar {
+    grid-template-columns: 1fr;
+    align-items: stretch;
+  }
+
+  .provider-profile-actions {
+    justify-content: flex-end;
+  }
+
+  .provider-active-indicator {
+    margin-right: auto;
+  }
+}
+
 .settings-data-export-actions {
   display: flex;
   flex-wrap: wrap;

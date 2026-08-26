@@ -27,7 +27,7 @@ test('MarkdownContent commits in the typewriter cadence and reports stable DOM r
   assert.match(markdownContentScript, /watch\(\(\) => buildPluginCacheKey\(props\.renderPlugins\), scheduleRenderedMarkdown, \{ flush: 'post' \}\);/);
   assert.match(markdownContentScript, /onMounted\(\(\) => \{\s*reconcileRenderedHtml\(\);/);
   assert.match(markdownContentScript, /emits: \['rendered'\]/);
-  assert.match(markdownContentScript, /reconcileDomChildren\(root, templateElement\.content\);\s*appliedHtml = pendingHtml;\s*fitInlineKatex\(\);\s*emit\('rendered'\);/);
+  assert.match(markdownContentScript, /reconcileDomChildren\(root, templateElement\.content\);\s*applyKatexSurfaceContrast\(root\);\s*appliedHtml = pendingHtml;\s*fitInlineKatex\(\);\s*emit\('rendered'\);/);
   assert.doesNotMatch(markdownContentScript, /requestAnimationFrame|markdownRenderFrame|cancelPendingMarkdownFrame/);
   assert.match(markdownContentScript, /templateElement\.innerHTML = pendingHtml;/);
   assert.match(markdownContentScript, /import \{ reconcileDomChildren \} from '..\/utils\/domReconciler\.js';/);

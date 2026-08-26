@@ -1,6 +1,6 @@
 import {
-  fetchProviderRequest,
   providerFetch,
+  providerFetchUrl,
   readJsonResponse
 } from './providerHttp.js';
 import { getImageGenerationCompatibility } from './providerImageModels.js';
@@ -45,7 +45,7 @@ export async function generateImage(settings, prompt, options = {}) {
 
 async function generateGeminiImage(settings, prompt, options = {}) {
   const model = normalizeProviderModel(settings.providerType, resolveProviderModel(settings, options));
-  const response = await fetchProviderRequest(geminiNativeGenerateContentUrl(settings, model), {
+  const response = await providerFetchUrl(settings, geminiNativeGenerateContentUrl(settings, model), {
     method: 'POST',
     headers: geminiNativeRequestHeaders(settings),
     body: JSON.stringify({

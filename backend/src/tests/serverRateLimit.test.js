@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { readRepoText } from './frontendSfcTestUtils.js';
 
-const serverSource = readRepoText('backend/src/server.js');
+const appSource = readRepoText('backend/src/app.js');
 const configSource = readRepoText('backend/src/config.js');
 const dbSource = readRepoText('backend/src/db.js');
 const securitySource = readRepoText('backend/src/security.js');
@@ -19,23 +19,23 @@ test('server API rate limit is tuned for normal authenticated app usage', () => 
   assert.match(configSource, /authenticatedApiRateLimitMax: readPositiveInteger\(/);
   assert.match(configSource, /process\.env\.AUTHENTICATED_API_RATE_LIMIT_MAX \?\? process\.env\.API_AUTHENTICATED_RATE_LIMIT_MAX/);
   assert.match(configSource, /Math\.max\(readPositiveInteger\(process\.env\.API_RATE_LIMIT_MAX, 240\), 900\)/);
-  assert.match(serverSource, /const apiRateLimitWindowMs = appConfig\.apiRateLimitWindowMs;/);
-  assert.match(serverSource, /const apiRateLimitMax = appConfig\.apiRateLimitMax;/);
-  assert.match(serverSource, /const authenticatedApiRateLimitMax = appConfig\.authenticatedApiRateLimitMax;/);
-  assert.match(serverSource, /function shouldSkipApiRateLimit\(request\)[\s\S]*request\.method === 'OPTIONS'/);
-  assert.match(serverSource, /function getApiRateLimitForRequest\(request\)[\s\S]*request\.auth\?\.user \? authenticatedApiRateLimitMax : apiRateLimitMax;/);
-  assert.match(serverSource, /limit: getApiRateLimitForRequest/);
-  assert.match(serverSource, /skip: shouldSkipApiRateLimit/);
-  assert.match(serverSource, /keyGenerator: getApiRateLimitKey/);
+  assert.match(appSource, /const apiRateLimitWindowMs = config\.apiRateLimitWindowMs;/);
+  assert.match(appSource, /const apiRateLimitMax = config\.apiRateLimitMax;/);
+  assert.match(appSource, /const authenticatedApiRateLimitMax = config\.authenticatedApiRateLimitMax;/);
+  assert.match(appSource, /function shouldSkipApiRateLimit\(request\)[\s\S]*request\.method === 'OPTIONS'/);
+  assert.match(appSource, /function getApiRateLimitForRequest\(request\)[\s\S]*request\.auth\?\.user \? authenticatedApiRateLimitMax : apiRateLimitMax;/);
+  assert.match(appSource, /limit: getApiRateLimitForRequest/);
+  assert.match(appSource, /skip: shouldSkipApiRateLimit/);
+  assert.match(appSource, /keyGenerator: getApiRateLimitKey/);
 });
 
 test('server keeps auth attempt rate limit separate and strict', () => {
   assert.match(configSource, /authRateLimitWindowMs: readPositiveInteger\(process\.env\.AUTH_RATE_LIMIT_WINDOW_MS, 60 \* 1000\)/);
   assert.match(configSource, /authRateLimitMax: readPositiveInteger\(process\.env\.AUTH_RATE_LIMIT_MAX, 20\)/);
-  assert.match(serverSource, /const authRateLimitWindowMs = appConfig\.authRateLimitWindowMs;/);
-  assert.match(serverSource, /const authRateLimitMax = appConfig\.authRateLimitMax;/);
-  assert.match(serverSource, /app\.use\('\/api\/auth\/login', authLimiter\);/);
-  assert.match(serverSource, /app\.use\('\/api\/auth\/register', authLimiter\);/);
+  assert.match(appSource, /const authRateLimitWindowMs = config\.authRateLimitWindowMs;/);
+  assert.match(appSource, /const authRateLimitMax = config\.authRateLimitMax;/);
+  assert.match(appSource, /app\.use\('\/api\/auth\/login', authLimiter\);/);
+  assert.match(appSource, /app\.use\('\/api\/auth\/register', authLimiter\);/);
 });
 
 test('app config centralizes upload provider and log defaults', () => {
@@ -65,13 +65,16 @@ test('app config centralizes runtime environment defaults', () => {
   assert.match(securitySource, /if \(appConfig\.appSecret\)/);
   assert.match(securitySource, /secure: appConfig\.isProduction/);
   assert.match(csrfSource, /secure: appConfig\.isProduction/);
-  assert.match(serverSource, /function getChatProviderSettings\(userId\) \{[\s\S]*mockProviderEnabled: appConfig\.mockProviderEnabled/);
-  assert.match(serverSource, /mockProviderEnabled: appConfig\.mockProviderEnabled/);
+  assert.match(appSource, /function getChatProviderSettings\(userId\) \{[\s\S]*mockProviderEnabled: config\.mockProviderEnabled/);
+  assert.match(appSource, /mockProviderEnabled: config\.mockProviderEnabled/);
 });
 
 test('server exposes package-safe runtime health checks', () => {
-  assert.match(serverSource, /import \{ buildRuntimeHealth \} from '\.\/services\/runtimeHealth\.js';/);
-  assert.match(serverSource, /app\.get\('\/api\/health', \(_request, response\) => \{[\s\S]*response\.json\(buildRuntimeHealth\(db\)\);[\s\S]*\}\);/);
+  assert.match(appSource, /buildRuntimeHealth,/);
+  assert.match(appSource, /buildRuntimeLiveness,/);
+  assert.match(appSource, /createReadinessProbe/);
+  assert.match(appSource, /app\.get\(\['\/health\/ready', '\/api\/health\/ready', '\/api\/health'\], readyHandler\)/);
+  assert.match(appSource, /app\.get\('\/api\/admin\/diagnostics\/health', requireAuth, requireRootAdmin/);
   assert.match(runtimeHealthSource, /export function buildRuntimeHealth\(database, options = \{\}\)/);
   assert.match(runtimeHealthSource, /database: checkDatabase\(database\)/);
   assert.match(runtimeHealthSource, /storage: checkStorage\(\)/);

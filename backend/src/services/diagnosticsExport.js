@@ -2,6 +2,7 @@ import { appConfig } from '../config.js';
 import { normalizeProviderRow } from './providers.js';
 import { sanitizeDiagnosticValue } from './diagnosticRedaction.js';
 import { buildUserCastDiagnostics } from './cast/castSnapshot.js';
+import { getSelectedProviderProfileRow } from '../repositories/providerProfileRepository.js';
 
 const diagnosticTables = [
   'characters',
@@ -18,7 +19,7 @@ const diagnosticTables = [
 ];
 
 export function buildDiagnosticsExport(database, userId) {
-  const providerRow = database.prepare('SELECT * FROM provider_settings WHERE user_id = ?').get(userId);
+  const providerRow = getSelectedProviderProfileRow(database, userId);
   const conversationIds = database.prepare(
     'SELECT id FROM conversations WHERE user_id = ? ORDER BY id'
   ).all(userId).map((row) => row.id);

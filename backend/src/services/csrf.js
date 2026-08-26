@@ -14,16 +14,65 @@
 
 import crypto from 'node:crypto';
 import { appConfig } from '../config.js';
+import { appSecretForSigning } from '../security.js';
 
 const CSRF_COOKIE_NAME = 'flai_csrf';
+const CSRF_BIND_COOKIE_NAME = 'flai_csrf_bind';
 const CSRF_HEADER_NAME = 'x-csrf-token';
 const TOKEN_LENGTH = 32;
+const TOKEN_TTL_MS = 24 * 60 * 60 * 1000;
+const MUTATION_METHODS = new Set(['POST', 'PUT', 'DELETE', 'PATCH']);
 
 /**
  * 生成随机 CSRF token
  */
 function generateCsrfToken() {
   return crypto.randomBytes(TOKEN_LENGTH).toString('base64url');
+}
+
+function csrfBinding(request) {
+  return request.auth?.sessionId || request.cookies?.[CSRF_BIND_COOKIE_NAME] || '';
+}
+
+function tokenSignature(payload) {
+  return crypto.createHmac('sha256', appSecretForSigning()).update(payload).digest('base64url');
+}
+
+function createSignedToken(binding) {
+  const payload = Buffer.from(JSON.stringify({
+    binding,
+    nonce: generateCsrfToken(),
+    expiresAt: Date.now() + TOKEN_TTL_MS
+  })).toString('base64url');
+  return `v1.${payload}.${tokenSignature(payload)}`;
+}
+
+export function issueCsrfToken(response, binding) {
+  const normalizedBinding = String(binding || '').trim() || generateCsrfToken();
+  setCsrfBindingCookie(response, normalizedBinding);
+  const token = createSignedToken(normalizedBinding);
+  setCsrfCookie(response, token);
+  return token;
+}
+
+function verifySignedToken(token, binding) {
+  const parts = String(token || '').split('.');
+  if (parts.length !== 3 || parts[0] !== 'v1' || !binding) {
+    return false;
+  }
+  const [version, payload, signature] = parts;
+  const expected = tokenSignature(payload);
+  const actualBuffer = Buffer.from(signature);
+  const expectedBuffer = Buffer.from(expected);
+  if (actualBuffer.length !== expectedBuffer.length || !crypto.timingSafeEqual(actualBuffer, expectedBuffer)) {
+    return false;
+  }
+  try {
+    const decoded = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8'));
+    return decoded?.binding === binding && Number(decoded?.expiresAt) > Date.now();
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -39,6 +88,40 @@ function setCsrfCookie(response, token) {
   });
 }
 
+function setCsrfBindingCookie(response, value) {
+  response.cookie(CSRF_BIND_COOKIE_NAME, value, {
+    httpOnly: true,
+    sameSite: 'lax',
+    secure: appConfig.isProduction,
+    maxAge: TOKEN_TTL_MS,
+    path: '/'
+  });
+}
+
+function allowedMutationOrigin(request) {
+  const fetchSite = String(request.headers?.['sec-fetch-site'] || '').toLowerCase();
+  if (fetchSite === 'cross-site') {
+    return false;
+  }
+  const origin = String(request.headers?.origin || '').trim();
+  if (!origin) {
+    return true;
+  }
+  if (appConfig.clientOrigins.includes(origin)) {
+    return true;
+  }
+  if (!appConfig.allowPrivateNetworkOrigins) {
+    return false;
+  }
+  try {
+    const url = new URL(origin);
+    return ['http:', 'https:'].includes(url.protocol)
+      && ['localhost', '127.0.0.1', '::1'].includes(url.hostname);
+  } catch {
+    return false;
+  }
+}
+
 /**
  * CSRF 校验中间件
  * GET/HEAD/OPTIONS 请求不需要校验
@@ -47,8 +130,13 @@ function setCsrfCookie(response, token) {
 export function csrfProtection(request, response, next) {
   // 仅对状态变更请求做校验
   const method = request.method.toUpperCase();
-  if (['GET', 'HEAD', 'OPTIONS'].includes(method)) {
+  if (!MUTATION_METHODS.has(method)) {
     return next();
+  }
+
+  if (!allowedMutationOrigin(request)) {
+    response.status(419).json({ error: '请求来源未被信任', code: 'CSRF_ORIGIN_INVALID' });
+    return;
   }
 
   // 从 cookie 中获取 token
@@ -56,21 +144,8 @@ export function csrfProtection(request, response, next) {
   // 从 header 中获取 token
   const headerToken = request.headers[CSRF_HEADER_NAME];
 
-  if (!cookieToken || !headerToken) {
-    response.status(403).json({ error: 'CSRF token 缺失，请刷新页面重试' });
-    return;
-  }
-
-  // 使用 timingSafeEqual 防止时序攻击
-  try {
-    const a = Buffer.from(cookieToken);
-    const b = Buffer.from(headerToken);
-    if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) {
-      response.status(403).json({ error: 'CSRF token 无效，请刷新页面重试' });
-      return;
-    }
-  } catch {
-    response.status(403).json({ error: 'CSRF token 校验失败' });
+  if (!cookieToken || !headerToken || !verifySignedToken(cookieToken, csrfBinding(request)) || cookieToken !== headerToken) {
+    response.status(419).json({ error: 'CSRF token 无效，请刷新页面重试', code: 'CSRF_TOKEN_INVALID' });
     return;
   }
 
@@ -82,7 +157,7 @@ export function csrfProtection(request, response, next) {
  * 前端在首次加载时调用，获取 token 并存入 cookie
  */
 export function csrfTokenEndpoint(request, response) {
-  const token = generateCsrfToken();
-  setCsrfCookie(response, token);
+  const binding = csrfBinding(request) || generateCsrfToken();
+  const token = issueCsrfToken(response, binding);
   response.json({ csrfToken: token });
 }

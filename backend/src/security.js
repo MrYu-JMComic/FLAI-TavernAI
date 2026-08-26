@@ -27,6 +27,10 @@ function appSecret() {
   return localAppSecret();
 }
 
+export function appSecretForSigning() {
+  return appSecret();
+}
+
 function localAppSecret() {
   fs.mkdirSync(path.dirname(secretFile), { recursive: true });
 
@@ -291,16 +295,33 @@ export function clearSessionCookie(response) {
 
 export function createSession(database, userId) {
   const sessionId = newId();
+  const tokenHash = hashSessionToken(sessionId);
   const expiresAt = Date.now() + sessionDays * 24 * 60 * 60 * 1000;
   database
-    .prepare('INSERT INTO sessions (id, user_id, expires_at, created_at) VALUES (?, ?, ?, ?)')
-    .run(sessionId, userId, expiresAt, nowIso());
+    .prepare('INSERT INTO sessions (id, user_id, token_hash, expires_at, created_at) VALUES (?, ?, ?, ?, ?)')
+    .run(newId(), userId, tokenHash, expiresAt, nowIso());
   return sessionId;
+}
+
+export function rotateSession(database, userId, previousSessionId = '') {
+  if (previousSessionId) {
+    destroySession(database, previousSessionId);
+  }
+  return createSession(database, userId);
+}
+
+export function cleanupExpiredSessions(database, now = Date.now()) {
+  return database.prepare('DELETE FROM sessions WHERE expires_at <= ?').run(Number(now)).changes;
+}
+
+export function hashSessionToken(token) {
+  return crypto.createHash('sha256').update(String(token || '')).digest('base64url');
 }
 
 export function destroySession(database, sessionId) {
   if (sessionId) {
-    database.prepare('DELETE FROM sessions WHERE id = ?').run(sessionId);
+    const tokenHash = hashSessionToken(sessionId);
+    database.prepare('DELETE FROM sessions WHERE token_hash = ? OR id = ?').run(tokenHash, sessionId);
   }
 }
 
@@ -310,6 +331,7 @@ export function resolveSession(database, request) {
     return null;
   }
 
+  const tokenHash = hashSessionToken(sessionId);
   const row = database
     .prepare(
       `SELECT sessions.id AS session_id, users.id, users.username, users.display_name,
@@ -319,19 +341,27 @@ export function resolveSession(database, request) {
        JOIN users ON users.id = sessions.user_id
        LEFT JOIN avatar_assets
          ON avatar_assets.owner_type = 'user' AND avatar_assets.owner_id = users.id
-       WHERE sessions.id = ? AND sessions.expires_at > ?`
+       WHERE (sessions.token_hash = ? OR (sessions.token_hash IS NULL AND sessions.id = ?))
+         AND sessions.expires_at > ?`
     )
-    .get(sessionId, Date.now());
+    .get(tokenHash, sessionId, Date.now());
 
   if (!row) {
-    database.prepare('DELETE FROM sessions WHERE id = ?').run(sessionId);
+    database.prepare('DELETE FROM sessions WHERE token_hash = ? OR id = ?').run(tokenHash, sessionId);
     return null;
   }
+
+  if (!row.session_id) {
+    return null;
+  }
+
+  database.prepare('UPDATE sessions SET token_hash = ? WHERE id = ? AND (token_hash IS NULL OR token_hash <> ?)')
+    .run(tokenHash, row.session_id, tokenHash);
 
   const isRootAdmin = normalizeBoolean(row.is_root_admin);
 
   return {
-    sessionId: row.session_id,
+    sessionId,
     user: {
       id: row.id,
       username: row.username,

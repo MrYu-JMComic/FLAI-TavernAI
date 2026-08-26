@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { appConfig } from '../config.js';
-import { avatarUploadDir } from '../db.js';
+import { avatarUploadDir } from '../db/runtime.js';
 import { assetIdFromUrl, assetKinds, assetUrl } from '../modules/assets.js';
 import { newId, nowIso } from '../security.js';
 import {
@@ -10,6 +10,7 @@ import {
   parseImageBuffer,
   parseImageDataUrl as parseSharedImageDataUrl
 } from './imageDataUrls.js';
+import { assertUploadQuota } from './quotas.js';
 
 const avatarMaxBytes = appConfig.upload.avatarMaxBytes;
 const backgroundMaxBytes = appConfig.upload.backgroundMaxBytes;
@@ -132,6 +133,8 @@ function saveImageAssetInput(database, {
 
   const kind = imageAssetKindForOwnerType(ownerType);
   const existing = getExistingImageAssetTimestamp(database, { ownerType, ownerId, kind });
+  const existingBytes = getExistingImageAssetBytes(database, { userId, ownerType, ownerId, kind });
+  assertUploadQuota(database, userId, Math.max(0, normalized.byteSize - existingBytes));
   const id = newId();
   const createdAt = existing?.created_at || nowIso();
   const updatedAt = nowIso();
@@ -161,6 +164,17 @@ function saveImageAssetInput(database, {
     );
 
   return assetUrl(id);
+}
+
+function getExistingImageAssetBytes(database, { userId, ownerType, ownerId, kind }) {
+  const row = database.prepare(
+    `SELECT
+       (SELECT COALESCE(SUM(byte_size), 0) FROM assets
+        WHERE user_id = ? AND owner_type = ? AND owner_id = ? AND kind = ?) +
+       (SELECT COALESCE(SUM(byte_size), 0) FROM avatar_assets
+        WHERE user_id = ? AND owner_type = ? AND owner_id = ?) AS bytes`
+  ).get(userId, ownerType, ownerId, kind, userId, ownerType, ownerId);
+  return Number(row?.bytes || 0);
 }
 
 export function deleteAvatarAsset(database, ownerType, ownerId) {

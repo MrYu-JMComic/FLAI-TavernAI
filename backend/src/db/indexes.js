@@ -1,7 +1,9 @@
 export function createDatabaseIndexes(database) {
   database.exec(`
     CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
+    CREATE INDEX IF NOT EXISTS idx_sessions_token_hash ON sessions(token_hash);
     CREATE INDEX IF NOT EXISTS idx_provider_presets_user ON provider_presets(user_id);
+    CREATE INDEX IF NOT EXISTS idx_provider_presets_user_updated ON provider_presets(user_id, updated_at DESC, id ASC);
     CREATE INDEX IF NOT EXISTS idx_avatar_assets_user ON avatar_assets(user_id);
     CREATE INDEX IF NOT EXISTS idx_avatar_assets_owner ON avatar_assets(owner_type, owner_id);
     CREATE INDEX IF NOT EXISTS idx_assets_user_kind_created ON assets(user_id, kind, created_at);

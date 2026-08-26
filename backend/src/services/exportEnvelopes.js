@@ -16,9 +16,17 @@ import {
 import { newId } from '../security.js';
 import { normalizeBoolean } from '../utils/boolean.js';
 import { normalizeFiniteNumber } from '../utils/number.js';
+import { assertSafeRegexPattern } from './regexSafety.js';
 import { normalizeRegexFlags } from '../../../shared/regexFlags.js';
+import { recordAutomationAudit } from './automationAudit.js';
+import { assertUploadQuota } from './quotas.js';
 
 export const exportEnvelopeVersion = 1;
+export const exportEnvelopeSchemaVersion = 2;
+export const exportEnvelopeCompatibility = Object.freeze({ minSchemaVersion: 1, maxSchemaVersion: 2 });
+const IMPORT_CONFLICT_STRATEGIES = new Set(['duplicate', 'skip', 'error']);
+const MAX_IMPORT_ITEMS = 1000;
+const MAX_IMPORT_BYTES = 20 * 1024 * 1024;
 
 const kindAliases = new Map([
   ['character', 'characters'],
@@ -58,6 +66,8 @@ export function buildExportEnvelope(database, userId, rawKind, options = {}) {
   const items = exportItems(database, userId, kind, exportOptions);
   return {
     version: exportEnvelopeVersion,
+    schemaVersion: exportEnvelopeSchemaVersion,
+    compatibility: exportEnvelopeCompatibility,
     kind,
     createdAt: new Date().toISOString(),
     items,
@@ -70,29 +80,78 @@ export function importExportEnvelope(database, userId, rawKind, payload = {}) {
   if (!kind) {
     return null;
   }
-  const items = readEnvelopeItems(kind, payload);
+  const envelope = readEnvelope(kind, payload);
+  const items = envelope.items;
+  const importOptions = normalizeImportOptions(payload);
+  assertImportQuotas(database, userId, payload, items);
   const result = {
     version: exportEnvelopeVersion,
+    schemaVersion: exportEnvelopeSchemaVersion,
+    compatibility: exportEnvelopeCompatibility,
     kind,
     createdAt: new Date().toISOString(),
     dependencies: normalizeEnvelopeDependencies(payload?.dependencies),
     imported: 0,
+    dryRun: importOptions.dryRun,
+    conflictStrategy: importOptions.conflictStrategy,
+    migrationsApplied: envelope.migrationsApplied,
+    conflicts: [],
     skipped: [],
     items: []
   };
 
-  for (let index = 0; index < items.length; index += 1) {
-    try {
-      const item = withSavepoint(database, 'sp_envelope_item_import', () => (
-        importItem(database, userId, kind, items[index], index)
-      ));
-      result.imported += 1;
-      result.items.push(item);
-    } catch (error) {
-      result.skipped.push({ index, reason: error?.message || 'import failed' });
+  if (importOptions.conflictStrategy === 'error') {
+    for (let index = 0; index < items.length; index += 1) {
+      const conflict = findImportConflict(database, userId, kind, items[index]);
+      if (conflict) result.conflicts.push({ index, ...conflict });
+    }
+    if (result.conflicts.length) {
+      result.skipped = result.conflicts.map(({ index, ...conflict }) => ({
+        index,
+        reason: 'conflict',
+        conflict
+      }));
+      persistImportAudit(database, userId, result, items.length);
+      return result;
     }
   }
 
+  const applyItems = () => {
+    for (let index = 0; index < items.length; index += 1) {
+      const conflict = findImportConflict(database, userId, kind, items[index]);
+      if (conflict) {
+        result.conflicts.push({ index, ...conflict });
+        if (importOptions.conflictStrategy === 'skip') {
+          result.skipped.push({ index, reason: 'conflict', conflict });
+          continue;
+        }
+      }
+      try {
+        const item = withSavepoint(database, 'sp_envelope_item_import', () => (
+          importItem(database, userId, kind, items[index], index)
+        ));
+        result.imported += 1;
+        result.items.push(item);
+      } catch (error) {
+        result.skipped.push({ index, reason: error?.message || 'import failed' });
+      }
+    }
+  };
+
+  if (importOptions.dryRun) {
+    database.exec('SAVEPOINT sp_envelope_dry_run');
+    try {
+      applyItems();
+    } finally {
+      database.exec('ROLLBACK TO SAVEPOINT sp_envelope_dry_run');
+      database.exec('RELEASE SAVEPOINT sp_envelope_dry_run');
+    }
+  } else {
+    applyItems();
+  }
+
+  result.wouldImport = importOptions.dryRun ? result.imported : 0;
+  persistImportAudit(database, userId, result, items.length);
   return result;
 }
 
@@ -140,32 +199,179 @@ function importItem(database, userId, kind, item, index) {
   throw new Error('unsupported envelope kind');
 }
 
-function readEnvelopeItems(kind, payload = {}) {
+function readEnvelope(kind, payload = {}) {
   const source = payload && typeof payload === 'object' ? payload : {};
-  validateEnvelopeVersion(source);
+  const schemaVersion = validateEnvelopeVersion(source);
   const payloadKind = normalizeEnvelopeKind(source.kind);
   if (payloadKind && payloadKind !== kind) {
     throw new Error('envelope kind does not match route kind');
   }
   if (Array.isArray(source.items)) {
-    return source.items;
+    return migrateEnvelope({ source, items: source.items, schemaVersion });
   }
   if (Array.isArray(payload)) {
-    return payload;
+    return migrateEnvelope({ source: {}, items: payload, schemaVersion: 1 });
   }
-  return [source].filter((item) => item && typeof item === 'object');
+  return migrateEnvelope({
+    source,
+    items: [source].filter((item) => item && typeof item === 'object'),
+    schemaVersion
+  });
 }
 
 function validateEnvelopeVersion(source = {}) {
   if (!source || typeof source !== 'object' || Array.isArray(source)) {
-    return;
+    return 1;
   }
-  if (source.version === undefined || source.version === null || source.version === '') {
-    return;
+  const value = source.schemaVersion ?? source.version ?? 1;
+  const version = Number(value);
+  if (
+    !Number.isInteger(version)
+    || version < exportEnvelopeCompatibility.minSchemaVersion
+    || version > exportEnvelopeCompatibility.maxSchemaVersion
+  ) {
+    throw new Error(`unsupported envelope version: ${value}`);
   }
-  if (Number(source.version) !== exportEnvelopeVersion) {
-    throw new Error(`unsupported envelope version: ${source.version}`);
+  return version;
+}
+
+function migrateEnvelope(envelope) {
+  if (envelope.schemaVersion === exportEnvelopeSchemaVersion) {
+    return { items: envelope.items, migrationsApplied: [] };
   }
+  if (envelope.schemaVersion === 1) {
+    return {
+      items: envelope.items.map((item) => migrateEnvelopeItemV1(item)),
+      migrationsApplied: ['1-to-2']
+    };
+  }
+  throw new Error(`unsupported envelope version: ${envelope.schemaVersion}`);
+}
+
+function migrateEnvelopeItemV1(item) {
+  return item && typeof item === 'object' ? { ...item } : item;
+}
+
+function normalizeImportOptions(payload = {}) {
+  const nested = payload?.importOptions && typeof payload.importOptions === 'object'
+    ? payload.importOptions
+    : {};
+  const conflictStrategy = String(
+    nested.conflictStrategy ?? payload?.conflictStrategy ?? 'duplicate'
+  ).trim().toLowerCase();
+  if (!IMPORT_CONFLICT_STRATEGIES.has(conflictStrategy)) {
+    throw new Error(`unsupported import conflict strategy: ${conflictStrategy}`);
+  }
+  return {
+    dryRun: normalizeBoolean(nested.dryRun ?? payload?.dryRun, false),
+    conflictStrategy
+  };
+}
+
+function assertImportQuotas(database, userId, payload, items) {
+  if (items.length > MAX_IMPORT_ITEMS) {
+    throw new Error(`import item quota exceeded: ${items.length}/${MAX_IMPORT_ITEMS}`);
+  }
+  const bytes = Buffer.byteLength(JSON.stringify(payload ?? {}), 'utf8');
+  if (bytes > MAX_IMPORT_BYTES) {
+    throw new Error(`import payload quota exceeded: ${bytes}/${MAX_IMPORT_BYTES}`);
+  }
+  assertUploadQuota(database, userId, estimateEmbeddedAssetBytes(payload));
+}
+
+function estimateEmbeddedAssetBytes(value) {
+  let total = 0;
+  const pending = [value];
+  const seen = new Set();
+  while (pending.length) {
+    const current = pending.pop();
+    if (typeof current === 'string') {
+      const match = current.match(/^data:[^;,]+\/[^;,]+;base64,([a-z0-9+/=]+)$/i);
+      if (match) total += Math.floor(match[1].replace(/=+$/, '').length * 3 / 4);
+      continue;
+    }
+    if (!current || typeof current !== 'object' || seen.has(current)) continue;
+    seen.add(current);
+    if (Array.isArray(current)) pending.push(...current);
+    else pending.push(...Object.values(current));
+  }
+  return total;
+}
+
+function findImportConflict(database, userId, kind, item = {}) {
+  const source = kind === 'characters' && item?.character && typeof item.character === 'object'
+    ? item.character
+    : item;
+  const name = String(source?.name || '').trim();
+  let row = null;
+  let subjectType = kind;
+  if (name && kind === 'characters') {
+    row = database.prepare('SELECT id, name FROM characters WHERE user_id = ? AND name = ? COLLATE NOCASE')
+      .get(userId, name);
+  } else if (name && kind === 'world_books') {
+    row = database.prepare('SELECT id, name FROM world_books WHERE user_id = ? AND name = ? COLLATE NOCASE')
+      .get(userId, name);
+  } else if (name && kind === 'presets') {
+    row = database.prepare('SELECT id, name FROM presets WHERE user_id = ? AND name = ? COLLATE NOCASE')
+      .get(userId, name);
+  } else if (name && kind === 'mods') {
+    row = database.prepare('SELECT id, name FROM mods WHERE user_id = ? AND name = ? COLLATE NOCASE')
+      .get(userId, name);
+  } else if (name && kind === 'status_bar_templates') {
+    row = database.prepare(
+      'SELECT id, name FROM status_bar_templates WHERE user_id = ? AND name = ? COLLATE NOCASE'
+    ).get(userId, name);
+  } else if (kind === 'regex_rules') {
+    subjectType = 'regex_rule';
+    const characterId = String(source?.characterId || source?.character_id || '').trim();
+    const label = String(source?.label || source?.name || '').trim();
+    if (characterId && label) {
+      row = database.prepare(
+        `SELECT id, label AS name FROM regex_rules
+         WHERE user_id = ? AND character_id = ? AND label = ? COLLATE NOCASE`
+      ).get(userId, characterId, label);
+    }
+  }
+  return row ? { subjectType, existingId: row.id, name: row.name || name } : null;
+}
+
+function persistImportAudit(database, userId, result, itemCount) {
+  const reportId = newId();
+  result.auditReportId = reportId;
+  const reportJson = JSON.stringify(result);
+  database.prepare(
+    `INSERT INTO import_audit_reports (
+       id, user_id, envelope_kind, schema_version, dry_run, conflict_strategy,
+       item_count, imported_count, skipped_count, report_json, created_at
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  ).run(
+    reportId,
+    userId,
+    result.kind,
+    result.schemaVersion,
+    result.dryRun ? 1 : 0,
+    result.conflictStrategy,
+    itemCount,
+    result.imported,
+    result.skipped.length,
+    reportJson.length <= 200_000 ? reportJson : JSON.stringify({ truncated: true }),
+    result.createdAt
+  );
+  recordAutomationAudit(database, userId, {
+    domain: 'import',
+    operation: result.dryRun ? 'dry-run' : 'apply',
+    subjectType: 'envelope',
+    subjectId: reportId,
+    planSummary: `${result.kind}: ${result.imported} imported, ${result.skipped.length} skipped`,
+    after: {
+      schemaVersion: result.schemaVersion,
+      dryRun: result.dryRun,
+      conflictStrategy: result.conflictStrategy,
+      imported: result.imported,
+      skipped: result.skipped.length,
+      conflicts: result.conflicts.length
+    }
+  });
 }
 
 function listCharacterEnvelopeItems(database, userId, requestedIds = []) {
@@ -476,7 +682,7 @@ function normalizeRegexRuleImportItem(item = {}, index = 0) {
   if (!pattern) {
     throw new Error('regex rule requires pattern');
   }
-  new RegExp(pattern, flags);
+  assertSafeRegexPattern(pattern, flags);
   return {
     characterId: String(item.characterId || item.character_id || '').trim(),
     label: String(item.label || item.name || `Imported rule ${index + 1}`).trim().slice(0, 100),

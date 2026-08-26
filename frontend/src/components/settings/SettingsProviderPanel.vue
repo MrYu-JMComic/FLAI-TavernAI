@@ -1,6 +1,6 @@
 <script setup>
 import { computed } from 'vue';
-import { RefreshCw, Save, ShieldCheck, WalletCards } from '@lucide/vue';
+import { CircleCheck, Plus, RefreshCw, Save, ShieldCheck, Trash2, WalletCards } from '@lucide/vue';
 
 const props = defineProps({
   balanceLoading: { type: Boolean, default: false },
@@ -13,16 +13,22 @@ const props = defineProps({
   probeLoading: { type: Boolean, default: false },
   probeMessage: { type: String, default: '' },
   probeStatus: { type: String, default: 'idle' },
+  providers: { type: Array, default: () => [] },
   providerCapability: { type: Object, default: null },
   providerCapabilityError: { type: String, default: '' },
+  providerActionLoading: { type: Boolean, default: false },
+  selectedProviderId: { type: String, default: '' },
   saving: { type: Boolean, default: false }
 });
 
 const emit = defineEmits([
   'apply-preset',
+  'add-provider',
   'check-balance',
   'load-models',
   'probe-provider',
+  'remove-provider',
+  'select-provider',
   'submit',
   'update-field'
 ]);
@@ -40,6 +46,12 @@ const providerCapabilityName = computed(() => (
   || props.form.gatewayName
   || '当前网关'
 ));
+const activeProviderSummary = computed(() => {
+  const provider = props.providers.find((item) => item?.id === props.selectedProviderId) || props.form;
+  const gatewayName = String(provider?.gatewayName || '未命名供应商').trim() || '未命名供应商';
+  const model = String(provider?.model || '').trim();
+  return model ? `${gatewayName} · ${model}` : gatewayName;
+});
 const capabilityItems = computed(() => {
   const capabilities = props.providerCapability?.capabilities || {};
   return capabilityDefinitions.map((definition) => ({
@@ -65,6 +77,20 @@ function updateField(key, value) {
 function updateTrimmedField(key, event) {
   updateField(key, readInputValue(event).trim());
 }
+
+function providerOptionLabel(provider) {
+  const gatewayName = String(provider?.gatewayName || '未命名供应商').trim() || '未命名供应商';
+  const model = String(provider?.model || '').trim();
+  return model ? `${gatewayName} · ${model}` : gatewayName;
+}
+
+function selectProvider(event) {
+  const target = event?.target;
+  emit('select-provider', readInputValue(event));
+  queueMicrotask(() => {
+    if (target) target.value = props.selectedProviderId;
+  });
+}
 </script>
 
 <template>
@@ -72,7 +98,47 @@ function updateTrimmedField(key, event) {
     <div class="inline-heading">
       <div>
         <h2>AI 供应商设置</h2>
-        <p>配置 SK、网关和模型列表。</p>
+        <p>{{ activeProviderSummary }}</p>
+      </div>
+    </div>
+    <div class="provider-profile-toolbar">
+      <label class="field provider-profile-picker">
+        <span>当前供应商</span>
+        <select
+          :value="selectedProviderId"
+          :disabled="controlsBusy || providers.length < 2"
+          @change="selectProvider"
+        >
+          <option v-for="provider in providers" :key="provider.id" :value="provider.id">
+            {{ providerOptionLabel(provider) }}
+          </option>
+        </select>
+      </label>
+      <div class="provider-profile-actions">
+        <span class="provider-active-indicator" aria-live="polite">
+          <CircleCheck :size="17" />
+          <span>{{ providerActionLoading ? '切换中' : '正在使用' }}</span>
+        </span>
+        <button
+          class="icon-button"
+          type="button"
+          title="添加 AI 供应商"
+          aria-label="添加 AI 供应商"
+          :disabled="controlsBusy"
+          @click="emit('add-provider')"
+        >
+          <Plus :size="19" />
+        </button>
+        <button
+          class="icon-button provider-delete-button"
+          type="button"
+          title="删除当前 AI 供应商"
+          aria-label="删除当前 AI 供应商"
+          :disabled="controlsBusy || providers.length <= 1"
+          @click="emit('remove-provider')"
+        >
+          <Trash2 :size="18" />
+        </button>
       </div>
     </div>
     <div class="form-grid two-col">

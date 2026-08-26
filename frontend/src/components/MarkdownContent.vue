@@ -8,7 +8,11 @@ import DOMPurify from 'dompurify';
 import { normalizeRegexFlags as normalizeSharedRegexFlags } from '../../../shared/regexFlags.js';
 import { recordFrontendDiagnostic } from '../diagnostics.js';
 import { reconcileDomChildren } from '../utils/domReconciler.js';
-import { normalizeKatexSource } from '../utils/katexCompatibility.js';
+import {
+  normalizeKatexSource,
+  selectKatexSurfaceTextColor
+} from '../utils/katexCompatibility.js';
+import KatexPreviewDialog from './KatexPreviewDialog.vue';
 import 'katex/dist/katex.min.css';
 
 // Initialize markdown-it with highlight.js
@@ -328,6 +332,27 @@ function appendPluginCacheField(cacheKey, value) {
   return `${cacheKey}${text.length}:${text};`;
 }
 
+function applyKatexSurfaceContrast(root) {
+  if (!root || typeof getComputedStyle !== 'function') return;
+
+  const surfaces = root.querySelectorAll(
+    '.katex-html .stretchy.fcolorbox, .katex-html .stretchy.colorbox'
+  );
+  for (const surface of surfaces) {
+    const contentLayer = surface.parentElement?.nextElementSibling;
+    if (!contentLayer?.style) continue;
+
+    const textColor = selectKatexSurfaceTextColor(
+      getComputedStyle(surface).backgroundColor
+    );
+    if (textColor) {
+      contentLayer.style.color = textColor;
+    } else {
+      contentLayer.style.removeProperty('color');
+    }
+  }
+}
+
 export default defineComponent({
   name: 'MarkdownContent',
   inheritAttrs: false,
@@ -348,6 +373,7 @@ export default defineComponent({
   },
   setup(props, { attrs, emit }) {
     const rootElement = ref(null);
+    const katexPreviewSource = ref(null);
     let pendingMarkdownText = props.text;
     let pendingRenderPlugins = props.renderPlugins;
     let pendingHtml = '';
@@ -367,6 +393,7 @@ export default defineComponent({
       templateElement ||= document.createElement('template');
       templateElement.innerHTML = pendingHtml;
       reconcileDomChildren(root, templateElement.content);
+      applyKatexSurfaceContrast(root);
       appliedHtml = pendingHtml;
       fitInlineKatex();
       emit('rendered');
@@ -383,6 +410,12 @@ export default defineComponent({
         wrapper.style.removeProperty('height');
         wrapper.style.removeProperty('--katex-scale');
         wrapper.removeAttribute('data-katex-scaled');
+        wrapper.removeAttribute('data-katex-previewable');
+        wrapper.removeAttribute('role');
+        wrapper.removeAttribute('tabindex');
+        wrapper.removeAttribute('aria-haspopup');
+        wrapper.removeAttribute('aria-label');
+        wrapper.removeAttribute('title');
 
         const formula = wrapper.querySelector(':scope > .katex') || wrapper.querySelector('.katex');
         const parent = wrapper.parentElement;
@@ -409,7 +442,48 @@ export default defineComponent({
         wrapper.style.height = `${naturalSize.height * scale}px`;
         wrapper.style.setProperty('--katex-scale', String(scale));
         wrapper.dataset.katexScaled = 'true';
+        wrapper.dataset.katexPreviewable = 'true';
+        wrapper.setAttribute('role', 'button');
+        wrapper.setAttribute('tabindex', '0');
+        wrapper.setAttribute('aria-haspopup', 'dialog');
+        wrapper.setAttribute('aria-label', '打开公式预览');
+        wrapper.setAttribute('title', '打开公式预览');
       }
+    }
+
+    function findKatexPreviewWrapper(target) {
+      const element = target?.nodeType === 1 ? target : target?.parentElement;
+      const wrapper = element?.closest?.('[data-katex-previewable="true"]');
+      return wrapper && rootElement.value?.contains(wrapper) ? wrapper : null;
+    }
+
+    function openKatexPreview(wrapper) {
+      const formula = wrapper?.querySelector(':scope > .katex') || wrapper?.querySelector('.katex');
+      if (!formula || typeof getComputedStyle !== 'function') return;
+
+      const source = formula.cloneNode(true);
+      const formulaStyle = getComputedStyle(formula);
+      source.style.fontSize = formulaStyle.fontSize;
+      source.style.color = formulaStyle.color;
+      wrapper.focus({ preventScroll: true });
+      katexPreviewSource.value = source;
+    }
+
+    function closeKatexPreview() {
+      katexPreviewSource.value = null;
+    }
+
+    function handleKatexPreviewClick(event) {
+      const wrapper = findKatexPreviewWrapper(event.target);
+      if (wrapper) openKatexPreview(wrapper);
+    }
+
+    function handleKatexPreviewKeydown(event) {
+      if (event.key !== 'Enter' && event.key !== ' ') return;
+      const wrapper = findKatexPreviewWrapper(event.target);
+      if (!wrapper) return;
+      event.preventDefault();
+      openKatexPreview(wrapper);
     }
 
     function scheduleKatexFit() {
@@ -441,6 +515,7 @@ export default defineComponent({
       }
     });
     onBeforeUnmount(() => {
+      closeKatexPreview();
       katexResizeObserver?.disconnect();
       katexResizeObserver = null;
       if (katexFitTimeout !== null) {
@@ -451,15 +526,25 @@ export default defineComponent({
     
     return () => {
       const { class: className, ...restAttrs } = attrs;
-      return h(
-        'div',
-        {
-          ...restAttrs,
-          ref: rootElement,
-          class: ['markdown-content', className],
-          'data-stream-rendering': props.deferUpdates ? 'true' : undefined
-        }
-      );
+      return [
+        h(
+          'div',
+          {
+            ...restAttrs,
+            ref: rootElement,
+            class: ['markdown-content', className],
+            'data-stream-rendering': props.deferUpdates ? 'true' : undefined,
+            onClick: handleKatexPreviewClick,
+            onKeydown: handleKatexPreviewKeydown
+          }
+        ),
+        katexPreviewSource.value
+          ? h(KatexPreviewDialog, {
+              sourceElement: katexPreviewSource.value,
+              onClose: closeKatexPreview
+            })
+          : null
+      ];
     };
   }
 });

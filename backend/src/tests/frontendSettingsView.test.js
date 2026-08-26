@@ -9,6 +9,7 @@ const downloadJsonSource = readRepoText('frontend/src/utils/downloadJson.js');
 const settingsModsComposableSource = readRepoText('frontend/src/composables/settings/useSettingsMods.js');
 const settingsProfileComposableSource = readRepoText('frontend/src/composables/settings/useSettingsProfile.js');
 const settingsProviderComposableSource = readRepoText('frontend/src/composables/settings/useSettingsProvider.js');
+const providerApiSource = readRepoText('frontend/src/api/providers.js');
 const settingsPresetsComposableSource = readRepoText('frontend/src/composables/settings/useSettingsPresets.js');
 const settingsRegexComposableSource = readRepoText('frontend/src/composables/settings/useSettingsRegex.js');
 const settingsSectionNavigationSource = readRepoText('frontend/src/composables/settings/useSettingsSectionNavigation.js');
@@ -119,7 +120,7 @@ test('SettingsView model refresh ignores events while refresh is unavailable or 
 test('SettingsView personal provider and profile saves expose visible busy guards', () => {
   assert.match(
     settingsProviderComposableSource,
-    /const providerControlsBusy = computed\(\(\) => saving\.value \|\| modelLoading\.value \|\| modelProbeLoading\.value\);/
+    /const providerControlsBusy = computed\(\(\) => \([\s\S]*saving\.value \|\| modelLoading\.value \|\| modelProbeLoading\.value \|\| providerActionLoading\.value[\s\S]*\)\);/
   );
   assert.match(
     settingsProviderComposableSource,
@@ -237,7 +238,7 @@ test('SettingsView structures personal settings and extensions through shared se
   assert.match(settingsProfilePanelTemplate, /<Bot :size="18" \/>[\s\S]*\{\{ formatNumber\(stats\.ownedAiCount\) \}\}/);
   assert.match(settingsProfilePanelTemplate, /v-for="character in ownedCharacters"[\s\S]*\{\{ visibilityText\(character\.visibility\) \}\} · 使用 \{\{ formatNumber\(character\.useCount\) \}\}/);
   assert.match(settingsViewScript, /import SettingsProviderPanel from '\.\.\/components\/settings\/SettingsProviderPanel\.vue';/);
-  assert.match(settingsProviderPanelScript, /import \{ RefreshCw, Save, ShieldCheck, WalletCards \} from '@lucide\/vue';/);
+  assert.match(settingsProviderPanelScript, /import \{ CircleCheck, Plus, RefreshCw, Save, ShieldCheck, Trash2, WalletCards \} from '@lucide\/vue';/);
   assert.match(settingsProviderPanelTemplate, /id="personal-section-provider" class="form-panel provider-settings-panel"/);
   assert.match(settingsViewScript, /import \{ useSettingsDataExports \} from '\.\.\/composables\/settings\/useSettingsDataExports';/);
   assert.match(settingsViewScript, /import SettingsDataExportPanel from '\.\.\/components\/settings\/SettingsDataExportPanel\.vue';/);
@@ -351,7 +352,7 @@ test('SettingsView structures personal settings and extensions through shared se
 test('SettingsView exposes provider connection probing beside model refresh', () => {
   assert.match(
     settingsProviderComposableSource,
-    /checkProviderHealth,[\s\S]*fetchDeepSeekBalance,[\s\S]*fetchProviderCapabilities,[\s\S]*getProviderSettings/
+    /checkProviderHealth,[\s\S]*fetchDeepSeekBalance,[\s\S]*fetchProviderCapabilities,[\s\S]*listProviderProfiles/
   );
   assert.match(settingsProviderComposableSource, /const modelProbeLoading = ref\(false\);/);
   assert.match(settingsProviderComposableSource, /const modelProbeStatus = ref\('idle'\);/);
@@ -365,7 +366,7 @@ test('SettingsView exposes provider connection probing beside model refresh', ()
   );
   assert.match(
     settingsProviderComposableSource,
-    /async function loadProviderSettingsBundle\(\) \{[\s\S]*const \[settings, capabilityResult\] = await Promise\.all\(\[[\s\S]*getProviderSettings\(\),[\s\S]*loadProviderCapabilities\(\)[\s\S]*\]\);[\s\S]*return \{ settings, capabilityResult \};[\s\S]*\}/
+    /async function loadProviderSettingsBundle\(\) \{[\s\S]*const \[providerBundle, capabilityResult\] = await Promise\.all\(\[[\s\S]*listProviderProfiles\(\),[\s\S]*loadProviderCapabilities\(\)[\s\S]*\]\);[\s\S]*return \{ providerBundle, capabilityResult \};[\s\S]*\}/
   );
   assert.match(
     settingsProviderComposableSource,
@@ -415,6 +416,21 @@ test('SettingsView exposes provider connection probing beside model refresh', ()
   );
   assert.match(stylesSource, /\.provider-capability-grid\s*{[\s\S]*grid-template-columns:\s*repeat\(auto-fit, minmax\(92px, 1fr\)\);[\s\S]*}/);
   assert.match(stylesSource, /\.provider-capability-chip\.enabled\s*{[\s\S]*border-color:[\s\S]*var\(--green\)[\s\S]*}/);
+});
+
+test('SettingsView manages multiple provider profiles and exposes the active selection', () => {
+  assert.match(providerApiSource, /export function listProviderProfiles\(\)[\s\S]*apiRequest\('\/api\/providers'\)/);
+  assert.match(providerApiSource, /export function createProviderProfile\(payload\)/);
+  assert.match(providerApiSource, /export function selectProviderProfile\(providerId\)/);
+  assert.match(providerApiSource, /export function deleteProviderProfile\(providerId\)/);
+  assert.match(settingsProviderComposableSource, /const providerProfiles = ref\(\[\]\);/);
+  assert.match(settingsProviderComposableSource, /const selectedProviderId = ref\(''\);/);
+  assert.match(settingsProviderComposableSource, /async function switchProvider\(providerId\)[\s\S]*selectProviderProfile\(nextProviderId\)/);
+  assert.match(settingsProviderPanelTemplate, /class="provider-profile-toolbar"[\s\S]*:value="selectedProviderId"[\s\S]*v-for="provider in providers"/);
+  assert.match(settingsProviderPanelTemplate, /title="添加 AI 供应商"[\s\S]*<Plus/);
+  assert.match(settingsProviderPanelTemplate, /title="删除当前 AI 供应商"[\s\S]*<Trash2/);
+  assert.match(settingsViewTemplate, /:providers="providerProfiles"[\s\S]*:selected-provider-id="selectedProviderId"[\s\S]*@select-provider="switchProvider"/);
+  assert.match(stylesSource, /\.provider-profile-toolbar\s*{[\s\S]*grid-template-columns:\s*minmax\(0, 1fr\) auto;[\s\S]*}/);
 });
 
 test('SettingsView no-key custom provider readiness trusts parsed private IPv4 hosts only', () => {

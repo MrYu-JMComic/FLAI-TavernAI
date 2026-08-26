@@ -7,15 +7,33 @@ import {
   newId,
   nowIso,
   setSessionCookie,
+  rotateSession,
   verifyPassword
 } from '../security.js';
+import { appConfig } from '../config.js';
+import { issueCsrfToken } from '../services/csrf.js';
+import { isUniqueConstraintError, withSavepoint } from '../modules/savepoint.js';
 import { registerSchema, loginSchema, updateProfileSchema, validate } from '../validations/schemas.js';
 
 export function createAuthRouter(ctx) {
-  const { db, requireAuth, asyncRoute, publicUser, saveDefaultProvider, getUserProfile } = ctx;
+  const {
+    db,
+    requireAuth,
+    asyncRoute,
+    publicUser,
+    saveDefaultProvider,
+    getUserProfile,
+    registrationEnabled = appConfig.registrationEnabled,
+    rootAdminUsername = appConfig.rootAdminUsername,
+    rootAdminPassword = appConfig.rootAdminPassword
+  } = ctx;
   const router = Router();
 
   router.post('/register', validate(registerSchema), asyncRoute(async (request, response) => {
+    if (!registrationEnabled) {
+      response.status(403).json({ error: '当前已关闭公开注册', code: 'REGISTRATION_DISABLED' });
+      return;
+    }
     const { username, password } = request.body;
     const existing = db.prepare('SELECT id FROM users WHERE username = ?').get(username);
     if (existing) {
@@ -24,17 +42,35 @@ export function createAuthRouter(ctx) {
     }
 
     const userId = newId();
-    db.prepare('INSERT INTO users (id, username, password_hash, created_at) VALUES (?, ?, ?, ?)').run(
-      userId,
+    const passwordHash = await hashPassword(password);
+    const createdAt = nowIso();
+    const isRootAdmin = shouldInitializeRootAdmin(
       username,
-      await hashPassword(password),
-      nowIso()
+      password,
+      rootAdminUsername,
+      rootAdminPassword
     );
-    saveDefaultProvider(userId);
+    let sessionId = '';
+    try {
+      withSavepoint(db, 'sp_register_user', () => {
+        db.prepare(
+          `INSERT INTO users (id, username, password_hash, permission_group, is_root_admin, created_at)
+           VALUES (?, ?, ?, ?, ?, ?)`
+        ).run(userId, username, passwordHash, isRootAdmin ? 'admin' : 'user', isRootAdmin ? 1 : 0, createdAt);
+        saveDefaultProvider(userId);
+        sessionId = createSession(db, userId);
+      });
+    } catch (error) {
+      if (isUniqueConstraintError(error)) {
+        response.status(409).json({ error: '用户名已存在', code: 'USERNAME_TAKEN' });
+        return;
+      }
+      throw error;
+    }
 
-    const sessionId = createSession(db, userId);
     setSessionCookie(response, sessionId);
-    response.status(201).json({ user: publicUser({ id: userId, username, created_at: nowIso() }) });
+    issueCsrfToken(response, sessionId);
+    response.status(201).json({ user: publicUser({ id: userId, username, is_root_admin: isRootAdmin ? 1 : 0, created_at: createdAt }) });
   }));
 
   router.post('/login', validate(loginSchema), asyncRoute(async (request, response) => {
@@ -45,8 +81,9 @@ export function createAuthRouter(ctx) {
       return;
     }
 
-    const sessionId = createSession(db, row.id);
+    const sessionId = rotateSession(db, row.id, request.auth?.sessionId || '');
     setSessionCookie(response, sessionId);
+    issueCsrfToken(response, sessionId);
     response.json({ user: publicUser(row) });
   }));
 
@@ -73,4 +110,13 @@ export function createAuthRouter(ctx) {
   });
 
   return router;
+}
+
+function shouldInitializeRootAdmin(username, password, rootAdminUsername, rootAdminPassword) {
+  return Boolean(
+    rootAdminUsername
+      && rootAdminPassword
+      && username === rootAdminUsername
+      && password === rootAdminPassword
+  );
 }

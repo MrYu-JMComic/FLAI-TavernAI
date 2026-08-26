@@ -1,4 +1,5 @@
 import { getWorldBook } from '../modules/worldBooks.js';
+import { compileSafeRegex, REGEX_TEXT_MAX_LENGTH } from './regexSafety.js';
 
 const WORLD_BOOK_CONTEXT_EXPLANATION_LIMIT = 48;
 
@@ -233,7 +234,7 @@ function matchPrimaryKeys(entry, rawText, lowerText) {
         invalidRegexKeys.push(key);
       } else {
         validKeyCount += 1;
-        if (regex.test(rawText)) {
+        if (canTestRegexText(rawText) && regex.test(rawText)) {
           detail.matched = true;
           matchedKeys.push(key);
         }
@@ -247,7 +248,7 @@ function matchPrimaryKeys(entry, rawText, lowerText) {
       usedRegex = true;
       detail.mode = 'string_regex';
       const regex = compileRegex(regexKey.pattern, regexKey.flags);
-      if (regex?.test(rawText)) {
+      if (regex && canTestRegexText(rawText) && regex.test(rawText)) {
         detail.matched = true;
         matchedKeys.push(key);
         keyDetails.push(detail);
@@ -512,11 +513,11 @@ function containsRegexLineTerminator(value) {
 }
 
 function compileRegex(pattern, flags) {
-  try {
-    return new RegExp(pattern, flags);
-  } catch {
-    return null;
-  }
+  return compileSafeRegex(pattern, flags);
+}
+
+function canTestRegexText(value) {
+  return String(value || '').length <= REGEX_TEXT_MAX_LENGTH;
 }
 
 function selectiveLogicLabel(value) {

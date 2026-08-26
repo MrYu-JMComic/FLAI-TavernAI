@@ -2,6 +2,7 @@ import { appConfig } from '../config.js';
 import { newId, nowIso } from '../security.js';
 import { parseJson } from '../utils/json.js';
 import { defaultImageTypesWithGif, parseImageDataUrl } from '../services/imageDataUrls.js';
+import { assertUploadQuota } from '../services/quotas.js';
 
 const assetMaxBytes = appConfig.upload.assetMaxBytes;
 const assetMaxPixels = appConfig.upload.imageMaxPixels;
@@ -35,6 +36,7 @@ export function createAsset(database, userId, payload = {}) {
     tooManyPixelsMessage: '资产图片像素过大',
     invalidMessage: '资产图片数据无效'
   });
+  assertUploadQuota(database, userId, parsed.byteSize);
   const timestamp = nowIso();
   const id = newId();
   database

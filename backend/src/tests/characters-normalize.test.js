@@ -2,7 +2,35 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 const { createAppDatabase } = await import('../db.js');
-const { createCharacter } = await import('../modules/characters.js');
+const { createCharacter, getCharacter } = await import('../modules/characters.js');
+
+test('character persistence preserves content within API field limits', () => {
+  const database = createAppDatabase(':memory:');
+  const userId = 'long-character-content-user';
+  database.prepare('INSERT INTO users (id, username, password_hash, created_at) VALUES (?, ?, ?, ?)').run(
+    userId,
+    'longcharacter',
+    'hash',
+    new Date().toISOString()
+  );
+  const content = {
+    background: '背'.repeat(9_000),
+    worldview: '界'.repeat(9_100),
+    persona: '人'.repeat(9_200),
+    openingMessage: '开'.repeat(4_500)
+  };
+
+  const character = createCharacter(database, userId, {
+    name: 'Long Content',
+    ...content
+  });
+  const reloaded = getCharacter(database, userId, character.id);
+
+  assert.equal(reloaded.background, content.background);
+  assert.equal(reloaded.worldview, content.worldview);
+  assert.equal(reloaded.persona, content.persona);
+  assert.equal(reloaded.openingMessage, content.openingMessage);
+});
 
 test('character regex rules skip null items during normalization', () => {
   const database = createAppDatabase(':memory:');
@@ -118,4 +146,24 @@ test('character render plugin cap counts patterned plugins only', () => {
   assert.equal(character.renderPlugins.length, 20);
   assert.equal(character.renderPlugins[0].pattern, 'plugin-0');
   assert.equal(character.renderPlugins[19].pattern, 'plugin-19');
+});
+
+test('character reads drop unsafe legacy render plugin patterns', () => {
+  const database = createAppDatabase(':memory:');
+  database.prepare('INSERT INTO users (id, username, password_hash, created_at) VALUES (?, ?, ?, ?)').run(
+    'plugin-legacy-user',
+    'pluginlegacy',
+    'hash',
+    new Date().toISOString()
+  );
+  const character = createCharacter(database, 'plugin-legacy-user', {
+    name: 'Legacy Plugin Guard'
+  });
+  database.prepare('UPDATE characters SET render_plugins = ? WHERE id = ?').run(
+    JSON.stringify([{ label: 'Unsafe legacy plugin', pattern: '(a+)+$', enabled: true }]),
+    character.id
+  );
+
+  const reloaded = getCharacter(database, 'plugin-legacy-user', character.id);
+  assert.deepEqual(reloaded.renderPlugins, []);
 });

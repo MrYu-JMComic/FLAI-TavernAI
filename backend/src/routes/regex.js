@@ -10,6 +10,11 @@ import { validate } from '../validations/schemas.js';
 import { normalizeBoolean } from '../utils/boolean.js';
 import { normalizeFiniteNumber } from '../utils/number.js';
 import { normalizeRegexFlags } from '../../../shared/regexFlags.js';
+import {
+  assertSafeRegexPattern,
+  REGEX_PATTERN_MAX_LENGTH,
+  REGEX_TEXT_MAX_LENGTH
+} from '../services/regexSafety.js';
 import { z } from 'zod';
 
 const reorderRegexSchema = z.object({
@@ -18,11 +23,11 @@ const reorderRegexSchema = z.object({
 
 const testRegexSchema = z.object({
   rule: z.object({
-    pattern: z.string().min(1, '请提供匹配模式'),
+    pattern: z.string().min(1, '请提供匹配模式').max(REGEX_PATTERN_MAX_LENGTH),
     mode: z.enum(['contain', 'exact', 'regex', 'preset']).optional().default('regex'),
     flags: z.string().max(10).optional().default('g')
   }),
-  text: z.string()
+  text: z.string().max(REGEX_TEXT_MAX_LENGTH)
 });
 
 export function createRegexRouter(ctx) {
@@ -138,7 +143,7 @@ function normalizeImportedRule(item = {}, index = 0) {
   const flags = normalizeRegexFlags(item.flags);
   const pattern = String(item.pattern || '').trim();
   if (pattern) {
-    new RegExp(pattern, flags);
+    assertSafeRegexPattern(pattern, flags);
   }
   return {
     characterId: String(item.characterId || item.character_id || '').trim(),

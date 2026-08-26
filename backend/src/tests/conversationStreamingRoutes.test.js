@@ -468,7 +468,8 @@ test('chat image generation auto-detects Gemini image models and uses native gen
     providerType: 'gemini',
     gatewayName: 'Gemini',
     baseUrl: 'https://generativelanguage.googleapis.com/v1/openai',
-    model: 'gemini-3.1-flash-image'
+    model: 'gemini-3.1-flash-image',
+    lookup: async () => [{ address: '8.8.8.8', family: 4 }]
   });
   const originalFetch = globalThis.fetch;
   let providerBody = null;
