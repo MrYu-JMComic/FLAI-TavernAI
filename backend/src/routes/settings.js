@@ -16,6 +16,18 @@ import { saveAvatarInput } from '../services/avatars.js';
 import { normalizeBoolean } from '../utils/boolean.js';
 import { parseJson } from '../utils/json.js';
 import { saveProviderSchema, updateProfileSchema, validate } from '../validations/schemas.js';
+import { appConfig } from '../config.js';
+import { isPrivateOrSpecialHost, parseProviderUrl, ProviderUrlError } from '../services/providerUrlPolicy.js';
+import {
+  createProviderProfile,
+  deleteProviderProfile,
+  ensureSelectedProviderProfile,
+  getProviderProfileRow,
+  listProviderProfileRows,
+  requireProviderProfileRow,
+  selectProviderProfile,
+  updateProviderProfile
+} from '../repositories/providerProfileRepository.js';
 
 export function createSettingsRouter(ctx) {
   const { db, requireAuth, asyncRoute, nowIso } = ctx;
@@ -26,7 +38,7 @@ export function createSettingsRouter(ctx) {
   });
 
   router.put('/provider', requireAuth, validate(saveProviderSchema), (request, response) => {
-    const settings = saveProviderSettings(request.auth.user.id, request.body || {});
+    const settings = saveProviderSettings(request.auth.user.id, request.body || {}, request.auth.user);
     response.json(settings);
   });
 
@@ -35,11 +47,40 @@ export function createSettingsRouter(ctx) {
   });
 
   router.put('/settings/provider', requireAuth, validate(saveProviderSchema), (request, response) => {
-    const settings = saveProviderSettings(request.auth.user.id, request.body || {});
+    const settings = saveProviderSettings(request.auth.user.id, request.body || {}, request.auth.user);
     response.json(settings);
   });
 
   // ── Providers ──
+
+  router.get('/providers', requireAuth, (request, response) => {
+    response.json(getProviderBundle(request.auth.user.id));
+  });
+
+  router.post('/providers', requireAuth, validate(saveProviderSchema), (request, response) => {
+    const provider = createProviderSettings(request.auth.user.id, request.body || {}, request.auth.user);
+    response.status(201).json({ ...getProviderBundle(request.auth.user.id), provider });
+  });
+
+  router.put('/providers/:providerId', requireAuth, validate(saveProviderSchema), (request, response) => {
+    const settings = saveProviderSettings(
+      request.auth.user.id,
+      request.body || {},
+      request.auth.user,
+      request.params.providerId
+    );
+    response.json(settings);
+  });
+
+  router.post('/providers/:providerId/select', requireAuth, (request, response) => {
+    selectProviderProfile(db, request.auth.user.id, request.params.providerId, { timestamp: nowIso() });
+    response.json(getProviderBundle(request.auth.user.id));
+  });
+
+  router.delete('/providers/:providerId', requireAuth, (request, response) => {
+    deleteProviderProfile(db, request.auth.user.id, request.params.providerId, { timestamp: nowIso() });
+    response.json(getProviderBundle(request.auth.user.id));
+  });
 
   router.get('/providers/deepseek/balance', requireAuth, asyncRoute(async (request, response) => {
     const row = getProviderRow(request.auth.user.id);
@@ -57,7 +98,7 @@ export function createSettingsRouter(ctx) {
   }));
 
   router.post('/providers/models', requireAuth, asyncRoute(async (request, response) => {
-    const settings = buildProviderProbeSettings(request.auth.user.id, request.body || {});
+    const settings = buildProviderProbeSettings(request.auth.user.id, request.body || {}, request.auth.user);
     response.json({ models: await listProviderModels(settings, { forceRefresh: normalizeBoolean(request.body?.forceRefresh) }) });
   }));
 
@@ -98,45 +139,59 @@ export function createSettingsRouter(ctx) {
 
   // ── Internal helpers ──
 
-  function getProviderRow(userId) {
-    return db.prepare('SELECT * FROM provider_settings WHERE user_id = ?').get(userId);
+  function getProviderRow(userId, providerId = '') {
+    return getProviderProfileRow(db, userId, providerId);
   }
 
   function getPublicProviderSettings(userId) {
-    const row = getProviderRow(userId);
-    if (row) {
-      return normalizeProviderRow(row);
+    return normalizeProviderRow(ensureProviderProfile(userId));
+  }
+
+  function ensureProviderProfile(userId) {
+    return ensureSelectedProviderProfile(db, userId, {
+      defaultSettings: defaultProviderSettings(),
+      timestamp: nowIso()
+    });
+  }
+
+  function getProviderBundle(userId) {
+    ensureProviderProfile(userId);
+    const providers = listProviderProfileRows(db, userId).map((row) => ({
+      ...normalizeProviderRow(row),
+      selected: Boolean(row.is_selected)
+    }));
+    return {
+      providers,
+      selectedProviderId: providers.find((provider) => provider.selected)?.id || ''
+    };
+  }
+
+  function createProviderSettings(userId, payload, user = {}) {
+    const values = buildProviderSettingsValues(null, payload, user);
+    const row = createProviderProfile(db, userId, values, { select: true, timestamp: nowIso() });
+    return normalizeProviderRow(row);
+  }
+
+  function saveProviderSettings(userId, payload, user = {}, providerId = '') {
+    let existing = providerId
+      ? requireProviderProfileRow(db, userId, providerId)
+      : getProviderRow(userId);
+    const values = buildProviderSettingsValues(existing, payload, user);
+    if (!existing) {
+      const created = createProviderProfile(db, userId, values, { select: true, timestamp: nowIso() });
+      return normalizeProviderRow(created);
     }
-    return saveDefaultProvider(userId);
+    if (!existing.id) {
+      existing = ensureProviderProfile(userId);
+    }
+    const row = updateProviderProfile(db, userId, existing?.id || providerId, values, { timestamp: nowIso() });
+    return normalizeProviderRow(row);
   }
 
-  function saveDefaultProvider(userId) {
-    const preset = defaultProviderSettings();
-    const timestamp = nowIso();
-    db.prepare(
-      `INSERT OR IGNORE INTO provider_settings (
-        user_id, provider_type, gateway_name, base_url, model, encrypted_api_key,
-        api_key_hint, supports_reasoning, extra_body, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-    ).run(
-      userId,
-      preset.providerType,
-      preset.gatewayName,
-      preset.baseUrl,
-      preset.model,
-      null,
-      null,
-      preset.supportsReasoning ? 1 : 0,
-      JSON.stringify(preset.extraBody),
-      timestamp
-    );
-    return getPublicProviderSettings(userId);
-  }
-
-  function saveProviderSettings(userId, payload) {
-    const preset = providerPresets[payload.providerType] || providerPresets.custom;
-    const existing = getProviderRow(userId);
+  function buildProviderSettingsValues(existing, payload, user = {}) {
     const existingPublic = existing ? normalizeProviderRow(existing) : null;
+    const providerType = payload.providerType || existingPublic?.providerType || 'deepseek';
+    const preset = providerPresets[providerType] || providerPresets.custom;
     const apiKey = String(payload.apiKey || '').trim();
     const encryptedApiKey = apiKey
       ? encryptSecret(apiKey)
@@ -146,11 +201,14 @@ export function createSettingsRouter(ctx) {
 
     const settings = {
       providerType: preset.providerType,
-      gatewayName: String(payload.gatewayName || preset.gatewayName).trim() || preset.gatewayName,
-      baseUrl: normalizeProviderBaseUrl(preset.providerType, payload.baseUrl ?? preset.baseUrl),
-      model: String(payload.model ?? preset.model).trim(),
-      supportsReasoning: normalizeBoolean(payload.supportsReasoning),
-      extraBody: parseProviderExtraBody(preset.providerType, payload.extraBody ?? preset.extraBody),
+      gatewayName: String(payload.gatewayName || existingPublic?.gatewayName || preset.gatewayName).trim() || preset.gatewayName,
+      baseUrl: normalizeProviderBaseUrl(preset.providerType, payload.baseUrl ?? existingPublic?.baseUrl ?? preset.baseUrl),
+      model: String(payload.model ?? existingPublic?.model ?? preset.model).trim(),
+      supportsReasoning: normalizeBoolean(payload.supportsReasoning, existingPublic?.supportsReasoning ?? preset.supportsReasoning),
+      allowPrivateNetwork: normalizeBoolean(payload.allowPrivateNetwork, existingPublic?.allowPrivateNetwork ?? false)
+        && Boolean(user.isRootAdmin)
+        && privateProviderNetworkEnabled(),
+      extraBody: parseProviderExtraBody(preset.providerType, payload.extraBody ?? existingPublic?.extraBody ?? preset.extraBody),
       encryptedApiKey,
       apiKeyHint: apiKey
         ? apiKeyHint(apiKey)
@@ -162,55 +220,52 @@ export function createSettingsRouter(ctx) {
     if (!settings.baseUrl || !settings.model) {
       throw new Error('请填写网关地址和模型名');
     }
-
-    db.prepare(
-      `INSERT INTO provider_settings (
-        user_id, provider_type, gateway_name, base_url, model, encrypted_api_key,
-        api_key_hint, supports_reasoning, extra_body, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      ON CONFLICT(user_id) DO UPDATE SET
-        provider_type = excluded.provider_type,
-        gateway_name = excluded.gateway_name,
-        base_url = excluded.base_url,
-        model = excluded.model,
-        encrypted_api_key = excluded.encrypted_api_key,
-        api_key_hint = excluded.api_key_hint,
-        supports_reasoning = excluded.supports_reasoning,
-        extra_body = excluded.extra_body,
-        updated_at = excluded.updated_at`
-    ).run(
-      userId,
-      settings.providerType,
-      settings.gatewayName,
-      settings.baseUrl,
-      settings.model,
-      settings.encryptedApiKey,
-      settings.apiKeyHint,
-      settings.supportsReasoning ? 1 : 0,
-      JSON.stringify(settings.extraBody),
-      nowIso()
-    );
-
-    return getPublicProviderSettings(userId);
+    validateProviderSettingsUrl(settings.baseUrl, user);
+    return settings;
   }
 
-  function buildProviderProbeSettings(userId, payload) {
-    const existing = getProviderRow(userId);
+  function buildProviderProbeSettings(userId, payload, user = {}) {
+    const providerId = String(payload.providerId || '').trim();
+    const existing = providerId
+      ? requireProviderProfileRow(db, userId, providerId)
+      : getProviderRow(userId);
     const saved = existing ? providerWithSecret(existing) : {};
     const providerType = payload.providerType || saved.providerType || 'custom';
     const preset = providerPresets[providerType] || providerPresets.custom;
     const apiKey = String(payload.apiKey || '').trim() || saved.apiKey || '';
 
-    return {
+    const settings = {
       providerType: preset.providerType,
       gatewayName: String(payload.gatewayName || saved.gatewayName || preset.gatewayName).trim() || preset.gatewayName,
       baseUrl: normalizeProviderBaseUrl(preset.providerType, payload.baseUrl ?? saved.baseUrl ?? preset.baseUrl),
       model: String(payload.model ?? saved.model ?? preset.model).trim(),
       supportsReasoning: normalizeBoolean(payload.supportsReasoning, saved.supportsReasoning ?? preset.supportsReasoning),
+      allowPrivateNetwork: normalizeBoolean(payload.allowPrivateNetwork, saved.allowPrivateNetwork ?? false)
+        && Boolean(user.isRootAdmin)
+        && privateProviderNetworkEnabled(),
       extraBody: parseProviderExtraBody(preset.providerType, payload.extraBody ?? saved.extraBody ?? preset.extraBody),
       apiKey,
       apiKeyError: apiKey ? null : saved.apiKeyError || null
     };
+    validateProviderSettingsUrl(settings.baseUrl, user);
+    return settings;
+  }
+
+  function validateProviderSettingsUrl(value, user = {}) {
+    const parsed = parseProviderUrl(value);
+    const privateNetwork = isPrivateOrSpecialHost(parsed.hostname);
+    if (privateNetwork && !user.isRootAdmin) {
+      throw new ProviderUrlError('只有 root 管理员可以使用本地或私网 Provider。', 'PROVIDER_PRIVATE_NETWORK_BLOCKED');
+    }
+    if (privateNetwork && !privateProviderNetworkEnabled()) {
+      throw new ProviderUrlError('部署配置未启用本地或私网 Provider。', 'PROVIDER_PRIVATE_NETWORK_BLOCKED');
+    }
+  }
+
+  function privateProviderNetworkEnabled() {
+    return appConfig.isProduction
+      ? appConfig.allowPrivateProviderNetwork
+      : appConfig.allowPrivateProviderNetworkInDevelopment;
   }
 
   function parseProviderExtraBody(providerType, value) {

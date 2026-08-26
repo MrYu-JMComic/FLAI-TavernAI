@@ -15,21 +15,27 @@ import {
 import { getCastItem } from '../../repositories/castItemRepository.js';
 import {
   assertCastConversationAccess,
-  createCastBehavior,
   createCastMember,
-  createCastMemory,
-  deleteCastBehaviorEntry,
-  deleteCastMemberItem,
-  deleteCastMemoryEntry,
   resolveCastMember,
   setCastMemberVisibility,
-  transferCastItem,
-  updateCastBehaviorEntry,
-  updateCastMemberAppearance,
   updateCastMemberProfile,
-  updateCastMemoryEntry,
-  upsertCastMemberItem,
-} from './castCommandService.js';
+} from './commands/memberCommands.js';
+import {
+  createCastMemory,
+  deleteCastMemoryEntry,
+  updateCastMemoryEntry
+} from './commands/memoryCommands.js';
+import {
+  createCastBehavior,
+  deleteCastBehaviorEntry,
+  updateCastBehaviorEntry
+} from './commands/behaviorCommands.js';
+import { updateCastMemberAppearance } from './commands/appearanceCommands.js';
+import {
+  deleteCastMemberItem,
+  transferCastItem,
+  upsertCastMemberItem
+} from './commands/itemCommands.js';
 
 export function parseAndValidateCastPlan(text, options = {}) {
   const plan = parseCastChangePlanText(text);

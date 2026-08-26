@@ -29,6 +29,7 @@ export function readCachedProviderModels(settings = {}) {
 export async function refreshProviderModels(settings = {}, { forceRefresh = true } = {}) {
   const result = await fetchProviderModels(
     {
+      providerId: settings.id || settings.providerId || '',
       providerType: settings.providerType,
       gatewayName: settings.gatewayName,
       baseUrl: settings.baseUrl,

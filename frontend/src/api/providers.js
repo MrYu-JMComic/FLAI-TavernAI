@@ -11,6 +11,36 @@ export function saveProviderSettings(payload) {
   });
 }
 
+export function listProviderProfiles() {
+  return apiRequest('/api/providers');
+}
+
+export function createProviderProfile(payload) {
+  return apiRequest('/api/providers', {
+    method: 'POST',
+    body: JSON.stringify(payload)
+  });
+}
+
+export function updateProviderProfile(providerId, payload) {
+  return apiRequest(`/api/providers/${encodeURIComponent(providerId)}`, {
+    method: 'PUT',
+    body: JSON.stringify(payload)
+  });
+}
+
+export function selectProviderProfile(providerId) {
+  return apiRequest(`/api/providers/${encodeURIComponent(providerId)}/select`, {
+    method: 'POST'
+  });
+}
+
+export function deleteProviderProfile(providerId) {
+  return apiRequest(`/api/providers/${encodeURIComponent(providerId)}`, {
+    method: 'DELETE'
+  });
+}
+
 export function fetchProviderModels(payload = {}, options = {}) {
   return apiRequest('/api/providers/models', {
     method: 'POST',

@@ -3,6 +3,12 @@ import { normalizeBoolean } from '../utils/boolean.js';
 import { normalizeFiniteNumber } from '../utils/number.js';
 import { withSavepoint } from './savepoint.js';
 import { recordWorldEvent } from './worldEvents.js';
+import {
+  createCursorScope,
+  decodeCursor,
+  encodeCursor
+} from '../services/cursorPagination.js';
+import { measureSync } from '../services/performanceMetrics.js';
 
 // ── Default currency types ──
 
@@ -195,42 +201,69 @@ export function getTransactionHistory(database, userId, conversationId, options 
   }
 
   const limit = normalizeQueryLimit(options.limit);
-  const offset = normalizeQueryOffset(options.offset);
+  const cursorMode = options.pagination === 'cursor';
+  const offset = cursorMode ? 0 : normalizeQueryOffset(options.offset);
   const currencyType = options.currencyType || options.currency_type || null;
 
   let whereClause = 'WHERE economy_accounts.conversation_id = ?';
-  const params = [conversationId];
+  const filterParams = [conversationId];
 
   if (currencyType) {
     whereClause += ' AND economy_accounts.currency_type = ?';
-    params.push(normalizeCurrencyType(currencyType));
+    filterParams.push(normalizeCurrencyType(currencyType));
   }
 
-  const rows = database
-    .prepare(
-      `SELECT economy_transactions.*, economy_accounts.currency_type
+  const countWhereClause = whereClause;
+  const queryParams = [...filterParams];
+  const scope = createCursorScope('economy-transactions', {
+    userId,
+    conversationId,
+    currencyType: currencyType ? normalizeCurrencyType(currencyType) : ''
+  });
+  if (cursorMode && options.cursor) {
+    const [createdAt, rowId] = decodeCursor(options.cursor, scope, { values: 2 });
+    whereClause += ' AND (economy_transactions.created_at < ? OR (economy_transactions.created_at = ? AND economy_transactions.rowid < ?))';
+    queryParams.push(createdAt, createdAt, rowId);
+  }
+
+  const queryLimit = cursorMode ? limit + 1 : limit;
+  queryParams.push(queryLimit);
+  if (!cursorMode) queryParams.push(offset);
+
+  const rows = measureSync('sqlite.economy.history', () => database.prepare(
+      `SELECT economy_transactions.*, economy_transactions.rowid AS _cursor_rowid,
+              economy_accounts.currency_type
        FROM economy_transactions
        JOIN economy_accounts ON economy_accounts.id = economy_transactions.account_id
        ${whereClause}
        ORDER BY economy_transactions.created_at DESC, economy_transactions.rowid DESC
-       LIMIT ? OFFSET ?`
-    )
-    .all(...params, limit, offset);
+       LIMIT ? ${cursorMode ? '' : 'OFFSET ?'}`
+    ).all(...queryParams));
+
+  const hasMore = cursorMode && rows.length > limit;
+  const pageRows = hasMore ? rows.slice(0, limit) : rows;
 
   const countRow = database
     .prepare(
       `SELECT COUNT(*) AS total
        FROM economy_transactions
        JOIN economy_accounts ON economy_accounts.id = economy_transactions.account_id
-       ${whereClause}`
+       ${countWhereClause}`
     )
-    .get(...params);
+    .get(...filterParams);
+
+  const last = pageRows.at(-1);
 
   return {
-    transactions: rows.map(toTransaction),
+    transactions: pageRows.map(toTransaction),
     total: countRow?.total || 0,
     limit,
-    offset
+    offset,
+    ...(cursorMode ? {
+      nextCursor: hasMore && last
+        ? encodeCursor(scope, [last.created_at, Number(last._cursor_rowid)])
+        : ''
+    } : {})
   };
 }
 
@@ -333,7 +366,8 @@ export function processTransactionIntents(database, userId, conversationId, text
         currencyType: intent.currencyType,
         amount: intent.amount,
         type: intent.type,
-        description: `自动检测: ${intent.matchedText}`
+        description: `自动检测: ${intent.matchedText}`,
+        source: 'ai-detected'
       });
       if (result) {
         results.push(result);

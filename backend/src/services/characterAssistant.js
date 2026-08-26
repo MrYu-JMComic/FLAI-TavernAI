@@ -2,7 +2,9 @@ import { runToolCompletion, streamToolCompletion } from './providers.js';
 import { resolvePromptUserName, userVariableToken } from './promptVariables.js';
 import { normalizeAdvancedSettings, normalizeAccessorySkills } from '../modules/advancedSettings.js';
 import { cloneToolCalls, nullToEmptyObject, objectOrEmpty, parseLooseJsonObject } from './assistantUtils.js';
+import { compileSafeRegex } from './regexSafety.js';
 import { normalizeRegexFlags } from '../../../shared/regexFlags.js';
+import { CHARACTER_CONTENT_LIMITS } from '../domain/characters/limits.js';
 
 const characterTools = [
   {
@@ -16,10 +18,10 @@ const characterTools = [
           name: { type: 'string', description: '角色名，1-40 个字符。' },
           gender: { type: 'string', description: '性别或性别表达，可留空。' },
           age: { type: 'string', description: '年龄、年龄段或外观年龄，可留空。' },
-          background: { type: 'string', description: `角色背景。可使用 ${userVariableToken} 代表当前用户。` },
-          worldview: { type: 'string', description: `世界观、时代、地点和规则。可使用 ${userVariableToken}。` },
-          persona: { type: 'string', description: `人设、说话方式、行为边界。可使用 ${userVariableToken}。` },
-          openingMessage: { type: 'string', description: `第一条开场白。可使用 ${userVariableToken}。` },
+          background: { type: 'string', maxLength: CHARACTER_CONTENT_LIMITS.background, description: `角色背景。可使用 ${userVariableToken} 代表当前用户。` },
+          worldview: { type: 'string', maxLength: CHARACTER_CONTENT_LIMITS.worldview, description: `世界观、时代、地点和规则。可使用 ${userVariableToken}。` },
+          persona: { type: 'string', maxLength: CHARACTER_CONTENT_LIMITS.persona, description: `人设、说话方式、行为边界。可使用 ${userVariableToken}。` },
+          openingMessage: { type: 'string', maxLength: CHARACTER_CONTENT_LIMITS.openingMessage, description: `第一条开场白。可使用 ${userVariableToken}。` },
           tags: {
             type: 'array',
             description: '角色标签，最多 8 个。',
@@ -546,19 +548,15 @@ function normalizeRegexRule(rule = {}, index = 0) {
   rule = objectOrEmpty(rule);
   const flags = normalizeRegexFlags(rule.flags);
   const pattern = String(rule.pattern || '').trim();
-  if (pattern) {
-    try {
-      new RegExp(pattern, flags);
-    } catch {
-      return {
-        label: String(rule.label || `规则 ${index + 1}`).trim().slice(0, 60),
-        pattern: '',
-        replacement: '',
-        flags,
-        scope: 'input',
-        enabled: false
-      };
-    }
+  if (pattern && !compileSafeRegex(pattern, flags)) {
+    return {
+      label: String(rule.label || `规则 ${index + 1}`).trim().slice(0, 60),
+      pattern: '',
+      replacement: '',
+      flags,
+      scope: 'input',
+      enabled: false
+    };
   }
   return {
     label: String(rule.label || `规则 ${index + 1}`).trim().slice(0, 60),
@@ -587,19 +585,15 @@ function normalizeRenderPlugin(plugin = {}, index = 0) {
   plugin = objectOrEmpty(plugin);
   const flags = normalizeRegexFlags(plugin.flags || 'u').replace(/g/g, '') || 'u';
   const pattern = String(plugin.pattern || '').trim();
-  if (pattern) {
-    try {
-      new RegExp(pattern, flags);
-    } catch {
-      return {
-        label: String(plugin.label || `Render plugin ${index + 1}`).trim().slice(0, 60),
-        type: 'fold',
-        pattern: '',
-        flags,
-        titleTemplate: '$1',
-        enabled: false
-      };
-    }
+  if (pattern && !compileSafeRegex(pattern, flags)) {
+    return {
+      label: String(plugin.label || `Render plugin ${index + 1}`).trim().slice(0, 60),
+      type: 'fold',
+      pattern: '',
+      flags,
+      titleTemplate: '$1',
+      enabled: false
+    };
   }
   return {
     label: String(plugin.label || `Render plugin ${index + 1}`).trim().slice(0, 60),
@@ -659,10 +653,7 @@ function limitText(value, key) {
     name: 40,
     gender: 24,
     age: 24,
-    background: 4000,
-    worldview: 4000,
-    persona: 4000,
-    openingMessage: 2000,
+    ...CHARACTER_CONTENT_LIMITS,
     worldBookSuggestion: 3000
   };
   return String(value || '').trim().slice(0, limits[key] || 1000);

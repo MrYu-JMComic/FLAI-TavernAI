@@ -20,3 +20,10 @@ export function withSavepoint(database, name, operation) {
     throw error;
   }
 }
+
+export function isUniqueConstraintError(error) {
+  const message = String(error?.message || '').toLowerCase();
+  return message.includes('unique constraint failed')
+    || message.includes('constraint failed: users.username')
+    || error?.code === 'SQLITE_CONSTRAINT_UNIQUE';
+}

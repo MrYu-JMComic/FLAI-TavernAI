@@ -24,6 +24,7 @@ import {
 import {
   providerAllowsNoAuth,
   providerFetch,
+  providerFetchUrl,
   readJsonResponse,
   responseErrorText
 } from './providerHttp.js';
@@ -41,7 +42,7 @@ import { parseSse } from './providerSse.js';
 import { createStreamEmitQueue } from './providerStreamEmit.js';
 import { providerStreamErrorMessage } from './providerStreamErrors.js';
 import { runToolCompletion, streamToolCompletion } from './providerToolCompletions.js';
-import { trimSlash } from './providerUrls.js';
+import { normalizeProviderBaseUrl, trimSlash } from './providerUrls.js';
 
 export { generateImage } from './providerImageGeneration.js';
 export { isImageGenerationModel } from './providerImageModels.js';
@@ -68,11 +69,13 @@ export function normalizeProviderRow(row) {
 
   const keyState = resolveApiKey(row);
   return {
+    id: row.id || null,
     providerType: row.provider_type,
     gatewayName: row.gateway_name,
     baseUrl: row.base_url,
     model: normalizeProviderModel(row.provider_type, row.model),
     supportsReasoning: Boolean(row.supports_reasoning),
+    allowPrivateNetwork: Boolean(row.allow_private_network),
     extraBody: parseJson(row.extra_body, {}),
     apiKeySet: keyState.apiKeySet,
     apiKeyHint: row.api_key_hint || null,
@@ -110,13 +113,22 @@ export async function listProviderModels(settings, options = {}) {
     return cloneModels(cached.models);
   }
 
-  const response = await providerFetch(settings, '/models', { method: 'GET' });
+  const modelRequest = await fetchProviderModelList(settings);
+  const response = modelRequest.response;
   const json = await readJsonResponse(response);
   const models = Array.isArray(json.data) ? json.data : Array.isArray(json.models) ? json.models : [];
 
   const normalized = [];
   for (const model of models) {
-    const id = typeof model === 'string' ? model : model?.id || model?.name || model?.model;
+    if (
+      modelRequest.nativeGemini
+      && Array.isArray(model?.supportedGenerationMethods)
+      && !model.supportedGenerationMethods.includes('generateContent')
+    ) {
+      continue;
+    }
+    const rawId = typeof model === 'string' ? model : model?.id || model?.name || model?.model;
+    const id = normalizeListedModelId(rawId, modelRequest.nativeGemini);
     if (!id) {
       continue;
     }
@@ -136,6 +148,55 @@ export async function listProviderModels(settings, options = {}) {
   }
 
   return cloneModels(normalized);
+}
+
+async function fetchProviderModelList(settings) {
+  const geminiUrl = officialGeminiModelListUrl(settings);
+  if (!geminiUrl) {
+    return {
+      response: await providerFetch(settings, '/models', { method: 'GET' }),
+      nativeGemini: false
+    };
+  }
+  return {
+    response: await providerFetchUrl(settings, geminiUrl, {
+      method: 'GET',
+      headers: {
+        Accept: 'application/json',
+        'x-goog-api-key': settings.apiKey
+      }
+    }),
+    nativeGemini: true
+  };
+}
+
+function officialGeminiModelListUrl(settings = {}) {
+  if (settings.providerType !== 'gemini') {
+    return '';
+  }
+  let url;
+  try {
+    url = new URL(normalizeProviderBaseUrl('gemini', settings.baseUrl));
+  } catch {
+    return '';
+  }
+  if (url.hostname !== 'generativelanguage.googleapis.com') {
+    return '';
+  }
+  let pathname = url.pathname.replace(/\/+$/, '');
+  if (pathname.endsWith('/openai')) {
+    pathname = pathname.slice(0, -'/openai'.length);
+  }
+  url.pathname = `${pathname}/models`;
+  url.search = '';
+  url.searchParams.set('pageSize', '1000');
+  url.hash = '';
+  return url.toString();
+}
+
+function normalizeListedModelId(value, nativeGemini) {
+  const id = String(value || '').trim();
+  return nativeGemini && id.startsWith('models/') ? id.slice('models/'.length) : id;
 }
 
 function providerModelCacheKey(settings = {}) {

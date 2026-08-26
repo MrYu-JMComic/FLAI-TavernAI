@@ -2,9 +2,66 @@ const COLOR_BOX_COMMANDS = [
   { name: '\\fcolorbox', argumentCount: 3 },
   { name: '\\colorbox', argumentCount: 2 }
 ];
+const KATEX_DARK_SURFACE_TEXT = { color: '#20241f', rgb: [32, 36, 31] };
+const KATEX_LIGHT_SURFACE_TEXT = { color: '#f1f5ee', rgb: [241, 245, 238] };
+const MIN_TEXT_CONTRAST = 4.5;
 
 export function normalizeKatexSource(source) {
   return normalizeColorBoxContents(String(source ?? ''));
+}
+
+export function selectKatexSurfaceTextColor(backgroundColor) {
+  const backgroundRgb = parseOpaqueRgbColor(backgroundColor);
+  if (!backgroundRgb) return '';
+
+  const backgroundLuminance = relativeLuminance(backgroundRgb);
+  const candidates = [KATEX_DARK_SURFACE_TEXT, KATEX_LIGHT_SURFACE_TEXT];
+  const preferred = candidates
+    .map((candidate) => ({
+      ...candidate,
+      contrast: contrastRatio(backgroundLuminance, relativeLuminance(candidate.rgb))
+    }))
+    .sort((left, right) => right.contrast - left.contrast)[0];
+
+  if (preferred.contrast >= MIN_TEXT_CONTRAST) return preferred.color;
+
+  const blackContrast = contrastRatio(backgroundLuminance, 0);
+  const whiteContrast = contrastRatio(backgroundLuminance, 1);
+  return blackContrast >= whiteContrast ? '#000000' : '#ffffff';
+}
+
+function parseOpaqueRgbColor(color) {
+  const match = String(color ?? '').trim().match(/^rgba?\((.*)\)$/iu);
+  if (!match) return null;
+
+  const components = match[1]
+    .trim()
+    .split(/[,\s/]+/u)
+    .filter(Boolean)
+    .map(Number);
+  if (components.length !== 3 && components.length !== 4) return null;
+  if (components.some((component) => !Number.isFinite(component))) return null;
+
+  const [red, green, blue, alpha = 1] = components;
+  if ([red, green, blue].some((channel) => channel < 0 || channel > 255)) return null;
+  if (alpha !== 1) return null;
+  return [red, green, blue];
+}
+
+function relativeLuminance(rgb) {
+  const [red, green, blue] = rgb.map((channel) => {
+    const normalized = channel / 255;
+    return normalized <= 0.04045
+      ? normalized / 12.92
+      : ((normalized + 0.055) / 1.055) ** 2.4;
+  });
+  return (0.2126 * red) + (0.7152 * green) + (0.0722 * blue);
+}
+
+function contrastRatio(firstLuminance, secondLuminance) {
+  const lighter = Math.max(firstLuminance, secondLuminance);
+  const darker = Math.min(firstLuminance, secondLuminance);
+  return (lighter + 0.05) / (darker + 0.05);
 }
 
 function normalizeColorBoxContents(source) {

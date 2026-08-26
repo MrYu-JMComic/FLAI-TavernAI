@@ -1,13 +1,117 @@
+import crypto from 'node:crypto';
 import { newId } from '../security.js';
 import { migrateCastDomainV1 } from './migrations/castDomainV1.js';
 import { migrateCastDomainV2 } from './migrations/castDomainV2.js';
+import { migrateDurableJobs } from './migrations/0006DurableJobs.js';
+import { migrateFullTextSearch } from './migrations/0007FullTextSearch.js';
+import { migrateOperationalControls } from './migrations/0008OperationalControls.js';
+import { migrateProviderProfiles } from './migrations/0009ProviderProfiles.js';
+
+export const latestSchemaVersion = '0009';
 
 export function applyStartupMigrations(database, { getCachedTableColumns }) {
   ensureSchemaMeta(database);
-  removeRegexCharacterForeignKey(database);
+  ensureMigrationLedger(database);
+  runRecordedMigration(database, {
+    version: '0001',
+    name: 'remove-regex-character-foreign-key',
+    checksum: 'regex-fk-v1',
+    apply: () => removeRegexCharacterForeignKey(database)
+  });
+  runRecordedMigration(database, {
+    version: '0002',
+    name: 'scope-tags-by-user',
+    checksum: 'tags-user-scope-v1',
+    apply: () => migrateTagsToUserScoped(database, getCachedTableColumns)
+  });
+  runRecordedMigration(database, {
+    version: '0003',
+    name: 'cast-domain-v1',
+    checksum: 'cast-domain-v1',
+    apply: () => migrateCastDomainV1(database)
+  });
+  runRecordedMigration(database, {
+    version: '0004',
+    name: 'cast-domain-v2',
+    checksum: 'cast-domain-v2',
+    apply: () => migrateCastDomainV2(database)
+  });
+  runRecordedMigration(database, {
+    version: '0005',
+    name: 'core-schema-columns',
+    checksum: 'core-schema-columns-v1',
+    apply: () => undefined
+  });
+  runRecordedMigration(database, {
+    version: '0006',
+    name: 'durable-job-queue',
+    checksum: 'durable-job-queue-v1',
+    apply: () => migrateDurableJobs(database)
+  });
+  runRecordedMigration(database, {
+    version: '0007',
+    name: 'full-text-search',
+    checksum: 'fts-messages-memories-world-books-v1',
+    apply: () => migrateFullTextSearch(database)
+  });
+  runRecordedMigration(database, {
+    version: '0008',
+    name: 'operational-controls',
+    checksum: 'operational-controls-v1',
+    apply: () => migrateOperationalControls(database)
+  });
+  runRecordedMigration(database, {
+    version: '0009',
+    name: 'provider-profiles',
+    checksum: 'provider-profiles-v1',
+    apply: () => migrateProviderProfiles(database)
+  });
+  // Keep repairing pre-ledger tag fixtures and interrupted legacy upgrades.
   migrateTagsToUserScoped(database, getCachedTableColumns);
-  migrateCastDomainV1(database);
-  migrateCastDomainV2(database);
+}
+
+export function listAppliedMigrations(database) {
+  ensureMigrationLedger(database);
+  return database.prepare(
+    'SELECT version, name, checksum, applied_at FROM schema_migrations ORDER BY version ASC'
+  ).all();
+}
+
+function ensureMigrationLedger(database) {
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS schema_migrations (
+      version TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      checksum TEXT NOT NULL,
+      applied_at TEXT NOT NULL
+    );
+  `);
+}
+
+function runRecordedMigration(database, migration) {
+  const expectedChecksum = checksumMigration(migration.checksum);
+  const existing = database.prepare(
+    'SELECT name, checksum FROM schema_migrations WHERE version = ?'
+  ).get(migration.version);
+  if (existing) {
+    if (existing.name !== migration.name || existing.checksum !== expectedChecksum) {
+      throw new Error(`Migration ${migration.version} checksum mismatch`);
+    }
+    return;
+  }
+
+  migration.apply();
+  const foreignKeyProblems = database.prepare('PRAGMA foreign_key_check').all();
+  if (foreignKeyProblems.length) {
+    throw new Error(`Migration ${migration.version} foreign key check failed (${foreignKeyProblems.length})`);
+  }
+  database.prepare(
+    'INSERT INTO schema_migrations (version, name, checksum, applied_at) VALUES (?, ?, ?, ?)'
+  ).run(migration.version, migration.name, expectedChecksum, new Date().toISOString());
+}
+
+function checksumMigration(value) {
+  return crypto.createHash('sha256').update(String(value)).digest('hex');
 }
 
 function ensureSchemaMeta(database) {

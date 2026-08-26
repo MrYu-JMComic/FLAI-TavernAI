@@ -11,7 +11,7 @@ import {
   upsertStatusBar
 } from '../modules/statusBars.js';
 import { renderPromptVariables } from '../services/promptVariables.js';
-import { ensureConversationProtagonist } from '../services/cast/castCommandService.js';
+import { ensureConversationProtagonist } from '../services/cast/commands/memberCommands.js';
 import { withSavepoint } from '../modules/savepoint.js';
 import {
   createConversationMessage,
@@ -30,7 +30,13 @@ import { createConversationCastRouter } from './conversationCast.js';
 import { createConversationMultiRoleRouter } from './conversationMultiRole.js';
 import { createConversationSettingsRouter } from './conversationSettings.js';
 import { createConversationSavesRouter } from './conversationSaves.js';
-import { createConversationSchema, bulkDeleteSchema, validate } from '../validations/schemas.js';
+import {
+  bulkDeleteSchema,
+  conversationListQuerySchema,
+  createConversationSchema,
+  validate
+} from '../validations/schemas.js';
+import { listConversationRows } from '../repositories/conversationRepository.js';
 
 export { createSavesRouter } from './conversationSaves.js';
 
@@ -41,32 +47,22 @@ export function createConversationsRouter(ctx) {
 
   // ── Conversation List ──
 
-  router.get('/', requireAuth, (request, response) => {
-    const characterId = String(request.query.characterId || '').trim();
-    const params = [request.auth.user.id];
-    let where = 'WHERE conversations.user_id = ?';
-    if (characterId) {
-      where += ' AND conversations.character_id = ?';
-      params.push(characterId);
-    }
-
-    const rows = db
-      .prepare(
-        `SELECT conversations.*, characters.name AS character_name, characters.avatar_url
-         FROM conversations
-         JOIN characters ON characters.id = conversations.character_id
-         ${where}
-         ORDER BY conversations.updated_at DESC, conversations.rowid DESC`
-      )
-      .all(...params);
-
-    const usageSummaries = getConversationUsageSummaries(db, request.auth.user.id);
-    response.json(
-      rows.map((row) => ({
+  router.get('/', requireAuth, validate(conversationListQuerySchema, 'query'), (request, response) => {
+    const query = request.validatedQuery;
+    const page = listConversationRows(db, request.auth.user.id, query);
+    const usageSummaries = query.pagination === 'cursor'
+      ? getConversationUsageSummaries(db, request.auth.user.id, page.rows.map((row) => row.id))
+      : getConversationUsageSummaries(db, request.auth.user.id);
+    const items = page.rows.map((row) => ({
         ...toConversation(row, db),
         usage: usageSummaries.get(row.id) || emptyUsageSummary()
-      }))
-    );
+      }));
+    if (query.pagination === 'cursor') {
+      response.setHeader('X-Next-Cursor', page.nextCursor);
+      response.json({ items, nextCursor: page.nextCursor });
+      return;
+    }
+    response.json(items);
   });
 
   router.post('/bulk-delete', requireAuth, validate(bulkDeleteSchema), (request, response) => {

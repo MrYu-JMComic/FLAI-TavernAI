@@ -2,20 +2,26 @@ import { Router } from 'express';
 import { getCharacter } from '../modules/characters.js';
 import {
   cleanupEmptyCastMembers,
-  createCastBehavior,
   createCastMember,
-  createCastMemory,
-  deleteCastBehaviorEntry,
-  deleteCastMemberItem,
-  deleteCastMemoryEntry,
-  rollbackCastAuditEvent,
-  transferCastItem,
-  updateCastBehaviorEntry,
-  updateCastMemberAppearance,
   updateCastMemberProfile,
-  updateCastMemoryEntry,
-  upsertCastMemberItem,
-} from '../services/cast/castCommandService.js';
+} from '../services/cast/commands/memberCommands.js';
+import {
+  createCastMemory,
+  deleteCastMemoryEntry,
+  updateCastMemoryEntry
+} from '../services/cast/commands/memoryCommands.js';
+import {
+  createCastBehavior,
+  deleteCastBehaviorEntry,
+  updateCastBehaviorEntry
+} from '../services/cast/commands/behaviorCommands.js';
+import { updateCastMemberAppearance } from '../services/cast/commands/appearanceCommands.js';
+import {
+  deleteCastMemberItem,
+  transferCastItem,
+  upsertCastMemberItem
+} from '../services/cast/commands/itemCommands.js';
+import { rollbackCastAuditEvent } from '../services/cast/commands/runtimeCommands.js';
 import {
   getCastAudit,
   getCastBehaviorEntry,

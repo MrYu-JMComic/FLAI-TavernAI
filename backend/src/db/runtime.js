@@ -26,15 +26,19 @@ export function ensureStorageDirs() {
   }
 }
 
-export function createAppDatabase(filename = path.join(dataDir, 'flai.sqlite')) {
+export function createAppDatabase(filename = path.join(dataDir, 'flai.sqlite'), options = {}) {
   ensureStorageDirs();
   resetColumnCache();
   resetMessageCounter();
+  const existedBeforeOpen = filename !== ':memory:' && fs.existsSync(filename);
   const database = new DatabaseSync(filename);
   try {
     database.exec('PRAGMA busy_timeout = 5000');
     database.exec('PRAGMA foreign_keys = ON');
     execWithDatabaseLockRetry(database, 'PRAGMA journal_mode = WAL');
+    if (existedBeforeOpen && typeof options.beforeInitialize === 'function') {
+      options.beforeInitialize(database, filename);
+    }
     initializeDatabase(database);
     return database;
   } catch (error) {

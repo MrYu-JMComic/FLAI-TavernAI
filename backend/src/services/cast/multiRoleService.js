@@ -6,7 +6,7 @@ import {
   recordCastConversationTurn,
   replaceCastTurnQueue,
   updateCastTurnQueueEntry,
-} from './castCommandService.js';
+} from './commands/runtimeCommands.js';
 import {
   getCastConversationTurns,
   getCastMemberDetail,

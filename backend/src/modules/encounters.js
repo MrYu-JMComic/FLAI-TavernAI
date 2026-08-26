@@ -7,7 +7,7 @@ import { getTravelMap } from './travel.js';
 import { recordWorldEvent } from './worldEvents.js';
 import { withSavepoint } from './savepoint.js';
 import { CastDomainError } from '../domain/cast/errors.js';
-import { resolveCastMember } from '../services/cast/castCommandService.js';
+import { resolveCastMember } from '../services/cast/commands/memberCommands.js';
 import { getProtagonist } from '../services/cast/castQueryService.js';
 
 const TERMINAL_MEMBER_STATUSES = new Set(['permanently_left', 'dead']);

@@ -3,6 +3,7 @@ import { listStatusBarTemplates } from '../modules/statusBarTemplates.js';
 import { parseJson } from '../utils/json.js';
 import { listProviderCapabilities } from './providerCapabilities.js';
 import { buildUserCastSnapshot } from './cast/castSnapshot.js';
+import { getSelectedProviderProfileRow } from '../repositories/providerProfileRepository.js';
 
 const snapshotVersion = 2;
 
@@ -435,14 +436,7 @@ function listAvatarAssets(database, userId) {
 }
 
 function getProviderSummary(database, userId) {
-  const row = database
-    .prepare(
-      `SELECT provider_type, gateway_name, base_url, model, api_key_hint,
-              supports_reasoning, extra_body, updated_at
-       FROM provider_settings
-       WHERE user_id = ?`
-    )
-    .get(userId);
+  const row = getSelectedProviderProfileRow(database, userId);
   if (!row) {
     return null;
   }

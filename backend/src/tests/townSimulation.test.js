@@ -80,6 +80,12 @@ test('town memory recall combines recency, importance and query relevance', () =
     title: '灯笼摊争执',
     occurredTick: 3400
   });
+  assert.equal(
+    database.prepare(
+      "SELECT COUNT(*) AS count FROM automation_audit_events WHERE user_id = ? AND domain = 'town'"
+    ).get(userId).count,
+    1
+  );
   const relevant = recordTownMemory(database, userId, town.id, resident.id, {
     content: '沈月在灯笼摊听见商贩争论失踪的账本。',
     importance: 7,

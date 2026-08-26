@@ -3,6 +3,7 @@ import {
   createCharacter,
   deleteCharacter,
   getCharacter,
+  listCharacterPage,
   listCharacters,
   setCharacterFavorite,
   setCharacterLike,
@@ -26,7 +27,12 @@ import {
 import { normalizeAdvancedSettings, normalizeAccessorySkills } from '../modules/advancedSettings.js';
 import { completeCharacterDraft, streamCharacterDraft } from '../services/characterAssistant.js';
 import { rollTalent, getCharacterTalents, deleteAllCharacterTalents, deleteCharacterTalent } from '../modules/talents.js';
-import { createCharacterSchema, updateCharacterSchema, validate } from '../validations/schemas.js';
+import {
+  characterListQuerySchema,
+  createCharacterSchema,
+  updateCharacterSchema,
+  validate
+} from '../validations/schemas.js';
 import { sanitizeCharacterPayload } from '../services/sanitize.js';
 import { normalizeBoolean } from '../utils/boolean.js';
 import { normalizeFiniteNumber } from '../utils/number.js';
@@ -49,12 +55,18 @@ export function createCharactersRouter({
 
   // ── Character CRUD ──
 
-  router.get('/', requireAuth, (request, response) => {
-    const characters = listCharacters(db, request.auth.user.id, {
-      search: request.query.search,
-      sort: request.query.sort,
-      tag: request.query.tag
-    });
+  router.get('/', requireAuth, validate(characterListQuerySchema, 'query'), (request, response) => {
+    const query = request.validatedQuery;
+    if (query.pagination === 'cursor') {
+      const page = listCharacterPage(db, request.auth.user.id, query);
+      response.setHeader('X-Next-Cursor', page.nextCursor);
+      withListCache(request, response, {
+        items: withCharacterListExtras(page.items),
+        nextCursor: page.nextCursor
+      });
+      return;
+    }
+    const characters = listCharacters(db, request.auth.user.id, query);
     withListCache(request, response, withCharacterListExtras(characters));
   });
 

@@ -1,24 +1,53 @@
 import { newId, nowIso } from '../security.js';
 import { parseJson } from '../utils/json.js';
 import { clampInteger, clampNumber } from '../utils/number.js';
+import {
+  listOwnedTownRows,
+  readOwnedTownRow,
+  readTownEventRow,
+  readTownMemoryRow,
+  readTownReflectionRow,
+  readTownResidentRow,
+  townUserExists
+} from '../repositories/townRepository.js';
+import {
+  calculateTownTick,
+  normalizeTownSimulationStatus,
+  updateTownClockRecord
+} from '../services/town/townClockService.js';
+import {
+  normalizeTownRecallWeights,
+  scoreTownMemoryRecord,
+  tokenizeTownMemoryText
+} from '../services/town/townMemoryService.js';
+import {
+  buildTownSimulationSnapshot,
+  recordTownSimulationEvent
+} from '../services/town/townSimulationService.js';
 import { withSavepoint } from './savepoint.js';
 
 const MEMORY_TYPES = new Set(['observation', 'event', 'relationship', 'plan', 'reflection']);
 const SCHEDULE_STATUSES = new Set(['planned', 'active', 'completed', 'cancelled']);
 const ITEM_STATUSES = new Set(['planned', 'active', 'completed', 'skipped']);
-const SIMULATION_STATUSES = new Set(['paused', 'running']);
-const DEFAULT_RECALL_WEIGHTS = Object.freeze({ recency: 0.35, importance: 0.25, relevance: 0.4 });
 
 export function createTown(database, userId, payload = {}) {
   if (!userExists(database, userId)) return null;
+  const idempotencyKey = normalizeText(payload.idempotencyKey, 200);
+  if (idempotencyKey) {
+    const existing = database.prepare(
+      'SELECT * FROM town_worlds WHERE user_id = ? AND idempotency_key = ?'
+    ).get(userId, idempotencyKey);
+    if (existing) return toTown(existing);
+  }
   const id = newId();
   const timestamp = nowIso();
   const name = normalizeText(payload.name, 120) || '未命名小镇';
   database.prepare(
     `INSERT INTO town_worlds (
        id, user_id, name, description, creation_prompt, map_config_json,
-       simulation_status, current_day, minute_of_day, settings_json, created_at, updated_at
-     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+       simulation_status, current_day, minute_of_day, settings_json, idempotency_key,
+       created_at, updated_at
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).run(
     id,
     userId,
@@ -30,6 +59,7 @@ export function createTown(database, userId, payload = {}) {
     clampInteger(payload.currentDay, 1, 1000000, 1),
     clampInteger(payload.minuteOfDay, 0, 1439, 480),
     JSON.stringify(normalizeObject(payload.settings)),
+    idempotencyKey,
     timestamp,
     timestamp
   );
@@ -37,14 +67,12 @@ export function createTown(database, userId, payload = {}) {
 }
 
 export function getTown(database, userId, townId) {
-  const row = database.prepare('SELECT * FROM town_worlds WHERE id = ? AND user_id = ?').get(townId, userId);
+  const row = readOwnedTownRow(database, userId, townId);
   return row ? toTown(row) : null;
 }
 
 export function listTowns(database, userId) {
-  return database.prepare(
-    'SELECT * FROM town_worlds WHERE user_id = ? ORDER BY updated_at DESC, rowid DESC'
-  ).all(userId).map(toTown);
+  return listOwnedTownRows(database, userId).map(toTown);
 }
 
 export function deleteTown(database, userId, townId) {
@@ -74,16 +102,7 @@ export function deleteTownResident(database, userId, townId, residentId) {
 export function updateTownClock(database, userId, townId, payload = {}) {
   const town = getTown(database, userId, townId);
   if (!town) return null;
-  const currentDay = clampInteger(payload.currentDay, 1, 1000000, town.currentDay);
-  const minuteOfDay = clampInteger(payload.minuteOfDay, 0, 1439, town.minuteOfDay);
-  const simulationStatus = payload.simulationStatus == null
-    ? town.simulationStatus
-    : normalizeSimulationStatus(payload.simulationStatus);
-  database.prepare(
-    `UPDATE town_worlds
-     SET current_day = ?, minute_of_day = ?, simulation_status = ?, engine_checkpoint_at = ?, updated_at = ?
-     WHERE id = ? AND user_id = ?`
-  ).run(currentDay, minuteOfDay, simulationStatus, nowIso(), nowIso(), townId, userId);
+  updateTownClockRecord(database, userId, town, payload);
   return getTown(database, userId, townId);
 }
 
@@ -141,36 +160,22 @@ export function updateTownResidentState(database, userId, townId, residentId, pa
 export function getTownSnapshot(database, userId, townId, options = {}) {
   const town = getTown(database, userId, townId);
   if (!town) return null;
-  return {
+  return buildTownSimulationSnapshot(
     town,
-    residents: listTownResidents(database, userId, townId),
-    events: listTownEvents(database, userId, townId, { limit: options.eventLimit })
-  };
+    listTownResidents(database, userId, townId),
+    listTownEvents(database, userId, townId, { limit: options.eventLimit })
+  );
 }
 
 export function recordTownEvent(database, userId, townId, payload = {}) {
   const town = getTown(database, userId, townId);
   if (!town) return null;
-  const residentId = normalizeResidentId(database, townId, payload.residentId);
-  const id = newId();
-  database.prepare(
-    `INSERT INTO town_events (
-       id, town_id, resident_id, event_type, source, title, detail,
-       payload_json, occurred_tick, created_at
-     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-  ).run(
-    id,
-    townId,
-    residentId || null,
-    normalizeText(payload.eventType, 80) || 'world.changed',
-    normalizeText(payload.source, 40) || 'simulation',
-    normalizeText(payload.title, 200),
-    normalizeText(payload.detail, 4000),
-    JSON.stringify(normalizeObject(payload.payload)),
-    normalizeTick(payload.occurredTick, townTick(town)),
-    nowIso()
-  );
-  return readTownEvent(database, townId, id);
+  return recordTownSimulationEvent(database, userId, town, payload, {
+    normalizeResidentId: (residentId) => normalizeResidentId(database, townId, residentId),
+    normalizeTick,
+    townTick,
+    readEvent: (eventId) => readTownEvent(database, townId, eventId)
+  });
 }
 
 export function listTownEvents(database, userId, townId, options = {}) {
@@ -232,7 +237,7 @@ export function retrieveTownMemories(database, userId, townId, residentId, query
   const limit = clampInteger(options.limit, 1, 50, 8);
   const candidateLimit = clampInteger(options.candidateLimit, limit, 500, Math.max(100, limit));
   const referenceTick = normalizeTick(options.referenceTick, townTick(context.town));
-  const weights = normalizeRecallWeights(options.weights);
+  const weights = normalizeTownRecallWeights(options.weights);
   const recencyDecay = clampNumber(options.recencyDecay, 0.5, 1, 0.99);
   const rows = selectRecallCandidates(database, townId, residentId, candidateLimit, options);
   const memories = rows
@@ -261,22 +266,7 @@ export function listTownUnreflectedMemories(database, userId, townId, residentId
 }
 
 export function scoreTownMemory(memory, query = '', options = {}) {
-  const weights = normalizeRecallWeights(options.weights);
-  const referenceTick = normalizeTick(options.referenceTick, memory.occurredTick);
-  const ageHours = Math.max(0, referenceTick - memory.occurredTick) / 60;
-  const recency = Math.pow(clampNumber(options.recencyDecay, 0.5, 1, 0.99), ageHours);
-  const importance = clampNumber(memory.importance, 1, 10, 5) / 10;
-  const relevance = calculateTokenRelevance(query, [memory.content, ...(memory.keywords || [])].join(' '));
-  const score = (recency * weights.recency) + (importance * weights.importance) + (relevance * weights.relevance);
-  return {
-    ...memory,
-    score: roundScore(score),
-    scoreParts: {
-      recency: roundScore(recency),
-      importance: roundScore(importance),
-      relevance: roundScore(relevance)
-    }
-  };
+  return scoreTownMemoryRecord(memory, query, options);
 }
 
 export function evaluateTownReflectionNeed(database, userId, townId, residentId) {
@@ -437,47 +427,7 @@ export function getTownSchedule(database, userId, townId, residentId, day) {
 }
 
 export function tokenizeMemoryText(value) {
-  const normalized = String(value || '').normalize('NFKC').toLowerCase();
-  const tokens = normalized.match(/[a-z0-9]+|[\u3400-\u9fff]+/gu) || [];
-  const output = new Set();
-  for (const token of tokens) {
-    if (/^[\u3400-\u9fff]+$/u.test(token)) {
-      for (const character of token) output.add(character);
-      for (let index = 0; index < token.length - 1; index += 1) {
-        output.add(token.slice(index, index + 2));
-      }
-    } else if (token.length > 1) {
-      output.add(token);
-    }
-  }
-  return [...output];
-}
-
-function calculateTokenRelevance(query, text) {
-  const queryTokens = new Set(tokenizeMemoryText(query));
-  if (!queryTokens.size) return 0;
-  const textTokens = new Set(tokenizeMemoryText(text));
-  let overlap = 0;
-  for (const token of queryTokens) {
-    if (textTokens.has(token)) overlap += 1;
-  }
-  return overlap / Math.sqrt(queryTokens.size * Math.max(1, textTokens.size));
-}
-
-function normalizeRecallWeights(value = {}) {
-  const source = value && typeof value === 'object' ? value : {};
-  const raw = {
-    recency: clampNumber(source.recency, 0, 1, DEFAULT_RECALL_WEIGHTS.recency),
-    importance: clampNumber(source.importance, 0, 1, DEFAULT_RECALL_WEIGHTS.importance),
-    relevance: clampNumber(source.relevance, 0, 1, DEFAULT_RECALL_WEIGHTS.relevance)
-  };
-  const total = raw.recency + raw.importance + raw.relevance;
-  if (total <= 0) return { ...DEFAULT_RECALL_WEIGHTS };
-  return {
-    recency: raw.recency / total,
-    importance: raw.importance / total,
-    relevance: raw.relevance / total
-  };
+  return tokenizeTownMemoryText(value);
 }
 
 function normalizeScheduleItems(value) {
@@ -573,26 +523,22 @@ function getResidentContext(database, userId, townId, residentId) {
 }
 
 function readTownResident(database, townId, residentId) {
-  const row = database.prepare('SELECT * FROM town_residents WHERE id = ? AND town_id = ?').get(residentId, townId);
+  const row = readTownResidentRow(database, townId, residentId);
   return row ? toTownResident(row) : null;
 }
 
 function readTownEvent(database, townId, eventId) {
-  const row = database.prepare('SELECT * FROM town_events WHERE id = ? AND town_id = ?').get(eventId, townId);
+  const row = readTownEventRow(database, townId, eventId);
   return row ? toTownEvent(row) : null;
 }
 
 function readTownMemory(database, townId, residentId, memoryId) {
-  const row = database.prepare(
-    'SELECT * FROM town_memories WHERE id = ? AND town_id = ? AND resident_id = ?'
-  ).get(memoryId, townId, residentId);
+  const row = readTownMemoryRow(database, townId, residentId, memoryId);
   return row ? toTownMemory(row) : null;
 }
 
 function readTownReflection(database, townId, residentId, reflectionId) {
-  const row = database.prepare(
-    'SELECT * FROM town_reflections WHERE id = ? AND town_id = ? AND resident_id = ?'
-  ).get(reflectionId, townId, residentId);
+  const row = readTownReflectionRow(database, townId, residentId, reflectionId);
   return row ? toTownReflection(row) : null;
 }
 
@@ -607,11 +553,11 @@ function normalizeEventId(database, townId, eventId) {
 }
 
 function userExists(database, userId) {
-  return Boolean(database.prepare('SELECT id FROM users WHERE id = ?').get(userId));
+  return townUserExists(database, userId);
 }
 
 function townTick(town) {
-  return ((town.currentDay - 1) * 1440) + town.minuteOfDay;
+  return calculateTownTick(town);
 }
 
 function normalizeTick(value, fallback) {
@@ -625,8 +571,7 @@ function normalizeMemoryType(value) {
 }
 
 function normalizeSimulationStatus(value) {
-  const normalized = String(value || '').trim();
-  return SIMULATION_STATUSES.has(normalized) ? normalized : 'paused';
+  return normalizeTownSimulationStatus(value);
 }
 
 function normalizeScheduleStatus(value) {
@@ -647,9 +592,6 @@ function normalizeText(value, maxLength) {
   return String(value || '').trim().slice(0, maxLength);
 }
 
-function roundScore(value) {
-  return Math.round(value * 1000000) / 1000000;
-}
 
 function toTown(row) {
   return {

@@ -8,17 +8,18 @@ import {
   deleteConversationMessage,
   getConversationForUser,
   getConversationMessage,
+  listConversationMessagePage,
   listConversationMessages,
   updateConversationMessage
 } from './helpers.js';
-import { updateMessageSchema, validate } from '../validations/schemas.js';
+import { messageListQuerySchema, updateMessageSchema, validate } from '../validations/schemas.js';
 
 export function createConversationMessagesRouter(ctx) {
   const { db, requireAuth, nowIso } = ctx;
   const getConversation = (userId, conversationId) => getConversationForUser(db, userId, conversationId);
   const router = Router({ mergeParams: true });
 
-  router.get('/messages', requireAuth, (request, response) => {
+  router.get('/messages', requireAuth, validate(messageListQuerySchema, 'query'), (request, response) => {
     const conversation = getConversation(request.auth.user.id, request.params.id);
     if (!conversation) {
       response.status(404).json({ error: '对话不存在' });
@@ -38,7 +39,13 @@ export function createConversationMessagesRouter(ctx) {
       charName: character?.name || ''
     };
 
-    const sourceMessages = listConversationMessages(db, request.auth.user.id, request.params.id);
+    const query = request.validatedQuery;
+    const paginated = query.limit !== undefined || Boolean(query.cursor);
+    const page = paginated
+      ? listConversationMessagePage(db, request.auth.user.id, request.params.id, query)
+      : null;
+    const sourceMessages = page?.messages
+      || listConversationMessages(db, request.auth.user.id, request.params.id);
     const messages = [];
     for (const message of sourceMessages) {
       if (!displayRules.length) {
@@ -51,9 +58,11 @@ export function createConversationMessagesRouter(ctx) {
       }
     }
 
+    if (page) response.setHeader('X-Next-Cursor', page.nextCursor);
     response.json({
       conversation,
-      messages
+      messages,
+      ...(page ? { nextCursor: page.nextCursor } : {})
     });
   });
 

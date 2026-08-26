@@ -3,7 +3,7 @@ import {
   getCastMemoryEntry,
   getCastRoster,
 } from './castQueryService.js';
-import { updateCastMemoryEntry } from './castCommandService.js';
+import { updateCastMemoryEntry } from './commands/memoryCommands.js';
 
 const MILLISECONDS_PER_DAY = 24 * 60 * 60 * 1_000;
 

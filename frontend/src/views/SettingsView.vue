@@ -49,6 +49,7 @@ const loading = ref(false);
 const loadError = ref('');
 let settingsLoadToken = 0;
 const {
+  addProvider,
   balance,
   balanceLoading,
   canCheckBalance,
@@ -64,13 +65,18 @@ const {
   modelProbeStatus,
   probeProviderConnection,
   providerCapabilityLoadError,
+  providerActionLoading,
   providerControlsBusy,
+  providerProfiles,
+  removeProvider,
   resetProviderAsyncScope,
   applyPreset,
   applyProviderSettingsBundle,
   saving,
+  selectedProviderId,
   settingsModelOptions,
   submit,
+  switchProvider,
   updateProviderFormField
 } = useSettingsProvider({
   isPersonalPage,
@@ -379,11 +385,17 @@ function resetExtensionAsyncScopes() {
       :probe-loading="modelProbeLoading"
       :probe-message="modelProbeMessage"
       :probe-status="modelProbeStatus"
+      :provider-action-loading="providerActionLoading"
+      :providers="providerProfiles"
       :saving="saving"
+      :selected-provider-id="selectedProviderId"
+      @add-provider="addProvider"
       @apply-preset="applyPreset"
       @check-balance="checkBalance"
       @load-models="loadModels"
       @probe-provider="probeProviderConnection"
+      @remove-provider="removeProvider"
+      @select-provider="switchProvider"
       @submit="submit"
       @update-field="updateProviderFormField"
     />

@@ -8,7 +8,7 @@ import {
   deleteWorldItem,
   transferCastItem,
   upsertWorldItem,
-} from '../services/cast/castCommandService.js';
+} from '../services/cast/commands/itemCommands.js';
 import { getWorldItems } from '../services/cast/castQueryService.js';
 
 const NODE_TYPES = new Set(['main_scene', 'map', 'building', 'room', 'area']);

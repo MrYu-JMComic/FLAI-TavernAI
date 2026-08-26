@@ -43,6 +43,62 @@ test('character assistant treats null current tags as empty', async () => {
   }
 });
 
+test('character assistant preserves generated content within character field limits', async () => {
+  const originalFetch = globalThis.fetch;
+  const background = '背'.repeat(9_000);
+  const worldview = '界'.repeat(9_100);
+  const persona = '人'.repeat(9_200);
+  const openingMessage = '开'.repeat(4_500);
+  let calls = 0;
+  try {
+    globalThis.fetch = async () => {
+      calls += 1;
+      if (calls === 1) {
+        return jsonResponse({
+          choices: [{
+            message: {
+              role: 'assistant',
+              content: null,
+              tool_calls: [{
+                id: 'long-character-content',
+                type: 'function',
+                function: {
+                  name: 'set_character_profile',
+                  arguments: JSON.stringify({ background, worldview, persona, openingMessage })
+                }
+              }]
+            }
+          }]
+        });
+      }
+      return jsonResponse({
+        choices: [{ message: { role: 'assistant', content: 'Done.' } }]
+      });
+    };
+
+    const result = await completeCharacterDraft(
+      {
+        providerType: 'deepseek',
+        gatewayName: 'DeepSeek',
+        baseUrl: 'https://api.deepseek.com',
+        model: 'deepseek-v4-flash',
+        apiKey: 'sk-test',
+        extraBody: {}
+      },
+      { requirement: 'generate long character content', current: {} }
+    );
+
+    assert.equal(calls, 2);
+    assert.equal(result.character.background, background);
+    assert.equal(result.character.worldview, worldview);
+    assert.equal(result.character.persona, persona);
+    assert.equal(result.character.openingMessage, openingMessage);
+    assert.equal(result.toolCalls[0].result.applied.openingMessage, openingMessage);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test('character assistant normalizes generation options with direct defaults loop', async () => {
   const originalFetch = globalThis.fetch;
   let enabledSections = null;

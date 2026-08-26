@@ -1,6 +1,13 @@
 import { isLocalOrPrivateBaseUrl } from '../../../shared/privateNetwork.js';
 import { parseJson } from '../utils/json.js';
 import { normalizeProviderBaseUrl, trimSlash } from './providerUrls.js';
+import { appConfig } from '../config.js';
+import {
+  assertProviderUrlAllowed,
+  PROVIDER_MAX_REDIRECTS,
+  providerUrlPolicyOptions
+} from './providerUrlPolicy.js';
+import { executeProviderRequest } from './providerResilience.js';
 
 export async function providerFetch(settings, endpoint, options = {}) {
   const baseUrl = normalizeProviderBaseUrl(settings.providerType, settings.baseUrl);
@@ -9,7 +16,7 @@ export async function providerFetch(settings, endpoint, options = {}) {
     ...options,
     headers: requestHeaders(settings, options.headers)
   };
-  const response = await fetchProviderRequest(url, request);
+  const response = await providerFetchUrl(settings, url, request);
 
   if (!shouldRetryProviderWithoutAuth(response, settings)) {
     return response;
@@ -20,10 +27,35 @@ export async function providerFetch(settings, endpoint, options = {}) {
       console.error('[provider] Failed to cancel authenticated retry response body', error);
     });
   }
-  return fetchProviderRequest(url, {
+  return providerFetchUrl(settings, url, {
     ...options,
     headers: requestHeaders({ ...settings, apiKey: '' }, options.headers)
   });
+}
+
+export function providerFetchUrl(settings, url, request = {}) {
+  return resilientProviderFetch(settings, String(url), request);
+}
+
+function resilientProviderFetch(settings, url, request) {
+  const method = String(request.method || 'GET').toUpperCase();
+  const { idempotent, ...fetchRequest } = request;
+  const resilienceKey = [
+    String(settings.providerType || 'custom'),
+    String(settings.model || ''),
+    new URL(url).host
+  ].join(':');
+  return executeProviderRequest(
+    resilienceKey,
+    ({ signal }) => fetchProviderRequest(url, { ...fetchRequest, signal }, providerFetchPolicy(settings)),
+    {
+      signal: request.signal,
+      timeoutMs: settings.timeoutMs,
+      concurrency: settings.concurrencyLimit,
+      retryBudget: settings.retryBudget,
+      idempotent: ['GET', 'HEAD', 'OPTIONS'].includes(method) || idempotent === true
+    }
+  );
 }
 
 export async function readJsonResponse(response) {
@@ -69,21 +101,66 @@ export async function responseErrorText(response) {
   return responseErrorMessage(response, text);
 }
 
-export async function fetchProviderRequest(url, request) {
-  try {
-    return await fetch(url, request);
-  } catch (error) {
-    if (error?.name === 'TimeoutError') {
-      throw new Error('AI 请求超时，请稍后重试或检查网关状态。', { cause: error });
+export async function fetchProviderRequest(url, request = {}, options = {}) {
+  const policy = providerUrlPolicyOptions(options);
+  let currentUrl = String(url);
+  let currentRequest = { ...request, redirect: 'manual' };
+
+  for (let redirectCount = 0; redirectCount <= PROVIDER_MAX_REDIRECTS; redirectCount += 1) {
+    await assertProviderUrlAllowed(currentUrl, policy);
+    let response;
+    try {
+      response = await fetch(currentUrl, currentRequest);
+    } catch (error) {
+      if (error?.name === 'TimeoutError') {
+        const timeoutError = new Error('AI 请求超时，请稍后重试或检查网关状态。', { cause: error });
+        timeoutError.code = 'PROVIDER_TIMEOUT';
+        timeoutError.retryable = true;
+        throw timeoutError;
+      }
+      if (error?.name === 'AbortError') {
+        throw error;
+      }
+      if (!(error instanceof TypeError)) {
+        throw error;
+      }
+      const networkError = new Error('AI 请求失败，请检查网络、Base URL 或网关状态。', { cause: error });
+      networkError.code = 'PROVIDER_NETWORK_ERROR';
+      networkError.retryable = true;
+      throw networkError;
     }
-    if (error?.name === 'AbortError') {
-      throw error;
+
+    if (![301, 302, 303, 307, 308].includes(response.status)) {
+      return response;
     }
-    if (!(error instanceof TypeError)) {
-      throw error;
+    if (redirectCount === PROVIDER_MAX_REDIRECTS) {
+      throw new Error('Provider 重定向次数超过限制。');
     }
-    throw new Error('AI 请求失败，请检查网络、Base URL 或网关状态。', { cause: error });
+    const location = response.headers?.get?.('location');
+    if (!location) {
+      throw new Error('Provider 重定向缺少目标地址。');
+    }
+    try {
+      await response.body?.cancel?.();
+    } catch {
+      // The redirect response body is not needed after its Location is read.
+    }
+    currentUrl = new URL(location, currentUrl).toString();
+    if (response.status === 303 && !['GET', 'HEAD'].includes(String(currentRequest.method || 'GET').toUpperCase())) {
+      currentRequest = { ...currentRequest, method: 'GET', body: undefined };
+    }
   }
+
+  throw new Error('Provider 重定向失败。');
+}
+
+function providerFetchPolicy(settings = {}) {
+  return {
+    allowPrivateNetwork: settings.allowPrivateNetwork === true
+      || (!appConfig.isProduction && appConfig.allowPrivateProviderNetworkInDevelopment),
+    resolveDns: settings.resolveDns,
+    lookup: settings.lookup
+  };
 }
 
 function requestHeaders(settings = {}, extraHeaders = {}) {

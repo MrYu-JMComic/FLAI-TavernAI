@@ -9,6 +9,7 @@ import { generateProceduralTownMap } from './townMapGenerator.js';
 
 export function generateTownFromBlueprint(database, userId, payload = {}) {
   const prompt = String(payload.prompt || '').trim();
+  const idempotencyKey = String(payload.idempotencyKey || '').trim().slice(0, 200);
   const blueprint = payload.blueprint;
   if (!prompt) throw new Error('请输入你的世界构想');
   if (
@@ -23,6 +24,15 @@ export function generateTownFromBlueprint(database, userId, payload = {}) {
     || !blueprint.openingEvents.length
   ) {
     throw new Error('AI 世界蓝图无效');
+  }
+
+  if (idempotencyKey) {
+    const existing = database.prepare(
+      'SELECT id FROM town_worlds WHERE user_id = ? AND idempotency_key = ?'
+    ).get(userId, idempotencyKey);
+    if (existing) {
+      return getTownSnapshot(database, userId, existing.id, { eventLimit: 200 });
+    }
   }
 
   const mapConfig = generateProceduralTownMap(blueprint, prompt);
@@ -43,7 +53,8 @@ export function generateTownFromBlueprint(database, userId, payload = {}) {
         mapGenerator: 'procedural-v1',
         worldRules: blueprint.rules || [],
         environment: blueprint.environment || {}
-      }
+      },
+      idempotencyKey
     });
     if (!town) throw new Error('无法为当前用户创建世界');
 

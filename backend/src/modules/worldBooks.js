@@ -1,47 +1,44 @@
 import { newId, nowIso } from '../security.js';
 import { normalizeBoolean } from '../utils/boolean.js';
 import { normalizeFiniteNumber } from '../utils/number.js';
+import {
+  listLinkedCharacterIds,
+  listOwnedWorldBookRows,
+  listWorldBookEntryRows,
+  readOwnedCharacterRow,
+  readOwnedWorldBookRow,
+  readOwnedWorldBookWithCount,
+  readWorldBookEntryRow,
+  touchWorldBookRecord
+} from '../repositories/worldBookRepository.js';
+import {
+  matchesWorldBookEntry,
+  normalizeWorldBookScanTexts as normalizeScanTexts,
+  pruneWorldBookInclusionGroups as applyGroupInclusion
+} from '../services/worldBooks/worldBookMatcher.js';
+import {
+  loadWorldBookEntryStates as getEntryStates,
+  nextWorldBookMessageCount as getNextMessageCount,
+  peekWorldBookMessageCount as peekNextMessageCount,
+  persistWorldBookEntryStates as updateEntryStates,
+  resetWorldBookMessageCounter
+} from '../services/worldBooks/worldBookStateService.js';
 import { withSavepoint } from './savepoint.js';
 
 // ── World Book CRUD ──
 
 export function listWorldBooks(database, userId) {
-  return database
-    .prepare(
-      `SELECT wb.*,
-        (SELECT COUNT(*) FROM world_book_entries WHERE world_book_id = wb.id) AS entry_count
-       FROM world_books wb
-       WHERE wb.user_id = ?
-       ORDER BY wb.updated_at DESC, wb.rowid DESC`
-    )
-    .all(userId)
-    .map(toWorldBook);
+  return listOwnedWorldBookRows(database, userId).map(toWorldBook);
 }
 
 export function getWorldBook(database, userId, bookId) {
-  const row = database
-    .prepare(
-      `SELECT wb.*,
-        (SELECT COUNT(*) FROM world_book_entries WHERE world_book_id = wb.id) AS entry_count
-       FROM world_books wb
-       WHERE wb.id = ? AND wb.user_id = ?`
-    )
-    .get(bookId, userId);
+  const row = readOwnedWorldBookWithCount(database, userId, bookId);
   if (!row) {
     return null;
   }
 
   // Collect linked character IDs from junction table
-  const linkedCharacters = database
-    .prepare(
-      `SELECT cwb.character_id
-       FROM character_world_books cwb
-       JOIN characters c ON c.id = cwb.character_id
-       WHERE cwb.world_book_id = ? AND c.user_id = ?
-       ORDER BY cwb.created_at ASC, cwb.rowid ASC`
-    )
-    .all(bookId, row.user_id)
-    .map((r) => r.character_id);
+  const linkedCharacters = listLinkedCharacterIds(database, row.user_id, bookId);
 
   return {
     ...toWorldBook(row),
@@ -585,211 +582,11 @@ function matchPassWithState(entries, lowerText, rawText, matchedIds, matched, en
       }
     }
 
-    let hit = false;
-    const hasKeys = forEachEntryKey(entry.trigger_keys, (key) => {
-      if (entry.regex_mode) {
-        try {
-          const regex = new RegExp(key, 'i');
-          if (regex.test(rawText)) {
-            hit = true;
-            return false;
-          }
-        } catch {
-          // Invalid regex, skip this key
-        }
-        return true;
-      }
-
-      if (matchesStringModeEntryKey(key, lowerText, rawText)) {
-        hit = true;
-        return false;
-      }
-      return true;
-    });
-
-    if (!hasKeys) {
-      continue;
-    }
-
-    // Selective filter: when primary keys hit, apply secondary key logic
-    if (hit && entry.selective) {
-      const logic = normalizeEntryEnumNumber(entry.selective_logic);
-      if (logic === 2) {
-        const secondary = matchAllLiteralEntryKeys(entry.keys_secondary, lowerText);
-        if (secondary.hasKeys) {
-          hit = !secondary.hit;
-        }
-      } else {
-        const secondary = matchAnyLiteralEntryKey(entry.keys_secondary, lowerText);
-        if (secondary.hasKeys) {
-          hit = logic === 0 ? secondary.hit : !secondary.hit;
-        }
-      }
-    }
-
-    // Probability-based activation
-    if (hit && entry.use_probability) {
-      const prob = normalizeEntryProbability(entry.probability);
-      hit = Math.random() * 100 < prob;
-    }
-
-    if (hit) {
+    if (matchesWorldBookEntry(entry, lowerText, rawText)) {
       matched.push(toMatchedEntry(entry));
       matchedIds.add(entry.id);
     }
   }
-}
-
-function forEachEntryKey(value, onKey) {
-  const text = String(value || '');
-  let hasKey = false;
-  let start = 0;
-  for (let index = 0; index <= text.length; index++) {
-    if (index !== text.length && text[index] !== ',') {
-      continue;
-    }
-
-    const key = text.slice(start, index).trim();
-    if (key) {
-      hasKey = true;
-      if (onKey(key) === false) {
-        break;
-      }
-    }
-    start = index + 1;
-  }
-  return hasKey;
-}
-
-function matchesStringModeEntryKey(key, lowerText, rawText) {
-  const regexKey = parseStringModeRegexKey(key);
-  if (regexKey) {
-    try {
-      const regex = new RegExp(regexKey.pattern, regexKey.flags);
-      return regex.test(rawText);
-    } catch {
-      // Invalid regex, fall back to literal match
-    }
-  }
-  return lowerText.includes(key.toLowerCase());
-}
-
-function parseStringModeRegexKey(key) {
-  if (!key || key[0] !== '/') {
-    return null;
-  }
-  const finalSlash = key.lastIndexOf('/');
-  if (finalSlash <= 1) {
-    return null;
-  }
-  const flags = key.slice(finalSlash + 1);
-  for (let index = 0; index < flags.length; index++) {
-    if (!'gimsuy'.includes(flags[index])) {
-      return null;
-    }
-  }
-  const pattern = key.slice(1, finalSlash);
-  if (containsRegexLineTerminator(pattern)) {
-    return null;
-  }
-  return { pattern, flags };
-}
-
-function containsRegexLineTerminator(value) {
-  for (let index = 0; index < value.length; index++) {
-    const code = value.charCodeAt(index);
-    if (code === 10 || code === 13 || code === 0x2028 || code === 0x2029) {
-      return true;
-    }
-  }
-  return false;
-}
-
-function matchAnyLiteralEntryKey(value, lowerText) {
-  let hit = false;
-  const hasKeys = forEachEntryKey(value, (key) => {
-    if (lowerText.includes(key.toLowerCase())) {
-      hit = true;
-      return false;
-    }
-    return true;
-  });
-  return { hasKeys, hit };
-}
-
-function matchAllLiteralEntryKeys(value, lowerText) {
-  let hit = true;
-  const hasKeys = forEachEntryKey(value, (key) => {
-    if (!lowerText.includes(key.toLowerCase())) {
-      hit = false;
-      return false;
-    }
-    return true;
-  });
-  return { hasKeys, hit: hasKeys && hit };
-}
-
-function normalizeScanTexts(texts) {
-  if (!Array.isArray(texts)) {
-    return typeof texts === 'string' && texts.length > 0 ? [texts] : [];
-  }
-
-  const normalized = [];
-  for (const text of texts) {
-    if (typeof text === 'string' && text.length > 0) {
-      normalized.push(text);
-    }
-  }
-  return normalized;
-}
-
-function applyGroupInclusion(entryById, matched, matchedIds) {
-  const groups = new Map();
-  for (const m of matched) {
-    const src = entryById.get(m.id);
-    if (src && src.inclusion_group) {
-      if (!groups.has(src.inclusion_group)) {
-        groups.set(src.inclusion_group, []);
-      }
-      groups.get(src.inclusion_group).push(m);
-    }
-  }
-
-  for (const groupMatches of groups.values()) {
-    if (groupMatches.length <= 1) {
-      continue;
-    }
-
-    let totalWeight = 0;
-    for (const match of groupMatches) {
-      totalWeight += getGroupMatchWeight(entryById, match);
-    }
-    let roll = Math.random() * totalWeight;
-    let winnerIdx = 0;
-    for (let i = 0; i < groupMatches.length; i++) {
-      roll -= getGroupMatchWeight(entryById, groupMatches[i]);
-      if (roll <= 0) {
-        winnerIdx = i;
-        break;
-      }
-    }
-
-    for (let i = 0; i < groupMatches.length; i++) {
-      if (i !== winnerIdx) {
-        const loser = groupMatches[i];
-        const loserIdx = matched.indexOf(loser);
-        if (loserIdx !== -1) {
-          matched.splice(loserIdx, 1);
-        }
-        matchedIds.delete(loser.id);
-      }
-    }
-  }
-}
-
-function getGroupMatchWeight(entryById, match) {
-  const src = entryById.get(match.id);
-  return Math.max(normalizeEntryGroupWeight(src?.group_weight), 1);
 }
 
 function toMatchedIdSet(matched) {
@@ -815,123 +612,8 @@ function toMatchedEntry(entry) {
 }
 
 
-// ── Sticky / Cooldown / Delay State Helpers ──
-
-let _messageCounter = 0;
-let _counterInitialized = false;
-
-function ensureMessageCounterInitialized(database) {
-  // Lazy-init: recover counter from persisted state so sticky/cooldown survive restarts
-  if (_counterInitialized) {
-    return;
-  }
-  _counterInitialized = true;
-  try {
-    const row = database
-      .prepare(
-        `SELECT MAX(last_activated_message) AS a, MAX(last_deactivated_message) AS d,
-                MAX(first_seen_message) AS f FROM world_book_entry_state`
-      )
-      .get();
-    const maxSeen = Math.max(
-      normalizeMessageCount(row?.a, 0),
-      normalizeMessageCount(row?.d, 0),
-      normalizeMessageCount(row?.f, 0)
-    );
-    if (maxSeen > _messageCounter) {
-      _messageCounter = maxSeen;
-    }
-  } catch {
-    // Table may not exist yet; ignore
-  }
-}
-
-function getNextMessageCount(database) {
-  ensureMessageCounterInitialized(database);
-  _messageCounter = normalizeMessageCount(_messageCounter, 0);
-  return ++_messageCounter;
-}
-
-function peekNextMessageCount(database) {
-  ensureMessageCounterInitialized(database);
-  return normalizeMessageCount(_messageCounter, 0) + 1;
-}
-
-function getEntryStates(database, entryIds) {
-  const states = new Map();
-  if (!entryIds.length) return states;
-
-  const placeholders = entryIds.map(() => '?').join(',');
-  const rows = database
-    .prepare(`SELECT * FROM world_book_entry_state WHERE entry_id IN (${placeholders})`)
-    .all(...entryIds);
-
-  for (const row of rows) {
-    states.set(row.entry_id, {
-      last_activated_message: normalizeMessageCount(row.last_activated_message, 0),
-      last_deactivated_message: normalizeMessageCount(row.last_deactivated_message, 0),
-      first_seen_message: normalizeMessageCount(row.first_seen_message, 0),
-      sticky_remaining: normalizeMessageCount(row.sticky_remaining, 0),
-      was_active: row.was_active ? 1 : 0
-    });
-  }
-  return states;
-}
-
-function updateEntryStates(database, entries, matchedIds, entryStates, messageCount) {
-  const persistEntryState = database.prepare(
-    `UPDATE world_book_entry_state
-     SET last_activated_message = ?, last_deactivated_message = ?, first_seen_message = ?,
-         sticky_remaining = ?, was_active = ?
-     WHERE entry_id = ?`
-  );
-  for (const entry of entries) {
-    const state = entryStates.get(entry.id);
-    if (!state) continue;
-
-    const isNowActive = matchedIds.has(entry.id);
-    const wasActive = state.was_active ? true : false;
-
-    if (isNowActive) {
-      // Entry is active in this round
-      if (!wasActive) {
-        // Newly activated - set sticky counter
-        const sticky = normalizeOptionalEntryNumber(entry.sticky);
-        if (sticky != null && sticky > 0) {
-          state.sticky_remaining = sticky;
-        }
-        state.last_activated_message = messageCount;
-      }
-      // The activation round counts toward the configured sticky window.
-      if (state.sticky_remaining > 0) {
-        state.sticky_remaining--;
-      }
-      state.was_active = 1;
-    } else {
-      // Entry is NOT active in this round
-      if (wasActive) {
-        // Just deactivated — start cooldown
-        state.last_deactivated_message = messageCount;
-        state.sticky_remaining = 0;
-      }
-      state.was_active = 0;
-    }
-
-    // Persist state
-    persistEntryState.run(
-      state.last_activated_message,
-      state.last_deactivated_message,
-      state.first_seen_message,
-      state.sticky_remaining,
-      state.was_active ? 1 : 0,
-      entry.id
-    );
-  }
-}
-
-// Reset message counter (for testing)
 export function resetMessageCounter() {
-  _messageCounter = 0;
+  resetWorldBookMessageCounter();
 }
 
 export function buildWorldBookContext(entries = []) {
@@ -1036,28 +718,16 @@ function collectAtDepthEntries(entries) {
 // ── Internal Helpers ──
 
 function listEntries(database, bookId) {
-  return database
-    .prepare(
-      `SELECT * FROM world_book_entries
-       WHERE world_book_id = ?
-       ORDER BY order_index ASC, rowid ASC`
-    )
-    .all(bookId)
-    .map(toEntry);
+  return listWorldBookEntryRows(database, bookId).map(toEntry);
 }
 
 function getEntry(database, entryId) {
-  const row = database
-    .prepare('SELECT * FROM world_book_entries WHERE id = ?')
-    .get(entryId);
+  const row = readWorldBookEntryRow(database, entryId);
   return row ? toEntry(row) : null;
 }
 
 function getOwnedWorldBook(database, userId, bookId) {
-  const row = database
-    .prepare('SELECT * FROM world_books WHERE id = ? AND user_id = ?')
-    .get(bookId, userId);
-  return row || null;
+  return readOwnedWorldBookRow(database, userId, bookId);
 }
 
 function getOwnedCharacter(database, userId, characterId) {
@@ -1065,10 +735,7 @@ function getOwnedCharacter(database, userId, characterId) {
   if (!id) {
     return null;
   }
-  const row = database
-    .prepare('SELECT id FROM characters WHERE id = ? AND user_id = ?')
-    .get(id, userId);
-  return row || null;
+  return readOwnedCharacterRow(database, userId, id);
 }
 
 function normalizeOwnedCharacterId(database, userId, value) {
@@ -1083,9 +750,7 @@ function normalizeOwnedCharacterId(database, userId, value) {
 }
 
 function touchWorldBook(database, bookId) {
-  database
-    .prepare('UPDATE world_books SET updated_at = ? WHERE id = ?')
-    .run(nowIso(), bookId);
+  touchWorldBookRecord(database, bookId);
 }
 
 function normalizeName(name) {

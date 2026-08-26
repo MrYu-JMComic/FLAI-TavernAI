@@ -5,6 +5,7 @@
 
 import { z } from 'zod';
 import { THINKING_LEVELS } from '../../../shared/providerThinking.js';
+import { CHARACTER_CONTENT_LIMITS } from '../domain/characters/limits.js';
 
 const STATUS_BLUEPRINT_VARIABLE_LIMIT = 60;
 const BACKGROUND_IMAGE_INPUT_MAX_LENGTH = 6_000_000;
@@ -110,10 +111,10 @@ export const createCharacterSchema = z.object({
   avatarUrl: z.string().optional().default(''),
   gender: z.string().max(20).trim().optional().default(''),
   age: z.string().max(20).trim().optional().default(''),
-  background: z.string().max(10000, '背景最多 10000 字').optional().default(''),
-  worldview: z.string().max(10000, '世界观最多 10000 字').optional().default(''),
-  persona: z.string().max(10000, '人设最多 10000 字').optional().default(''),
-  openingMessage: z.string().max(5000, '开场白最多 5000 字').optional().default(''),
+  background: z.string().max(CHARACTER_CONTENT_LIMITS.background, '背景最多 10000 字').optional().default(''),
+  worldview: z.string().max(CHARACTER_CONTENT_LIMITS.worldview, '世界观最多 10000 字').optional().default(''),
+  persona: z.string().max(CHARACTER_CONTENT_LIMITS.persona, '人设最多 10000 字').optional().default(''),
+  openingMessage: z.string().max(CHARACTER_CONTENT_LIMITS.openingMessage, '开场白最多 5000 字').optional().default(''),
   visibility: z.enum(['public', 'private']).optional().default('private'),
   tags: z.array(z.string().max(30)).max(20).optional().default([]),
   renderPlugins: z.array(z.any()).max(20).optional().default([]),
@@ -275,6 +276,7 @@ export const saveProviderSchema = z.object({
   apiKey: z.string().max(500).optional(),
   clearApiKey: z.boolean().optional().default(false),
   supportsReasoning: z.boolean().optional(),
+  allowPrivateNetwork: z.boolean().optional().default(false),
   extraBody: z.union([z.record(z.any()), z.string().max(50000)]).optional()
 });
 
@@ -313,6 +315,38 @@ export const saveConversationSettingsSchema = z.object({
 
 export const createConversationSchema = z.object({
   characterId: z.string().min(1, '角色 ID 不能为空')
+});
+
+const cursorSchema = z.string().max(2048).trim().optional();
+const cursorLimitSchema = z.coerce.number().int().min(1).max(200).optional();
+
+export const characterListQuerySchema = z.object({
+  search: z.string().max(500).trim().optional(),
+  sort: z.enum(['created', 'used', 'name']).optional(),
+  tag: z.string().max(120).trim().optional(),
+  pagination: z.enum(['cursor']).optional(),
+  limit: cursorLimitSchema,
+  cursor: cursorSchema
+});
+
+export const conversationListQuerySchema = z.object({
+  characterId: z.string().max(120).trim().optional(),
+  pagination: z.enum(['cursor']).optional(),
+  limit: cursorLimitSchema,
+  cursor: cursorSchema
+});
+
+export const messageListQuerySchema = z.object({
+  limit: cursorLimitSchema,
+  cursor: cursorSchema
+});
+
+export const economyHistoryQuerySchema = z.object({
+  currencyType: z.enum(['gold', 'silver', 'copper', 'gem', 'credit']).optional(),
+  pagination: z.enum(['cursor']).optional(),
+  limit: cursorLimitSchema,
+  offset: z.coerce.number().int().min(0).max(1_000_000).optional(),
+  cursor: cursorSchema
 });
 
 export const bulkDeleteSchema = z.object({
@@ -652,4 +686,39 @@ export function validate(schema, source = 'body') {
     }
     next();
   };
+}
+
+const requestParamBoundarySchema = z.record(z.string(), z.string().max(500));
+const requestQueryBoundarySchema = z.record(
+  z.string(),
+  z.union([
+    z.string().max(20_000),
+    z.array(z.string().max(20_000)).max(100)
+  ])
+).superRefine((value, context) => {
+  if (Object.keys(value).length > 100) {
+    context.addIssue({ code: 'custom', message: '查询参数过多' });
+  }
+});
+const jsonBoundarySchema = z.lazy(() => z.union([
+  z.string(),
+  z.number().finite(),
+  z.boolean(),
+  z.null(),
+  z.array(jsonBoundarySchema).max(10_000),
+  z.record(z.string(), jsonBoundarySchema)
+]));
+
+export function validateAuthenticatedRequestBoundary(request, response, next) {
+  const result = z.object({
+    params: requestParamBoundarySchema,
+    query: requestQueryBoundarySchema,
+    body: jsonBoundarySchema.optional()
+  }).safeParse({ params: request.params || {}, query: request.query || {}, body: request.body });
+  if (!result.success) {
+    const message = result.error.issues.map((issue) => issue.message).join('; ');
+    response.status(400).json({ error: message || '请求参数无效' });
+    return;
+  }
+  next();
 }

@@ -4,7 +4,11 @@ import {
   getConversationEconomyState,
   getTransactionHistory
 } from '../modules/economy.js';
-import { economyTransactionSchema, validate } from '../validations/schemas.js';
+import {
+  economyHistoryQuerySchema,
+  economyTransactionSchema,
+  validate
+} from '../validations/schemas.js';
 
 export function createConversationEconomyRouter(ctx) {
   const { db, requireAuth } = ctx;
@@ -33,16 +37,21 @@ export function createConversationEconomyRouter(ctx) {
     }
   });
 
-  router.get('/history', requireAuth, (request, response) => {
+  router.get('/history', requireAuth, validate(economyHistoryQuerySchema, 'query'), (request, response) => {
+    const query = request.validatedQuery;
     const history = getTransactionHistory(db, request.auth.user.id, request.params.id, {
-      currencyType: request.query.currencyType,
-      limit: request.query.limit,
-      offset: request.query.offset
+      currencyType: query.currencyType,
+      pagination: query.pagination,
+      limit: query.limit,
+      offset: query.offset,
+      cursor: query.cursor
     });
     if (!history) {
       response.status(404).json({ error: '对话不存在' });
       return;
     }
+    if (query.pagination === 'cursor') response.setHeader('X-Next-Cursor', history.nextCursor);
+    if (query.offset !== undefined) response.setHeader('Deprecation', 'true');
     response.json(history);
   });
 

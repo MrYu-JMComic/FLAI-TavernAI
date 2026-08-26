@@ -5,11 +5,13 @@ import { withSavepoint } from './savepoint.js';
 import { recordWorldEvent } from './worldEvents.js';
 import { CastDomainError } from '../domain/cast/errors.js';
 import {
-  createCastActivity,
   resolveCastMember,
-  updateCastActivity,
   updateCastMemberProfile,
-} from '../services/cast/castCommandService.js';
+} from '../services/cast/commands/memberCommands.js';
+import {
+  createCastActivity,
+  updateCastActivity
+} from '../services/cast/commands/runtimeCommands.js';
 import {
   getCastActivities,
   getCastMemberDetail,

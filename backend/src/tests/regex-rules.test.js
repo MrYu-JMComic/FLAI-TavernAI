@@ -1,10 +1,19 @@
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
 import test from 'node:test';
 
 process.env.FLAI_DB_PATH = ':memory:';
 process.env.APP_SECRET = 'test-secret';
 
 const { applyRegexRules, testRegexRule } = await import('../modules/characters.js');
+const charactersSource = fs.readFileSync(new URL('../modules/characters.js', import.meta.url), 'utf8');
+const userRegexSources = [
+  '../modules/characters.js',
+  '../modules/worldBooks.js',
+  '../services/characterAssistant.js',
+  '../services/exportEnvelopes.js',
+  '../services/worldBookMatchPreview.js'
+].map((path) => fs.readFileSync(new URL(path, import.meta.url), 'utf8'));
 
 // ── testRegexRule: contain mode ──
 
@@ -54,6 +63,12 @@ test('testRegexRule regex mode returns empty matches on invalid regex', () => {
   assert.deepEqual(result.matches, []);
 });
 
+test('testRegexRule rejects potentially catastrophic regex patterns', () => {
+  const result = testRegexRule({ pattern: '(a+)+$', mode: 'regex' }, 'aaaa!');
+  assert.equal(result.pass, false);
+  assert.deepEqual(result.matches, []);
+});
+
 // ── testRegexRule: preset mode ──
 
 test('testRegexRule preset mode always passes', () => {
@@ -72,7 +87,8 @@ test('testRegexRule defaults to regex mode when mode is not specified', () => {
 
 // ── applyRegexRules: scriptMode ──
 
-test('applyRegexRules applies jsScript when scriptMode is enabled', () => {
+test('applyRegexRules ignores stored scripts without executing them', () => {
+  delete globalThis.__flaiRegexScriptExecuted;
   const rules = [
     {
       label: 'uppercase script',
@@ -82,11 +98,12 @@ test('applyRegexRules applies jsScript when scriptMode is enabled', () => {
       scope: 'input',
       enabled: true,
       scriptMode: 1,
-      jsScript: 'return text.toUpperCase();'
+      jsScript: 'globalThis.__flaiRegexScriptExecuted = true; return text.toUpperCase();'
     }
   ];
   const result = applyRegexRules('hello world', rules, 'input');
-  assert.equal(result, 'HELLO WORLD');
+  assert.equal(result, 'hello world');
+  assert.equal(globalThis.__flaiRegexScriptExecuted, undefined);
 });
 
 test('applyRegexRules falls back to replacement when scriptMode is disabled', () => {
@@ -121,37 +138,27 @@ test('applyRegexRules falls back to replacement when jsScript is empty', () => {
   assert.equal(result, 'hi world');
 });
 
-test('applyRegexRules scriptMode receives text, matches, and rule args', () => {
+test('applyRegexRules skips potentially catastrophic regex patterns', () => {
   const rules = [
     {
-      label: 'args test',
-      pattern: '(\\w+)',
-      replacement: '',
+      label: 'unsafe pattern',
+      pattern: '(a+)+$',
+      replacement: 'blocked',
       flags: 'g',
       scope: 'input',
-      enabled: true,
-      scriptMode: 1,
-      jsScript: 'return matches.join(",");'
+      enabled: true
     }
   ];
-  const result = applyRegexRules('foo bar', rules, 'input');
-  assert.equal(result, 'foo,bar');
+  const result = applyRegexRules('aaaa!', rules, 'input');
+  assert.equal(result, 'aaaa!');
 });
 
-test('applyRegexRules handles script errors gracefully', () => {
-  const rules = [
-    {
-      label: 'bad script',
-      pattern: 'hello',
-      replacement: 'fallback',
-      flags: 'g',
-      scope: 'input',
-      enabled: true,
-      scriptMode: 1,
-      jsScript: 'throw new Error("boom");'
-    }
-  ];
-  // On error, falls through to original text (no replacement applied)
-  const result = applyRegexRules('hello world', rules, 'input');
-  assert.equal(result, 'hello world');
+test('backend regex rules contain no dynamic JavaScript execution primitive', () => {
+  assert.doesNotMatch(charactersSource, /\bnew\s+Function\b|\beval\s*\(/);
+});
+
+test('user-authored regex paths use the shared safe compiler', () => {
+  for (const source of userRegexSources) {
+    assert.doesNotMatch(source, /new\s+RegExp\s*\(/);
+  }
 });

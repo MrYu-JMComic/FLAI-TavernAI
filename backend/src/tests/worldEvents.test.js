@@ -57,6 +57,14 @@ test('world events are isolated, normalized and support incremental cursors', ()
   const incremental = listWorldEvents(database, userId, conversationId, { afterCursor: first.cursor });
   assert.deepEqual(incremental.events.map(event => event.id), [second.id]);
   assert.equal(incremental.nextCursor, second.cursor);
+  const audits = database.prepare(
+    'SELECT domain, operation, subject_id FROM automation_audit_events WHERE user_id = ?'
+  ).all(userId).map((row) => ({ ...row }));
+  assert.deepEqual(audits, [{
+    domain: 'cast',
+    operation: 'cast.relationship.changed',
+    subject_id: conversationId
+  }]);
 
   assert.deepEqual(deleteConversationWorldEvents(database, userId, conversationId), { deleted: 2 });
   assert.deepEqual(listWorldEvents(database, userId, conversationId).events, []);
@@ -74,5 +82,10 @@ test('world event ledger receives key gameplay mutations', () => {
   assert.ok(types.has('scene.location.discovered'));
   assert.ok(types.has('status.created'));
   assert.ok(types.has('economy.transaction.created'));
+  const auditDomains = new Set(database.prepare(
+    'SELECT domain FROM automation_audit_events WHERE user_id = ?'
+  ).all(userId).map((row) => row.domain));
+  assert.equal(auditDomains.has('world'), true);
+  assert.equal(auditDomains.has('economy'), true);
   database.close();
 });

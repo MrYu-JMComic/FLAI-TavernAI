@@ -4,6 +4,12 @@ import { normalizeBoolean } from '../utils/boolean.js';
 import { normalizeFiniteNumber } from '../utils/number.js';
 import { normalizeRegexFlags } from '../../../shared/regexFlags.js';
 import {
+  assertSafeRegexPattern,
+  compileSafeRegex,
+  REGEX_PATTERN_MAX_LENGTH,
+  REGEX_TEXT_MAX_LENGTH
+} from '../services/regexSafety.js';
+import {
   avatarShortUrl,
   characterBackgroundOwnerTypes,
   deleteAvatarAsset,
@@ -12,6 +18,14 @@ import {
 } from '../services/avatars.js';
 import { normalizeAdvancedSettings } from './advancedSettings.js';
 import { withSavepoint } from './savepoint.js';
+import {
+  createCursorScope,
+  decodeCursor,
+  encodeCursor,
+  normalizeCursorLimit
+} from '../services/cursorPagination.js';
+import { measureSync } from '../services/performanceMetrics.js';
+import { CHARACTER_CONTENT_LIMITS } from '../domain/characters/limits.js';
 
 const characterColumns = `characters.*,
   avatar_assets.id AS avatar_asset_id,
@@ -26,11 +40,33 @@ const MAX_REGEX_RULES = 40;
 const MAX_RENDER_PLUGINS = 20;
 
 export function listCharacters(database, userId, options = {}) {
+  return queryCharacterRows(database, userId, options)
+    .map((row) => toCharacter(row, undefined, userId));
+}
+
+export function listCharacterPage(database, userId, options = {}) {
+  const limit = normalizeCursorLimit(options.limit);
+  const rows = queryCharacterRows(database, userId, { ...options, limit: limit + 1, paginated: true });
+  const hasMore = rows.length > limit;
+  const pageRows = hasMore ? rows.slice(0, limit) : rows;
+  const scope = characterCursorScope(userId, options);
+  return {
+    items: pageRows.map((row) => toCharacter(row, undefined, userId)),
+    nextCursor: hasMore && pageRows.length
+      ? encodeCursor(scope, characterCursorValues(pageRows.at(-1), options.sort))
+      : ''
+  };
+}
+
+function queryCharacterRows(database, userId, options = {}) {
+  options = options && typeof options === 'object' ? options : {};
   const { search = '', sort = 'created', tag = '' } = options ?? {};
   const query = String(search || '').trim();
   const tagFilter = String(tag || '').trim();
   const params = [userId, userId, userId];
-  let sql = `SELECT ${characterColumns} FROM characters ${avatarAssetJoin} WHERE (characters.user_id = ? OR visibility = 'public')`;
+  let sql = `SELECT ${characterColumns}, characters.rowid AS _cursor_rowid
+    FROM characters ${avatarAssetJoin}
+    WHERE (characters.user_id = ? OR visibility = 'public')`;
 
   if (query) {
     sql += ' AND (name LIKE ? OR tags LIKE ? OR persona LIKE ? OR background LIKE ?)';
@@ -43,6 +79,29 @@ export function listCharacters(database, userId, options = {}) {
     params.push(userId, tagFilter);
   }
 
+  if (options.paginated && options.cursor) {
+    const valueCount = sort === 'name' ? 3 : 2;
+    const cursor = decodeCursor(options.cursor, characterCursorScope(userId, options), { values: valueCount });
+    if (sort === 'name') {
+      const [name, createdAt, rowId] = cursor;
+      sql += ` AND (
+        characters.name COLLATE NOCASE > ? COLLATE NOCASE
+        OR (characters.name COLLATE NOCASE = ? COLLATE NOCASE AND (
+          characters.created_at < ?
+          OR (characters.created_at = ? AND characters.rowid < ?)
+        ))
+      )`;
+      params.push(name, name, createdAt, createdAt, rowId);
+    } else {
+      const [sortValue, rowId] = cursor;
+      const expression = sort === 'used'
+        ? 'COALESCE(characters.last_used_at, characters.created_at)'
+        : 'characters.created_at';
+      sql += ` AND (${expression} < ? OR (${expression} = ? AND characters.rowid < ?))`;
+      params.push(sortValue, sortValue, rowId);
+    }
+  }
+
   if (sort === 'used') {
     sql += ' ORDER BY COALESCE(characters.last_used_at, characters.created_at) DESC, characters.rowid DESC';
   } else if (sort === 'name') {
@@ -51,7 +110,27 @@ export function listCharacters(database, userId, options = {}) {
     sql += ' ORDER BY characters.created_at DESC, characters.rowid DESC';
   }
 
-  return database.prepare(sql).all(...params).map((row) => toCharacter(row, undefined, userId));
+  if (options.paginated) {
+    sql += ' LIMIT ?';
+    params.push(normalizeCursorLimit(options.limit, 51, 201));
+  }
+
+  return measureSync('sqlite.characters.list', () => database.prepare(sql).all(...params));
+}
+
+function characterCursorScope(userId, options = {}) {
+  return createCursorScope('characters', {
+    userId,
+    search: String(options.search || '').trim(),
+    sort: options.sort || 'created',
+    tag: String(options.tag || '').trim()
+  });
+}
+
+function characterCursorValues(row, sort = 'created') {
+  if (sort === 'name') return [row.name, row.created_at, Number(row._cursor_rowid)];
+  if (sort === 'used') return [row.last_used_at || row.created_at, Number(row._cursor_rowid)];
+  return [row.created_at, Number(row._cursor_rowid)];
 }
 
 export function getCharacter(database, userId, characterId) {
@@ -367,6 +446,10 @@ export function testRegexRule(rule, text) {
   const pattern = String(rule.pattern || '');
   const input = String(text || '');
 
+  if (pattern.length > REGEX_PATTERN_MAX_LENGTH || input.length > REGEX_TEXT_MAX_LENGTH) {
+    return { pass: false, matches: [] };
+  }
+
   if (mode === 'preset') {
     return { pass: true, matches: [] };
   }
@@ -381,13 +464,12 @@ export function testRegexRule(rule, text) {
   }
 
   // mode === 'regex'
-  try {
-    const re = new RegExp(pattern, rule.flags || 'g');
-    const matches = input.match(re) || [];
-    return { pass: matches.length > 0, matches };
-  } catch {
+  const regex = compileSafeRegex(pattern, rule.flags || 'g');
+  if (!regex) {
     return { pass: false, matches: [] };
   }
+  const matches = input.match(regex) || [];
+  return { pass: matches.length > 0, matches };
 }
 
 export function applyRegexRules(text, rules, phase) {
@@ -400,18 +482,20 @@ export function applyRegexRules(text, rules, phase) {
       continue;
     }
 
+    if (value.length > REGEX_TEXT_MAX_LENGTH) {
+      break;
+    }
+
+    // Script fields remain readable for data compatibility, but server-side
+    // execution would grant stored user content access to the Node.js process.
+    if (rule.scriptMode && rule.jsScript) {
+      continue;
+    }
+
     try {
-      if (rule.scriptMode && rule.jsScript) {
-        const fn = new Function('text', 'matches', 'rule', rule.jsScript);
-        const deadline = Date.now() + 100; // 100ms timeout guard
-        const result = fn(value, value.match(new RegExp(rule.pattern, rule.flags || 'g')) || [], rule);
-        if (Date.now() > deadline) {
-          console.warn('[regex] script exceeded 100ms budget, consider optimizing:', rule.label);
-        }
-        value = String(result ?? value);
-      } else {
-        value = value.replace(new RegExp(rule.pattern, rule.flags || 'g'), rule.replacement || '');
-      }
+      const regex = compileSafeRegex(rule.pattern, rule.flags || 'g');
+      if (!regex) continue;
+      value = value.replace(regex, rule.replacement || '');
     } catch {
       continue;
     }
@@ -450,10 +534,10 @@ function normalizeCharacterPayload(payload = {}) {
     avatarUrl: String(payload.avatarDataUrl || payload.avatarUrl || '').trim(),
     gender: String(payload.gender || '').trim().slice(0, 24),
     age: String(payload.age || '').trim().slice(0, 24),
-    background: String(payload.background || '').slice(0, 4000),
-    worldview: String(payload.worldview || '').slice(0, 4000),
-    persona: String(payload.persona || '').slice(0, 4000),
-    openingMessage: String(payload.openingMessage || '').slice(0, 2000),
+    background: String(payload.background || '').slice(0, CHARACTER_CONTENT_LIMITS.background),
+    worldview: String(payload.worldview || '').slice(0, CHARACTER_CONTENT_LIMITS.worldview),
+    persona: String(payload.persona || '').slice(0, CHARACTER_CONTENT_LIMITS.persona),
+    openingMessage: String(payload.openingMessage || '').slice(0, CHARACTER_CONTENT_LIMITS.openingMessage),
     visibility: normalizeVisibility(payload.visibility),
     tags: normalizeTags(payload.tags),
     renderPlugins: normalizeRenderPlugins(payload.renderPlugins),
@@ -546,7 +630,7 @@ function normalizeRegexRules(rules = []) {
     const flags = normalizeRegexFlags(rule.flags);
     const pattern = String(rule.pattern || '').trim();
     if (pattern) {
-      new RegExp(pattern, flags);
+      assertSafeRegexPattern(pattern, flags);
     }
 
     normalized.push({
@@ -569,10 +653,12 @@ function normalizeRegexRules(rules = []) {
   return normalized;
 }
 
-function normalizeRenderPlugins(plugins = []) {
+function normalizeRenderPlugins(plugins = [], options = {}) {
   if (!Array.isArray(plugins)) {
     return [];
   }
+
+  const rejectUnsafe = options.rejectUnsafe !== false;
 
   const normalized = [];
   for (const plugin of plugins) {
@@ -584,7 +670,12 @@ function normalizeRenderPlugins(plugins = []) {
     if (!pattern) {
       continue;
     }
-    new RegExp(pattern, flags);
+    if (!compileSafeRegex(pattern, flags)) {
+      if (rejectUnsafe) {
+        assertSafeRegexPattern(pattern, flags);
+      }
+      continue;
+    }
 
     normalized.push({
       id: plugin.id,
@@ -639,7 +730,7 @@ function toCharacter(row, regexRules = undefined, viewerId = undefined) {
     persona: row.persona || '',
     openingMessage: row.opening_message || '',
     tags: legacyTags,
-    renderPlugins: parseJson(row.render_plugins, []),
+    renderPlugins: normalizeRenderPlugins(parseJson(row.render_plugins, []), { rejectUnsafe: false }),
     authorAdvancedSettings: parseJson(row.author_advanced_settings, {}),
     likeCount: Number(row.like_count || 0),
     favoriteCount: Number(row.favorite_count || 0),

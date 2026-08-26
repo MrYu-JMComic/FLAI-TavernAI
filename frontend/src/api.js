@@ -126,11 +126,16 @@ export {
 } from './api/presets.js';
 export {
   checkProviderHealth,
+  createProviderProfile,
+  deleteProviderProfile,
   fetchDeepSeekBalance,
   fetchProviderCapabilities,
   fetchProviderModels,
   getProviderSettings,
-  saveProviderSettings
+  listProviderProfiles,
+  selectProviderProfile,
+  saveProviderSettings,
+  updateProviderProfile
 } from './api/providers.js';
 export {
   fetchRegexRules,

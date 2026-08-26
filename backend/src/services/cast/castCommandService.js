@@ -1,6 +1,5 @@
 import { isDeepStrictEqual } from 'node:util';
 import { newId, nowIso } from '../../security.js';
-import { withSavepoint } from '../../modules/savepoint.js';
 import {
   castBehaviorRuleKey,
   castContentKey,
@@ -55,8 +54,11 @@ import {
 import {
   findRollbackForEvent,
   getCastAuditEvent,
-  insertCastAuditEvent,
 } from '../../repositories/auditRepository.js';
+import {
+  recordCastAudit as recordAudit,
+  runCastMutation
+} from './castMutationService.js';
 import {
   getCastActivity,
   getCastEmotionState,
@@ -1392,37 +1394,6 @@ function isEmptyCastMember(database, conversationId, member) {
     || member.memorySealed
   );
   return !hasProfile && Object.values(usage).every((count) => count === 0);
-}
-
-function recordAudit(database, context, data) {
-  return insertCastAuditEvent(database, {
-    id: newId(),
-    batchId: context.batchId,
-    actor: context.actor,
-    createdAt: nowIso(),
-    ...data,
-    metadata: {
-      ...(data.metadata || {}),
-      sourceKind: context.sourceKind,
-      evidence: context.evidence || null,
-    },
-  });
-}
-
-function runCastMutation(database, operation) {
-  try {
-    return withSavepoint(database, 'sp_cast_command', operation);
-  } catch (error) {
-    if (error instanceof CastDomainError) throw error;
-    const message = String(error?.message || '');
-    if (message.includes('UNIQUE constraint failed')) {
-      throw castConflict('Cast data conflicts with an existing record');
-    }
-    if (message.includes('CHECK constraint failed') || message.includes('FOREIGN KEY constraint failed')) {
-      throw new CastDomainError('Cast data violates a storage constraint');
-    }
-    throw error;
-  }
 }
 
 function sameResource(before, candidate) {

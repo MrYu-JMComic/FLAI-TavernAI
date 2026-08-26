@@ -4,7 +4,7 @@ import { createConversationTransaction } from './economy.js';
 import { listQuests, updateQuestObjective } from './quests.js';
 import { recordWorldEvent } from './worldEvents.js';
 import { withSavepoint } from './savepoint.js';
-import { upsertCastMemberItem } from '../services/cast/castCommandService.js';
+import { upsertCastMemberItem } from '../services/cast/commands/itemCommands.js';
 import { getCastItems, getProtagonist } from '../services/cast/castQueryService.js';
 
 export function listRewardGrants(database, userId, conversationId, options = {}) {

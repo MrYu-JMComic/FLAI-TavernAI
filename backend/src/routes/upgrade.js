@@ -218,7 +218,7 @@ export function createUpgradeRouter(ctx) {
         response.status(404).json({ error: '不支持的导入类型' });
         return;
       }
-      response.status(201).json(result);
+      response.status(result.dryRun ? 200 : 201).json(result);
     } catch (error) {
       response.status(400).json({ error: error?.message || '导入失败' });
     }
@@ -231,7 +231,14 @@ function buildProviderHealthSettings(ctx, userId, payload = {}) {
   if (!Object.keys(payload).length) {
     return providerWithSecret(ctx.getProviderRow(userId));
   }
-  const saved = providerWithSecret(ctx.getProviderRow(userId));
+  const providerId = String(payload.providerId || '').trim();
+  const row = ctx.getProviderRow(userId, providerId);
+  if (providerId && !row) {
+    const error = new Error('AI 供应商不存在');
+    error.status = 404;
+    throw error;
+  }
+  const saved = providerWithSecret(row);
   return {
     ...saved,
     providerType: payload.providerType || saved.providerType,

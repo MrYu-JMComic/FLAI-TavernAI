@@ -1,5 +1,6 @@
 import { newId, nowIso } from '../security.js';
 import { parseJson } from '../utils/json.js';
+import { recordAutomationAudit } from '../services/automationAudit.js';
 
 const EVENT_LIMIT_DEFAULT = 30;
 const EVENT_LIMIT_MAX = 100;
@@ -28,7 +29,24 @@ export function recordWorldEvent(database, userId, conversationId, payload = {})
     JSON.stringify(event.payload),
     createdAt
   );
-  return readWorldEvent(database, userId, conversationId, id);
+  const created = readWorldEvent(database, userId, conversationId, id);
+  if (isAutomatedSource(event.source)) {
+    recordAutomationAudit(database, userId, {
+      domain: auditDomain(event.eventType),
+      operation: event.eventType,
+      subjectType: event.entityType || 'conversation',
+      subjectId: event.entityId || conversationId,
+      sourceMessageId: event.payload.sourceMessageId,
+      jobId: event.payload.jobId,
+      providerType: event.payload.providerType,
+      model: event.payload.model,
+      planSummary: event.title || event.detail,
+      before: event.payload.before,
+      after: event.payload.after ?? event.payload,
+      rollbackOfId: event.payload.rollbackOfId
+    });
+  }
+  return created;
 }
 
 export function listWorldEvents(database, userId, conversationId, options = {}) {
@@ -139,4 +157,16 @@ function normalizeLimit(value) {
 
 function normalizeText(value, maxLength) {
   return String(value || '').trim().slice(0, maxLength);
+}
+
+function isAutomatedSource(value) {
+  const source = String(value || '').trim().toLowerCase();
+  return source && source !== 'manual' && source !== 'player' && !source.startsWith('user:');
+}
+
+function auditDomain(eventType) {
+  if (eventType.startsWith('economy.')) return 'economy';
+  if (eventType.startsWith('quest.')) return 'task';
+  if (eventType.startsWith('cast.')) return 'cast';
+  return 'world';
 }
