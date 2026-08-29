@@ -10,6 +10,37 @@ export function normalizeKatexSource(source) {
   return normalizeColorBoxContents(String(source ?? ''));
 }
 
+// Some providers escape TeX twice while serializing Markdown (for example,
+// `\\\\fcolorbox` or `\\\\(`). Collapse only control-sequence-looking runs so
+// ordinary LaTeX row breaks (`\\\\`) and prose backslashes remain untouched.
+export function normalizeEscapedKatexSource(source) {
+  const collapsed = collapseEscapedKatex(String(source ?? ''));
+  const normalized = containsColorBoxCommand(collapsed)
+    ? normalizeNestedDollarMath(collapsed)
+    : collapsed;
+  return normalizeKatexSource(normalized);
+}
+
+export function findColorBoxExpression(source, index = 0) {
+  const text = String(source ?? '');
+  const commandIndex = text.startsWith('\\\\', index) ? index + 1 : index;
+  const command = matchColorBoxCommand(text, commandIndex, commandIndex !== index);
+  if (!command) return null;
+
+  const argumentsList = readBracedArguments(
+    text,
+    commandIndex + command.name.length,
+    command.argumentCount
+  );
+  if (!argumentsList) return null;
+
+  return {
+    name: command.name,
+    start: index,
+    end: argumentsList.at(-1).contentEnd + 1
+  };
+}
+
 export function selectKatexSurfaceTextColor(backgroundColor) {
   const backgroundRgb = parseOpaqueRgbColor(backgroundColor);
   if (!backgroundRgb) return '';
@@ -100,9 +131,99 @@ function normalizeColorBoxContents(source) {
   return normalized;
 }
 
-function matchColorBoxCommand(source, index) {
+function collapseEscapedKatex(source) {
+  let normalized = '';
+  let cursor = 0;
+
+  while (cursor < source.length) {
+    if (source[cursor] !== '\\') {
+      normalized += source[cursor];
+      cursor += 1;
+      continue;
+    }
+
+    let runEnd = cursor + 1;
+    while (runEnd < source.length && source[runEnd] === '\\') runEnd += 1;
+    const runLength = runEnd - cursor;
+    const nextCharacter = source[runEnd] || '';
+
+    if (runLength >= 2 && runLength % 2 === 0 && isEscapedKatexControl(nextCharacter)) {
+      normalized += '\\';
+      cursor = runEnd;
+      continue;
+    }
+
+    // A generated `\\\\` row break should become the normal TeX `\\` break.
+    if (runLength >= 4 && runLength % 2 === 0 && /(?:\s|&|\[)/u.test(nextCharacter)) {
+      normalized += '\\'.repeat(runLength / 2);
+      cursor = runEnd;
+      continue;
+    }
+
+    normalized += source.slice(cursor, runEnd);
+    cursor = runEnd;
+  }
+
+  return normalized;
+}
+
+function normalizeNestedDollarMath(source) {
+  let normalized = '';
+  let cursor = 0;
+
+  while (cursor < source.length) {
+    if (
+      source[cursor] !== '$'
+      || source[cursor + 1] === '$'
+      || isEscapedControlSequence(source, cursor)
+    ) {
+      normalized += source[cursor];
+      cursor += 1;
+      continue;
+    }
+
+    const close = findUnescapedDollar(source, cursor + 1);
+    if (close === -1) {
+      normalized += source[cursor];
+      cursor += 1;
+      continue;
+    }
+
+    // The complete color-box expression is already in math mode. Dollar
+    // delimiters nested inside it would be interpreted as a second math shift,
+    // so keep their contents and drop only the delimiters.
+    normalized += source.slice(cursor + 1, close);
+    cursor = close + 1;
+  }
+
+  return normalized;
+}
+
+function containsColorBoxCommand(source) {
+  return COLOR_BOX_COMMANDS.some((command) => source.includes(command.name));
+}
+
+function findUnescapedDollar(source, start) {
+  for (let cursor = start; cursor < source.length; cursor += 1) {
+    if (
+      source[cursor] === '$'
+      && source[cursor - 1] !== '$'
+      && source[cursor + 1] !== '$'
+      && !isEscapedControlSequence(source, cursor)
+    ) {
+      return cursor;
+    }
+  }
+  return -1;
+}
+
+function isEscapedKatexControl(character) {
+  return /[A-Za-z(){};,:!%_]/u.test(character);
+}
+
+function matchColorBoxCommand(source, index, allowEscaped = false) {
   if (source[index] !== '\\') return null;
-  if (isEscapedControlSequence(source, index)) return null;
+  if (!allowEscaped && isEscapedControlSequence(source, index)) return null;
 
   for (const command of COLOR_BOX_COMMANDS) {
     if (!source.startsWith(command.name, index)) continue;

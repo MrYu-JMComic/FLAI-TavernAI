@@ -9,7 +9,8 @@ import { normalizeRegexFlags as normalizeSharedRegexFlags } from '../../../share
 import { recordFrontendDiagnostic } from '../diagnostics.js';
 import { reconcileDomChildren } from '../utils/domReconciler.js';
 import {
-  normalizeKatexSource,
+  findColorBoxExpression,
+  normalizeEscapedKatexSource,
   selectKatexSurfaceTextColor
 } from '../utils/katexCompatibility.js';
 import KatexPreviewDialog from './KatexPreviewDialog.vue';
@@ -42,7 +43,7 @@ const katexPlugin = typeof markdownItKatex === 'function'
   : markdownItKatex?.default;
 const compatibleKatex = {
   renderToString(source, options) {
-    return katex.renderToString(normalizeKatexSource(source), options);
+    return katex.renderToString(normalizeEscapedKatexSource(source), options);
   }
 };
 
@@ -67,24 +68,48 @@ const BACKSLASH_CHAR_CODE = 0x5c;
 const OPEN_PAREN_CHAR_CODE = 0x28;
 const OPEN_BRACKET_CHAR_CODE = 0x5b;
 const INLINE_MATH_CLOSE = '\\)';
+const ESCAPED_INLINE_MATH_OPEN = '\\\\(';
+const ESCAPED_INLINE_MATH_CLOSE = '\\\\)';
 const BLOCK_MATH_CLOSE = '\\]';
+const ESCAPED_BLOCK_MATH_OPEN = '\\\\[';
+const ESCAPED_BLOCK_MATH_CLOSE = '\\\\]';
+
+// A color box is a TeX expression even when the provider omits outer math
+// delimiters. Capture the balanced command as one token so KaTeX can render
+// the box and its nested `\(...\)` content together.
+function mathInlineColorBox(state, silent) {
+  const expression = findColorBoxExpression(state.src, state.pos);
+  if (!expression) return false;
+  if (!silent) {
+    const token = state.push('math_inline', 'math', 0);
+    token.markup = expression.name;
+    token.content = state.src.slice(expression.start, expression.end);
+  }
+  state.pos = expression.end;
+  return true;
+}
 
 // Inline rule for \(...\). Unterminated math falls through to plain text so
 // streaming responses never flash a KaTeX error mid-formula.
 function mathInlineParen(state, silent) {
   const start = state.pos;
-  if (state.src.charCodeAt(start) !== BACKSLASH_CHAR_CODE) return false;
-  if (state.src.charCodeAt(start + 1) !== OPEN_PAREN_CHAR_CODE) return false;
-  const end = state.src.indexOf(INLINE_MATH_CLOSE, start + 2);
+  const escaped = state.src.startsWith(ESCAPED_INLINE_MATH_OPEN, start);
+  const openLength = escaped ? ESCAPED_INLINE_MATH_OPEN.length : 2;
+  const closeDelimiter = escaped ? ESCAPED_INLINE_MATH_CLOSE : INLINE_MATH_CLOSE;
+  if (!escaped) {
+    if (state.src.charCodeAt(start) !== BACKSLASH_CHAR_CODE) return false;
+    if (state.src.charCodeAt(start + 1) !== OPEN_PAREN_CHAR_CODE) return false;
+  }
+  const end = state.src.indexOf(closeDelimiter, start + openLength);
   if (end === -1) return false;
-  const content = state.src.slice(start + 2, end);
+  const content = state.src.slice(start + openLength, end);
   if (!content.trim()) return false;
   if (!silent) {
     const token = state.push('math_inline', 'math', 0);
     token.markup = '\\(';
     token.content = content;
   }
-  state.pos = end + 2;
+  state.pos = end + closeDelimiter.length;
   return true;
 }
 
@@ -94,15 +119,20 @@ function mathBlockBracket(state, startLine, endLine, silent) {
   const start = state.bMarks[startLine] + state.tShift[startLine];
   const max = state.eMarks[startLine];
   if (state.sCount[startLine] - state.blkIndent >= 4) return false;
-  if (state.src.charCodeAt(start) !== BACKSLASH_CHAR_CODE) return false;
-  if (state.src.charCodeAt(start + 1) !== OPEN_BRACKET_CHAR_CODE) return false;
+  const escaped = state.src.startsWith(ESCAPED_BLOCK_MATH_OPEN, start);
+  const openLength = escaped ? ESCAPED_BLOCK_MATH_OPEN.length : 2;
+  const closeDelimiter = escaped ? ESCAPED_BLOCK_MATH_CLOSE : BLOCK_MATH_CLOSE;
+  if (!escaped) {
+    if (state.src.charCodeAt(start) !== BACKSLASH_CHAR_CODE) return false;
+    if (state.src.charCodeAt(start + 1) !== OPEN_BRACKET_CHAR_CODE) return false;
+  }
 
-  const firstLineTail = state.src.slice(start + 2, max);
+  const firstLineTail = state.src.slice(start + openLength, max);
   let content = null;
   let nextLine = startLine;
-  const closeIndex = firstLineTail.indexOf(BLOCK_MATH_CLOSE);
+  const closeIndex = firstLineTail.indexOf(closeDelimiter);
   if (closeIndex !== -1) {
-    if (firstLineTail.slice(closeIndex + 2).trim()) return false;
+    if (firstLineTail.slice(closeIndex + closeDelimiter.length).trim()) return false;
     content = firstLineTail.slice(0, closeIndex);
   } else {
     let buffer = firstLineTail;
@@ -112,12 +142,12 @@ function mathBlockBracket(state, startLine, endLine, silent) {
       const lineStart = state.bMarks[nextLine] + state.tShift[nextLine];
       const lineEnd = state.eMarks[nextLine];
       const line = state.src.slice(lineStart, lineEnd);
-      const lineClose = line.indexOf(BLOCK_MATH_CLOSE);
+      const lineClose = line.indexOf(closeDelimiter);
       if (lineClose === -1) {
         buffer += `\n${line}`;
         continue;
       }
-      if (line.slice(lineClose + 2).trim()) return false;
+      if (line.slice(lineClose + closeDelimiter.length).trim()) return false;
       content = `${buffer}\n${line.slice(0, lineClose)}`;
     }
   }
@@ -134,6 +164,7 @@ function mathBlockBracket(state, startLine, endLine, silent) {
 }
 
 md.inline.ruler.before('escape', 'math_inline_paren', mathInlineParen);
+md.inline.ruler.before('escape', 'math_inline_colorbox', mathInlineColorBox);
 md.block.ruler.before('fence', 'math_block_bracket', mathBlockBracket, {
   alt: ['paragraph', 'blockquote', 'list']
 });

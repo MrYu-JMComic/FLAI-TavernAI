@@ -169,6 +169,46 @@ test('auto sync plan verifies evidence, applies atomically, and is idempotent', 
   }
 });
 
+test('auto sync evidence matching tolerates normalized message formatting', () => {
+  const fixture = createFixture();
+  const { database, userId, conversationId } = fixture;
+  try {
+    ensureConversationProtagonist(database, userId, conversationId);
+    database.prepare(
+      `INSERT INTO messages (id, user_id, conversation_id, role, content, created_at)
+       VALUES (?, ?, ?, 'assistant', ?, ?)`
+    ).run(
+      'message-normalized-evidence',
+      userId,
+      conversationId,
+      'Ａｌｉｃｅ arrived at the clock tower.\nShe showed the iron key.',
+      '2025-01-01T00:01:00.000Z'
+    );
+
+    const result = applyCastChangePlan(database, userId, conversationId, {
+      version: 1,
+      operations: [{
+        op: 'member.create',
+        target: { name: 'Alice' },
+        changes: {},
+        evidence: {
+          messageId: 'message-normalized-evidence',
+          quote: 'Alice arrived at the clock tower. She showed the iron key.',
+        },
+      }],
+    }, {
+      sourceKind: 'auto_sync',
+      scope: 'conversation',
+      idempotencyKey: 'auto:normalized-evidence',
+    });
+
+    assert.equal(result.batch.status, 'applied');
+    assert.equal(getCastRoster(database, userId, conversationId).npcs[0].canonicalName, 'Alice');
+  } finally {
+    database.close();
+  }
+});
+
 test('a failing multi-operation plan rolls back every domain write and audit event', () => {
   const fixture = createFixture();
   const { database, userId, conversationId } = fixture;

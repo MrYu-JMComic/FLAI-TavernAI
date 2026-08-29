@@ -5,6 +5,7 @@ import {
   parseCastChangePlanText,
   validateCastChangePlan,
 } from '../../domain/cast/changePlan.js';
+import { normalizeCastText } from '../../domain/cast/normalization.js';
 import { CastDomainError, castForbidden, castNotFound } from '../../domain/cast/errors.js';
 import {
   getCastChangeBatchByKey,
@@ -258,7 +259,9 @@ function validateOperationEvidence(operation, evidenceById, sourceKind) {
   if (sourceKind !== 'auto_sync') return operation.evidence || null;
   const evidence = operation.evidence;
   const message = evidenceById.get(evidence.messageId);
-  if (!message || !message.content.includes(evidence.quote)) {
+  const messageText = message ? normalizeCastText(message.content, 20_000) : '';
+  const quote = normalizeCastText(evidence.quote, 1_000);
+  if (!message || !quote || !messageText.includes(quote)) {
     throw new CastDomainError('Auto sync evidence does not match an allowed conversation message', {
       code: 'CAST_PLAN_EVIDENCE',
       statusCode: 400,
