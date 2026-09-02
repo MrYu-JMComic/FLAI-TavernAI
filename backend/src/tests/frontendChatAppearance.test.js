@@ -115,7 +115,8 @@ test('chat appearance merges layered text fields without filter arrays', () => {
         customJsRiskAccepted: true,
         statusBarPrompt: 'User prompt',
         showWorldBookMatches: false
-      }
+      },
+      { allowAuthorDangerous: true }
     ),
     {
       desktopBackgroundUrl: '/author.png',
@@ -169,14 +170,16 @@ test('chat appearance only applies custom CSS and JS after risk confirmation', (
   assert.equal(
     mergeChatAppearance(
       { customCss: '.author {}', customCssEnabled: true, customCssRiskAccepted: true },
-      { customJs: 'user();', customJsEnabled: true, customJsRiskAccepted: true }
+      { customJs: 'user();', customJsEnabled: true, customJsRiskAccepted: true },
+      { allowAuthorDangerous: true }
     ).customCss,
     '.author {}'
   );
   assert.equal(
     mergeChatAppearance(
       { customCss: '.author {}', customCssEnabled: true, customCssRiskAccepted: true },
-      { customJs: 'user();', customJsEnabled: true, customJsRiskAccepted: true }
+      { customJs: 'user();', customJsEnabled: true, customJsRiskAccepted: true },
+      { allowAuthorDangerous: true }
     ).customJs,
     'user();'
   );

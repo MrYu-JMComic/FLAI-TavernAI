@@ -54,7 +54,7 @@ export function createConversationsRouter(ctx) {
       ? getConversationUsageSummaries(db, request.auth.user.id, page.rows.map((row) => row.id))
       : getConversationUsageSummaries(db, request.auth.user.id);
     const items = page.rows.map((row) => ({
-        ...toConversation(row, db),
+        ...toConversation(row, db, request.auth.user.id),
         usage: usageSummaries.get(row.id) || emptyUsageSummary()
       }));
     if (query.pagination === 'cursor') {

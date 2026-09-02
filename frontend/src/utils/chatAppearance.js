@@ -38,8 +38,16 @@ export function normalizeChatAppearance(input = {}) {
   };
 }
 
-export function mergeChatAppearance(author = {}, user = {}) {
+export function mergeChatAppearance(author = {}, user = {}, options = {}) {
   const authorSettings = normalizeChatAppearance(author);
+  if (options.allowAuthorDangerous !== true) {
+    authorSettings.customCss = '';
+    authorSettings.customCssEnabled = false;
+    authorSettings.customCssRiskAccepted = false;
+    authorSettings.customJs = '';
+    authorSettings.customJsEnabled = false;
+    authorSettings.customJsRiskAccepted = false;
+  }
   const userSettings = normalizeChatAppearance(user);
   return {
     desktopBackgroundUrl: userSettings.desktopBackgroundUrl || authorSettings.desktopBackgroundUrl,

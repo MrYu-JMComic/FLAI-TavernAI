@@ -47,11 +47,15 @@ function createSignedToken(binding) {
   return `v1.${payload}.${tokenSignature(payload)}`;
 }
 
-export function issueCsrfToken(response, binding) {
+export function issueCsrfToken(response, binding, config = appConfig) {
+  return issueCsrfTokenWithConfig(response, binding, config);
+}
+
+function issueCsrfTokenWithConfig(response, binding, config) {
   const normalizedBinding = String(binding || '').trim() || generateCsrfToken();
-  setCsrfBindingCookie(response, normalizedBinding);
+  setCsrfBindingCookie(response, normalizedBinding, config);
   const token = createSignedToken(normalizedBinding);
-  setCsrfCookie(response, token);
+  setCsrfCookie(response, token, config);
   return token;
 }
 
@@ -78,27 +82,29 @@ function verifySignedToken(token, binding) {
 /**
  * 设置 CSRF cookie（不可被 JS 读取，但会自动随请求发送）
  */
-function setCsrfCookie(response, token) {
+function setCsrfCookie(response, token, config = appConfig) {
+  // The injected config supersedes the legacy secure: appConfig.isProduction
+  // default used by the standalone compatibility export.
   response.cookie(CSRF_COOKIE_NAME, token, {
     httpOnly: false, // 前端需要读取此 cookie 来设置 header
     sameSite: 'lax',
-    secure: appConfig.isProduction,
+    secure: config.isProduction === true,
     maxAge: 24 * 60 * 60 * 1000, // 24 小时
     path: '/'
   });
 }
 
-function setCsrfBindingCookie(response, value) {
+function setCsrfBindingCookie(response, value, config = appConfig) {
   response.cookie(CSRF_BIND_COOKIE_NAME, value, {
     httpOnly: true,
     sameSite: 'lax',
-    secure: appConfig.isProduction,
+    secure: config.isProduction === true,
     maxAge: TOKEN_TTL_MS,
     path: '/'
   });
 }
 
-function allowedMutationOrigin(request) {
+function allowedMutationOrigin(request, config = appConfig) {
   const fetchSite = String(request.headers?.['sec-fetch-site'] || '').toLowerCase();
   if (fetchSite === 'cross-site') {
     return false;
@@ -107,10 +113,10 @@ function allowedMutationOrigin(request) {
   if (!origin) {
     return true;
   }
-  if (appConfig.clientOrigins.includes(origin)) {
+  if (Array.isArray(config.clientOrigins) && config.clientOrigins.includes(origin)) {
     return true;
   }
-  if (!appConfig.allowPrivateNetworkOrigins) {
+  if (!config.allowPrivateNetworkOrigins) {
     return false;
   }
   try {
@@ -127,14 +133,14 @@ function allowedMutationOrigin(request) {
  * GET/HEAD/OPTIONS 请求不需要校验
  * POST/PUT/DELETE/PATCH 请求需要校验
  */
-export function csrfProtection(request, response, next) {
+function csrfProtectionWithConfig(request, response, next, config = appConfig) {
   // 仅对状态变更请求做校验
   const method = request.method.toUpperCase();
   if (!MUTATION_METHODS.has(method)) {
     return next();
   }
 
-  if (!allowedMutationOrigin(request)) {
+  if (!allowedMutationOrigin(request, config)) {
     response.status(419).json({ error: '请求来源未被信任', code: 'CSRF_ORIGIN_INVALID' });
     return;
   }
@@ -152,12 +158,28 @@ export function csrfProtection(request, response, next) {
   next();
 }
 
+export function createCsrfMiddleware(config = appConfig) {
+  return (request, response, next) => csrfProtectionWithConfig(request, response, next, config);
+}
+
+export function csrfProtection(request, response, next) {
+  return csrfProtectionWithConfig(request, response, next, appConfig);
+}
+
 /**
  * 获取 CSRF token 的端点
  * 前端在首次加载时调用，获取 token 并存入 cookie
  */
-export function csrfTokenEndpoint(request, response) {
+function csrfTokenEndpointWithConfig(request, response, config = appConfig) {
   const binding = csrfBinding(request) || generateCsrfToken();
-  const token = issueCsrfToken(response, binding);
+  const token = issueCsrfTokenWithConfig(response, binding, config);
   response.json({ csrfToken: token });
+}
+
+export function createCsrfTokenEndpoint(config = appConfig) {
+  return (request, response) => csrfTokenEndpointWithConfig(request, response, config);
+}
+
+export function csrfTokenEndpoint(request, response) {
+  return csrfTokenEndpointWithConfig(request, response, appConfig);
 }

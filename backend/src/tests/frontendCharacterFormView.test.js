@@ -1102,7 +1102,7 @@ test('CharacterFormView preserves unchanged AI process panel references', () => 
   assert.doesNotMatch(characterFormScript, /function setAiToolCallsIfChanged/);
 });
 
-test('CharacterFormView uses single-section navigation', () => {
+test('CharacterFormView uses section navigation and a full creation form', () => {
   assert.match(characterFormScript, /useCharacterSections\(\{[\s\S]*sections: formSections,[\s\S]*isSectionVisible: \(section\) => isCharacterSectionVisibleInCurrentMode\(section\.id\)/);
   assert.match(characterSectionsSource, /const activeSection = ref\(sections\[0\]\?\.id \|\| 'basic'\);/);
   assert.match(characterSectionsSource, /const visibleSections = computed\(getVisibleSections\);/);
@@ -1111,7 +1111,8 @@ test('CharacterFormView uses single-section navigation', () => {
   assert.match(characterSectionsSource, /function goToNextSection\(\)/);
   assert.doesNotMatch(characterSectionsSource, /scrollIntoView|sectionNavRef|syncActiveSectionFromScroll|addEventListener\('scroll'/);
   assert.match(characterEditorDesktopTemplate, /class="character-studio-nav"[\s\S]*editor\.sectionGroups[\s\S]*editor\.activeSection[\s\S]*@click="editor\.setActiveSection\(section\.id\)"/);
-  assert.match(characterEditorDesktopTemplate, /<CharacterSectionOutlet v-if="editor\.activeSection"[\s\S]*:section-id="editor\.activeSection"/);
+  assert.match(characterEditorDesktopTemplate, /editor\.isCharacterCreationFullForm[\s\S]*v-for="section in editor\.visibleSections"/);
+  assert.match(characterEditorDesktopTemplate, /<CharacterSectionOutlet v-else-if="editor\.activeSection"[\s\S]*:section-id="editor\.activeSection"/);
   assert.match(characterEditorMobileTemplate, /class="character-mobile-section-item"[\s\S]*@click="enterSection\(section\.id\)"/);
   assert.match(stylesSource, /\.character-studio-nav\s*\{[\s\S]*position:\s*sticky;[\s\S]*max-height:/);
   assert.match(stylesSource, /\.character-mobile-sheet-head\s*\{[\s\S]*position:\s*sticky;/);

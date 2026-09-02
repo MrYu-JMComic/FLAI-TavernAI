@@ -6,8 +6,9 @@ import { migrateDurableJobs } from './migrations/0006DurableJobs.js';
 import { migrateFullTextSearch } from './migrations/0007FullTextSearch.js';
 import { migrateOperationalControls } from './migrations/0008OperationalControls.js';
 import { migrateProviderProfiles } from './migrations/0009ProviderProfiles.js';
+import { migrateTalentPoolOwnership } from './migrations/0010TalentPoolOwnership.js';
 
-export const latestSchemaVersion = '0009';
+export const latestSchemaVersion = '0010';
 
 export function applyStartupMigrations(database, { getCachedTableColumns }) {
   ensureSchemaMeta(database);
@@ -65,6 +66,12 @@ export function applyStartupMigrations(database, { getCachedTableColumns }) {
     name: 'provider-profiles',
     checksum: 'provider-profiles-v1',
     apply: () => migrateProviderProfiles(database)
+  });
+  runRecordedMigration(database, {
+    version: '0010',
+    name: 'talent-pool-ownership',
+    checksum: 'talent-pool-ownership-v1',
+    apply: () => migrateTalentPoolOwnership(database)
   });
   // Keep repairing pre-ledger tag fixtures and interrupted legacy upgrades.
   migrateTagsToUserScoped(database, getCachedTableColumns);

@@ -652,6 +652,9 @@ export function initializeDatabase(database) {
 
     CREATE TABLE IF NOT EXISTS talent_pools (
       id TEXT PRIMARY KEY,
+      user_id TEXT,
+      owner_type TEXT NOT NULL DEFAULT 'system',
+      read_only INTEGER NOT NULL DEFAULT 1,
       name TEXT NOT NULL,
       description TEXT NOT NULL DEFAULT '',
       talents_json TEXT NOT NULL DEFAULT '[]',
@@ -801,6 +804,12 @@ export function initializeDatabase(database) {
   ensureColumn(database, 'conversation_memories', 'emotional_intensity', 'REAL NOT NULL DEFAULT 0');
 
   applyStartupMigrations(database, { getCachedTableColumns });
+  ensureColumn(
+    database,
+    'user_quotas',
+    'max_structured_storage_bytes',
+    'INTEGER NOT NULL DEFAULT 268435456'
+  );
   createDatabaseIndexes(database);
 }
 

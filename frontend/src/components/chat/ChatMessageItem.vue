@@ -19,6 +19,7 @@ import MarkdownContent from '../MarkdownContent.vue';
 import { extractHtmlDocument } from '../../utils/htmlDocument.js';
 import { useTypewriterText } from '../../composables/useTypewriterText.js';
 import HtmlDocumentPreview from './HtmlDocumentPreview.vue';
+import { normalizeSafeAttachmentUrl } from '../../utils/attachmentUrls.js';
 
 const props = defineProps({
   message: { type: Object, required: true },
@@ -108,12 +109,13 @@ function normalizeMessageAttachments(attachments = []) {
   const source = Array.isArray(attachments) ? attachments : [];
   for (const attachment of source) {
     const url = String(attachment?.url || attachment?.dataUrl || '').trim();
-    if (!url) {
+    const safeUrl = normalizeSafeAttachmentUrl(url);
+    if (!safeUrl) {
       continue;
     }
     normalized.push({
       id: String(attachment.id || url.slice(0, 48)),
-      url,
+      url: safeUrl,
       alt: String(attachment.alt || attachment.name || '聊天图片').trim() || '聊天图片'
     });
   }
@@ -223,7 +225,7 @@ watch(isEditingCurrentMessage, async (active) => {
               :key="attachment.id"
               :href="attachment.url"
               target="_blank"
-              rel="noreferrer"
+              rel="noopener noreferrer"
               class="message-attachment"
             >
               <img :src="attachment.url" :alt="attachment.alt" />

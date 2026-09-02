@@ -64,11 +64,11 @@
 | B-06 | Medium | 已修复 | CSRF Token 现在由 HMAC 签名并绑定 Session，同时校验状态变更请求的 `Origin` 和 `Sec-Fetch-Site`。 |
 | B-07 | Medium | 已修复 | 统一 `AppError` 和错误 envelope；生产响应使用稳定公开消息和请求 ID，详细原因只进入结构化脱敏日志。 |
 | B-08 | Medium | 已修复 | 注册、默认 Provider 和 Session 写入已事务化；数据库只保存 Session Token 哈希，并实现登录轮换、过期清理、注册开关和 root 初始化。 |
-| B-09 | Medium | 已修复 | 已增加带 checksum 的 `schema_migrations` 账本和 0001-0009 迁移；升级前备份，迁移事务化并校验外键。 |
+| B-09 | Medium | 已修复 | 已增加带 checksum 的 `schema_migrations` 账本和 0001-0010 迁移；升级前备份，迁移事务化并校验外键。 |
 | B-10 | Medium/Low | 已修复 | `/health/live` 保持轻量，`/health/ready` 使用缓存的数据库和存储检查；详细诊断继续受权限和脱敏约束。 |
 | B-11 | Maintenance | 已修复 | `createApp(context)` 无基础设施副作用；`server.js` 只拥有数据库、任务、监听和有序 shutdown 生命周期。 |
 | B-12 | Maintenance | 已整理 | 认证请求增加统一 Zod 边界，核心端点使用具体 schema；OpenAPI、废弃遥测和兼容响应已补齐，worldBooks、town 与 cast 已按领域边界拆分。 |
-| B-13 | Maintenance | 待处理 | `src/services/backend/src/services/toolSchemaOptimizer.js` 是未引用的误嵌套文件，且与正式实现内容不同。根据仓库规则本轮未删除，后续需明确删除。 |
+| B-13 | Maintenance | 已修复 | 已确认无运行时引用并移除误嵌套的 `src/services/backend/src/services/toolSchemaOptimizer.js`，正式实现保留在 `src/services/toolSchemaOptimizer.js`。 |
 | B-14 | Maintenance | 待处理 | `backend/docs` 中多份工具优化报告包含已失效文件、行号和模型信息。应保留一份当前运维文档，其余归档或删除。 |
 
 ## 5. 实施结果
@@ -205,7 +205,7 @@ powershell -ExecutionPolicy Bypass -File scripts/review-gate.ps1
 
 ## 8. 明确的暂留项
 
-- 未删除误嵌套的 `src/services/backend/src/services/toolSchemaOptimizer.js`，因为仓库规则要求删除必须有明确授权。
+- 旧版工具优化报告仍保留作历史记录；其中的文件路径和行号不作为当前运行时契约。
 - 未合并或删除旧的工具优化报告；它们需要先确认是否仍有发布或支持价值。
 - 未修改任何前端文件。
 

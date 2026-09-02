@@ -354,9 +354,9 @@ test('reflects and plans one resident through the real backend cognition route o
 
   await page.getByRole('button', { name: `让 ${keeper.name} 进行 AI 反思与规划` }).click();
   await expect(page.getByText(/AI 已通过 E2E Cognition Provider · town-tool-model 为.*形成反思并规划了当天日程/)).toBeVisible();
-  await expect(page.getByText('桥墩异响与星尘草偏转发生在同一时段，我应把两处异常作为同一条因果线索核对。')).toBeVisible();
+  await expect(page.getByLabel('居民面板').getByText('桥墩异响与星尘草偏转发生在同一时段，我应把两处异常作为同一条因果线索核对。')).toBeVisible();
   await expect(page.getByText('目标：先核对星尘草的光向，再回到石桥验证回声与光向的对应关系')).toBeVisible();
-  await expect(page.getByText('在鹿鸣药圃比对星尘草光向')).toBeVisible();
+  await expect(page.getByLabel('居民面板').locator('.town-agent-facts strong').filter({ hasText: '在鹿鸣药圃比对星尘草光向' })).toBeVisible();
   await expect(keeperMapAgent).toContainText('鹿鸣药圃');
   const afterLeft = await keeperMapAgent.evaluate((element) => element.style.left);
   expect(afterLeft).not.toBe(beforeLeft);
@@ -389,7 +389,7 @@ test('reflects and plans one resident through the real backend cognition route o
   const cognitionTab = page.getByRole('tab', { name: '认知' });
   await cognitionTab.scrollIntoViewIfNeeded();
   await expect(cognitionTab).toBeVisible();
-  await expect(page.getByText('在鹿鸣药圃比对星尘草光向')).toBeVisible();
+  await expect(page.getByLabel('居民面板').locator('.town-agent-facts strong').filter({ hasText: '在鹿鸣药圃比对星尘草光向' })).toBeVisible();
   const hasPageOverflow = await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth);
   expect(hasPageOverflow).toBe(false);
   await page.screenshot({ path: path.join(os.tmpdir(), 'flai-town-cognition-mobile.png'), fullPage: false });

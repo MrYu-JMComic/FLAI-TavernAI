@@ -1,5 +1,13 @@
 # AI 工具调用错误诊断和解决指南
 
+## 本地或私网 Provider 连接检测
+
+本地网关（例如 `127.0.0.1`、`localhost`、RFC1918 地址或 `.local` 主机）必须同时满足 root 账户和部署开关。生产环境设置 `ALLOW_PRIVATE_PROVIDER_NETWORK=true`，开发环境设置 `ALLOW_PRIVATE_PROVIDER_NETWORK_DEV=true`，然后完整重启后端；生产环境不会读取开发开关。设置页会显示当前生效的开关名，`/api/providers/models`、`/api/providers/health`、聊天和后台任务使用同一策略。
+
+如果仍看到旧的英文私网拒绝提示，先确认 `3001` 只有一个后端进程，再重启它；权限是在进程启动和每次请求时重新计算的，数据库中的旧 `allow_private_network` 标志不会绕过部署策略。
+
+root 初始化建议使用一次性 `ROOT_ADMIN_BOOTSTRAP_TOKEN`，并在空数据库的注册页填写令牌。令牌初始化成功后公开注册会自动关闭；只有显式设置 `ALLOW_LEGACY_ROOT_BOOTSTRAP=true` 才会启用旧的用户名/长期密码初始化路径。
+
 ## 常见错误及解决方案
 
 ### 1. "schema at top-level requires unspecified property 'id'"

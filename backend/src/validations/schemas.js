@@ -6,6 +6,7 @@
 import { z } from 'zod';
 import { THINKING_LEVELS } from '../../../shared/providerThinking.js';
 import { CHARACTER_CONTENT_LIMITS } from '../domain/characters/limits.js';
+import { JSON_BODY_LIMIT_DEFAULT_BYTES } from '../config.js';
 
 const STATUS_BLUEPRINT_VARIABLE_LIMIT = 60;
 const BACKGROUND_IMAGE_INPUT_MAX_LENGTH = 6_000_000;
@@ -90,7 +91,9 @@ export const registerSchema = z.object({
     .trim(),
   password: z.string()
     .min(6, '密码至少 6 位')
-    .max(128, '密码最多 128 位')
+    .max(128, '密码最多 128 位'),
+  // Optional one-time bootstrap proof. It is never persisted or returned.
+  bootstrapToken: z.string().max(256).optional()
 });
 
 export const loginSchema = registerSchema;
@@ -700,16 +703,19 @@ const requestQueryBoundarySchema = z.record(
     context.addIssue({ code: 'custom', message: '查询参数过多' });
   }
 });
-const jsonBoundarySchema = z.lazy(() => z.union([
-  z.string(),
-  z.number().finite(),
-  z.boolean(),
-  z.null(),
-  z.array(jsonBoundarySchema).max(10_000),
-  z.record(z.string(), jsonBoundarySchema)
-]));
+// Keep the request boundary check iterative.  A recursive z.lazy schema can
+// itself overflow the JavaScript stack before Zod has a chance to return a
+// useful 400 response for hostile, deeply nested JSON.
+const jsonBoundarySchema = z.any();
+export const JSON_BOUNDARY_LIMITS = Object.freeze({
+  maxDepth: 100,
+  maxKeys: 10_000,
+  maxArrayLength: 10_000,
+  maxStringLength: 8_000_000,
+  maxBytes: JSON_BODY_LIMIT_DEFAULT_BYTES
+});
 
-export function validateAuthenticatedRequestBoundary(request, response, next) {
+export function validateAuthenticatedRequestBoundary(request, response, next, options = {}) {
   const result = z.object({
     params: requestParamBoundarySchema,
     query: requestQueryBoundarySchema,
@@ -720,5 +726,76 @@ export function validateAuthenticatedRequestBoundary(request, response, next) {
     response.status(400).json({ error: message || '请求参数无效' });
     return;
   }
+  const boundaryError = scanJsonBoundary(request.body, {
+    ...JSON_BOUNDARY_LIMITS,
+    ...(options.limits || {})
+  });
+  if (boundaryError) {
+    response.status(400).json({ error: boundaryError });
+    return;
+  }
   next();
+}
+
+export function scanJsonBoundary(value, limits = JSON_BOUNDARY_LIMITS) {
+  if (value === undefined) {
+    return '';
+  }
+  let serializedBytes = 0;
+  try {
+    serializedBytes = Buffer.byteLength(JSON.stringify(value));
+  } catch {
+    return '请求 JSON 无法序列化';
+  }
+  if (serializedBytes > limits.maxBytes) {
+    return '请求 JSON 超出大小限制';
+  }
+
+  const stack = [{ value, depth: 0 }];
+  let keyCount = 0;
+  while (stack.length) {
+    const current = stack.pop();
+    const item = current.value;
+    const depth = current.depth;
+    if (depth > limits.maxDepth) {
+      return '请求 JSON 嵌套层级过深';
+    }
+    if (typeof item === 'string') {
+      if (item.length > limits.maxStringLength) {
+        return '请求 JSON 字符串过长';
+      }
+      continue;
+    }
+    if (typeof item === 'number') {
+      if (!Number.isFinite(item)) {
+        return '请求 JSON 包含无效数字';
+      }
+      continue;
+    }
+    if (item === null || typeof item === 'boolean') {
+      continue;
+    }
+    if (Array.isArray(item)) {
+      if (item.length > limits.maxArrayLength) {
+        return '请求 JSON 数组过长';
+      }
+      for (let index = item.length - 1; index >= 0; index -= 1) {
+        stack.push({ value: item[index], depth: depth + 1 });
+      }
+      continue;
+    }
+    if (typeof item === 'object') {
+      const keys = Object.keys(item);
+      keyCount += keys.length;
+      if (keyCount > limits.maxKeys) {
+        return '请求 JSON 对象字段过多';
+      }
+      for (let index = keys.length - 1; index >= 0; index -= 1) {
+        stack.push({ value: item[keys[index]], depth: depth + 1 });
+      }
+      continue;
+    }
+    return '请求 JSON 类型无效';
+  }
+  return '';
 }

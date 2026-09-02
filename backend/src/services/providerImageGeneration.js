@@ -8,8 +8,19 @@ import { normalizeProviderModel } from './providerModels.js';
 import { providerPresets } from './providerRegistry.js';
 import { normalizeProviderBaseUrl } from './providerUrls.js';
 import { normalizeProviderExtraBody } from './providerExtraBody.js';
+import { withProviderQuota } from './quotas.js';
 
 export async function generateImage(settings, prompt, options = {}) {
+  options = options ?? {};
+  return withProviderQuota(
+    options.database,
+    options.userId,
+    () => generateImageInternal(settings, prompt, { ...options, __quotaHandled: true }),
+    options
+  );
+}
+
+async function generateImageInternal(settings, prompt, options = {}) {
   const compatibility = getImageGenerationCompatibility(settings, options);
   if (!compatibility.supported) {
     throw new Error(compatibility.error);

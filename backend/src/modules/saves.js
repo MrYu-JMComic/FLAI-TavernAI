@@ -1,6 +1,7 @@
 import { newId, nowIso } from '../security.js';
 import { parseJson } from '../utils/json.js';
 import { withSavepoint } from './savepoint.js';
+import { sanitizeChatAttachments } from '../services/chatAttachments.js';
 
 // ── Save CRUD ──
 
@@ -116,7 +117,7 @@ export function loadSave(database, userId, saveId, requestedConversationId = '')
           targetConversationId,
           msg.role,
           msg.content,
-          JSON.stringify(normalizeSnapshotAttachments(msg.attachments)),
+          JSON.stringify(sanitizeChatAttachments(msg.attachments)),
           msg.reasoning || '',
           msg.usage ? JSON.stringify(msg.usage) : null,
           msg.createdAt || nowIso()
@@ -168,6 +169,12 @@ function normalizeSnapshotAttachments(attachments = []) {
   const normalized = [];
   for (const attachment of source) {
     if (!attachment || typeof attachment !== 'object') {
+      continue;
+    }
+    if (attachment.url && !/^\/api\/assets\/[^/?#]+$/.test(String(attachment.url).trim())) {
+      continue;
+    }
+    if (attachment.dataUrl && !/^data:image\/(?:png|jpeg|webp);base64,[A-Za-z0-9+/]+={0,2}$/i.test(String(attachment.dataUrl).trim())) {
       continue;
     }
     normalized.push({

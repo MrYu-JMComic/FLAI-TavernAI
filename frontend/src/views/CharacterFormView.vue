@@ -39,7 +39,7 @@ provide(CHARACTER_EDITOR_KEY, editor);
         <p>{{ editor.isEditing && !editor.canEdit ? '查看角色' : editor.isEditing ? '编辑角色' : '创建角色' }}</p>
         <h1>{{ editor.isEditing ? editor.form.name || '角色编辑' : '创建新的 AI 角色' }}</h1>
       </div>
-      <button class="ghost-button" type="button" @click="editor.navigateHome">
+      <button class="ghost-button" type="button" aria-label="返回" @click="editor.navigateHome">
         <ArrowLeft :size="18" />
         <span>返回</span>
       </button>

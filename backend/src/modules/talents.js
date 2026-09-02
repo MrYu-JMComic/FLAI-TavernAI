@@ -19,45 +19,102 @@ const RARITY_LABELS = {
 // ── Talent Pool CRUD ──
 
 export function listTalentPools(database) {
+  const userId = arguments.length > 1 ? String(arguments[1] || '').trim() : '';
+  const options = arguments.length > 2 && arguments[2] && typeof arguments[2] === 'object'
+    ? arguments[2]
+    : {};
+  const paginated = options.limit !== undefined || options.cursor;
+  const limit = clampInteger(options.limit, 1, 200, 50);
+  const whereParts = [];
+  const params = [];
+  if (userId) {
+    whereParts.push('(user_id = ? OR user_id IS NULL)');
+    params.push(userId);
+  }
+  if (paginated && options.cursor) {
+    const cursor = decodeTalentCursor(options.cursor);
+    if (cursor) {
+      whereParts.push('(created_at < ? OR (created_at = ? AND rowid < ?))');
+      params.push(cursor.createdAt, cursor.createdAt, cursor.rowId);
+    }
+  }
+  const where = whereParts.length ? `WHERE ${whereParts.join(' AND ')}` : '';
+  if (paginated) {
+    params.push(limit + 1);
+  }
   const rows = database
     .prepare(
-      `SELECT id, name, description, talents_json, created_at
+      `SELECT id, user_id, owner_type, read_only, name, description, talents_json, created_at, rowid AS _rowid
        FROM talent_pools
-       ORDER BY created_at DESC, rowid DESC`
+       ${where}
+       ORDER BY created_at DESC, rowid DESC
+       ${paginated ? 'LIMIT ?' : ''}`
     )
-    .all();
+    .all(...params);
   const pools = [];
   for (const row of rows) {
     pools.push(toTalentPool(row));
   }
-  return pools;
+  if (!paginated || pools.length <= limit) {
+    return paginated ? { items: pools, nextCursor: '' } : pools;
+  }
+  const page = pools.slice(0, limit);
+  const last = rows[limit - 1];
+  return {
+    items: page,
+    nextCursor: encodeTalentCursor(last?.created_at, last?._rowid)
+  };
 }
 
 export function getTalentPool(database, poolId) {
+  const userId = arguments.length > 2 ? String(arguments[2] || '').trim() : '';
+  const where = userId ? 'AND (user_id = ? OR user_id IS NULL)' : '';
+  const params = userId ? [poolId, userId] : [poolId];
   const row = database
-    .prepare('SELECT id, name, description, talents_json, created_at FROM talent_pools WHERE id = ?')
-    .get(poolId);
+    .prepare(`SELECT id, user_id, owner_type, read_only, name, description, talents_json, created_at
+      FROM talent_pools WHERE id = ? ${where}`)
+    .get(...params);
   return row ? toTalentPool(row) : null;
 }
 
 export function createTalentPool(database, payload) {
-  const name = normalizePoolName(payload.name);
-  const description = String(payload.description || '').trim();
-  const talents = normalizeTalentsList(payload.talents);
+  let userId = '';
+  let source = payload;
+  if (typeof payload === 'string') {
+    userId = payload.trim();
+    source = arguments[2] || {};
+  }
+  const name = normalizePoolName(source.name);
+  const description = String(source.description || '').trim();
+  const talents = normalizeTalentsList(source.talents);
 
   const id = newId();
   const timestamp = nowIso();
   database
     .prepare(
-      'INSERT INTO talent_pools (id, name, description, talents_json, created_at) VALUES (?, ?, ?, ?, ?)'
+      `INSERT INTO talent_pools (
+         id, user_id, owner_type, read_only, name, description, talents_json, created_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
     )
-    .run(id, name, description, JSON.stringify(talents), timestamp);
+    .run(id, userId || null, userId ? 'user' : 'system', userId ? 0 : 1, name, description, JSON.stringify(talents), timestamp);
 
-  return { id, name, description, talents, createdAt: timestamp };
+  return {
+    id,
+    ownerId: userId || null,
+    ownerType: userId ? 'user' : 'system',
+    readOnly: !userId,
+    name,
+    description,
+    talents,
+    createdAt: timestamp
+  };
 }
 
 export function updateTalentPool(database, poolId, payload) {
-  const existing = database.prepare('SELECT id FROM talent_pools WHERE id = ?').get(poolId);
+  const userId = arguments.length > 3 ? String(arguments[3] || '').trim() : '';
+  const ownershipClause = userId ? 'AND user_id = ? AND COALESCE(read_only, 0) = 0' : '';
+  const ownershipParams = userId ? [poolId, userId] : [poolId];
+  const existing = database.prepare(`SELECT id, user_id, read_only FROM talent_pools WHERE id = ? ${ownershipClause}`).get(...ownershipParams);
   if (!existing) {
     return null;
   }
@@ -82,23 +139,36 @@ export function updateTalentPool(database, poolId, payload) {
   }
 
   if (sets.length === 0) {
-    return getTalentPool(database, poolId);
+    return getTalentPool(database, poolId, userId);
   }
 
   params.push(poolId);
-  database.prepare(`UPDATE talent_pools SET ${sets.join(', ')} WHERE id = ?`).run(...params);
-  return getTalentPool(database, poolId);
+  let updateWhere = 'id = ?';
+  if (userId) {
+    updateWhere += ' AND user_id = ? AND COALESCE(read_only, 0) = 0';
+    params.push(userId);
+  }
+  database.prepare(`UPDATE talent_pools SET ${sets.join(', ')} WHERE ${updateWhere}`).run(...params);
+  return getTalentPool(database, poolId, userId);
 }
 
 export function deleteTalentPool(database, poolId) {
-  const result = database.prepare('DELETE FROM talent_pools WHERE id = ?').run(poolId);
+  const userId = arguments.length > 2 ? String(arguments[2] || '').trim() : '';
+  let sql = 'DELETE FROM talent_pools WHERE id = ?';
+  const params = [poolId];
+  if (userId) {
+    sql += ' AND user_id = ? AND COALESCE(read_only, 0) = 0';
+    params.push(userId);
+  }
+  const result = database.prepare(sql).run(...params);
   return result.changes > 0;
 }
 
 // ── Character Talent (Roll) ──
 
 export function rollTalent(database, characterId, poolId) {
-  const pool = getTalentPool(database, poolId);
+  const userId = arguments.length > 3 ? String(arguments[3] || '').trim() : '';
+  const pool = getTalentPool(database, poolId, userId);
   if (!pool) {
     return { error: '天赋池不存在' };
   }
@@ -107,7 +177,9 @@ export function rollTalent(database, characterId, poolId) {
     return { error: '天赋池为空，无法 Roll' };
   }
 
-  const character = database.prepare('SELECT id FROM characters WHERE id = ?').get(characterId);
+  const character = userId
+    ? database.prepare('SELECT id FROM characters WHERE id = ? AND user_id = ?').get(characterId, userId)
+    : database.prepare('SELECT id FROM characters WHERE id = ?').get(characterId);
   if (!character) {
     return { error: '角色不存在' };
   }
@@ -148,14 +220,20 @@ export function rollTalent(database, characterId, poolId) {
 }
 
 export function getCharacterTalents(database, characterId) {
+  const userId = arguments.length > 2 ? String(arguments[2] || '').trim() : '';
+  const characterClause = userId ? 'AND characters.user_id = ?' : '';
+  const params = userId ? [characterId, userId] : [characterId];
   const rows = database
     .prepare(
-      `SELECT id, character_id, talent_name, talent_rarity, talent_description, talent_effect, pool_id, rolled_at
+      `SELECT character_talents.id, character_talents.character_id, character_talents.talent_name,
+              character_talents.talent_rarity, character_talents.talent_description,
+              character_talents.talent_effect, character_talents.pool_id, character_talents.rolled_at
        FROM character_talents
-       WHERE character_id = ?
-       ORDER BY rolled_at DESC, rowid DESC`
+       JOIN characters ON characters.id = character_talents.character_id
+       WHERE character_talents.character_id = ? ${characterClause}
+       ORDER BY character_talents.rolled_at DESC, character_talents.rowid DESC`
     )
-    .all(characterId);
+    .all(...params);
   const talents = [];
   for (const row of rows) {
     talents.push(toCharacterTalent(row));
@@ -164,14 +242,28 @@ export function getCharacterTalents(database, characterId) {
 }
 
 export function deleteCharacterTalent(database, talentId, characterId = '') {
-  const result = characterId
-    ? database.prepare('DELETE FROM character_talents WHERE id = ? AND character_id = ?').run(talentId, characterId)
-    : database.prepare('DELETE FROM character_talents WHERE id = ?').run(talentId);
+  const userId = arguments.length > 3 ? String(arguments[3] || '').trim() : '';
+  let sql = characterId
+    ? 'DELETE FROM character_talents WHERE id = ? AND character_id = ?'
+    : 'DELETE FROM character_talents WHERE id = ?';
+  const params = characterId ? [talentId, characterId] : [talentId];
+  if (userId) {
+    sql += ' AND EXISTS (SELECT 1 FROM characters WHERE characters.id = character_talents.character_id AND characters.user_id = ?)';
+    params.push(userId);
+  }
+  const result = database.prepare(sql).run(...params);
   return result.changes > 0;
 }
 
 export function deleteAllCharacterTalents(database, characterId) {
-  const result = database.prepare('DELETE FROM character_talents WHERE character_id = ?').run(characterId);
+  const userId = arguments.length > 2 ? String(arguments[2] || '').trim() : '';
+  let sql = 'DELETE FROM character_talents WHERE character_id = ?';
+  const params = [characterId];
+  if (userId) {
+    sql += ' AND EXISTS (SELECT 1 FROM characters WHERE characters.id = character_talents.character_id AND characters.user_id = ?)';
+    params.push(userId);
+  }
+  const result = database.prepare(sql).run(...params);
   return result.changes > 0;
 }
 
@@ -286,11 +378,38 @@ function normalizeRarity(value) {
 function toTalentPool(row) {
   return {
     id: row.id,
+    ownerId: row.user_id || null,
+    ownerType: row.owner_type || (row.user_id ? 'user' : 'system'),
+    readOnly: Boolean(row.read_only || !row.user_id),
     name: row.name,
     description: row.description || '',
     talents: parseJson(row.talents_json, []),
     createdAt: row.created_at
   };
+}
+
+function encodeTalentCursor(createdAt, rowId) {
+  if (!createdAt || !Number.isFinite(Number(rowId))) {
+    return '';
+  }
+  return Buffer.from(JSON.stringify({ createdAt, rowId: Number(rowId) }), 'utf8').toString('base64url');
+}
+
+function decodeTalentCursor(value) {
+  try {
+    const decoded = JSON.parse(Buffer.from(String(value || ''), 'base64url').toString('utf8'));
+    if (!decoded?.createdAt || !Number.isSafeInteger(Number(decoded.rowId))) {
+      return null;
+    }
+    return { createdAt: String(decoded.createdAt), rowId: Number(decoded.rowId) };
+  } catch {
+    return null;
+  }
+}
+
+function clampInteger(value, min, max, fallback) {
+  const number = Number(value);
+  return Number.isFinite(number) ? Math.min(max, Math.max(min, Math.floor(number))) : fallback;
 }
 
 function toCharacterTalent(row) {

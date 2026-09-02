@@ -38,6 +38,7 @@ const routeQuery = z.object({
 const quotaBody = z.object({
   maxConcurrentAiJobs: z.number().int().min(1).max(32).optional(),
   maxUploadBytes: z.number().int().min(1024).max(10 * 1024 ** 3).optional(),
+  maxStructuredStorageBytes: z.number().int().min(1024).max(10 * 1024 ** 3).optional(),
   maxDailyRequests: z.number().int().min(1).max(10_000_000).optional(),
   maxDailyCostMicros: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER).optional()
 }).strict();

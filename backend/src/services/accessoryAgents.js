@@ -175,6 +175,8 @@ async function runStatusBarAgent({ db, userId, conversation, assistantMessage, o
         maxRounds: 2,
         thinkingEnabled: false,
         signal,
+        database: db,
+        userId,
         onNoToolCall: statusBarNoToolNudge
       }
     ).catch((error) => {
@@ -246,7 +248,7 @@ async function runEconomyAgent({ db, userId, conversation, assistantMessage, obs
         }
         return { ok: true, transaction: result?.transaction || null };
       },
-      { maxRounds: 3, thinkingEnabled: false, signal }
+      { maxRounds: 3, thinkingEnabled: false, signal, database: db, userId }
     ).catch((error) => {
       logAccessoryAgentFailure('economy', error);
       return null;
@@ -293,7 +295,7 @@ async function runWorldDirectorAgent({ db, userId, conversation, character, obse
     buildWorldDirectorMessages(observationWindow, context),
     worldDirectorTools({ travelEnabled, encounterEnabled, rewardEnabled }),
     async (toolName, args) => executeWorldDirectorProposal({ db, userId, conversationId: conversation.id, character, toolName, args, executions, travelEnabled, encounterEnabled, rewardEnabled }),
-    { maxRounds: 6, thinkingEnabled: false, signal }
+    { maxRounds: 6, thinkingEnabled: false, signal, database: db, userId }
   ).catch((error) => {
     logAccessoryAgentFailure('world-director', error);
     executions.push({ tool: 'provider', ok: false, error: error?.message || 'world director failed' });

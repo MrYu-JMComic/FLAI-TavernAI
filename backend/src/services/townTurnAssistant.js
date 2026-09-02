@@ -107,6 +107,8 @@ export async function generateTownTurnPlan(settings, context, options = {}) {
       thinkingEnabled: false,
       toolChoice: 'required',
       signal: options.signal,
+      database: options.database,
+      userId: options.userId,
       onNoToolCall: () => '必须调用 advance_town_world 工具提交本次推演，不要只输出自然语言。'
     }
   );

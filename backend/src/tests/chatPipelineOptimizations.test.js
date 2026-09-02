@@ -98,10 +98,9 @@ test('prompt pipeline persists world book state while context preview stays dry'
 
 test('stream response persists partials and reports terminal events on all error paths', () => {
   // Non-abort provider errors persist the partial and attach it to the error event.
-  assert.match(
-    streamResponseSource,
-    /const interruptedMessage = saveInterruptedAssistantResult\(\{[^]{0,600}\.\.\.\(interruptedMessage \? \{ assistantMessage: interruptedMessage \} : \{\}\)/
-  );
+  assert.match(streamResponseSource, /const interruptedMessage = saveInterruptedAssistantResult\(\{/);
+  assert.match(streamResponseSource, /\.\.\.\(interruptedMessage \? \{ assistantMessage: interruptedMessage \} : \{\}\)/);
+  assert.match(streamResponseSource, /const publicError = routeErrorPayload\(error, \{/);
   // Server-initiated aborts (timeout) still emit a terminal error while the socket is writable.
   assert.match(
     streamResponseSource,

@@ -46,9 +46,18 @@ import {
   providerStreamErrorMessage
 } from './providerStreamErrors.js';
 import { executeProviderTool } from './providerToolResults.js';
+import { withProviderQuota } from './quotas.js';
 
 export async function runToolCompletion(settings, messages, tools, executeTool, options = {}) {
   options = options ?? {};
+  if (options.database && options.userId && options.__quotaHandled !== true) {
+    return withProviderQuota(
+      options.database,
+      options.userId,
+      () => runToolCompletion(settings, messages, tools, executeTool, { ...options, __quotaHandled: true }),
+      options
+    );
+  }
   if (!hasUsableProvider(settings)) {
     throw new Error('请先在用户页保存 API Key / SK，并确认网关和模型可用。');
   }
@@ -190,6 +199,22 @@ export async function runToolCompletion(settings, messages, tools, executeTool, 
 
 export async function streamToolCompletion(settings, messages, tools, executeTool, emit, signal, options = {}) {
   options = options ?? {};
+  if (options.database && options.userId && options.__quotaHandled !== true) {
+    return withProviderQuota(
+      options.database,
+      options.userId,
+      () => streamToolCompletion(
+        settings,
+        messages,
+        tools,
+        executeTool,
+        emit,
+        signal,
+        { ...options, __quotaHandled: true }
+      ),
+      options
+    );
+  }
   const streamEmit = createStreamEmitQueue(emit);
   if (!hasUsableProvider(settings)) {
     const result = await streamMockCompletion(messages, streamEmit.emit, settings);

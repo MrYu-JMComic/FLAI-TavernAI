@@ -259,7 +259,7 @@ function buildCharacterAssistantMessages({ requirement, draft, userName, enabled
 }
 
 export async function completeCharacterDraft(settings, request = {}) {
-  const { requirement = '', current = {}, user = {}, options: rawOptions = {}, signal } = nullToEmptyObject(request);
+  const { requirement = '', current = {}, user = {}, options: rawOptions = {}, signal, database, userId } = nullToEmptyObject(request);
   const options = rawOptions ?? {};
   const draft = normalizeDraft(current);
   let summary = '';
@@ -272,7 +272,7 @@ export async function completeCharacterDraft(settings, request = {}) {
     buildCharacterAssistantMessages({ requirement, draft, userName, enabledSections, optimizeExisting }),
     characterTools,
     (name, args) => executeCharacterTool(name, filterToolArgs(name, args, enabledSections), draft),
-    { maxRounds: 100, thinkingEnabled: false, signal }
+    { maxRounds: 100, thinkingEnabled: false, signal, database, userId }
   );
 
   if (!result.toolCalls.length && result.content) {
@@ -291,7 +291,7 @@ export async function completeCharacterDraft(settings, request = {}) {
 }
 
 export async function streamCharacterDraft(settings, request = {}) {
-  const { requirement = '', current = {}, user = {}, options: rawOptions = {}, signal, emit = () => {} } = nullToEmptyObject(request);
+  const { requirement = '', current = {}, user = {}, options: rawOptions = {}, signal, emit = () => {}, database, userId } = nullToEmptyObject(request);
   const options = rawOptions ?? {};
   const draft = normalizeDraft(current);
   const userName = resolvePromptUserName(user);
@@ -305,7 +305,7 @@ export async function streamCharacterDraft(settings, request = {}) {
     (name, args) => executeCharacterTool(name, filterToolArgs(name, args, enabledSections), draft),
     emit,
     signal,
-    { maxRounds: 100, thinkingEnabled: false }
+    { maxRounds: 100, thinkingEnabled: false, database, userId }
   );
 
   if (!result.toolCalls.length && result.content) {

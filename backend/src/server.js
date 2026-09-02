@@ -2,7 +2,7 @@ import 'dotenv/config';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { createApp } from './app.js';
-import { appConfig } from './config.js';
+import { appConfig, withAppConfigDefaults } from './config.js';
 import { startTownSimulationEngine } from './modules/townEngine.js';
 import { cleanupExpiredSessions } from './security.js';
 import { migrateLegacyAvatarUploads } from './services/avatars.js';
@@ -13,7 +13,7 @@ import { createDefaultJobHandlers } from './services/jobs/jobHandlers.js';
 import { startJobWorker } from './services/jobs/jobWorker.js';
 
 export async function startServer(context = {}) {
-  const config = context.config || appConfig;
+  const config = withAppConfigDefaults(context.config || appConfig);
   const applicationLogger = context.logger || logger;
   let database;
   let databasePath;
@@ -57,7 +57,7 @@ export async function startServer(context = {}) {
     })
   });
   const stopJobWorker = startJobWorker(database, {
-    handlers: context.jobHandlers || createDefaultJobHandlers(database),
+    handlers: context.jobHandlers || createDefaultJobHandlers(database, { config }),
     onError: (error, job) => applicationLogger.error('job_worker_error', {
       jobId: job?.id,
       type: job?.type,

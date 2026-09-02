@@ -3,6 +3,7 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
+import { latestSchemaVersion } from '../db/migrations.js';
 import test from 'node:test';
 
 process.env.FLAI_DB_PATH = ':memory:';
@@ -84,7 +85,7 @@ test('startup backup captures the database before migration and records integrit
     } finally {
       backup.close();
     }
-    assert.equal(database.prepare('SELECT COUNT(*) AS count FROM schema_migrations').get().count, 9);
+    assert.equal(database.prepare('SELECT COUNT(*) AS count FROM schema_migrations').get().count, 10);
   } finally {
     database.close();
     rmSync(temporaryRoot, { recursive: true, force: true });
@@ -110,7 +111,7 @@ test('restore preflight verifies metadata and offline restore preserves a rollba
     assert.equal(preflight.canRestore, true);
     assert.equal(preflight.integrity, 'ok');
     assert.equal(preflight.hashMatches, true);
-    assert.equal(preflight.schemaVersion, '0009');
+    assert.equal(preflight.schemaVersion, latestSchemaVersion);
     assert.throws(
       () => preflightBackupRestore({ databasePath, filename: '../flai.sqlite' }),
       (error) => error.code === 'BACKUP_FILENAME_INVALID'

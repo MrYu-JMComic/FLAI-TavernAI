@@ -7,6 +7,7 @@ import {
 } from './conversationGenerationDiagnostics.js';
 import { createStreamEmitQueue } from './providerStreamEmit.js';
 import { streamCompletion } from './providers.js';
+import { routeErrorPayload } from '../routes/errorResponse.js';
 
 export const CHAT_STREAM_HEARTBEAT_MS = 15_000;
 
@@ -14,6 +15,8 @@ export async function streamAssistantResponse({
   request,
   response,
   userId,
+  database,
+  config,
   conversation,
   character,
   rules,
@@ -79,7 +82,12 @@ export async function streamAssistantResponse({
   }, CHAT_STREAM_HEARTBEAT_MS);
 
   try {
-    const result = await streamCompletion(settings, modelMessages, emit, controller.signal, { thinkingEnabled, ...completionOptions });
+    const result = await streamCompletion(settings, modelMessages, emit, controller.signal, {
+      thinkingEnabled,
+      ...completionOptions,
+      database,
+      userId
+    });
     if (!hasAssistantPayload(result)) {
       const diagnosticId = createChatDiagnosticId();
       logAssistantPayloadFailure({
@@ -194,8 +202,14 @@ export async function streamAssistantResponse({
       }
     });
     if (!response.destroyed && !response.writableEnded) {
+      const publicError = routeErrorPayload(error, {
+        status: Number.isInteger(error?.status) ? error.status : 500,
+        isProduction: config?.isProduction,
+        fallback: 'AI 生成失败，请稍后重试。'
+      });
       await emit('error', {
-        error: error?.message || '生成失败',
+        error: publicError.error,
+        ...(publicError.code ? { code: publicError.code } : {}),
         ...(interruptedMessage ? { assistantMessage: interruptedMessage } : {})
       });
       await streamWrites.wait();

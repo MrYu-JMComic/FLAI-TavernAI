@@ -57,7 +57,17 @@ const editor = inject(CHARACTER_EDITOR_KEY);
 
     <form class="character-studio-main" novalidate @submit.prevent="editor.submit">
       <div class="character-studio-stage">
-        <CharacterSectionOutlet v-if="editor.activeSection" :key="editor.activeSection" :section-id="editor.activeSection" />
+        <div v-if="editor.isCharacterCreationFullForm" class="character-studio-full-form">
+          <div
+            v-for="section in editor.visibleSections"
+            :key="section.id"
+            class="character-studio-full-section character-studio-stage"
+            :data-section-id="section.id"
+          >
+            <CharacterSectionOutlet :section-id="section.id" />
+          </div>
+        </div>
+        <CharacterSectionOutlet v-else-if="editor.activeSection" :key="editor.activeSection" :section-id="editor.activeSection" />
 
         <div class="character-studio-stepper">
           <button
@@ -154,7 +164,7 @@ const editor = inject(CHARACTER_EDITOR_KEY);
             :disabled="editor.saving || editor.deleting || editor.exporting"
           >
             <Save :size="18" />
-            <span>{{ editor.saving ? '保存中...' : (editor.isEditing ? '保存角色' : '创建角色') }}</span>
+            <span>{{ editor.saving ? '保存中...' : (editor.isEditing || editor.isCharacterCreationFullForm ? '保存角色' : '创建角色') }}</span>
           </button>
           <button
             v-else
