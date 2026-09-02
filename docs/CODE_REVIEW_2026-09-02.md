@@ -282,6 +282,7 @@ existedBefore=true, existsAfterFailure=false, error="simulated VACUUM failure"
 - 2026-09-02：F-15 初始化加固完成：令牌模式下错误注册不会占用空库，成功初始化后公开注册自动关闭；旧的用户名/长期密码 root 初始化必须显式开启 `ALLOW_LEGACY_ROOT_BOOTSTRAP=true`，注册页支持一次性令牌输入，并新增对应回归测试。
 - 2026-09-02：最终 review gate 通过：编码检查（586 文件）、后端 `1334/1334`、前端构建、生产依赖审计（0 漏洞）、Playwright E2E `16/16` 与 Git diff 检查均通过；当前仅保留 F-17 的超大模块拆分作为后续治理项。
 - 2026-09-02：API 契约、root bootstrap 和 Provider 网络策略最后一轮改动复核完成；再次执行 review gate（日志 `.runtime-check/review-gate-20260902-115943.log`）仍为 `PASS`，未发现需阻塞 PR 的回归。
+- 2026-09-02：已创建 PR [#5](https://github.com/MrYu-JMComic/FLAI-TavernAI/pull/5)，分支 `MrYu/code-review-2026-09-02`，提交 `65b88bd`；后续按 CI 结果处理审阅意见。
 
 ### 问题清单
 
