@@ -129,6 +129,39 @@ test('package scripts keep encoding checks wired into backend tests and frontend
   assert.equal(frontendPackage.scripts.build, 'vite build');
 });
 
+test('release version is declared once and shared by every package', async () => {
+  const backendPackage = readJson('backend/package.json');
+  const frontendPackage = readJson('frontend/package.json');
+  const windowsPackage = readJson('packaging/windows/package.json');
+  const { appConfig } = await import('../config.js');
+
+  assert.match(backendPackage.version, /^\d+\.\d+\.\d+$/);
+  assert.equal(frontendPackage.version, backendPackage.version);
+  assert.equal(windowsPackage.version, backendPackage.version);
+  assert.equal(appConfig.version, backendPackage.version);
+  assert.match(readText('CHANGELOG.md'), new RegExp(`^## \\[${backendPackage.version.replaceAll('.', '\\.')}\\]`, 'm'));
+});
+
+test('packages and CI pin the Node 24 runtime floor', () => {
+  const backendPackage = readJson('backend/package.json');
+  const frontendPackage = readJson('frontend/package.json');
+
+  assert.equal(backendPackage.engines?.node, '>=24');
+  assert.equal(frontendPackage.engines?.node, '>=24');
+  assert.equal(readText('.nvmrc').trim(), '24');
+  assert.match(readText('.github/workflows/ci.yml'), /node-version:\s*24\.x/);
+});
+
+test('CI workflow audits production dependencies for both packages', () => {
+  const workflow = readText('.github/workflows/ci.yml');
+  const auditSteps = workflow.match(/npm audit --omit=dev --audit-level=moderate\s*\r?\n\s*working-directory:\s*(backend|frontend)/g) ?? [];
+
+  assert.deepEqual(
+    auditSteps.map((step) => step.trim().split(/\s+/).at(-1)).sort(),
+    ['backend', 'frontend']
+  );
+});
+
 test('frontend keeps Playwright E2E smoke entry wired', () => {
   const frontendPackage = readJson('frontend/package.json');
   const playwrightConfig = readText('frontend/playwright.config.js');
@@ -190,6 +223,8 @@ test('review gate keeps required validation stages wired', () => {
     /return\s+\$result\.ExitCode/,
     /Invoke-LoggedNativeCommand\s+-File\s+"npm"\s+-WorkingDirectory\s+"backend"\s+-Arguments\s+@\("test"\)/,
     /Invoke-LoggedNativeCommand\s+-File\s+"npm"\s+-WorkingDirectory\s+"frontend"\s+-Arguments\s+@\("run",\s*"build"\)/,
+    /foreach\s+\(\$auditDirectory\s+in\s+@\("backend",\s*"frontend"\)\)/,
+    /Invoke-LoggedNativeCommand\s+-File\s+"npm"\s+-WorkingDirectory\s+\$auditDirectory\s+-Arguments\s+@\("audit",\s*"--omit=dev",\s*"--audit-level=moderate"\)/,
     /Invoke-LoggedNativeCommand\s+-File\s+"git"\s+-Arguments\s+@\("diff",\s*"--check"\)/,
     /Invoke-LoggedNativeCommand\s+-File\s+"git"\s+-Arguments\s+@\("diff",\s*"--cached",\s*"--check"\)/,
     /Invoke-CapturedNativeCommand\s+-File\s+"git"\s+-Arguments\s+@\("status",\s*"--short"\)/,

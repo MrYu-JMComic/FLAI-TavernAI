@@ -1,3 +1,7 @@
+import { readFileSync } from 'node:fs';
+
+const backendPackage = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
+
 export const TOWN_WORLD_GENERATION_TIMEOUT_DEFAULT_MS = 8 * 60 * 1000;
 export const TOWN_WORLD_GENERATION_TIMEOUT_MIN_MS = 60 * 1000;
 export const TOWN_WORLD_GENERATION_TIMEOUT_MAX_MS = 30 * 60 * 1000;
@@ -5,7 +9,7 @@ export const JSON_BODY_LIMIT_DEFAULT_BYTES = 12 * 1024 * 1024;
 
 export const appConfig = Object.freeze({
   serviceName: 'flai-tavern-backend',
-  version: '0.1.0',
+  version: backendPackage.version,
   nodeEnv: readString(process.env.NODE_ENV, 'development'),
   isProduction: process.env.NODE_ENV === 'production',
   port: readPositiveInteger(process.env.PORT, 3001),

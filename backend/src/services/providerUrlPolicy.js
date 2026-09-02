@@ -16,12 +16,17 @@ export class ProviderUrlError extends Error {
 }
 
 export function providerUrlPolicyOptions(options = {}) {
+  // Callers may pass an already-normalized policy (fetchProviderRequest does),
+  // so the lookup default must not be mistaken for a caller-provided lookup.
+  const customLookup = typeof options.customLookup === 'boolean'
+    ? options.customLookup
+    : typeof options.lookup === 'function';
   return {
     allowPrivateNetwork: options.allowPrivateNetwork === true,
     privateNetworkErrorMessage: String(options.privateNetworkErrorMessage || '').trim(),
     resolveDns: options.resolveDns ?? appConfig.providerResolveDns,
     lookup: options.lookup || dns.lookup,
-    customLookup: typeof options.lookup === 'function',
+    customLookup,
     isProduction: options.isProduction ?? appConfig.isProduction
   };
 }

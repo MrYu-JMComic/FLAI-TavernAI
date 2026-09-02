@@ -1,8 +1,11 @@
 {
   "name": "flai-tavern-frontend",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
   "scripts": {
     "dev": "vite --host 0.0.0.0",
     "prebuild": "node ../scripts/check-encoding.mjs",

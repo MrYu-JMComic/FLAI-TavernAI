@@ -140,14 +140,16 @@ try {
     $failures += "前端构建执行异常: $_"
 }
 
-# 6. 前端生产依赖审计
-Write-ReviewOutput "`n[6/8] 前端生产依赖审计..." -ForegroundColor Yellow
-try {
-    if ((Invoke-LoggedNativeCommand -File "npm" -WorkingDirectory "frontend" -Arguments @("audit", "--omit=dev", "--audit-level=moderate")) -ne 0) {
-        $failures += "前端生产依赖审计失败"
+# 6. 生产依赖审计
+Write-ReviewOutput "`n[6/8] 生产依赖审计..." -ForegroundColor Yellow
+foreach ($auditDirectory in @("backend", "frontend")) {
+    try {
+        if ((Invoke-LoggedNativeCommand -File "npm" -WorkingDirectory $auditDirectory -Arguments @("audit", "--omit=dev", "--audit-level=moderate")) -ne 0) {
+            $failures += "$auditDirectory 生产依赖审计失败"
+        }
+    } catch {
+        $failures += "$auditDirectory 生产依赖审计执行异常: $_"
     }
-} catch {
-    $failures += "前端生产依赖审计执行异常: $_"
 }
 
 # 7. 端到端测试
