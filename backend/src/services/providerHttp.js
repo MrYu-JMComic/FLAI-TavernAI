@@ -155,11 +155,18 @@ export async function fetchProviderRequest(url, request = {}, options = {}) {
 }
 
 function providerFetchPolicy(settings = {}) {
+  const enforceNetworkPolicy = settings.enforcePrivateNetworkPolicy === true;
   return {
+    // Route-created settings carry enforcePrivateNetworkPolicy after the
+    // root/config checks. Legacy direct service callers remain compatible in
+    // development, but cannot opt into this path from an HTTP request.
     allowPrivateNetwork: settings.allowPrivateNetwork === true
-      || (!appConfig.isProduction && appConfig.allowPrivateProviderNetworkInDevelopment),
+      || (!enforceNetworkPolicy && !appConfig.isProduction),
+    enforceNetworkPolicy,
+    privateNetworkErrorMessage: settings.privateNetworkErrorMessage,
     resolveDns: settings.resolveDns,
-    lookup: settings.lookup
+    lookup: settings.lookup,
+    isProduction: settings.isProduction ?? appConfig.isProduction
   };
 }
 

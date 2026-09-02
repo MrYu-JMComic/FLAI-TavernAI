@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  findColorBoxExpression,
+  normalizeEscapedKatexSource,
   normalizeKatexSource,
   selectKatexSurfaceTextColor
 } from '../../../frontend/src/utils/katexCompatibility.js';
@@ -39,6 +41,37 @@ test('KaTeX compatibility handles nested boxes and is idempotent', () => {
   assert.equal(normalizeKatexSource(normalized), expected);
 });
 
+test('KaTeX compatibility collapses provider-escaped control sequences', () => {
+  const source = String.raw`\\fcolorbox{red}{white}{ \\(\\begin{array}{l}x\\\\[0.5em] y\\end{array}\\) }`;
+  const expected = String.raw`\fcolorbox{red}{white}{ \(\begin{array}{l}x\\[0.5em] y\end{array}\) }`;
+
+  assert.equal(normalizeEscapedKatexSource(source), expected);
+});
+
+test('KaTeX compatibility converts nested dollar math inside color boxes', () => {
+  const source = String.raw`\fcolorbox{red}{white}{\(\begin{array}{l}text $\\rightarrow$ text\end{array}\)}`;
+  const normalized = normalizeEscapedKatexSource(source);
+
+  assert.equal(normalized.includes('$'), false);
+  assert.equal(normalized.includes(String.raw`\rightarrow`), true);
+});
+
+test('KaTeX compatibility locates balanced color-box expressions', () => {
+  const source = String.raw`prefix \fcolorbox{red}{white}{\(x\)} suffix`;
+  const expression = findColorBoxExpression(source, 7);
+
+  assert.deepEqual(expression, {
+    name: '\\fcolorbox',
+    start: 7,
+    end: source.indexOf(' suffix')
+  });
+
+  const escapedSource = String.raw`prefix \\fcolorbox{red}{white}{ \\(x\\) } suffix`;
+  const escapedExpression = findColorBoxExpression(escapedSource, 7);
+  assert.equal(escapedExpression?.start, 7);
+  assert.equal(escapedExpression?.end, escapedSource.indexOf(' suffix'));
+});
+
 test('KaTeX compatibility preserves ordinary and incomplete color boxes', () => {
   const ordinary = String.raw`\colorbox{red}{\text{Alert}}`;
   const incomplete = String.raw`\fcolorbox{red}{white}{\begin{array}{l}`;
@@ -60,13 +93,15 @@ test('KaTeX surface contrast selects readable defaults for generated backgrounds
 test('MarkdownContent renders through the KaTeX compatibility adapter', () => {
   assert.match(
     markdownContentScript,
-    /import \{[\s\S]*normalizeKatexSource,[\s\S]*selectKatexSurfaceTextColor[\s\S]*\} from '..\/utils\/katexCompatibility\.js';/
+    /import \{[\s\S]*findColorBoxExpression,[\s\S]*normalizeEscapedKatexSource,[\s\S]*selectKatexSurfaceTextColor[\s\S]*\} from '..\/utils\/katexCompatibility\.js';/
   );
   assert.match(
     markdownContentScript,
-    /const compatibleKatex = \{\s*renderToString\(source, options\) \{\s*return katex\.renderToString\(normalizeKatexSource\(source\), options\);\s*\}\s*\};/
+    /const compatibleKatex = \{\s*renderToString\(source, options\) \{\s*return katex\.renderToString\(normalizeEscapedKatexSource\(source\), options\);\s*\}\s*\};/
   );
   assert.match(markdownContentScript, /md\.use\(katexPlugin, \{\s*katex: compatibleKatex,/);
+  assert.match(markdownContentScript, /const expression = findColorBoxExpression\(state\.src, state\.pos\);/);
+  assert.match(markdownContentScript, /token\.content = state\.src\.slice\(expression\.start, expression\.end\);/);
 });
 
 test('MarkdownContent applies surface-aware contrast to KaTeX color boxes', () => {

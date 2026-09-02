@@ -34,6 +34,7 @@ import {
 } from './helpers.js';
 import { continueMessageSchema, sendMessageSchema, validate } from '../validations/schemas.js';
 import { normalizeThinkingLevel } from '../../../shared/providerThinking.js';
+import { routeErrorPayload } from './errorResponse.js';
 
 const CONTINUATION_PROMPT = [
   '从上一条 assistant 回复的末尾直接续写尚未完成的内容。',
@@ -43,6 +44,7 @@ const CONTINUATION_PROMPT = [
 
 export function createConversationGenerationRouter(ctx) {
   const { db, requireAuth, asyncRoute, newId, nowIso } = ctx;
+  const config = ctx.config || {};
   const getChatProviderSettings = (userId) => getChatProviderSettingsFromContext(ctx, userId);
   // Generation only needs authorization + settings; skip the O(messages) usage scan.
   const getConversation = (userId, conversationId) =>
@@ -168,10 +170,20 @@ export function createConversationGenerationRouter(ctx) {
     if (shouldUseImageGeneration(request.body, settings.value, aiOptions)) {
       let result;
       try {
-        result = await generateImage(settings.value, processedUserText || userText, aiOptions);
+        result = await generateImage(settings.value, processedUserText || userText, {
+          ...aiOptions,
+          database: db,
+          userId: request.auth.user.id
+        });
       } catch (error) {
-        response.status(400).json({
-          error: error?.message || '生图模型调用失败',
+        const publicError = routeErrorPayload(error, {
+          status: Number.isInteger(error?.status) ? error.status : 400,
+          isProduction: config.isProduction,
+          fallback: '生图模型调用失败'
+        });
+        response.status(publicError.normalized.status).json({
+          error: publicError.error,
+          code: publicError.code,
           accepted: true,
           userMessage,
           worldBookMatches
@@ -213,6 +225,8 @@ export function createConversationGenerationRouter(ctx) {
         request,
         response,
         userId: request.auth.user.id,
+        database: db,
+        config,
         conversation,
         character,
         rules,
@@ -232,7 +246,11 @@ export function createConversationGenerationRouter(ctx) {
       return;
     }
 
-    const result = await generateCompletion(settings.value, modelMessages, completionOptions);
+    const result = await generateCompletion(settings.value, modelMessages, {
+      ...completionOptions,
+      database: db,
+      userId: request.auth.user.id
+    });
     if (!hasAssistantPayload(result)) {
       const diagnosticId = createChatDiagnosticId();
       logAssistantPayloadFailure({
@@ -378,6 +396,8 @@ export function createConversationGenerationRouter(ctx) {
         request,
         response,
         userId: request.auth.user.id,
+        database: db,
+        config,
         conversation,
         character,
         rules,
@@ -397,7 +417,11 @@ export function createConversationGenerationRouter(ctx) {
       return;
     }
 
-    const result = await generateCompletion(settings.value, modelMessages, completionOptions);
+    const result = await generateCompletion(settings.value, modelMessages, {
+      ...completionOptions,
+      database: db,
+      userId: request.auth.user.id
+    });
     if (!hasAssistantPayload(result)) {
       const diagnosticId = createChatDiagnosticId();
       logAssistantPayloadFailure({

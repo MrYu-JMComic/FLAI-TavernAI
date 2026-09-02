@@ -65,9 +65,11 @@ import {
   castRosterQuerySchema,
   validate,
 } from '../validations/schemas.js';
+import { routeErrorPayload } from './errorResponse.js';
 
 export function createConversationCastRouter(ctx) {
   const { db, requireAuth } = ctx;
+  const config = ctx.config || {};
   const organizeCast = ctx.organizeConversationCast || organizeConversationCast;
   const asyncRoute = ctx.asyncRoute || ((handler) => (
     (request, response, next) => Promise.resolve(handler(request, response, next)).catch(next)
@@ -166,10 +168,15 @@ export function createConversationCastRouter(ctx) {
         });
       } catch (error) {
         const failure = serializeCastPlanError(error);
+        const publicError = routeErrorPayload(error, {
+          status: Number.isInteger(error?.statusCode) ? error.statusCode : 400,
+          isProduction: config.isProduction,
+          fallback: '人物整理失败'
+        });
         await writeSse(response, 'error', {
           ...failure,
-          error: error?.message || '人物整理失败',
-          code: error?.code || 'CAST_ORGANIZE_FAILED',
+          error: publicError.error,
+          code: publicError.code || error?.code || 'CAST_ORGANIZE_FAILED',
         });
       } finally {
         if (!response.writableEnded) response.end();

@@ -8,6 +8,7 @@ import {
 } from '../../api/chat.js';
 import { readFileAsDataUrl } from '../../utils/fileReaders.js';
 import { samePlainValue } from '../../utils/plainValues.js';
+import { isSafeAttachmentUrl, normalizeSafeAttachmentUrl } from '../../utils/attachmentUrls.js';
 import { resolveProviderModelCapabilities } from '../../../../shared/providerCapabilities.js';
 import {
   listThinkingPreferenceLevels,
@@ -1582,8 +1583,9 @@ export function useChatSubmit({
     const normalized = [];
     for (const attachment of source) {
       const rawUrl = String(attachment?.url || '').trim();
-      const dataUrl = String(attachment?.dataUrl || (isSupportedChatImageDataUrl(rawUrl) ? rawUrl : '')).trim();
-      const url = dataUrl ? '' : rawUrl;
+      const rawDataUrl = String(attachment?.dataUrl || (isSupportedChatImageDataUrl(rawUrl) ? rawUrl : '')).trim();
+      const dataUrl = rawDataUrl && isSafeAttachmentUrl(rawDataUrl) ? rawDataUrl : '';
+      const url = dataUrl ? '' : normalizeSafeAttachmentUrl(rawUrl);
       const mimeType = normalizeChatImageMimeType(attachment?.mimeType || mimeTypeFromImageDataUrl(dataUrl));
       if ((!dataUrl && !url) || !isSupportedChatImageType(mimeType)) {
         continue;

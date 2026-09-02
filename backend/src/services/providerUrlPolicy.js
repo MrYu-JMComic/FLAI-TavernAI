@@ -18,8 +18,11 @@ export class ProviderUrlError extends Error {
 export function providerUrlPolicyOptions(options = {}) {
   return {
     allowPrivateNetwork: options.allowPrivateNetwork === true,
+    privateNetworkErrorMessage: String(options.privateNetworkErrorMessage || '').trim(),
     resolveDns: options.resolveDns ?? appConfig.providerResolveDns,
-    lookup: options.lookup || dns.lookup
+    lookup: options.lookup || dns.lookup,
+    customLookup: typeof options.lookup === 'function',
+    isProduction: options.isProduction ?? appConfig.isProduction
   };
 }
 
@@ -29,7 +32,10 @@ export async function assertProviderUrlAllowed(value, options = {}) {
 
   if (isPrivateOrSpecialHost(url.hostname)) {
     if (!policy.allowPrivateNetwork) {
-      throw new ProviderUrlError('Provider Base URL cannot target a private or local network.', 'PROVIDER_PRIVATE_NETWORK_BLOCKED');
+      throw new ProviderUrlError(
+        policy.privateNetworkErrorMessage || 'Provider Base URL cannot target a private or local network.',
+        'PROVIDER_PRIVATE_NETWORK_BLOCKED'
+      );
     }
     return url;
   }
@@ -38,13 +44,20 @@ export async function assertProviderUrlAllowed(value, options = {}) {
     return url;
   }
 
+  // RFC-reserved test names are used by isolated contract tests and cannot
+  // resolve on the public DNS. Keep this narrow exception independent from
+  // the private-network switch; it does not permit arbitrary hostnames.
+  if (!policy.isProduction && !policy.customLookup && isReservedTestHost(url.hostname)) {
+    return url;
+  }
+
   let addresses;
   try {
     addresses = await policy.lookup(url.hostname, { all: true, verbatim: true });
   } catch (error) {
-    // Reserved .test hosts are useful for local contract tests and are never
+    // Reserved test hosts are useful for local contract tests and are never
     // routable in production. Other resolution failures fail closed.
-    if (!appConfig.isProduction && url.hostname.endsWith('.test')) {
+    if (!policy.isProduction && !policy.customLookup && isReservedTestHost(url.hostname)) {
       return url;
     }
     throw new ProviderUrlError('Provider host could not be resolved.', 'PROVIDER_HOST_UNRESOLVED', { cause: error });
@@ -63,11 +76,19 @@ export async function assertProviderUrlAllowed(value, options = {}) {
     }
     if (isPrivateOrSpecialAddress(resolvedAddress)) {
       if (!policy.allowPrivateNetwork) {
-        throw new ProviderUrlError('Provider host resolves to a private or local network.', 'PROVIDER_PRIVATE_NETWORK_BLOCKED');
+        throw new ProviderUrlError(
+          policy.privateNetworkErrorMessage || 'Provider host resolves to a private or local network.',
+          'PROVIDER_PRIVATE_NETWORK_BLOCKED'
+        );
       }
     }
   }
   return url;
+}
+
+function isReservedTestHost(hostname) {
+  const host = String(hostname || '').toLowerCase().replace(/\.$/, '');
+  return host.endsWith('.test') || host.endsWith('.example') || host.endsWith('.invalid');
 }
 
 export function parseProviderUrl(value) {

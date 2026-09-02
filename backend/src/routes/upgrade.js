@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { appConfig } from '../config.js';
+import { appConfig, withAppConfigDefaults } from '../config.js';
 import { createAsset, deleteAsset, getAssetForViewer, listAssets } from '../modules/assets.js';
 import {
   confirmConversationMemory,
@@ -20,9 +20,12 @@ import { describeProviderCapabilities, listProviderCapabilities, probeProviderHe
 import { providerWithSecret } from '../services/providers.js';
 import { buildWorldBookMatchPreview } from '../services/worldBookMatchPreview.js';
 import { createAssetSchema, validate } from '../validations/schemas.js';
+import { applyProviderNetworkPolicy } from '../services/providerNetworkPolicy.js';
+import { sendRouteError } from './errorResponse.js';
 
 export function createUpgradeRouter(ctx) {
   const { db, requireAuth, asyncRoute } = ctx;
+  const config = withAppConfigDefaults(ctx.config || appConfig);
   const router = Router();
 
   router.get('/app/bootstrap', requireAuth, (request, response) => {
@@ -30,8 +33,8 @@ export function createUpgradeRouter(ctx) {
     const provider = providerRow ? ctx.providerWithSecret(providerRow) : null;
     response.json({
       app: {
-        serviceName: appConfig.serviceName,
-        version: appConfig.version
+        serviceName: config.serviceName,
+        version: config.version
       },
       user: request.auth.user,
       profile: ctx.getUserProfile(request.auth.user.id),
@@ -52,7 +55,7 @@ export function createUpgradeRouter(ctx) {
   });
 
   router.post('/providers/health', requireAuth, asyncRoute(async (request, response) => {
-    const settings = buildProviderHealthSettings(ctx, request.auth.user.id, request.body || {});
+    const settings = buildProviderHealthSettings(ctx, request.auth.user.id, request.body || {}, request.auth.user);
     response.json(await probeProviderHealth(settings));
   }));
 
@@ -66,7 +69,7 @@ export function createUpgradeRouter(ctx) {
       const { base64Data: _base64Data, dataUrl: _dataUrl, ...summary } = asset;
       response.status(201).json(summary);
     } catch (error) {
-      response.status(400).json({ error: error?.message || '资产保存失败' });
+      sendRouteError(response, error, { status: 400, isProduction: config.isProduction, fallback: '资产保存失败' });
     }
   });
 
@@ -118,7 +121,7 @@ export function createUpgradeRouter(ctx) {
       }
       response.status(201).json(memory);
     } catch (error) {
-      response.status(400).json({ error: error?.message || '记忆保存失败' });
+      sendRouteError(response, error, { status: 400, isProduction: config.isProduction, fallback: '记忆保存失败' });
     }
   });
 
@@ -137,7 +140,7 @@ export function createUpgradeRouter(ctx) {
       }
       response.json(memory);
     } catch (error) {
-      response.status(400).json({ error: error?.message || '记忆更新失败' });
+      sendRouteError(response, error, { status: 400, isProduction: config.isProduction, fallback: '记忆更新失败' });
     }
   });
 
@@ -220,16 +223,18 @@ export function createUpgradeRouter(ctx) {
       }
       response.status(result.dryRun ? 200 : 201).json(result);
     } catch (error) {
-      response.status(400).json({ error: error?.message || '导入失败' });
+      sendRouteError(response, error, { status: 400, isProduction: config.isProduction, fallback: '导入失败' });
     }
   });
 
   return router;
 }
 
-function buildProviderHealthSettings(ctx, userId, payload = {}) {
+function buildProviderHealthSettings(ctx, userId, payload = {}, user = {}) {
+  const config = withAppConfigDefaults(ctx.config || appConfig);
   if (!Object.keys(payload).length) {
-    return providerWithSecret(ctx.getProviderRow(userId));
+    const saved = providerWithSecret(ctx.getProviderRow(userId));
+    return applyProviderNetworkPolicy(saved, config, user);
   }
   const providerId = String(payload.providerId || '').trim();
   const row = ctx.getProviderRow(userId, providerId);
@@ -239,7 +244,7 @@ function buildProviderHealthSettings(ctx, userId, payload = {}) {
     throw error;
   }
   const saved = providerWithSecret(row);
-  return {
+  return applyProviderNetworkPolicy({
     ...saved,
     providerType: payload.providerType || saved.providerType,
     gatewayName: payload.gatewayName || saved.gatewayName,
@@ -249,7 +254,7 @@ function buildProviderHealthSettings(ctx, userId, payload = {}) {
     extraBody: payload.extraBody ?? saved.extraBody,
     apiKey: String(payload.apiKey || '').trim() || saved.apiKey,
     apiKeySet: Boolean(payload.apiKey || saved.apiKeySet)
-  };
+  }, config, user);
 }
 
 function stripProviderSecret(provider = {}) {

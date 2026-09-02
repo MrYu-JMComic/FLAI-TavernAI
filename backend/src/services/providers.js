@@ -43,6 +43,7 @@ import { createStreamEmitQueue } from './providerStreamEmit.js';
 import { providerStreamErrorMessage } from './providerStreamErrors.js';
 import { runToolCompletion, streamToolCompletion } from './providerToolCompletions.js';
 import { normalizeProviderBaseUrl, trimSlash } from './providerUrls.js';
+import { withProviderQuota } from './quotas.js';
 
 export { generateImage } from './providerImageGeneration.js';
 export { isImageGenerationModel } from './providerImageModels.js';
@@ -274,6 +275,16 @@ function buildNonStreamSignal(options = {}) {
 
 export async function generateCompletion(settings, messages, options = {}) {
   options = options ?? {};
+  return withProviderQuota(
+    options.database,
+    options.userId,
+    () => generateCompletionInternal(settings, messages, { ...options, __quotaHandled: true }),
+    options
+  );
+}
+
+async function generateCompletionInternal(settings, messages, options = {}) {
+  options = options ?? {};
   if (!hasUsableProvider(settings)) {
     return mockCompletion(messages, settings);
   }
@@ -306,6 +317,16 @@ export async function generateCompletion(settings, messages, options = {}) {
 }
 
 export async function streamCompletion(settings, messages, emit, signal, options = {}) {
+  options = options ?? {};
+  return withProviderQuota(
+    options.database,
+    options.userId,
+    () => streamCompletionInternal(settings, messages, emit, signal, { ...options, __quotaHandled: true }),
+    options
+  );
+}
+
+async function streamCompletionInternal(settings, messages, emit, signal, options = {}) {
   options = options ?? {};
   if (!hasUsableProvider(settings)) {
     const streamEmit = createStreamEmitQueue(emit);

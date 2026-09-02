@@ -1,0 +1,49 @@
+name: FLAI review gate
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.x
+          cache: npm
+          cache-dependency-path: |
+            backend/package-lock.json
+            frontend/package-lock.json
+      - name: Install backend dependencies
+        run: npm ci
+        working-directory: backend
+      - name: Install frontend dependencies
+        run: npm ci
+        working-directory: frontend
+      - name: Check encoding
+        run: node scripts/check-encoding.mjs
+      - name: Backend tests
+        run: npm test
+        working-directory: backend
+      - name: Frontend production audit
+        run: npm audit --omit=dev --audit-level=moderate
+        working-directory: frontend
+      - name: Frontend build
+        run: npm run build
+        working-directory: frontend
+      - name: Install Playwright browser
+        run: npx playwright install --with-deps chromium
+        working-directory: frontend
+      - name: End-to-end smoke suite
+        run: npm run test:e2e
+        working-directory: frontend
+      - name: Upload E2E artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-artifacts
+          path: .runtime-check/playwright-*
+          if-no-files-found: ignore

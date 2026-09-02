@@ -18,6 +18,7 @@ const mode = ref(normalizeAuthMode(props.initialMode));
 const username = ref('');
 const password = ref('');
 const confirmPassword = ref('');
+const bootstrapToken = ref('');
 const passwordVisible = ref(false);
 const confirmPasswordVisible = ref(false);
 const loading = ref(false);
@@ -46,7 +47,7 @@ watch(
   }
 );
 
-watch([username, password, confirmPassword], clearAuthFeedback);
+watch([username, password, confirmPassword, bootstrapToken], clearAuthFeedback);
 
 onBeforeUnmount(() => {
   disposed = true;
@@ -68,6 +69,7 @@ function setMode(nextMode) {
   mode.value = normalizedMode;
   confirmPassword.value = '';
   confirmPasswordVisible.value = false;
+  bootstrapToken.value = '';
   clearAuthFeedback();
 }
 
@@ -114,9 +116,13 @@ async function submit() {
 
   const requestToken = ++submitToken;
   const authRequest = isRegisterMode.value ? register : login;
+  const payload = { username: username.value.trim(), password: password.value };
+  if (isRegisterMode.value && bootstrapToken.value.trim()) {
+    payload.bootstrapToken = bootstrapToken.value.trim();
+  }
   loading.value = true;
   try {
-    const result = await authRequest({ username: username.value.trim(), password: password.value });
+    const result = await authRequest(payload);
     if (!isCurrentSubmit(requestToken)) return;
     emit('authenticated', result);
   } catch (err) {
@@ -246,6 +252,19 @@ async function submit() {
           </div>
           <small class="field-hint">再次输入密码</small>
         </div>
+
+        <label v-if="isRegisterMode" class="field" for="auth-bootstrap-token">
+          <span>管理员初始化令牌（如有）</span>
+          <input
+            id="auth-bootstrap-token"
+            v-model="bootstrapToken"
+            autocomplete="off"
+            type="password"
+            maxlength="256"
+            :disabled="loading"
+          />
+          <small class="field-hint">启用一次性初始化时填写</small>
+        </label>
 
         <p v-if="formError" class="error-text auth-inline-error" role="alert">{{ formError }}</p>
 

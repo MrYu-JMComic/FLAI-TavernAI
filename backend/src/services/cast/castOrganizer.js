@@ -19,6 +19,7 @@ export async function organizeConversationCast(options = {}) {
     idempotencyKey = '',
     signal,
     generate = generateCompletion,
+    quotaManaged = false,
     onProgress = async () => {},
   } = options;
   try {
@@ -40,6 +41,7 @@ export async function organizeConversationCast(options = {}) {
       maxTokens: scope === 'member' ? 6_000 : 12_000,
       timeoutMs: 120_000,
       signal,
+      ...(quotaManaged ? {} : { database, userId }),
     };
     const result = await generate(
       settings,

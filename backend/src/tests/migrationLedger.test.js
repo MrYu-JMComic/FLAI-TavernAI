@@ -2,14 +2,15 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createAppDatabase } from '../db/runtime.js';
 import { initializeDatabase } from '../db/schema.js';
-import { listAppliedMigrations } from '../db/migrations.js';
+import { latestSchemaVersion, listAppliedMigrations } from '../db/migrations.js';
 import { insertUser } from './routeTestUtils.js';
 
 test('migration ledger records deterministic checksums and replays idempotently', () => {
   const database = createAppDatabase(':memory:');
   try {
     const first = listAppliedMigrations(database);
-    assert.deepEqual(first.map((row) => row.version), ['0001', '0002', '0003', '0004', '0005', '0006', '0007', '0008', '0009']);
+    assert.equal(first.at(-1)?.version, latestSchemaVersion);
+    assert.equal(first.length, 10);
     for (const row of first) {
       assert.match(row.checksum, /^[a-f0-9]{64}$/);
     }
@@ -26,7 +27,7 @@ test('existing schemas without a ledger are adopted on the next initialization',
   try {
     database.exec('DROP TABLE schema_migrations');
     initializeDatabase(database);
-    assert.equal(listAppliedMigrations(database).length, 9);
+    assert.equal(listAppliedMigrations(database).length, 10);
   } finally {
     database.close();
   }

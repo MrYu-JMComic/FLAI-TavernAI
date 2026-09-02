@@ -110,20 +110,53 @@ export async function hashPassword(password) {
 }
 
 export async function verifyPassword(password, storedHash) {
-  const passwordHashParts = parseColonFields(storedHash, 3);
+  const source = String(storedHash || '');
+  // Password hashes are database data, not unbounded input.  Reject malformed
+  // fields before invoking scrypt so a corrupt row cannot trigger expensive
+  // work or a synchronous error response.
+  if (source.length > 256) {
+    return false;
+  }
+  const passwordHashParts = parseColonFields(source, 3);
   if (!passwordHashParts) {
     return false;
   }
 
   const [scheme, salt, hash] = passwordHashParts;
-  if (scheme !== 'scrypt' || !salt || !hash) {
+  if (scheme !== 'scrypt' || !isStrictBase64(salt) || !isStrictBase64(hash)) {
     return false;
   }
 
-  const derived = await scryptAsync(password, salt, passwordKeyLength);
-  const expected = Buffer.from(hash, 'base64');
-  const actual = Buffer.from(derived);
-  return expected.length === actual.length && crypto.timingSafeEqual(expected, actual);
+  let expected;
+  try {
+    const saltBytes = Buffer.from(salt, 'base64');
+    expected = Buffer.from(hash, 'base64');
+    if (saltBytes.length !== 16 || expected.length !== passwordKeyLength) {
+      return false;
+    }
+    // Keep the historical wire format compatible: hashPassword passes the
+    // base64 salt text to scrypt (rather than the decoded bytes).
+    const derived = await scryptAsync(password, salt, passwordKeyLength, {
+      maxmem: 32 * 1024 * 1024
+    });
+    const actual = Buffer.from(derived);
+    return expected.length === actual.length && crypto.timingSafeEqual(expected, actual);
+  } catch {
+    return false;
+  }
+}
+
+function isStrictBase64(value) {
+  const text = String(value || '');
+  if (!text || text.length % 4 !== 0 || !/^[A-Za-z0-9+/]+={0,2}$/.test(text)) {
+    return false;
+  }
+  try {
+    const decoded = Buffer.from(text, 'base64');
+    return decoded.length > 0 && decoded.toString('base64') === text;
+  } catch {
+    return false;
+  }
 }
 
 export function encryptSecret(value) {

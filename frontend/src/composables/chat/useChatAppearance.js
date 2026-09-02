@@ -34,6 +34,7 @@ export function useChatAppearance({
 }) {
   const chatAppearanceForm = reactive(createDefaultChatAppearance());
   const authorChatAppearance = ref(createDefaultChatAppearance());
+  const authorDangerousSettingsAllowed = ref(false);
   const customAppearanceStyleEl = ref(null);
   const customAppearanceCleanup = ref(null);
   const customAppearanceState = ref({});
@@ -49,7 +50,11 @@ export function useChatAppearance({
   let appearanceDisposed = false;
   let lastAppearanceSyncSignature = '';
 
-  const effectiveChatAppearance = computed(() => mergeChatAppearance(authorChatAppearance.value, chatAppearanceForm));
+  const effectiveChatAppearance = computed(() => mergeChatAppearance(
+    authorChatAppearance.value,
+    chatAppearanceForm,
+    { allowAuthorDangerous: authorDangerousSettingsAllowed.value }
+  ));
 
   const activeChatBackgroundUrl = computed(() => {
     return resolveChatBackgroundUrl(effectiveChatAppearance.value, chatViewportIsPhone.value);
@@ -94,6 +99,12 @@ export function useChatAppearance({
     const authorSettings = normalizeChatAppearance(sourceSettings?.authorSettings || conversation.value?.authorSettings || {});
     const userSettingsSource = sourceSettings?.userSettings || conversation.value?.userSettings || sourceSettings;
     const userSettings = normalizeChatAppearance(userSettingsSource);
+    const characterOwner = Boolean(
+      conversation.value?.isCharacterOwner
+      || conversation.value?.character?.isOwner
+      || activeCharacterValue.value?.isOwner
+    );
+    authorDangerousSettingsAllowed.value = characterOwner && sourceSettings.authorDangerousAllowed !== false;
     const directSettings = hasDirectAppearanceSettings(sourceSettings) ? normalizeChatAppearance(sourceSettings) : null;
     if (directSettings && hasOwnAppearanceSetting(sourceSettings, 'showWorldBookMatches', 'show_world_book_matches')) {
       userSettings.showWorldBookMatches = directSettings.showWorldBookMatches;
@@ -559,6 +570,7 @@ export function useChatAppearance({
   return {
     chatAppearanceForm,
     authorChatAppearance,
+    authorDangerousSettingsAllowed,
     customAppearanceStyleEl,
     customAppearanceCleanup,
     customAppearanceState,

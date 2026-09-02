@@ -5,7 +5,7 @@ import crypto from 'node:crypto';
 import path from 'node:path';
 import express from 'express';
 import rateLimit, { ipKeyGenerator } from 'express-rate-limit';
-import { appConfig } from './config.js';
+import { appConfig, withAppConfigDefaults } from './config.js';
 import { AppError, appErrorFrom, publicErrorMessage } from './errors.js';
 import { getCharacterWorldBookId, getCharacterWorldBookIds } from './modules/worldBooks.js';
 import { getCharacterTagsMap } from './modules/tags.js';
@@ -35,7 +35,7 @@ import { createUpgradeRouter } from './routes/upgrade.js';
 import { createWorldBooksRouter } from './routes/worldBooks.js';
 import { newId, nowIso, resolveSession } from './security.js';
 import { getAvatarAssetForViewer } from './services/avatars.js';
-import { csrfProtection, csrfTokenEndpoint } from './services/csrf.js';
+import { createCsrfMiddleware, createCsrfTokenEndpoint } from './services/csrf.js';
 import {
   buildOpenApiDocument,
   compatibilityAliasMiddleware,
@@ -51,7 +51,9 @@ import {
   providerWithSecret
 } from './services/providers.js';
 import { providerResilienceSnapshot } from './services/providerResilience.js';
-import { consumeDailyRequest } from './services/quotas.js';
+import { assertStructuredStorageQuota, consumeDailyRequest } from './services/quotas.js';
+import { applyProviderNetworkPolicy } from './services/providerNetworkPolicy.js';
+import { isPrivateOrSpecialHost, parseProviderUrl } from './services/providerUrlPolicy.js';
 import {
   buildRuntimeHealth,
   buildRuntimeLiveness,
@@ -63,10 +65,11 @@ export function createApp(context = {}) {
   if (!db) {
     throw new TypeError('createApp requires a database');
   }
-  const config = context.config || appConfig;
+  const config = withAppConfigDefaults(context.config || appConfig);
   const applicationLogger = context.logger || logger;
   const backupService = context.backupService || {};
   const app = express();
+  repairRootProviderPermissions(db, config);
   const readinessProbe = createReadinessProbe(db, context.readinessOptions);
 
   const apiRateLimitWindowMs = config.apiRateLimitWindowMs;
@@ -132,13 +135,34 @@ export function createApp(context = {}) {
     request.auth = resolveSession(db, request);
     next();
   });
+  app.use((request, _response, next) => {
+    const userId = request.auth?.user?.id;
+    if (!userId || !['POST', 'PUT', 'PATCH'].includes(String(request.method || '').toUpperCase())) {
+      next();
+      return;
+    }
+    let bodyBytes = 0;
+    try {
+      bodyBytes = Buffer.byteLength(JSON.stringify(request.body ?? {}));
+    } catch {
+      bodyBytes = 0;
+    }
+    try {
+      assertStructuredStorageQuota(db, userId, bodyBytes);
+      next();
+    } catch (error) {
+      next(error);
+    }
+  });
 
   const requireAuth = (request, response, next) => {
     if (!request.auth?.user) {
       response.status(401).json({ error: '请先登录' });
       return;
     }
-    validateAuthenticatedRequestBoundary(request, response, next);
+    validateAuthenticatedRequestBoundary(request, response, next, {
+      limits: config.jsonBodyLimitBytes ? { maxBytes: config.jsonBodyLimitBytes } : {}
+    });
   };
   const requireRootAdmin = (request, response, next) => {
     if (!request.auth?.user?.isRootAdmin) {
@@ -168,7 +192,7 @@ export function createApp(context = {}) {
     message: { error: '登录尝试过于频繁，请 1 分钟后再试' }
   });
 
-  app.get('/api/csrf-token', csrfTokenEndpoint);
+  app.get('/api/csrf-token', createCsrfTokenEndpoint(config));
   app.get('/api/avatars/:id', requireAuth, (request, response) => {
     const asset = getAvatarAssetForViewer(db, request.auth.user.id, request.params.id);
     if (!asset) {
@@ -179,7 +203,7 @@ export function createApp(context = {}) {
     response.setHeader('Cache-Control', 'private, max-age=3600');
     response.send(Buffer.from(asset.base64Data, 'base64'));
   });
-  app.use('/api', csrfProtection);
+  app.use('/api', createCsrfMiddleware(config));
   app.use((_request, response, next) => {
     response.setHeader('Content-Type', 'application/json; charset=utf-8');
     next();
@@ -253,16 +277,34 @@ export function createApp(context = {}) {
   }
 
   function getChatProviderSettings(userId) {
-    return getChatProviderSettingsFromContext({
+    const result = getChatProviderSettingsFromContext({
       providerWithSecret,
       hasUsableProvider,
       getProviderRow,
       mockProviderEnabled: config.mockProviderEnabled
     }, userId);
+    if (result?.ok) {
+      if (result.value.providerType !== 'mock') {
+        const user = db.prepare(
+          'SELECT id, is_root_admin AS isRootAdmin FROM users WHERE id = ?'
+        ).get(userId) || { id: userId };
+        try {
+          result.value = applyProviderNetworkPolicy(result.value, config, user);
+        } catch (error) {
+          return {
+            ok: false,
+            error: error?.publicMessage || error?.message || 'Provider 网络策略拒绝请求。',
+            code: error?.code
+          };
+        }
+      }
+    }
+    return result;
   }
 
   const routeContext = {
     db,
+    config,
     requireAuth,
     requireRootAdmin,
     asyncRoute,
@@ -285,6 +327,8 @@ export function createApp(context = {}) {
     registrationEnabled: config.registrationEnabled,
     rootAdminUsername: config.rootAdminUsername,
     rootAdminPassword: config.rootAdminPassword,
+    rootAdminBootstrapToken: config.rootAdminBootstrapToken,
+    allowLegacyRootBootstrap: config.allowLegacyRootBootstrap,
     backupService
   };
 
@@ -436,4 +480,75 @@ function saveDefaultProvider(database, userId) {
     timestamp: nowIso()
   });
   return normalizeProviderRow(row);
+}
+
+function repairRootProviderPermissions(database, config) {
+  try {
+    const privateEnabled = config.isProduction
+      ? config.allowPrivateProviderNetwork
+      : config.allowPrivateProviderNetworkInDevelopment;
+    if (!privateEnabled) {
+      return;
+    }
+    const hasProviderTables = database.prepare(
+      "SELECT COUNT(*) AS count FROM sqlite_master WHERE type = 'table' AND name IN ('users', 'provider_settings')"
+    ).get()?.count === 2;
+    if (!hasProviderTables) {
+      return;
+    }
+    database.exec(`
+    CREATE TABLE IF NOT EXISTS provider_private_network_repairs (
+      user_id TEXT PRIMARY KEY,
+      repaired_at TEXT NOT NULL,
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    )
+    `);
+    const users = database.prepare(
+      `SELECT users.id
+       FROM users
+       LEFT JOIN provider_private_network_repairs repairs ON repairs.user_id = users.id
+       WHERE users.is_root_admin = 1 AND repairs.user_id IS NULL`
+    ).all();
+    const tableNames = new Set(
+      database.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('provider_settings', 'provider_presets')")
+        .all()
+        .map((row) => row.name)
+    );
+    for (const user of users) {
+      try {
+        const privateRows = [];
+        for (const tableName of tableNames) {
+          const rows = database.prepare(
+            `SELECT rowid AS row_id, base_url FROM ${tableName} WHERE user_id = ?`
+          ).all(user.id);
+          for (const row of rows) {
+            try {
+              if (isPrivateOrSpecialHost(parseProviderUrl(row.base_url).hostname)) {
+                privateRows.push({ tableName, rowId: row.row_id });
+              }
+            } catch (error) {
+              void error;
+            }
+          }
+        }
+        for (const row of privateRows) {
+          database.prepare(
+            `UPDATE ${row.tableName} SET allow_private_network = 1 WHERE rowid = ? AND user_id = ?`
+          ).run(row.rowId, user.id);
+        }
+        if (privateRows.length) {
+          database.prepare(
+            'INSERT OR IGNORE INTO provider_private_network_repairs (user_id, repaired_at) VALUES (?, ?)'
+          ).run(user.id, nowIso());
+        }
+      } catch (error) {
+        // Invalid provider URLs are handled by normal settings validation;
+        // startup repair must never prevent the server from booting.
+        void error;
+      }
+    }
+  } catch (error) {
+    // Read-only or pre-migration databases can skip this optional repair.
+    void error;
+  }
 }

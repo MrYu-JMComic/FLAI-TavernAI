@@ -7260,7 +7260,11 @@ test('advanced settings helpers treat null inputs as defaults', () => {
   assert.equal(normalized.statusBarBlueprint.variables.length, 0);
   assert.equal(normalized.accessorySkills.statusBarAgent.enabled, 'auto');
 
-  const merged = mergeAdvancedSettings({ statusBarPrompt: 'author prompt', showWorldBookMatches: false }, null);
+  const merged = mergeAdvancedSettings(
+    { statusBarPrompt: 'author prompt', showWorldBookMatches: false },
+    null,
+    { allowAuthorDangerous: true }
+  );
   assert.equal(merged.statusBarPrompt, 'author prompt');
   assert.equal(merged.showWorldBookMatches, false);
   assert.equal(

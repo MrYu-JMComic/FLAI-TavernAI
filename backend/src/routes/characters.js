@@ -37,6 +37,7 @@ import { sanitizeCharacterPayload } from '../services/sanitize.js';
 import { normalizeBoolean } from '../utils/boolean.js';
 import { normalizeFiniteNumber } from '../utils/number.js';
 import { parseJson, withModelOverride, writeSse } from './helpers.js';
+import { routeErrorPayload } from './errorResponse.js';
 
 export function createCharactersRouter({
   db,
@@ -49,7 +50,8 @@ export function createCharactersRouter({
   getChatProviderSettings,
   withEtag,
   withListCache,
-  nowIso
+  nowIso,
+  config = {}
 }) {
   const router = Router();
 
@@ -337,6 +339,8 @@ export function createCharactersRouter({
             current,
             user: request.auth.user,
             options: request.body?.options || {},
+            database: db,
+            userId: request.auth.user.id,
             signal: controller.signal,
             emit: (event, data) => writeSse(response, event, data)
           });
@@ -346,7 +350,7 @@ export function createCharactersRouter({
           if (!request.aborted && !response.destroyed) {
             const message = controller.signal.aborted
               ? controller.signal.reason?.message || 'AI 角色助手请求已中断，请重试。'
-              : normalizeCharacterAssistantError(error);
+              : safeCharacterAssistantError(error, config);
             writeSse(response, 'error', { error: message });
             response.end();
           }
@@ -362,6 +366,8 @@ export function createCharactersRouter({
           current,
           user: request.auth.user,
           options: request.body?.options || {},
+          database: db,
+          userId: request.auth.user.id,
           signal: controller.signal
         })
       );
@@ -369,10 +375,17 @@ export function createCharactersRouter({
       if (request.aborted || response.destroyed) {
         return;
       }
-      const message = controller.signal.aborted
+      const status = controller.signal.aborted ? 504 : Number(error?.status) === 429 ? 429 : 400;
+      const abortedMessage = controller.signal.aborted
         ? controller.signal.reason?.message || 'AI 角色助手请求已中断，请重试。'
-        : normalizeCharacterAssistantError(error);
-      response.status(controller.signal.aborted ? 504 : 400).json({ error: message });
+        : '';
+      const publicError = routeErrorPayload(error, {
+        status,
+        isProduction: config.isProduction,
+        publicMessage: abortedMessage || undefined,
+        fallback: abortedMessage || 'AI 角色助手失败，请稍后重试。'
+      });
+      response.status(status).json({ error: publicError.error, code: publicError.code });
     } finally {
       clearTimeout(timeout);
     }
@@ -397,7 +410,7 @@ export function createCharactersRouter({
       return;
     }
 
-    const result = rollTalent(db, request.params.id, poolId);
+    const result = rollTalent(db, request.params.id, poolId, request.auth.user.id);
     if (result.error) {
       response.status(400).json({ error: result.error });
       return;
@@ -411,7 +424,7 @@ export function createCharactersRouter({
       response.status(404).json({ error: '角色不存在' });
       return;
     }
-    response.json(getCharacterTalents(db, request.params.id));
+    response.json(getCharacterTalents(db, request.params.id, request.auth.user.id));
   });
 
   router.delete('/:id/talents', requireAuth, (request, response) => {
@@ -424,7 +437,7 @@ export function createCharactersRouter({
       response.status(403).json({ error: '只有角色拥有者可以管理天赋' });
       return;
     }
-    deleteAllCharacterTalents(db, request.params.id);
+    deleteAllCharacterTalents(db, request.params.id, request.auth.user.id);
     response.json({ ok: true });
   });
 
@@ -438,7 +451,7 @@ export function createCharactersRouter({
       response.status(403).json({ error: '只有角色拥有者可以管理天赋' });
       return;
     }
-    if (!deleteCharacterTalent(db, request.params.talentId, request.params.id)) {
+    if (!deleteCharacterTalent(db, request.params.talentId, request.params.id, request.auth.user.id)) {
       response.status(404).json({ error: '天赋不存在' });
       return;
     }
@@ -543,4 +556,11 @@ function normalizeCharacterAssistantError(error) {
     return 'AI 服务连接中断，请检查网关地址、网络或稍后重试。';
   }
   return message;
+}
+
+function safeCharacterAssistantError(error, config = {}) {
+  if (config.isProduction && !error?.publicMessage) {
+    return 'AI 角色助手失败，请稍后重试。';
+  }
+  return normalizeCharacterAssistantError(error);
 }

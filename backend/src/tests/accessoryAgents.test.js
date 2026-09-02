@@ -170,7 +170,8 @@ test('advanced settings text fields merge without filter join arrays', () => {
       customJsEnabled: true,
       customJsRiskAccepted: true,
       statusBarPrompt: 'User status prompt'
-    }
+    },
+    { allowAuthorDangerous: true }
   );
 
   assert.equal(merged.customCss, '.author {}\n\n.user {}');

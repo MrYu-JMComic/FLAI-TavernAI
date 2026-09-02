@@ -16,8 +16,15 @@ import { saveAvatarInput } from '../services/avatars.js';
 import { normalizeBoolean } from '../utils/boolean.js';
 import { parseJson } from '../utils/json.js';
 import { saveProviderSchema, updateProfileSchema, validate } from '../validations/schemas.js';
-import { appConfig } from '../config.js';
-import { isPrivateOrSpecialHost, parseProviderUrl, ProviderUrlError } from '../services/providerUrlPolicy.js';
+import { appConfig, withAppConfigDefaults } from '../config.js';
+import { isPrivateOrSpecialHost, parseProviderUrl } from '../services/providerUrlPolicy.js';
+import {
+  applyProviderNetworkPolicy,
+  evaluateProviderNetworkPolicy,
+  isPrivateProviderNetworkEnabled,
+  isTestMockProviderUrl,
+  providerNetworkStatus
+} from '../services/providerNetworkPolicy.js';
 import {
   createProviderProfile,
   deleteProviderProfile,
@@ -31,6 +38,7 @@ import {
 
 export function createSettingsRouter(ctx) {
   const { db, requireAuth, asyncRoute, nowIso } = ctx;
+  const config = withAppConfigDefaults(ctx.config || appConfig);
   const router = Router();
 
   router.get('/provider', requireAuth, (request, response) => {
@@ -93,7 +101,7 @@ export function createSettingsRouter(ctx) {
   }));
 
   router.get('/providers/models', requireAuth, asyncRoute(async (request, response) => {
-    const settings = providerWithSecret(getProviderRow(request.auth.user.id));
+    const settings = buildProviderProbeSettings(request.auth.user.id, {}, request.auth.user);
     response.json({ models: await listProviderModels(settings, { forceRefresh: request.query.force === '1' }) });
   }));
 
@@ -162,7 +170,8 @@ export function createSettingsRouter(ctx) {
     }));
     return {
       providers,
-      selectedProviderId: providers.find((provider) => provider.selected)?.id || ''
+      selectedProviderId: providers.find((provider) => provider.selected)?.id || '',
+      providerNetworkPolicy: providerNetworkStatus(config)
     };
   }
 
@@ -192,6 +201,11 @@ export function createSettingsRouter(ctx) {
     const existingPublic = existing ? normalizeProviderRow(existing) : null;
     const providerType = payload.providerType || existingPublic?.providerType || 'deepseek';
     const preset = providerPresets[providerType] || providerPresets.custom;
+    const candidateBaseUrl = normalizeProviderBaseUrl(
+      preset.providerType,
+      payload.baseUrl ?? existingPublic?.baseUrl ?? preset.baseUrl
+    );
+    const privateNetwork = isPrivateBaseUrl(candidateBaseUrl);
     const apiKey = String(payload.apiKey || '').trim();
     const encryptedApiKey = apiKey
       ? encryptSecret(apiKey)
@@ -202,13 +216,16 @@ export function createSettingsRouter(ctx) {
     const settings = {
       providerType: preset.providerType,
       gatewayName: String(payload.gatewayName || existingPublic?.gatewayName || preset.gatewayName).trim() || preset.gatewayName,
-      baseUrl: normalizeProviderBaseUrl(preset.providerType, payload.baseUrl ?? existingPublic?.baseUrl ?? preset.baseUrl),
+      baseUrl: candidateBaseUrl,
       model: String(payload.model ?? existingPublic?.model ?? preset.model).trim(),
       supportsReasoning: normalizeBoolean(payload.supportsReasoning, existingPublic?.supportsReasoning ?? preset.supportsReasoning),
-      allowPrivateNetwork: normalizeBoolean(payload.allowPrivateNetwork, existingPublic?.allowPrivateNetwork ?? false)
-        && Boolean(user.isRootAdmin)
-        && privateProviderNetworkEnabled(),
+      allowPrivateNetwork: privateNetwork
+        ? (Boolean(user.isRootAdmin) && isPrivateProviderNetworkEnabled(config) || isTestMockProviderUrl(candidateBaseUrl, config))
+        : normalizeBoolean(payload.allowPrivateNetwork, existingPublic?.allowPrivateNetwork ?? false),
       extraBody: parseProviderExtraBody(preset.providerType, payload.extraBody ?? existingPublic?.extraBody ?? preset.extraBody),
+      resolveDns: config.providerResolveDns,
+      isProduction: config.isProduction,
+      enforcePrivateNetworkPolicy: true,
       encryptedApiKey,
       apiKeyHint: apiKey
         ? apiKeyHint(apiKey)
@@ -233,39 +250,34 @@ export function createSettingsRouter(ctx) {
     const providerType = payload.providerType || saved.providerType || 'custom';
     const preset = providerPresets[providerType] || providerPresets.custom;
     const apiKey = String(payload.apiKey || '').trim() || saved.apiKey || '';
-
+    const candidateBaseUrl = normalizeProviderBaseUrl(preset.providerType, payload.baseUrl ?? saved.baseUrl ?? preset.baseUrl);
     const settings = {
       providerType: preset.providerType,
       gatewayName: String(payload.gatewayName || saved.gatewayName || preset.gatewayName).trim() || preset.gatewayName,
-      baseUrl: normalizeProviderBaseUrl(preset.providerType, payload.baseUrl ?? saved.baseUrl ?? preset.baseUrl),
+      baseUrl: candidateBaseUrl,
       model: String(payload.model ?? saved.model ?? preset.model).trim(),
       supportsReasoning: normalizeBoolean(payload.supportsReasoning, saved.supportsReasoning ?? preset.supportsReasoning),
-      allowPrivateNetwork: normalizeBoolean(payload.allowPrivateNetwork, saved.allowPrivateNetwork ?? false)
-        && Boolean(user.isRootAdmin)
-        && privateProviderNetworkEnabled(),
+      allowPrivateNetwork: normalizeBoolean(payload.allowPrivateNetwork, saved.allowPrivateNetwork ?? false),
       extraBody: parseProviderExtraBody(preset.providerType, payload.extraBody ?? saved.extraBody ?? preset.extraBody),
+      resolveDns: config.providerResolveDns,
+      isProduction: config.isProduction,
+      enforcePrivateNetworkPolicy: true,
       apiKey,
       apiKeyError: apiKey ? null : saved.apiKeyError || null
     };
-    validateProviderSettingsUrl(settings.baseUrl, user);
-    return settings;
+    return applyProviderNetworkPolicy(settings, config, user);
   }
 
   function validateProviderSettingsUrl(value, user = {}) {
-    const parsed = parseProviderUrl(value);
-    const privateNetwork = isPrivateOrSpecialHost(parsed.hostname);
-    if (privateNetwork && !user.isRootAdmin) {
-      throw new ProviderUrlError('只有 root 管理员可以使用本地或私网 Provider。', 'PROVIDER_PRIVATE_NETWORK_BLOCKED');
-    }
-    if (privateNetwork && !privateProviderNetworkEnabled()) {
-      throw new ProviderUrlError('部署配置未启用本地或私网 Provider。', 'PROVIDER_PRIVATE_NETWORK_BLOCKED');
-    }
+    evaluateProviderNetworkPolicy(value, config, user);
   }
 
-  function privateProviderNetworkEnabled() {
-    return appConfig.isProduction
-      ? appConfig.allowPrivateProviderNetwork
-      : appConfig.allowPrivateProviderNetworkInDevelopment;
+  function isPrivateBaseUrl(value) {
+    try {
+      return isPrivateOrSpecialHost(parseProviderUrl(value).hostname);
+    } catch {
+      return false;
+    }
   }
 
   function parseProviderExtraBody(providerType, value) {

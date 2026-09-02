@@ -70,7 +70,8 @@ test('root bootstrap stores only the session token hash', async () => {
   const database = createAppDatabase(':memory:');
   const app = createAuthRoutesApp(database, {
     rootAdminUsername: 'bootstrap-admin',
-    rootAdminPassword: 'bootstrap-admin-password'
+    rootAdminPassword: 'bootstrap-admin-password',
+    allowLegacyRootBootstrap: true
   });
 
   try {
@@ -123,6 +124,96 @@ test('register route honors the registration switch without writing data', async
   }
 });
 
+test('one-time bootstrap token creates root and closes public registration', async () => {
+  const database = createAppDatabase(':memory:');
+  const app = createAuthRoutesApp(database, {
+    rootAdminUsername: 'token-admin',
+    rootAdminBootstrapToken: 'one-time-bootstrap-token'
+  });
+  try {
+    await withServer(app, async (baseUrl) => {
+      const first = await fetch(`${baseUrl}/api/auth/register`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          username: 'token-admin',
+          password: 'normal-login-password',
+          bootstrapToken: 'one-time-bootstrap-token'
+        })
+      });
+      const firstBody = await first.json();
+      assert.equal(first.status, 201);
+      assert.equal(firstBody.user.isRootAdmin, true);
+
+      const second = await fetch(`${baseUrl}/api/auth/register`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: 'another-user', password: 'another-password' })
+      });
+      const secondBody = await second.json();
+      assert.equal(second.status, 403);
+      assert.equal(secondBody.code, 'REGISTRATION_BOOTSTRAP_COMPLETE');
+    });
+  } finally {
+    database.close();
+  }
+});
+
+test('bootstrap token mode rejects a non-root first registration and preserves the empty bootstrap slot', async () => {
+  const database = createAppDatabase(':memory:');
+  const app = createAuthRoutesApp(database, {
+    rootAdminUsername: 'token-first-admin',
+    rootAdminBootstrapToken: 'token-first-secret'
+  });
+  try {
+    await withServer(app, async (baseUrl) => {
+      const wrong = await fetch(`${baseUrl}/api/auth/register`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: 'ordinary-user', password: 'ordinary-password' })
+      });
+      assert.equal(wrong.status, 403);
+      assert.equal((await wrong.json()).code, 'ROOT_BOOTSTRAP_REQUIRED');
+      assert.equal(database.prepare('SELECT COUNT(*) AS count FROM users').get().count, 0);
+
+      const right = await fetch(`${baseUrl}/api/auth/register`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          username: 'token-first-admin',
+          password: 'ordinary-password',
+          bootstrapToken: 'token-first-secret'
+        })
+      });
+      assert.equal(right.status, 201);
+      assert.equal((await right.json()).user.isRootAdmin, true);
+    });
+  } finally {
+    database.close();
+  }
+});
+
+test('legacy root password bootstrap is disabled unless explicitly enabled', async () => {
+  const database = createAppDatabase(':memory:');
+  const app = createAuthRoutesApp(database, {
+    rootAdminUsername: 'legacy-admin',
+    rootAdminPassword: 'legacy-password'
+  });
+  try {
+    await withServer(app, async (baseUrl) => {
+      const response = await fetch(`${baseUrl}/api/auth/register`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: 'legacy-admin', password: 'legacy-password' })
+      });
+      assert.equal(response.status, 201);
+      assert.equal((await response.json()).user.isRootAdmin, false);
+    });
+  } finally {
+    database.close();
+  }
+});
+
 function createAuthRoutesApp(database, options = {}) {
   const app = express();
   app.use(express.json());
@@ -141,7 +232,9 @@ function createAuthRoutesApp(database, options = {}) {
     saveDefaultProvider: options.saveDefaultProvider || ((userId) => saveDefaultProvider(database, userId)),
     registrationEnabled: options.registrationEnabled,
     rootAdminUsername: options.rootAdminUsername,
-    rootAdminPassword: options.rootAdminPassword
+    rootAdminPassword: options.rootAdminPassword,
+    rootAdminBootstrapToken: options.rootAdminBootstrapToken,
+    allowLegacyRootBootstrap: options.allowLegacyRootBootstrap
   }));
   app.use((error, _request, response, _next) => {
     response.status(500).json({ error: error.message });

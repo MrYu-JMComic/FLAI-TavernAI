@@ -6,6 +6,7 @@ const props = defineProps({
   balanceLoading: { type: Boolean, default: false },
   canCheckBalance: { type: Boolean, default: false },
   canFetchModels: { type: Boolean, default: false },
+  isRootAdmin: { type: Boolean, default: false },
   controlsBusy: { type: Boolean, default: false },
   form: { type: Object, required: true },
   modelLoading: { type: Boolean, default: false },
@@ -17,6 +18,7 @@ const props = defineProps({
   providerCapability: { type: Object, default: null },
   providerCapabilityError: { type: String, default: '' },
   providerActionLoading: { type: Boolean, default: false },
+  providerNetworkPolicy: { type: Object, default: () => ({}) },
   selectedProviderId: { type: String, default: '' },
   saving: { type: Boolean, default: false }
 });
@@ -103,7 +105,7 @@ function selectProvider(event) {
     </div>
     <div class="provider-profile-toolbar">
       <label class="field provider-profile-picker">
-        <span>当前供应商</span>
+        <span>配置档案</span>
         <select
           :value="selectedProviderId"
           :disabled="controlsBusy || providers.length < 2"
@@ -123,7 +125,7 @@ function selectProvider(event) {
           class="icon-button"
           type="button"
           title="添加 AI 供应商"
-          aria-label="添加 AI 供应商"
+          aria-label="添加配置档案"
           :disabled="controlsBusy"
           @click="emit('add-provider')"
         >
@@ -133,7 +135,7 @@ function selectProvider(event) {
           class="icon-button provider-delete-button"
           type="button"
           title="删除当前 AI 供应商"
-          aria-label="删除当前 AI 供应商"
+          aria-label="删除配置档案"
           :disabled="controlsBusy || providers.length <= 1"
           @click="emit('remove-provider')"
         >
@@ -231,6 +233,23 @@ function selectProvider(event) {
       <input :checked="form.clearApiKey" type="checkbox" :disabled="controlsBusy" @change="updateField('clearApiKey', readInputChecked($event))" />
       <span>清除已保存密钥 {{ form.apiKeyHint ? `（当前：${form.apiKeyHint}）` : '' }}</span>
     </label>
+    <label v-if="isRootAdmin" class="checkbox-line">
+      <input
+        :checked="form.allowPrivateNetwork"
+        type="checkbox"
+        :disabled="controlsBusy || !providerNetworkPolicy.enabled"
+        @change="updateField('allowPrivateNetwork', readInputChecked($event))"
+      />
+      <span>允许本地或私网 Provider（仅 root）</span>
+    </label>
+    <p v-if="isRootAdmin" class="muted-text provider-private-network-hint">
+      <template v-if="providerNetworkPolicy.enabled">
+        部署已启用私网 Provider；仅 root 账户可以连接。
+      </template>
+      <template v-else>
+        部署未启用；设置 {{ providerNetworkPolicy.settingName || 'ALLOW_PRIVATE_PROVIDER_NETWORK_DEV' }}=true 并重启后端。
+      </template>
+    </p>
     <details class="provider-advanced-settings">
       <summary>
         <span>高级模型参数</span>

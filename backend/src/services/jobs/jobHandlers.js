@@ -9,12 +9,15 @@ import { hasUsableProvider, providerWithSecret } from '../providers.js';
 import { recordAutomationAudit } from '../automationAudit.js';
 import { executeProviderTask } from '../providerTaskRouter.js';
 import { getSelectedProviderProfileRow } from '../../repositories/providerProfileRepository.js';
+import { appConfig, withAppConfigDefaults } from '../../config.js';
+import { applyProviderNetworkPolicy } from '../providerNetworkPolicy.js';
 
-export function createDefaultJobHandlers(database) {
+export function createDefaultJobHandlers(database, options = {}) {
+  const config = withAppConfigDefaults(options.config || appConfig);
   return {
     'town.generate': async ({ job, payload, signal, progress }) => {
       progress(5, { phase: 'provider' });
-      const settings = providerSettings(database, job.userId);
+      const settings = providerSettings(database, job.userId, config);
       progress(15, { phase: 'generating' });
       const routed = await executeProviderTask(database, {
         userId: job.userId,
@@ -64,7 +67,7 @@ export function createDefaultJobHandlers(database) {
       const conversationId = requiredText(payload.conversationId, 'conversationId');
       const conversation = getConversationForUser(database, job.userId, conversationId, { includeUsage: false });
       if (!conversation) throw jobFailure('Conversation not found.', 'CONVERSATION_NOT_FOUND');
-      const settings = providerSettings(database, job.userId);
+      const settings = providerSettings(database, job.userId, config);
       const messages = listRecentConversationEvidenceMessages(database, conversationId, { limit: 80 });
       const routed = await executeProviderTask(database, {
         userId: job.userId,
@@ -83,6 +86,7 @@ export function createDefaultJobHandlers(database) {
           requirement: payload.requirement,
           messages,
           signal,
+          quotaManaged: true,
           idempotencyKey: `job:${job.id}`,
           onProgress: (phase, data) => progress(castProgress(phase), { phase, ...data })
         })
@@ -131,7 +135,7 @@ export function createDefaultJobHandlers(database) {
     },
     'world-book.assist': async ({ job, payload, signal, progress }) => {
       progress(10, { phase: 'provider' });
-      const settings = providerSettings(database, job.userId);
+      const settings = providerSettings(database, job.userId, config);
       progress(25, { phase: 'generating' });
       const current = payload.current && typeof payload.current === 'object' ? payload.current : {};
       const routed = await executeProviderTask(database, {
@@ -165,13 +169,16 @@ export function createDefaultJobHandlers(database) {
   };
 }
 
-function providerSettings(database, userId) {
+function providerSettings(database, userId, config) {
   const row = getSelectedProviderProfileRow(database, userId);
   const settings = providerWithSecret(row);
   if (!hasUsableProvider(settings) || settings.providerType === 'mock') {
     throw jobFailure('A usable non-mock provider is required.', 'JOB_PROVIDER_UNAVAILABLE');
   }
-  return settings;
+  const user = database.prepare(
+    'SELECT id, is_root_admin AS isRootAdmin FROM users WHERE id = ?'
+  ).get(userId) || { id: userId };
+  return applyProviderNetworkPolicy(settings, config, user);
 }
 
 function requiredText(value, field) {

@@ -21,9 +21,10 @@ export function normalizeAdvancedSettings(input = {}) {
   };
 }
 
-export function mergeAdvancedSettings(author = {}, user = {}) {
+export function mergeAdvancedSettings(author = {}, user = {}, options = {}) {
   const userSource = normalizeObject(user);
-  const authorSettings = normalizeAdvancedSettings(author);
+  const trustedAuthor = options.allowAuthorDangerous === true;
+  const authorSettings = sanitizeAuthorAdvancedSettings(author, { allowDangerous: trustedAuthor });
   const userSettings = normalizeAdvancedSettings(user);
   return {
     desktopBackgroundUrl: userSettings.desktopBackgroundUrl || authorSettings.desktopBackgroundUrl,
@@ -163,6 +164,39 @@ function normalizeBoolean(value, fallback = false) {
     return false;
   }
   return fallback;
+}
+
+/**
+ * Author-provided executable/style settings are trusted only for the owner of
+ * the character.  Public character data is still useful for harmless visual
+ * preferences and status-bar copy, but it must never silently grant code or
+ * write-capable accessory agents to another user.
+ */
+export function sanitizeAuthorAdvancedSettings(input = {}, options = {}) {
+  const normalized = normalizeAdvancedSettings(input);
+  if (options.allowDangerous === true) {
+    return normalized;
+  }
+  normalized.customCss = '';
+  normalized.customCssEnabled = false;
+  normalized.customCssRiskAccepted = false;
+  normalized.customJs = '';
+  normalized.customJsEnabled = false;
+  normalized.customJsRiskAccepted = false;
+  normalized.accessorySkills = disabledAccessorySkills();
+  return normalized;
+}
+
+function disabledAccessorySkills() {
+  const defaults = createDefaultAccessorySkills();
+  const disabled = {};
+  for (const key in defaults) {
+    if (!Object.prototype.hasOwnProperty.call(defaults, key)) {
+      continue;
+    }
+    disabled[key] = { enabled: false, modelOverride: '' };
+  }
+  return disabled;
 }
 
 function normalizeCastTracking(value) {

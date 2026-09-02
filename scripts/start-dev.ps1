@@ -53,7 +53,7 @@ foreach ($ip in $localIps) {
 }
 $clientOriginValue = $clientOrigins -join ','
 
-Start-Process -FilePath 'cmd.exe' -ArgumentList '/k', "title FLAI Backend :3001 && set PORT=3001 && set CLIENT_ORIGIN=$clientOriginValue && npm.cmd run dev" -WorkingDirectory "$repoRoot\backend"
+Start-Process -FilePath 'cmd.exe' -ArgumentList '/k', "title FLAI Backend :3001 && set PORT=3001 && set CLIENT_ORIGIN=$clientOriginValue && set ALLOW_PRIVATE_PROVIDER_NETWORK_DEV=true && npm.cmd run dev" -WorkingDirectory "$repoRoot\backend"
 
 $backendReady = $false
 for ($i = 0; $i -lt 40; $i++) {

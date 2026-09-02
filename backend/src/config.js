@@ -1,6 +1,7 @@
 export const TOWN_WORLD_GENERATION_TIMEOUT_DEFAULT_MS = 8 * 60 * 1000;
 export const TOWN_WORLD_GENERATION_TIMEOUT_MIN_MS = 60 * 1000;
 export const TOWN_WORLD_GENERATION_TIMEOUT_MAX_MS = 30 * 60 * 1000;
+export const JSON_BODY_LIMIT_DEFAULT_BYTES = 12 * 1024 * 1024;
 
 export const appConfig = Object.freeze({
   serviceName: 'flai-tavern-backend',
@@ -31,6 +32,8 @@ export const appConfig = Object.freeze({
   registrationEnabled: readBoolean(process.env.REGISTRATION_ENABLED, true),
   rootAdminUsername: readString(process.env.ROOT_ADMIN_USERNAME, ''),
   rootAdminPassword: readString(process.env.ROOT_ADMIN_PASSWORD, ''),
+  rootAdminBootstrapToken: readString(process.env.ROOT_ADMIN_BOOTSTRAP_TOKEN, ''),
+  allowLegacyRootBootstrap: readBoolean(process.env.ALLOW_LEGACY_ROOT_BOOTSTRAP, false),
   apiRateLimitWindowMs: readPositiveInteger(process.env.API_RATE_LIMIT_WINDOW_MS, 60 * 1000),
   apiRateLimitMax: readPositiveInteger(process.env.API_RATE_LIMIT_MAX, 240),
   authenticatedApiRateLimitMax: readPositiveInteger(
@@ -45,11 +48,21 @@ export const appConfig = Object.freeze({
     TOWN_WORLD_GENERATION_TIMEOUT_MIN_MS,
     TOWN_WORLD_GENERATION_TIMEOUT_MAX_MS
   ),
-  jsonBodyLimit: process.env.JSON_BODY_LIMIT || '8mb',
+  // Base64-encoded 6 MiB assets expand to roughly 8.4 MiB before JSON
+  // metadata. Keep headroom so the documented asset ceiling is reachable.
+  jsonBodyLimitBytes: readPositiveInteger(
+    process.env.JSON_BODY_LIMIT_BYTES,
+    JSON_BODY_LIMIT_DEFAULT_BYTES
+  ),
+  jsonBodyLimit: process.env.JSON_BODY_LIMIT || '12mb',
   logLevel: readLogLevel(process.env.LOG_LEVEL, 'info'),
   quotaDefaults: Object.freeze({
     maxConcurrentAiJobs: readPositiveInteger(process.env.DEFAULT_MAX_CONCURRENT_AI_JOBS, 2),
     maxUploadBytes: readPositiveInteger(process.env.DEFAULT_MAX_UPLOAD_BYTES, 100 * 1024 * 1024),
+    maxStructuredStorageBytes: readPositiveInteger(
+      process.env.DEFAULT_MAX_STRUCTURED_STORAGE_BYTES,
+      256 * 1024 * 1024
+    ),
     maxDailyRequests: readPositiveInteger(process.env.DEFAULT_MAX_DAILY_REQUESTS, 10_000),
     maxDailyCostMicros: readPositiveInteger(process.env.DEFAULT_MAX_DAILY_COST_MICROS, 5_000_000)
   }),
@@ -64,6 +77,28 @@ export const appConfig = Object.freeze({
   mockProviderEnabled: readBoolean(process.env.FLAI_ENABLE_MOCK_PROVIDER, false),
   appSecret: readString(process.env.APP_SECRET, '')
 });
+
+export function withAppConfigDefaults(overrides = {}) {
+  const source = overrides && typeof overrides === 'object' ? overrides : {};
+  const production = source.isProduction === true || source.nodeEnv === 'production'
+    || appConfig.isProduction === true && source.nodeEnv === undefined;
+  return {
+    ...appConfig,
+    ...source,
+    isProduction: production,
+    clientOrigins: Array.isArray(source.clientOrigins)
+      ? source.clientOrigins
+      : appConfig.clientOrigins,
+    quotaDefaults: {
+      ...appConfig.quotaDefaults,
+      ...(source.quotaDefaults && typeof source.quotaDefaults === 'object' ? source.quotaDefaults : {})
+    },
+    upload: {
+      ...appConfig.upload,
+      ...(source.upload && typeof source.upload === 'object' ? source.upload : {})
+    }
+  };
+}
 
 export function readPositiveInteger(value, fallback) {
   const parsed = Number(value);

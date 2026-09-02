@@ -9,6 +9,7 @@ import { logger } from './logger.js';
 
 const defaultDatabasePath = appConfig.databasePath || path.join(dataDir, 'flai.sqlite');
 const MAX_BACKUPS = 7;
+let backupInProgress = false;
 
 export function resolveBackupStorage(value) {
   const normalized = String(value || '').trim();
@@ -69,7 +70,25 @@ function backupFileName(options = {}) {
  * separate main/-wal/-shm trio.
  */
 export function createBackup(options = {}) {
+  if (backupInProgress) {
+    throw backupError('A database backup is already in progress.', 'BACKUP_IN_PROGRESS', 409);
+  }
+  backupInProgress = true;
+  try {
+    return createBackupInternal(options);
+  } finally {
+    backupInProgress = false;
+  }
+}
+
+function createBackupInternal(options = {}) {
   const database = options.database;
+  if (!database && options.databasePath === undefined) {
+    // A direct helper call without an active database represents the
+    // in-memory/no-backup case; do not accidentally inspect the process's
+    // default on-disk database.
+    return null;
+  }
   const storage = resolveBackupStorage(options.databasePath ?? defaultDatabasePath);
   if (!storage.sourcePath || !fs.existsSync(storage.sourcePath)) {
     return null;
@@ -82,29 +101,125 @@ export function createBackup(options = {}) {
     return null;
   }
   const destPath = path.join(storage.backupDir, backupFileName(options));
-
-  // VACUUM INTO refuses to overwrite; clear any prior file for the same day.
-  removeBackupFileGroup(destPath);
-
-  database.exec(`VACUUM INTO '${escapeSqlStringLiteral(destPath)}'`);
-
-  const integrity = verifyBackupFile(destPath);
-  const metadata = backupMetadata(database, destPath, integrity);
-  fs.writeFileSync(`${destPath}.json`, `${JSON.stringify(metadata, null, 2)}\n`, 'utf8');
-  pruneOldBackups(storage.backupDir);
-  return options.withMetadata ? metadata : destPath;
+  const temporaryPath = path.join(
+    storage.backupDir,
+    `.${path.basename(destPath)}.${crypto.randomUUID()}.tmp.sqlite`
+  );
+  assertPathInside(temporaryPath, storage.backupDir);
+  try {
+    // VACUUM INTO writes to a new path.  The existing same-day backup is left
+    // untouched until the new file has passed integrity verification.
+    database.exec(`VACUUM INTO '${escapeSqlStringLiteral(temporaryPath)}'`);
+    const integrity = verifyBackupFile(temporaryPath);
+    if (integrity !== 'ok') {
+      throw backupError('新备份完整性校验失败，已保留旧备份。', 'BACKUP_INTEGRITY_FAILED');
+    }
+    syncFile(temporaryPath);
+    atomicReplaceBackupFile(temporaryPath, destPath);
+    const metadata = backupMetadata(database, destPath, integrity);
+    writeBackupMetadataAtomically(destPath, metadata);
+    // Sidecar files from a previous backup are safe to remove only after the
+    // new database file is in place.
+    removeBackupSidecars(destPath);
+    pruneOldBackups(storage.backupDir);
+    return options.withMetadata ? metadata : destPath;
+  } catch (error) {
+    try {
+      if (fs.existsSync(temporaryPath)) fs.rmSync(temporaryPath, { force: true });
+    } catch (cleanupError) {
+      // Best-effort cleanup; the temporary path is unique and harmless.
+      void cleanupError;
+    }
+    throw error;
+  }
 }
 
 function escapeSqlStringLiteral(value) {
   return String(value).replace(/'/g, "''");
 }
 
-function removeBackupFileGroup(backupPath) {
-  for (const suffix of ['', '-wal', '-shm']) {
+function removeBackupSidecars(backupPath) {
+  for (const suffix of ['-wal', '-shm']) {
     try {
       fs.rmSync(backupPath + suffix, { force: true });
-    } catch {
-      // Ignore removal errors; VACUUM INTO will surface a real conflict.
+    } catch (error) {
+      // Sidecars are optional and can be cleaned on the next run.
+      void error;
+    }
+  }
+}
+
+function atomicReplaceBackupFile(temporaryPath, destinationPath) {
+  const previousPath = `${destinationPath}.${crypto.randomUUID()}.previous`;
+  let movedPrevious = false;
+  try {
+    if (fs.existsSync(destinationPath)) {
+      fs.renameSync(destinationPath, previousPath);
+      movedPrevious = true;
+    }
+    try {
+      fs.renameSync(temporaryPath, destinationPath);
+    } catch (error) {
+      if (movedPrevious && fs.existsSync(previousPath) && !fs.existsSync(destinationPath)) {
+        fs.renameSync(previousPath, destinationPath);
+      }
+      throw error;
+    }
+  } finally {
+    if (movedPrevious) {
+      try {
+        fs.rmSync(previousPath, { force: true });
+      } catch (error) {
+        // A stale previous file is recoverable and does not invalidate the
+        // newly installed backup.
+        void error;
+      }
+    }
+  }
+  syncDirectory(path.dirname(destinationPath));
+}
+
+function writeBackupMetadataAtomically(destinationPath, metadata) {
+  const metadataPath = `${destinationPath}.json`;
+  const temporaryPath = `${metadataPath}.${crypto.randomUUID()}.tmp`;
+  fs.writeFileSync(temporaryPath, `${JSON.stringify(metadata, null, 2)}\n`, 'utf8');
+  syncFile(temporaryPath);
+  try {
+    fs.renameSync(temporaryPath, metadataPath);
+  } catch (error) {
+    try { fs.rmSync(temporaryPath, { force: true }); } catch (cleanupError) { void cleanupError; }
+    throw error;
+  }
+  syncDirectory(path.dirname(metadataPath));
+}
+
+function syncFile(filePath) {
+  let descriptor;
+  try {
+    descriptor = fs.openSync(filePath, 'r');
+    fs.fsyncSync(descriptor);
+  } catch (error) {
+    // fsync is not available on every filesystem (notably some Windows
+    // network shares); integrity verification still protects the data.
+    void error;
+  } finally {
+    if (descriptor !== undefined) {
+      try { fs.closeSync(descriptor); } catch (error) { void error; }
+    }
+  }
+}
+
+function syncDirectory(directoryPath) {
+  let descriptor;
+  try {
+    descriptor = fs.openSync(directoryPath, 'r');
+    fs.fsyncSync(descriptor);
+  } catch (error) {
+    // Directory fsync is unsupported on Windows; the rename remains atomic.
+    void error;
+  } finally {
+    if (descriptor !== undefined) {
+      try { fs.closeSync(descriptor); } catch (error) { void error; }
     }
   }
 }
@@ -126,8 +241,9 @@ function pruneOldBackups(backupDir) {
       if (fs.existsSync(walFile)) fs.unlinkSync(walFile);
       if (fs.existsSync(shmFile)) fs.unlinkSync(shmFile);
       if (fs.existsSync(metadataFile)) fs.unlinkSync(metadataFile);
-    } catch {
+    } catch (cleanupError) {
       // Ignore deletion errors
+      void cleanupError;
     }
   }
 }
@@ -167,6 +283,9 @@ export function scheduleDailyBackup(options = {}) {
  * List available backups (for admin API).
  */
 export function listBackups(options = {}) {
+  if (options.databasePath === undefined) {
+    return [];
+  }
   const storage = resolveBackupStorage(options.databasePath ?? defaultDatabasePath);
   if (!ensureBackupDir(storage.backupDir)) {
     return [];
@@ -276,8 +395,9 @@ export function restoreBackupOffline(options = {}) {
   } catch (error) {
     try {
       if (fs.existsSync(temporaryPath)) fs.rmSync(temporaryPath, { force: true });
-    } catch {
+    } catch (cleanupError) {
       // The temporary file can be removed manually if the OS still holds it.
+      void cleanupError;
     }
     throw error;
   }

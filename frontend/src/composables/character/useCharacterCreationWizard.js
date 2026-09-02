@@ -32,6 +32,9 @@ export function useCharacterCreationWizard({
   const isCharacterCreationWizardActive = computed(() => (
     isCharacterCreationWizardAvailable.value && characterCreationMode.value === 'wizard'
   ));
+  const isCharacterCreationFullForm = computed(() => (
+    isCharacterCreationWizardAvailable.value && characterCreationMode.value === 'full'
+  ));
   const characterWizardStepIndex = computed(getCharacterWizardStepIndex);
   const currentCharacterWizardStep = computed(getCurrentCharacterWizardStep);
   const characterWizardProgressText = computed(() => (
@@ -132,6 +135,7 @@ export function useCharacterCreationWizard({
     goToNextCharacterWizardStep,
     goToPreviousCharacterWizardStep,
     isCharacterCreationWizardActive,
+    isCharacterCreationFullForm,
     isCharacterCreationWizardAvailable,
     isCharacterSectionVisibleInCurrentMode,
     setCharacterCreationMode,

@@ -1,5 +1,7 @@
 import { newId, nowIso } from '../security.js';
 import { withSavepoint } from './savepoint.js';
+import { sanitizeChatAttachments } from '../services/chatAttachments.js';
+import { parseJson } from '../utils/json.js';
 
 export function branchConversation(db, userId, conversationId, branchFromMessageId) {
   const conversation = db
@@ -53,7 +55,7 @@ export function branchConversation(db, userId, conversationId, branchFromMessage
         newConversationId,
         msg.role,
         msg.content,
-        msg.attachments_json || '[]',
+        JSON.stringify(sanitizeChatAttachments(parseJson(msg.attachments_json, []))),
         msg.reasoning || '',
         msg.usage_json,
         msg.created_at

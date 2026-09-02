@@ -101,7 +101,7 @@ function buildWorldBookAssistantMessages(requirement, draft) {
 }
 
 export async function completeWorldBookDraft(settings, request = {}) {
-  const { requirement = '', current = {}, signal } = nullToEmptyObject(request);
+  const { requirement = '', current = {}, signal, database, userId } = nullToEmptyObject(request);
   const draft = normalizeDraft(current);
 
   const result = await runToolCompletion(
@@ -109,7 +109,7 @@ export async function completeWorldBookDraft(settings, request = {}) {
     buildWorldBookAssistantMessages(requirement, draft),
     worldBookTools,
     (name, args) => executeWorldBookTool(name, args, draft),
-    { maxRounds: 100, thinkingEnabled: false, signal, onNoToolCall: ({ content } = {}) => worldBookNoToolNudge(draft, content) }
+    { maxRounds: 100, thinkingEnabled: false, signal, database, userId, onNoToolCall: ({ content } = {}) => worldBookNoToolNudge(draft, content) }
   );
 
   if (!result.toolCalls.length && result.content) {
@@ -135,7 +135,7 @@ export async function completeWorldBookDraft(settings, request = {}) {
 }
 
 export async function streamWorldBookDraft(settings, request = {}) {
-  const { requirement = '', current = {}, signal, emit = () => {} } = nullToEmptyObject(request);
+  const { requirement = '', current = {}, signal, emit = () => {}, database, userId } = nullToEmptyObject(request);
   const draft = normalizeDraft(current);
 
   const result = await streamToolCompletion(
@@ -145,7 +145,7 @@ export async function streamWorldBookDraft(settings, request = {}) {
     (name, args) => executeWorldBookTool(name, args, draft),
     emit,
     signal,
-    { maxRounds: 100, thinkingEnabled: false, onNoToolCall: ({ content } = {}) => worldBookNoToolNudge(draft, content) }
+    { maxRounds: 100, thinkingEnabled: false, database, userId, onNoToolCall: ({ content } = {}) => worldBookNoToolNudge(draft, content) }
   );
 
   if (!result.toolCalls.length && result.content) {

@@ -235,7 +235,9 @@ test('streaming chat emits provider errors without saving an assistant message',
       assert.match(body, /Route Lore/);
       assert.match(body, /Route Secret/);
       assert.match(body, /event: error/);
-      assert.match(body, /Provider exploded/);
+      assert.match(body, /AI 生成失败，请稍后重试/);
+      assert.match(body, /INTERNAL_ERROR/);
+      assert.doesNotMatch(body, /Provider exploded/);
 
       const messages = database
         .prepare('SELECT role, content FROM messages WHERE conversation_id = ? ORDER BY rowid ASC')

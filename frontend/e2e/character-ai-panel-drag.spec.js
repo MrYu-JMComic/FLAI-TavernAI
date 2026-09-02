@@ -8,7 +8,7 @@ test('AI draft workspace stays inline and usable across desktop and mobile', asy
   await page.getByRole('button', { name: /创建角色/ }).first().click();
   await expect(page.getByRole('heading', { name: /创建新的 AI 角色/ })).toBeVisible();
   await page.getByRole('button', { name: /完整表单/ }).click();
-  // The editor renders one section at a time, so open the AI section explicitly.
+  // The full form keeps every section available; focus the AI section in the directory.
   await page.locator('.character-studio-nav').getByRole('button', { name: /AI 完善/ }).click();
 
   const panel = page.locator('.ai-draft-panel');

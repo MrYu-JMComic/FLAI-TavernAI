@@ -13,11 +13,13 @@ import { createWorldBookSchema, updateWorldBookSchema, createWorldBookEntrySchem
 import { sanitizeText } from '../services/sanitize.js';
 import { completeWorldBookDraft, streamWorldBookDraft } from '../services/worldBookAssistant.js';
 import { withModelOverride, writeSse } from './helpers.js';
+import { sendRouteError } from './errorResponse.js';
 
 const WORLD_BOOK_ASSISTANT_TIMEOUT_MS = 10 * 60 * 1000;
 
 export function createWorldBooksRouter(ctx) {
   const { db, requireAuth, asyncRoute, withListCache, getChatProviderSettings } = ctx;
+  const config = ctx.config || {};
   const router = Router();
 
   router.get('/', requireAuth, (request, response) => {
@@ -61,6 +63,8 @@ export function createWorldBooksRouter(ctx) {
           const result = await streamWorldBookDraft(effectiveSettings, {
             requirement,
             current,
+            database: db,
+            userId: request.auth.user.id,
             signal: controller.signal,
             emit: (event, data) => writeSse(response, event, data)
           });
@@ -70,7 +74,7 @@ export function createWorldBooksRouter(ctx) {
           if (!request.aborted && !response.destroyed) {
             const message = controller.signal.aborted
               ? controller.signal.reason?.message || 'AI 世界书创建请求已中断，请重试。'
-              : normalizeWorldBookAssistantError(error);
+              : safeWorldBookAssistantError(error, config);
             writeSse(response, 'error', { error: message });
             response.end();
           }
@@ -80,15 +84,27 @@ export function createWorldBooksRouter(ctx) {
         return;
       }
 
-      response.json(await completeWorldBookDraft(effectiveSettings, { requirement, current, signal: controller.signal }));
+      response.json(await completeWorldBookDraft(effectiveSettings, {
+        requirement,
+        current,
+        database: db,
+        userId: request.auth.user.id,
+        signal: controller.signal
+      }));
     } catch (error) {
       if (request.aborted || response.destroyed) {
         return;
       }
-      const message = controller.signal.aborted
+      const status = controller.signal.aborted ? 504 : Number(error?.status) === 429 ? 429 : 400;
+      const abortedMessage = controller.signal.aborted
         ? controller.signal.reason?.message || 'AI 世界书创建请求已中断，请重试。'
-        : normalizeWorldBookAssistantError(error);
-      response.status(controller.signal.aborted ? 504 : 400).json({ error: message });
+        : '';
+      sendRouteError(response, error, {
+        status,
+        isProduction: config.isProduction,
+        publicMessage: abortedMessage || undefined,
+        fallback: abortedMessage || 'AI 世界书创建失败，请稍后重试。'
+      });
     } finally {
       clearTimeout(timeout);
     }
@@ -101,7 +117,7 @@ export function createWorldBooksRouter(ctx) {
       const book = createWorldBook(db, request.auth.user.id, body);
       response.status(201).json(book);
     } catch (error) {
-      response.status(400).json({ error: error.message });
+      sendRouteError(response, error, { status: 400, isProduction: config.isProduction, fallback: '世界书保存失败' });
     }
   });
 
@@ -125,7 +141,7 @@ export function createWorldBooksRouter(ctx) {
       }
       response.json(book);
     } catch (error) {
-      response.status(400).json({ error: error.message });
+      sendRouteError(response, error, { status: 400, isProduction: config.isProduction, fallback: '世界书更新失败' });
     }
   });
 
@@ -146,7 +162,7 @@ export function createWorldBooksRouter(ctx) {
       }
       response.status(201).json(entry);
     } catch (error) {
-      response.status(400).json({ error: error.message });
+      sendRouteError(response, error, { status: 400, isProduction: config.isProduction, fallback: '世界书条目保存失败' });
     }
   });
 
@@ -159,7 +175,7 @@ export function createWorldBooksRouter(ctx) {
       }
       response.json(entry);
     } catch (error) {
-      response.status(400).json({ error: error.message });
+      sendRouteError(response, error, { status: 400, isProduction: config.isProduction, fallback: '世界书条目更新失败' });
     }
   });
 
@@ -188,4 +204,11 @@ function normalizeWorldBookAssistantError(error) {
     return 'AI 服务连接中断，请检查网关地址、网络或稍后重试。';
   }
   return message;
+}
+
+function safeWorldBookAssistantError(error, config = {}) {
+  if (config.isProduction && !error?.publicMessage) {
+    return 'AI 世界书创建失败，请稍后重试。';
+  }
+  return normalizeWorldBookAssistantError(error);
 }

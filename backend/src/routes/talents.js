@@ -13,15 +13,24 @@ export function createTalentsRouter(ctx) {
   const { db, requireAuth } = ctx;
   const router = Router();
 
-  router.get('/', requireAuth, (_request, response) => {
-    response.json(listTalentPools(db));
+  router.get('/', requireAuth, (request, response) => {
+    const result = listTalentPools(db, request.auth.user.id, {
+      limit: request.query.limit,
+      cursor: request.query.cursor
+    });
+    if (result && !Array.isArray(result)) {
+      response.setHeader('X-Next-Cursor', result.nextCursor || '');
+      response.json(result);
+      return;
+    }
+    response.json(result);
   });
 
   router.post('/', requireAuth, validate(createTalentPoolSchema), (request, response) => {
     try {
       const body = request.body;
       body.name = sanitizeText(body.name);
-      const pool = createTalentPool(db, body);
+      const pool = createTalentPool(db, request.auth.user.id, body);
       response.status(201).json(pool);
     } catch (error) {
       response.status(400).json({ error: error.message });
@@ -29,7 +38,7 @@ export function createTalentsRouter(ctx) {
   });
 
   router.get('/:id', requireAuth, (request, response) => {
-    const pool = getTalentPool(db, request.params.id);
+    const pool = getTalentPool(db, request.params.id, request.auth.user.id);
     if (!pool) {
       response.status(404).json({ error: '天赋池不存在' });
       return;
@@ -41,7 +50,7 @@ export function createTalentsRouter(ctx) {
     try {
       const body = request.body;
       if (body.name) body.name = sanitizeText(body.name);
-      const pool = updateTalentPool(db, request.params.id, body);
+      const pool = updateTalentPool(db, request.params.id, body, request.auth.user.id);
       if (!pool) {
         response.status(404).json({ error: '天赋池不存在' });
         return;
@@ -53,7 +62,7 @@ export function createTalentsRouter(ctx) {
   });
 
   router.delete('/:id', requireAuth, (request, response) => {
-    if (!deleteTalentPool(db, request.params.id)) {
+    if (!deleteTalentPool(db, request.params.id, request.auth.user.id)) {
       response.status(404).json({ error: '天赋池不存在' });
       return;
     }

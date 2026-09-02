@@ -103,7 +103,7 @@ const presets = {
   }
 };
 
-export function useSettingsProvider({ isPersonalPage, notify, emitProviderSaved } = {}) {
+export function useSettingsProvider({ isPersonalPage, notify, emitProviderSaved, user } = {}) {
   const form = reactive({
     id: '',
     providerType: 'deepseek',
@@ -117,6 +117,7 @@ export function useSettingsProvider({ isPersonalPage, notify, emitProviderSaved 
     apiKeyError: '',
     clearApiKey: false,
     supportsReasoning: true,
+    allowPrivateNetwork: false,
     extraBody: '{}'
   });
   const saving = ref(false);
@@ -131,6 +132,13 @@ export function useSettingsProvider({ isPersonalPage, notify, emitProviderSaved 
   const selectedProviderId = ref('');
   const providerCapabilityLoadError = ref('');
   const providerActionLoading = ref(false);
+  const providerNetworkPolicy = ref({
+    enabled: false,
+    settingName: 'ALLOW_PRIVATE_PROVIDER_NETWORK_DEV',
+    environment: 'development',
+    requiresRoot: true,
+    mockProvider: false
+  });
   const balance = ref(null);
   const settingsModelOptions = computed(() => buildModelSelectOptions(modelOptions.value, form.model));
   const providerControlsBusy = computed(() => (
@@ -139,8 +147,13 @@ export function useSettingsProvider({ isPersonalPage, notify, emitProviderSaved 
   const currentProviderCapability = computed(() => findCurrentProviderCapability());
   const providerFormDirty = computed(() => !samePlainValue(providerFormSnapshot(), providerFormBaseline));
   const canCheckBalance = computed(() => form.providerType === 'deepseek' && form.apiKeySet && !form.apiKeyNeedsReset);
+  const isRootAdmin = computed(() => Boolean(user?.value?.isRootAdmin));
   const canFetchModels = computed(() => Boolean(
     form.baseUrl && (form.apiKey || form.apiKeySet || canUseNoAuthProvider())
+    && (
+      !isLocalOrPrivateBaseUrl(form.baseUrl)
+      || (isRootAdmin.value && providerNetworkPolicy.value.enabled)
+    )
   ));
   let modelLoadToken = 0;
   let providerSaveToken = 0;
@@ -415,6 +428,7 @@ export function useSettingsProvider({ isPersonalPage, notify, emitProviderSaved 
       apiKey: form.apiKey,
       apiKeySet: form.apiKeySet,
       supportsReasoning: form.supportsReasoning,
+      allowPrivateNetwork: form.allowPrivateNetwork,
       extraBody: form.extraBody
     };
   }
@@ -428,6 +442,7 @@ export function useSettingsProvider({ isPersonalPage, notify, emitProviderSaved 
       && form.apiKey === request.apiKey
       && form.apiKeySet === request.apiKeySet
       && form.supportsReasoning === request.supportsReasoning
+      && form.allowPrivateNetwork === request.allowPrivateNetwork
       && form.extraBody === request.extraBody;
   }
 
@@ -448,6 +463,7 @@ export function useSettingsProvider({ isPersonalPage, notify, emitProviderSaved 
       apiKey: form.apiKey,
       clearApiKey: form.clearApiKey,
       supportsReasoning: form.supportsReasoning,
+      allowPrivateNetwork: form.allowPrivateNetwork,
       extraBody: form.extraBody
     };
   }
@@ -460,6 +476,7 @@ export function useSettingsProvider({ isPersonalPage, notify, emitProviderSaved 
       && form.apiKey === payload.apiKey
       && form.clearApiKey === payload.clearApiKey
       && form.supportsReasoning === payload.supportsReasoning
+      && form.allowPrivateNetwork === payload.allowPrivateNetwork
       && form.extraBody === payload.extraBody;
   }
 
@@ -500,6 +517,7 @@ export function useSettingsProvider({ isPersonalPage, notify, emitProviderSaved 
       apiKeyError: settings.apiKeyError || '',
       clearApiKey: false,
       supportsReasoning: settings.supportsReasoning,
+      allowPrivateNetwork: Boolean(settings.allowPrivateNetwork),
       extraBody: JSON.stringify(settings.extraBody || {}, null, 2)
     });
     selectedProviderId.value = form.id;
@@ -509,6 +527,12 @@ export function useSettingsProvider({ isPersonalPage, notify, emitProviderSaved 
 
   function applyProviderBundle(bundle = {}) {
     const profiles = Array.isArray(bundle.providers) ? bundle.providers : [];
+    if (bundle.providerNetworkPolicy && typeof bundle.providerNetworkPolicy === 'object') {
+      providerNetworkPolicy.value = {
+        ...providerNetworkPolicy.value,
+        ...bundle.providerNetworkPolicy
+      };
+    }
     setProviderListIfChanged(providerProfiles, profiles);
     const nextSelectedId = String(
       bundle.selectedProviderId || profiles.find((provider) => provider?.selected)?.id || ''
@@ -539,6 +563,7 @@ export function useSettingsProvider({ isPersonalPage, notify, emitProviderSaved 
       apiKey: form.apiKey,
       clearApiKey: form.clearApiKey,
       supportsReasoning: form.supportsReasoning,
+      allowPrivateNetwork: form.allowPrivateNetwork,
       extraBody: form.extraBody
     };
   }
@@ -747,6 +772,7 @@ export function useSettingsProvider({ isPersonalPage, notify, emitProviderSaved 
     balanceLoading,
     canCheckBalance,
     canFetchModels,
+    isRootAdmin,
     checkBalance,
     currentProviderCapability,
     form,
@@ -760,6 +786,7 @@ export function useSettingsProvider({ isPersonalPage, notify, emitProviderSaved 
     providerCapabilityLoadError,
     providerActionLoading,
     providerControlsBusy,
+    providerNetworkPolicy,
     providerProfiles,
     removeProvider,
     resetProviderAsyncScope,

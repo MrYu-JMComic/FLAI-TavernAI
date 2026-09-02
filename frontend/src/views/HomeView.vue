@@ -194,7 +194,7 @@ const hotTagRailSummary = computed(() => (
 const hotTagRailLabel = computed(() => `热门标签，${hotTagRailSummary.value}`);
 
 const quickActions = computed(() => [
-  { label: '新角色', icon: Plus, view: 'characterNew', tone: 'primary' },
+  { label: '创建角色', icon: Plus, view: 'characterNew', tone: 'primary' },
   { label: '世界书', icon: BookOpen, view: 'worldBooks', tone: 'quiet' },
   { label: '模型设置', icon: Settings, view: 'settings', tone: providerReady.value ? 'quiet' : 'warning' }
 ]);

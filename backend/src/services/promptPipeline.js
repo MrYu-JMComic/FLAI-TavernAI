@@ -670,7 +670,9 @@ function normalizePipelineConversation(conversation = {}) {
     ...source,
     authorSettings,
     userSettings,
-    settings: source.settings || mergeAdvancedSettings(authorSettings, userSettings)
+    settings: source.settings || mergeAdvancedSettings(authorSettings, userSettings, {
+      allowAuthorDangerous: source.isCharacterOwner === true || source.authorDangerousAllowed === true
+    })
   };
 }
 

@@ -93,6 +93,8 @@ export async function generateTownWorldBlueprint(settings, prompt, options = {})
       thinkingEnabled: false,
       toolChoice: 'required',
       signal: options.signal,
+      database: options.database,
+      userId: options.userId,
       onNoToolCall: () => '必须调用 create_town_world 工具提交完整世界蓝图，不要只输出自然语言。'
     }
   );
