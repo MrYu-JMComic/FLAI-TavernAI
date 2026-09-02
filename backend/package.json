@@ -24,7 +24,7 @@
     "dotenv": "17.4.2",
     "express": "5.2.1",
     "express-rate-limit": "^8.7.0",
-    "jsdom": "^29.1.1",
+    "jsdom": "^30.0.1",
     "lru-cache": "^11.5.2",
     "safe-regex2": "^5.1.1",
     "zod": "^4.5.4"
