@@ -19,7 +19,7 @@
     "@vscode/markdown-it-katex": "^1.1.2",
     "dompurify": "^3.4.14",
     "highlight.js": "^11.12.0",
-    "katex": "^0.16.47",
+    "katex": "^0.18.5",
     "markdown-it": "^14.3.1",
     "vue": "3.5.42",
     "vue-router": "^4.6.4"
@@ -29,5 +29,10 @@
     "@playwright/test": "^1.62.1",
     "@vitejs/plugin-vue": "6.0.8",
     "vite": "8.2.2"
+  },
+  "overrides": {
+    "@vscode/markdown-it-katex": {
+      "katex": "$katex"
+    }
   }
 }
