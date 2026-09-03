@@ -162,6 +162,32 @@ test('CI workflow audits production dependencies for both packages', () => {
   );
 });
 
+test('frontend unit tests run through Vitest in the gate and in CI', () => {
+  const frontendPackage = readJson('frontend/package.json');
+  const vitestConfig = readText('frontend/vitest.config.js');
+  const reviewGate = readText('scripts/review-gate.ps1');
+  const workflow = readText('.github/workflows/ci.yml');
+
+  assert.equal(frontendPackage.scripts['test:unit'], 'vitest run');
+  assert.ok(frontendPackage.devDependencies.vitest);
+  assert.ok(frontendPackage.devDependencies['@vue/test-utils']);
+  assert.match(vitestConfig, /environment:\s*'jsdom'/);
+  assert.match(vitestConfig, /include:\s*\['src\/\*\*\/__tests__\/\*\*\/\*\.\{test,spec\}\.js'\]/);
+  assert.match(reviewGate, /Invoke-LoggedNativeCommand\s+-File\s+"npm"\s+-WorkingDirectory\s+"frontend"\s+-Arguments\s+@\("run",\s*"test:unit"\)/);
+  assert.match(workflow, /run: npm run test:unit\s*\r?\n\s*working-directory: frontend/);
+  assert.match(workflow, /run: npm run test:e2e -- --shard=\$\{\{ matrix\.shard \}\}\/2/);
+  assert.match(workflow, /name: playwright-artifacts-shard-\$\{\{ matrix\.shard \}\}/);
+});
+
+test('review gate numbers every stage against the same total', () => {
+  const labels = [...readText('scripts/review-gate.ps1').matchAll(/\[(\d+)\/(\d+)\]/g)];
+  const totals = new Set(labels.map((match) => match[2]));
+
+  assert.equal(totals.size, 1);
+  assert.deepEqual(labels.map((match) => Number(match[1])), labels.map((_, index) => index + 1));
+  assert.equal(labels.length, Number([...totals][0]));
+});
+
 test('frontend keeps Playwright E2E smoke entry wired', () => {
   const frontendPackage = readJson('frontend/package.json');
   const playwrightConfig = readText('frontend/playwright.config.js');

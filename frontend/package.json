@@ -10,6 +10,7 @@
     "dev": "vite --host 0.0.0.0",
     "prebuild": "node ../scripts/check-encoding.mjs",
     "build": "vite build",
+    "test:unit": "vitest run",
     "test:e2e": "playwright test",
     "preview": "vite preview --host 0.0.0.0"
   },
@@ -28,7 +29,10 @@
     "@axe-core/playwright": "^4.13.0",
     "@playwright/test": "^1.62.1",
     "@vitejs/plugin-vue": "6.0.8",
-    "vite": "8.2.2"
+    "@vue/test-utils": "^2.5.0",
+    "jsdom": "^30.0.1",
+    "vite": "8.2.2",
+    "vitest": "^4.1.11"
   },
   "overrides": {
     "@vscode/markdown-it-katex": {

@@ -72,13 +72,13 @@
 
 ### 阶段 2：测试基础设施（3～4 天）
 
-- [ ] 前端引入 Vitest + `@vue/test-utils`（`frontend/package.json` 增加 `test:unit`），CI 与 review gate 加入该步骤。
+- [x] 前端引入 Vitest 4 + `@vue/test-utils`（`frontend/package.json` 增加 `test:unit`，`vitest.config.js` 使用 jsdom 环境），CI `verify` job 与 review gate 第 7 步执行；首批用例覆盖 markdown 渲染管线与 lucide 图标名存在性。
 - [ ] 将 `backend/src/tests/frontend*.test.js`（约 9 个文件、1.1 万行）迁移到 `frontend/src/**/__tests__`，保持断言不变；迁移完成后从 `run-tests.mjs` 的 contracts 集合移除。
 - [ ] 拆分 `backend.test.js`（10889 行）为按路由领域的文件（auth、characters、conversations、worldBooks、towns、talents、admin、providers、backup……），每个 ≤ 1500 行；`node --test` 自动并行。
 - [ ] review gate 第 2/3 步（未引用组件、控件可访问性）在基线清零后改为阻塞。
-- [ ] Playwright：失败时上传 trace（`trace: 'retain-on-failure'`），CI 按 spec 分片。
+- [x] Playwright：`trace: 'retain-on-failure'` 已存在；CI 拆出独立 `e2e` job，按 `--shard=N/2` 分片，失败产物按分片命名上传。
 
-验收：前端 `npm run test:unit` 独立可跑；后端测试数量不减（≥ 1334）；gate 8 步全部阻塞。
+验收：前端 `npm run test:unit` 独立可跑；后端测试数量不减（≥ 1334）；gate 9 步全部阻塞。
 
 ### 阶段 3：F-17 模块拆分（5～7 天，逐文件 PR）
 
@@ -178,4 +178,5 @@
 - 2026-09-02：四项待决策已确定（见第六节），开始执行阶段 0。
 - 2026-09-02：阶段 0 本地项完成于分支 `MrYu/upgrade-phase-0`；review gate PASS（后端 1339/1339、前后端审计 0 漏洞、构建通过、E2E 16/16）。合并与打 tag 等待 CI 账单恢复。
 - 2026-09-03：阶段 1 完成。`markdown-it` 15（23 例渲染语料与 14.3.1 逐字节一致，渲染管线抽出为 `utils/markdownRenderer.js`）、`@lucide/vue` 1.39（117 个图标名全部存在）、`vue-router` 5（E2E 16/16）、Electron 44.1.1 / electron-builder 26.15.3（`npm ci` 校验通过）、Dependabot、Windows 打包 CI job。
+- 2026-09-03：阶段 2 第 1、5 项完成：Vitest 4 + jsdom 30 + @vue/test-utils 2.5 落地，`npm run test:unit` 8 例通过；CI 拆为 `verify` / `e2e`（2 分片）/ `windows-package` 三个 job；review gate 扩为 9 步。
 - 2026-09-03：发现一个并行运行的 Codex 代理在同一工作树上改动共享文件；经用户确认由本会话接管，其改动逐项审查后按阶段拆分提交。
