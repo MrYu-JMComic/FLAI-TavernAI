@@ -7,6 +7,11 @@
 
 ### Changed
 
+- 依赖主版本升级：`jsdom` 30、`katex` 0.18、`markdown-it` 15、`@lucide/vue` 1.39、`vue-router` 5，以及 `zod`、`vue`、`highlight.js`、Playwright 等小版本；
+  `@vscode/markdown-it-katex` 通过 npm override 复用根目录 KaTeX，前端包体减少一份重复的 KaTeX 拷贝。
+- markdown-it 渲染管线（实例、KaTeX 插件、`\( \)`/`\[ \]`/color box 规则、fence 渲染）从 `MarkdownContent.vue` 抽出为 `frontend/src/utils/markdownRenderer.js`。
+- Windows 打包依赖从 `latest` 固定为 `electron` 44.1.1 与 `electron-builder` 26.15.3，并提交 `packaging/windows/package-lock.json`；CI 新增 `windows-latest` job 执行打包 staging 与 smoke。
+- 新增 `.github/dependabot.yml`：每周检查 backend、frontend、packaging/windows 的 npm 依赖，小版本合并为一组，主版本单独 PR。
 - CI 与 review gate 对 `backend` 也执行生产依赖审计（此前只审计 `frontend`）。
 - 两个包声明 `engines.node >= 24`，仓库新增 `.nvmrc`。
 - 后端运行时版本号改为读取 `backend/package.json`，三处 `package.json` 版本由测试保证一致。

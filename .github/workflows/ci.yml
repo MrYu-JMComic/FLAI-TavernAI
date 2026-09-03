@@ -50,3 +50,22 @@ jobs:
           name: playwright-artifacts
           path: .runtime-check/playwright-*
           if-no-files-found: ignore
+  windows-package:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.x
+          cache: npm
+          cache-dependency-path: |
+            backend/package-lock.json
+            frontend/package-lock.json
+            packaging/windows/package-lock.json
+      - name: Stage Windows runtime
+        shell: pwsh
+        run: ./scripts/package-windows.ps1 -NoPackage -SkipReviewGate
+      - name: Windows package smoke
+        shell: pwsh
+        run: ./scripts/smoke-windows-package.ps1 -SkipStage -SkipReviewGate

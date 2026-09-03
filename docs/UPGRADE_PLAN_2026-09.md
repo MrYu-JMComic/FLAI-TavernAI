@@ -22,7 +22,7 @@
 | 模块体量 | `WorldBookView.vue` 2340 行、`StatusBar.vue` 1924、`HomeView.vue` 1867、`ChatView.vue` 1741、`useChatSubmit.js` 1672、`castCommandService.js` 1508、`ChatContextInspector.vue` 1293；`backend.test.js` 10889 行 | 每次安全修复回归半径过大（F-17） |
 | 前端测试 | 无 Vitest；前端逻辑由 `backend/src/tests/frontend*.test.js` 以契约方式在后端测试套件里跑；组件层无单测 | 前后端测试耦合，组件重构无保护 |
 | 类型 | 0 个 TypeScript 文件，无 `checkJs` | 跨层数据契约只靠 Zod 与测试 |
-| 可观测性 | 无未鉴权 `/healthz`，无 `/metrics`；诊断均在 root 管理接口下；日志为 36 行手写 JSON logger | 打包版/LAN 部署无法做进程级探活；无成本/延迟时序数据 |
+| 可观测性 | 已有未鉴权 `/health/live`、`/health/ready`（`/api/health`），无 `/metrics`；诊断均在 root 管理接口下；日志为 36 行手写 JSON logger | 无成本/延迟时序数据 |
 | 打包 | `packaging/windows/package.json` 中 `electron`、`electron-builder` 均为 `latest`；CI 无 Windows 打包 smoke | 打包结果不可复现 |
 | 自定义 JS | 非拥有者已禁用，但拥有者路径仍用 `AsyncFunction` 在页面 origin 执行（`chatAppearance.js:198-230`） | F-01 建议 3（sandbox iframe + CSP）未做 |
 | Town 模拟 | `docs/town-simulation-plan.md` 第 1～6 步完成；Tier A+ 批量 AI 回合未做；前端删除小镇/居民 UI 未接（后端端点已就绪） | 体验缺口 |
@@ -66,7 +66,7 @@
 | 6 | `vue-router` | 4 → 5 | 变更最大：路由守卫、`RouterView` 插槽、`history` API；11 个 view 全部走一遍 E2E |
 | 7 | `packaging/windows`：`electron`、`electron-builder` | `latest` → 固定版本 | 固定后跑 `scripts/smoke-windows-package.ps1` |
 
-- [ ] 增加 `.github/dependabot.yml`（或 Renovate）：backend/frontend/packaging 三个目录，小版本分组周更，主版本单独 PR。
+- [x] 增加 `.github/dependabot.yml`：backend/frontend/packaging 三个目录，小版本分组周更，主版本单独 PR。
 
 验收：`npm outdated` 在三个目录均为空（或仅剩有意保留的项并记录原因）；audit 0 漏洞。
 
@@ -101,7 +101,7 @@
 
 ### 阶段 4：可观测性与运维（2～3 天）
 
-- [ ] 新增未鉴权 `GET /api/health`（仅返回 `ok` 与版本号，不泄露内部信息）与 `GET /api/ready`（DB 可写、迁移已到 `latestSchemaVersion`）；Windows 打包 smoke 与 Electron 主进程用它探活。
+- [x] 未鉴权探活已存在：`/health/live` 与 `/health/ready`（别名 `/api/health`，`services/runtimeHealth.js`），Windows 打包 smoke 已用它探活；盘点时误判为缺失，无需新增。
 - [ ] 新增 root 管理接口 `GET /api/admin/metrics`（Prometheus 文本格式）：HTTP 时延分布、Provider 调用次数/失败/时延/成本微元、任务队列积压与租约恢复次数、SQLite WAL 大小。
 - [ ] 日志：每条记录携带 request ID（已有 F-11 基础），增加日志轮转说明；保留手写 logger，不引入新依赖。
 - [ ] 备份：新增 `scripts/backup-restore-drill.mjs`，用最新备份恢复到临时库并跑迁移校验；备份保留策略（按数量/天数）进入 `config.js`。
@@ -137,7 +137,7 @@
 
 ### 阶段 7：发布工程（1 天，收尾）
 
-- [ ] CI 增加 `windows-latest` job：`scripts/package-windows.ps1 -NoPackage` 阶段化 + `smoke-windows-package.ps1`。
+- [x] CI 增加 `windows-latest` job：`scripts/package-windows.ps1 -NoPackage` 阶段化 + `smoke-windows-package.ps1`。
 - [ ] 版本号策略：`backend`/`frontend`/`packaging/windows` 三处同步，由 `scripts/prepare-commit.ps1` 校验一致。
 - [ ] 每阶段结束更新 `CHANGELOG.md` 并打 tag（`v0.3.0` 依赖升级、`v0.4.0` 测试/拆分、`v0.5.0` 可观测性……）。
 
@@ -177,3 +177,5 @@
 - 2026-09-02：完成现状盘点并建立本计划。
 - 2026-09-02：四项待决策已确定（见第六节），开始执行阶段 0。
 - 2026-09-02：阶段 0 本地项完成于分支 `MrYu/upgrade-phase-0`；review gate PASS（后端 1339/1339、前后端审计 0 漏洞、构建通过、E2E 16/16）。合并与打 tag 等待 CI 账单恢复。
+- 2026-09-03：阶段 1 完成。`markdown-it` 15（23 例渲染语料与 14.3.1 逐字节一致，渲染管线抽出为 `utils/markdownRenderer.js`）、`@lucide/vue` 1.39（117 个图标名全部存在）、`vue-router` 5（E2E 16/16）、Electron 44.1.1 / electron-builder 26.15.3（`npm ci` 校验通过）、Dependabot、Windows 打包 CI job。
+- 2026-09-03：发现一个并行运行的 Codex 代理在同一工作树上改动共享文件；经用户确认由本会话接管，其改动逐项审查后按阶段拆分提交。
