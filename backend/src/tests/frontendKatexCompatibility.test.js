@@ -6,9 +6,10 @@ import {
   normalizeKatexSource,
   selectKatexSurfaceTextColor
 } from '../../../frontend/src/utils/katexCompatibility.js';
-import { readFrontendStyles, readVueBlocks } from './frontendSfcTestUtils.js';
+import { readFrontendStyles, readRepoText, readVueBlocks } from './frontendSfcTestUtils.js';
 
 const { script: markdownContentScript } = readVueBlocks('frontend/src/components/MarkdownContent.vue');
+const markdownRendererScript = readRepoText('frontend/src/utils/markdownRenderer.js');
 const {
   script: katexPreviewScript,
   template: katexPreviewTemplate
@@ -90,18 +91,20 @@ test('KaTeX surface contrast selects readable defaults for generated backgrounds
   assert.equal(selectKatexSurfaceTextColor('transparent'), '');
 });
 
-test('MarkdownContent renders through the KaTeX compatibility adapter', () => {
+test('markdown renderer renders through the KaTeX compatibility adapter', () => {
+  assert.match(markdownContentScript, /import \{ md \} from '..\/utils\/markdownRenderer\.js';/);
+  assert.match(markdownContentScript, /import \{ selectKatexSurfaceTextColor \} from '..\/utils\/katexCompatibility\.js';/);
   assert.match(
-    markdownContentScript,
-    /import \{[\s\S]*findColorBoxExpression,[\s\S]*normalizeEscapedKatexSource,[\s\S]*selectKatexSurfaceTextColor[\s\S]*\} from '..\/utils\/katexCompatibility\.js';/
+    markdownRendererScript,
+    /import \{[\s\S]*findColorBoxExpression,[\s\S]*normalizeEscapedKatexSource[\s\S]*\} from '.\/katexCompatibility\.js';/
   );
   assert.match(
-    markdownContentScript,
+    markdownRendererScript,
     /const compatibleKatex = \{\s*renderToString\(source, options\) \{\s*return katex\.renderToString\(normalizeEscapedKatexSource\(source\), options\);\s*\}\s*\};/
   );
-  assert.match(markdownContentScript, /md\.use\(katexPlugin, \{\s*katex: compatibleKatex,/);
-  assert.match(markdownContentScript, /const expression = findColorBoxExpression\(state\.src, state\.pos\);/);
-  assert.match(markdownContentScript, /token\.content = state\.src\.slice\(expression\.start, expression\.end\);/);
+  assert.match(markdownRendererScript, /md\.use\(katexPlugin, \{\s*katex: compatibleKatex,/);
+  assert.match(markdownRendererScript, /const expression = findColorBoxExpression\(state\.src, state\.pos\);/);
+  assert.match(markdownRendererScript, /token\.content = state\.src\.slice\(expression\.start, expression\.end\);/);
 });
 
 test('MarkdownContent applies surface-aware contrast to KaTeX color boxes', () => {
