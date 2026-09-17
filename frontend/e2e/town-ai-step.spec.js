@@ -68,7 +68,7 @@ test.beforeAll(async () => {
         const state = messageState.currentTownState;
         lastProviderRequest = { body, state };
         const [firstResident, secondResident] = state.residents;
-        const [firstLocation, secondLocation] = state.locations;
+        const secondLocation = state.locations[1];
         const pendingEventId = state.pendingIntervention?.id || '';
         const plan = {
           event: {
@@ -83,6 +83,7 @@ test.beforeAll(async () => {
             {
               residentId: firstResident.id,
               locationId: secondLocation.id,
+              actionKind: 'personal',
               activity: `前往${secondLocation.name}核实钟声线索`,
               intention: firstResident.goal,
               mood: '警觉',
@@ -91,11 +92,12 @@ test.beforeAll(async () => {
             },
             {
               residentId: secondResident.id,
-              locationId: firstLocation.id,
-              activity: `前往${firstLocation.name}比较发光药草`,
+              locationId: secondLocation.id,
+              actionKind: 'personal',
+              activity: `在${secondLocation.name}比较发光药草`,
               intention: secondResident.goal,
               mood: '专注',
-              memory: `我与${firstResident.name}在${firstLocation.name}比较了药草与钟声。`,
+              memory: `我与${firstResident.name}在${secondLocation.name}比较了药草与钟声。`,
               importance: 8
             }
           ]
@@ -221,9 +223,9 @@ test('advances a paused generated-map town through a validated AI tool turn on d
   const keeperAgent = page.locator('.town-agent').filter({ hasText: keeper.name });
   const beforeLeft = await keeperAgent.evaluate((element) => element.style.left);
   await aiButton.click();
-  await expect(page.getByText('已暂停 · 第 1 天 · 10:15')).toBeVisible();
-  await expect(page.getByText(/AI 已通过 E2E Town Provider · town-tool-model 推演世界 15 分钟/)).toBeVisible();
-  await expect(keeperAgent).toContainText('鹿鸣药圃');
+  await expect(page.getByText('已暂停 · 第 1 天 · 10:30')).toBeVisible();
+  await expect(page.getByText(/AI 已通过 E2E Town Provider · town-tool-model 推演世界 30 分钟/)).toBeVisible();
+  await expect(page.locator('.town-agent-live strong')).toContainText('鹿鸣药圃');
   const afterLeft = await keeperAgent.evaluate((element) => element.style.left);
   expect(afterLeft).not.toBe(beforeLeft);
 
@@ -356,13 +358,12 @@ test('reflects and plans one resident through the real backend cognition route o
   await expect(page.getByText(/AI 已通过 E2E Cognition Provider · town-tool-model 为.*形成反思并规划了当天日程/)).toBeVisible();
   await expect(page.getByLabel('居民面板').getByText('桥墩异响与星尘草偏转发生在同一时段，我应把两处异常作为同一条因果线索核对。')).toBeVisible();
   await expect(page.getByText('目标：先核对星尘草的光向，再回到石桥验证回声与光向的对应关系')).toBeVisible();
-  await expect(page.getByLabel('居民面板').locator('.town-agent-facts strong').filter({ hasText: '在鹿鸣药圃比对星尘草光向' })).toBeVisible();
-  await expect(keeperMapAgent).toContainText('鹿鸣药圃');
+  await expect(page.getByLabel('居民面板').locator('.town-agent-live strong')).toHaveText('检查桥面裂缝');
   const afterLeft = await keeperMapAgent.evaluate((element) => element.style.left);
-  expect(afterLeft).not.toBe(beforeLeft);
+  expect(afterLeft).toBe(beforeLeft);
 
   expect(lastCognitionProviderRequest.body.tool_choice).toBe('required');
-  expect(lastCognitionProviderRequest.context.world.creationPrompt).toContain(`自然语言世界构想 cognition-${suffix}`);
+  expect(lastCognitionProviderRequest.context.world.creationPrompt).toBeUndefined();
   expect(lastCognitionProviderRequest.context.reflectionStatus.shouldReflect).toBe(true);
   expect(new Set(lastCognitionProviderRequest.plan.reflection.evidenceMemoryIds)).toEqual(
     new Set([firstMemory.id, secondMemory.id])
@@ -375,8 +376,13 @@ test('reflects and plans one resident through the real backend cognition route o
   expect(cognition.reflectionStatus.importanceTotal).toBe(5);
   const snapshot = await apiRequest(page, `/api/towns/${town.id}/snapshot?eventLimit=50`);
   const updatedKeeper = snapshot.residents.find((resident) => resident.id === keeper.id);
-  expect(updatedKeeper.currentLocation).toBe('鹿鸣药圃');
-  expect(updatedKeeper.state.currentActivity).toBe('在鹿鸣药圃比对星尘草光向');
+  expect(updatedKeeper.currentLocation).toBe('星痕石桥');
+  expect(updatedKeeper.state.currentActivity).toBe('检查桥面裂缝');
+  expect(updatedKeeper.state.plannedActivity).toBe('在鹿鸣药圃比对星尘草光向');
+
+  await page.getByRole('button', { name: '单步推进生活模拟' }).click();
+  await expect(page.getByLabel('居民面板').locator('.town-agent-live strong')).toHaveText('在鹿鸣药圃比对星尘草光向');
+  expect(await keeperMapAgent.evaluate((element) => element.style.left)).not.toBe(beforeLeft);
 
   await page.getByRole('button', { name: '打开完整时间线' }).click();
   const timeline = page.getByRole('complementary', { name: '完整世界时间线' });
@@ -389,7 +395,7 @@ test('reflects and plans one resident through the real backend cognition route o
   const cognitionTab = page.getByRole('tab', { name: '认知' });
   await cognitionTab.scrollIntoViewIfNeeded();
   await expect(cognitionTab).toBeVisible();
-  await expect(page.getByLabel('居民面板').locator('.town-agent-facts strong').filter({ hasText: '在鹿鸣药圃比对星尘草光向' })).toBeVisible();
+  await expect(page.getByLabel('居民面板').locator('.town-agent-live strong').filter({ hasText: '在鹿鸣药圃比对星尘草光向' })).toBeVisible();
   const hasPageOverflow = await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth);
   expect(hasPageOverflow).toBe(false);
   await page.screenshot({ path: path.join(os.tmpdir(), 'flai-town-cognition-mobile.png'), fullPage: false });
@@ -407,7 +413,7 @@ function createTownPayload(suffix) {
     currentDay: 1,
     minuteOfDay: 600,
     settings: {
-      tickMinutes: 15,
+      tickMinutes: 30,
       worldRules: ['居民只依据亲历或听闻的信息行动。'],
       environment: { biome: 'fantasy', atmosphere: '夜色里漂浮着星尘。' }
     },

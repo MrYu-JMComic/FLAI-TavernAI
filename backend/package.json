@@ -14,9 +14,11 @@
     "test:backend": "node scripts/run-tests.mjs backend",
     "test:contracts": "node scripts/run-tests.mjs contracts",
     "test:coverage": "node scripts/run-tests.mjs backend --coverage",
-    "backup:restore": "node scripts/restore-backup.mjs"
+    "backup:restore": "node scripts/restore-backup.mjs",
+    "evaluate:context": "node scripts/evaluate-context-quality.mjs"
   },
   "dependencies": {
+    "@dagrejs/graphlib": "4.0.5",
     "compression": "^1.8.1",
     "cookie-parser": "^1.4.7",
     "cors": "2.8.6",

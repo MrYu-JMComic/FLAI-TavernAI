@@ -1,5 +1,6 @@
 import { buildCastPlanRepairMessages } from '../prompts/castPlanRepairPrompt.js';
 import { parseAndValidateCastPlan } from './castPlanService.js';
+import { isTransientProviderError } from '../providerRetry.js';
 
 const REPAIRABLE_PLAN_CODES = new Set([
   'CAST_PLAN_JSON',
@@ -56,10 +57,11 @@ export async function parseOrRepairCastPlan(options = {}) {
 export function serializeCastPlanError(error) {
   const details = normalizeErrorDetails(error?.details);
   return {
-    error: String(error?.message || 'Cast plan validation failed').slice(0, 500),
+    error: String(error?.publicMessage || error?.message || 'Cast plan validation failed').slice(0, 500),
     code: String(error?.code || 'CAST_PLAN_FAILED').slice(0, 100),
     details,
     repairAttempted: error?.repairAttempted === true,
+    retryable: isTransientProviderError(error),
   };
 }
 

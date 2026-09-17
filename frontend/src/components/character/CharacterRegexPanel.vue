@@ -72,6 +72,7 @@ const previewInputModel = computed({
         <option value="input">输入</option>
         <option value="output">输出</option>
         <option value="both">双向</option>
+        <option value="display">仅显示</option>
       </select>
       <input
         v-model="rule.groupName"

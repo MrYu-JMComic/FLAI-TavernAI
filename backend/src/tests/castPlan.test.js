@@ -10,6 +10,7 @@ import {
   ensureConversationProtagonist,
 } from '../services/cast/castCommandService.js';
 import { getCastRoster } from '../services/cast/castQueryService.js';
+import { buildCastContext } from '../services/cast/castContextBuilder.js';
 import {
   getCastChangeBatchByKey,
   listCastMemories,
@@ -214,6 +215,8 @@ test('a failing multi-operation plan rolls back every domain write and audit eve
   const { database, userId, conversationId } = fixture;
   try {
     ensureConversationProtagonist(database, userId, conversationId);
+    database.prepare('INSERT INTO messages (id, user_id, conversation_id, role, content, created_at) VALUES (?, ?, ?, ?, ?, ?)')
+      .run('rollback-evidence', userId, conversationId, 'assistant', 'This operation must fail.', '2025-01-01T00:01:00.000Z');
     const auditCountBefore = database.prepare(
       'SELECT COUNT(*) AS count FROM conversation_audit_events'
     ).get().count;
@@ -226,6 +229,7 @@ test('a failing multi-operation plan rolls back every domain write and audit eve
             op: 'memory.create',
             target: { name: 'Missing NPC' },
             changes: { content: 'This operation must fail.' },
+            evidence: { messageId: 'rollback-evidence', quote: 'This operation must fail.' },
           },
         ],
       }, {
@@ -315,6 +319,56 @@ test('single-member organization cannot mutate another member', () => {
     );
     assert.equal(getCastRoster(database, userId, conversationId).npcs
       .find((member) => member.id === bob.id).relationship, '');
+  } finally {
+    database.close();
+  }
+});
+
+test('memory agents distinguish intent from facts without excluding user-authored actions', () => {
+  const { database, userId, conversationId } = createFixture();
+  try {
+    ensureConversationProtagonist(database, userId, conversationId);
+    const member = createCastMember(database, userId, conversationId, { canonicalName: 'Alice' });
+    const insert = database.prepare('INSERT INTO messages (id, user_id, conversation_id, role, content, created_at) VALUES (?, ?, ?, ?, ?, ?)');
+    insert.run('user-intent', userId, conversationId, 'user', 'I want to find a key.', '2025-01-01T00:01:00.000Z');
+    insert.run('user-action', userId, conversationId, 'user', 'I handed Alice the map.', '2025-01-01T00:01:30.000Z');
+    insert.run('assistant-fact', userId, conversationId, 'assistant', 'Alice found a key.', '2025-01-01T00:02:00.000Z');
+    const operation = { op: 'memory.create', target: { memberId: member.id }, changes: { content: 'Alice found a key.' } };
+    for (const sourceKind of ['auto_sync', 'ai_organize']) {
+      assert.throws(() => applyCastChangePlan(database, userId, conversationId, {
+        version: 1, operations: [{ ...operation, evidence: { messageId: 'user-intent', quote: 'I want to find a key.', kind: 'intent' } }]
+      }, { sourceKind, scope: 'conversation' }), (error) => error.code === 'CAST_PLAN_EVIDENCE');
+    }
+    assert.throws(() => parseAndValidateCastPlan(JSON.stringify({ version: 1, operations: [operation] }), {
+      sourceKind: 'ai_organize', scope: 'conversation'
+    }), (error) => error.code === 'CAST_PLAN_EVIDENCE');
+    assert.equal(listCastMemories(database, conversationId, member.id).length, 0);
+    applyCastChangePlan(database, userId, conversationId, {
+      version: 1, operations: [{ ...operation, evidence: { messageId: 'assistant-fact', quote: 'Alice found a key.' } }]
+    }, { sourceKind: 'ai_organize', scope: 'conversation', evidenceMessageIds: ['assistant-fact'] });
+    const memory = listCastMemories(database, conversationId, member.id)[0];
+    assert.equal(memory.sourceMessageId, 'assistant-fact');
+    const update = { op: 'memory.update', target: { memberId: member.id, memoryId: memory.id }, changes: { importance: 0.9 } };
+    applyCastChangePlan(database, userId, conversationId, { version: 1, operations: [update] }, { sourceKind: 'ai_organize', scope: 'conversation' });
+    assert.equal(listCastMemories(database, conversationId, member.id)[0].importance, 0.9);
+    assert.throws(() => applyCastChangePlan(database, userId, conversationId, {
+      version: 1, operations: [{ ...update, changes: { content: 'Invented replacement.' } }]
+    }, { sourceKind: 'ai_organize', scope: 'conversation' }), (error) => error.code === 'CAST_PLAN_EVIDENCE');
+    assert.equal(listCastMemories(database, conversationId, member.id)[0].content, 'Alice found a key.');
+    applyCastChangePlan(database, userId, conversationId, { version: 1, operations: [{
+      ...operation, changes: { content: 'The player handed Alice the map.' },
+      evidence: { messageId: 'user-action', quote: 'I handed Alice the map.', kind: 'fact' }
+    }] }, { sourceKind: 'auto_sync', scope: 'conversation' });
+    assert.ok(listCastMemories(database, conversationId, member.id).some((item) => item.sourceMessageId === 'user-action'));
+    applyCastChangePlan(database, userId, conversationId, { version: 1, operations: [{
+      ...operation, changes: { content: 'The player wants to find a key.', memoryType: 'intent' },
+      evidence: { messageId: 'user-intent', quote: 'I want to find a key.', kind: 'intent' }
+    }] }, { sourceKind: 'auto_sync', scope: 'conversation' });
+    assert.match(buildCastContext(database, userId, conversationId), /\[intent\] The player wants to find a key/);
+    const intent = listCastMemories(database, conversationId, member.id).find((item) => item.memoryType === 'intent');
+    assert.throws(() => applyCastChangePlan(database, userId, conversationId, { version: 1, operations: [{
+      op: 'memory.update', target: { memberId: member.id, memoryId: intent.id }, changes: { memoryType: 'event' }
+    }] }, { sourceKind: 'ai_organize', scope: 'conversation' }), (error) => error.code === 'CAST_PLAN_EVIDENCE');
   } finally {
     database.close();
   }

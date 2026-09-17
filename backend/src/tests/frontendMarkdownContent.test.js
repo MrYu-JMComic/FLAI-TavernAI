@@ -4,12 +4,14 @@ import { readVueBlocks } from './frontendSfcTestUtils.js';
 
 const { script: markdownContentScript } = readVueBlocks('frontend/src/components/MarkdownContent.vue');
 
-test('MarkdownContent render cache refreshes exact hits before returning cached HTML', () => {
+test('MarkdownContent caches only settled sanitized HTML with bounded storage', () => {
   assert.match(
     markdownContentScript,
-    /if \(renderCache\.has\(cacheKey\)\) \{\s*const cached = renderCache\.get\(cacheKey\);[\s\S]*renderCache\.delete\(cacheKey\);[\s\S]*renderCache\.set\(cacheKey, cached\);[\s\S]*return cached;[\s\S]*}/
+    /const renderCache = createMarkdownRenderCache\(\);/
   );
-  assert.doesNotMatch(markdownContentScript, /const cached = renderCache\.get\(cacheKey\);\s*if \(cached\) return cached;/);
+  assert.match(markdownContentScript, /if \(cached !== undefined\) return cached;/);
+  assert.match(markdownContentScript, /if \(cacheResult\) renderCache\.set\(cacheKey, html\);/);
+  assert.match(markdownContentScript, /getCachedRender\(text, renderPlugins, !props\.deferUpdates\)/);
 });
 
 test('MarkdownContent commits in the typewriter cadence and reports stable DOM renders', () => {
@@ -23,11 +25,10 @@ test('MarkdownContent commits in the typewriter cadence and reports stable DOM r
     markdownContentScript,
     /function scheduleRenderedMarkdown\(\) \{[\s\S]*pendingMarkdownText = props\.text;[\s\S]*pendingRenderPlugins = props\.renderPlugins;[\s\S]*renderMarkdownNow\(pendingMarkdownText, pendingRenderPlugins\);[\s\S]*}/
   );
-  assert.match(markdownContentScript, /watch\(\(\) => props\.text, scheduleRenderedMarkdown, \{ immediate: true, flush: 'post' \}\);/);
-  assert.match(markdownContentScript, /watch\(\(\) => buildPluginCacheKey\(props\.renderPlugins\), scheduleRenderedMarkdown, \{ flush: 'post' \}\);/);
+  assert.match(markdownContentScript, /watch\(\s*\[\(\) => props\.text, \(\) => buildPluginCacheKey\(props\.renderPlugins\), \(\) => props\.deferUpdates\],\s*scheduleRenderedMarkdown,\s*\{ immediate: true, flush: 'post' \}/);
   assert.match(markdownContentScript, /onMounted\(\(\) => \{\s*reconcileRenderedHtml\(\);/);
   assert.match(markdownContentScript, /emits: \['rendered'\]/);
-  assert.match(markdownContentScript, /reconcileDomChildren\(root, templateElement\.content\);\s*applyKatexSurfaceContrast\(root\);\s*appliedHtml = pendingHtml;\s*fitInlineKatex\(\);\s*emit\('rendered'\);/);
+  assert.match(markdownContentScript, /reconcileDomChildren\(root, templateElement\.content\);\s*applyKatexSurfaceContrast\(root\);\s*appliedHtml = pendingHtml;\s*appliedDialogueHighlight = props\.highlightDialogue;\s*fitInlineKatex\(\);\s*emit\('rendered'\);/);
   assert.doesNotMatch(markdownContentScript, /requestAnimationFrame|markdownRenderFrame|cancelPendingMarkdownFrame/);
   assert.match(markdownContentScript, /templateElement\.innerHTML = pendingHtml;/);
   assert.match(markdownContentScript, /import \{ reconcileDomChildren \} from '..\/utils\/domReconciler\.js';/);

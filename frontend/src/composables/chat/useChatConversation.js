@@ -8,6 +8,7 @@ import {
 } from '../../api/chat.js';
 import { fetchCharacters } from '../../api/characters.js';
 import { fetchPresets } from '../../api/presets.js';
+import { samePlainValue } from '../../utils/plainValues.js';
 
 export function useChatConversation({ route, emit, showError }) {
   const conversation = ref(null);
@@ -112,7 +113,7 @@ export function useChatConversation({ route, emit, showError }) {
 
   function setActiveConversationIfChanged(nextConversation) {
     const normalizedConversation = nextConversation || null;
-    if (sameStableValue(conversation.value, normalizedConversation)) {
+    if (samePlainValue(conversation.value, normalizedConversation)) {
       return false;
     }
     conversation.value = normalizedConversation;
@@ -120,7 +121,21 @@ export function useChatConversation({ route, emit, showError }) {
   }
 
   function setMessagesIfChanged(nextMessages) {
-    return setListRefIfChanged(messages, nextMessages, sameMessageSummary);
+    const nextItems = Array.isArray(nextMessages) ? nextMessages : [];
+    const currentItems = messages.value;
+    if (sameListItems(currentItems, nextItems, samePlainValue)) return false;
+
+    // Reuse unchanged rows by ID, including after insertions and deletions.
+    // Their Markdown DOM, local disclosure state and measured heights survive.
+    const currentById = new Map();
+    for (const message of currentItems) currentById.set(message.id, message);
+    const reconciled = [];
+    for (const message of nextItems) {
+      const current = message.id ? currentById.get(message.id) : null;
+      reconciled.push(current && samePlainValue(current, message) ? current : message);
+    }
+    messages.value = reconciled;
+    return true;
   }
 
   function filterConversationSummaries(items, rawQuery) {
@@ -206,10 +221,6 @@ export function useChatConversation({ route, emit, showError }) {
       && current?.usage?.totalCostCny === next?.usage?.totalCostCny;
   }
 
-  function sameMessageSummary(current = {}, next = {}) {
-    return sameStableValue(current, next);
-  }
-
   function sameCharacterSummary(current = {}, next = {}) {
     return current?.id === next?.id
       && current?.name === next?.name
@@ -244,66 +255,6 @@ export function useChatConversation({ route, emit, showError }) {
       && (current?.pattern || '') === (next?.pattern || '')
       && (current?.flags || '') === (next?.flags || '')
       && (current?.titleTemplate || current?.label || '') === (next?.titleTemplate || next?.label || '');
-  }
-
-  function sameStableValue(current, next) {
-    if (current === next) {
-      return true;
-    }
-    return stableSerialize(current) === stableSerialize(next);
-  }
-
-  function stableSerialize(value) {
-    if (typeof value === 'undefined') {
-      return 'undefined';
-    }
-    if (value === null || typeof value !== 'object') {
-      return JSON.stringify(value);
-    }
-    if (Array.isArray(value)) {
-      return stableSerializeArray(value);
-    }
-    return stableSerializeObject(value);
-  }
-
-  function stableSerializeArray(items) {
-    let serialized = '[';
-    for (let index = 0; index < items.length; index += 1) {
-      if (index > 0) {
-        serialized += ',';
-      }
-      if (Object.prototype.hasOwnProperty.call(items, index)) {
-        const serializedItem = stableSerialize(items[index]);
-        if (typeof serializedItem !== 'undefined') {
-          serialized += serializedItem;
-        }
-      }
-    }
-    return `${serialized}]`;
-  }
-
-  function stableSerializeObject(value) {
-    const keys = collectStableObjectKeys(value);
-    let serialized = '{';
-    for (let index = 0; index < keys.length; index += 1) {
-      if (index > 0) {
-        serialized += ',';
-      }
-      const key = keys[index];
-      serialized += `${JSON.stringify(key)}:${stableSerialize(value[key])}`;
-    }
-    return `${serialized}}`;
-  }
-
-  function collectStableObjectKeys(value) {
-    const keys = [];
-    for (const key in value) {
-      if (!Object.prototype.hasOwnProperty.call(value, key)) {
-        continue;
-      }
-      keys.push(key);
-    }
-    return keys.sort();
   }
 
   function formatSidebarLoadError(failures) {

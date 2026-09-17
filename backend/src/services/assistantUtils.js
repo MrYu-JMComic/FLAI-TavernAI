@@ -14,6 +14,7 @@ export function cloneToolCalls(toolCalls = []) {
     cloned.push({
       name: call.name,
       arguments: call.arguments,
+      ...(call.policy ? { policy: call.policy } : {}),
       result: call.result
     });
   }

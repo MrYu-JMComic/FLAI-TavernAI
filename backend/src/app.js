@@ -60,6 +60,13 @@ import {
   createReadinessProbe
 } from './services/runtimeHealth.js';
 
+const QUOTA_EXEMPT_AUTH_PATHS = new Set([
+  '/auth/login',
+  '/auth/register',
+  '/auth/logout',
+  '/auth/me'
+]);
+
 export function createApp(context = {}) {
   const db = context.db;
   if (!db) {
@@ -89,6 +96,27 @@ export function createApp(context = {}) {
 
   function shouldSkipApiRateLimit(request) {
     return request.method === 'OPTIONS' || isAuthAttemptPath(request);
+  }
+
+  function shouldConsumeDailyRequest(request) {
+    return !isAuthenticationControlPlaneRequest(request) && !isRootAdminControlPlaneRequest(request);
+  }
+
+  function isAuthenticationControlPlaneRequest(request) {
+    return QUOTA_EXEMPT_AUTH_PATHS.has(requestApiPath(request));
+  }
+
+  function isRootAdminControlPlaneRequest(request) {
+    const pathName = requestApiPath(request);
+    const isAdminControlPlane = pathName === '/admin' || pathName.startsWith('/admin/');
+    return Boolean(request.auth?.user?.isRootAdmin && isAdminControlPlane);
+  }
+
+  function requestApiPath(request) {
+    const originalPath = String(request.originalUrl || '').split('?', 1)[0];
+    if (originalPath === '/api') return '/';
+    if (originalPath.startsWith('/api/')) return originalPath.slice(4);
+    return String(request.path || '').split('?', 1)[0];
   }
 
   function getApiRateLimitForRequest(request) {
@@ -137,7 +165,12 @@ export function createApp(context = {}) {
   });
   app.use((request, _response, next) => {
     const userId = request.auth?.user?.id;
-    if (!userId || !['POST', 'PUT', 'PATCH'].includes(String(request.method || '').toUpperCase())) {
+    if (
+      !userId
+      || isAuthenticationControlPlaneRequest(request)
+      || isRootAdminControlPlaneRequest(request)
+      || !['POST', 'PUT', 'PATCH'].includes(String(request.method || '').toUpperCase())
+    ) {
       next();
       return;
     }
@@ -210,7 +243,9 @@ export function createApp(context = {}) {
   });
   app.use('/api', apiLimiter);
   app.use('/api', (request, _response, next) => {
-    if (request.auth?.user) consumeDailyRequest(db, request.auth.user.id);
+    if (request.auth?.user && shouldConsumeDailyRequest(request)) {
+      consumeDailyRequest(db, request.auth.user.id);
+    }
     next();
   });
   app.use('/api/auth/login', authLimiter);
@@ -304,6 +339,7 @@ export function createApp(context = {}) {
 
   const routeContext = {
     db,
+    databasePath: context.databasePath || config.databasePath || '',
     config,
     requireAuth,
     requireRootAdmin,

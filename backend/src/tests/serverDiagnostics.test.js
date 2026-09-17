@@ -32,7 +32,10 @@ test('server owns process lifecycle without constructing routes', () => {
   assert.match(serverSource, /const app = createApp\(\{/);
   assert.match(serverSource, /const server = await listen\(app, config\.port\)/);
   assert.match(serverSource, /stopTownEngine\?\.\(\)/);
-  assert.match(serverSource, /database\.exec\('PRAGMA wal_checkpoint\(TRUNCATE\)'\)/);
+  // Shutdown still folds the WAL back in, now through the shared maintenance
+  // helper that the periodic timer also uses.
+  assert.match(serverSource, /performDatabaseMaintenance\(database\)/);
+  assert.match(serverSource, /clearInterval\(maintenanceTimer\)/);
   assert.doesNotMatch(appSource, /\.listen\(/);
   assert.doesNotMatch(appSource, /setInterval\(/);
 });

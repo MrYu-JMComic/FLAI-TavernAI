@@ -1,4 +1,5 @@
 import { parseStatusTemplateToken } from '../../../shared/statusTemplateTokens.js';
+import { THINKING_LEVELS } from '../../../shared/providerThinking.js';
 
 const STATUS_BLUEPRINT_VARIABLE_LIMIT = 60;
 
@@ -15,6 +16,7 @@ export function normalizeAdvancedSettings(input = {}) {
     customJsRiskAccepted: normalizeBoolean(source.customJsRiskAccepted ?? source.custom_js_risk_accepted, false),
     statusBarPrompt: normalizeText(source.statusBarPrompt ?? source.status_bar_prompt ?? source.status_bar_prompt_text ?? ''),
     showWorldBookMatches: normalizeBoolean(source.showWorldBookMatches ?? source.show_world_book_matches, true),
+    highlightDialogue: normalizeBoolean(source.highlightDialogue ?? source.highlight_dialogue, true),
     castTracking: normalizeCastTracking(source.castTracking ?? source.cast_tracking),
     statusBarBlueprint: normalizeStatusBarBlueprint(source.statusBarBlueprint ?? source.status_bar_blueprint ?? {}),
     accessorySkills: normalizeAccessorySkills(source.accessorySkills ?? source.accessory_skills ?? {})
@@ -47,6 +49,9 @@ export function mergeAdvancedSettings(author = {}, user = {}, options = {}) {
     showWorldBookMatches: hasOwnSetting(userSource, 'showWorldBookMatches', 'show_world_book_matches')
       ? userSettings.showWorldBookMatches
       : authorSettings.showWorldBookMatches,
+    highlightDialogue: hasOwnSetting(userSource, 'highlightDialogue', 'highlight_dialogue')
+      ? userSettings.highlightDialogue
+      : authorSettings.highlightDialogue,
     castTracking: hasOwnSetting(userSource, 'castTracking', 'cast_tracking')
       ? userSettings.castTracking
       : authorSettings.castTracking,
@@ -104,6 +109,8 @@ export function createDefaultAccessorySkills() {
     economyAgent: createSkillConfig(false),
     talentPrompt: createSkillConfig(false),
     cgScene: createSkillConfig(false),
+    // Model-driven long-term memory review; 'auto' uses the model when a provider is usable and rules otherwise.
+    memoryAgent: createSkillConfig('auto'),
     sceneAgent: createSkillConfig(false)
   };
 }
@@ -147,6 +154,10 @@ export function isAccessorySkillActive(skills = {}, key, context = {}) {
         normalizeText(context.statusBarPrompt).trim() ||
         hasStatusBarBlueprint(context.statusBarBlueprint)
     );
+  }
+  // The memory agent has no extra prerequisite: 'auto' means "use the model when it is available".
+  if (key === 'memoryAgent') {
+    return true;
   }
   return false;
 }
@@ -201,7 +212,18 @@ function disabledAccessorySkills() {
 
 function normalizeCastTracking(value) {
   const source = value && typeof value === 'object' ? value : {};
-  return { enabled: normalizeBoolean(source.enabled, false) };
+  const thinkingLevel = normalizeOptionalThinkingLevel(source.thinkingLevel ?? source.thinking_level);
+  return {
+    enabled: normalizeBoolean(source.enabled, false),
+    // '' follows the main chat provider; otherwise one of the user's saved provider profiles.
+    providerProfileId: String(source.providerProfileId ?? source.provider_profile_id ?? '').trim().slice(0, 160),
+    modelOverride: normalizeModelOverride(source.modelOverride ?? source.model_override),
+    // Missing/empty follows the main conversation's effective thinking level.
+    ...(thinkingLevel ? { thinkingLevel } : {}),
+    // Plan operations the NPC agent may propose; a missing key means allowed.
+    autoSyncOperations: normalizeSkillTools(source.autoSyncOperations ?? source.auto_sync_operations),
+    organizeOperations: normalizeSkillTools(source.organizeOperations ?? source.organize_operations)
+  };
 }
 
 function hasOwnSetting(source, camelKey, snakeKey) {
@@ -388,10 +410,13 @@ function isMeterTemplateProperty(property = '') {
   return ['max', 'percent', 'percentage', 'color', 'display', 'displayValue'].includes(String(property || '').trim());
 }
 
-function createSkillConfig(enabled) {
+function createSkillConfig(enabled, extras = {}) {
   return {
     enabled,
-    modelOverride: ''
+    modelOverride: '',
+    providerProfileId: '',
+    tools: {},
+    ...extras
   };
 }
 
@@ -399,8 +424,25 @@ function normalizeSkillConfig(value, fallback = createSkillConfig(false)) {
   const input = value && typeof value === 'object' ? value : {};
   return {
     enabled: normalizeEnabled(input.enabled, fallback.enabled),
-    modelOverride: normalizeModelOverride(input.modelOverride ?? input.model_override ?? fallback.modelOverride)
+    modelOverride: normalizeModelOverride(input.modelOverride ?? input.model_override ?? fallback.modelOverride),
+    // '' follows the main chat provider; otherwise one of the user's saved provider profiles.
+    providerProfileId: String(input.providerProfileId ?? input.provider_profile_id ?? fallback.providerProfileId ?? '').trim().slice(0, 160),
+    tools: normalizeSkillTools(input.tools ?? fallback.tools)
   };
+}
+
+function normalizeSkillTools(value) {
+  const source = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+  const tools = {};
+  let count = 0;
+  for (const key of Object.keys(source)) {
+    const name = String(key || '').trim().slice(0, 40);
+    if (!/^[a-z][a-z0-9_.]*$/.test(name)) continue;
+    tools[name] = source[key] === true || source[key] === 'true' || source[key] === 'on' || source[key] === 1;
+    count += 1;
+    if (count >= 24) break;
+  }
+  return tools;
 }
 
 function normalizeObject(value) {
@@ -422,6 +464,11 @@ function normalizeEnabled(value, fallback) {
 
 function normalizeModelOverride(value) {
   return String(value || '').trim().slice(0, 100);
+}
+
+function normalizeOptionalThinkingLevel(value) {
+  const level = String(value ?? '').trim().toLowerCase();
+  return THINKING_LEVELS.includes(level) ? level : '';
 }
 
 function normalizeImageUrl(value) {

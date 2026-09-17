@@ -10,6 +10,7 @@ import {
   Copy,
   GitBranch,
   Pencil,
+  RefreshCw,
   RotateCcw,
   StepForward,
   Trash2,
@@ -33,10 +34,12 @@ const props = defineProps({
   canDelete: { type: Boolean, default: false },
   canRerunEdit: { type: Boolean, default: false },
   canContinue: { type: Boolean, default: false },
+  canRegenerate: { type: Boolean, default: false },
   branchCan: { type: Boolean, default: true },
   messageActionBusy: { type: Boolean, default: false },
   copyBusy: { type: Boolean, default: false },
   renderPlugins: { type: Array, default: () => [] },
+  highlightDialogue: { type: Boolean, default: true },
   swipeDisplay: { type: String, default: '' },
   swipeCanPrev: { type: Boolean, default: false },
   swipeCanNext: { type: Boolean, default: false },
@@ -52,6 +55,7 @@ const emit = defineEmits([
   'save-edit',
   'save-edit-rerun',
   'continue-generation',
+  'regenerate',
   'delete',
   'copy',
   'update:editingMessageContent',
@@ -239,6 +243,7 @@ watch(isEditingCurrentMessage, async (active) => {
             v-else-if="displayedContent || messagePlaceholder"
             class="typing-text"
             :text="displayedContent || messagePlaceholder"
+            :highlight-dialogue="highlightDialogue"
             :render-plugins="renderPlugins"
             :defer-updates="isContentTyping"
             @rendered="emitContentRendered"
@@ -288,6 +293,19 @@ watch(isEditingCurrentMessage, async (active) => {
           >
             <StepForward :size="14" />
             <span>继续</span>
+          </button>
+          <button
+            v-if="canRegenerate"
+            type="button"
+            class="message-action-button regenerate-message-button"
+            aria-label="重新生成这条回复"
+            title="重新生成（原回复保留为候选）"
+            :disabled="messageActionBusy"
+            :aria-busy="messageActionBusy"
+            @click.stop="emitMessageAction('regenerate')"
+          >
+            <RefreshCw :size="14" />
+            <span>重新生成</span>
           </button>
           <button
             v-if="worldBookMatchCount > 0"

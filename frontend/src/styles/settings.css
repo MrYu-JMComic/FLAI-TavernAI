@@ -217,6 +217,39 @@ fieldset.accessory-skills-grid:disabled {
   min-width: 0;
 }
 
+.accessory-skill-configure-button {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  min-height: 38px;
+  padding: 6px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.accessory-skill-configure-button > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.accessory-skill-configure-button > small {
+  flex-shrink: 0;
+  color: var(--accent);
+}
+
+.accessory-skill-configure-button:hover {
+  border-color: var(--accent);
+}
+
 @media (max-width: 560px) {
   .accessory-skill-row > .chat-setting-field {
     flex-basis: 100%;

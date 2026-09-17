@@ -91,6 +91,7 @@ export async function runToolCompletion(settings, messages, tools, executeTool, 
       response = await providerFetch(settings, '/chat/completions', {
         method: 'POST',
         body: JSON.stringify(requestBody),
+        requestTrace: options.requestTrace,
         signal: options.signal
       });
       json = await readJsonResponse(response);
@@ -155,12 +156,15 @@ export async function runToolCompletion(settings, messages, tools, executeTool, 
         call.name,
         call.arguments,
         call,
-        options.signal
+        options.signal,
+        tools,
+        { database: options.database, userId: options.userId }
       );
       const result = prepared.result;
       const log = {
         name: call.name,
         arguments: call.arguments,
+        policy: prepared.policy,
         result
       };
       step.tools.push(log);
@@ -259,6 +263,7 @@ export async function streamToolCompletion(settings, messages, tools, executeToo
       response = await providerFetch(settings, '/chat/completions', {
         method: 'POST',
         body: JSON.stringify(requestBody),
+        requestTrace: options.requestTrace,
         signal
       });
 
@@ -417,11 +422,12 @@ export async function streamToolCompletion(settings, messages, tools, executeToo
     });
 
     for (const call of calls) {
-      const prepared = await executeProviderTool(executeTool, call.name, call.arguments, call, signal);
+      const prepared = await executeProviderTool(executeTool, call.name, call.arguments, call, signal, tools, { database: options.database, userId: options.userId });
       const result = prepared.result;
       const log = {
         name: call.name,
         arguments: call.arguments,
+        policy: prepared.policy,
         result
       };
       toolCalls.push(log);

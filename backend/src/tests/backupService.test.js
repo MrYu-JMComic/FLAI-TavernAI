@@ -85,7 +85,7 @@ test('startup backup captures the database before migration and records integrit
     } finally {
       backup.close();
     }
-    assert.equal(database.prepare('SELECT COUNT(*) AS count FROM schema_migrations').get().count, 10);
+    assert.equal(database.prepare('SELECT COUNT(*) AS count FROM schema_migrations').get().count, 17);
   } finally {
     database.close();
     rmSync(temporaryRoot, { recursive: true, force: true });

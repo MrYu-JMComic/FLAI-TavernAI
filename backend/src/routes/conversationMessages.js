@@ -6,18 +6,44 @@ import {
 } from '../modules/characters.js';
 import {
   deleteConversationMessage,
+  deleteConversationMessagesFrom,
   getConversationForUser,
   getConversationMessage,
   listConversationMessagePage,
   listConversationMessages,
   updateConversationMessage
 } from './helpers.js';
-import { messageListQuerySchema, updateMessageSchema, validate } from '../validations/schemas.js';
+import { messageListQuerySchema, truncateMessagesSchema, updateMessageSchema, validate } from '../validations/schemas.js';
+import { requestConversationStateRebuild } from '../services/conversationTimeline.js';
+import { getConversationProcessingSummary } from '../services/jobs/jobQueue.js';
+import { listAiToolPolicies } from '../services/toolRegistry.js';
 
 export function createConversationMessagesRouter(ctx) {
   const { db, requireAuth, nowIso } = ctx;
   const getConversation = (userId, conversationId) => getConversationForUser(db, userId, conversationId);
   const router = Router({ mergeParams: true });
+  router.get('/processing', requireAuth, (request, response) => {
+    const conversation = getConversationForUser(db, request.auth.user.id, request.params.id, { includeUsage: false });
+    if (!conversation) return response.status(404).json({ error: '对话不存在' });
+    response.json({ conversationId: conversation.id, stateStatus: conversation.stateStatus, timelineRevision: conversation.timelineRevision,
+      job: getConversationProcessingSummary(db, request.auth.user.id, conversation.id) });
+  });
+  router.post('/processing/rebuild', requireAuth, (request, response) => {
+    const conversation = getConversationForUser(db, request.auth.user.id, request.params.id, { includeUsage: false });
+    if (!conversation) return response.status(404).json({ error: '对话不存在' });
+    response.json(requestConversationStateRebuild(db, request.auth.user.id, conversation.id, {
+      confirmed: request.body?.confirmed === true, acceptCurrent: request.body?.acceptCurrent === true
+    }));
+  });
+  router.get('/processing/tools', requireAuth, (request, response) => {
+    if (!getConversationForUser(db, request.auth.user.id, request.params.id, { includeUsage: false })) {
+      return response.status(404).json({ error: '对话不存在' });
+    }
+    const rows = db.prepare(`SELECT id, job_id, step_key, attempt, tool_name, domain, effect, idempotency, status, arguments_json, result_json, created_at
+      FROM ai_tool_executions WHERE conversation_id = ? AND user_id = ? ORDER BY created_at DESC, rowid DESC LIMIT 100`)
+      .all(request.params.id, request.auth.user.id);
+    response.json({ policies: listAiToolPolicies(), executions: rows });
+  });
 
   router.get('/messages', requireAuth, validate(messageListQuerySchema, 'query'), (request, response) => {
     const conversation = getConversation(request.auth.user.id, request.params.id);
@@ -88,6 +114,22 @@ export function createConversationMessagesRouter(ctx) {
     response.json(updateConversationMessage(db, nowIso, request.auth.user.id, request.params.id, request.params.messageId, { content }));
   });
 
+  router.post('/messages/truncate', requireAuth, validate(truncateMessagesSchema), (request, response) => {
+    const conversation = getConversation(request.auth.user.id, request.params.id);
+    if (!conversation) {
+      response.status(404).json({ error: '对话不存在' });
+      return;
+    }
+    const result = deleteConversationMessagesFrom(
+      db, nowIso, request.auth.user.id, request.params.id, request.body.fromMessageId
+    );
+    if (!result) {
+      response.status(404).json({ error: '消息不存在' });
+      return;
+    }
+    response.json({ ok: true, deletedIds: result.deletedIds, timeline: result.timeline });
+  });
+
   router.delete('/messages/:messageId', requireAuth, (request, response) => {
     const conversation = getConversation(request.auth.user.id, request.params.id);
     if (!conversation) {
@@ -104,7 +146,8 @@ export function createConversationMessagesRouter(ctx) {
     response.json({
       ok: true,
       deletedId: deletedMessage.deletedId,
-      deletedReasoning: deletedMessage.deletedReasoning
+      deletedReasoning: deletedMessage.deletedReasoning,
+      timeline: deletedMessage.timeline
     });
   });
 

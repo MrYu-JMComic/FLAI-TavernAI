@@ -1,5 +1,8 @@
 # FLAI TavernAI 升级计划（2026-09）
 
+> 2026-09-05：会话可靠性第一批进入实施，覆盖完整快照、历史版本与持久后台处理。
+> 当前范围与验收清单见 `docs/conversation-reliability-batch-1.md`；以下旧基线数字不代表当前工作树。
+
 > 基于 2026-09-02 分支 `MrYu/code-review-2026-09-02`（提交 `ad82630`）的实际状态制定。
 > 状态规则沿用 `docs/NPC_REFACTOR_TASKS.md`：实现、清理、验证全部完成后才能勾选。
 

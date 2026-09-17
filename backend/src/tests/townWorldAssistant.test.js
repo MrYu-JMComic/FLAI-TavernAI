@@ -16,7 +16,7 @@ test('town world assistant sends the user idea unchanged and accepts only the re
     {
       runCompletion: async (settings, messages, tools, executeTool, options) => {
         captured = { settings, messages, tools, options };
-        const toolResult = await executeTool('create_town_world', createBlueprint());
+        const toolResult = await executeTool('create_town_world', createLifeBlueprint());
         return {
           toolCalls: [{ name: 'create_town_world', arguments: createBlueprint(), result: toolResult }],
           provider: '测试网关',
@@ -70,6 +70,47 @@ test('blueprint normalization rejects missing AI-authored resident details and i
   missingEnvironment.environment.atmosphere = '';
   assert.equal(normalizeTownWorldBlueprint(missingEnvironment), null);
 });
+
+test('world generation validates lifestyle references and allows a bounded correction round', async () => {
+  const valid = createLifeBlueprint();
+  const normalized = normalizeTownWorldBlueprint(valid);
+  assert.equal(normalized.environment.architecture, 'modern');
+  assert.equal(normalized.residents[0].simulation.homeLocationId, normalized.locations[0].id);
+  const invalidHome = structuredClone(valid);
+  invalidHome.residents[0].lifestyle.homeLocation = 'missing';
+  assert.equal(normalizeTownWorldBlueprint(invalidHome), null);
+  const invalidTrait = structuredClone(valid);
+  invalidTrait.residents[0].lifestyle.personality.extraversion = 200;
+  assert.equal(normalizeTownWorldBlueprint(invalidTrait), null);
+  const invalidSleep = structuredClone(valid);
+  invalidSleep.residents[0].lifestyle.sleepMinute = 600;
+  assert.equal(normalizeTownWorldBlueprint(invalidSleep), null);
+  await generateTownWorldBlueprint({ model: 'test' }, PROMPT, {
+    runCompletion: async (_settings, _messages, _tools, executeTool, options) => {
+      assert.equal(options.maxRounds, 4);
+      const rejected = await executeTool('create_town_world', invalidHome);
+      assert.equal(rejected.ok, false);
+      assert.equal(rejected.stop, false);
+      const accepted = await executeTool('create_town_world', valid);
+      assert.equal(accepted.ok, true);
+      return { toolCalls: [{ name: 'create_town_world', result: accepted }] };
+    }
+  });
+});
+
+function createLifeBlueprint() {
+  const blueprint = createBlueprint();
+  blueprint.publicDescription = 'A busy coastal neighborhood.';
+  blueprint.environment.architecture = 'modern';
+  blueprint.locations = blueprint.locations.map((location, index) => ({ ...location, assetId: ['lighthouse', 'office', 'cafe'][index], services: index === 0 ? ['sleep', 'eat', 'wash', 'work'] : index === 1 ? ['work', 'social'] : ['eat', 'social'], capacity: 8, opensAt: 0, closesAt: 1440 }));
+  for (const resident of blueprint.residents) resident.lifestyle = {
+    homeLocation: blueprint.locations[0].name, workLocation: blueprint.locations[1].name,
+    wakeMinute: 420, sleepMinute: 1380, workStartMinute: 540, workEndMinute: 1020,
+    hourlyWage: 12, startingMoney: 120, interests: ['Reading'],
+    personality: { openness: 60, conscientiousness: 70, extraversion: 40, agreeableness: 60, sensitivity: 50 }
+  };
+  return blueprint;
+}
 
 function createBlueprint() {
   return {

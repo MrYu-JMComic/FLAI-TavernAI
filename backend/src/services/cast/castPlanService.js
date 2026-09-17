@@ -50,7 +50,7 @@ export function applyCastChangePlan(database, userId, conversationId, input, opt
     : validateCastChangePlan(input);
   const sourceKind = normalizeSourceKind(options.sourceKind);
   const scope = options.scope === 'conversation' ? 'conversation' : 'member';
-  assertCastPlanPermissions(plan, { sourceKind, scope });
+  assertCastPlanPermissions(plan, { sourceKind, scope, allowedOperations: options.allowedOperations });
   const idempotencyKey = String(options.idempotencyKey || newId()).trim().slice(0, 200);
   if (!idempotencyKey) throw new CastDomainError('Idempotency key is required');
   const existing = getCastChangeBatchByKey(database, conversationId, idempotencyKey);
@@ -89,21 +89,25 @@ export function applyCastChangePlan(database, userId, conversationId, input, opt
           continue;
         }
         seen.add(signature);
-        const evidence = validateOperationEvidence(operation, evidenceById, sourceKind);
-        const result = applyOperation(database, userId, conversationId, operation, {
-          sourceKind,
-          batchId: batch.id,
-          evidence,
-          scopeMemberId,
-          scope,
-        });
-        results.push({ index, op: operation.op, status: 'applied', subjectId: result?.id || result?.deletedId || '' });
+        try {
+          const result = withSavepoint(database, 'sp_cast_plan_operation', () => {
+            const evidence = validateOperationEvidence(operation, evidenceById, sourceKind);
+            return applyOperation(database, userId, conversationId, operation, {
+              sourceKind, batchId: batch.id, evidence, scopeMemberId, scope,
+            });
+          });
+          results.push({ index, op: operation.op, status: 'applied', subjectId: result?.id || result?.deletedId || '' });
+        } catch (error) {
+          if (sourceKind !== 'auto_sync' || !(error instanceof CastDomainError) || error.statusCode >= 500) throw error;
+          results.push({ index, op: operation.op, status: 'skipped', code: error.code, error: error.message });
+        }
       }
       const appliedAt = nowIso();
       const result = {
         summary: plan.summary,
         applied: results.filter((entry) => entry.status === 'applied').length,
         deduplicated: results.filter((entry) => entry.status === 'deduplicated').length,
+        skipped: results.filter((entry) => entry.status === 'skipped').length,
         operations: results,
       };
       updateCastChangeBatch(database, batch.id, 'applied', result, appliedAt);
@@ -239,35 +243,44 @@ function applyOperation(database, userId, conversationId, operation, context) {
 }
 
 function buildEvidenceMap(database, conversationId, plan, sourceKind, options = {}) {
-  if (sourceKind !== 'auto_sync') return new Map();
-  const ids = plan.operations.map((operation) => operation.evidence?.messageId).filter(Boolean);
+  if (!['auto_sync', 'ai_organize'].includes(sourceKind)) return new Map();
+  let ids = plan.operations.map((operation) => operation.evidence?.messageId).filter(Boolean);
   if (Array.isArray(options.allowedMessageIds)) {
     const allowed = new Set(options.allowedMessageIds.map((id) => String(id || '')).filter(Boolean));
     const outsideObservation = ids.find((id) => !allowed.has(id));
     if (outsideObservation) {
-      throw new CastDomainError('Auto sync evidence must come from the current story turn', {
+      throw new CastDomainError('AI evidence must come from the supplied conversation observation', {
         code: 'CAST_PLAN_EVIDENCE',
         statusCode: 400,
       });
     }
+    ids = [...allowed];
   }
   const rows = getConversationEvidenceMessages(database, conversationId, ids);
   return new Map(rows.map((row) => [row.id, row]));
 }
 
 function validateOperationEvidence(operation, evidenceById, sourceKind) {
-  if (sourceKind !== 'auto_sync') return operation.evidence || null;
+  if (!['auto_sync', 'ai_organize'].includes(sourceKind)) return operation.evidence || null;
   const evidence = operation.evidence;
-  const message = evidenceById.get(evidence.messageId);
-  const messageText = message ? normalizeCastText(message.content, 20_000) : '';
+  if (!evidence) return null;
   const quote = normalizeCastText(evidence.quote, 1_000);
-  if (!message || !quote || !messageText.includes(quote)) {
-    throw new CastDomainError('Auto sync evidence does not match an allowed conversation message', {
+  const comparable = (text) => text.normalize('NFKC').replace(/[\s\p{P}\p{S}]+/gu, '').toLowerCase();
+  const normalizedQuote = comparable(quote);
+  const message = evidence.messageId ? evidenceById.get(evidence.messageId)
+    : [...evidenceById.values()].find((row) => normalizedQuote.length >= 2 && comparable(row.content).includes(normalizedQuote));
+  if (!message && !evidence.messageId) return null;
+  if (!message || !['user', 'assistant'].includes(message.role)) {
+    throw new CastDomainError('AI evidence must quote an allowed conversation message', {
       code: 'CAST_PLAN_EVIDENCE',
       statusCode: 400,
     });
   }
-  return evidence;
+  const messageText = normalizeCastText(message.content, 20_000);
+  const quoteVerified = Boolean(normalizedQuote && comparable(messageText).includes(normalizedQuote));
+  // Paraphrases are acceptable evidence summaries, not fabricated exact quotes.
+  return { ...evidence, messageId: message.id, quote: quoteVerified ? quote : messageText.slice(0, 1_000),
+    quoteVerified, ...(quote && !quoteVerified ? { summary: quote } : {}) };
 }
 
 function normalizeScopeMember(database, userId, conversationId, scopeMemberId, scope) {

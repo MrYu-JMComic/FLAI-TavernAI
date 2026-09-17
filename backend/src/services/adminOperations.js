@@ -1,5 +1,6 @@
 import { parseJson } from '../utils/json.js';
 import { publicUser } from '../modules/users.js';
+import { AppError } from '../errors.js';
 import { getDailyUsage, getUserQuota } from './quotas.js';
 import { listProviderRouteEvents } from './providerTaskRouter.js';
 import { createCursorScope, decodeCursor, encodeCursor } from './cursorPagination.js';
@@ -38,17 +39,24 @@ export function buildAdminOverview(database) {
 
 export function listAdminUsers(database, options = {}) {
   const limit = clampInteger(options.limit, 1, 200, 50);
-  const scope = createCursorScope('admin-users');
+  const search = String(options.search || '').trim();
+  const scope = createCursorScope('admin-users', { search });
   const cursor = decodeCursor(options.cursor, scope, { values: 2 });
   const params = [];
-  let where = '';
+  const clauses = [];
+  if (search) {
+    const pattern = `%${escapeLikePattern(search)}%`;
+    clauses.push("(username LIKE ? ESCAPE '\\' OR display_name LIKE ? ESCAPE '\\' OR id LIKE ? ESCAPE '\\')");
+    params.push(pattern, pattern, pattern);
+  }
   if (cursor) {
-    where = 'WHERE created_at < ? OR (created_at = ? AND id < ?)';
+    clauses.push('(created_at < ? OR (created_at = ? AND id < ?))');
     params.push(cursor[0], cursor[0], cursor[1]);
   }
   params.push(limit + 1);
   const rows = database.prepare(
-    `SELECT * FROM users ${where} ORDER BY created_at DESC, id DESC LIMIT ?`
+    `SELECT * FROM users ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
+     ORDER BY created_at DESC, id DESC LIMIT ?`
   ).all(...params);
   const hasMore = rows.length > limit;
   const page = hasMore ? rows.slice(0, limit) : rows;
@@ -73,6 +81,24 @@ export function listAdminUsers(database, options = {}) {
       ? encodeCursor(scope, [users.at(-1).createdAt, users.at(-1).id])
       : ''
   };
+}
+
+export function deleteAdminUser(database, userId, actorId) {
+  const target = database.prepare('SELECT id, is_root_admin FROM users WHERE id = ?').get(userId);
+  if (!target) return null;
+  if (String(target.id) === String(actorId)) {
+    throw new AppError(409, 'ADMIN_SELF_DELETE_FORBIDDEN', '不能删除当前登录管理员账号。');
+  }
+  if (Number(target.is_root_admin) === 1) {
+    const rootCount = Number(database.prepare(
+      'SELECT COUNT(*) AS count FROM users WHERE is_root_admin = 1'
+    ).get().count || 0);
+    if (rootCount <= 1) {
+      throw new AppError(409, 'LAST_ROOT_ADMIN', '不能删除唯一的根管理员账号。');
+    }
+  }
+  const result = database.prepare('DELETE FROM users WHERE id = ?').run(userId);
+  return result.changes > 0 ? { ok: true, userId: String(userId) } : null;
 }
 
 export function listAdminSessions(database, options = {}) {
@@ -281,4 +307,8 @@ function number(value) {
 function clampInteger(value, min, max, fallback) {
   const numberValue = Number(value);
   return Number.isFinite(numberValue) ? Math.min(max, Math.max(min, Math.floor(numberValue))) : fallback;
+}
+
+function escapeLikePattern(value) {
+  return String(value || '').replace(/[\\%_]/g, '\\$&');
 }

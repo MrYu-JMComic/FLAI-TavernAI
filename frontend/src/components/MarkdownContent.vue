@@ -6,26 +6,22 @@ import { recordFrontendDiagnostic } from '../diagnostics.js';
 import { reconcileDomChildren } from '../utils/domReconciler.js';
 import { selectKatexSurfaceTextColor } from '../utils/katexCompatibility.js';
 import { md } from '../utils/markdownRenderer.js';
+import { createMarkdownRenderCache } from '../utils/markdownRenderCache.js';
+import { highlightDialogueQuotes } from '../utils/dialogueQuotes.js';
 import KatexPreviewDialog from './KatexPreviewDialog.vue';
 import 'katex/dist/katex.min.css';
 
-// Cache for rendered HTML
-const renderCache = new Map();
-const MAX_CACHE_SIZE = 200;
+const renderCache = createMarkdownRenderCache();
 const LF_CHAR_CODE = 10;
 const CR_CHAR_CODE = 13;
 const FOLD_CARET = '\u203a';
 const DEFAULT_FOLD_TITLE = '\u6298\u53e0\u5185\u5bb9';
 
-function getCachedRender(text, renderPlugins = []) {
+function getCachedRender(text, renderPlugins = [], cacheResult = true) {
   if (!text) return '';
   const cacheKey = `${text}\n<!--plugins:${buildPluginCacheKey(renderPlugins)}-->`;
-  if (renderCache.has(cacheKey)) {
-    const cached = renderCache.get(cacheKey);
-    renderCache.delete(cacheKey);
-    renderCache.set(cacheKey, cached);
-    return cached;
-  }
+  const cached = cacheResult ? renderCache.get(cacheKey) : undefined;
+  if (cached !== undefined) return cached;
   
   const rawHtml = renderWithPlugins(text, renderPlugins);
   const html = DOMPurify.sanitize(rawHtml, {
@@ -36,13 +32,8 @@ function getCachedRender(text, renderPlugins = []) {
     ADD_ATTR: ['class', 'data-lang', 'open', 'encoding']
   });
   
-  // Evict oldest entries if cache is full
-  if (renderCache.size >= MAX_CACHE_SIZE) {
-    const firstKey = renderCache.keys().next().value;
-    renderCache.delete(firstKey);
-  }
-  
-  renderCache.set(cacheKey, html);
+  // Streaming prefixes are rarely reused and would evict settled history.
+  if (cacheResult) renderCache.set(cacheKey, html);
   return html;
 }
 
@@ -222,6 +213,10 @@ export default defineComponent({
     deferUpdates: {
       type: Boolean,
       default: false
+    },
+    highlightDialogue: {
+      type: Boolean,
+      default: false
     }
   },
   setup(props, { attrs, emit }) {
@@ -231,23 +226,27 @@ export default defineComponent({
     let pendingRenderPlugins = props.renderPlugins;
     let pendingHtml = '';
     let appliedHtml = null;
+    let appliedDialogueHighlight = null;
     let templateElement = null;
     let katexResizeObserver = null;
     let katexFitTimeout = null;
 
     function renderMarkdownNow(text, renderPlugins) {
-      pendingHtml = getCachedRender(text, renderPlugins);
+      pendingHtml = getCachedRender(text, renderPlugins, !props.deferUpdates);
       reconcileRenderedHtml();
     }
 
     function reconcileRenderedHtml() {
       const root = rootElement.value;
-      if (!root || appliedHtml === pendingHtml || typeof document === 'undefined') return;
+      if (!root || typeof document === 'undefined') return;
+      if (appliedHtml === pendingHtml && appliedDialogueHighlight === props.highlightDialogue) return;
       templateElement ||= document.createElement('template');
       templateElement.innerHTML = pendingHtml;
+      if (props.highlightDialogue) highlightDialogueQuotes(templateElement.content);
       reconcileDomChildren(root, templateElement.content);
       applyKatexSurfaceContrast(root);
       appliedHtml = pendingHtml;
+      appliedDialogueHighlight = props.highlightDialogue;
       fitInlineKatex();
       emit('rendered');
     }
@@ -357,8 +356,13 @@ export default defineComponent({
 
     // The typewriter owns the visible update cadence. Commit Markdown after
     // Vue's text update without adding a second animation-frame queue.
-    watch(() => props.text, scheduleRenderedMarkdown, { immediate: true, flush: 'post' });
-    watch(() => buildPluginCacheKey(props.renderPlugins), scheduleRenderedMarkdown, { flush: 'post' });
+    watch(
+      [() => props.text, () => buildPluginCacheKey(props.renderPlugins), () => props.deferUpdates],
+      scheduleRenderedMarkdown,
+      { immediate: true, flush: 'post' }
+    );
+    // The cached HTML is presentation-neutral; toggles only reconcile its DOM.
+    watch(() => props.highlightDialogue, reconcileRenderedHtml, { flush: 'post' });
     onMounted(() => {
       reconcileRenderedHtml();
       fitInlineKatex();
@@ -402,3 +406,9 @@ export default defineComponent({
   }
 });
 </script>
+
+<style scoped>
+.markdown-content :deep(.chat-dialogue-quote) {
+  color: var(--chat-dialogue-color);
+}
+</style>

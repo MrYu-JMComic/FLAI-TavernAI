@@ -30,7 +30,8 @@ export function findColorBoxExpression(source, index = 0) {
   const argumentsList = readBracedArguments(
     text,
     commandIndex + command.name.length,
-    command.argumentCount
+    command.argumentCount,
+    { recoverArrayClosure: true }
   );
   if (!argumentsList) return null;
 
@@ -110,7 +111,8 @@ function normalizeColorBoxContents(source) {
     const argumentsList = readBracedArguments(
       source,
       cursor + command.name.length,
-      command.argumentCount
+      command.argumentCount,
+      { recoverArrayClosure: true }
     );
     if (!argumentsList) {
       normalized += source[cursor];
@@ -119,7 +121,11 @@ function normalizeColorBoxContents(source) {
     }
 
     const contentArgument = argumentsList.at(-1);
-    const content = source.slice(contentArgument.contentStart, contentArgument.contentEnd);
+    const content = removeIgnoredCharacters(
+      source.slice(contentArgument.contentStart, contentArgument.contentEnd),
+      contentArgument.ignoredClosers,
+      contentArgument.contentStart
+    );
     const nestedContent = normalizeColorBoxContents(content);
 
     normalized += source.slice(cursor, contentArgument.contentStart);
@@ -242,12 +248,14 @@ function isEscapedControlSequence(source, index) {
   return precedingBackslashes % 2 === 1;
 }
 
-function readBracedArguments(source, startIndex, argumentCount) {
+function readBracedArguments(source, startIndex, argumentCount, options = {}) {
   const argumentsList = [];
   let cursor = startIndex;
 
   for (let index = 0; index < argumentCount; index += 1) {
-    const argument = readBracedArgument(source, cursor);
+    const argument = readBracedArgument(source, cursor, {
+      recoverArrayClosure: options.recoverArrayClosure && index === argumentCount - 1
+    });
     if (!argument) return null;
     argumentsList.push(argument);
     cursor = argument.contentEnd + 1;
@@ -256,12 +264,13 @@ function readBracedArguments(source, startIndex, argumentCount) {
   return argumentsList;
 }
 
-function readBracedArgument(source, startIndex) {
+function readBracedArgument(source, startIndex, options = {}) {
   let cursor = startIndex;
   while (/\s/u.test(source[cursor] || '')) cursor += 1;
   if (source[cursor] !== '{') return null;
 
   const contentStart = cursor + 1;
+  const ignoredClosers = [];
   let depth = 1;
   for (cursor = contentStart; cursor < source.length; cursor += 1) {
     const character = source[cursor];
@@ -278,14 +287,47 @@ function readBracedArgument(source, startIndex) {
       continue;
     }
     if (character === '}') {
+      if (
+        depth === 1
+        && options.recoverArrayClosure
+        && shouldRecoverArrayClosure(source, contentStart, cursor)
+      ) {
+        ignoredClosers.push(cursor);
+        continue;
+      }
       depth -= 1;
       if (depth === 0) {
-        return { contentStart, contentEnd: cursor };
+        return { contentStart, contentEnd: cursor, ignoredClosers };
       }
     }
   }
 
   return null;
+}
+
+function shouldRecoverArrayClosure(source, contentStart, candidateIndex) {
+  const contentBeforeCandidate = source.slice(contentStart, candidateIndex);
+  if (!/\\begin\s*\{\s*array\*?\s*\}/u.test(contentBeforeCandidate)) return false;
+  if (/\\end\s*\{\s*array\*?\s*\}/u.test(contentBeforeCandidate)) return false;
+
+  let nextIndex = candidateIndex + 1;
+  while (/\s/u.test(source[nextIndex] || '')) nextIndex += 1;
+  if (source[nextIndex] !== '\\' || source[nextIndex + 1] !== '\\') return false;
+
+  return /\\end\s*\{\s*array\*?\s*\}/u.test(source.slice(nextIndex + 2));
+}
+
+function removeIgnoredCharacters(source, ignoredIndices = [], sourceOffset = 0) {
+  if (!ignoredIndices.length) return source;
+
+  const ignored = new Set(ignoredIndices);
+  let normalized = '';
+  for (let index = 0; index < source.length; index += 1) {
+    if (!ignored.has(sourceOffset + index)) {
+      normalized += source[index];
+    }
+  }
+  return normalized;
 }
 
 function wrapDirectMathEnvironment(content) {

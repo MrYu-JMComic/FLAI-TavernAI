@@ -41,6 +41,7 @@ export function formatCastSyncError(status = {}) {
 export function useCastManager(options = {}) {
   const conversationId = computed(() => String(unref(options.conversationId) || '').trim());
   const isOpen = computed(() => Boolean(unref(options.open)));
+  const mainThinkingLevel = computed(() => String(unref(options.mainThinkingLevel) || '').trim());
   const notify = options.notify || {};
   const roster = ref(emptyRoster());
   const selectedMemberId = ref('');
@@ -492,6 +493,7 @@ export function useCastManager(options = {}) {
         scope,
         ...(memberId ? { memberId } : {}),
         requirement: organizer.requirement,
+        ...(mainThinkingLevel.value ? { thinkingLevel: mainThinkingLevel.value } : {}),
       }, {
         progress(data = {}) {
           if (!isCurrentSession(session, currentConversationId)) return;

@@ -102,7 +102,7 @@ test('BaseLayout keeps the home route scroll inside a fixed app shell', () => {
 test('BaseLayout gives workspace routes a full-width single scroll shell', () => {
   assert.match(
     baseLayoutScript,
-    /const isWorkspaceRoute = computed\(\(\) => \(\s*props\.currentRoute === 'characterNew'\s*\|\| props\.currentRoute === 'characterEdit'\s*\|\| isWorldBookRoute\.value\s*\|\| isExtensionsRoute\.value\s*\|\| isPresetsRoute\.value\s*\|\| props\.currentRoute === 'settings'\s*\)\);/
+    /const isWorkspaceRoute = computed\(\(\) => \(\s*props\.currentRoute === 'characterNew'\s*\|\| props\.currentRoute === 'characterEdit'\s*\|\| isWorldBookRoute\.value\s*\|\| isExtensionsRoute\.value\s*\|\| isPresetsRoute\.value\s*\|\| props\.currentRoute === 'settings'\s*\|\| isAdminRoute\.value\s*\)\);/
   );
   assert.match(
     baseLayoutTemplate,
@@ -127,6 +127,18 @@ test('BaseLayout gives workspace routes a full-width single scroll shell', () =>
   assert.match(
     stylesSource,
     /\.workspace-layout-shell \.settings-section-nav\s*\{[\s\S]*top:\s*calc\(-1 \* var\(--workspace-page-padding-top, 28px\)\);[\s\S]*\}/
+  );
+});
+
+test('BaseLayout exposes quota management only to root administrators', () => {
+  assert.match(baseLayoutScript, /const isAdminRoute = computed\(\(\) => props\.currentRoute === 'admin'\);/);
+  assert.match(
+    baseLayoutScript,
+    /function openAdmin\(\) \{\s*userMenuOpen\.value = false;\s*mobileNavOpen\.value = false;\s*emit\('navigate', 'admin'\);\s*\}/
+  );
+  assert.match(
+    baseLayoutTemplate,
+    /<button v-if="user\?\.isRootAdmin" class="user-menu-item" type="button" role="menuitem" @click="openAdmin">[\s\S]*<span>额度管理<\/span>/
   );
 });
 

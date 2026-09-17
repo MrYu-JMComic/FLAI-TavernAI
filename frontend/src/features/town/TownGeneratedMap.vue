@@ -1,7 +1,10 @@
 <script setup>
 import { nextTick, onMounted, ref, watch } from 'vue';
+import { townArchitecture, townAssetId } from '../../../../shared/townAssets.js';
+import { drawTownAsset } from './townAssetRenderer.js';
 
 const props = defineProps({
+  minute: { type: Number, default: 480 },
   mapConfig: {
     type: Object,
     required: true
@@ -16,7 +19,7 @@ const canvas = ref(null);
 
 onMounted(drawMap);
 watch(
-  () => props.mapConfig,
+  () => [props.mapConfig, props.minute],
   () => void nextTick(drawMap)
 );
 
@@ -41,9 +44,9 @@ function drawMap() {
   drawWater(context, map.waterBodies, palette);
   drawRoads(context, map.roads, palette);
   drawLocationCenters(context, map.locations, palette);
-  drawBuildings(context, map.buildings, palette);
+  drawBuildings(context, map, palette);
   drawTexture(context, width, height, Number(map.seed) || 1);
-  drawVignette(context, width, height);
+  drawDaylight(context, width, height, props.minute);
 }
 
 function drawTerrain(context, patches, palette) {
@@ -52,15 +55,15 @@ function drawTerrain(context, patches, palette) {
     context.globalAlpha = clampNumber(patch.opacity, 0.04, 0.3, 0.12);
     context.fillStyle = palette.groundAlt;
     context.beginPath();
-    context.ellipse(
-      finiteNumber(patch.x),
-      finiteNumber(patch.y),
-      positiveNumber(patch.radiusX, 80),
-      positiveNumber(patch.radiusY, 50),
-      0,
-      0,
-      Math.PI * 2
-    );
+    const x = finiteNumber(patch.x);
+    const y = finiteNumber(patch.y);
+    const rx = positiveNumber(patch.radiusX, 80);
+    const ry = positiveNumber(patch.radiusY, 50);
+    for (const [index, [dx, dy]] of [[-0.8, -0.35], [-0.3, -0.7], [0.65, -0.5], [1, 0.2], [0.3, 0.6], [-0.7, 0.5]].entries()) {
+      if (index === 0) context.moveTo(x + rx * dx, y + ry * dy);
+      else context.lineTo(x + rx * dx, y + ry * dy);
+    }
+    context.closePath();
     context.fill();
     context.restore();
   }
@@ -90,17 +93,17 @@ function drawWater(context, waterBodies, palette) {
       context.save();
       context.lineCap = 'round';
       context.lineJoin = 'round';
-      traceSmoothLine(context, points);
+      tracePolyline(context, points);
       context.strokeStyle = palette.waterEdge;
       context.lineWidth = width + 18;
       context.stroke();
-      traceSmoothLine(context, points);
+      tracePolyline(context, points);
       context.strokeStyle = palette.water;
       context.lineWidth = width;
       context.stroke();
       context.globalAlpha = 0.3;
       context.setLineDash([18, 24]);
-      traceSmoothLine(context, points);
+      tracePolyline(context, points);
       context.strokeStyle = '#d8f4f2';
       context.lineWidth = 3;
       context.stroke();
@@ -143,21 +146,36 @@ function drawRoads(context, roads, palette) {
     context.save();
     context.lineCap = 'round';
     context.lineJoin = 'round';
-    traceSmoothLine(context, points);
+    tracePolyline(context, points);
     context.strokeStyle = palette.roadEdge;
     context.lineWidth = 25;
     context.stroke();
-    traceSmoothLine(context, points);
+    tracePolyline(context, points);
     context.strokeStyle = palette.road;
     context.lineWidth = 15;
     context.stroke();
     context.globalAlpha = 0.22;
     context.setLineDash([8, 13]);
-    traceSmoothLine(context, points);
+    tracePolyline(context, points);
     context.strokeStyle = '#fff3cf';
     context.lineWidth = 2;
     context.stroke();
     context.restore();
+    for (const bridge of arrayOrEmpty(road.bridgeSegments)) {
+      context.save();
+      context.lineCap = 'square';
+      context.strokeStyle = '#e4d6b4';
+      context.lineWidth = 22;
+      context.beginPath();
+      context.moveTo(bridge.from.x, bridge.from.y);
+      context.lineTo(bridge.to.x, bridge.to.y);
+      context.stroke();
+      context.strokeStyle = '#886d54';
+      context.lineWidth = 2;
+      context.setLineDash([2, 6]);
+      context.stroke();
+      context.restore();
+    }
   }
 }
 
@@ -236,62 +254,13 @@ function drawDecorations(context, decorations, palette) {
   }
 }
 
-function drawBuildings(context, buildings, palette) {
-  const sorted = [...arrayOrEmpty(buildings)].sort((first, second) => finiteNumber(first.y) - finiteNumber(second.y));
+function drawBuildings(context, map, palette) {
+  const architecture = map.architecture || townArchitecture({ biome: map.biome }, map.locations || []);
+  const sorted = [...arrayOrEmpty(map.buildings)].sort((first, second) => finiteNumber(first.y) - finiteNumber(second.y));
   for (const building of sorted) {
-    const width = positiveNumber(building.width, 36);
-    const height = positiveNumber(building.height, 28);
-    const landmark = building.kind && building.kind !== 'house';
-    context.save();
-    context.translate(finiteNumber(building.x), finiteNumber(building.y));
-    context.rotate(finiteNumber(building.rotation) * Math.PI / 180);
-
-    context.globalAlpha = 0.24;
-    context.fillStyle = '#11100e';
-    context.beginPath();
-    context.ellipse(5, height * 0.38, width * 0.62, height * 0.38, 0, 0, Math.PI * 2);
-    context.fill();
-    context.globalAlpha = 1;
-
-    const floors = clampNumber(building.floors, 1, 3, 1);
-    for (let floor = floors - 1; floor >= 0; floor -= 1) {
-      const offset = floor * 3;
-      context.fillStyle = palette.wall;
-      context.strokeStyle = landmark ? '#f3d08a' : palette.roadEdge;
-      context.lineWidth = landmark ? 2.5 : 1.5;
-      context.fillRect(-width / 2 - offset, -height / 2 - offset, width, height);
-      context.strokeRect(-width / 2 - offset, -height / 2 - offset, width, height);
-    }
-
-    context.fillStyle = palette.roof;
-    context.beginPath();
-    context.moveTo(-width * 0.62, -height * 0.1);
-    context.lineTo(0, -height * 0.72);
-    context.lineTo(width * 0.62, -height * 0.1);
-    context.lineTo(0, height * 0.28);
-    context.closePath();
-    context.fill();
-    context.strokeStyle = landmark ? '#f2c76d' : palette.roadEdge;
-    context.lineWidth = landmark ? 2.4 : 1.3;
-    context.stroke();
-
-    context.globalAlpha = 0.34;
-    context.strokeStyle = '#fff3d0';
-    context.beginPath();
-    context.moveTo(0, -height * 0.69);
-    context.lineTo(0, height * 0.24);
-    context.stroke();
-    context.globalAlpha = 1;
-    context.fillStyle = '#4b352b';
-    context.fillRect(-3, height * 0.23, 6, Math.max(5, height * 0.18));
-
-    if (landmark) {
-      context.fillStyle = '#f4cf72';
-      context.beginPath();
-      context.arc(0, -height * 0.18, 3.2, 0, Math.PI * 2);
-      context.fill();
-    }
-    context.restore();
+    const location = arrayOrEmpty(map.locations).find((location) => location.id === building.locationId);
+    const assetId = building.assetId || townAssetId(building.kind === 'house' ? building : location || building);
+    drawTownAsset(context, { ...building, assetId, architecture }, palette, { night: props.minute < 360 || props.minute >= 1140 });
   }
 }
 
@@ -310,11 +279,9 @@ function drawTexture(context, width, height, seed) {
   context.restore();
 }
 
-function drawVignette(context, width, height) {
-  const gradient = context.createRadialGradient(width / 2, height / 2, width * 0.2, width / 2, height / 2, width * 0.72);
-  gradient.addColorStop(0, 'rgba(7, 10, 16, 0)');
-  gradient.addColorStop(1, 'rgba(7, 10, 16, 0.24)');
-  context.fillStyle = gradient;
+function drawDaylight(context, width, height, minute) {
+  if (minute >= 360 && minute < 1140) return;
+  context.fillStyle = 'rgba(17, 31, 45, 0.18)';
   context.fillRect(0, 0, width, height);
 }
 
@@ -327,16 +294,10 @@ function tracePolygon(context, points) {
   context.closePath();
 }
 
-function traceSmoothLine(context, points) {
+function tracePolyline(context, points) {
   context.beginPath();
   context.moveTo(points[0].x, points[0].y);
-  for (let index = 1; index < points.length - 1; index += 1) {
-    const current = points[index];
-    const next = points[index + 1];
-    context.quadraticCurveTo(current.x, current.y, (current.x + next.x) / 2, (current.y + next.y) / 2);
-  }
-  const last = points[points.length - 1];
-  context.lineTo(last.x, last.y);
+  for (const point of points.slice(1)) context.lineTo(point.x, point.y);
 }
 
 function normalizePoints(value) {
@@ -382,7 +343,7 @@ function clampNumber(value, minimum, maximum, fallback) {
 </script>
 
 <template>
-  <canvas ref="canvas" class="town-generated-map" role="img" :aria-label="label">
+  <canvas ref="canvas" class="town-generated-map" :data-architecture="mapConfig.architecture || 'legacy'" role="img" :aria-label="label">
     {{ label }}
   </canvas>
 </template>

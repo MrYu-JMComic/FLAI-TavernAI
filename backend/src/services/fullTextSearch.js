@@ -2,6 +2,21 @@ import { measureSync } from './performanceMetrics.js';
 
 const SEARCH_TYPES = new Set(['message', 'memory', 'world-book']);
 
+// Untouched legacy automatic candidates remain usable; an explicit review,
+// disable, invalidation or merge must never be silently undone by recall.
+export const RECALLABLE_MEMORY_SQL = `(memories.enabled = 1 OR (memories.source_kind = 'auto'
+  AND memories.revision = 1 AND memories.created_at = memories.updated_at
+  AND memories.invalidated_at IS NULL AND memories.merged_into_id IS NULL
+  AND EXISTS (SELECT 1 FROM messages evidence WHERE evidence.id = memories.source_message_id
+    AND evidence.conversation_id = memories.conversation_id AND evidence.user_id = memories.user_id)))`;
+
+export function conversationRecallTerms(value) {
+  const text = String(value || '').normalize('NFKC').toLowerCase().slice(0, 2_000);
+  return [...new Set([...new Intl.Segmenter('zh', { granularity: 'word' }).segment(text)]
+    .filter((part) => part.isWordLike && part.segment.length > 1)
+    .map((part) => part.segment))].slice(0, 32);
+}
+
 export function searchUserContent(database, userId, query, options = {}) {
   return measureSync('sqlite.fts.search', () => searchUserContentUnmeasured(database, userId, query, options));
 }
@@ -97,7 +112,7 @@ function searchMemories(database, userId, matchQuery, limit, options) {
      FROM fts_memories source
      JOIN conversation_memories memories ON memories.id = source.entity_id
      WHERE fts_memories MATCH ? AND source.user_id = ?
-       AND memories.enabled = 1 AND memories.archived = 0
+       AND ${options.includeUnreviewedAutomatic ? RECALLABLE_MEMORY_SQL : 'memories.enabled = 1'} AND memories.archived = 0
        AND (? = '' OR source.conversation_id = ?)
      ORDER BY text_rank ASC LIMIT ?`
   ).all(matchQuery, userId, conversationId, conversationId, limit).map((row) => ({

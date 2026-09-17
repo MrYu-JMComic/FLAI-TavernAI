@@ -214,9 +214,10 @@ backend/src/db/migrations/
 
 ### 6.1 自动同步
 
-- 配置键为 `castTracking.enabled`，仅有开关，没有角色、提示词编辑或模型覆盖。
+- 配置键为 `castTracking.enabled`；2026-09-10 起同一对象还包含 `providerProfileId`（空表示跟随主聊天）、`modelOverride`、`autoSyncOperations` 与 `organizeOperations`，没有角色或提示词编辑。
 - assistant 消息成功持久化后，由聊天编排器提交后台投影任务。
-- 投影器使用当前聊天供应商和当前聊天模型，直接调用无工具的文本补全。
+- 投影器默认使用当前聊天供应商和模型；若会话指定了供应商配置或模型覆盖，则通过 `services/cast/castAgentSettings.js` 解析（不可用时回退主聊天）。调用始终是无工具的文本补全。
+- 自动同步契约中的操作变体按 `autoSyncOperations` 收窄；被关闭的操作在服务端校验时以 `CAST_PLAN_FORBIDDEN_OPERATION` 拒绝。
 - 输入仅包含当前 user/assistant 观察窗口、精简人物名册、相关已知事实和严格 JSON 契约。
 - 状态事件改为 `cast-sync` 的 `queued/running/applied/skipped/error`；不再发送 `npcAgent` 附件任务结果。
 - 同一消息 ID 幂等；切换对话后旧事件不得刷新当前面板。
@@ -225,7 +226,7 @@ backend/src/db/migrations/
 
 - 单人物整理只读取所选人物、相关物品与限定消息窗口。
 - 全对话整理读取服务端压缩后的全人物数据，并按预算选择对话证据。
-- 两种整理都只生成一次 `CastChangePlanV1`，不进入工具多轮循环。
+- 两种整理都只生成一次 `CastChangePlanV1`，不进入工具多轮循环；操作变体按 `organizeOperations` 收窄，模型来源与自动同步共用同一解析。
 - SSE 只发送 `context`、`generating`、`validating`、`applying`、`done/error` 阶段和安全摘要，不执行模型工具调用。
 - 取消通过请求 `AbortSignal` 传递；供应商超时和应用事务超时分别处理。
 

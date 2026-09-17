@@ -23,6 +23,10 @@ const drawerSource = readFileSync(
   new URL('../../../frontend/src/components/cast/CastManagerDrawer.vue', import.meta.url),
   'utf8'
 );
+const agentSettingsSource = readFileSync(
+  new URL('../../../frontend/src/components/cast/CastAgentSettingsDialog.vue', import.meta.url),
+  'utf8'
+);
 const rosterSource = readFileSync(
   new URL('../../../frontend/src/components/cast/CastRoster.vue', import.meta.url),
   'utf8'
@@ -272,6 +276,49 @@ test('cast manager cancellation aborts the active organizer request', async () =
   }
 });
 
+test('cast manager sends the current main thinking level when organizing', async () => {
+  const originalFetch = globalThis.fetch;
+  const conversationId = ref('conversation-thinking');
+  const open = ref(true);
+  const mainThinkingLevel = ref('high');
+  const requests = [];
+  const scope = effectScope();
+  let manager;
+  __resetApiCsrfTokenForTests();
+  globalThis.fetch = async (url, request = {}) => {
+    const path = String(url);
+    requests.push({ path, request });
+    if (path === '/api/csrf-token') return jsonResponse({ csrfToken: 'cast-thinking-csrf' });
+    if (path.endsWith('/sync-events')) return sseResponse('');
+    if (path === '/api/conversations/conversation-thinking/cast') {
+      return jsonResponse(roster('member-thinking', 'Thinker'));
+    }
+    if (path === '/api/conversations/conversation-thinking/cast/member-thinking') {
+      return jsonResponse(detail('member-thinking', 'Thinker'));
+    }
+    if (path.endsWith('/organize')) {
+      return sseResponse('event: progress\ndata: {"phase":"done","summary":"No changes","applied":0}\n\n');
+    }
+    return jsonResponse({ error: `Unexpected request: ${path}` }, 500);
+  };
+
+  try {
+    manager = scope.run(() => useCastManager({ conversationId, open, mainThinkingLevel, notify: {} }));
+    await flushTasks();
+    await manager.runOrganization({ scope: 'conversation', requirement: '' });
+    const organizeRequest = requests.find((entry) => entry.path.endsWith('/organize'));
+    assert.deepEqual(JSON.parse(organizeRequest.request.body), {
+      scope: 'conversation',
+      requirement: '',
+      thinkingLevel: 'high',
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    scope.stop();
+    __resetApiCsrfTokenForTests();
+  }
+});
+
 test('cast manager UI keeps the existing entry semantics and accessible mobile controls', () => {
   assert.match(drawerSource, /role="dialog"[\s\S]*aria-modal="true"/);
   assert.match(drawerSource, /class="cast-mobile-actions"/);
@@ -280,6 +327,9 @@ test('cast manager UI keeps the existing entry semantics and accessible mobile c
   assert.match(castStyles, /min-height:\s*44px/);
   assert.match(castStyles, /@media \(max-width:\s*720px\)/);
   assert.match(castStyles, /@media \(prefers-reduced-motion:\s*reduce\)/);
+  assert.match(agentSettingsSource, /<span>思考强度<\/span>[\s\S]*v-model="thinkingLevel"/);
+  assert.match(agentSettingsSource, /跟随主对话（当前/);
+  assert.match(drawerSource, /:main-thinking-level="mainThinkingLevel"/);
   assert.doesNotMatch(drawerSource, /NpcPanel/);
 });
 

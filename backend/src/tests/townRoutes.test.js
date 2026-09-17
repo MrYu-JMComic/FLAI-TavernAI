@@ -611,33 +611,36 @@ function createGeneratedWorldBlueprint() {
 
 function createGeneratedTurnPlan(context) {
   const [firstResident, secondResident] = context.residents;
-  const [firstLocation, secondLocation] = context.locations;
+  const firstLocation = context.locations.find((location) => location.name === firstResident.currentLocation);
+  const secondLocation = context.locations.find((location) => location.name === secondResident.currentLocation);
   return {
     event: {
-      eventType: 'resident.social',
-      uiType: 'dialogue',
-      title: `${firstResident.name}与${secondResident.name}交换了新线索`,
-      detail: `${firstResident.name}依据近期记忆提出疑问，${secondResident.name}决定与其一同调查。`,
+      eventType: 'resident.discovery',
+      uiType: 'clue',
+      title: '居民分别核实各自掌握的线索',
+      detail: `${firstResident.name}与${secondResident.name}分别在当前地点继续调查。`,
       participantIds: [firstResident.id, secondResident.id],
       respondsToEventId: context.pendingIntervention?.id || ''
     },
     actions: [
       {
         residentId: firstResident.id,
-        locationId: secondLocation.id,
-        activity: `前往${secondLocation.name}交换线索`,
+        locationId: firstLocation.id,
+        actionKind: 'personal',
+        activity: `在${firstLocation.name}核实线索`,
         intention: firstResident.goal,
         mood: '警觉',
-        memory: `我前往${secondLocation.name}与${secondResident.name}交换了线索。`,
+        memory: `我在${firstLocation.name}核实了新的线索。`,
         importance: 7
       },
       {
         residentId: secondResident.id,
-        locationId: firstLocation.id,
-        activity: `前往${firstLocation.name}核实线索`,
+        locationId: secondLocation.id,
+        actionKind: 'personal',
+        activity: `在${secondLocation.name}核实线索`,
         intention: secondResident.goal,
         mood: '专注',
-        memory: `我答应与${firstResident.name}一起前往${firstLocation.name}调查。`,
+        memory: `我在${secondLocation.name}核实了新的线索。`,
         importance: 7
       }
     ]

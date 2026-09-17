@@ -1,5 +1,6 @@
 import { computed, nextTick, reactive, ref, triggerRef } from 'vue';
-import { branchConversation, createMessageSwipe, deleteMessage, fetchConversationBranches, fetchMessageSwipes, updateMessage } from '../../api/chat.js';
+import { branchConversation, deleteMessage, fetchConversationBranches, fetchMessageSwipes, truncateMessages, updateMessage } from '../../api/chat.js';
+import { copyTextToClipboard } from '../../utils/clipboard.js';
 
 export function useChatMessageActions({
   messages,
@@ -10,7 +11,9 @@ export function useChatMessageActions({
   loadSidebarData,
   onCopyFallback,
   showActionNotice,
-  showError
+  showError,
+  regenerateMessage = null,
+  isConversationBusy = () => false
 }) {
   const expandedReasoning = ref(new Set());
   const editingMessageId = ref('');
@@ -129,7 +132,7 @@ export function useChatMessageActions({
   }
 
   function isMessageMutationLocked() {
-    return Boolean(messageActionBusy.value || branchBusy.value);
+    return Boolean(isConversationBusy() || messageActionBusy.value || branchBusy.value || swipeLoading.value.size);
   }
 
   function getPersistedMessageActionId(message) {
@@ -279,16 +282,14 @@ export function useChatMessageActions({
     const actionToken = ++messageActionToken;
     messageActionBusy.value = messageId;
     try {
-      for (let index = tailMessageIds.length - 1; index >= 0; index -= 1) {
-        const targetId = tailMessageIds[index];
-        await deleteMessage(conversationId, targetId);
-        if (!isCurrentMessageAction(actionToken, conversationId)) {
-          return null;
-        }
-        removeMessageFromListIfPresent(targetId);
-      }
+      // One request removes the whole tail as a single history change.
+      const result = await truncateMessages(conversationId, messageId);
       if (!isCurrentMessageAction(actionToken, conversationId)) {
         return null;
+      }
+      const deletedIds = Array.isArray(result?.deletedIds) && result.deletedIds.length ? result.deletedIds : tailMessageIds;
+      for (const targetId of deletedIds) {
+        removeMessageFromListIfPresent(targetId);
       }
       clearMessageEdit();
       resetMessageSwipeState();
@@ -435,8 +436,7 @@ export function useChatMessageActions({
     const actionToken = ++copyActionToken;
     copyBusy.value = true;
     try {
-      await requestClipboardPermission();
-      await writeClipboardText(text);
+      await copyTextToClipboard(text);
       if (!isCurrentCopyAction(actionToken)) {
         return;
       }
@@ -473,48 +473,6 @@ export function useChatMessageActions({
 
   function isLatestCopyAction(actionToken) {
     return actionToken === copyActionToken;
-  }
-
-  async function requestClipboardPermission() {
-    const permissions = window.navigator?.permissions;
-    if (!permissions?.query) {
-      return;
-    }
-
-    try {
-      const status = await permissions.query({ name: 'clipboard-write' });
-      if (status.state === 'denied') {
-        throw new Error('剪贴板权限被拒绝');
-      }
-    } catch (err) {
-      if (/denied|拒绝/.test(err.message || '')) {
-        throw err;
-      }
-    }
-  }
-
-  async function writeClipboardText(text) {
-    if (window.navigator?.clipboard?.writeText) {
-      await window.navigator.clipboard.writeText(text);
-      return;
-    }
-
-    const textarea = document.createElement('textarea');
-    textarea.value = text;
-    textarea.setAttribute('readonly', '');
-    textarea.style.position = 'fixed';
-    textarea.style.left = '-9999px';
-    document.body.appendChild(textarea);
-    let copied = false;
-    try {
-      textarea.select();
-      copied = document.execCommand('copy');
-    } finally {
-      document.body.removeChild(textarea);
-    }
-    if (!copied) {
-      throw new Error('复制失败，请手动复制');
-    }
   }
 
   async function withMessageScrollAnchor(messageId, callback, conversationId = route.params.id) {
@@ -632,26 +590,6 @@ export function useChatMessageActions({
     setRef.value = new Set();
   }
 
-  function addSetRefItem(setRef, item) {
-    if (setRef.value.has(item)) {
-      return false;
-    }
-    const next = new Set(setRef.value);
-    next.add(item);
-    setRef.value = next;
-    return true;
-  }
-
-  function deleteSetRefItem(setRef, item) {
-    if (!setRef.value.has(item)) {
-      return false;
-    }
-    const next = new Set(setRef.value);
-    next.delete(item);
-    setRef.value = next;
-    return true;
-  }
-
   function resetMessageSwipeState({ invalidate = true } = {}) {
     if (invalidate) {
       swipeInitToken += 1;
@@ -715,7 +653,7 @@ export function useChatMessageActions({
   async function swipeMessagePrev(message) {
     if (disposed) return;
     const target = getCurrentSwipeTarget(message);
-    if (!target || isSwipeActionLocked(target.messageId)) return;
+    if (!target || isMessageMutationLocked()) return;
     const { currentMessage, state } = target;
     if (!state || state.activeIndex <= 0) return;
     state.activeIndex--;
@@ -723,36 +661,26 @@ export function useChatMessageActions({
   }
 
   async function swipeMessageNext(message, conversationId) {
-    if (disposed) return;
+    if (disposed) return false;
     const target = getCurrentSwipeTarget(message);
-    if (!target || isSwipeActionLocked(target.messageId)) return;
-    const { messageId, currentMessage, state } = target;
+    if (!target || isMessageMutationLocked()) return false;
+    const { currentMessage, state } = target;
     if (state.activeIndex < state.swipeCount - 1) {
       state.activeIndex++;
       applySwipeIndexToMessage(currentMessage, state);
-    } else {
-      addSetRefItem(swipeLoading, messageId);
-      try {
-        const result = await createMessageSwipe(conversationId, messageId, {
-          content: currentMessage.content || '',
-          reasoning: currentMessage.reasoning || '',
-          usage: currentMessage.usage || null
-        });
-        if (!isCurrentSwipeGeneration(conversationId, messageId, currentMessage, state)) {
-          return;
-        }
-        if (result) {
-          state.swipes.push(result);
-          state.swipeCount = state.swipes.length + 1;
-          state.activeIndex = state.swipeCount - 1;
-          applySwipeContentToMessage(currentMessage, result);
-        }
-      } finally {
-        if (!disposed && route.params.id === conversationId) {
-          deleteSetRefItem(swipeLoading, messageId);
-        }
-      }
+      return true;
     }
+    // Past the last stored candidate, the only way to get a new one is a real regeneration.
+    if (typeof regenerateMessage !== 'function' || route.params.id !== conversationId) {
+      return false;
+    }
+    return Boolean(await regenerateMessage(currentMessage));
+  }
+
+  // Reload one message's candidate list after the server replaced its text.
+  async function refreshMessageSwipe(conversationId, messageId) {
+    if (disposed || route.params.id !== conversationId) return;
+    await initMessageSwipe(conversationId, messageId, swipeInitToken);
   }
 
   function getCurrentSwipeTarget(message) {
@@ -766,11 +694,6 @@ export function useChatMessageActions({
       return null;
     }
     return { messageId, currentMessage, state };
-  }
-
-  function isSwipeActionLocked(messageId) {
-    const stateId = normalizeMessageUiId(messageId);
-    return Boolean(messageActionBusy.value || branchBusy.value || swipeLoading.value.has(stateId));
   }
 
   function snapshotSwipeContent(message) {
@@ -811,13 +734,6 @@ export function useChatMessageActions({
 
   function isCurrentSwipeInitRun(requestToken, conversationId) {
     return !disposed && requestToken === swipeInitToken && route.params.id === conversationId;
-  }
-
-  function isCurrentSwipeGeneration(conversationId, messageId, currentMessage, state) {
-    return !disposed
-      && route.params.id === conversationId
-      && findMessageListItem(messageId) === currentMessage
-      && messageSwipeState[messageId] === state;
   }
 
   function getSwipeDisplay(message) {
@@ -998,6 +914,7 @@ export function useChatMessageActions({
     messageSwipeState,
     swipeLoading,
     initMessageSwipes,
+    refreshMessageSwipe,
     swipeMessagePrev,
     swipeMessageNext,
     getSwipeDisplay,

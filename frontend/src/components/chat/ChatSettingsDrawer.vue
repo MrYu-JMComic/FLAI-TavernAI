@@ -9,7 +9,11 @@ const props = defineProps({
   conversation: { type: Object, default: null },
   sending: { type: Boolean, default: false },
   imageGenerationEnabled: { type: Boolean, default: true },
+  canGenerateImages: { type: Boolean, default: false },
   canToggleImageGeneration: { type: Boolean, default: false },
+  imageModel: { type: String, default: '' },
+  imageModelOptions: { type: Array, default: () => [] },
+  imageModelHint: { type: String, default: '' },
   authorChatAppearance: { type: Object, default: () => ({}) },
   chatAppearanceForm: { type: Object, default: () => ({}) },
   appearanceSaving: { type: Boolean, default: false },
@@ -33,6 +37,7 @@ const props = defineProps({
 const emit = defineEmits([
   'close',
   'toggle-image-generation',
+  'update:image-model',
   'save-appearance',
   'reset-appearance',
   'update:chatLorebookId',
@@ -40,6 +45,7 @@ const emit = defineEmits([
   'clear-field',
   'update:accessorySettingsOpen',
   'save-accessory',
+  'open-skill-settings',
   'update:accessorySkillEnabled',
   'update:accessorySkillModel',
   'open-status-bar-editor',
@@ -302,6 +308,13 @@ function modelOverrideOptions(value = '') {
   return buildModelSelectOptions(props.providerModelOptions, value, '使用当前模型');
 }
 
+function skillSourceSummary(skill = {}) {
+  const profileId = String(skill?.providerProfileId || '').trim();
+  const model = String(skill?.modelOverride || '').trim();
+  if (profileId) return model ? `单独配置 · ${model}` : '单独配置的供应商';
+  return model ? `跟随主聊天 · ${model}` : '跟随主聊天设置';
+}
+
 const drawerCloseLocked = computed(() => props.appearanceSaving || props.accessorySaving || props.statusBarSaving);
 
 function requestClose() {
@@ -364,7 +377,7 @@ function requestClose() {
       <section class="chat-settings-section">
         <div class="settings-section-title">
           <h3>回复模式</h3>
-          <p>图像生成模型会按这里的开关决定是否进入生图流程。</p>
+          <p>开启后，发送消息会调用独立图片模型；关闭则使用文字回复。</p>
         </div>
         <label class="chat-setting-toggle image-generation-setting">
           <input
@@ -381,8 +394,24 @@ function requestClose() {
               <ImageIcon :size="15" />
               <span>{{ canToggleImageGeneration && imageGenerationEnabled ? '生成图片' : '文字回复' }}</span>
             </strong>
-            <small>{{ canToggleImageGeneration ? '开启后发送会调用图像生成能力。' : '当前模型不支持图像生成。' }}</small>
+            <small>{{ imageModelHint || (canToggleImageGeneration ? `图片模型：${imageModel || '供应商默认'}` : '当前供应商未配置可用的图片模型。') }}</small>
           </span>
+        </label>
+        <label class="chat-setting-field image-generation-model-field">
+          <span>图片模型</span>
+          <input
+            :value="imageModel"
+            list="chat-image-model-options"
+            :disabled="sending || !canGenerateImages"
+            aria-label="图片模型"
+            placeholder="例如 gpt-image-2"
+            @input="emit('update:image-model', readEventTargetValue($event))"
+          />
+          <datalist id="chat-image-model-options">
+            <option v-for="model in imageModelOptions" :key="model.id" :value="model.id">
+              {{ model.label || model.id }}
+            </option>
+          </datalist>
         </label>
       </section>
 
@@ -441,6 +470,24 @@ function requestClose() {
             清空
           </button>
         </div>
+      </section>
+
+      <section class="chat-settings-section">
+        <div class="settings-section-title">
+          <h3>高级设置</h3>
+        </div>
+        <label class="chat-setting-toggle">
+          <input
+            v-model="chatAppearanceForm.highlightDialogue"
+            class="chat-setting-toggle-input"
+            type="checkbox"
+            :disabled="appearanceSaving"
+          />
+          <span class="chat-setting-toggle-control" aria-hidden="true"></span>
+          <span class="chat-setting-toggle-copy">
+            <strong>引号对白着色</strong>
+          </span>
+        </label>
       </section>
 
       <section class="chat-settings-section">
@@ -602,7 +649,19 @@ function requestClose() {
                 <option v-if="item.auto" value="auto">自动</option>
               </select>
             </label>
-            <label v-if="item.model !== false" class="chat-setting-field compact">
+            <div v-if="item.configurable" class="chat-setting-field compact accessory-skill-configure">
+              <span>模型与工具</span>
+              <button
+                class="accessory-skill-configure-button"
+                type="button"
+                :aria-label="`打开${item.label}设置`"
+                @click="emit('open-skill-settings', item.key)"
+              >
+                <span>{{ skillSourceSummary(accessorySkills[item.key]) }}</span>
+                <small>弹窗设置</small>
+              </button>
+            </div>
+            <label v-else-if="item.model !== false" class="chat-setting-field compact">
               <span>模型覆盖</span>
               <select
                 v-model="accessorySkills[item.key].modelOverride"

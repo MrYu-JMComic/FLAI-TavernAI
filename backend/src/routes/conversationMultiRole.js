@@ -1,5 +1,8 @@
 import { Router } from 'express';
 import { CastDomainError } from '../domain/cast/errors.js';
+import { assertCurrentGeneration, beginConversationGeneration, endConversationGeneration } from '../services/conversationTimeline.js';
+import { createConversationDatabaseFacade, withConversationMutationContext } from '../services/conversationMutationContext.js';
+import { writeConversationCheckpoint } from '../repositories/conversationSnapshotRepository.js';
 import {
   configureMultiRoleQueue,
   generateMultiRoleTurns,
@@ -39,6 +42,7 @@ export function createConversationMultiRoleRouter(ctx) {
     if (!requireConversation(db, request, response)) return;
     const settings = getChatProviderSettingsFromContext(ctx, request.auth.user.id);
     if (!settings.ok) return response.status(400).json({ error: settings.error });
+    const ticket = beginConversationGeneration(db, request.auth.user.id, request.params.id);
     const controller = new AbortController();
     const abort = () => controller.abort(new Error('Client disconnected'));
     request.once('aborted', abort);
@@ -46,13 +50,14 @@ export function createConversationMultiRoleRouter(ctx) {
       if (!response.writableEnded) abort();
     });
     try {
-      const result = await generateMultiRoleTurns(settings.value, {
-        database: db,
+      const result = await withConversationMutationContext({ assert: () => assertCurrentGeneration(db, ticket) }, () => generateMultiRoleTurns(settings.value, {
+        database: createConversationDatabaseFacade(db),
         userId: request.auth.user.id,
         conversationId: request.params.id,
         input: request.body?.input,
         memberIds: request.body?.memberIds,
-      }, { signal: controller.signal });
+      }, { signal: AbortSignal.any([controller.signal, ticket.signal]) }));
+      writeConversationCheckpoint(db, request.auth.user.id, request.params.id);
       response.json(result);
     } catch (error) {
       if (error instanceof CastDomainError) {
@@ -60,6 +65,7 @@ export function createConversationMultiRoleRouter(ctx) {
       }
       throw error;
     } finally {
+      endConversationGeneration(db, ticket);
       request.off('aborted', abort);
     }
   }));

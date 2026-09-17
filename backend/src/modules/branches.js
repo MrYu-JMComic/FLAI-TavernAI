@@ -1,7 +1,7 @@
 import { newId, nowIso } from '../security.js';
 import { withSavepoint } from './savepoint.js';
-import { sanitizeChatAttachments } from '../services/chatAttachments.js';
-import { parseJson } from '../utils/json.js';
+import { captureConversationSnapshot, findConversationCheckpoint, readSnapshotMessages, restoreConversationSnapshot, SNAPSHOT_STATE_TABLES, writeConversationCheckpoint } from '../repositories/conversationSnapshotRepository.js';
+import { assertConversationIdle } from '../services/conversationTimeline.js';
 
 export function branchConversation(db, userId, conversationId, branchFromMessageId) {
   const conversation = db
@@ -13,6 +13,23 @@ export function branchConversation(db, userId, conversationId, branchFromMessage
     .prepare('SELECT rowid AS message_rowid, * FROM messages WHERE id = ? AND conversation_id = ? AND user_id = ?')
     .get(branchFromMessageId, conversationId, userId);
   if (!branchMessage) return null;
+  assertConversationIdle(db, userId, conversationId);
+  if (['needs_review', 'needs_rebuild', 'stale'].includes(conversation.state_status)) {
+    throw Object.assign(new Error('请先处理待同步的剧情状态，再创建分支。'), { code: 'CONVERSATION_STATE_REBUILD_REQUIRED', status: 409 });
+  }
+
+  const allMessages = readSnapshotMessages(db, userId, conversationId);
+  const branchIndex = allMessages.findIndex((message) => message.id === branchFromMessageId);
+  const checkpoint = findConversationCheckpoint(db, userId, conversationId, branchFromMessageId, { exact: true });
+  const atTip = branchIndex === allMessages.length - 1;
+  const snapshot = checkpoint?.snapshot || captureConversationSnapshot(db, userId, conversationId, { includeMessages: false });
+  if (!checkpoint && !atTip) {
+    for (const table of SNAPSHOT_STATE_TABLES) snapshot.state[table] = [];
+  }
+  snapshot.messages = allMessages.slice(0, branchIndex + 1);
+  const messageIds = snapshot.messages.map((message) => message.id);
+  snapshot.swipes = db.prepare(`SELECT * FROM message_swipes WHERE user_id = ? AND message_id IN (${messageIds.map(() => '?').join(',')}) ORDER BY created_at, rowid`)
+    .all(userId, ...messageIds);
 
   const newConversationId = newId();
   const timestamp = nowIso();
@@ -34,55 +51,13 @@ export function branchConversation(db, userId, conversationId, branchFromMessage
       timestamp
     );
 
-    // Copy messages up to and including the branch point
-    const messages = db
-      .prepare(
-        `SELECT * FROM messages
-         WHERE conversation_id = ?
-           AND user_id = ?
-           AND (created_at < ? OR (created_at = ? AND rowid <= ?))
-         ORDER BY created_at ASC, rowid ASC`
-      )
-      .all(conversationId, userId, branchMessage.created_at, branchMessage.created_at, branchMessage.message_rowid);
-
-    for (const msg of messages) {
-      const newMsgId = newId();
-      db.prepare(
-        'INSERT INTO messages (id, user_id, conversation_id, role, content, attachments_json, reasoning, usage_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
-      ).run(
-        newMsgId,
-        userId,
-        newConversationId,
-        msg.role,
-        msg.content,
-        JSON.stringify(sanitizeChatAttachments(parseJson(msg.attachments_json, []))),
-        msg.reasoning || '',
-        msg.usage_json,
-        msg.created_at
-      );
-
-      // Copy swipes for assistant messages
-      if (msg.role === 'assistant') {
-        const swipes = db.prepare('SELECT * FROM message_swipes WHERE message_id = ? AND user_id = ?').all(msg.id, userId);
-        for (const swipe of swipes) {
-          const newSwipeId = newId();
-          db.prepare(
-            'INSERT INTO message_swipes (id, message_id, user_id, content, reasoning, usage_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)'
-          ).run(newSwipeId, newMsgId, userId, swipe.content, swipe.reasoning || '', swipe.usage_json, swipe.created_at);
-        }
-      }
-    }
-
-    // Copy status bar if exists
-    const statusBar = db.prepare('SELECT * FROM status_bars WHERE conversation_id = ?').get(conversationId);
-    if (statusBar) {
-      db.prepare(
-        'INSERT INTO status_bars (id, conversation_id, name, variables, template, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)'
-      ).run(newId(), newConversationId, statusBar.name, statusBar.variables, statusBar.template, timestamp, timestamp);
-    }
+    restoreConversationSnapshot(db, userId, newConversationId, snapshot, { remapIds: true, restoreTitle: false });
+    db.prepare('UPDATE conversations SET state_status = ? WHERE id = ?')
+      .run(checkpoint || atTip ? 'ready' : 'legacy_partial', newConversationId);
+    writeConversationCheckpoint(db, userId, newConversationId);
   });
 
-  return getBranchConversation(db, userId, newConversationId);
+  return { ...getBranchConversation(db, userId, newConversationId), warnings: checkpoint || atTip ? [] : ['此历史节点没有状态快照，分支未继承后续人物、记忆、物品或经济状态。'] };
 }
 
 export function getBranchConversation(db, userId, conversationId) {
@@ -102,6 +77,8 @@ export function getBranchConversation(db, userId, conversationId) {
     id: row.id,
     characterId: row.character_id,
     title: row.title,
+    stateStatus: row.state_status,
+    timelineRevision: row.timeline_revision,
     branchedFromId: row.branched_from_id || null,
     branchedFromMessageId: row.branched_from_message_id || null,
     branchedFromTitle: row.branched_from_title_name || row.branched_from_title || '',

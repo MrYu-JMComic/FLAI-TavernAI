@@ -1,6 +1,7 @@
 import { appConfig } from '../config.js';
 import { AppError } from '../errors.js';
 import { nowIso } from '../security.js';
+import { unwrapConversationDatabase } from './conversationMutationContext.js';
 
 export function getUserQuota(database, userId, defaults = appConfig.quotaDefaults) {
   const row = database.prepare('SELECT * FROM user_quotas WHERE user_id = ?').get(userId);
@@ -12,7 +13,7 @@ export function getUserQuota(database, userId, defaults = appConfig.quotaDefault
       row?.max_structured_storage_bytes,
       defaults.maxStructuredStorageBytes ?? 256 * 1024 * 1024
     ),
-    maxDailyRequests: positiveInteger(row?.max_daily_requests, defaults.maxDailyRequests),
+    maxDailyRequests: normalizeDailyRequestLimit(row?.max_daily_requests, defaults.maxDailyRequests),
     maxDailyCostMicros: positiveInteger(row?.max_daily_cost_micros, defaults.maxDailyCostMicros),
     updatedAt: row?.updated_at || ''
   };
@@ -29,7 +30,7 @@ export function updateUserQuota(database, userId, payload = {}, defaults = appCo
       10 * 1024 ** 3,
       current.maxStructuredStorageBytes
     ),
-    maxDailyRequests: boundedInteger(payload.maxDailyRequests, 1, 10_000_000, current.maxDailyRequests),
+    maxDailyRequests: normalizeDailyRequestUpdate(payload, current.maxDailyRequests),
     maxDailyCostMicros: boundedInteger(payload.maxDailyCostMicros, 1, Number.MAX_SAFE_INTEGER, current.maxDailyCostMicros)
   };
   const timestamp = nowIso();
@@ -50,7 +51,7 @@ export function updateUserQuota(database, userId, payload = {}, defaults = appCo
     quota.maxConcurrentAiJobs,
     quota.maxUploadBytes,
     quota.maxStructuredStorageBytes,
-    quota.maxDailyRequests,
+    quota.maxDailyRequests ?? 0,
     quota.maxDailyCostMicros,
     timestamp
   );
@@ -153,10 +154,20 @@ export function consumeDailyRequest(database, userId, options = {}) {
   const quota = getUserQuota(database, userId);
   const date = usageDate(options.now);
   const current = getDailyUsage(database, userId, date);
-  if (current.requestCount >= quota.maxDailyRequests) {
+  if (quota.maxDailyRequests !== null && current.requestCount >= quota.maxDailyRequests) {
     throw quotaError('DAILY_REQUEST_QUOTA_EXCEEDED', 'Daily request quota exceeded.');
   }
   upsertDailyUsage(database, userId, date, { requestCount: 1 });
+  return getDailyUsage(database, userId, date);
+}
+
+export function resetDailyRequestUsage(database, userId, options = {}) {
+  const date = usageDate(options.now);
+  database.prepare(
+    `UPDATE user_daily_usage
+     SET request_count = 0, updated_at = ?
+     WHERE user_id = ? AND usage_date = ?`
+  ).run(nowIso(), userId, date);
   return getDailyUsage(database, userId, date);
 }
 
@@ -296,6 +307,7 @@ export function settleProviderCost(database, reservation, usage = {}, options = 
 }
 
 export async function withProviderQuota(database, userId, operation, options = {}) {
+  database = unwrapConversationDatabase(database);
   if (typeof operation !== 'function') {
     throw new TypeError('Provider operation is required.');
   }
@@ -385,6 +397,17 @@ function quotaError(code, message) {
 function positiveInteger(value, fallback) {
   const number = integer(value, fallback);
   return number > 0 ? number : fallback;
+}
+
+function normalizeDailyRequestLimit(value, fallback) {
+  if (Number(value) === 0) return null;
+  return positiveInteger(value, fallback);
+}
+
+function normalizeDailyRequestUpdate(payload, fallback) {
+  if (!Object.hasOwn(payload, 'maxDailyRequests')) return fallback;
+  if (payload.maxDailyRequests === null || Number(payload.maxDailyRequests) === 0) return null;
+  return boundedInteger(payload.maxDailyRequests, 1, 10_000_000, fallback);
 }
 
 function boundedInteger(value, min, max, fallback) {

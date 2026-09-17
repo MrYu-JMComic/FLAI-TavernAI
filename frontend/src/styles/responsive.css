@@ -798,14 +798,14 @@
 
 @media (max-width: 620px) {
   .brand-button {
-    justify-content: center;
-    width: var(--touch-min, 44px);
+    justify-content: flex-start;
+    width: auto;
     min-width: var(--touch-min, 44px);
-    gap: 0;
+    gap: 8px;
   }
 
   .brand-button > span:not(.brand-mark) {
-    display: none;
+    display: block;
   }
 
   .settings-section-nav {

@@ -7,8 +7,16 @@ import { migrateFullTextSearch } from './migrations/0007FullTextSearch.js';
 import { migrateOperationalControls } from './migrations/0008OperationalControls.js';
 import { migrateProviderProfiles } from './migrations/0009ProviderProfiles.js';
 import { migrateTalentPoolOwnership } from './migrations/0010TalentPoolOwnership.js';
+import { migrateProviderImageModel } from './migrations/0011ProviderImageModel.js';
+import { migrateConversationWorldBookState } from './migrations/0013ConversationWorldBookState.js';
+import { migrateConversationTimeline } from './migrations/0014ConversationTimeline.js';
+import { migrateConversationMemoryReview } from './migrations/0015ConversationMemoryReview.js';
+import { migrateCastMemoryDecay } from './migrations/0016CastMemoryDecay.js';
+import { migratePromptTrace } from './migrations/0017PromptTrace.js';
+import { migrateConversationRetention } from './migrations/0018ConversationRetention.js';
 
-export const latestSchemaVersion = '0010';
+// The image-model migration stays at 0012: an older deployment already used 0011.
+export const latestSchemaVersion = '0018';
 
 export function applyStartupMigrations(database, { getCachedTableColumns }) {
   ensureSchemaMeta(database);
@@ -73,6 +81,28 @@ export function applyStartupMigrations(database, { getCachedTableColumns }) {
     checksum: 'talent-pool-ownership-v1',
     apply: () => migrateTalentPoolOwnership(database)
   });
+  runRecordedMigration(database, {
+    version: '0012',
+    name: 'provider-image-model',
+    checksum: 'provider-image-model-v1',
+    apply: () => migrateProviderImageModel(database)
+  });
+  runRecordedMigration(database, {
+    version: '0013',
+    name: 'conversation-world-book-state',
+    checksum: 'conversation-world-book-state-v1',
+    apply: () => migrateConversationWorldBookState(database)
+  });
+  runRecordedMigration(database, {
+    version: '0014',
+    name: 'conversation-timeline-and-job-steps',
+    checksum: 'conversation-timeline-and-job-steps-v1',
+    apply: () => migrateConversationTimeline(database)
+  });
+  runRecordedMigration(database, { version: '0015', name: 'conversation-memory-review', checksum: 'conversation-memory-review-v1', apply: () => migrateConversationMemoryReview(database) });
+  runRecordedMigration(database, { version: '0016', name: 'cast-memory-decay-checkpoint', checksum: 'cast-memory-decay-checkpoint-v1', apply: () => migrateCastMemoryDecay(database) });
+  runRecordedMigration(database, { version: '0017', name: 'prompt-trace-and-budget', checksum: 'prompt-trace-and-budget-v1', apply: () => migratePromptTrace(database) });
+  runRecordedMigration(database, { version: '0018', name: 'conversation-retention', checksum: 'conversation-retention-v1', apply: () => migrateConversationRetention(database) });
   // Keep repairing pre-ledger tag fixtures and interrupted legacy upgrades.
   migrateTagsToUserScoped(database, getCachedTableColumns);
 }

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createAppDatabase } from '../db/runtime.js';
 import { normalizeAdvancedSettings } from '../modules/advancedSettings.js';
-import { saveConversationAppearance } from '../modules/conversationAppearance.js';
+import { getConversationAppearance, saveConversationAppearance } from '../modules/conversationAppearance.js';
 import {
   createCastMember,
   ensureConversationProtagonist,
@@ -16,12 +16,21 @@ import {
 } from '../services/cast/castSyncStatus.js';
 import { listCastMemories } from '../repositories/castRepository.js';
 
-test('cast tracking has one boolean setting and persists without a model override', () => {
+test('cast tracking keeps its switch plus an optional provider source and operation library', () => {
   const normalized = normalizeAdvancedSettings({
-    castTracking: { enabled: 'true', modelOverride: 'must-not-survive' },
+    castTracking: { enabled: 'true', modelOverride: ' cheap-model ', providerProfileId: 'profile-1', thinkingLevel: 'HIGH', autoSyncOperations: { 'member.create': false, 'Bad Name': true }, organizeOperations: { 'memory.delete': 'off' } },
   });
-  assert.deepEqual(normalized.castTracking, { enabled: true });
-  assert.equal('modelOverride' in normalized.castTracking, false);
+  assert.deepEqual(normalized.castTracking, {
+    enabled: true,
+    providerProfileId: 'profile-1',
+    modelOverride: 'cheap-model',
+    thinkingLevel: 'high',
+    autoSyncOperations: { 'member.create': false },
+    organizeOperations: { 'memory.delete': false }
+  });
+  assert.deepEqual(normalizeAdvancedSettings({}).castTracking, {
+    enabled: false, providerProfileId: '', modelOverride: '', autoSyncOperations: {}, organizeOperations: {}
+  });
 
   const fixture = createFixture();
   try {
@@ -31,7 +40,21 @@ test('cast tracking has one boolean setting and persists without a model overrid
     const stored = JSON.parse(fixture.database.prepare(
       'SELECT user_advanced_settings FROM conversations WHERE id = ?'
     ).get(fixture.conversationId).user_advanced_settings);
-    assert.deepEqual(stored.castTracking, { enabled: true });
+    assert.deepEqual(stored.castTracking, {
+      enabled: true, providerProfileId: '', modelOverride: '', autoSyncOperations: {}, organizeOperations: {}
+    });
+
+    const saved = saveConversationAppearance(fixture.database, fixture.userId, fixture.conversationId, {
+      castTracking: { thinkingLevel: 'low' },
+    });
+    assert.equal(saved.castTracking.thinkingLevel, 'low');
+    assert.deepEqual(getConversationAppearance(fixture.database, fixture.userId, fixture.conversationId), saved);
+
+    const cleared = saveConversationAppearance(fixture.database, fixture.userId, fixture.conversationId, {
+      castTracking: { thinkingLevel: '' },
+    });
+    assert.equal(Object.hasOwn(cleared.castTracking, 'thinkingLevel'), false);
+    assert.deepEqual(getConversationAppearance(fixture.database, fixture.userId, fixture.conversationId), cleared);
   } finally {
     fixture.database.close();
   }

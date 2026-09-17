@@ -1,14 +1,19 @@
 import {
   providerFetch,
   providerFetchUrl,
+  providerAllowsNoAuth,
   readJsonResponse
 } from './providerHttp.js';
-import { getImageGenerationCompatibility } from './providerImageModels.js';
-import { normalizeProviderModel } from './providerModels.js';
+import {
+  getImageGenerationCompatibility,
+  isGeminiImageGenerationModel,
+  resolveImageGenerationModel
+} from './providerImageModels.js';
 import { providerPresets } from './providerRegistry.js';
 import { normalizeProviderBaseUrl } from './providerUrls.js';
 import { normalizeProviderExtraBody } from './providerExtraBody.js';
 import { withProviderQuota } from './quotas.js';
+import { AppError } from '../errors.js';
 
 export async function generateImage(settings, prompt, options = {}) {
   options = options ?? {};
@@ -25,63 +30,88 @@ async function generateImageInternal(settings, prompt, options = {}) {
   if (!compatibility.supported) {
     throw new Error(compatibility.error);
   }
-  if (settings.providerType === 'gemini') {
+  if (settings.apiKeyError) {
+    throw new Error(settings.apiKeyError);
+  }
+  if (!settings.apiKey && !providerAllowsNoAuth(settings)) {
+    throw new Error('请先填写或保存 API Key / SK，再调用图片模型。');
+  }
+  const model = compatibility.model || resolveImageGenerationModel(settings, options);
+  if (isGeminiImageGenerationModel(model) && isOfficialGeminiEndpoint(settings.baseUrl)) {
     return generateGeminiImage(settings, prompt, options);
   }
-  const response = await providerFetch(settings, '/images/generations', {
-    method: 'POST',
-    body: JSON.stringify({
-      ...normalizeProviderExtraBody(settings.extraBody),
-      model: resolveProviderModel(settings, options),
-      prompt: String(prompt || '').trim(),
-      n: 1,
-      size: options.imageSize || '1024x1024',
-      response_format: 'b64_json'
-    })
-  });
-  const json = await readJsonResponse(response);
-  const image = normalizeGeneratedImage(json);
-  if (!image) {
-    throw new Error('生图模型没有返回图片数据');
-  }
-  return {
-    content: image.revisedPrompt ? `已生成图片：${image.revisedPrompt}` : '已生成图片',
-    attachments: [image],
-    usage: json.usage || null,
-    provider: settings.gatewayName,
-    providerType: settings.providerType,
-    model: normalizeProviderModel(settings.providerType, settings.model)
+  const requestBody = {
+    ...normalizeProviderExtraBody(settings.extraBody),
+    model,
+    prompt: String(prompt || '').trim(),
+    n: 1,
+    size: options.imageSize || '1024x1024'
   };
+  if (isGptImageModel(model)) {
+    // GPT Image models return b64_json by default and reject the legacy
+    // response_format parameter. output_format is the supported selector.
+    delete requestBody.response_format;
+    requestBody.output_format = normalizeOutputFormat(options.outputFormat);
+  } else {
+    requestBody.response_format = 'b64_json';
+  }
+  try {
+    const response = await providerFetch(settings, '/images/generations', {
+      method: 'POST',
+      body: JSON.stringify(requestBody),
+      signal: options.signal
+    });
+    const json = await readJsonResponse(response);
+    const image = normalizeGeneratedImage(json);
+    if (!image) {
+      throw new Error('生图模型没有返回图片数据');
+    }
+    return {
+      content: image.revisedPrompt ? `已生成图片：${image.revisedPrompt}` : '已生成图片',
+      attachments: [image],
+      usage: json.usage || null,
+      provider: settings.gatewayName,
+      providerType: settings.providerType,
+      model
+    };
+  } catch (error) {
+    throw normalizeImageGenerationError(error, model);
+  }
 }
 
 async function generateGeminiImage(settings, prompt, options = {}) {
-  const model = normalizeProviderModel(settings.providerType, resolveProviderModel(settings, options));
-  const response = await providerFetchUrl(settings, geminiNativeGenerateContentUrl(settings, model), {
-    method: 'POST',
-    headers: geminiNativeRequestHeaders(settings),
-    body: JSON.stringify({
-      contents: [{
-        role: 'user',
-        parts: [{ text: String(prompt || '').trim() }]
-      }],
-      generationConfig: {
-        responseModalities: ['TEXT', 'IMAGE']
-      }
-    })
-  });
-  const json = await readJsonResponse(response);
-  const image = normalizeGeminiGeneratedImage(json);
-  if (!image) {
-    throw new Error('Gemini 生图模型没有返回 inlineData 图片数据');
+  const model = resolveImageGenerationModel(settings, options);
+  try {
+    const response = await providerFetchUrl(settings, geminiNativeGenerateContentUrl(settings, model), {
+      method: 'POST',
+      headers: geminiNativeRequestHeaders(settings),
+      body: JSON.stringify({
+        contents: [{
+          role: 'user',
+          parts: [{ text: String(prompt || '').trim() }]
+        }],
+        generationConfig: {
+          responseModalities: ['TEXT', 'IMAGE']
+        }
+      }),
+      signal: options.signal
+    });
+    const json = await readJsonResponse(response);
+    const image = normalizeGeminiGeneratedImage(json);
+    if (!image) {
+      throw new Error('Gemini 生图模型没有返回 inlineData 图片数据');
+    }
+    return {
+      content: image.revisedPrompt ? `已生成图片：${image.revisedPrompt}` : '已生成图片',
+      attachments: [image],
+      usage: json.usageMetadata || json.usage_metadata || json.usage || null,
+      provider: settings.gatewayName,
+      providerType: settings.providerType,
+      model
+    };
+  } catch (error) {
+    throw normalizeImageGenerationError(error, model);
   }
-  return {
-    content: image.revisedPrompt ? `已生成图片：${image.revisedPrompt}` : '已生成图片',
-    attachments: [image],
-    usage: json.usageMetadata || json.usage_metadata || json.usage || null,
-    provider: settings.gatewayName,
-    providerType: settings.providerType,
-    model
-  };
 }
 
 function normalizeGeneratedImage(json = {}) {
@@ -167,6 +197,40 @@ function geminiNativeRequestHeaders(settings = {}) {
   return headers;
 }
 
-function resolveProviderModel(settings = {}, options = {}) {
-  return normalizeProviderModel(settings.providerType, settings.model);
+function isOfficialGeminiEndpoint(baseUrl = '') {
+  try {
+    return new URL(normalizeProviderBaseUrl('gemini', baseUrl || providerPresets.gemini.baseUrl)).hostname
+      === 'generativelanguage.googleapis.com';
+  } catch {
+    return false;
+  }
+}
+
+function isGptImageModel(model = '') {
+  return /^gpt-image(?:-|$)/i.test(String(model || '').trim());
+}
+
+function normalizeOutputFormat(value = '') {
+  const format = String(value || '').trim().toLowerCase();
+  return ['png', 'jpeg', 'webp'].includes(format) ? format : 'png';
+}
+
+function normalizeImageGenerationError(error, model = '') {
+  const message = String(error?.message || '').trim();
+  if (!/auth_not_found\s*:\s*no auth available/i.test(message)) {
+    return error;
+  }
+  const normalizedModel = String(model || '所选图片模型').trim() || '所选图片模型';
+  const upstreamStatus = Number(error?.response?.status);
+  const status = Number.isInteger(upstreamStatus) && upstreamStatus >= 400 ? upstreamStatus : 503;
+  const authError = new AppError(
+    status,
+    'IMAGE_AUTH_UNAVAILABLE',
+    `图片模型鉴权失败：当前网关没有可用于 ${normalizedModel} 的图片凭据。请修复 Codex/代理的图片授权，或改用已配置 API Key 的 OpenAI-compatible 图片网关。`,
+    { cause: error }
+  );
+  // AppError keeps the upstream message in `cause`; expose the safe, actionable
+  // image-auth explanation to direct service callers as well as HTTP routes.
+  authError.message = authError.publicMessage;
+  return authError;
 }

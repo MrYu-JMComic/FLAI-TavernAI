@@ -110,11 +110,13 @@ onBeforeUnmount(() => manager.setDirty('editor', false));
       <div class="cast-form-grid three-column">
         <label>
           <span>类型</span>
-          <select v-model="form.memoryType">
+          <select v-model="form.memoryType" aria-label="类型">
             <option value="event">事件</option>
             <option value="relationship">关系</option>
             <option value="knowledge">知识</option>
             <option value="emotion">情绪</option>
+            <option value="intent">计划</option>
+            <option value="hypothesis">假设</option>
           </select>
         </label>
         <label>

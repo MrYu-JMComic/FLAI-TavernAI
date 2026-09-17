@@ -639,7 +639,7 @@ function normalizeRegexRules(rules = []) {
       pattern,
       replacement: String(rule.replacement || '').slice(0, 1000),
       flags,
-      scope: ['input', 'output', 'both'].includes(rule.scope) ? rule.scope : 'input',
+      scope: ['input', 'output', 'both', 'display'].includes(rule.scope) ? rule.scope : 'input',
       enabled: normalizeBoolean(rule.enabled, true),
       groupName: String(rule.groupName || '全局').trim().slice(0, 60) || '全局',
       priority: Math.max(0, Math.round(normalizeFiniteNumber(rule.priority))),

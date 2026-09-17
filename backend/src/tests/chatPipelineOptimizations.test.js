@@ -104,7 +104,7 @@ test('stream response persists partials and reports terminal events on all error
   // Server-initiated aborts (timeout) still emit a terminal error while the socket is writable.
   assert.match(
     streamResponseSource,
-    /const serverAborted = isAbortError\(error\) \|\| controller\.signal\.aborted \|\| response\.destroyed;/
+    /const serverAborted = isAbortError\(error\) \|\| signal\.aborted \|\| response\.destroyed;/
   );
   assert.match(streamResponseSource, /interrupted: true/);
   assert.match(streamResponseSource, /const reason = controller\.signal\.reason;/);
@@ -130,9 +130,10 @@ test('parseSse always releases the upstream reader', () => {
 
 test('generation route locks per conversation and skips usage aggregation', () => {
   assert.match(generationRouteSource, /getConversationForUser\(db, userId, conversationId, \{ includeUsage: false \}\)/);
-  assert.match(generationRouteSource, /const generatingConversations = new Set\(\);/);
-  assert.match(generationRouteSource, /if \(!tryLockGeneration\(conversation\.id, response\)\) \{\s*return;\s*\}/);
-  assert.match(generationRouteSource, /finally \{\s*unlockGeneration\(conversation\.id\);\s*\}/);
+  assert.match(generationRouteSource, /beginConversationGeneration\(db, userId, conversationId\)/);
+  assert.match(generationRouteSource, /if \(!ticket\) \{\s*return;\s*\}/);
+  assert.match(generationRouteSource, /finally \{\s*finishFailedTrace\(ticket\);\s*endConversationGeneration\(db, ticket\);\s*\}/);
+  assert.doesNotMatch(generationRouteSource, /queueMicrotask|startAccessoryAgentsInBackground/);
   assert.match(generationRouteSource, /response\.status\(409\)/);
   // Status bar is fetched once per response, not per field.
   assert.doesNotMatch(
@@ -153,9 +154,9 @@ test('non-stream completions carry an abort signal with a timeout ceiling', () =
 test('accessory agents abort their provider calls at the deadline', () => {
   assert.match(accessoryAgentsSource, /const controller = new AbortController\(\);/);
   assert.match(accessoryAgentsSource, /const statusBarAgentTimeoutMs = 60000;/);
-  assert.match(accessoryAgentsSource, /\{ timeoutMs: statusBarAgentTimeoutMs \}/);
-  assert.match(accessoryAgentsSource, /controller\.abort\(new Error\(`\$\{skill\} timed out`\)\);/);
-  assert.match(accessoryAgentsSource, /await withTimeout\(handler\(controller\.signal\), timeoutMs \+ agentAbortGraceMs/);
+  assert.match(accessoryAgentsSource, /\{ timeoutMs: statusBarAgentTimeoutMs, signal: parentSignal \}/);
+  assert.match(accessoryAgentsSource, /controller\.abort\(Object\.assign\(new Error\(`\$\{skill\} timed out`\)/);
+  assert.match(accessoryAgentsSource, /await withTimeout\(handler\(signal\), timeoutMs \+ agentAbortGraceMs/);
   assert.match(accessoryAgentsSource, /onNoToolCall: statusBarNoToolNudge/);
   assert.match(accessoryAgentsSource, /maxRounds:\s*2,[\s\S]{0,80}thinkingEnabled:\s*false,[\s\S]{0,80}signal/);
 });

@@ -31,19 +31,31 @@ const thinkingLevelSchema = z.enum(THINKING_LEVELS);
 
 const accessorySkillConfigSchema = z.object({
   enabled: z.union([z.boolean(), z.literal('auto')]).optional(),
-  modelOverride: z.string().max(100).trim().optional().default('')
+  modelOverride: z.string().max(100).trim().optional().default(''),
+  providerProfileId: z.string().max(160).trim().optional().default(''),
+  tools: z.record(z.string().max(40), z.boolean()).optional().default({})
 }).passthrough();
 
 const accessorySkillsSchema = z.object({
+  worldDirector: accessorySkillConfigSchema.optional(),
+  gameHud: accessorySkillConfigSchema.optional(),
+  encounterMode: accessorySkillConfigSchema.optional(),
+  rewardMode: accessorySkillConfigSchema.optional(),
   sceneAgent: accessorySkillConfigSchema.optional(),
   statusBarAgent: accessorySkillConfigSchema.optional(),
   economyAgent: accessorySkillConfigSchema.optional(),
   talentPrompt: accessorySkillConfigSchema.optional(),
-  cgScene: accessorySkillConfigSchema.optional()
+  cgScene: accessorySkillConfigSchema.optional(),
+  memoryAgent: accessorySkillConfigSchema.optional()
 }).partial().optional().default({});
 
 const castTrackingSchema = z.object({
   enabled: booleanLikeSchema.optional().default(false),
+  providerProfileId: z.string().max(160).trim().optional().default(''),
+  modelOverride: z.string().max(100).trim().optional().default(''),
+  thinkingLevel: z.union([thinkingLevelSchema, z.literal('')]).optional(),
+  autoSyncOperations: z.record(z.string().max(40), z.boolean()).optional().default({}),
+  organizeOperations: z.record(z.string().max(40), z.boolean()).optional().default({})
 }).strict().optional().default({ enabled: false });
 
 const statusBarBlueprintVariableSchema = z.object({
@@ -70,6 +82,7 @@ const advancedSettingsSchema = z.object({
   customJsRiskAccepted: booleanLikeSchema.optional().default(false),
   statusBarPrompt: z.string().max(50000).trim().optional().default(''),
   showWorldBookMatches: booleanLikeSchema.optional().default(true),
+  highlightDialogue: booleanLikeSchema.optional(),
   castTracking: castTrackingSchema,
   statusBarBlueprint: statusBarBlueprintSchema,
   accessorySkills: accessorySkillsSchema
@@ -146,6 +159,7 @@ export const sendMessageSchema = z.object({
   attachments: z.array(chatImageAttachmentSchema).max(4).optional().default([]),
   stream: booleanLikeSchema.optional(),
   imageGeneration: booleanLikeSchema.optional(),
+  imageModel: z.string().max(100).trim().optional(),
   presetId: z.string().optional(),
   thinkingEnabled: booleanLikeSchema.optional(),
   thinkingLevel: thinkingLevelSchema.optional()
@@ -156,6 +170,12 @@ export const continueMessageSchema = z.object({
   presetId: z.string().optional(),
   thinkingEnabled: booleanLikeSchema.optional(),
   thinkingLevel: thinkingLevelSchema.optional()
+});
+
+export const regenerateMessageSchema = continueMessageSchema;
+
+export const truncateMessagesSchema = z.object({
+  fromMessageId: z.string().min(1, '缺少起始消息').max(160).trim()
 });
 
 export const updateMessageSchema = z.object({
@@ -229,7 +249,7 @@ export const createPresetSchema = z.object({
   name: z.string().max(100).trim().optional().default('未命名预设'),
   systemPrompt: z.string().max(50000).trim().optional().default(''),
   temperature: z.number().min(0).max(2).optional().default(1.0),
-  maxTokens: z.number().int().min(1).max(128000).optional().default(4096),
+  maxTokens: z.number().int().min(0).max(128000).optional().default(0),
   topP: z.number().min(0).max(1).optional().default(1.0),
   frequencyPenalty: z.number().min(-2).max(2).optional().default(0),
   presencePenalty: z.number().min(-2).max(2).optional().default(0),
@@ -276,6 +296,7 @@ export const saveProviderSchema = z.object({
   gatewayName: z.string().max(50).trim().optional().default(''),
   baseUrl: z.string().url().max(500).trim().optional().or(z.literal('')),
   model: z.string().max(100).trim().optional().default(''),
+  imageModel: z.string().max(100).trim().optional(),
   apiKey: z.string().max(500).optional(),
   clearApiKey: z.boolean().optional().default(false),
   supportsReasoning: z.boolean().optional(),
@@ -309,6 +330,7 @@ export const saveConversationSettingsSchema = z.object({
   customJsRiskAccepted: booleanLikeSchema.optional().default(false),
   statusBarPrompt: z.string().max(50000).trim().optional().default(''),
   showWorldBookMatches: booleanLikeSchema.optional().default(true),
+  highlightDialogue: booleanLikeSchema.optional(),
   castTracking: castTrackingSchema,
   chatLorebookId: z.string().max(200).trim().nullable().optional(),
   accessorySkills: accessorySkillsSchema
@@ -537,6 +559,8 @@ export const castOrganizerSchema = z.object({
   scope: z.enum(['member', 'conversation']).default('member'),
   memberId: castIdSchema.optional(),
   requirement: z.string().max(2_000).optional().default(''),
+  thinkingEnabled: booleanLikeSchema.optional(),
+  thinkingLevel: thinkingLevelSchema.optional(),
 }).strict().refine(
   (value) => value.scope === 'conversation' ? !value.memberId : Boolean(value.memberId),
   { message: '单人物整理必须提供 memberId，全对话整理不能提供 memberId' }
@@ -605,7 +629,8 @@ export const generateTownSchema = z.object({
 export const updateTownClockSchema = z.object({
   currentDay: z.number().int().min(1).max(1000000).optional(),
   minuteOfDay: z.number().int().min(0).max(1439).optional(),
-  simulationStatus: z.enum(['paused', 'running']).optional()
+  simulationStatus: z.enum(['paused', 'running']).optional(),
+  realSecondsPerTick: z.number().int().min(1).max(60).optional()
 }).refine((value) => Object.keys(value).length > 0, '至少提供一个时钟字段');
 
 export const advanceTownSchema = z.object({
@@ -703,6 +728,8 @@ const requestQueryBoundarySchema = z.record(
     context.addIssue({ code: 'custom', message: '查询参数过多' });
   }
 });
+
+export const rebuildTownMapSchema = z.object({ architecture: z.enum(['modern', 'traditional', 'fantasy']) });
 // Keep the request boundary check iterative.  A recursive z.lazy schema can
 // itself overflow the JavaScript stack before Zod has a chance to return a
 // useful 400 response for hostile, deeply nested JSON.

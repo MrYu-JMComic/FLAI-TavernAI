@@ -37,12 +37,12 @@ export function adaptToolsForProvider(tools, providerType, modelName = '') {
  *
  * Gemini 的特殊要求：
  * 1. 不支持某些高级 JSON Schema 特性
- * 2. required 字段必须存在且不能为空数组
+ * 2. 保留必填字段，并省略空 required 数组
  * 3. 所有 object 类型必须有明确的 properties 或 additionalProperties
  */
 function adaptToolsForGemini(tools) {
   return tools.map(tool => {
-    if (tool.type !== 'function') {
+    if (tool?.type !== 'function' || !tool.function) {
       return tool;
     }
 
@@ -63,23 +63,14 @@ function adaptSchemaForGemini(schema) {
 
   const adapted = { ...schema };
 
-  // Gemini 不支持 anyOf, oneOf, allOf - 将它们转换为更简单的形式
-  if (adapted.anyOf || adapted.oneOf || adapted.allOf) {
-    const variants = adapted.anyOf || adapted.oneOf || adapted.allOf;
-    // 合并所有变体的 required 字段，将它们都变成可选
-    const allRequired = new Set();
-    for (const variant of variants) {
-      if (variant.required) {
-        for (const field of variant.required) {
-          allRequired.add(field);
-        }
-      }
-    }
-    // 不设置 required，让所有字段都是可选的
-    delete adapted.required;
-    delete adapted.anyOf;
+  // Gemini Schema supports anyOf. Keep every branch and validate the original
+  // oneOf exclusivity locally before execution: https://ai.google.dev/api/caching#Schema
+  if (Array.isArray(adapted.oneOf) && !adapted.anyOf) {
+    adapted.anyOf = adapted.oneOf;
     delete adapted.oneOf;
-    delete adapted.allOf;
+  }
+  for (const key of ['anyOf', 'oneOf', 'allOf']) {
+    if (Array.isArray(adapted[key])) adapted[key] = adapted[key].map(adaptSchemaForGemini);
   }
 
   // Gemini 要求：如果有 required 字段，不能为空数组
@@ -93,7 +84,7 @@ function adaptSchemaForGemini(schema) {
       adapted.properties = {};
     }
     // 如果没有 required 且 properties 为空，确保有 additionalProperties
-    if (Object.keys(adapted.properties).length === 0 && !adapted.additionalProperties) {
+    if (Object.keys(adapted.properties).length === 0 && !Object.hasOwn(adapted, 'additionalProperties')) {
       adapted.additionalProperties = true;
     }
   }
@@ -111,6 +102,9 @@ function adaptSchemaForGemini(schema) {
   // 递归处理 items
   if (adapted.items) {
     adapted.items = adaptSchemaForGemini(adapted.items);
+  }
+  if (adapted.additionalProperties && typeof adapted.additionalProperties === 'object') {
+    adapted.additionalProperties = adaptSchemaForGemini(adapted.additionalProperties);
   }
 
   return adapted;

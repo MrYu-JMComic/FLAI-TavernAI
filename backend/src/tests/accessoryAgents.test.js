@@ -59,6 +59,7 @@ test('accessory skill payloads build active flags with direct own-key loops', ()
     'economyAgent',
     'talentPrompt',
     'cgScene',
+    'memoryAgent',
     'sceneAgent'
   ]);
   assert.equal(payload.active.worldDirector, false);

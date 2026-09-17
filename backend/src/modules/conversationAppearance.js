@@ -20,10 +20,12 @@ export function normalizeConversationAppearance(input = {}) {
   const customJsRiskAccepted = normalizeBoolean(input.customJsRiskAccepted ?? input.custom_js_risk_accepted, false);
   const statusBarPrompt = normalizeMultilineText(input.statusBarPrompt ?? input.status_bar_prompt ?? '');
   const showWorldBookMatches = normalizeBoolean(input.showWorldBookMatches ?? input.show_world_book_matches, true);
+  const highlightDialogue = normalizeBoolean(input.highlightDialogue ?? input.highlight_dialogue, true);
   const castTrackingSource = input.castTracking ?? input.cast_tracking ?? {};
-  const castTracking = {
-    enabled: normalizeBoolean(castTrackingSource?.enabled, false)
-  };
+  const normalizedCastTracking = normalizeAdvancedSettings({ castTracking: castTrackingSource }).castTracking;
+  const castTracking = hasConfiguredCastTracking(normalizedCastTracking)
+    ? normalizedCastTracking
+    : { enabled: normalizedCastTracking.enabled };
 
   return {
     desktopBackgroundUrl,
@@ -36,6 +38,7 @@ export function normalizeConversationAppearance(input = {}) {
     customJsRiskAccepted,
     statusBarPrompt,
     showWorldBookMatches,
+    highlightDialogue,
     castTracking
   };
 }
@@ -67,7 +70,24 @@ export function saveConversationAppearance(database, userId, conversationId, pay
     return null;
   }
 
-  const appearance = normalizeConversationAppearance(payload);
+  const existingAdvancedSettings = parseJson(current.user_advanced_settings, {});
+  const appearance = normalizeConversationAppearance({
+    ...payload,
+    // Older clients omit this display preference when saving other settings.
+    highlightDialogue: payload?.highlightDialogue ?? payload?.highlight_dialogue
+      ?? existingAdvancedSettings?.highlightDialogue ?? existingAdvancedSettings?.highlight_dialogue
+  });
+  const existingCastTracking = normalizeAdvancedSettings(existingAdvancedSettings).castTracking;
+  const requestedCastTracking = payload?.castTracking ?? payload?.cast_tracking;
+  const mergedCastTracking = requestedCastTracking && typeof requestedCastTracking === 'object'
+    ? { ...existingCastTracking, ...requestedCastTracking }
+    : existingCastTracking;
+  const normalizedCastTracking = normalizeAdvancedSettings({ castTracking: mergedCastTracking }).castTracking;
+  // Keep the legacy one-field response for old/simple callers, while preserving
+  // the complete NPC Agent configuration whenever either side uses it.
+  appearance.castTracking = hasConfiguredCastTracking(normalizedCastTracking)
+    ? normalizedCastTracking
+    : { enabled: normalizedCastTracking.enabled };
   appearance.desktopBackgroundUrl = saveBackgroundImageInput(database, {
     userId,
     ownerType: conversationBackgroundOwnerTypes.desktop,
@@ -81,7 +101,6 @@ export function saveConversationAppearance(database, userId, conversationId, pay
     value: appearance.mobileBackgroundUrl
   });
 
-  const existingAdvancedSettings = parseJson(current.user_advanced_settings, {});
   database.prepare(
     `UPDATE conversations
      SET desktop_background_url = ?,
@@ -128,7 +147,16 @@ function normalizeMultilineText(value) {
   return text.trim() ? text : '';
 }
 
-
+function hasConfiguredCastTracking(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  return Boolean(
+    String(value.providerProfileId || '').trim()
+    || String(value.modelOverride || '').trim()
+    || String(value.thinkingLevel || '').trim()
+    || Object.keys(value.autoSyncOperations || {}).length
+    || Object.keys(value.organizeOperations || {}).length
+  );
+}
 
 function toLegacyAppearance(appearance) {
   return {
@@ -141,6 +169,7 @@ function toLegacyAppearance(appearance) {
     customJsEnabled: appearance.customJsEnabled,
     customJsRiskAccepted: appearance.customJsRiskAccepted,
     showWorldBookMatches: appearance.showWorldBookMatches,
+    highlightDialogue: appearance.highlightDialogue,
     castTracking: appearance.castTracking
   };
 }

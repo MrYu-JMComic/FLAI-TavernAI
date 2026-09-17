@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { z } from 'zod';
 import {
   buildAdminOverview,
+  deleteAdminUser,
   getAdminUserUsage,
   listAdminJobs,
   listAdminProviderSettings,
@@ -10,15 +11,17 @@ import {
   revokeAdminSession
 } from '../services/adminOperations.js';
 import { listAutomationAudit } from '../services/automationAudit.js';
+import { PROMETHEUS_CONTENT_TYPE, buildPrometheusMetrics } from '../services/metricsExposition.js';
 import { performanceMetricsSnapshot } from '../services/performanceMetrics.js';
 import { providerResilienceSnapshot } from '../services/providerResilience.js';
 import { listProviderRouteEvents } from '../services/providerTaskRouter.js';
-import { updateUserQuota } from '../services/quotas.js';
+import { resetDailyRequestUsage, updateUserQuota } from '../services/quotas.js';
 import { validate } from '../validations/schemas.js';
 
 const pageQuery = z.object({
   limit: z.coerce.number().int().min(1).max(200).optional().default(50),
-  cursor: z.string().max(1000).optional().default('')
+  cursor: z.string().max(1000).optional().default(''),
+  search: z.string().max(200).trim().optional().default('')
 });
 const idParams = z.object({ id: z.string().min(1).max(200) });
 const jobsQuery = pageQuery.extend({
@@ -39,7 +42,7 @@ const quotaBody = z.object({
   maxConcurrentAiJobs: z.number().int().min(1).max(32).optional(),
   maxUploadBytes: z.number().int().min(1024).max(10 * 1024 ** 3).optional(),
   maxStructuredStorageBytes: z.number().int().min(1024).max(10 * 1024 ** 3).optional(),
-  maxDailyRequests: z.number().int().min(1).max(10_000_000).optional(),
+  maxDailyRequests: z.number().int().min(0).max(10_000_000).nullable().optional(),
   maxDailyCostMicros: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER).optional()
 }).strict();
 const backupParams = z.object({ filename: z.string().min(1).max(255) });
@@ -67,6 +70,17 @@ export function createAdminRouter(ctx) {
       return response.json(updateUserQuota(ctx.db, request.params.id, request.body));
     }
   );
+  router.delete('/users/:id', validate(idParams, 'params'), (request, response) => {
+    const result = deleteAdminUser(ctx.db, request.params.id, request.auth?.user?.id);
+    if (!result) return response.status(404).json({ error: 'User not found.' });
+    return response.json(result);
+  });
+  router.post('/users/:id/usage/requests/reset', validate(idParams, 'params'), (request, response) => {
+    if (!getAdminUserUsage(ctx.db, request.params.id)) {
+      return response.status(404).json({ error: 'User not found.' });
+    }
+    return response.json(resetDailyRequestUsage(ctx.db, request.params.id));
+  });
   router.get('/sessions', validate(pageQuery, 'query'), (request, response) => {
     response.json(listAdminSessions(ctx.db, {
       limit: request.validatedQuery.limit,
@@ -94,6 +108,9 @@ export function createAdminRouter(ctx) {
   });
   router.get('/diagnostics/performance', (_request, response) => {
     response.json({ operations: performanceMetricsSnapshot() });
+  });
+  router.get('/metrics', (_request, response) => {
+    response.type(PROMETHEUS_CONTENT_TYPE).send(buildPrometheusMetrics({ db: ctx.db, databasePath: ctx.databasePath }));
   });
   router.get('/backups/:filename/preflight', validate(backupParams, 'params'), (request, response) => {
     if (!ctx.backupService?.preflight) {

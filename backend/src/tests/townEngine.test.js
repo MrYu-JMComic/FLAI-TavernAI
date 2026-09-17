@@ -29,6 +29,7 @@ function setupEngineTown() {
     simulationStatus: 'running',
     currentDay: 1,
     minuteOfDay: 480,
+    mapConfig: { locations: [{ id: 'commons', name: 'Community', kind: 'cafe', x: 400, y: 300, services: ['sleep', 'eat', 'wash', 'social', 'relax'], opensAt: 0, closesAt: 1440 }] },
     settings: { tickMinutes: 15, realSecondsPerTick: 2 }
   });
   const residents = [
@@ -45,6 +46,9 @@ function setupEngineTown() {
       profile: { goal: '寻找落脚处', activities: ['记录见闻', '向人问路'], dialogue: ['这里和我的家乡完全不同。'] }
     })
   ];
+  for (const resident of residents) {
+    database.prepare('UPDATE town_residents SET current_location = ?, state_json = ? WHERE id = ?').run('Community', JSON.stringify({ mapX: 400, mapY: 300, life: { needs: { social: 15 } } }), resident.id);
+  }
   return { database, userId, town, residents };
 }
 
@@ -76,8 +80,7 @@ test('town engine advances shared state and turns a god event into resident reac
 
   runTownSimulationStep(database, userId, town.id);
   runTownSimulationStep(database, userId, town.id);
-  const fourth = runTownSimulationStep(database, userId, town.id);
-  assert.equal(fourth.generated.kind, 'social');
+  for (let step = 0; step < 12; step += 1) runTownSimulationStep(database, userId, town.id);
   const types = new Set(listTownEvents(database, userId, town.id, { limit: 30 }).map((event) => event.eventType));
   assert.ok(types.has('resident.intervention.reaction'));
   assert.ok(types.has('resident.social'));

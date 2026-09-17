@@ -81,7 +81,7 @@ export function updateProviderProfile(database, userId, providerId, values, opti
     const timestamp = options.timestamp || nowIso();
     database.prepare(
       `UPDATE provider_presets SET
-        name = ?, provider_type = ?, gateway_name = ?, base_url = ?, model = ?,
+        name = ?, provider_type = ?, gateway_name = ?, base_url = ?, model = ?, image_model = ?,
         encrypted_api_key = ?, api_key_hint = ?, supports_reasoning = ?,
         allow_private_network = ?, extra_body = ?, updated_at = ?
        WHERE id = ? AND user_id = ?`
@@ -91,6 +91,7 @@ export function updateProviderProfile(database, userId, providerId, values, opti
       values.gatewayName,
       values.baseUrl,
       values.model,
+      values.imageModel ?? existing.image_model ?? '',
       values.encryptedApiKey,
       values.apiKeyHint,
       values.supportsReasoning ? 1 : 0,
@@ -147,10 +148,10 @@ function insertProviderProfileRow(database, userId, values = {}, timestampValue)
   const gatewayName = String(values.gatewayName || values.gateway_name || 'AI 供应商').trim() || 'AI 供应商';
   database.prepare(
     `INSERT INTO provider_presets (
-      id, user_id, name, provider_type, gateway_name, base_url, model,
+      id, user_id, name, provider_type, gateway_name, base_url, model, image_model,
       encrypted_api_key, api_key_hint, supports_reasoning, allow_private_network,
       extra_body, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).run(
     id,
     userId,
@@ -159,6 +160,7 @@ function insertProviderProfileRow(database, userId, values = {}, timestampValue)
     gatewayName,
     values.baseUrl ?? values.base_url ?? '',
     values.model || '',
+    values.imageModel ?? values.image_model ?? '',
     values.encryptedApiKey ?? values.encrypted_api_key ?? null,
     values.apiKeyHint ?? values.api_key_hint ?? null,
     normalizeStoredBoolean(values.supportsReasoning ?? values.supports_reasoning),
@@ -185,14 +187,15 @@ function selectProviderProfileRow(database, userId, profile, timestampValue) {
 function syncLegacyProviderSettings(database, profile) {
   database.prepare(
     `INSERT INTO provider_settings (
-      user_id, provider_type, gateway_name, base_url, model, encrypted_api_key,
+      user_id, provider_type, gateway_name, base_url, model, image_model, encrypted_api_key,
       api_key_hint, supports_reasoning, allow_private_network, extra_body, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(user_id) DO UPDATE SET
       provider_type = excluded.provider_type,
       gateway_name = excluded.gateway_name,
       base_url = excluded.base_url,
       model = excluded.model,
+      image_model = excluded.image_model,
       encrypted_api_key = excluded.encrypted_api_key,
       api_key_hint = excluded.api_key_hint,
       supports_reasoning = excluded.supports_reasoning,
@@ -205,6 +208,7 @@ function syncLegacyProviderSettings(database, profile) {
     profile.gateway_name,
     profile.base_url,
     profile.model,
+    profile.image_model || '',
     profile.encrypted_api_key,
     profile.api_key_hint,
     profile.supports_reasoning,
@@ -236,6 +240,7 @@ function valuesFromRow(row) {
     gatewayName: row.gateway_name,
     baseUrl: row.base_url,
     model: row.model,
+    imageModel: row.image_model || '',
     encryptedApiKey: row.encrypted_api_key,
     apiKeyHint: row.api_key_hint,
     supportsReasoning: row.supports_reasoning,

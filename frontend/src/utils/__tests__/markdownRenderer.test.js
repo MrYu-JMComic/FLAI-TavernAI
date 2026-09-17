@@ -63,6 +63,13 @@ describe('markdown renderer', () => {
     expect(escaped).not.toContain('katex-error');
   });
 
+  it('recovers array color boxes whose content closes before the final row', () => {
+    const rendered = md.render(String.raw`\(\fcolorbox{red}{yellow}{\begin{array}{l}x} \\ y \end{array}}\)`);
+
+    expect(rendered).toContain('fcolorbox');
+    expect(rendered).not.toContain('katex-error');
+  });
+
   it('leaves unterminated inline math as plain text while streaming', () => {
     const rendered = md.render(String.raw`start \(x + y`);
 

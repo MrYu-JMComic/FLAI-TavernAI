@@ -22,6 +22,11 @@ export const routeDefinitions = [
     component: () => import('./views/SettingsView.vue')
   },
   {
+    path: '/admin',
+    name: 'admin',
+    component: () => import('./views/AdminView.vue')
+  },
+  {
     path: '/extensions',
     name: 'extensions',
     component: () => import('./views/SettingsView.vue')

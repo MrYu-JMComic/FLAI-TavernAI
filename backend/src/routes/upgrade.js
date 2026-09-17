@@ -2,17 +2,26 @@ import { Router } from 'express';
 import { appConfig, withAppConfigDefaults } from '../config.js';
 import { createAsset, deleteAsset, getAssetForViewer, listAssets } from '../modules/assets.js';
 import {
+  batchReviewConversationMemories,
   confirmConversationMemory,
   createConversationMemory,
   deleteConversationMemory,
   disableConversationMemory,
+  listConversationMemoryConflictCandidates,
   listConversationMemories,
+  mergeConversationMemories,
+  pinConversationMemory,
   rollbackConversationMemory,
+  undoConversationMemoryMerge,
   updateConversationMemory
 } from '../modules/conversationMemories.js';
 import { getConversationBranchTree } from '../modules/branches.js';
 import { getWorldBook } from '../modules/worldBooks.js';
 import { buildConversationContextPreview } from '../services/contextPreview.js';
+import { getDefaultPreset } from '../modules/presets.js';
+import { getChatProviderSettingsFromContext } from './helpers.js';
+import { readConversationContextBudget, updateConversationContextBudget, describeConversationContextBudget } from '../services/conversationContextBudget.js';
+import { listPromptTraces, getPromptTrace } from '../services/promptTrace.js';
 import { buildDiagnosticsExport } from '../services/diagnosticsExport.js';
 import { buildExportEnvelope, importExportEnvelope } from '../services/exportEnvelopes.js';
 import { buildProjectSnapshot } from '../services/projectSnapshot.js';
@@ -93,12 +102,45 @@ export function createUpgradeRouter(ctx) {
   });
 
   router.post('/conversations/:id/context/preview', requireAuth, (request, response) => {
-    const preview = buildConversationContextPreview(db, request.auth.user, request.params.id, request.body || {});
+    const settings = getChatProviderSettingsFromContext(ctx, request.auth.user.id);
+    const preview = buildConversationContextPreview(db, request.auth.user, request.params.id, request.body || {}, settings.value);
     if (!preview) {
       response.status(404).json({ error: '对话不存在' });
       return;
     }
     response.json(preview);
+  });
+
+  router.get('/conversations/:id/context/budget', requireAuth, (request, response) => {
+    const budget = readConversationContextBudget(db, request.auth.user.id, request.params.id);
+    if (!budget) return response.status(404).json({ error: 'Conversation not found' });
+    const settings = getChatProviderSettingsFromContext(ctx, request.auth.user.id);
+    response.json(describeConversationContextBudget(budget, settings.value, getDefaultPreset(db, request.auth.user.id)));
+  });
+
+  router.put('/conversations/:id/context/budget', requireAuth, (request, response) => {
+    try {
+      const settings = getChatProviderSettingsFromContext(ctx, request.auth.user.id);
+      const budget = updateConversationContextBudget(db, request.auth.user.id, request.params.id, request.body, settings.value);
+      if (!budget) return response.status(404).json({ error: 'Conversation not found' });
+      response.json(describeConversationContextBudget(budget, settings.value, getDefaultPreset(db, request.auth.user.id)));
+    } catch (error) {
+      sendRouteError(response, error, { status: error.status || 400, isProduction: config.isProduction, fallback: 'Context budget could not be saved' });
+    }
+  });
+
+  router.get('/conversations/:id/context/traces', requireAuth, (request, response) => {
+    const traces = listPromptTraces(db, request.auth.user.id, request.params.id);
+    if (!traces) return response.status(404).json({ error: 'Conversation not found' });
+    response.setHeader('Cache-Control', 'no-store');
+    response.json({ traces });
+  });
+
+  router.get('/conversations/:id/context/traces/:traceId', requireAuth, (request, response) => {
+    const trace = getPromptTrace(db, request.auth.user.id, request.params.id, request.params.traceId);
+    if (!trace) return response.status(404).json({ error: 'Request trace not found' });
+    response.setHeader('Cache-Control', 'no-store');
+    response.json(trace);
   });
 
   router.get('/conversations/:id/memories', requireAuth, (request, response) => {
@@ -123,6 +165,34 @@ export function createUpgradeRouter(ctx) {
     } catch (error) {
       sendRouteError(response, error, { status: 400, isProduction: config.isProduction, fallback: '记忆保存失败' });
     }
+  });
+
+  router.get('/conversations/:id/memories/conflicts', requireAuth, (request, response) => {
+    const candidates = listConversationMemoryConflictCandidates(db, request.auth.user.id, request.params.id);
+    if (!candidates) {
+      response.status(404).json({ error: '对话不存在' });
+      return;
+    }
+    response.json({ candidates });
+  });
+
+  router.post('/conversations/:id/memories/batch', requireAuth, (request, response) => {
+    handleMemoryMutation(response, config, () => {
+      const memories = batchReviewConversationMemories(db, request.auth.user.id, request.params.id, request.body || {});
+      return memories ? { memories } : null;
+    });
+  });
+
+  router.post('/conversations/:id/memories/merge', requireAuth, (request, response) => {
+    handleMemoryMutation(response, config, () => mergeConversationMemories(
+      db, request.auth.user.id, request.params.id, request.body || {}
+    ));
+  });
+
+  router.post('/conversations/:id/memories/merges/:operationId/undo', requireAuth, (request, response) => {
+    handleMemoryMutation(response, config, () => undoConversationMemoryMerge(
+      db, request.auth.user.id, request.params.id, request.params.operationId
+    ));
   });
 
   router.put('/conversations/:id/memories/:memoryId', requireAuth, (request, response) => {
@@ -151,6 +221,12 @@ export function createUpgradeRouter(ctx) {
       return;
     }
     response.json(memory);
+  });
+
+  router.post('/conversations/:id/memories/:memoryId/pin', requireAuth, (request, response) => {
+    handleMemoryMutation(response, config, () => pinConversationMemory(
+      db, request.auth.user.id, request.params.id, request.params.memoryId, request.body || {}
+    ));
   });
 
   router.post('/conversations/:id/memories/:memoryId/disable', requireAuth, (request, response) => {
@@ -228,6 +304,23 @@ export function createUpgradeRouter(ctx) {
   });
 
   return router;
+}
+
+function handleMemoryMutation(response, config, operation) {
+  try {
+    const result = operation();
+    if (!result) {
+      response.status(404).json({ error: '对话或记忆不存在' });
+      return;
+    }
+    response.json(result);
+  } catch (error) {
+    sendRouteError(response, error, {
+      status: Number(error?.status) || 400,
+      isProduction: config.isProduction,
+      fallback: '记忆审阅操作失败'
+    });
+  }
 }
 
 function buildProviderHealthSettings(ctx, userId, payload = {}, user = {}) {

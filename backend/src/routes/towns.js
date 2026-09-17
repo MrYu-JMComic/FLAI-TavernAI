@@ -25,7 +25,8 @@ import {
   getTownResidentCognition
 } from '../modules/townCognitionEngine.js';
 import { runTownSimulationStep } from '../modules/townEngine.js';
-import { generateTownFromBlueprint } from '../modules/townWorldGenerator.js';
+import { withSavepoint } from '../modules/savepoint.js';
+import { generateTownFromBlueprint, rebuildTownMap } from '../modules/townWorldGenerator.js';
 import { generateTownResidentCognitionPlan } from '../services/townCognitionAssistant.js';
 import { generateTownTurnPlan } from '../services/townTurnAssistant.js';
 import { generateTownWorldBlueprint } from '../services/townWorldAssistant.js';
@@ -38,6 +39,7 @@ import {
   createTownResidentSchema,
   createTownSchema,
   generateTownSchema,
+  rebuildTownMapSchema,
   saveTownScheduleSchema,
   updateTownClockSchema,
   validate
@@ -152,6 +154,29 @@ export function createTownsRouter(ctx) {
     response.json(result);
   });
 
+  router.post('/:townId/map/rebuild', requireAuth, validate(rebuildTownMapSchema), (request, response) => {
+    const town = getTown(db, request.auth.user.id, request.params.townId);
+    if (!town) return notFound(response, '小镇不存在');
+    if (town.simulationStatus !== 'paused') return response.status(409).json({ error: '请先暂停世界再重建地图。' });
+    const snapshot = rebuildTownMap(db, request.auth.user.id, request.params.townId, request.body.architecture);
+    if (!snapshot) return notFound(response, '小镇不存在');
+    response.json(snapshot);
+  });
+
+  router.post('/:townId/step', requireAuth, validate(advanceTownSchema), (request, response) => {
+    const town = getTown(db, request.auth.user.id, request.params.townId);
+    if (!town) return notFound(response, '小镇不存在');
+    if (town.simulationStatus !== 'paused') return response.status(409).json({ error: '请先暂停世界再单步推进。' });
+    const result = withSavepoint(db, 'sp_town_manual_steps', () => {
+      let latest;
+      for (let index = 0; index < request.body.steps; index += 1) {
+        latest = runTownSimulationStep(db, request.auth.user.id, town.id, { force: true });
+      }
+      return latest;
+    });
+    response.json({ ...result, steps: request.body.steps });
+  });
+
   router.post('/:townId/advance-ai', requireAuth, asyncHandler(async (request, response) => {
     const context = buildTownTurnContext(db, request.auth.user.id, request.params.townId);
     if (!context) return notFound(response, '小镇不存在');
@@ -178,7 +203,8 @@ export function createTownsRouter(ctx) {
         userId: request.auth.user.id
       });
       const result = applyTownTurnPlan(db, request.auth.user.id, request.params.townId, generated.plan, {
-        expectedTick: context.version.tick
+        expectedTick: context.version.tick,
+        expectedVersion: context.version
       });
       response.json({
         ...result,

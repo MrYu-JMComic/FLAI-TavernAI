@@ -8,6 +8,7 @@ import {
 import { createStreamEmitQueue } from './providerStreamEmit.js';
 import { streamCompletion } from './providers.js';
 import { routeErrorPayload } from '../routes/errorResponse.js';
+import { finishPromptTrace } from './promptTrace.js';
 
 export const CHAT_STREAM_HEARTBEAT_MS = 15_000;
 
@@ -30,8 +31,7 @@ export async function streamAssistantResponse({
   writeSse,
   getStatusBar,
   saveAssistantResult,
-  saveInterruptedAssistantResult,
-  startAccessoryAgentsInBackground
+  saveInterruptedAssistantResult
 }) {
   request.socket?.setTimeout?.(0);
   response.socket?.setTimeout?.(0);
@@ -46,6 +46,7 @@ export async function streamAssistantResponse({
   response.flushHeaders?.();
 
   const controller = new AbortController();
+  const signal = completionOptions.signal ? AbortSignal.any([controller.signal, completionOptions.signal]) : controller.signal;
   request.on('aborted', () => controller.abort());
   response.on('close', () => {
     if (!response.writableEnded) {
@@ -82,13 +83,14 @@ export async function streamAssistantResponse({
   }, CHAT_STREAM_HEARTBEAT_MS);
 
   try {
-    const result = await streamCompletion(settings, modelMessages, emit, controller.signal, {
+    const result = await streamCompletion(settings, modelMessages, emit, signal, {
       thinkingEnabled,
       ...completionOptions,
       database,
       userId
     });
     if (!hasAssistantPayload(result)) {
+      finishPromptTrace(completionOptions.requestTrace, { status: 'empty', usage: result.usage, errorCode: 'PROVIDER_EMPTY' });
       const diagnosticId = createChatDiagnosticId();
       logAssistantPayloadFailure({
         diagnosticId,
@@ -121,6 +123,7 @@ export async function streamAssistantResponse({
       }
     });
     if (!assistantMessage) {
+      finishPromptTrace(completionOptions.requestTrace, { status: 'empty', usage: result.usage, errorCode: 'POSTPROCESS_EMPTY' });
       const diagnosticId = createChatDiagnosticId();
       logAssistantPayloadFailure({
         diagnosticId,
@@ -152,17 +155,9 @@ export async function streamAssistantResponse({
     });
     await streamWrites.wait();
     response.end();
-    startAccessoryAgentsInBackground({
-      userId,
-      conversation,
-      character,
-      userMessage,
-      assistantMessage,
-      settings,
-      statusBar: latestStatusBar || statusBar
-    });
   } catch (error) {
-    const serverAborted = isAbortError(error) || controller.signal.aborted || response.destroyed;
+    const stale = (error?.code || signal.reason?.code) === 'CONVERSATION_TIMELINE_CHANGED';
+    const serverAborted = isAbortError(error) || signal.aborted || response.destroyed;
     if (serverAborted) {
       const interruptedMessage = saveInterruptedAssistantResult({
         userId,
@@ -175,7 +170,12 @@ export async function streamAssistantResponse({
           charName: character.name || ''
         }
       });
-      // Client disconnect closes/destroys the response — nothing to emit.
+      finishPromptTrace(completionOptions.requestTrace, {
+        status: stale ? 'stale' : interruptedMessage ? 'partial' : 'cancelled',
+        assistantMessageId: interruptedMessage?.id, usage: interruptedMessage?.usage,
+        errorCode: stale ? 'CONVERSATION_TIMELINE_CHANGED' : 'GENERATION_INTERRUPTED'
+      });
+      // Client disconnect closes/destroys the response: nothing to emit.
       // Server-initiated abort (timeout) leaves the socket writable: tell the client why.
       if (!response.destroyed && !response.writableEnded) {
         const reason = controller.signal.reason;
@@ -200,6 +200,10 @@ export async function streamAssistantResponse({
         userName: request.auth?.user?.displayName || request.auth?.user?.username || '用户',
         charName: character.name || ''
       }
+    });
+    finishPromptTrace(completionOptions.requestTrace, {
+      status: stale ? 'stale' : interruptedMessage ? 'partial' : 'failed',
+      assistantMessageId: interruptedMessage?.id, usage: interruptedMessage?.usage, errorCode: error?.code || ''
     });
     if (!response.destroyed && !response.writableEnded) {
       const publicError = routeErrorPayload(error, {

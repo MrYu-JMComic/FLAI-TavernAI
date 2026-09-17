@@ -28,10 +28,37 @@ const ACCESSORY_SKILL_DEFAULTS = [
   { key: 'encounterMode', enabled: false, modelOverride: '' },
   { key: 'rewardMode', enabled: false, modelOverride: '' },
   { key: 'statusBarAgent', enabled: 'auto', modelOverride: '' },
+  // The memory agent can follow the main provider or name a saved profile, and exposes a tool library.
+  { key: 'memoryAgent', enabled: 'auto', modelOverride: '', providerProfileId: '', tools: {} },
   { key: 'economyAgent', enabled: false, modelOverride: '' },
   { key: 'talentPrompt', enabled: false, modelOverride: '' },
   { key: 'cgScene', enabled: false, modelOverride: '' }
 ];
+
+function extraSkillFields(defaultSkill, source = {}) {
+  const extras = {};
+  if (Object.prototype.hasOwnProperty.call(defaultSkill, 'providerProfileId')) {
+    extras.providerProfileId = String(source.providerProfileId || source.provider_profile_id || '').trim();
+  }
+  if (Object.prototype.hasOwnProperty.call(defaultSkill, 'tools')) {
+    const tools = {};
+    const raw = source.tools && typeof source.tools === 'object' ? source.tools : {};
+    for (const name of Object.keys(raw)) tools[name] = raw[name] === true;
+    extras.tools = tools;
+  }
+  return extras;
+}
+
+function sameSkillTools(current, next) {
+  const left = current && typeof current === 'object' ? current : {};
+  const right = next && typeof next === 'object' ? next : {};
+  const leftKeys = Object.keys(left);
+  if (leftKeys.length !== Object.keys(right).length) return false;
+  for (const key of leftKeys) {
+    if (left[key] !== right[key]) return false;
+  }
+  return true;
+}
 
 function parseCharacter(raw) {
   if (!raw || typeof raw !== 'object') return null;
@@ -304,6 +331,8 @@ export function useChatAccessory({ conversation, setActiveConversationIfChanged,
   const accessorySettingsOpen = ref(false);
   const accessorySaving = ref(false);
   const accessorySkillResults = ref([]);
+  const memoryAgentTools = ref([]);
+  const castAgentOperations = ref([]);
   const economyAccounts = ref([]);
   let statusBarLoadToken = 0;
   let statusBarMutationToken = 0;
@@ -340,6 +369,7 @@ export function useChatAccessory({ conversation, setActiveConversationIfChanged,
     { key: 'encounterMode', label: '遭遇与回合行动', auto: false },
     { key: 'rewardMode', label: '战利品与奖励结算', auto: false },
     { key: 'statusBarAgent', label: '状态栏 Agent', auto: true },
+    { key: 'memoryAgent', label: '记忆 Agent', auto: true, configurable: true },
     { key: 'economyAgent', label: '经济识别', auto: false },
     { key: 'talentPrompt', label: '天赋提示', auto: false },
     { key: 'cgScene', label: 'CG 场景', auto: false }
@@ -523,12 +553,24 @@ export function useChatAccessory({ conversation, setActiveConversationIfChanged,
         return;
       }
       syncAccessorySkills(payload.skills);
+      syncMemoryAgentTools(payload.memoryAgentTools);
+      syncCastAgentOperations(payload.castAgentOperations);
     } catch {
       if (!isCurrentAccessorySkillsLoad(requestToken, conversationId)) {
         return;
       }
       syncAccessorySkills(conversation.value?.settings?.accessorySkills);
     }
+  }
+
+  function syncMemoryAgentTools(next) {
+    if (!Array.isArray(next)) return;
+    memoryAgentTools.value = next;
+  }
+
+  function syncCastAgentOperations(next) {
+    if (!Array.isArray(next)) return;
+    castAgentOperations.value = next;
   }
 
   function isCurrentStatusBarLoad(requestToken, conversationId) {
@@ -549,7 +591,8 @@ export function useChatAccessory({ conversation, setActiveConversationIfChanged,
       const defaultSkill = ACCESSORY_SKILL_DEFAULTS[index];
       skills[defaultSkill.key] = {
         enabled: defaultSkill.enabled,
-        modelOverride: defaultSkill.modelOverride
+        modelOverride: defaultSkill.modelOverride,
+        ...extraSkillFields(defaultSkill, defaultSkill)
       };
     }
     return skills;
@@ -562,7 +605,8 @@ export function useChatAccessory({ conversation, setActiveConversationIfChanged,
       const source = next?.[key] || {};
       const normalizedSkill = {
         enabled: normalizeSkillEnabled(source.enabled, defaultSkill.enabled),
-        modelOverride: String(source.modelOverride || source.model_override || '').trim()
+        modelOverride: String(source.modelOverride || source.model_override || '').trim(),
+        ...extraSkillFields(defaultSkill, source)
       };
       if (!sameAccessorySkillConfig(accessorySkills[key], normalizedSkill)) {
         accessorySkills[key] = normalizedSkill;
@@ -572,7 +616,19 @@ export function useChatAccessory({ conversation, setActiveConversationIfChanged,
 
   function sameAccessorySkillConfig(current = {}, next = {}) {
     return current?.enabled === next?.enabled
-      && current?.modelOverride === next?.modelOverride;
+      && current?.modelOverride === next?.modelOverride
+      && (current?.providerProfileId || '') === (next?.providerProfileId || '')
+      && sameSkillTools(current?.tools, next?.tools);
+  }
+
+  function updateAccessorySkill(key, patch = {}) {
+    const current = accessorySkills[key];
+    if (!current) return null;
+    const next = { ...current, ...patch };
+    if (!sameAccessorySkillConfig(current, next)) {
+      accessorySkills[key] = next;
+    }
+    return accessorySkills[key];
   }
 
   function normalizeSkillEnabled(value, fallback = false) {
@@ -600,6 +656,8 @@ export function useChatAccessory({ conversation, setActiveConversationIfChanged,
         return;
       }
       syncAccessorySkills(payload.skills);
+      syncMemoryAgentTools(payload.memoryAgentTools);
+      syncCastAgentOperations(payload.castAgentOperations);
       updateActiveConversationIfChanged({
         ...conversation.value,
         settings: {
@@ -1076,6 +1134,9 @@ export function useChatAccessory({ conversation, setActiveConversationIfChanged,
     accessorySettingsOpen,
     accessorySaving,
     accessorySkills,
+    memoryAgentTools,
+    castAgentOperations,
+    updateAccessorySkill,
     accessorySkillResults,
     economyAccounts,
     accessorySkillItems,

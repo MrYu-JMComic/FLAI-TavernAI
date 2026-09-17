@@ -9,6 +9,7 @@ import { logger } from './logger.js';
 
 const defaultDatabasePath = appConfig.databasePath || path.join(dataDir, 'flai.sqlite');
 const MAX_BACKUPS = 7;
+const DAY_MS = 24 * 60 * 60 * 1000;
 let backupInProgress = false;
 
 export function resolveBackupStorage(value) {
@@ -121,7 +122,7 @@ function createBackupInternal(options = {}) {
     // Sidecar files from a previous backup are safe to remove only after the
     // new database file is in place.
     removeBackupSidecars(destPath);
-    pruneOldBackups(storage.backupDir);
+    pruneOldBackups(storage.backupDir, options.retention || appConfig.backupRetention);
     return options.withMetadata ? metadata : destPath;
   } catch (error) {
     try {
@@ -225,15 +226,23 @@ function syncDirectory(directoryPath) {
 }
 
 /**
- * Remove backups older than MAX_BACKUPS days, keeping only the most recent ones.
+ * Keep the newest `maxCount` backups and drop anything older than `maxAgeDays`.
+ * The newest backup is always kept so a stalled schedule never leaves the
+ * directory empty.
  */
-function pruneOldBackups(backupDir) {
+function pruneOldBackups(backupDir, retention = {}) {
   const files = readBackupFileNamesNewestFirst(backupDir);
+  const maxCount = readRetentionLimit(retention.maxCount, MAX_BACKUPS);
+  const maxAgeDays = readRetentionLimit(retention.maxAgeDays, Infinity);
+  const cutoff = Date.now() - maxAgeDays * DAY_MS;
 
-  // Keep only the most recent MAX_BACKUPS backups
-  for (const file of files.slice(MAX_BACKUPS)) {
+  for (const [index, file] of files.entries()) {
+    if (index === 0) continue;
+    const filePath = path.join(backupDir, file);
+    const expired = index >= maxCount || readModifiedTime(filePath) < cutoff;
+    if (!expired) continue;
     try {
-      fs.unlinkSync(path.join(backupDir, file));
+      fs.unlinkSync(filePath);
       // Also remove associated WAL/SHM files
       const walFile = path.join(backupDir, file + '-wal');
       const shmFile = path.join(backupDir, file + '-shm');
@@ -245,6 +254,19 @@ function pruneOldBackups(backupDir) {
       // Ignore deletion errors
       void cleanupError;
     }
+  }
+}
+
+function readRetentionLimit(value, fallback) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : fallback;
+}
+
+function readModifiedTime(filePath) {
+  try {
+    return fs.statSync(filePath).mtimeMs;
+  } catch {
+    return Number.POSITIVE_INFINITY;
   }
 }
 

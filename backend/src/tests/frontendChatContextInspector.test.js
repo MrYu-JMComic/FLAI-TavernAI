@@ -6,6 +6,18 @@ const { script: inspectorScript, template: inspectorTemplate } = readVueBlocks(
   'frontend/src/components/chat/ChatContextInspector.vue',
   ['script', 'template']
 );
+const { script: memoryReviewScript, template: memoryReviewTemplate } = readVueBlocks(
+  'frontend/src/components/chat/ConversationMemoryReview.vue',
+  ['script', 'template']
+);
+const { script: budgetScript, template: budgetTemplate } = readVueBlocks(
+  'frontend/src/components/chat/ChatContextBudget.vue',
+  ['script', 'template']
+);
+const { script: historyScript, template: historyTemplate } = readVueBlocks(
+  'frontend/src/components/chat/ChatPromptHistory.vue',
+  ['script', 'template']
+);
 const { script: chatHeaderScript, template: chatHeaderTemplate } = readVueBlocks(
   'frontend/src/components/chat/ChatHeader.vue',
   ['script', 'template']
@@ -15,23 +27,25 @@ const { script: chatViewScript, template: chatViewTemplate } = readVueBlocks(
   ['script', 'template']
 );
 
-test('ChatContextInspector uses the shared prompt preview and memory APIs', () => {
+test('ChatContextInspector uses shared preview data and delegates focused context tools', () => {
   assert.match(inspectorScript, /previewConversationContext/);
-  assert.match(inspectorScript, /fetchConversationMemories/);
   assert.match(inspectorScript, /fetchConversationBranchTree/);
-  assert.match(inspectorScript, /confirmConversationMemory/);
-  assert.match(inspectorScript, /disableConversationMemory/);
-  assert.match(inspectorScript, /rollbackConversationMemory/);
   assert.match(
     inspectorScript,
-    /const \[nextPreview, memoryResult, branchTreeResult\] = await Promise\.all\(\[[\s\S]*previewConversationContext\(conversationId, buildPreviewPayload\(\)\),[\s\S]*fetchConversationMemories\(conversationId\),[\s\S]*fetchConversationBranchTree\(conversationId\)/
+    /const \[nextPreview, branchTreeResult\] = await Promise\.all\(\[[\s\S]*previewConversationContext\(conversationId, buildPreviewPayload\(\)\),[\s\S]*fetchConversationBranchTree\(conversationId\)/
   );
   assert.match(inspectorScript, /content: props\.draftContent \|\| ''/);
   assert.match(inspectorScript, /attachments: normalizePreviewAttachments\(props\.draftAttachments\)/);
   assert.match(inspectorScript, /payload\.presetId = presetId;/);
+  assert.match(inspectorScript, /import ChatContextBudget from '\.\/ChatContextBudget\.vue'/);
+  assert.match(inspectorScript, /import ChatPromptHistory from '\.\/ChatPromptHistory\.vue'/);
+  assert.match(inspectorScript, /import ConversationMemoryReview from '\.\/ConversationMemoryReview\.vue'/);
+  assert.match(inspectorScript, /emit\('memory-updated', result\)/);
+  assert.match(inspectorScript, /await loadInspector\(\{ quiet: true \}\)/);
+  assert.doesNotMatch(inspectorScript, /fetchConversationMemories|confirmConversationMemory|disableConversationMemory|rollbackConversationMemory|memoryActionBusyId/);
 });
 
-test('ChatContextInspector exposes prompt diagnostics and long-term memory review', () => {
+test('ChatContextInspector exposes prompt diagnostics and compact context views', () => {
   assert.match(inspectorTemplate, /Prompt Pipeline V2/);
   assert.match(inspectorScript, /label: '估算 Token'/);
   assert.match(inspectorScript, /value: formatNumber\(budget\.estimatedTokens\)/);
@@ -65,14 +79,41 @@ test('ChatContextInspector exposes prompt diagnostics and long-term memory revie
   assert.match(inspectorTemplate, /v-for="group in worldBookDiagnosticGroups"/);
   assert.match(inspectorTemplate, /未命中诊断/);
   assert.match(inspectorTemplate, /v-for="item in worldBookDiagnosticMisses"/);
-  assert.match(inspectorTemplate, /长期记忆/);
-  assert.match(inspectorTemplate, /待确认 \{\{ memoryStats\.pending \}\}/);
-  assert.match(inspectorScript, /function memoryAuditLabel\(memory\)/);
-  assert.match(inspectorTemplate, /memoryAuditLabel\(memory\)/);
-  assert.match(inspectorTemplate, /@click="mutateMemory\(memory, 'confirm'\)"/);
-  assert.match(inspectorTemplate, /@click="mutateMemory\(memory, 'disable'\)"/);
-  assert.match(inspectorTemplate, /@click="mutateMemory\(memory, 'rollback'\)"/);
   assert.match(inspectorTemplate, /附加上下文/);
+  assert.match(inspectorTemplate, /role="tablist"/);
+  assert.match(inspectorTemplate, /<Teleport to="body">/);
+  for (const label of ['预览', '记忆', '实际请求', '预算']) assert.match(inspectorScript, new RegExp(`label: '${label}'`));
+  assert.match(inspectorTemplate, /aria-controls/);
+  assert.match(inspectorScript, /ArrowRight/);
+  assert.match(inspectorTemplate, /<ConversationMemoryReview[\s\S]*@changed="handleMemoryChanged"/);
+  assert.match(inspectorTemplate, /<ChatPromptHistory[\s\S]*activeView === 'history'/);
+  assert.match(inspectorTemplate, /<ChatContextBudget[\s\S]*@changed="loadInspector\(\{ quiet: true \}\)"/);
+});
+
+test('split context tools scope requests, protect stale state, and keep budget writes numeric-only', () => {
+  assert.match(memoryReviewScript, /import \{ apiRequest \} from '\.\.\/\.\.\/api\/core\.js'/);
+  assert.match(memoryReviewScript, /function isCurrentMutation\(conversationId, token\)/);
+  assert.match(memoryReviewTemplate, /<CastConfirmDialog/);
+
+  assert.match(budgetScript, /const BUDGET_CONFIG_FIELDS = \['inputTokenLimit', 'reservedOutputTokens', 'imageTokensPerImage', 'contextWindowTokens'\]/);
+  assert.match(budgetScript, /for \(const key of BUDGET_CONFIG_FIELDS\)/);
+  assert.match(budgetScript, /entries\.push\(\[key, null\]\)/);
+  assert.match(budgetScript, /Number\.isInteger\(numeric\)/);
+  assert.doesNotMatch(budgetScript, /forModel|forProviderType/);
+  assert.match(budgetScript, /function isCurrent\(conversationId, current\)/);
+  assert.match(budgetTemplate, /provider\?\.providerType/);
+  assert.match(budgetTemplate, /provider\?\.model/);
+  assert.match(budgetTemplate, /估算值 · 非精确计数/);
+
+  assert.match(historyScript, /function isCurrent\(conversationId, current\)/);
+  assert.match(historyScript, /tokenEstimate/);
+  assert.match(historyTemplate, /tokenCount\(request\)/);
+  assert.match(historyTemplate, /生成状态：\{\{ detail\.status \}\}/);
+  assert.match(historyTemplate, /HTTP \{\{ request\.httpStatus/);
+  assert.match(historyTemplate, /敏感字段已脱敏/);
+  assert.match(historyTemplate, /请求 JSON 已截断/);
+  assert.match(historyTemplate, /未记录线上传输/);
+  assert.doesNotMatch(historyTemplate, /v-html/);
 });
 
 test('ChatHeader and ChatView wire the context inspector into the chat workspace', () => {

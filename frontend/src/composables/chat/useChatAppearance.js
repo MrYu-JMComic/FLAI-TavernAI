@@ -109,6 +109,9 @@ export function useChatAppearance({
     if (directSettings && hasOwnAppearanceSetting(sourceSettings, 'showWorldBookMatches', 'show_world_book_matches')) {
       userSettings.showWorldBookMatches = directSettings.showWorldBookMatches;
     }
+    if (directSettings && hasOwnAppearanceSetting(sourceSettings, 'highlightDialogue', 'highlight_dialogue')) {
+      userSettings.highlightDialogue = directSettings.highlightDialogue;
+    }
     if (directSettings && hasOwnAppearanceSetting(sourceSettings, 'castTracking', 'cast_tracking')) {
       userSettings.castTracking = directSettings.castTracking;
     }
@@ -159,6 +162,7 @@ export function useChatAppearance({
         customJsRiskAccepted: chatAppearanceForm.customJsRiskAccepted,
         statusBarPrompt: chatAppearanceForm.statusBarPrompt,
         showWorldBookMatches: chatAppearanceForm.showWorldBookMatches,
+        highlightDialogue: chatAppearanceForm.highlightDialogue,
         castTracking: chatAppearanceForm.castTracking,
         chatLorebookId: chatLorebookId.value
       });
@@ -197,13 +201,20 @@ export function useChatAppearance({
   }
 
   async function setCastTrackingEnabled(enabled) {
-    const previous = Boolean(chatAppearanceForm.castTracking?.enabled);
-    chatAppearanceForm.castTracking = { enabled: Boolean(enabled) };
-    const saved = await saveConversationAppearanceChanges({
+    return updateCastTracking({ enabled: Boolean(enabled) }, {
       successMessage: enabled ? '人物自动同步已开启' : '人物自动同步已关闭'
     });
+  }
+
+  // Merge a partial NPC agent setting (switch, provider source, operation library) and persist it.
+  async function updateCastTracking(patch = {}, options = {}) {
+    const previous = { ...(chatAppearanceForm.castTracking || {}) };
+    chatAppearanceForm.castTracking = { ...previous, ...(patch && typeof patch === 'object' ? patch : {}) };
+    const saved = await saveConversationAppearanceChanges({
+      successMessage: options.successMessage || 'NPC 管理 Agent 设置已保存'
+    });
     if (!saved) {
-      chatAppearanceForm.castTracking = { enabled: previous };
+      chatAppearanceForm.castTracking = previous;
       return false;
     }
     return true;
@@ -590,6 +601,7 @@ export function useChatAppearance({
     setChatLorebookId,
     saveConversationAppearanceChanges,
     setCastTrackingEnabled,
+    updateCastTracking,
     applyConversationAppearance,
     cleanupConversationAppearance,
     disposeConversationAppearance,

@@ -118,6 +118,15 @@ export function buildOpenApiDocument(config = appConfig) {
       '/envelopes/{kind}/import': { post: operation('Dry-run or import a versioned data envelope', true, 'ImportReport') },
       '/admin/overview': { get: operation('Read root administrator overview', true, 'AdminOverview') },
       '/admin/users': { get: operation('List users and quota state', true, 'AdminUserList') },
+      '/admin/users/{id}/quota': {
+        put: operation('Update a user request quota', true, 'AdminUserQuota')
+      },
+      '/admin/users/{id}': {
+        delete: operation('Delete a user account', true, 'AdminUserDelete')
+      },
+      '/admin/users/{id}/usage/requests/reset': {
+        post: operation('Reset a user daily request count', true, 'DailyUsage')
+      },
       '/admin/sessions': { get: operation('List revocable sessions', true, 'AdminSessionList') },
       '/admin/jobs': { get: operation('List jobs across users', true, 'JobList') },
       '/admin/audit': { get: operation('List shared automation audit events', true, 'AutomationAuditList') },
@@ -209,6 +218,17 @@ export function buildOpenApiDocument(config = appConfig) {
         ImportReport: { type: 'object' },
         AdminOverview: { type: 'object' },
         AdminUserList: objectSchema({ users: { type: 'array', items: { type: 'object' } } }),
+        AdminUserQuota: { type: 'object' },
+        AdminUserDelete: objectSchema({ ok: { type: 'boolean' }, userId: { type: 'string' } }),
+        DailyUsage: objectSchema({
+          userId: { type: 'string' },
+          date: { type: 'string', format: 'date' },
+          requestCount: { type: 'integer' },
+          inputTokens: { type: 'integer' },
+          outputTokens: { type: 'integer' },
+          costMicros: { type: 'integer' },
+          updatedAt: { type: 'string' }
+        }),
         AdminSessionList: objectSchema({ sessions: { type: 'array', items: { type: 'object' } } }),
         AutomationAuditList: objectSchema({ events: { type: 'array', items: { type: 'object' } } }),
         AdminProviderState: { type: 'object' },

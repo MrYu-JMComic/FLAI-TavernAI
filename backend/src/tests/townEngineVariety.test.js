@@ -24,10 +24,14 @@ function setupTown(residentSpecs, settings = {}) {
     name: '多样性测试镇',
     simulationStatus: 'running',
     currentDay: 1,
-    minuteOfDay: 0,
+    minuteOfDay: 600,
+    mapConfig: { locations: [{ id: 'community', name: 'Community', kind: 'cafe', x: 400, y: 300, services: ['sleep', 'eat', 'wash', 'social', 'relax'], opensAt: 0, closesAt: 1440 }] },
     settings: { tickMinutes: 15, ...settings }
   });
-  const residents = residentSpecs.map((spec) => createTownResident(database, userId, town.id, spec));
+  const residents = residentSpecs.map((spec) => createTownResident(database, userId, town.id, {
+    ...spec, currentLocation: 'Community', state: { mapX: 400, mapY: 300, life: { needs: { social: 15 } } },
+    profile: { ...spec.profile, simulation: { workLocationId: '' } }
+  }));
   return { database, userId, town, residents };
 }
 

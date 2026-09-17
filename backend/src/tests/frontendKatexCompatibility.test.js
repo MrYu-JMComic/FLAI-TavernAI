@@ -57,6 +57,13 @@ test('KaTeX compatibility converts nested dollar math inside color boxes', () =>
   assert.equal(normalized.includes(String.raw`\rightarrow`), true);
 });
 
+test('KaTeX compatibility recovers array color boxes with a premature row closure', () => {
+  const source = String.raw`\fcolorbox{red}{yellow}{\begin{array}{l}x} \\ y \end{array}}`;
+  const expected = String.raw`\fcolorbox{red}{yellow}{\(\begin{array}{l}x \\ y \end{array}\)}`;
+
+  assert.equal(normalizeKatexSource(source), expected);
+});
+
 test('KaTeX compatibility locates balanced color-box expressions', () => {
   const source = String.raw`prefix \fcolorbox{red}{white}{\(x\)} suffix`;
   const expression = findColorBoxExpression(source, 7);

@@ -5,8 +5,18 @@
 
 ## [Unreleased]
 
+### Added
+
+- 对话：最后一条模型回复可“重新生成”，原回复保留为候选；候选翻页到末尾时同样触发真实重新生成（此前只是把当前内容复制为候选）。新增 `POST /api/conversations/:id/messages/:messageId/regenerate`（JSON 与 SSE）。
+- 对话：编辑用户消息后重跑改为一次 `POST /api/conversations/:id/messages/truncate` 删除整段尾部，只产生一份恢复点和一次同步任务取消。
+- 记忆 Agent：每轮回复后的长期记忆整理改为模型驱动（附属技能 `memoryAgent`，自动/开启/关闭），工具库包含检索记忆、检索历史、记录、修正、合并、失效、置顶与结束，可按会话勾选；供应商不可用或调用失败时回退规则提取。
+- 附属技能与 NPC 管理 Agent 支持“跟随主聊天设置”或指定已保存的供应商配置与模型（`providerProfileId` / `modelOverride`），聊天高阶设置与 NPC 管理面板均提供弹窗设置。
+- NPC 管理 Agent：自动同步与 AI 整理可执行的 `CastChangePlanV1` 操作可按会话开关，未勾选的操作在写入前被拒绝。
+- 正则规则新增 `display` 作用域（仅显示时替换）；此前后端的显示分支无法启用。
+
 ### Changed
 
+- 自动恢复点存档标记为 `kind = 'recovery'`（迁移 `0018`），存档面板默认折叠；每个会话最多保留 `CONVERSATION_RECOVERY_SAVE_LIMIT`（默认 5）份，已结束或失效任务的步骤快照在 `CONVERSATION_STALE_JOB_STEP_DAYS`（默认 3）天后清理，启动时执行一次全库清理。切换候选不再写恢复点。
 - 依赖主版本升级：`jsdom` 30、`katex` 0.18、`markdown-it` 15、`@lucide/vue` 1.39、`vue-router` 5，以及 `zod`、`vue`、`highlight.js`、Playwright 等小版本；
   `@vscode/markdown-it-katex` 通过 npm override 复用根目录 KaTeX，前端包体减少一份重复的 KaTeX 拷贝。
 - markdown-it 渲染管线（实例、KaTeX 插件、`\( \)`/`\[ \]`/color box 规则、fence 渲染）从 `MarkdownContent.vue` 抽出为 `frontend/src/utils/markdownRenderer.js`。
@@ -20,6 +30,7 @@
 
 ### Fixed
 
+- 人物同步 / AI 整理 / 记忆 Agent：网关偶发返回 `auth_unavailable: no auth available`（HTTP 503）或 429/5xx 时，此前会直接以 `CAST_PLAN_FAILED` 失败且不重试。现在 HTTP 层把这类响应归类为可重试的网关暂时不可用（`PROVIDER_AUTH_UNAVAILABLE`，附中文说明），模型调用带退避重试，后台任务也会按最大次数重试。
 - Provider URL 策略：`fetchProviderRequest` 对已归一化的策略二次归一化时会把默认 DNS 解析器误判为调用方自定义解析器，
   导致 `.test`/`.example`/`.invalid` 保留测试域名的例外失效；无本地 DNS 代理的环境下 Provider 契约测试会因 `ENOTFOUND` 失败。
 

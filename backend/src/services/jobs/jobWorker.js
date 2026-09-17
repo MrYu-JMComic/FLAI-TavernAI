@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import { withConversationMutationContext } from '../conversationMutationContext.js';
 import {
   claimNextJob,
   completeJob,
@@ -82,18 +83,18 @@ async function runJob(database, job, workerId, handler, options) {
     if (!heartbeatJob(database, job.id, workerId, { leaseMs: options.leaseMs })) {
       controller.abort(jobAbortReason('Job lease was lost.', 'JOB_LEASE_LOST'));
     }
-  }, Math.max(1000, Math.floor(options.leaseMs / 3)));
+  }, Math.max(250, Math.min(1000, Math.floor(options.leaseMs / 3))));
   heartbeat.unref?.();
   try {
     if (typeof handler !== 'function') {
       throw jobFailure('No worker is registered for this job type.', 'JOB_HANDLER_MISSING', false);
     }
-    const result = await handler({
+    const result = await withConversationMutationContext({ database, userId: job.userId, jobId: job.id, attempt: job.attempt }, () => handler({
       job,
       payload: job.payload,
       signal: controller.signal,
       progress: (value, data) => reportJobProgress(database, job.id, workerId, value, data)
-    });
+    }));
     const latest = getJob(database, job.userId, job.id);
     if (latest?.cancelRequested || controller.signal.reason?.code === 'JOB_CANCELLED') {
       finishCancelledJob(database, job.id, workerId);

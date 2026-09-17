@@ -79,7 +79,17 @@ export const appConfig = Object.freeze({
   }),
   providerDefaultType: readProviderType(process.env.DEFAULT_PROVIDER_TYPE, 'deepseek'),
   mockProviderEnabled: readBoolean(process.env.FLAI_ENABLE_MOCK_PROVIDER, false),
-  appSecret: readString(process.env.APP_SECRET, '')
+  appSecret: readString(process.env.APP_SECRET, ''),
+  backupRetention: Object.freeze({
+    maxCount: readPositiveInteger(process.env.BACKUP_RETENTION_COUNT, 7),
+    maxAgeDays: readPositiveInteger(process.env.BACKUP_RETENTION_DAYS, 30)
+  }),
+  conversationRetention: Object.freeze({
+    // Automatic recovery points kept per conversation; older ones are pruned on each history change.
+    recoverySaveLimit: readPositiveInteger(process.env.CONVERSATION_RECOVERY_SAVE_LIMIT, 5),
+    // Step snapshots of settled or superseded background jobs are removed after this many days.
+    staleJobStepDays: readPositiveInteger(process.env.CONVERSATION_STALE_JOB_STEP_DAYS, 3)
+  })
 });
 
 export function withAppConfigDefaults(overrides = {}) {
@@ -100,6 +110,14 @@ export function withAppConfigDefaults(overrides = {}) {
     upload: {
       ...appConfig.upload,
       ...(source.upload && typeof source.upload === 'object' ? source.upload : {})
+    },
+    backupRetention: {
+      ...appConfig.backupRetention,
+      ...(source.backupRetention && typeof source.backupRetention === 'object' ? source.backupRetention : {})
+    },
+    conversationRetention: {
+      ...appConfig.conversationRetention,
+      ...(source.conversationRetention && typeof source.conversationRetention === 'object' ? source.conversationRetention : {})
     }
   };
 }

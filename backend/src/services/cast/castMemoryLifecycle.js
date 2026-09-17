@@ -57,9 +57,14 @@ function listMemoryIds(database, userId, conversationId, memberId) {
 
 export function calculateDecayUpdate(memory, now = new Date(), forgetThreshold = 0.05) {
   if (!memory || memory.forgottenAt || Number(memory.decayRate) <= 0) return null;
-  const referenceTime = Date.parse(memory.lastReinforcedAt || memory.updatedAt || memory.createdAt || '');
+  const nowTime = now.getTime();
+  if (!Number.isFinite(nowTime)) return null;
+  const decayCheckpoint = parseTime(memory.lastDecayedAt);
+  const referenceTime = Number.isFinite(decayCheckpoint)
+    ? latestValidTime(memory.lastDecayedAt, memory.lastReinforcedAt)
+    : latestValidTime(memory.lastReinforcedAt, memory.updatedAt, memory.createdAt);
   if (!Number.isFinite(referenceTime)) return null;
-  const elapsedDays = Math.floor((now.getTime() - referenceTime) / MILLISECONDS_PER_DAY);
+  const elapsedDays = Math.floor((nowTime - referenceTime) / MILLISECONDS_PER_DAY);
   if (elapsedDays < 1) return null;
   const currentImportance = clampUnit(memory.importance, 0.5);
   const decayRate = clampUnit(memory.decayRate, 0);
@@ -68,8 +73,23 @@ export function calculateDecayUpdate(memory, now = new Date(), forgetThreshold =
   return {
     importance,
     layer: importance >= 0.8 ? 'core' : importance >= 0.3 ? 'long_term' : 'short_term',
+    // Advance only across complete periods so retries are idempotent and a partial day is retained.
+    lastDecayedAt: new Date(referenceTime + elapsedDays * MILLISECONDS_PER_DAY).toISOString(),
     forgottenAt: importance <= threshold ? now.toISOString() : null,
   };
+}
+
+function latestValidTime(...values) {
+  let latest = Number.NaN;
+  for (const value of values) {
+    const parsed = Date.parse(value || '');
+    if (Number.isFinite(parsed) && (!Number.isFinite(latest) || parsed > latest)) latest = parsed;
+  }
+  return latest;
+}
+
+function parseTime(value) {
+  return Date.parse(value || '');
 }
 
 function normalizeNow(value) {

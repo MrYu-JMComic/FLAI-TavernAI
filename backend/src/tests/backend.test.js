@@ -1512,7 +1512,7 @@ test('character assistant respects disabled generation sections', async () => {
   }
 });
 
-test('character assistant ignores null tool arguments', async () => {
+test('character assistant rejects null tool arguments without changing the draft', async () => {
   const originalFetch = globalThis.fetch;
   let calls = 0;
   try {
@@ -1567,8 +1567,8 @@ test('character assistant ignores null tool arguments', async () => {
     assert.equal(calls, 2);
     assert.equal(result.character.name, 'Original Name');
     assert.equal(result.character.persona, 'Original persona');
-    assert.equal(result.toolCalls[0].result.ok, true);
-    assert.deepEqual(result.toolCalls[0].result.applied, {});
+    assert.equal(result.toolCalls[0].result.ok, false);
+    assert.equal(result.toolCalls[0].result.error, 'TOOL_ARGUMENTS_INVALID');
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -1642,7 +1642,7 @@ test('character assistant treats null request as defaults', async () => {
   }
 });
 
-test('character assistant skips non-object generated array entries', async () => {
+test('character assistant rejects non-object generated array entries without partial writes', async () => {
   const originalFetch = globalThis.fetch;
   let calls = 0;
   try {
@@ -1713,9 +1713,11 @@ test('character assistant skips non-object generated array entries', async () =>
     );
 
     assert.equal(calls, 2);
-    assert.deepEqual(result.character.regexRules.map((rule) => rule.pattern), ['foo']);
-    assert.deepEqual(result.character.renderPlugins.map((plugin) => plugin.label), ['Valid fold']);
-    assert.deepEqual(result.character.modSuggestions.map((mod) => mod.name), ['Valid Mod']);
+    assert.deepEqual(result.character.regexRules, []);
+    assert.deepEqual(result.character.renderPlugins, []);
+    assert.deepEqual(result.character.modSuggestions, []);
+    assert.equal(result.toolCalls.length, 2);
+    assert.ok(result.toolCalls.every((call) => call.result.error === 'TOOL_ARGUMENTS_INVALID'));
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -1927,39 +1929,44 @@ test('world book assistant includes quality guide in complete and stream prompts
   }
 });
 
-test('world book assistant skips non-object AI entries', async () => {
+test('world book assistant accepts repaired entries after rejecting a malformed batch', async () => {
   const originalFetch = globalThis.fetch;
+  let calls = 0;
   try {
-    globalThis.fetch = async () => jsonResponse({
-      choices: [
-        {
-          message: {
-            role: 'assistant',
-            content: null,
-            tool_calls: [
-              {
-                id: 'wb-mixed-entries',
-                type: 'function',
-                function: {
-                  name: 'replace_world_book_entries',
-                  arguments: JSON.stringify({
-                    entries: [
-                      null,
-                      'not an entry',
-                      {
-                        name: 'Hidden Gate',
-                        triggerKeys: 'gate,hidden',
-                        content: 'The hidden gate opens at moonrise.'
-                      }
-                    ]
-                  })
+    globalThis.fetch = async (_url, request = {}) => {
+      calls += 1;
+      if (calls === 2) assert.match(request.body, /TOOL_ARGUMENTS_INVALID/);
+      if (calls > 2) return jsonResponse({ choices: [{ message: { role: 'assistant', content: 'Done.' } }] });
+      return jsonResponse({
+        choices: [
+          {
+            message: {
+              role: 'assistant',
+              content: null,
+              tool_calls: [
+                {
+                  id: 'wb-mixed-entries',
+                  type: 'function',
+                  function: {
+                    name: 'replace_world_book_entries',
+                    arguments: JSON.stringify({
+                      entries: [
+                        ...(calls === 1 ? [null, 'not an entry'] : []),
+                        {
+                          name: 'Hidden Gate',
+                          triggerKeys: 'gate,hidden',
+                          content: 'The hidden gate opens at moonrise.'
+                        }
+                      ]
+                    })
+                  }
                 }
-              }
-            ]
+              ]
+            }
           }
-        }
-      ]
-    });
+        ]
+      });
+    };
 
     const result = await completeWorldBookDraft(
       {
@@ -1976,6 +1983,8 @@ test('world book assistant skips non-object AI entries', async () => {
     assert.equal(result.worldBook.entries.length, 1);
     assert.equal(result.worldBook.entries[0].name, 'Hidden Gate');
     assert.equal(result.worldBook.entries[0].content, 'The hidden gate opens at moonrise.');
+    assert.equal(result.toolCalls[0].result.error, 'TOOL_ARGUMENTS_INVALID');
+    assert.equal(calls, 3);
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -2702,6 +2711,7 @@ test('conversation appearance settings persist empty values and custom code', ()
     customJsEnabled: true,
     customJsRiskAccepted: true,
     showWorldBookMatches: true,
+    highlightDialogue: true,
     castTracking: { enabled: false }
   });
 
@@ -2756,6 +2766,7 @@ test('conversation appearance treats null input as defaults', () => {
     customJsRiskAccepted: false,
     statusBarPrompt: '',
     showWorldBookMatches: true,
+    highlightDialogue: true,
     castTracking: { enabled: false }
   });
 });
@@ -7404,6 +7415,7 @@ test('conversation settings invalid lorebook rolls back appearance inside transa
         customJsEnabled: false,
         customJsRiskAccepted: false,
         showWorldBookMatches: true,
+        highlightDialogue: true,
         castTracking: { enabled: false }
       });
 
@@ -7493,6 +7505,7 @@ test('conversation settings save succeeds inside an existing transaction', async
         customJsEnabled: false,
         customJsRiskAccepted: false,
         showWorldBookMatches: true,
+        highlightDialogue: true,
         castTracking: { enabled: false }
       });
       assert.equal(
@@ -7513,6 +7526,7 @@ test('conversation settings save succeeds inside an existing transaction', async
       customJsEnabled: false,
       customJsRiskAccepted: false,
       showWorldBookMatches: true,
+      highlightDialogue: true,
       castTracking: { enabled: false }
     });
     assert.equal(

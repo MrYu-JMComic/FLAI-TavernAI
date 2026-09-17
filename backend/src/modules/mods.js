@@ -163,20 +163,27 @@ export function getEnabledModsForUser(database, userId, options = {}) {
 }
 
 export function buildModSystemPrompt(mods) {
-  if (!mods.length) return '';
+  return buildModPromptSections(mods).map((entry) => entry.context).join('\n\n');
+}
 
+export function buildModPromptSections(mods = []) {
   const parts = [];
-  for (const mod of mods) {
+  const seen = new Set();
+  for (const mod of Array.isArray(mods) ? mods : []) {
+    const content = String(mod?.content || '').trim();
+    if (!content || !normalizeBoolean(mod?.enabled, true) || (mod?.id && seen.has(mod.id))) continue;
+    if (mod.id) seen.add(mod.id);
+    let context;
     if (mod.type === 'prompt_inject') {
-      parts.push(`[Mod 指令: ${mod.name}]\n${mod.content}`);
+      context = `[Mod 指令: ${mod.name}]\n${content}`;
     } else if (mod.type === 'style_enhance') {
-      parts.push(`[文风要求]\nMod: ${mod.name}\n${mod.content}`);
+      context = `[文风要求]\nMod: ${mod.name}\n仅调整表达方式，不改变角色身份、世界事实或用户选择。\n${content}`;
     } else {
-      parts.push(`[Mod 辅助规则: ${mod.name}]\n${mod.content}`);
+      context = `[Mod 辅助规则: ${mod.name}]\n${content}`;
     }
+    parts.push({ id: mod.id || '', name: mod.name || '', type: mod.type, context });
   }
-
-  return parts.join('\n\n');
+  return parts;
 }
 
 function normalizeModPayload(payload = {}, existing = null) {

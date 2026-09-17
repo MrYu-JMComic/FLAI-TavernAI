@@ -6,6 +6,8 @@ import { applyCastChangePlan } from './castPlanService.js';
 import { publishCastSyncStatus } from './castSyncStatus.js';
 import { buildCastProjectionMessages } from '../prompts/castProjectionPrompt.js';
 import { parseOrRepairCastPlan, serializeCastPlanError } from './castPlanGenerator.js';
+import { resolveCastAgentOperations, resolveCastAgentSettings } from './castAgentSettings.js';
+import { isTransientProviderError, retryProviderCall } from '../providerRetry.js';
 
 export async function projectConversationCast(options = {}) {
   const {
@@ -18,6 +20,7 @@ export async function projectConversationCast(options = {}) {
     signal,
     generate = generateCompletion,
     publish = publishCastSyncStatus,
+    config,
   } = options;
   const conversationId = String(conversation?.id || '');
   const messageId = String(assistantMessage?.id || '');
@@ -28,7 +31,7 @@ export async function projectConversationCast(options = {}) {
   if (!conversationId || !messageId || !String(assistantMessage?.content || '').trim()) {
     return skip(publish, conversationId, messageId, 'No completed assistant message');
   }
-  const idempotencyKey = `cast-sync:${messageId}`;
+  const idempotencyKey = options.idempotencyKey || `cast-sync:${messageId}`;
   const existing = getCastChangeBatchByKey(database, conversationId, idempotencyKey);
   if (existing) {
     return skip(publish, conversationId, messageId, 'Cast turn already processed', existing);
@@ -50,28 +53,36 @@ export async function projectConversationCast(options = {}) {
         role: message.role,
         content: String(message.content || '').slice(0, 20_000),
       }));
-    const projectionMessages = buildCastProjectionMessages({ observation, castSnapshot });
+    const allowedOperations = resolveCastAgentOperations(castTracking, 'auto_sync');
+    const resolvedProvider = resolveCastAgentSettings(database, userId, settings, castTracking, {
+      config,
+      mainThinkingLevel: options.mainThinkingLevel ?? options.thinkingLevel,
+      mainThinkingEnabled: options.mainThinkingEnabled ?? options.thinkingEnabled,
+    });
+    const projectionMessages = buildCastProjectionMessages({ observation, castSnapshot, allowedOperations });
     const generationOptions = {
-      thinkingEnabled: false,
+      thinkingEnabled: resolvedProvider.thinkingEnabled,
+      ...(resolvedProvider.thinkingLevel ? { thinkingLevel: resolvedProvider.thinkingLevel } : {}),
       temperature: 0,
       maxTokens: 4_000,
       timeoutMs: 60_000,
       signal,
     };
-    const result = await generate(
-      settings,
-      projectionMessages,
-      generationOptions
+    // A momentary gateway outage (429/5xx, empty credential pool) must not lose the turn.
+    const result = await retryProviderCall(
+      () => generate(resolvedProvider.settings, projectionMessages, generationOptions),
+      { signal, retryDelaysMs: options.retryDelaysMs, onRetry: (error, attempt) => publish(conversationId, { status: 'running', messageId, retrying: attempt, error: error?.publicMessage || error?.message }) }
     );
     const generatedPlan = await parseOrRepairCastPlan({
       initialResult: result,
       generate,
-      settings,
+      settings: resolvedProvider.settings,
       messages: projectionMessages,
       generationOptions,
       validationOptions: {
         sourceKind: 'auto_sync',
         scope: 'conversation',
+        allowedOperations,
       },
     });
     const plan = generatedPlan.plan;
@@ -80,15 +91,21 @@ export async function projectConversationCast(options = {}) {
       scope: 'conversation',
       idempotencyKey,
       evidenceMessageIds: observation.map((message) => message.id),
+      allowedOperations,
     });
     const status = publish(conversationId, {
       status: 'applied',
       messageId,
       summary: plan.summary,
       applied: applied.batch.result.applied,
+      skipped: applied.batch.result.skipped,
       repairAttempted: generatedPlan.attempts > 1,
+      providerSource: resolvedProvider.source,
+      model: resolvedProvider.settings?.model || '',
+      thinkingLevel: resolvedProvider.thinkingLevel || '',
+      thinkingSource: resolvedProvider.thinkingSource,
     });
-    return { ok: true, status, plan, attempts: generatedPlan.attempts, ...applied };
+    return { ok: true, status, plan, reviewRequired: applied.batch.result.skipped > 0, attempts: generatedPlan.attempts, ...applied };
   } catch (error) {
     const failure = serializeCastPlanError(error);
     const status = publish(conversationId, {
@@ -96,7 +113,7 @@ export async function projectConversationCast(options = {}) {
       messageId,
       ...failure,
     });
-    return { ok: false, status, ...failure };
+    return { ok: false, status, ...failure, retryable: isTransientProviderError(error) || error?.name === 'TimeoutError' };
   }
 }
 

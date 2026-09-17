@@ -13,6 +13,9 @@ const { writeSse } = await import('../routes/helpers.js');
 const { normalizeChatAttachments, validateChatAttachmentsForUpload } = await import('../services/chatAttachments.js');
 const { createStreamEmitQueue } = await import('../services/providerStreamEmit.js');
 const { hasUsableProvider } = await import('../services/providers.js');
+const { claimNextJob, completeJob, getJob } = await import('../services/jobs/jobQueue.js');
+const { writeConversationCheckpoint } = await import('../repositories/conversationSnapshotRepository.js');
+const { createDefaultJobHandlers } = await import('../services/jobs/jobHandlers.js');
 const { insertUser, withServer } = await import('./routeTestUtils.js');
 const conversationGenerationRouteSource = readFileSync(new URL('../routes/conversationGeneration.js', import.meta.url), 'utf8');
 const routeHelpersSource = readFileSync(new URL('../routes/helpers.js', import.meta.url), 'utf8');
@@ -380,6 +383,10 @@ test('chat message image attachments are saved and sent as multimodal content', 
         { type: 'image_url', image_url: { url: tinyPngDataUrl } }
       ]);
 
+      const processingJob = claimNextJob(database, 'image-memory-worker');
+      const processingHandlers = createDefaultJobHandlers(database, { providerSettings: () => ({ providerType: 'mock' }) });
+      const processingResult = await processingHandlers[processingJob.type]({ job: processingJob, payload: processingJob.payload, signal: new AbortController().signal, progress: () => {} });
+      completeJob(database, processingJob.id, processingJob.leaseOwner, processingResult);
       const followupResponse = await fetch(`${baseUrl}/api/conversations/${conversationId}/messages`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -458,7 +465,7 @@ test('chat image generation saves returned image as an assistant attachment', as
   }
 });
 
-test('chat image generation auto-detects Gemini image models and uses native generateContent', async () => {
+test('chat image generation explicitly selects Gemini image models and uses native generateContent', async () => {
   const database = createAppDatabase(':memory:');
   const userId = 'chat-gemini-image-generation-user';
   const conversationId = 'chat-gemini-image-generation-conversation';
@@ -504,7 +511,9 @@ test('chat image generation auto-detects Gemini image models and uses native gen
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           content: 'draw a moon gate',
-          stream: false
+          stream: false,
+          imageGeneration: true,
+          imageModel: 'gemini-3.1-flash-image'
         })
       });
       const body = await response.json();
@@ -530,7 +539,63 @@ test('chat image generation auto-detects Gemini image models and uses native gen
   }
 });
 
-test('chat image generation explicit false overrides image model auto-detection', async () => {
+test('chat image generation exposes a recoverable error when the gateway lacks image auth', async () => {
+  const database = createAppDatabase(':memory:');
+  const userId = 'chat-image-auth-error-user';
+  const conversationId = 'chat-image-auth-error-conversation';
+  insertUser(database, userId);
+  const character = createCharacter(database, userId, { name: 'ImageAuthChar', visibility: 'private' });
+  insertConversation(database, { userId, conversationId, characterId: character.id });
+
+  const app = createConversationStreamingApp(database, userId, {
+    providerType: 'custom',
+    gatewayName: 'Codex',
+    baseUrl: 'https://image-auth-error-provider.test/v1',
+    model: 'gpt-5.4-mini',
+    imageModel: 'gpt-image-2',
+    apiKey: 'sk-codex-test'
+  });
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url, options) => {
+    const href = String(url);
+    if (href.startsWith('http://127.0.0.1:')) {
+      return originalFetch(url, options);
+    }
+    assert.match(href, /\/images\/generations$/);
+    return new Response(JSON.stringify({
+      error: { message: 'auth_not_found: no auth available (providers=codex, model=gpt-image-2)' }
+    }), {
+      status: 503,
+      headers: { 'Content-Type': 'application/json' }
+    });
+  };
+
+  try {
+    await withServer(app, async (baseUrl) => {
+      const response = await fetch(`${baseUrl}/api/conversations/${conversationId}/messages`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          content: 'draw a lantern',
+          stream: false,
+          imageGeneration: true,
+          imageModel: 'gpt-image-2'
+        })
+      });
+      const body = await response.json();
+
+      assert.equal(response.status, 503);
+      assert.equal(body.code, 'IMAGE_AUTH_UNAVAILABLE');
+      assert.match(body.error, /图片模型鉴权失败/);
+      assert.match(body.error, /gpt-image-2/);
+      assert.equal(body.userMessage.content, 'draw a lantern');
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('chat image generation false selects the text route even for an image chat model', async () => {
   const database = createAppDatabase(':memory:');
   const userId = 'chat-image-generation-disabled-user';
   const conversationId = 'chat-image-generation-disabled-conversation';
@@ -636,7 +701,7 @@ test('chat image generation rejects unsupported xAI lite image model before prov
   }
 });
 
-test('chat completion inserts context director between base and preset system prompts', async () => {
+test('chat completion separates director lore character and preset system prompts', async () => {
   const database = createAppDatabase(':memory:');
   const userId = 'chat-context-director-user';
   const conversationId = 'chat-context-director-conversation';
@@ -707,15 +772,16 @@ test('chat completion inserts context director between base and preset system pr
 
       assert.equal(response.status, 200);
       assert.equal(providerBody.messages[0].role, 'system');
-      assert.match(providerBody.messages[0].content, /DirectorChar/);
-      assert.match(providerBody.messages[0].content, /The moon gate opens only for sworn guests/);
-      assert.equal(providerBody.messages[1].role, 'system');
-      assert.match(providerBody.messages[1].content, /Context priority and conflict handling/);
-      assert.match(providerBody.messages[1].content, /1\. Explicit user instruction/);
-      assert.match(providerBody.messages[1].content, /matched world book entries/i);
-      assert.equal(providerBody.messages[2].role, 'system');
-      assert.match(providerBody.messages[2].content, /\[用户配置的会话级指令\]/);
-      assert.match(providerBody.messages[2].content, /Preset session guidance sentinel\./);
+      assert.match(providerBody.messages[0].content, /Context priority and conflict handling/);
+      assert.match(providerBody.messages[0].content, /1\. Explicit user instruction/);
+      assert.match(providerBody.messages[0].content, /matched world book entries/i);
+      const loreIndex = providerBody.messages.findIndex((message) => /The moon gate opens only for sworn guests/.test(message.content));
+      const characterIndex = providerBody.messages.findIndex((message) => /DirectorChar/.test(message.content));
+      const presetIndex = providerBody.messages.findIndex((message) => /Preset session guidance sentinel\./.test(message.content));
+      assert.ok(loreIndex > 0 && loreIndex < characterIndex);
+      assert.ok(presetIndex > characterIndex);
+      for (const index of [loreIndex, characterIndex, presetIndex]) assert.equal(providerBody.messages[index].role, 'system');
+      assert.match(providerBody.messages[presetIndex].content, /\[用户配置的会话级指令\]/);
       assert.equal(providerBody.messages.at(-1).role, 'user');
       assert.equal(providerBody.messages.at(-1).content, 'approach the moon gate');
     });
@@ -772,9 +838,10 @@ test('chat completion injects long-term conversation memories through the prompt
       });
 
       assert.equal(response.status, 200);
-      assert.match(providerBody.messages[0].content, /\[Long-term conversation memory\]/);
-      assert.match(providerBody.messages[0].content, /silver key under the old bridge/);
-      assert.match(providerBody.messages[1].content, /long-term conversation memory/i);
+      const memoryMessage = providerBody.messages.find((message) => /\[Long-term conversation memory\]/.test(message.content));
+      assert.equal(memoryMessage.role, 'system');
+      assert.match(memoryMessage.content, /silver key under the old bridge/);
+      assert.match(providerBody.messages[0].content, /long-term conversation memory/i);
     });
   } finally {
     globalThis.fetch = originalFetch;
@@ -827,10 +894,16 @@ test('chat completion records pending automatic long-term memory candidates', as
       const body = await response.json();
 
       assert.equal(response.status, 200);
+      assert.ok(body.assistantMessage.postprocessJobId);
+      const queued = claimNextJob(database, 'memory-test-worker');
+      const handlers = createDefaultJobHandlers(database, { providerSettings: () => ({ providerType: 'mock' }) });
+      const processed = await handlers[queued.type]({ job: queued, payload: queued.payload, signal: new AbortController().signal, progress: () => {} });
+      completeJob(database, queued.id, queued.leaseOwner, processed);
       const memories = await waitForConversationMemories(database, conversationId, 2);
       assert.ok(memories.length >= 2);
       assert.equal(memories.every((memory) => memory.source_kind === 'auto'), true);
-      assert.equal(memories.every((memory) => memory.enabled === 0), true);
+      // Automatic extraction enables bounded, source-linked memories (context-memory-quality-stage-4).
+      assert.equal(memories.every((memory) => memory.enabled === 1), true);
       assert.equal(memories.every((memory) => memory.archived === 0), true);
       assert.equal(memories.some((memory) => memory.memory_type === 'preference'), true);
       assert.equal(memories.some((memory) => memory.memory_type === 'relationship'), true);
@@ -908,6 +981,129 @@ test('chat continue appends an assistant message without storing a user prompt',
         { role: 'assistant', content: 'The hinges groan as the door opens.' },
         { role: 'assistant', content: 'A cold blue light spills across the floor.' }
       ]);
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('chat completion carries its effective thinking level into postprocessing', async () => {
+  const database = createAppDatabase(':memory:');
+  const userId = 'chat-thinking-user';
+  const conversationId = 'chat-thinking-conversation';
+  insertUser(database, userId);
+  const character = createCharacter(database, userId, { name: 'ThinkingChar', visibility: 'private' });
+  insertConversation(database, { userId, conversationId, characterId: character.id });
+  const app = createConversationStreamingApp(database, userId, {
+    providerType: 'custom',
+    gatewayName: 'Thinking Gateway',
+    baseUrl: 'https://thinking-provider.test/v1',
+    model: 'gpt-5.4',
+    supportsReasoning: true,
+  });
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url, options) => {
+    if (String(url).startsWith('http://127.0.0.1:')) return originalFetch(url, options);
+    JSON.parse(options.body);
+    return new Response(JSON.stringify({
+      choices: [{ message: { content: 'Mira studies the map.' } }],
+    }), { headers: { 'Content-Type': 'application/json' } });
+  };
+
+  try {
+    await withServer(app, async (baseUrl) => {
+      const response = await fetch(`${baseUrl}/api/conversations/${conversationId}/messages`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ content: 'Study the map.', stream: false, thinkingLevel: 'xhigh' }),
+      });
+      const body = await response.json();
+      assert.equal(response.status, 200);
+      const job = getJob(database, userId, body.assistantMessage.postprocessJobId);
+      assert.equal(job.payload.thinkingLevel, 'xhigh');
+      assert.equal(job.payload.thinkingEnabled, true);
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    database.close();
+  }
+});
+
+test('chat regenerate replaces the latest assistant reply in place and keeps the previous text as a swipe', async () => {
+  const database = createAppDatabase(':memory:');
+  const userId = 'chat-regenerate-user';
+  const conversationId = 'chat-regenerate-conversation';
+  insertUser(database, userId);
+  const character = createCharacter(database, userId, { name: 'RegenerateChar', visibility: 'private' });
+  insertConversation(database, { userId, conversationId, characterId: character.id });
+  insertMessage(database, { userId, conversationId, id: 'regen-user-1', role: 'user', content: 'Open the old door.' });
+  insertMessage(database, { userId, conversationId, id: 'regen-assistant-1', role: 'assistant', content: 'The hinges groan as the door opens.' });
+  // Generation start records a checkpoint anchored at the previous reply, exactly like the live flow.
+  writeConversationCheckpoint(database, userId, conversationId, { throughMessageId: 'regen-assistant-1', kind: 'before' });
+  insertMessage(database, { userId, conversationId, id: 'regen-user-2', role: 'user', content: 'Step inside.' });
+  insertMessage(database, { userId, conversationId, id: 'regen-assistant-2', role: 'assistant', content: 'Dust swirls in the dark hall.' });
+
+  const app = createConversationStreamingApp(database, userId, {
+    providerType: 'custom',
+    gatewayName: 'Regenerate Gateway',
+    baseUrl: 'https://regenerate-provider.test/v1',
+    model: 'regenerate-model'
+  });
+  const originalFetch = globalThis.fetch;
+  let providerBody = null;
+  globalThis.fetch = async (url, options) => {
+    const href = String(url);
+    if (href.startsWith('http://127.0.0.1:')) {
+      return originalFetch(url, options);
+    }
+    providerBody = JSON.parse(options.body);
+    return new Response(JSON.stringify({
+      choices: [{ message: { content: 'A cold blue light spills across the floor.' } }]
+    }), { headers: { 'Content-Type': 'application/json' } });
+  };
+
+  try {
+    await withServer(app, async (baseUrl) => {
+      const rejected = await fetch(`${baseUrl}/api/conversations/${conversationId}/messages/regen-assistant-1/regenerate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ stream: false })
+      });
+      assert.equal(rejected.status, 400);
+      assert.equal((await rejected.json()).code, 'REGENERATE_NOT_LATEST');
+      assert.equal(providerBody, null);
+
+      const response = await fetch(`${baseUrl}/api/conversations/${conversationId}/messages/regen-assistant-2/regenerate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ stream: false })
+      });
+      const body = await response.json();
+
+      assert.equal(response.status, 200);
+      assert.equal(body.userMessage, null);
+      assert.equal(body.assistantMessage.id, 'regen-assistant-2');
+      assert.equal(body.assistantMessage.content, 'A cold blue light spills across the floor.');
+      assert.equal(body.assistantMessage.regenerated, true);
+      assert.equal(body.assistantMessage.swipeCount, 2);
+      assert.equal(body.assistantMessage.revision, 2);
+      assert.equal(providerBody.messages.at(-1).role, 'user');
+      assert.equal(providerBody.messages.at(-1).content, 'Step inside.');
+      assert.equal(providerBody.messages.some((message) => /Dust swirls/.test(String(message.content))), false);
+
+      const messages = database
+        .prepare('SELECT id, role, content FROM messages WHERE conversation_id = ? ORDER BY created_at ASC, rowid ASC')
+        .all(conversationId);
+      assert.deepEqual(messages.map((row) => row.content), [
+        'Open the old door.',
+        'The hinges groan as the door opens.',
+        'Step inside.',
+        'A cold blue light spills across the floor.'
+      ]);
+      const swipes = database.prepare('SELECT content FROM message_swipes WHERE message_id = ?').all('regen-assistant-2');
+      assert.deepEqual(swipes.map((row) => row.content), ['Dust swirls in the dark hall.']);
+      assert.equal(database.prepare("SELECT COUNT(*) AS count FROM saves WHERE conversation_id = ? AND kind = 'recovery'").get(conversationId).count, 0);
+      assert.equal(database.prepare("SELECT postprocess_state FROM messages WHERE id = 'regen-assistant-2'").get().postprocess_state, 'queued');
     });
   } finally {
     globalThis.fetch = originalFetch;

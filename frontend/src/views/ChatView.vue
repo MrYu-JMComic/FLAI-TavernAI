@@ -8,11 +8,13 @@ import ChatHeader from '../components/chat/ChatHeader.vue';
 import ChatMessageItem from '../components/chat/ChatMessageItem.vue';
 import ChatComposer from '../components/chat/ChatComposer.vue';
 import ChatStatusSummary from '../components/chat/ChatStatusSummary.vue';
+import ChatProcessingStatus from '../components/chat/ChatProcessingStatus.vue';
 import GameHud from '../components/game/GameHud.vue';
 import { fetchConversationMessages } from '../api/chat.js';
 import { saveProviderSettings } from '../api/providers.js';
 import { useNotify } from '../composables/useNotify';
 import { useChatConversation } from '../composables/chat/useChatConversation';
+import { useChatDraft } from '../composables/chat/useChatDraft.js';
 import { useChatAccessory } from '../composables/chat/useChatAccessory';
 import { useChatAppearance } from '../composables/chat/useChatAppearance';
 import { useChatMessageActions } from '../composables/chat/useChatMessageActions';
@@ -23,6 +25,7 @@ import { useProviderModels } from '../composables/useProviderModels';
 import { isPhoneViewport } from '../composables/useViewport';
 import { refreshProviderModels } from '../services/modelCatalog';
 import { callEventMethod } from '../utils/eventMethods';
+import { copyTextToClipboard } from '../utils/clipboard.js';
 
 const EconomyPanel = defineAsyncComponent(() => import('../components/EconomyPanel.vue'));
 const ScenePanel = defineAsyncComponent(() => import('../components/ScenePanel.vue'));
@@ -31,6 +34,7 @@ const CastManagerDrawer = defineAsyncComponent(() => import('../components/cast/
 const ChatSettingsDrawer = defineAsyncComponent(() => import('../components/chat/ChatSettingsDrawer.vue'));
 const ChatContextInspector = defineAsyncComponent(() => import('../components/chat/ChatContextInspector.vue'));
 const ChatModelSwitcher = defineAsyncComponent(() => import('../components/chat/ChatModelSwitcher.vue'));
+const MemoryAgentSettingsDialog = defineAsyncComponent(() => import('../components/chat/MemoryAgentSettingsDialog.vue'));
 
 const props = defineProps({
   route: { type: Object, required: true },
@@ -126,7 +130,7 @@ const {
   statusBar, statusBarForm, statusBarEditorOpen, statusBarSaving,
   statusBarTemplateMode, statusBarTemplateConfig, statusBarTemplateIssues, statusBarTemplateCfg,
   accessorySettingsOpen, accessorySaving, accessorySkills, accessorySkillResults,
-  accessorySkillItems,
+  accessorySkillItems, memoryAgentTools, castAgentOperations, updateAccessorySkill,
   hasStatusBarContent, showEconomyFeature, showNpcFeature, showSceneFeature, showGameHudFeature, showEncounterFeature, showRewardFeature,
   loadStatusBar, loadEconomyBalance, loadAccessorySkills,
   syncAccessorySkills, isAccessorySkillActiveLocal,
@@ -151,7 +155,7 @@ const {
   effectiveChatAppearance, activeChatBackgroundUrl, chatMainStyle, chatScopeSelector,
   activeCharacter, activeRenderPlugins,
   syncConversationAppearance, resetConversationAppearance, saveConversationAppearanceChanges,
-  setCastTrackingEnabled,
+  setCastTrackingEnabled, updateCastTracking,
   setChatLorebookId, applyConversationAppearance, disposeConversationAppearance,
   handleAppearanceBackgroundUpload, clearAppearanceField, handleSettingsBackgroundUpload,
   loadWorldBooks
@@ -172,13 +176,16 @@ const {
   canEditMessage, canDeleteMessage, canRerunMessageEdit, canBranchMessage,
   beginEditMessage, cancelEditMessage,
   setEditingMessageContent, saveMessageEdit, prepareMessageEditRerun, removeMessage, copyMessage,
-  messageSwipeState, swipeLoading, initMessageSwipes, swipeMessagePrev, swipeMessageNext, getSwipeDisplay,
+  messageSwipeState, swipeLoading, initMessageSwipes, refreshMessageSwipe, swipeMessagePrev, swipeMessageNext, getSwipeDisplay,
   conversationBranches, branchBusy, loadConversationBranches, handleBranchMessage,
   resetMessageUiState, cleanup: cleanupMessageActions
 } = useChatMessageActions({
   messages, messageScroller, route: props.route,
   user: computed(() => props.user), activeCharacter,
-  loadSidebarData, onCopyFallback: appendCopyFallbackToComposer, showActionNotice, showError
+  loadSidebarData, onCopyFallback: appendCopyFallbackToComposer, showActionNotice, showError,
+  // Swiping past the last stored candidate asks the model for a new one.
+  regenerateMessage: (message) => regenerateLatestMessage(message),
+  isConversationBusy: () => requestPending.value || loading.value || conversationActionBusy.value
 });
 
 const scroll = useChatScroll({
@@ -221,14 +228,18 @@ function prepareExpandedStatusBarForSubmit() {
   return hasExpandedStatus;
 }
 
+const { providerModels, syncProviderModels } = useProviderModels(computed(() => props.provider));
+
 const {
   input, chatAttachments, attachmentBusy, useStream, thinkingEnabled, imageGenerationEnabled,
+  imageModel, imageModelOptions, imageModelHint,
   thinkingLevel, thinkingOptions,
-  sending, usage, lastFailure, latestWorldBookMatches,
+  sending, requestPending, usage, lastFailure, latestWorldBookMatches,
   canSend, canContinueGeneration, canToggleThinking, canToggleImageGeneration, canUseStream, canAddAttachments, chatProviderCapabilities,
-  submitDraft, submit, continueGeneration, stop, restoreLastFailureInput, retryLastFailure, dismissLastFailure,
+  canGenerateImages,
+  submitDraft, submit, continueGeneration, canRegenerateMessage, regenerateMessage, stop, restoreLastFailureInput, retryLastFailure, dismissLastFailure,
   addChatAttachmentFiles, removeChatAttachment, clearChatAttachments,
-  setSelectedPresetId, toggleUseStream, toggleThinking, toggleImageGeneration, setThinkingLevel,
+  setSelectedPresetId, toggleUseStream, toggleThinking, toggleImageGeneration, setThinkingLevel, setImageModel,
   cleanup: cleanupSubmit
 } = useChatSubmit({
   route: props.route, messages, provider: computed(() => props.provider),
@@ -244,9 +255,22 @@ const {
   scrollToMessage,
   prepareExpandedStatusBarForSubmit,
   expandReasoning,
-  showError
+  showError,
+  providerModelOptions: providerModels,
+  onMessageRegenerated: (message, conversationId) => { void refreshMessageSwipe(conversationId, message.id); },
+  // Both entry points enforce the same operation boundary, including keyboard
+  // submits and stale clicks; disabled buttons alone cannot enforce it.
+  isConversationBusy: () => !conversationReady.value || Boolean(
+    messageActionBusy.value || branchBusy.value || swipeLoading.value.size
+    || editingMessageId.value || conversationActionBusy.value
+  )
 });
-const { providerModels, syncProviderModels } = useProviderModels(computed(() => props.provider));
+const { draftStatus, cleanup: cleanupDraft } = useChatDraft({
+  input,
+  conversationId: computed(() => props.route.params.id),
+  scrollToOffsetFallback: (top) => messageListRef.value?.scrollToOffset?.(top),
+  userId: computed(() => props.user?.id)
+});
 const chatRenderPlugins = computed(() => activeRenderPlugins());
 const composerHasDraft = computed(() => Boolean(input.value.trim() || chatAttachments.value.length));
 const activeChatFailure = computed(() => {
@@ -364,13 +388,14 @@ async function copyLastFailureMessage() {
     return;
   }
   try {
-    if (typeof navigator === 'undefined' || typeof navigator.clipboard?.writeText !== 'function') {
-      throw new Error('clipboard unavailable');
-    }
-    await navigator.clipboard.writeText(message);
+    await copyTextToClipboard(message);
     notify.success('已复制错误信息');
-  } catch {
-    notify.error('复制失败，请手动选择错误信息。');
+  } catch (error) {
+    if (appendCopyFallbackToComposer(message)) {
+      notify.error('剪贴板不可用，错误信息已放入输入框，请手动复制。');
+      return;
+    }
+    notify.error(error?.message || '复制失败，请手动选择错误信息。');
   }
 }
 
@@ -552,8 +577,11 @@ async function loadConversation() {
     syncAccessorySkills(result.conversation?.settings?.accessorySkills);
     await applyConversationAppearance();
     if (!isCurrentConversationLoad(requestToken, conversationId)) return;
+    // Restore the reading position as soon as the message layout is ready.
+    // Optional status/swipe/branch requests must not cause a late scroll jump.
+    restoreMessageScrollPosition(messages);
     // Parallel: these 4 operations are independent of each other
-    const [, , , branchesResult] = await Promise.all([
+    await Promise.all([
       loadStatusBar(),
       loadAccessorySkills(),
       typeof initMessageSwipes === 'function'
@@ -563,9 +591,9 @@ async function loadConversation() {
     ]);
     if (!isCurrentConversationLoad(requestToken, conversationId)) return;
     resetAccessoryUpdateStatus();
-    restoreMessageScrollPosition(messages);
   } catch (err) {
     if (!isCurrentConversationLoad(requestToken, conversationId)) return;
+    if (!conversation.value?.id) error.value = err.message || '对话加载失败';
     showError(err.message);
   } finally {
     if (isCurrentConversationLoad(requestToken, conversationId)) {
@@ -643,6 +671,14 @@ function handleAccessorySkillResult(data = {}) {
       : ACCESSORY_NOT_UPDATED;
   }
   handleSkillResult(data);
+}
+
+async function refreshProcessedState(state) {
+  if (chatViewDisposed || state?.conversationId !== conversation.value?.id) return;
+  setActiveConversationIfChanged({ ...conversation.value, stateStatus: state.stateStatus, timelineRevision: state.timelineRevision });
+  // Background completion must never replace a streaming draft or move the
+  // user's scroll position by reloading the message list.
+  await Promise.allSettled([loadStatusBar(), loadEconomyBalance()]);
 }
 
 async function refreshAccessoryPanels(payload = {}) {
@@ -746,10 +782,46 @@ function canSwipePrev(message) {
 
 function canSwipeNext(message) {
   const state = messageSwipeState[message.id];
-  return Boolean(state && state.swipeCount > 1 && state.activeIndex < state.swipeCount - 1);
+  if (state && state.swipeCount > 1 && state.activeIndex < state.swipeCount - 1) return true;
+  // Past the last candidate, the arrow requests a fresh regeneration.
+  return canRegenerateMessage(message);
+}
+
+async function regenerateLatestMessage(message) {
+  if (!canRegenerateMessage(message)) {
+    return false;
+  }
+  if (composerHasDraft.value && sending.value) {
+    return false;
+  }
+  return regenerateMessage(message);
+}
+
+const memoryAgentDialogOpen = ref(false);
+
+function openSkillSettings(key) {
+  if (key === 'memoryAgent') {
+    memoryAgentDialogOpen.value = true;
+  }
+}
+
+function closeMemoryAgentDialog() {
+  if (accessorySaving.value) return;
+  memoryAgentDialogOpen.value = false;
+}
+
+async function saveMemoryAgentSettings(payload) {
+  if (accessorySaving.value) return;
+  updateAccessorySkill('memoryAgent', payload);
+  await saveAccessorySkillChanges();
+  memoryAgentDialogOpen.value = false;
 }
 
 function handleGlobalKeydown(event) {
+  if (event.key === 'Escape' && memoryAgentDialogOpen.value) {
+    closeMemoryAgentDialog();
+    return;
+  }
   if (event.key === 'Escape' && worldBookMatchDialogOpen.value) {
     closeWorldBookMatchDialog();
     return;
@@ -1052,6 +1124,7 @@ onBeforeUnmount(() => {
   modelRefreshToken += 1;
   modelSaveToken += 1;
   saveMessageScrollPosition();
+  cleanupDraft();
   cleanupSubmit();
   cleanupConversationState();
   cleanupMessageActions();
@@ -1174,7 +1247,11 @@ watch([showWorldBookMatchSummary, worldBookMatchSummary], ([shouldShow, matches]
         :conversation="conversation"
         :sending="sending"
         :image-generation-enabled="imageGenerationEnabled"
+        :can-generate-images="canGenerateImages"
         :can-toggle-image-generation="canToggleImageGeneration"
+        :image-model="imageModel"
+        :image-model-options="imageModelOptions"
+        :image-model-hint="imageModelHint"
         :author-chat-appearance="authorChatAppearance"
       :chat-appearance-form="chatAppearanceForm"
       :appearance-saving="appearanceSaving"
@@ -1195,6 +1272,7 @@ watch([showWorldBookMatchSummary, worldBookMatchSummary], ([shouldShow, matches]
       :status-bar-template-cfg="statusBarTemplateCfg"
         @close="closeWorkspaceTool('appearance')"
         @toggle-image-generation="toggleImageGeneration"
+        @update:image-model="setImageModel"
         @save-appearance="saveConversationAppearanceChanges"
       @update:chat-lorebook-id="setChatLorebookId"
       @reset-appearance="resetConversationAppearance(conversation?.settings)"
@@ -1202,6 +1280,7 @@ watch([showWorldBookMatchSummary, worldBookMatchSummary], ([shouldShow, matches]
       @clear-field="clearAppearanceField"
       @update:accessory-settings-open="(val) => accessorySettingsOpen = val"
       @save-accessory="saveAccessorySkillChanges"
+      @open-skill-settings="openSkillSettings"
       @open-status-bar-editor="openStatusBarEditor"
       @close-status-bar-editor="closeStatusBarEditor"
       @update:status-bar-template-mode="setStatusBarTemplateMode"
@@ -1217,7 +1296,19 @@ watch([showWorldBookMatchSummary, worldBookMatchSummary], ([shouldShow, matches]
       @remove-quick-reply="removeQuickReply"
     />
 
+    <MemoryAgentSettingsDialog
+      :open="memoryAgentDialogOpen"
+      :skill="accessorySkills.memoryAgent"
+      :tools="memoryAgentTools"
+      :main-provider="props.provider"
+      :main-model-options="providerModels"
+      :saving="accessorySaving"
+      @close="closeMemoryAgentDialog"
+      @save="saveMemoryAgentSettings"
+    />
+
     <section class="deep-chat-main" :style="chatMainStyle" :data-chat-scope="conversation?.id || 'active'">
+      <div class="chat-context-header">
       <ChatHeader
         :show-economy-feature="showEconomyFeature"
         :show-npc-feature="showNpcFeature"
@@ -1241,6 +1332,14 @@ watch([showWorldBookMatchSummary, worldBookMatchSummary], ([shouldShow, matches]
         @open-multichat="(event) => openMultiAgentChat(event)"
       />
 
+      <ChatProcessingStatus
+        v-if="conversation?.id"
+        :conversation-id="conversation.id"
+        :generating="sending"
+        :refresh-key="`${messages.length}:${latestAssistantMessage?.id || ''}:${sending}:${messageActionBusy}`"
+        @settled="refreshProcessedState"
+      />
+
       <GameHud
         v-if="conversation?.id && showGameHudFeature"
         :conversation-id="conversation.id"
@@ -1253,6 +1352,7 @@ watch([showWorldBookMatchSummary, worldBookMatchSummary], ([shouldShow, matches]
         @open-scene="openWorkspaceTool('scene')"
         @open-npc="openWorkspaceTool('npc')"
       />
+      </div>
 
       <VirtualMessageList
         :ref="setMessageListRef"
@@ -1286,6 +1386,14 @@ watch([showWorldBookMatchSummary, worldBookMatchSummary], ([shouldShow, matches]
             </div>
           </div>
         </article>
+        <section v-else-if="error" class="chat-empty-conversation" role="alert">
+          <h2>对话加载失败</h2>
+          <p>{{ error }}</p>
+          <button class="chat-recovery-button" type="button" @click="loadConversation">
+            <RotateCcw :size="16" />
+            <span>重新加载</span>
+          </button>
+        </section>
         <section v-else class="chat-empty-conversation" aria-live="polite">
           <span aria-hidden="true">F</span>
           <h2>从这里开始新的故事</h2>
@@ -1295,8 +1403,8 @@ watch([showWorldBookMatchSummary, worldBookMatchSummary], ([shouldShow, matches]
         <template #default="{ message }">
           <ChatMessageItem
             :message="message"
-            :editing-message-id="editingMessageId"
-            :editing-message-content="editingMessageContent"
+            :editing-message-id="editingMessageId === message.id ? editingMessageId : ''"
+            :editing-message-content="editingMessageId === message.id ? editingMessageContent : ''"
             :reasoning-open="reasoningOpen(message.id)"
             :author-name="messageAuthorName(message)"
             :author-initial="messageAuthorInitial(message)"
@@ -1305,14 +1413,16 @@ watch([showWorldBookMatchSummary, worldBookMatchSummary], ([shouldShow, matches]
             :can-delete="canDeleteMessage(message)"
             :can-rerun-edit="canSaveMessageEditAndRerun(message)"
             :can-continue="canContinueGeneration && latestMessage?.id === message.id"
+            :can-regenerate="canRegenerateMessage(message)"
             :branch-can="canBranchMessage(message)"
-            :message-action-busy="messageActionBusy === message.id || branchBusy"
+            :message-action-busy="Boolean(messageActionBusy || branchBusy || requestPending || loading || swipeLoading.size)"
             :copy-busy="copyBusy"
             :render-plugins="chatRenderPlugins"
+            :highlight-dialogue="effectiveChatAppearance.highlightDialogue !== false"
             :swipe-display="getSwipeDisplay(message)"
             :swipe-can-prev="canSwipePrev(message)"
             :swipe-can-next="canSwipeNext(message)"
-            :swipe-loading="swipeLoading.has(message.id) || messageActionBusy === message.id || branchBusy"
+            :swipe-loading="Boolean(swipeLoading.size || messageActionBusy || branchBusy || requestPending || loading)"
             :branch-busy="branchBusy"
             :world-book-match-count="hasWorldBookMatchesForMessage(message) ? worldBookMatchSummary.length : 0"
             @toggle-reasoning="toggleReasoning"
@@ -1321,6 +1431,7 @@ watch([showWorldBookMatchSummary, worldBookMatchSummary], ([shouldShow, matches]
             @save-edit="saveMessageEdit"
             @save-edit-rerun="saveMessageEditAndRerun"
             @continue-generation="continueGeneration"
+            @regenerate="regenerateLatestMessage"
             @delete="removeMessage"
             @copy="copyMessage"
             @update:editing-message-content="setEditingMessageContent"
@@ -1400,6 +1511,7 @@ watch([showWorldBookMatchSummary, worldBookMatchSummary], ([shouldShow, matches]
       <ChatComposer
         ref="composerWrap"
         :input="input"
+        :draft-status="draftStatus"
         :sending="sending"
         :can-send="canSend"
         :use-stream="useStream"
@@ -1532,8 +1644,14 @@ watch([showWorldBookMatchSummary, worldBookMatchSummary], ([shouldShow, matches]
       :open="npcPanelOpen"
       :tracking-enabled="Boolean(chatAppearanceForm.castTracking?.enabled)"
       :tracking-saving="appearanceSaving"
+      :tracking-settings="chatAppearanceForm.castTracking"
+      :agent-operations="castAgentOperations"
+      :main-provider="props.provider"
+      :main-model-options="providerModels"
+      :main-thinking-level="thinkingLevel || 'off'"
       @close="closeWorkspaceTool('npc')"
       @update-tracking="setCastTrackingEnabled"
+      @update-tracking-settings="updateCastTracking"
     />
     <ScenePanel
       v-if="conversation?.id && (showSceneFeature || activeTool === 'scene')"
@@ -1737,5 +1855,12 @@ watch([showWorldBookMatchSummary, worldBookMatchSummary], ([shouldShow, matches]
     width: 100%;
     max-height: min(640px, calc(100dvh - 24px));
   }
+}
+
+@media (max-height: 500px) {
+  .chat-empty-conversation { min-height: 0; margin: 8px auto; gap: 4px; }
+  .chat-empty-conversation > span { display: none; }
+  .chat-empty-conversation h2 { margin: 0; font-size: 18px; }
+  .chat-empty-conversation p { margin: 0; font-size: 14px; line-height: 1.4; }
 }
 </style>

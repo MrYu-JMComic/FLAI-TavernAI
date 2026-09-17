@@ -61,6 +61,60 @@ const capabilityItems = computed(() => {
     enabled: Boolean(capabilities[definition.key])
   }));
 });
+const imageModelOptions = computed(() => {
+  const options = new Map();
+  const add = (id, label = id) => {
+    const value = String(id || '').trim();
+    if (value && !options.has(value)) {
+      options.set(value, label || value);
+    }
+  };
+  const providerDefaults = {
+    openai: [['gpt-image-1.5', 'GPT Image 1.5'], ['gpt-image-2', 'GPT Image 2']],
+    gemini: [
+      ['gemini-3.1-flash-image', 'Gemini 3.1 Flash Image'],
+      ['gemini-3-pro-image', 'Gemini 3 Pro Image'],
+      ['gemini-2.5-flash-image', 'Gemini 2.5 Flash Image']
+    ],
+    xai: [['grok-imagine-image', 'Grok Imagine Image'], ['grok-imagine-image-quality', 'Grok Imagine Image Quality'], ['grok-imagine-image-2.0', 'Grok Imagine Image 2.0']]
+  };
+  for (const [id, label] of providerDefaults[props.form.providerType] || []) {
+    add(id, label);
+  }
+  for (const model of props.modelOptions) {
+    const id = String(model?.id || '').trim();
+    if (/(?:image|imagen|imagine|wanx|flux|dall-e)/i.test(id)
+      && isImageModelAllowedForProvider(props.form, id)) {
+      add(id, model?.label || id);
+    }
+  }
+  add(props.form.imageModel, props.form.imageModel);
+  return Array.from(options, ([id, label]) => ({ id, label }));
+});
+
+function isImageModelAllowedForProvider(provider = {}, model = '') {
+  const providerType = String(provider.providerType || 'custom').trim().toLowerCase();
+  const normalizedModel = String(model || '').trim().toLowerCase();
+  if (/^gemini-(?:3\.1-flash-image|3-pro-image|2\.5-flash-image)$/i.test(normalizedModel)) {
+    return providerType === 'gemini'
+      || providerType === 'custom' && isOfficialGeminiBaseUrl(provider.baseUrl);
+  }
+  if (normalizedModel === 'gpt-image-1.5' || normalizedModel === 'gpt-image-2') {
+    return providerType === 'openai' || providerType === 'custom';
+  }
+  if (/^grok-imagine-image(?:-quality|-2\.0)?$/i.test(normalizedModel)) {
+    return providerType === 'xai' || providerType === 'custom';
+  }
+  return providerType === 'custom';
+}
+
+function isOfficialGeminiBaseUrl(baseUrl = '') {
+  try {
+    return new URL(String(baseUrl || '').trim()).hostname === 'generativelanguage.googleapis.com';
+  } catch {
+    return false;
+  }
+}
 
 function readInputValue(event) {
   const target = event?.target;
@@ -195,6 +249,23 @@ function selectProvider(event) {
           {{ probeMessage }}
         </p>
       </div>
+      <label class="field image-model-field">
+        <span>图片模型</span>
+        <input
+          :value="form.imageModel"
+          aria-label="生图"
+          list="provider-image-model-options"
+          :disabled="controlsBusy"
+          placeholder="例如 gpt-image-2 或 gemini-3.1-flash-image"
+          @input="updateTrimmedField('imageModel', $event)"
+        />
+        <datalist id="provider-image-model-options">
+          <option v-for="model in imageModelOptions" :key="model.id" :value="model.id">
+            {{ model.label }}
+          </option>
+        </datalist>
+        <small class="field-hint">聊天模型负责对话；开启图片调用时使用这里的模型。</small>
+      </label>
     </div>
 
     <div class="provider-capability-panel" :aria-label="`${providerCapabilityName} 能力`">

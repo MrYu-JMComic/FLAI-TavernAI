@@ -16,6 +16,9 @@ test('OpenAPI document fixes the shared error envelope and core security schemes
   assert.ok(document.paths['/jobs'].post);
   assert.ok(document.paths['/envelopes/{kind}/import'].post);
   assert.ok(document.paths['/admin/backups/{filename}/preflight'].get);
+  assert.ok(document.paths['/admin/users/{id}/quota'].put);
+  assert.ok(document.paths['/admin/users/{id}'].delete);
+  assert.ok(document.paths['/admin/users/{id}/usage/requests/reset'].post);
   assert.equal(document.components.schemas.CharacterList.oneOf[0].type, 'array');
   assert.equal(document.components.schemas.WorldBookList.type, 'array');
   assert.equal(document.components.schemas.TownList.type, 'array');

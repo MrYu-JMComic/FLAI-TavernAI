@@ -199,7 +199,7 @@ test('ChatView ignores model switcher open events while sending', () => {
 });
 
 test('ChatView routes preset selection through the guarded submit setter', () => {
-  assert.match(chatViewScript, /submit, continueGeneration, stop,[\s\S]*setSelectedPresetId, toggleUseStream, toggleThinking, toggleImageGeneration/);
+  assert.match(chatViewScript, /submit, continueGeneration, canRegenerateMessage, regenerateMessage, stop,[\s\S]*setSelectedPresetId, toggleUseStream, toggleThinking, toggleImageGeneration/);
   assert.match(chatViewScript, /canSend, canContinueGeneration, canToggleThinking, canToggleImageGeneration/);
   assert.match(chatViewTemplate, /<ChatSettingsDrawer[\s\S]*:image-generation-enabled="imageGenerationEnabled"[\s\S]*:can-toggle-image-generation="canToggleImageGeneration"[\s\S]*@toggle-image-generation="toggleImageGeneration"/);
   assert.match(chatViewTemplate, /<ChatMessageItem[\s\S]*:can-continue="canContinueGeneration && latestMessage\?\.id === message\.id"[\s\S]*@continue-generation="continueGeneration"/);

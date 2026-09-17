@@ -75,6 +75,7 @@ export function normalizeProviderRow(row) {
     gatewayName: row.gateway_name,
     baseUrl: row.base_url,
     model: normalizeProviderModel(row.provider_type, row.model),
+    imageModel: row.image_model || '',
     supportsReasoning: Boolean(row.supports_reasoning),
     allowPrivateNetwork: Boolean(row.allow_private_network),
     extraBody: parseJson(row.extra_body, {}),
@@ -309,6 +310,7 @@ async function generateCompletionInternal(settings, messages, options = {}) {
   const response = await providerFetch(settings, '/chat/completions', {
     method: 'POST',
     body: JSON.stringify(buildProviderBody(settings, messages, false, options)),
+    requestTrace: options.requestTrace,
     signal
   });
 
@@ -350,6 +352,7 @@ async function streamCompletionInternal(settings, messages, emit, signal, option
   const response = await providerFetch(settings, '/chat/completions', {
     method: 'POST',
     body: JSON.stringify(buildProviderBody(settings, messages, true, options)),
+    requestTrace: options.requestTrace,
     signal
   });
 

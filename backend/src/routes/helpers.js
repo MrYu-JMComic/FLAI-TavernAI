@@ -8,7 +8,7 @@ import {
   mergeAdvancedSettings,
   sanitizeAuthorAdvancedSettings
 } from '../modules/advancedSettings.js';
-import { summarizeUsageSnapshots } from '../services/providers.js';
+import { hasUsableProvider, summarizeUsageSnapshots } from '../services/providers.js';
 import { parseJson } from '../utils/json.js';
 import {
   createCursorScope,
@@ -18,6 +18,8 @@ import {
 } from '../services/cursorPagination.js';
 import { measureSync } from '../services/performanceMetrics.js';
 import { isSafeAttachmentUrl } from '../services/chatAttachments.js';
+import { withSavepoint } from '../modules/savepoint.js';
+import { finishConversationHistoryChange, prepareConversationHistoryChange } from '../services/conversationTimeline.js';
 
 export { parseJson };
 
@@ -114,7 +116,10 @@ export function toConversation(row, db, viewerId = '') {
     id: row.id,
     characterId: row.character_id,
     title: row.title,
+    timelineRevision: row.timeline_revision || 1,
+    stateStatus: row.state_status || 'legacy',
     chatLorebookId: row.chat_lorebook_id || null,
+    contextBudget: parseJson(row.context_budget_json, {}),
     settings: mergedSettings,
     authorSettings: authorAdvancedSettings,
     authorDangerousAllowed: isCharacterOwner,
@@ -228,6 +233,8 @@ export function toMessage(row) {
   const rawAttachments = parseJson(row.attachments_json, []);
   return {
     id: row.id,
+    revision: row.revision || 1,
+    postprocessState: row.postprocess_state || 'untracked',
     role: row.role,
     content: row.content,
     attachments: sanitizeMessageAttachments(rawAttachments),
@@ -314,13 +321,19 @@ export function updateConversationTimestamp(db, nowIso, userId, conversationId) 
 }
 
 export function updateConversationMessage(db, nowIso, userId, conversationId, messageId, payload) {
+  const existing = getConversationMessage(db, userId, conversationId, messageId);
+  if (!existing || existing.content === payload.content) return existing;
+  return withSavepoint(db, 'sp_edit_conversation_history', () => {
+  const prepared = prepareConversationHistoryChange(db, userId, conversationId, messageId);
   db.prepare(
     `UPDATE messages
      SET content = ?
      WHERE user_id = ? AND conversation_id = ? AND id = ?`
   ).run(payload.content, userId, conversationId, messageId);
   updateConversationTimestamp(db, nowIso, userId, conversationId);
-  return getConversationMessage(db, userId, conversationId, messageId);
+  const timeline = finishConversationHistoryChange(db, userId, conversationId, prepared);
+  return { ...getConversationMessage(db, userId, conversationId, messageId), timeline };
+  });
 }
 
 export function deleteConversationMessage(db, nowIso, userId, conversationId, messageId) {
@@ -328,26 +341,59 @@ export function deleteConversationMessage(db, nowIso, userId, conversationId, me
   if (!existing) {
     return null;
   }
-
+  return withSavepoint(db, 'sp_delete_conversation_history', () => {
+  const prepared = prepareConversationHistoryChange(db, userId, conversationId, messageId);
   const result = db
     .prepare('DELETE FROM messages WHERE user_id = ? AND conversation_id = ? AND id = ?')
     .run(userId, conversationId, messageId);
   if (result.changes > 0) {
     updateConversationTimestamp(db, nowIso, userId, conversationId);
   }
+  const timeline = result.changes > 0 ? finishConversationHistoryChange(db, userId, conversationId, prepared) : null;
   return result.changes > 0
-    ? { deletedId: messageId, deletedReasoning: Boolean(existing.reasoning) }
+    ? { deletedId: messageId, deletedReasoning: Boolean(existing.reasoning), timeline }
     : null;
+  });
+}
+
+/**
+ * Delete a message and everything after it as one history change. Rerunning an
+ * edited prompt previously deleted each tail message separately, which produced
+ * one recovery snapshot and one job cancellation per message.
+ */
+export function deleteConversationMessagesFrom(db, nowIso, userId, conversationId, messageId) {
+  const rows = db
+    .prepare(
+      `SELECT id FROM messages
+       WHERE user_id = ? AND conversation_id = ?
+       ORDER BY created_at ASC, rowid ASC`
+    )
+    .all(userId, conversationId);
+  const index = rows.findIndex((row) => row.id === messageId);
+  if (index < 0) {
+    return null;
+  }
+  const targets = rows.slice(index).map((row) => row.id);
+  return withSavepoint(db, 'sp_truncate_conversation_history', () => {
+    const prepared = prepareConversationHistoryChange(db, userId, conversationId, messageId);
+    const remove = db.prepare('DELETE FROM messages WHERE user_id = ? AND conversation_id = ? AND id = ?');
+    const deletedIds = [];
+    for (const targetId of targets) {
+      if (remove.run(userId, conversationId, targetId).changes > 0) deletedIds.push(targetId);
+    }
+    updateConversationTimestamp(db, nowIso, userId, conversationId);
+    const timeline = finishConversationHistoryChange(db, userId, conversationId, prepared);
+    return { deletedIds, timeline };
+  });
 }
 
 export function listRecentConversationMessageRows(db, userId, conversationId) {
   const rows = db
     .prepare(
-      `SELECT role, content, attachments_json, reasoning, created_at
+      `SELECT id, revision, role, content, attachments_json, reasoning, created_at
        FROM messages
        WHERE user_id = ? AND conversation_id = ?
-       ORDER BY created_at DESC, rowid DESC
-       LIMIT 20`
+       ORDER BY created_at DESC, rowid DESC`
     )
     .all(userId, conversationId);
   const recentMessages = [];
@@ -445,7 +491,7 @@ export function getChatProviderSettingsFromContext(ctx, userId) {
   if (settings.apiKeyError) {
     return { ok: false, error: settings.apiKeyError };
   }
-  const providerReady = ctx.hasUsableProvider(settings);
+  const providerReady = (ctx.hasUsableProvider || hasUsableProvider)(settings);
   if (!settings.apiKey && !providerReady) {
     if (ctx.mockProviderEnabled) {
       return { ok: true, value: mockProviderSettings(settings) };

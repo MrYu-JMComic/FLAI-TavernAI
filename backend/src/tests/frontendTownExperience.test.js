@@ -34,7 +34,7 @@ test('new town maps render from procedural map configuration while legacy image 
   assert.match(generatedMapScript, /drawTerrain\(context, map\.terrainPatches, palette\)/);
   assert.match(generatedMapScript, /drawWater\(context, map\.waterBodies, palette\)/);
   assert.match(generatedMapScript, /drawRoads\(context, map\.roads, palette\)/);
-  assert.match(generatedMapScript, /drawBuildings\(context, map\.buildings, palette\)/);
+  assert.match(generatedMapScript, /drawBuildings\(context, map, palette\)/);
 });
 
 test('paused worlds expose an explicit AI turn that refreshes the real snapshot without racing polling', () => {

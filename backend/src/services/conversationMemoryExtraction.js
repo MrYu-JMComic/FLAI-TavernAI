@@ -1,7 +1,7 @@
 import { createConversationMemory, listConversationMemories } from '../modules/conversationMemories.js';
 
-const AUTO_MEMORY_LIMIT = 6;
-const MEMORY_SENTENCE_LIMIT = 180;
+const AUTO_MEMORY_LIMIT = 12;
+const MEMORY_SENTENCE_LIMIT = 1_000;
 
 export function recordAutomaticConversationMemories(database, userId, conversationId, options = {}) {
   const userMessage = options.userMessage || {};
@@ -41,10 +41,10 @@ export function recordAutomaticConversationMemories(database, userId, conversati
       subject: candidate.subject,
       content: candidate.content,
       confidence: candidate.confidence,
-      sourceMessageId: candidate.sourceMessageId || assistantMessage.id || userMessage.id || '',
+      sourceMessageId: candidate.sourceMessageId || '',
       sourceKind: 'auto',
       sourceExcerpt: candidate.sourceExcerpt,
-      enabled: false
+      enabled: true
     });
     if (memory) {
       created.push(memory);
@@ -62,117 +62,52 @@ export function extractConversationMemoryCandidates(options = {}) {
     return [];
   }
 
-  const candidates = [];
-  for (const source of sources) {
+  const perSource = sources.map((source) => {
+    const candidates = [];
     collectSourceMemoryCandidates(candidates, source);
-    if (candidates.length >= AUTO_MEMORY_LIMIT * 3) {
-      break;
-    }
+    return candidates;
+  });
+  const candidates = [];
+  for (let index = 0; index < AUTO_MEMORY_LIMIT; index += 1) {
+    for (const entries of perSource) if (entries[index]) candidates.push(entries[index]);
   }
   return dedupeCandidates(candidates);
 }
 
 function collectSourceMemoryCandidates(candidates, source) {
-  const start = candidates.length;
-  collectPreferenceCandidates(candidates, source.text);
-  collectRelationshipCandidates(candidates, source.text);
-  collectLocationCandidates(candidates, source.text);
-  collectEventCandidates(candidates, source.text);
-  collectFactCandidates(candidates, source.text);
-  for (let index = start; index < candidates.length; index += 1) {
-    candidates[index].sourceMessageId = source.id;
-    candidates[index].sourceRole = source.role;
-  }
-}
-
-function collectPreferenceCandidates(candidates, text) {
-  collectRegexCandidates(candidates, text, [
-    /(?:我|用户|玩家|player|user)\s*(?:喜欢|偏好|更想|希望|不喜欢|讨厌|避免)\s*([^。！？.!?\n]{2,80})/gi,
-    /\b(?:I|user|player)\s+(?:like|prefer|want|hope|hate|dislike|avoid)\s+([^.!?\n]{2,100})/gi
-  ], (match) => ({
-    memoryType: 'preference',
-    subject: 'user',
-    content: trimMemorySentence(match[0]),
-    confidence: 0.74,
-    sourceExcerpt: trimMemorySentence(match[0])
-  }));
-}
-
-function collectRelationshipCandidates(candidates, text) {
-  collectRegexCandidates(candidates, text, [
-    /([\u4e00-\u9fa5A-Za-z0-9_]{1,24})\s*(?:信任|喜欢|讨厌|怀疑|保护|背叛|帮助|依赖|认识)\s*([\u4e00-\u9fa5A-Za-z0-9_]{1,24})/g,
-    /\b([A-Z][A-Za-z0-9_]{1,24}|player|user)\s+(trusts|likes|hates|suspects|protects|betrayed|helps|knows|depends on)\s+([A-Z][A-Za-z0-9_]{1,24}|the player|the user|user|player)\b/g
-  ], (match) => ({
-    memoryType: 'relationship',
-    subject: normalizeSubject(match[1]),
-    content: trimMemorySentence(match[0]),
-    confidence: 0.78,
-    sourceExcerpt: trimMemorySentence(match[0])
-  }));
-}
-
-function collectLocationCandidates(candidates, text) {
-  collectRegexCandidates(candidates, text, [
-    /(?:抵达|来到|进入|离开|位于|住在|藏在|前往)\s*([^，。！？.!?\n]{2,50})/g,
-    /\b(?:arrived at|entered|left|went to|is at|stays in|lives in|hidden in)\s+([A-Z][A-Za-z0-9 _-]{2,60})/gi
-  ], (match) => ({
-    memoryType: 'location',
-    subject: trimMemorySentence(match[1]).slice(0, 80),
-    content: trimMemorySentence(match[0]),
-    confidence: 0.7,
-    sourceExcerpt: trimMemorySentence(match[0])
-  }));
-}
-
-function collectEventCandidates(candidates, text) {
-  const sentences = splitSentences(text);
-  for (const sentence of sentences) {
-    if (!hasEventSignal(sentence)) {
-      continue;
-    }
+  if (!['user', 'assistant'].includes(source.role)) return;
+  for (const sentence of splitSentences(source.text)) {
+    if (source.role === 'user' && isConversationRequest(sentence)) continue;
+    const memoryType = classifyMemorySentence(sentence, source.role);
     candidates.push({
-      memoryType: 'event',
-      subject: inferEventSubject(sentence),
+      memoryType,
+      subject: memoryType === 'preference' ? 'user' : '',
       content: trimMemorySentence(sentence),
-      confidence: 0.68,
-      sourceExcerpt: trimMemorySentence(sentence)
+      confidence: memoryType === 'summary' ? 0.55 : 0.7,
+      sourceExcerpt: trimMemorySentence(sentence),
+      sourceMessageId: source.id,
+      sourceRole: source.role
     });
-    if (candidates.length >= AUTO_MEMORY_LIMIT * 2) {
-      return;
-    }
+    if (candidates.length >= AUTO_MEMORY_LIMIT) return;
   }
 }
 
-function collectFactCandidates(candidates, text) {
-  collectRegexCandidates(candidates, text, [
-    /([\u4e00-\u9fa5A-Za-z0-9_]{2,30})\s*(?:是|拥有|携带|掌握|知道)\s*([^。！？.!?\n]{2,80})/g,
-    /\b([A-Z][A-Za-z0-9_]{1,30})\s+(?:is|has|carries|knows)\s+([^.!?\n]{2,100})/g
-  ], (match) => ({
-    memoryType: 'fact',
-    subject: normalizeSubject(match[1]),
-    content: trimMemorySentence(match[0]),
-    confidence: 0.62,
-    sourceExcerpt: trimMemorySentence(match[0])
-  }));
+function isConversationRequest(text) {
+  if (/[?？]["'”’）)]?$/.test(text)) return true;
+  return /^(?:请)?(?:简短|简洁|详细|继续|续写|重写|回答|确认|输出|总结|扩写|用.{0,12}(?:字|句|段).*(?:回答|回复|描述)|不要(?:代写|重复))/.test(text)
+    || /^(?:please\s+)?(?:reply|respond|answer|continue|rewrite|summarize)\b/i.test(text);
 }
 
-function collectRegexCandidates(candidates, text, patterns, createCandidate) {
-  for (const pattern of patterns) {
-    pattern.lastIndex = 0;
-    let match;
-    while ((match = pattern.exec(text))) {
-      const candidate = createCandidate(match);
-      if (candidate?.content) {
-        candidates.push(candidate);
-      }
-      if (candidates.length >= AUTO_MEMORY_LIMIT * 3) {
-        return;
-      }
-      if (!pattern.global) {
-        break;
-      }
-    }
-  }
+function classifyMemorySentence(text, role) {
+  if (/(?:如果|假如|假设|也许|可能|或许|\b(?:if|might|maybe|perhaps|imagine|suppose)\b)/i.test(text)) return 'hypothesis';
+  if (/(?:打算|准备|计划|将会|想要|想去|想把|想买|希望|明天|后天|下次|\b(?:will|want to|hope to|plan to|intend to|tomorrow|next time)\b)/i.test(text)) return 'intent';
+  if (role === 'user' && /^(?:我|用户|玩家|I|user|player)\s*(?:喜欢|偏好|不喜欢|讨厌|避免|prefer\b|like\b|dislike\b|hate\b|avoid\b|don't like\b|do not like\b)/i.test(text)) return 'preference';
+  if (/(?:信任|喜欢|讨厌|怀疑|保护|背叛|帮助|依赖|认识|\b(?:trusts|likes|hates|suspects|protects|betrayed|helps|knows|depends on)\b)/i.test(text)) return 'relationship';
+  if (/(?:抵达|来到|进入|离开|位于|住在|藏在|前往|\b(?:arrived at|entered|left|went to|is at|stays in|lives in|hidden in)\b)/i.test(text)) return 'location';
+  if (/(?:发现|找到|获得|拿到|救下|击败|承诺|失去|交给|交出|交付|完成|打开|关上|点头|摇头|坐下|站起|递给|递回|放进|接过|收下|归还|取出|抱住|亲吻|离世|死了|\b(?:found|discovered|obtained|rescued|defeated|promised|lost|unlocked|handed|delivered|completed|opened|closed|nodded|sat|stood|hugged|kissed|died)\b)/i.test(text)) return 'event';
+  if (/(?:是|拥有|携带|掌握|知道|\b(?:is|has|carries|knows)\b)/i.test(text)) return 'fact';
+  // Retain ordinary narration verbatim instead of requiring a fixed verb list.
+  return 'summary';
 }
 
 function dedupeCandidates(candidates = []) {
@@ -245,7 +180,7 @@ function normalizeMemorySources(options = {}) {
 }
 
 function appendMemorySource(sources, content, metadata = {}) {
-  const text = String(content || '').trim().slice(0, 6000);
+  const text = String(content || '').trim().slice(0, 60_000);
   if (!text) {
     return;
   }
@@ -257,39 +192,10 @@ function appendMemorySource(sources, content, metadata = {}) {
 }
 
 function splitSentences(text) {
-  const sentences = [];
-  let start = 0;
-  for (let index = 0; index < text.length; index += 1) {
-    if (!'。！？.!?\n'.includes(text[index])) {
-      continue;
-    }
-    pushSentence(sentences, text.slice(start, index + 1));
-    start = index + 1;
-    if (sentences.length >= 24) {
-      break;
-    }
-  }
-  if (sentences.length < 24) {
-    pushSentence(sentences, text.slice(start));
-  }
-  return sentences;
-}
-
-function pushSentence(sentences, value) {
-  const sentence = trimMemorySentence(value);
-  if (sentence.length >= 8) {
-    sentences.push(sentence);
-  }
-}
-
-function hasEventSignal(sentence) {
-  return /(?:发现|找到|获得|拿到|救下|击败|承诺|失去|抵达|离开|解开|found|discovered|obtained|rescued|defeated|promised|lost|arrived|left|unlocked)/i
-    .test(sentence);
-}
-
-function inferEventSubject(sentence) {
-  const match = /([\u4e00-\u9fa5A-Za-z0-9_]{2,24})/.exec(sentence);
-  return match ? normalizeSubject(match[1]) : '';
+  return [...new Intl.Segmenter('zh', { granularity: 'sentence' }).segment(text)]
+    .flatMap((part) => part.segment.split(/\n+/))
+    .map((sentence) => sentence.trim())
+    .filter((sentence) => sentence.length >= 2 && !/^(?:好|好的|嗯|哦|继续|ok|yes|no|understood)[。.!！\s]*$/i.test(sentence));
 }
 
 function trimMemorySentence(value) {
@@ -299,17 +205,13 @@ function trimMemorySentence(value) {
     .slice(0, MEMORY_SENTENCE_LIMIT);
 }
 
-function normalizeSubject(value) {
-  return String(value || '').trim().replace(/[，。！？.!?]+$/g, '').slice(0, 80);
-}
-
 function normalizeComparableText(value) {
   return String(value || '').trim().replace(/\s+/g, ' ').toLowerCase();
 }
 
 function normalizeMemoryType(value) {
   const normalized = String(value || '').trim();
-  return ['event', 'relationship', 'location', 'preference', 'fact', 'summary'].includes(normalized)
+  return ['event', 'relationship', 'location', 'preference', 'fact', 'summary', 'intent', 'hypothesis'].includes(normalized)
     ? normalized
     : 'event';
 }

@@ -4,7 +4,7 @@ import { readRepoText, readVueBlocks } from './frontendSfcTestUtils.js';
 
 const { useChatAppearance } = await import('../../../frontend/src/composables/chat/useChatAppearance.js');
 const { useChatConversation } = await import('../../../frontend/src/composables/chat/useChatConversation.js');
-const { buildScopedChatCss, mergeChatAppearance, runChatCustomScript } = await import('../../../frontend/src/utils/chatAppearance.js');
+const { buildScopedChatCss, mergeChatAppearance, normalizeChatAppearance, runChatCustomScript } = await import('../../../frontend/src/utils/chatAppearance.js');
 
 const chatAppearanceSource = readRepoText('frontend/src/composables/chat/useChatAppearance.js');
 const chatAppearanceUtilsSource = readRepoText('frontend/src/utils/chatAppearance.js');
@@ -92,6 +92,8 @@ test('chat appearance caches active character and render plugin lookups', () => 
 });
 
 test('chat appearance merges layered text fields without filter arrays', () => {
+  assert.equal(normalizeChatAppearance({ cast_tracking: { thinking_level: 'HIGH' } }).castTracking.thinkingLevel, 'high');
+  assert.equal(Object.hasOwn(normalizeChatAppearance({ castTracking: { thinkingLevel: 'invalid' } }).castTracking, 'thinkingLevel'), false);
   assert.deepEqual(
     mergeChatAppearance(
       {
@@ -129,7 +131,8 @@ test('chat appearance merges layered text fields without filter arrays', () => {
       customJsRiskAccepted: true,
       statusBarPrompt: 'Author prompt\n\nUser prompt',
       showWorldBookMatches: false,
-      castTracking: { enabled: false }
+      highlightDialogue: true,
+      castTracking: { enabled: false, providerProfileId: '', modelOverride: '', autoSyncOperations: {}, organizeOperations: {} }
     }
   );
   assert.match(
@@ -164,7 +167,8 @@ test('chat appearance only applies custom CSS and JS after risk confirmation', (
       customJsRiskAccepted: false,
       statusBarPrompt: '',
       showWorldBookMatches: true,
-      castTracking: { enabled: false }
+      highlightDialogue: true,
+      castTracking: { enabled: false, providerProfileId: '', modelOverride: '', autoSyncOperations: {}, organizeOperations: {} }
     }
   );
   assert.equal(
@@ -416,7 +420,8 @@ test('chat appearance save preserves active conversation references for unchange
     customJsRiskAccepted: false,
     statusBarPrompt: '',
     showWorldBookMatches: true,
-    castTracking: { enabled: false }
+    highlightDialogue: true,
+    castTracking: { enabled: false, providerProfileId: '', modelOverride: '', autoSyncOperations: {}, organizeOperations: {} }
   };
   const savedSettings = {
     ...normalizedAppearance,

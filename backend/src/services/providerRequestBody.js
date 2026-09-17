@@ -23,7 +23,20 @@ export function buildProviderBody(settings, messages, stream, options = {}) {
 
   // Apply preset / override parameters
   assignFiniteProviderNumber(body, 'temperature', options.temperature);
-  assignFiniteProviderNumber(body, 'max_tokens', options.maxTokens);
+  if (options.unlimitedOutput) {
+    delete body.max_tokens;
+    delete body.max_completion_tokens;
+    delete body.max_output_tokens;
+    delete body.maxTokens;
+    delete body.maxCompletionTokens;
+    delete body.maxOutputTokens;
+  } else {
+    assignFiniteProviderNumber(body, 'max_tokens', options.maxTokens);
+    if (Number.isFinite(options.maxTokens) && Object.hasOwn(extraBody, 'max_completion_tokens')) {
+      body.max_completion_tokens = options.maxTokens;
+      delete body.max_tokens;
+    }
+  }
   assignFiniteProviderNumber(body, 'top_p', options.topP);
   assignFiniteProviderNumber(body, 'frequency_penalty', options.frequencyPenalty);
   assignFiniteProviderNumber(body, 'presence_penalty', options.presencePenalty);

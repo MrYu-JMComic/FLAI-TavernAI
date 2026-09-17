@@ -218,6 +218,7 @@ export function createSettingsRouter(ctx) {
       gatewayName: String(payload.gatewayName || existingPublic?.gatewayName || preset.gatewayName).trim() || preset.gatewayName,
       baseUrl: candidateBaseUrl,
       model: String(payload.model ?? existingPublic?.model ?? preset.model).trim(),
+      imageModel: String(payload.imageModel ?? existingPublic?.imageModel ?? preset.imageModel ?? '').trim(),
       supportsReasoning: normalizeBoolean(payload.supportsReasoning, existingPublic?.supportsReasoning ?? preset.supportsReasoning),
       allowPrivateNetwork: privateNetwork
         ? (Boolean(user.isRootAdmin) && isPrivateProviderNetworkEnabled(config) || isTestMockProviderUrl(candidateBaseUrl, config))

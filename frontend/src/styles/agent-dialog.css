@@ -1,0 +1,309 @@
+/* Shared styling for the memory agent and NPC agent settings dialogs. */
+
+:is(.cast-agent-backdrop, .memory-agent-backdrop) {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-modal);
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  background: rgba(12, 14, 17, 0.5);
+  backdrop-filter: blur(3px);
+}
+
+:is(.cast-agent-dialog, .memory-agent-dialog) {
+  display: flex;
+  flex-direction: column;
+  width: min(640px, 100%);
+  max-height: calc(100vh - 32px);
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: var(--surface-raised);
+  box-shadow: var(--shadow-lg);
+  color: var(--text);
+  text-align: left;
+}
+
+:is(.cast-agent-dialog, .memory-agent-dialog) > header,
+:is(.cast-agent-dialog, .memory-agent-dialog) > footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 16px 20px;
+  flex: 0 0 auto;
+}
+
+:is(.cast-agent-dialog, .memory-agent-dialog) > header {
+  align-items: flex-start;
+  border-bottom: 1px solid var(--line);
+}
+
+:is(.cast-agent-dialog, .memory-agent-dialog) > footer {
+  justify-content: flex-end;
+  border-top: 1px solid var(--line);
+  background: color-mix(in srgb, var(--surface-strong) 55%, transparent);
+}
+
+:is(.cast-agent-dialog, .memory-agent-dialog) > section {
+  padding: 16px 20px 4px;
+}
+
+:is(.cast-agent-dialog, .memory-agent-dialog) > section:last-of-type {
+  padding-bottom: 16px;
+}
+
+:is(.cast-agent-dialog, .memory-agent-dialog) > section + section {
+  border-top: 1px dashed var(--line);
+}
+
+/* Sections scroll together while the header and footer stay fixed. */
+:is(.cast-agent-dialog, .memory-agent-dialog) > header + section,
+:is(.cast-agent-dialog, .memory-agent-dialog) > section {
+  overflow: visible;
+}
+
+:is(.cast-agent-dialog, .memory-agent-dialog) > .agent-dialog-body {
+  overflow: auto;
+}
+
+:is(.cast-agent-dialog, .memory-agent-dialog) h3 {
+  margin: 0;
+  font-size: 1.05rem;
+  font-weight: 800;
+  letter-spacing: 0.01em;
+}
+
+:is(.cast-agent-dialog, .memory-agent-dialog) h4 {
+  margin: 0 0 10px;
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+:is(.cast-agent-dialog, .memory-agent-dialog) > header p,
+:is(.cast-agent-hint, .memory-agent-hint) {
+  margin: 4px 0 0;
+  font-size: 0.8rem;
+  line-height: 1.55;
+  color: var(--muted);
+}
+
+:is(.cast-agent-hint, .memory-agent-hint) {
+  margin: -4px 0 10px;
+}
+
+:is(.cast-agent-field, .memory-agent-field) {
+  display: grid;
+  gap: 6px;
+  margin-bottom: 12px;
+  font-size: 0.84rem;
+  font-weight: 600;
+}
+
+:is(.cast-agent-field, .memory-agent-field) > span {
+  color: var(--muted);
+  font-weight: 600;
+}
+
+:is(.cast-agent-field, .memory-agent-field) select,
+:is(.cast-agent-field, .memory-agent-field) input[type='text'] {
+  height: 40px;
+  font-weight: 500;
+}
+
+:is(.cast-agent-model-row, .memory-agent-model-row) {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+:is(.cast-agent-model-row, .memory-agent-model-row) select {
+  flex: 1 1 auto;
+}
+
+:is(.cast-agent-modes, .memory-agent-modes) {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+:is(.cast-agent-mode, .memory-agent-mode, .cast-agent-operation, .memory-agent-tool) {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  justify-content: flex-start;
+  min-width: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--surface) 70%, transparent);
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.15s ease, background-color 0.15s ease;
+}
+
+:is(.cast-agent-mode, .memory-agent-mode, .cast-agent-operation, .memory-agent-tool):hover {
+  border-color: color-mix(in srgb, var(--primary) 55%, var(--line));
+}
+
+:is(.cast-agent-mode, .memory-agent-mode).active {
+  border-color: var(--primary);
+  background: var(--primary-soft);
+}
+
+/* Global form rules size every input like a text field; native toggles need their own box. */
+:is(.cast-agent-dialog, .memory-agent-dialog) input[type='radio'],
+:is(.cast-agent-dialog, .memory-agent-dialog) input[type='checkbox'] {
+  flex: 0 0 auto;
+  width: 18px;
+  height: 18px;
+  min-width: 18px;
+  margin: 2px 0 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  accent-color: var(--primary);
+  cursor: pointer;
+}
+
+:is(.cast-agent-dialog, .memory-agent-dialog) input[type='checkbox']:disabled,
+:is(.cast-agent-dialog, .memory-agent-dialog) input[type='radio']:disabled {
+  cursor: default;
+}
+
+:is(.cast-agent-mode, .memory-agent-mode, .cast-agent-operation, .memory-agent-tool) > span {
+  display: grid;
+  flex: 1 1 auto;
+  gap: 3px;
+  min-width: 0;
+}
+
+:is(.cast-agent-mode, .memory-agent-mode, .cast-agent-operation, .memory-agent-tool) strong {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.86rem;
+  font-weight: 700;
+  line-height: 1.35;
+}
+
+:is(.cast-agent-mode, .memory-agent-mode, .cast-agent-operation, .memory-agent-tool) small {
+  font-size: 0.75rem;
+  line-height: 1.5;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+:is(.cast-agent-operation, .memory-agent-tool) em {
+  padding: 1px 7px;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--line);
+  font-size: 0.66rem;
+  font-style: normal;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--muted);
+  background: color-mix(in srgb, var(--surface-strong) 60%, transparent);
+}
+
+.cast-agent-operation em {
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  letter-spacing: 0;
+}
+
+.memory-agent-tool.required {
+  opacity: 0.75;
+  cursor: default;
+}
+
+:is(.cast-agent-operations, .memory-agent-tools) {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+  gap: 8px;
+  margin: 0 0 12px;
+  padding: 0;
+  list-style: none;
+}
+
+:is(.cast-agent-error, .memory-agent-error) {
+  color: var(--danger);
+  font-size: 0.76rem;
+  font-weight: 500;
+}
+
+:is(.cast-agent-icon-button, .memory-agent-icon-button) {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+}
+
+:is(.cast-agent-icon-button, .memory-agent-icon-button):hover:not(:disabled) {
+  border-color: var(--primary);
+  color: var(--primary);
+}
+
+:is(.cast-agent-dialog, .memory-agent-dialog) > footer button {
+  min-height: 36px;
+  padding: 0 18px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 0.84rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+:is(.cast-agent-dialog, .memory-agent-dialog) > footer button.primary {
+  border-color: var(--primary);
+  background: var(--primary);
+  color: #fff8ec;
+}
+
+:is(.cast-agent-dialog, .memory-agent-dialog) > footer button:disabled,
+:is(.cast-agent-icon-button, .memory-agent-icon-button):disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+@media (max-width: 680px) {
+  :is(.cast-agent-backdrop, .memory-agent-backdrop) {
+    padding: 0;
+    align-items: end;
+  }
+
+  :is(.cast-agent-dialog, .memory-agent-dialog) {
+    width: 100%;
+    max-height: 100vh;
+    border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+  }
+
+  :is(.cast-agent-dialog, .memory-agent-dialog) > header,
+  :is(.cast-agent-dialog, .memory-agent-dialog) > footer,
+  :is(.cast-agent-dialog, .memory-agent-dialog) > section {
+    padding-left: 14px;
+    padding-right: 14px;
+  }
+
+  :is(.cast-agent-dialog, .memory-agent-dialog) > footer button {
+    min-height: 44px;
+  }
+}

@@ -1,17 +1,13 @@
 /**
  * 工具 Schema 优化器
- * 确保工具定义兼容所有主流 AI 模型：GPT、Gemini、DeepSeek、Claude、Grok 等
+ * 在保留参数约束的前提下规范工具定义。
  */
 
 /**
  * 优化 JSON Schema 以确保跨模型兼容性
  *
- * 兼容性问题：
- * 1. exclusiveMinimum/exclusiveMaximum: Claude/Anthropic 不支持，需转换为 minimum/maximum
- * 2. 空 properties: 某些模型要求至少有一个属性或使用 additionalProperties
- * 3. 深度嵌套: 某些模型对嵌套深度有限制
- * 4. maxLength/minLength: 所有主流模型都支持
- * 5. enum: 所有主流模型都支持
+ * 整数开边界可以精确转换为闭边界；浮点开边界不能用任意增量近似。
+ * 保留显式 additionalProperties 和 strict，递归处理嵌套结构。
  */
 export function optimizeToolSchema(schema) {
   if (!schema || typeof schema !== 'object') {
@@ -21,38 +17,23 @@ export function optimizeToolSchema(schema) {
   // 克隆以避免修改原对象
   const optimized = Array.isArray(schema) ? [...schema] : { ...schema };
 
-  // 1. 处理 exclusiveMinimum -> minimum (向上取整)
-  if ('exclusiveMinimum' in optimized) {
+  // Integer bounds can be normalized exactly; keep fractional bounds exclusive.
+  if (optimized.type === 'integer' && typeof optimized.exclusiveMinimum === 'number') {
     const value = optimized.exclusiveMinimum;
     delete optimized.exclusiveMinimum;
-
-    if (typeof value === 'number') {
-      // 对于整数类型，exclusive 0 变为 minimum 1
-      if (optimized.type === 'integer') {
-        optimized.minimum = Math.ceil(value) + 1;
-      } else {
-        // 对于浮点数，使用一个小的增量
-        optimized.minimum = value + 0.0001;
-      }
-    }
+    optimized.minimum = Math.max(optimized.minimum ?? -Infinity, Math.floor(value) + 1);
   }
 
   // 2. 处理 exclusiveMaximum -> maximum (向下取整)
-  if ('exclusiveMaximum' in optimized) {
+  if (optimized.type === 'integer' && typeof optimized.exclusiveMaximum === 'number') {
     const value = optimized.exclusiveMaximum;
     delete optimized.exclusiveMaximum;
 
-    if (typeof value === 'number') {
-      if (optimized.type === 'integer') {
-        optimized.maximum = Math.floor(value) - 1;
-      } else {
-        optimized.maximum = value - 0.0001;
-      }
-    }
+    optimized.maximum = Math.min(optimized.maximum ?? Infinity, Math.ceil(value) - 1);
   }
 
   // 3. 处理空 object 类型
-  if (optimized.type === 'object' && !optimized.properties && !optimized.additionalProperties) {
+  if (optimized.type === 'object' && !optimized.properties && !('additionalProperties' in optimized)) {
     // 添加 additionalProperties: true 以明确允许任意属性
     optimized.additionalProperties = true;
   }
@@ -96,8 +77,9 @@ export function optimizeTool(tool) {
   }
 
   const optimized = {
-    type: 'function',
+    ...tool,
     function: {
+      ...tool.function,
       name: tool.function.name,
       description: tool.function.description || '',
       parameters: tool.function.parameters ? optimizeToolSchema(tool.function.parameters) : {

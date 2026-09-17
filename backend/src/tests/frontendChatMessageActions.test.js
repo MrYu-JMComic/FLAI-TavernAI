@@ -22,7 +22,9 @@ function createMessageActions({
   loadSidebarData = async () => {},
   onCopyFallback = () => false,
   showActionNotice = () => {},
-  showError = () => {}
+  showError = () => {},
+  regenerateMessage = null,
+  isConversationBusy = () => false
 } = {}) {
   return useChatMessageActions({
     messages: messagesRef,
@@ -33,7 +35,9 @@ function createMessageActions({
     loadSidebarData,
     onCopyFallback,
     showActionNotice,
-    showError
+    showError,
+    regenerateMessage,
+    isConversationBusy
   });
 }
 
@@ -52,6 +56,62 @@ function deferredResponse(payload) {
   });
   return { promise, resolve: resolveResponse };
 }
+
+test('message mutations are locked during generation and any swipe request', async () => {
+  let busy = true;
+  const message = { id: 'msg-1', role: 'assistant', content: 'Original' };
+  const actions = createMessageActions({ messages: [message], isConversationBusy: () => busy });
+  assert.equal(actions.canEditMessage(message), false);
+  assert.equal(actions.canDeleteMessage(message), false);
+  assert.equal(actions.canBranchMessage(message), false);
+  await actions.beginEditMessage(message);
+  assert.equal(actions.editingMessageId.value, '');
+  busy = false;
+  actions.swipeLoading.value = new Set(['different-message']);
+  assert.equal(actions.canEditMessage(message), false);
+  actions.swipeLoading.value = new Set();
+  assert.equal(actions.canEditMessage(message), true);
+  actions.cleanup();
+});
+
+test('swiping past the last candidate requests a real regeneration instead of copying the text', async (t) => {
+  const message = { id: 'assistant-1', role: 'assistant', content: 'Original' };
+  const regenerated = [];
+  t.mock.method(globalThis, 'fetch', async () => jsonResponse([]));
+  const actions = createMessageActions({
+    messages: [message],
+    regenerateMessage: async (target) => {
+      regenerated.push(target);
+      return true;
+    }
+  });
+  await actions.initMessageSwipes('conv-1');
+  const requests = [];
+  t.mock.method(globalThis, 'fetch', async (url, options = {}) => {
+    requests.push(`${String(options.method || 'GET')} ${String(url)}`);
+    return jsonResponse({});
+  });
+  assert.equal(await actions.swipeMessageNext(message, 'conv-1'), true);
+  assert.deepEqual(regenerated, [message]);
+  assert.deepEqual(requests, []);
+  assert.equal(message.content, 'Original');
+  assert.equal(actions.swipeLoading.value.size, 0);
+  assert.equal(actions.canEditMessage(message), true);
+  actions.cleanup();
+});
+
+test('swiping past the last candidate is a no-op without a regeneration handler', async (t) => {
+  const message = { id: 'assistant-1', role: 'assistant', content: 'Original' };
+  t.mock.method(globalThis, 'fetch', async () => jsonResponse([]));
+  const actions = createMessageActions({ messages: [message] });
+  await actions.initMessageSwipes('conv-1');
+  t.mock.method(globalThis, 'fetch', async () => {
+    throw new Error('No request expected');
+  });
+  assert.equal(await actions.swipeMessageNext(message, 'conv-1'), false);
+  assert.equal(message.content, 'Original');
+  actions.cleanup();
+});
 
 test('message author helpers reuse cached identity summaries', () => {
   const assistantRef = shallowRef({
@@ -287,12 +347,10 @@ test('message copy inserts into composer fallback when clipboard permission is d
 
   globalThis.window = {
     navigator: {
-      permissions: {
-        query: async () => ({ state: 'denied' })
-      },
       clipboard: {
         writeText: async () => {
           clipboardWrites += 1;
+          throw new Error('permission denied');
         }
       }
     }
@@ -302,7 +360,7 @@ test('message copy inserts into composer fallback when clipboard permission is d
     await actions.copyMessage({ id: 'msg-1', content: '  Copy fallback text  ' });
 
     assert.deepEqual(fallbackTexts, ['Copy fallback text']);
-    assert.equal(clipboardWrites, 0);
+    assert.equal(clipboardWrites, 1);
     assert.equal(actions.copyBusy.value, false);
     assert.deepEqual(notices, [['剪贴板不可用，已放入输入框', 'warning']]);
   } finally {
@@ -989,48 +1047,25 @@ test('message UI reset clears populated collection state', () => {
   assert.doesNotMatch(chatMessageActionsSource, /Object\.keys\(messageSwipeState\)/);
 });
 
-test('message swipe generation replaces loading Set refs when pending state changes', async () => {
-  const originalFetch = globalThis.fetch;
+test('message swipe regeneration is scoped to the active conversation', async () => {
   const message = { id: 'msg-1', role: 'assistant', content: 'Current', reasoning: '' };
-  const actions = createMessageActions({ messages: [message] });
-  const swipeResponse = deferredResponse({ id: 'swipe-1', content: 'Alternative', reasoning: 'Reasoned' });
-  let swipeRequests = 0;
+  let calls = 0;
+  const actions = createMessageActions({
+    messages: [message],
+    regenerateMessage: async () => {
+      calls += 1;
+      return true;
+    }
+  });
 
   actions.messageSwipeState['msg-1'] = { swipes: [], activeIndex: 0, swipeCount: 1 };
 
-  try {
-    globalThis.fetch = async (url, options = {}) => {
-      const path = String(url);
-      const method = String(options.method || 'GET').toUpperCase();
-
-      if (path === '/api/csrf-token') {
-        return jsonResponse({ csrfToken: 'swipe-token' });
-      }
-      if (path === '/api/messages/msg-1/swipes' && method === 'POST') {
-        swipeRequests += 1;
-        return swipeResponse.promise;
-      }
-      throw new Error(`Unexpected request: ${path}`);
-    };
-
-    const initialLoading = actions.swipeLoading.value;
-    const swipePromise = actions.swipeMessageNext(message, 'conv-1');
-    const pendingLoading = actions.swipeLoading.value;
-
-    assert.notEqual(pendingLoading, initialLoading);
-    assert.equal(pendingLoading.has('msg-1'), true);
-
-    swipeResponse.resolve();
-    await swipePromise;
-
-    assert.equal(swipeRequests, 1);
-    assert.equal(message.content, 'Alternative');
-    assert.equal(message.reasoning, 'Reasoned');
-    assert.notEqual(actions.swipeLoading.value, pendingLoading);
-    assert.equal(actions.swipeLoading.value.has('msg-1'), false);
-  } finally {
-    globalThis.fetch = originalFetch;
-  }
+  assert.equal(await actions.swipeMessageNext(message, 'conv-other'), false);
+  assert.equal(calls, 0);
+  assert.equal(await actions.swipeMessageNext(message, 'conv-1'), true);
+  assert.equal(calls, 1);
+  assert.equal(actions.swipeLoading.value.size, 0);
+  actions.cleanup();
 });
 
 test('message swipe content triggers shallow message refs only when visible text changes', async () => {
@@ -1127,24 +1162,17 @@ test('message swipe navigation uses current list items for stale same-id events'
   }
 });
 
-test('message swipe generation uses current list item payloads for stale same-id events', async () => {
-  const originalFetch = globalThis.fetch;
-  const currentMessage = {
-    id: 'msg-1',
-    role: 'assistant',
-    content: 'Current content',
-    reasoning: 'Current reasoning',
-    usage: { totalTokens: 5 }
-  };
-  const staleMessage = {
-    id: 'msg-1',
-    role: 'assistant',
-    content: 'Stale content',
-    reasoning: 'Stale reasoning',
-    usage: { totalTokens: 1 }
-  };
-  const actions = createMessageActions({ messages: [currentMessage] });
-  let swipeBody = null;
+test('message swipe regeneration targets the current list item for stale same-id events', async () => {
+  const currentMessage = { id: 'msg-1', role: 'assistant', content: 'Current content', reasoning: 'Current reasoning' };
+  const staleMessage = { id: 'msg-1', role: 'assistant', content: 'Stale content', reasoning: 'Stale reasoning' };
+  const targets = [];
+  const actions = createMessageActions({
+    messages: [currentMessage],
+    regenerateMessage: async (target) => {
+      targets.push(target);
+      return true;
+    }
+  });
 
   actions.messageSwipeState['msg-1'] = {
     original: { content: 'Current content', reasoning: 'Current reasoning' },
@@ -1153,109 +1181,32 @@ test('message swipe generation uses current list item payloads for stale same-id
     swipeCount: 1
   };
 
-  globalThis.fetch = async (url, options = {}) => {
-    const requestUrl = String(url);
-    const method = String(options.method || 'GET').toUpperCase();
-
-    if (requestUrl === '/api/csrf-token') {
-      return jsonResponse({ csrfToken: 'swipe-token' });
-    }
-    if (requestUrl === '/api/messages/msg-1/swipes' && method === 'POST') {
-      swipeBody = JSON.parse(String(options.body || '{}'));
-      return jsonResponse({ id: 'swipe-1', content: 'Generated', reasoning: 'Generated reasoning' });
-    }
-    throw new Error(`Unexpected request: ${requestUrl}`);
-  };
-
-  try {
-    await actions.swipeMessageNext(staleMessage, 'conv-1');
-  } finally {
-    globalThis.fetch = originalFetch;
-  }
-
-  assert.deepEqual(swipeBody, {
-    content: 'Current content',
-    reasoning: 'Current reasoning',
-    usage: { totalTokens: 5 }
-  });
-  assert.equal(currentMessage.content, 'Generated');
-  assert.equal(currentMessage.reasoning, 'Generated reasoning');
+  assert.equal(await actions.swipeMessageNext(staleMessage, 'conv-1'), true);
+  assert.equal(targets.length, 1);
+  assert.equal(targets[0], currentMessage);
+  assert.equal(currentMessage.content, 'Current content');
   assert.equal(staleMessage.content, 'Stale content');
-  assert.equal(staleMessage.reasoning, 'Stale reasoning');
-  assert.equal(actions.messageSwipeState['msg-1'].activeIndex, 1);
+  actions.cleanup();
 });
 
-test('message swipe generation ignores completions after the same-id list item is replaced', async () => {
-  const originalFetch = globalThis.fetch;
-  const originalMessage = {
-    id: 'msg-1',
-    role: 'assistant',
-    content: 'Original content',
-    reasoning: 'Original reasoning',
-    usage: { totalTokens: 5 }
-  };
-  const replacementMessage = {
-    id: 'msg-1',
-    role: 'assistant',
-    content: 'Replacement content',
-    reasoning: 'Replacement reasoning',
-    usage: { totalTokens: 9 }
-  };
-  const messagesRef = shallowRef([originalMessage]);
-  const actions = createMessageActions({ messagesRef });
-  const swipeResponse = deferredResponse({ id: 'swipe-1', content: 'Generated', reasoning: 'Generated reasoning' });
-  let resolvePostStarted;
-  const postStarted = new Promise((resolve) => {
-    resolvePostStarted = resolve;
-  });
-
-  actions.messageSwipeState['msg-1'] = {
-    original: { content: 'Original content', reasoning: 'Original reasoning' },
-    swipes: [],
-    activeIndex: 0,
-    swipeCount: 1
-  };
-
-  globalThis.fetch = async (url, options = {}) => {
-    const requestUrl = String(url);
-    const method = String(options.method || 'GET').toUpperCase();
-
-    if (requestUrl === '/api/csrf-token') {
-      return jsonResponse({ csrfToken: 'swipe-token' });
-    }
-    if (requestUrl === '/api/messages/msg-1/swipes' && method === 'POST') {
-      resolvePostStarted();
-      return swipeResponse.promise;
-    }
-    throw new Error(`Unexpected request: ${requestUrl}`);
-  };
-
-  try {
-    const swipePromise = actions.swipeMessageNext(originalMessage, 'conv-1');
-    await postStarted;
-
-    messagesRef.value = [replacementMessage];
-    actions.messageSwipeState['msg-1'] = {
-      original: { content: 'Replacement content', reasoning: 'Replacement reasoning' },
-      swipes: [],
-      activeIndex: 0,
-      swipeCount: 1
-    };
-
-    swipeResponse.resolve();
-    await swipePromise;
-  } finally {
-    globalThis.fetch = originalFetch;
-  }
-
-  assert.equal(originalMessage.content, 'Original content');
-  assert.equal(originalMessage.reasoning, 'Original reasoning');
-  assert.equal(replacementMessage.content, 'Replacement content');
-  assert.equal(replacementMessage.reasoning, 'Replacement reasoning');
-  assert.deepEqual(actions.messageSwipeState['msg-1'].swipes, []);
-  assert.equal(actions.messageSwipeState['msg-1'].activeIndex, 0);
+test('refreshMessageSwipe reloads one candidate list from the server', async (t) => {
+  const message = { id: 'msg-1', role: 'assistant', content: 'Current' };
+  let swipes = [];
+  t.mock.method(globalThis, 'fetch', async () => jsonResponse(swipes));
+  const actions = createMessageActions({ messages: [message] });
+  await actions.initMessageSwipes('conv-1');
   assert.equal(actions.messageSwipeState['msg-1'].swipeCount, 1);
-  assert.equal(actions.swipeLoading.value.size, 0);
+  assert.equal(actions.getSwipeDisplay(message), '');
+
+  swipes = [{ id: 'swipe-1', content: 'Previous reply' }];
+  await actions.refreshMessageSwipe('conv-1', 'msg-1');
+  assert.equal(actions.messageSwipeState['msg-1'].swipeCount, 2);
+  assert.equal(actions.getSwipeDisplay(message), '1/2');
+
+  swipes = [];
+  await actions.refreshMessageSwipe('conv-other', 'msg-1');
+  assert.equal(actions.messageSwipeState['msg-1'].swipeCount, 2);
+  actions.cleanup();
 });
 
 test('message swipe navigation stays locked while message or branch actions are busy', async () => {

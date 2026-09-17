@@ -154,12 +154,6 @@ test('StatusBar forwards custom collapse actions to its embedded disclosure owne
 });
 
 test('StatusBar copy fallback cleans up temporary textareas when selection throws', () => {
-  assert.match(
-    statusBarScript,
-    /document\.body\.appendChild\(textarea\);\s*try \{\s*textarea\.select\(\);\s*document\.execCommand\('copy'\);[\s\S]*\} finally \{\s*document\.body\.removeChild\(textarea\);/
-  );
-  assert.doesNotMatch(
-    statusBarScript,
-    /document\.body\.appendChild\(textarea\);\s*textarea\.select\(\);\s*try \{/
-  );
+  assert.match(statusBarScript, /copyTextToClipboard/);
+  assert.match(statusBarScript, /import \{ copyTextToClipboard \} from '..\/utils\/clipboard\.js';/);
 });

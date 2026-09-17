@@ -124,8 +124,14 @@ test('NPC manager preserves the chat entry and supports the rebuilt desktop and 
   await expect(drawer.getByText('记得旧港口仓库的暗门。')).toBeVisible();
   await drawer.getByRole('button', { name: '添加记忆' }).click();
   await drawer.getByLabel('内容').fill('答应在钟楼敲响前带路。');
+  const memoryType = drawer.getByLabel('类型', { exact: true });
+  await memoryType.selectOption('hypothesis');
+  await expect(memoryType).toHaveValue('hypothesis');
+  await memoryType.selectOption('intent');
   await drawer.getByRole('button', { name: '保存记忆' }).click();
   await expect(drawer.getByText('答应在钟楼敲响前带路。')).toBeVisible();
+  const savedMemories = await apiRequest(page, `${castBase}/${encodeURIComponent(npc.id)}/memories`);
+  expect(savedMemories.items.find((memory) => memory.content === '答应在钟楼敲响前带路。').memoryType).toBe('intent');
 
   await drawer.getByRole('tab', { name: /行为/ }).click();
   await expect(drawer.getByText('先确认对方身份再回答')).toBeVisible();

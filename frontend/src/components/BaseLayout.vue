@@ -1,6 +1,6 @@
 <script setup>
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
-import { ArrowUp, BookOpen, ChevronDown, Home, KeyRound, LogOut, Menu, Moon, Plus, Puzzle, SlidersHorizontal, Sun, UserRound, X } from '@lucide/vue';
+import { ArrowUp, BookOpen, ChevronDown, Home, KeyRound, LogOut, Menu, Moon, Plus, Puzzle, ShieldCheck, SlidersHorizontal, Sun, UserRound, X } from '@lucide/vue';
 import { useViewport } from '../composables/useViewport';
 
 const ROUTE_LABELS = {
@@ -14,7 +14,8 @@ const ROUTE_LABELS = {
   worldBookDetail: '世界书详情',
   presets: '预设管理',
   extensions: '扩展管理',
-  settings: '个人中心'
+  settings: '个人中心',
+  admin: '额度管理'
 };
 
 const props = defineProps({
@@ -44,6 +45,8 @@ const isHomeRoute = computed(() => props.currentRoute === 'home');
 const isWorldBookRoute = computed(() => props.currentRoute === 'worldBooks' || props.currentRoute === 'worldBookDetail');
 const isExtensionsRoute = computed(() => props.currentRoute === 'extensions');
 const isPresetsRoute = computed(() => props.currentRoute === 'presets');
+const isAdminRoute = computed(() => props.currentRoute === 'admin');
+const isAccountRoute = computed(() => props.currentRoute === 'settings' || isAdminRoute.value);
 const isWorkspaceRoute = computed(() => (
   props.currentRoute === 'characterNew'
   || props.currentRoute === 'characterEdit'
@@ -51,6 +54,7 @@ const isWorkspaceRoute = computed(() => (
   || isExtensionsRoute.value
   || isPresetsRoute.value
   || props.currentRoute === 'settings'
+  || isAdminRoute.value
 ));
 const userMenuOpen = ref(false);
 const userMenuRef = ref(null);
@@ -143,6 +147,12 @@ function openExtensions() {
   emit('navigate', 'extensions');
 }
 
+function openAdmin() {
+  userMenuOpen.value = false;
+  mobileNavOpen.value = false;
+  emit('navigate', 'admin');
+}
+
 function logoutFromMenu() {
   userMenuOpen.value = false;
   mobileNavOpen.value = false;
@@ -228,7 +238,7 @@ function usesConversationLayout(routeName) {
     :class="{ 'chat-layout-shell': isConversationRoute, 'home-layout-shell': isHomeRoute, 'workspace-layout-shell': isWorkspaceRoute }"
     :data-town-layout="isTownRoute ? 'true' : undefined"
   >
-    <a href="#main-content" class="skip-link">跳转到主要内容</a>
+    <a href="#main-content" class="skip-link" @click.prevent="pageShellRef?.focus()">跳转到主要内容</a>
 
     <header v-if="!isConversationRoute && !isTownRoute" class="topbar">
       <span class="page-scroll-progress" :style="scrollProgressStyle" aria-hidden="true"></span>
@@ -314,7 +324,7 @@ function usesConversationLayout(routeName) {
         <div ref="userMenuRef" class="user-menu">
           <button
             class="user-chip"
-            :class="{ active: currentRoute === 'settings', open: userMenuOpen }"
+            :class="{ active: isAccountRoute, open: userMenuOpen }"
             type="button"
             aria-haspopup="menu"
             :aria-expanded="String(userMenuOpen)"
@@ -336,6 +346,10 @@ function usesConversationLayout(routeName) {
             <button class="user-menu-item" type="button" role="menuitem" @click="openExtensions">
               <Puzzle :size="17" aria-hidden="true" />
               <span>扩展管理</span>
+            </button>
+            <button v-if="user?.isRootAdmin" class="user-menu-item" type="button" role="menuitem" @click="openAdmin">
+              <ShieldCheck :size="17" aria-hidden="true" />
+              <span>额度管理</span>
             </button>
             <button class="user-menu-item danger" type="button" role="menuitem" @click="logoutFromMenu">
               <LogOut :size="17" aria-hidden="true" />

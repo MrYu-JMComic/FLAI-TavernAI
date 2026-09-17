@@ -5,6 +5,7 @@ import { detectSceneAndEmotion, findBestMatch, listCharacterImages } from '../mo
 import { listSceneWorkspace } from '../modules/scenes.js';
 import { completeSceneOrganization } from './sceneOrganizer.js';
 import { hasUsableProvider, runToolCompletion } from './providers.js';
+import { resolveAccessorySkillSettings } from './accessorySkillProvider.js';
 import { parseStatusTemplateToken } from '../../../shared/statusTemplateTokens.js';
 import { createQuest, listQuests, updateQuestObjective } from '../modules/quests.js';
 import { advanceWorldTime, getWorldClock, setWorldWeather } from '../modules/dynamicWorld.js';
@@ -47,16 +48,17 @@ export async function runAccessoryAgents({
   assistantMessage,
   settings,
   statusBar,
-  emit
+  emit,
+  signal: parentSignal,
+  strictErrors = false,
+  runStep = (_skill, operation) => operation()
 }) {
   const { skills, active } = getAccessorySkillsPayload(conversation, statusBar);
   const jobs = [];
-  let sceneAgentFactory = null;
-  let worldDirectorFactory = null;
   const observationWindow = buildObservationWindow(userMessage, assistantMessage);
 
   if (active.statusBarAgent) {
-    jobs.push(runAgentJob(
+    jobs.push(['statusBarAgent', () => runAgentJob(
       'statusBarAgent',
       skills.statusBarAgent,
       emit,
@@ -69,52 +71,36 @@ export async function runAccessoryAgents({
         settings,
         statusBar,
         skill: skills.statusBarAgent,
+        strictErrors,
         signal
       }),
-      { timeoutMs: statusBarAgentTimeoutMs }
-    ));
+      { timeoutMs: statusBarAgentTimeoutMs, signal: parentSignal }
+    )]);
   }
   if (active.economyAgent) {
-    jobs.push(runAgentJob('economyAgent', skills.economyAgent, emit, (signal) =>
-      runEconomyAgent({ db, userId, conversation, assistantMessage, observationWindow, settings, skill: skills.economyAgent, signal })
-    ));
+    jobs.push(['economyAgent', () => runAgentJob('economyAgent', skills.economyAgent, emit, (signal) =>
+      runEconomyAgent({ db, userId, conversation, assistantMessage, observationWindow, settings, skill: skills.economyAgent, signal, strictErrors }),
+    { signal: parentSignal })]);
   }
   if (active.cgScene) {
-    jobs.push(runAgentJob('cgScene', skills.cgScene, emit, () =>
-      runCgSceneAgent({ db, character, assistantMessage })
-    ));
+    jobs.push(['cgScene', () => runAgentJob('cgScene', skills.cgScene, emit, () =>
+      runCgSceneAgent({ db, character, assistantMessage }), { signal: parentSignal }
+    )]);
   }
   if (active.sceneAgent) {
-    sceneAgentFactory = () => runAgentJob('sceneAgent', skills.sceneAgent, emit, (signal) =>
-      runSceneAgent({ db, userId, conversation, character, assistantMessage, observationWindow, settings, skill: skills.sceneAgent, signal })
-    );
+    jobs.push(['sceneAgent', () => runAgentJob('sceneAgent', skills.sceneAgent, emit, (signal) =>
+      runSceneAgent({ db, userId, conversation, character, assistantMessage, observationWindow, settings, skill: skills.sceneAgent, signal, strictErrors }),
+    { signal: parentSignal })]);
   }
   if (active.worldDirector) {
-    worldDirectorFactory = () => runAgentJob('worldDirector', skills.worldDirector, emit, (signal) =>
-      runWorldDirectorAgent({ db, userId, conversation, character, observationWindow, settings, skill: skills.worldDirector, travelEnabled: active.gameHud, encounterEnabled: active.encounterMode, rewardEnabled: active.rewardMode, signal })
-    );
+    jobs.push(['worldDirector', () => runAgentJob('worldDirector', skills.worldDirector, emit, (signal) =>
+      runWorldDirectorAgent({ db, userId, conversation, character, observationWindow, settings, skill: skills.worldDirector, travelEnabled: active.gameHud, encounterEnabled: active.encounterMode, rewardEnabled: active.rewardMode, signal, strictErrors }),
+    { signal: parentSignal })]);
   }
-  // State agents share scene, item, appearance, and memory records, so keep
-  // their writes deterministic instead of racing last-writer-wins updates.
-  const stateAgentFactories = [];
-  if (sceneAgentFactory) stateAgentFactories.push(sceneAgentFactory);
-  if (worldDirectorFactory) stateAgentFactories.push(worldDirectorFactory);
-  if (stateAgentFactories.length) jobs.push(runAgentSequence(stateAgentFactories));
-
-  if (!jobs.length) {
-    const results = [];
-    emit?.('skills_done', { results });
-    return results;
-  }
-
-  const settled = await Promise.allSettled(jobs);
   const results = [];
-  for (const item of settled) {
-    const value = item.status === 'fulfilled'
-      ? item.value
-      : { skill: 'unknown', ok: false, error: item.reason?.message || 'Accessory skill failed' };
-    if (Array.isArray(value)) results.push(...value);
-    else results.push(value);
+  for (const [skill, operation] of jobs) {
+    parentSignal?.throwIfAborted();
+    results.push(await runStep(skill, operation));
   }
   emit?.('skills_done', { results });
   return results;
@@ -126,18 +112,23 @@ async function runAgentJob(skill, config, emit, handler, options = {}) {
   // through to its cheap non-AI fallback; the outer race is only a backstop
   // for anything that ignores the signal.
   const controller = new AbortController();
+  const signal = options.signal ? AbortSignal.any([controller.signal, options.signal]) : controller.signal;
   const timeoutMs = Number.isFinite(Number(options.timeoutMs))
     ? Math.max(1000, Number(options.timeoutMs))
     : agentTimeoutMs;
   const abortTimer = setTimeout(() => {
-    controller.abort(new Error(`${skill} timed out`));
+    controller.abort(Object.assign(new Error(`${skill} timed out`), { code: 'AGENT_TIMEOUT', retryable: true }));
   }, timeoutMs);
   let payload;
   try {
-    const result = await withTimeout(handler(controller.signal), timeoutMs + agentAbortGraceMs, `${skill} timed out`);
+    signal.throwIfAborted();
+    const result = await withTimeout(handler(signal), timeoutMs + agentAbortGraceMs, `${skill} timed out`);
     payload = { skill, ok: true, result };
   } catch (error) {
-    payload = { skill, ok: false, error: error?.message || `${skill} failed` };
+    payload = {
+      skill, ok: false, error: error?.message || `${skill} failed`, code: error?.code || 'AGENT_FAILED',
+      retryable: error?.retryable === true || error?.status >= 500 || error?.name === 'TimeoutError'
+    };
   } finally {
     clearTimeout(abortTimer);
   }
@@ -145,7 +136,7 @@ async function runAgentJob(skill, config, emit, handler, options = {}) {
   return payload;
 }
 
-async function runStatusBarAgent({ db, userId, conversation, assistantMessage, observationWindow, settings, statusBar, skill, signal }) {
+async function runStatusBarAgent({ db, userId, conversation, assistantMessage, observationWindow, settings, statusBar, skill, signal, strictErrors }) {
   const advancedSettings = normalizeAdvancedSettings(conversation?.settings || {});
   const statusBarPrompt = advancedSettings.statusBarPrompt;
   const statusBarBlueprint = advancedSettings.statusBarBlueprint;
@@ -157,7 +148,7 @@ async function runStatusBarAgent({ db, userId, conversation, assistantMessage, o
   let skippedUpdate = false;
   if (hasUsableProvider(settings)) {
     const toolResult = await runToolCompletion(
-      withModelOverride(settings, skill),
+      withModelOverride(settings, skill, db, userId),
       buildStatusBarMessages(currentStatusBar, observationWindow, statusBarPrompt),
       [statusBarTool(), statusBarSkipTool()],
       async (toolName, args) => {
@@ -181,6 +172,7 @@ async function runStatusBarAgent({ db, userId, conversation, assistantMessage, o
       }
     ).catch((error) => {
       logAccessoryAgentFailure('status-bar', error);
+      if (strictErrors) throw error;
       return null;
     });
 
@@ -222,20 +214,12 @@ function createStatusBarFromBlueprint(blueprint = {}) {
   };
 }
 
-async function runAgentSequence(factories = []) {
-  const results = [];
-  for (const factory of factories) {
-    results.push(await factory());
-  }
-  return results;
-}
-
-async function runEconomyAgent({ db, userId, conversation, assistantMessage, observationWindow, settings, skill, signal }) {
+async function runEconomyAgent({ db, userId, conversation, assistantMessage, observationWindow, settings, skill, signal, strictErrors }) {
   const transactions = [];
 
   if (hasUsableProvider(settings)) {
     await runToolCompletion(
-      withModelOverride(settings, skill),
+      withModelOverride(settings, skill, db, userId),
       buildEconomyMessages(observationWindow),
       [economyTool()],
       async (toolName, args) => {
@@ -251,6 +235,7 @@ async function runEconomyAgent({ db, userId, conversation, assistantMessage, obs
       { maxRounds: 3, thinkingEnabled: false, signal, database: db, userId }
     ).catch((error) => {
       logAccessoryAgentFailure('economy', error);
+      if (strictErrors) throw error;
       return null;
     });
   }
@@ -262,8 +247,8 @@ async function runEconomyAgent({ db, userId, conversation, assistantMessage, obs
   return { transactions };
 }
 
-async function runSceneAgent({ db, userId, conversation, character, assistantMessage, observationWindow, settings, skill, signal }) {
-  const result = await completeSceneOrganization(withModelOverride(settings, skill), {
+async function runSceneAgent({ db, userId, conversation, character, assistantMessage, observationWindow, settings, skill, signal, strictErrors }) {
+  const result = await completeSceneOrganization(withModelOverride(settings, skill, db, userId), {
     database: db,
     userId,
     conversationId: conversation.id,
@@ -274,12 +259,13 @@ async function runSceneAgent({ db, userId, conversation, character, assistantMes
     signal
   }).catch((error) => {
     logAccessoryAgentFailure('scene', error);
+    if (strictErrors) throw error;
     return { ok: false, changes: [], error: error?.message || 'scene agent failed' };
   });
   return { ...result, workspace: listSceneWorkspace(db, userId, conversation.id) };
 }
 
-async function runWorldDirectorAgent({ db, userId, conversation, character, observationWindow, settings, skill, travelEnabled, encounterEnabled, rewardEnabled, signal }) {
+async function runWorldDirectorAgent({ db, userId, conversation, character, observationWindow, settings, skill, travelEnabled, encounterEnabled, rewardEnabled, signal, strictErrors }) {
   const executions = [];
   if (!hasUsableProvider(settings)) return { executions, skipped: true, reason: 'provider unavailable' };
   const context = {
@@ -291,13 +277,14 @@ async function runWorldDirectorAgent({ db, userId, conversation, character, obse
     pendingRewards: rewardEnabled ? listRewardGrants(db, userId, conversation.id, { status: 'pending' }) : []
   };
   await runToolCompletion(
-    withModelOverride(settings, skill),
+    withModelOverride(settings, skill, db, userId),
     buildWorldDirectorMessages(observationWindow, context),
     worldDirectorTools({ travelEnabled, encounterEnabled, rewardEnabled }),
     async (toolName, args) => executeWorldDirectorProposal({ db, userId, conversationId: conversation.id, character, toolName, args, executions, travelEnabled, encounterEnabled, rewardEnabled }),
     { maxRounds: 6, thinkingEnabled: false, signal, database: db, userId }
   ).catch((error) => {
     logAccessoryAgentFailure('world-director', error);
+    if (strictErrors) throw error;
     executions.push({ tool: 'provider', ok: false, error: error?.message || 'world director failed' });
     return null;
   });
@@ -394,11 +381,9 @@ function logAccessoryAgentFailure(agentName, error) {
   console.error(`[accessory-agent:${agentName}] failed`, error);
 }
 
-function withModelOverride(settings, skill = {}) {
-  return {
-    ...settings,
-    model: skill.modelOverride || settings.model
-  };
+function withModelOverride(settings, skill = {}, db = null, userId = '') {
+  // Skills may follow the main provider (optionally with another model) or name a saved provider profile.
+  return resolveAccessorySkillSettings(db, userId, settings, skill).settings;
 }
 
 function buildObservationWindow(userMessage, assistantMessage) {

@@ -367,6 +367,45 @@ test('manual scroll intent cancels a pending virtual anchor restoration', () => 
   }), snapshot);
 });
 
+test('reading restoration waits for stable virtual heights before saving an anchor', () => {
+  const snapshot = JSON.stringify({ top: 200, pinned: false, anchorMessageId: 'anchor', anchorOffset: -20 });
+  withFakeWindow(() => withFakeAnimationFrame(({ frames, flushFrame }) => {
+    let messageTop = 500;
+    let writes = 0;
+    const scroller = {
+      scrollTop: 0, scrollHeight: 4000, clientHeight: 600,
+      getBoundingClientRect: () => ({ top: 0, bottom: 600 }),
+      querySelectorAll: () => [{
+        dataset: { messageId: 'anchor' },
+        getBoundingClientRect: () => ({ top: messageTop - scroller.scrollTop, bottom: messageTop + 100 - scroller.scrollTop })
+      }]
+    };
+    window.localStorage.setItem = () => { writes += 1; };
+    const offsets = [];
+    const scroll = useChatScroll({
+      messageScroller: refValue(scroller), conversationId: refValue('conv-1'),
+      scrollToOffsetFallback(top) {
+        offsets.push(top);
+        scroller.scrollTop = top;
+        return true;
+      }
+    });
+    scroll.restoreMessageScrollPosition(refValue([]));
+    flushFrame();
+    flushFrame();
+    scroll.saveMessageScrollPosition();
+    assert.equal(writes, 0);
+    messageTop += 180;
+    for (let index = 0; index < 20 && frames.size; index += 1) flushFrame();
+    assert.equal(frames.size, 0);
+    assert.equal(scroller.scrollTop, 684);
+    assert.equal(offsets.at(-1), 684);
+    scroll.saveMessageScrollPosition();
+    assert.equal(writes, 1);
+    scroll.cleanup();
+  }), snapshot);
+});
+
 test('message list keys and measurements survive local message id finalization', () => {
   assert.match(virtualMessageListSource, /const messageRenderKeys = new WeakMap\(\);/);
   assert.match(virtualMessageListSource, /getItemKey: \(index\) => getMessageRenderKey\(props\.messages\[index\], index\)/);
@@ -378,6 +417,7 @@ test('message list keys and measurements survive local message id finalization',
 test('virtual bottom jumps finish at the real container bottom after footer layout', () => {
   assert.match(
     virtualMessageListSource,
-    /nextTick\(\(\) => \{[\s\S]*virtualizer\.value\?\.measure\?\.\(\);[\s\S]*scrollToLastMessage\(\);[\s\S]*nextTick\(\(\) => scrollContainerToBottom\(smooth\)\);/
+    /nextTick\(\(\) => \{[\s\S]*if \(requestId !== scrollRequestId\) return;[\s\S]*scrollToLastMessage\(\);[\s\S]*nextTick\(\(\) => \{[\s\S]*if \(requestId === scrollRequestId\) scrollContainerToBottom\(smooth\);/
   );
+  assert.doesNotMatch(virtualMessageListSource, /virtualizer\.value\?\.measure\?\.\(/);
 });

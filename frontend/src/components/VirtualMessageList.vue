@@ -1,5 +1,5 @@
 <script setup>
-import { computed, nextTick, ref, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue';
 import { useVirtualizer } from '@tanstack/vue-virtual';
 
 const props = defineProps({
@@ -26,13 +26,19 @@ const emit = defineEmits(['scroll', 'wheel', 'touchstart', 'touchmove']);
 const scrollContainerRef = ref(null);
 const measurementCache = new Map();
 const messageRenderKeys = new WeakMap();
+const messageKeysById = new Map();
 let nextMessageRenderKey = 1;
+let scrollRequestId = 0;
 const activeMessageRenderKeys = computed(() => (
   props.messages.map((message, index) => getMessageRenderKey(message, index))
 ));
 
 watch(activeMessageRenderKeys, (keys) => {
   const activeKeys = new Set(keys);
+  const activeIds = new Set(props.messages.map((message) => message?.id));
+  for (const id of messageKeysById.keys()) {
+    if (!activeIds.has(id)) messageKeysById.delete(id);
+  }
   for (const renderKey of measurementCache.keys()) {
     if (!activeKeys.has(renderKey)) {
       measurementCache.delete(renderKey);
@@ -44,12 +50,16 @@ function getMessageRenderKey(message, index) {
   if (!message || (typeof message !== 'object' && typeof message !== 'function')) {
     return `message-fallback-${index}`;
   }
-  let renderKey = messageRenderKeys.get(message);
+  // Object identity keeps a local draft mounted when its server ID arrives;
+  // ID identity keeps the same row mounted when a refresh returns a new object.
+  const messageId = message.id;
+  let renderKey = messageRenderKeys.get(message) || (messageId && messageKeysById.get(messageId));
   if (!renderKey) {
     renderKey = `message-${nextMessageRenderKey}`;
     nextMessageRenderKey += 1;
-    messageRenderKeys.set(message, renderKey);
   }
+  messageRenderKeys.set(message, renderKey);
+  if (messageId) messageKeysById.set(messageId, renderKey);
   return renderKey;
 }
 
@@ -73,6 +83,9 @@ const virtualizer = useVirtualizer(
     getScrollElement: () => scrollContainerRef.value,
     getItemKey: (index) => getMessageRenderKey(props.messages[index], index),
     estimateSize,
+    // Apply observer-driven size corrections outside the ResizeObserver delivery
+    // cycle so content reflow cannot recursively trigger measurement writes.
+    useAnimationFrameWithResizeObserver: true,
     overscan: props.overscan
   }))
 );
@@ -96,6 +109,7 @@ function getScrollElement() {
 }
 
 function scrollToBottom(smooth = false) {
+  const requestId = ++scrollRequestId;
   if (props.virtualize && props.messages.length) {
     const scrollToLastMessage = () => virtualizer.value?.scrollToIndex?.(props.messages.length - 1, {
       align: 'end',
@@ -104,9 +118,13 @@ function scrollToBottom(smooth = false) {
     if (typeof virtualizer.value?.scrollToIndex !== 'function') return false;
     scrollToLastMessage();
     nextTick(() => {
-      virtualizer.value?.measure?.();
+      if (requestId !== scrollRequestId) return;
+      // ResizeObserver measures changed rows. A global measure() here discards
+      // every cached height and makes long conversations jump on each update.
       scrollToLastMessage();
-      nextTick(() => scrollContainerToBottom(smooth));
+      nextTick(() => {
+        if (requestId === scrollRequestId) scrollContainerToBottom(smooth);
+      });
     });
     return true;
   }
@@ -130,6 +148,7 @@ function scrollContainerToBottom(smooth) {
 }
 
 function scrollToMessage(messageId, options = {}) {
+  scrollRequestId += 1;
   const targetId = String(messageId || '');
   if (!targetId) return false;
   let targetIndex = -1;
@@ -149,7 +168,13 @@ function scrollToMessage(messageId, options = {}) {
     align: options.block === 'start' ? 'start' : options.block === 'center' ? 'center' : 'end',
     behavior: options.smooth === false ? 'auto' : 'smooth'
   });
-  nextTick(() => virtualizer.value?.measure?.());
+  return true;
+}
+
+function scrollToOffset(top) {
+  if (!props.virtualize || typeof virtualizer.value?.scrollToOffset !== 'function') return false;
+  scrollRequestId += 1;
+  virtualizer.value.scrollToOffset(top, { behavior: 'auto' });
   return true;
 }
 
@@ -170,6 +195,7 @@ defineExpose({
   scrollContainerRef,
   getScrollElement,
   measureElement,
+  scrollToOffset,
   scrollToMessage
 });
 
@@ -178,16 +204,21 @@ function handleScroll(event) {
 }
 
 function handleWheel(event) {
+  scrollRequestId += 1;
   emit('wheel', event);
 }
 
 function handleTouchstart(event) {
+  scrollRequestId += 1;
   emit('touchstart', event);
 }
 
 function handleTouchmove(event) {
+  scrollRequestId += 1;
   emit('touchmove', event);
 }
+
+onBeforeUnmount(() => { scrollRequestId += 1; });
 </script>
 
 <template>
