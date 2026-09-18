@@ -267,6 +267,7 @@ function sortObject(value) {
 export const NON_STREAM_COMPLETION_TIMEOUT_MS = 300_000;
 
 function buildNonStreamSignal(options = {}) {
+  if (options.timeoutMs === 0) return options.signal;
   const timeoutMs = Number.isFinite(options.timeoutMs) && options.timeoutMs > 0
     ? options.timeoutMs
     : NON_STREAM_COMPLETION_TIMEOUT_MS;
@@ -311,6 +312,7 @@ async function generateCompletionInternal(settings, messages, options = {}) {
     method: 'POST',
     body: JSON.stringify(buildProviderBody(settings, messages, false, options)),
     requestTrace: options.requestTrace,
+    timeoutMs: options.timeoutMs,
     signal
   });
 
@@ -353,6 +355,7 @@ async function streamCompletionInternal(settings, messages, emit, signal, option
     method: 'POST',
     body: JSON.stringify(buildProviderBody(settings, messages, true, options)),
     requestTrace: options.requestTrace,
+    timeoutMs: options.timeoutMs,
     signal
   });
 

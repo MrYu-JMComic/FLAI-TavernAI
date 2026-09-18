@@ -1321,10 +1321,11 @@ test('character assistant completes drafts through multiple tool rounds', async 
   globalThis.fetch = async (_url, request = {}) => {
     calls += 1;
     const body = JSON.parse(request.body);
-    assert.equal(body.tools.length, 4);
-    assert.ok(body.tools.some((tool) => tool.function?.name === 'set_character_extensions'));
-    const extensionsTool = body.tools.find((tool) => tool.function?.name === 'set_character_extensions');
-    const statusBlueprintSchema = extensionsTool.function.parameters.properties.statusBarBlueprint;
+    assert.equal(body.tools.length, 10);
+    assert.ok(body.tools.some((tool) => tool.function?.name === 'update_character_agents'));
+    assert.ok(body.tools.some((tool) => tool.function?.name === 'finish_character_draft'));
+    const statusTool = body.tools.find((tool) => tool.function?.name === 'update_character_status_bar');
+    const statusBlueprintSchema = statusTool.function.parameters.properties.statusBarBlueprint;
     const statusValueSchema = statusBlueprintSchema.properties.variables.items.properties.value;
     assert.deepEqual(statusValueSchema.oneOf.map((schema) => schema.type), ['number', 'string']);
     assert.match(statusBlueprintSchema.description, /\{\{姓名\}\}/);
@@ -1345,11 +1346,20 @@ test('character assistant completes drafts through multiple tool rounds', async 
                   id: 'call-1',
                   type: 'function',
                   function: {
-                    name: 'set_character_profile',
+                    name: 'update_character_profile',
                     arguments: JSON.stringify({
                       name: '澄灯',
-                      persona: '会把 {user} 当作熟客，但不会越界。',
                       tags: ['温和', '推理']
+                    })
+                  }
+                },
+                {
+                  id: 'call-story',
+                  type: 'function',
+                  function: {
+                    name: 'update_character_story',
+                    arguments: JSON.stringify({
+                      persona: '会把 {user} 当作熟客，但不会越界。'
                     })
                   }
                 }
@@ -1370,15 +1380,12 @@ test('character assistant completes drafts through multiple tool rounds', async 
               content: null,
               tool_calls: [
                 {
-                  id: 'call-2',
+                  id: 'call-story-retry',
                   type: 'function',
                   function: {
-                    name: 'add_regex_rule',
+                    name: 'update_character_story',
                     arguments: JSON.stringify({
-                      label: '称呼替换',
-                      pattern: '老板',
-                      replacement: '掌柜',
-                      scope: 'input'
+                      persona: '会把 {user} 当作熟客，但不会越界。'
                     })
                   }
                 }
@@ -1389,10 +1396,37 @@ test('character assistant completes drafts through multiple tool rounds', async 
       });
     }
 
-    return jsonResponse({
-      choices: [{ message: { role: 'assistant', content: '设定已完成。' } }],
-      usage: { total_tokens: 88 }
-    });
+    if (calls === 3) {
+      return jsonResponse({
+        choices: [
+          {
+            message: {
+              role: 'assistant',
+              content: null,
+              tool_calls: [
+                {
+                  id: 'call-2',
+                  type: 'function',
+                  function: {
+                    name: 'replace_character_regex_rules',
+                    arguments: JSON.stringify({
+                      rules: [{
+                        label: '称呼替换',
+                        pattern: '老板',
+                        replacement: '掌柜',
+                        scope: 'input'
+                      }]
+                    })
+                  }
+                }
+              ]
+            }
+          }
+        ]
+      });
+    }
+
+    return finishedCharacterDraftResponse('设定已完成。', ['profile', 'persona', 'tags', 'regexRules']);
   };
 
   let result;
@@ -1417,12 +1451,13 @@ test('character assistant completes drafts through multiple tool rounds', async 
     globalThis.fetch = originalFetch;
   }
 
-  assert.equal(calls, 3);
+  assert.equal(calls, 4);
   assert.equal(result.character.name, '澄灯');
   assert.match(result.character.persona, /\{user\}/);
   assert.deepEqual(result.character.tags, ['温和', '推理']);
   assert.equal(result.character.regexRules[0].pattern, '老板');
-  assert.equal(result.toolCalls.length, 2);
+  assert.equal(result.toolCalls.length, 5);
+  assert.equal(result.toolCalls.at(-1).name, 'finish_character_draft');
 });
 
 test('character assistant respects disabled generation sections', async () => {
@@ -1431,6 +1466,11 @@ test('character assistant respects disabled generation sections', async () => {
     globalThis.fetch = async (_url, request = {}) => {
       const body = JSON.parse(request.body);
       assert.match(body.messages[0].content, /允许修改的部分仅限/);
+      assert.deepEqual(body.tools.map((tool) => tool.function?.name), [
+        'update_character_story',
+        'report_character_progress',
+        'finish_character_draft'
+      ]);
       return jsonResponse({
         choices: [
           {
@@ -1442,12 +1482,21 @@ test('character assistant respects disabled generation sections', async () => {
                   id: 'call-disabled',
                   type: 'function',
                   function: {
-                    name: 'set_character_profile',
+                    name: 'update_character_profile',
                     arguments: JSON.stringify({
                       name: 'Changed Name',
-                      persona: 'Changed persona',
-                      background: 'Changed background',
                       tags: ['changed']
+                    })
+                  }
+                },
+                {
+                  id: 'call-story',
+                  type: 'function',
+                  function: {
+                    name: 'update_character_story',
+                    arguments: JSON.stringify({
+                      persona: 'Changed persona',
+                      background: 'Changed background'
                     })
                   }
                 },
@@ -1455,11 +1504,20 @@ test('character assistant respects disabled generation sections', async () => {
                   id: 'call-regex',
                   type: 'function',
                   function: {
-                    name: 'add_regex_rule',
+                    name: 'replace_character_regex_rules',
                     arguments: JSON.stringify({
-                      label: 'Blocked rule',
-                      pattern: 'foo',
-                      replacement: 'bar'
+                      rules: [{ label: 'Blocked rule', pattern: 'foo', replacement: 'bar' }]
+                    })
+                  }
+                },
+                {
+                  id: 'call-finish-disabled',
+                  type: 'function',
+                  function: {
+                    name: 'finish_character_draft',
+                    arguments: JSON.stringify({
+                      summary: 'Persona updated.',
+                      reviewedSections: ['persona']
                     })
                   }
                 }
@@ -1530,7 +1588,7 @@ test('character assistant rejects null tool arguments without changing the draft
                     id: 'character-null-profile',
                     type: 'function',
                     function: {
-                      name: 'set_character_profile',
+                      name: 'update_character_profile',
                       arguments: 'null'
                     }
                   }
@@ -1540,9 +1598,7 @@ test('character assistant rejects null tool arguments without changing the draft
           ]
         });
       }
-      return jsonResponse({
-        choices: [{ message: { role: 'assistant', content: 'No profile changes.' } }]
-      });
+      return finishedCharacterDraftResponse('No profile changes.');
     };
 
     const result = await completeCharacterDraft(
@@ -1574,34 +1630,33 @@ test('character assistant rejects null tool arguments without changing the draft
   }
 });
 
-test('character assistant ignores non-object loose JSON fallback', async () => {
+test('character assistant rejects natural-language JSON fallback', async () => {
   const originalFetch = globalThis.fetch;
   try {
     globalThis.fetch = async () => jsonResponse({
       choices: [{ message: { role: 'assistant', content: 'null' } }]
     });
 
-    const result = await completeCharacterDraft(
-      {
-        providerType: 'deepseek',
-        gatewayName: 'DeepSeek',
-        baseUrl: 'https://api.deepseek.com',
-        model: 'deepseek-v4-flash',
-        apiKey: 'sk-test',
-        extraBody: {}
-      },
-      {
-        requirement: 'keep current draft',
-        current: {
-          name: 'Existing Draft',
-          persona: 'Existing persona'
+    await assert.rejects(
+      completeCharacterDraft(
+        {
+          providerType: 'deepseek',
+          gatewayName: 'DeepSeek',
+          baseUrl: 'https://api.deepseek.com',
+          model: 'deepseek-v4-flash',
+          apiKey: 'sk-test',
+          extraBody: {}
+        },
+        {
+          requirement: 'keep current draft',
+          current: {
+            name: 'Existing Draft',
+            persona: 'Existing persona'
+          }
         }
-      }
+      ),
+      (error) => error?.code === 'CHARACTER_ASSISTANT_FORMAT_MISMATCH'
     );
-
-    assert.equal(result.character.name, 'Existing Draft');
-    assert.equal(result.character.persona, 'Existing persona');
-    assert.equal(result.toolCalls.length, 0);
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -1617,9 +1672,7 @@ test('character assistant treats null request as defaults', async () => {
       assert.equal(payload.optimizeExisting, false);
       assert.equal(payload.currentCharacter.name, '');
 
-      return jsonResponse({
-        choices: [{ message: { role: 'assistant', content: 'null' } }]
-      });
+      return finishedCharacterDraftResponse('Empty draft validated.');
     };
 
     const result = await completeCharacterDraft(
@@ -1636,7 +1689,7 @@ test('character assistant treats null request as defaults', async () => {
 
     assert.equal(result.character.name, '');
     assert.equal(result.character.regexRules.length, 0);
-    assert.equal(result.toolCalls.length, 0);
+    assert.equal(result.toolCalls.length, 1);
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -1660,7 +1713,7 @@ test('character assistant rejects non-object generated array entries without par
                     id: 'character-mixed-regex',
                     type: 'function',
                     function: {
-                      name: 'replace_regex_rules',
+                      name: 'replace_character_regex_rules',
                       arguments: JSON.stringify({
                         rules: [
                           null,
@@ -1671,16 +1724,25 @@ test('character assistant rejects non-object generated array entries without par
                     }
                   },
                   {
-                    id: 'character-mixed-extensions',
+                    id: 'character-mixed-render-plugins',
                     type: 'function',
                     function: {
-                      name: 'set_character_extensions',
+                      name: 'replace_character_render_plugins',
                       arguments: JSON.stringify({
-                        renderPlugins: [
+                        plugins: [
                           null,
                           'not a render plugin',
                           { label: 'Valid fold', pattern: '\\[note\\]([\\s\\S]+?)\\[/note\\]', titleTemplate: 'Note' }
-                        ],
+                        ]
+                      })
+                    }
+                  },
+                  {
+                    id: 'character-mixed-recommendations',
+                    type: 'function',
+                    function: {
+                      name: 'set_character_recommendations',
+                      arguments: JSON.stringify({
                         modSuggestions: [
                           null,
                           'not a mod',
@@ -1695,9 +1757,7 @@ test('character assistant rejects non-object generated array entries without par
           ]
         });
       }
-      return jsonResponse({
-        choices: [{ message: { role: 'assistant', content: 'Done.' } }]
-      });
+      return finishedCharacterDraftResponse('Invalid generated entries skipped.');
     };
 
     const result = await completeCharacterDraft(
@@ -1716,8 +1776,8 @@ test('character assistant rejects non-object generated array entries without par
     assert.deepEqual(result.character.regexRules, []);
     assert.deepEqual(result.character.renderPlugins, []);
     assert.deepEqual(result.character.modSuggestions, []);
-    assert.equal(result.toolCalls.length, 2);
-    assert.ok(result.toolCalls.every((call) => call.result.error === 'TOOL_ARGUMENTS_INVALID'));
+    assert.equal(result.toolCalls.length, 4);
+    assert.ok(result.toolCalls.slice(0, 3).every((call) => call.result.error === 'TOOL_ARGUMENTS_INVALID'));
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -5243,6 +5303,25 @@ async function waitForTestCondition(predicate, attempts = 20) {
 function jsonResponse(value) {
   return new Response(JSON.stringify(value), {
     headers: { 'Content-Type': 'application/json' }
+  });
+}
+
+function finishedCharacterDraftResponse(summary = 'Draft validated.', reviewedSections = []) {
+  return jsonResponse({
+    choices: [{
+      message: {
+        role: 'assistant',
+        content: null,
+        tool_calls: [{
+          id: `finish-character-${summary.length}`,
+          type: 'function',
+          function: {
+            name: 'finish_character_draft',
+            arguments: JSON.stringify({ summary, reviewedSections })
+          }
+        }]
+      }
+    }]
   });
 }
 

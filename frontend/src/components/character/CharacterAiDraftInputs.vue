@@ -1,5 +1,6 @@
 <script setup>
 import { computed } from 'vue';
+import { Check, ChevronDown, FileText, Radio, SlidersHorizontal } from '@lucide/vue';
 
 const props = defineProps({
   assistantModel: { type: String, default: '' },
@@ -7,6 +8,10 @@ const props = defineProps({
   modelOptions: { type: Array, default: () => [] },
   options: { type: Object, required: true },
   requirement: { type: String, default: '' },
+  streamingEnabled: { type: Boolean, default: false },
+  thinkingLevel: { type: String, default: 'off' },
+  thinkingOptions: { type: Array, default: () => [] },
+  thinkingSupported: { type: Boolean, default: false },
   useCurrentDraft: { type: Boolean, default: true }
 });
 
@@ -14,6 +19,8 @@ const emit = defineEmits([
   'set-option',
   'update:assistantModel',
   'update:requirement',
+  'update:streamingEnabled',
+  'update:thinkingLevel',
   'update:useCurrentDraft'
 ]);
 
@@ -57,7 +64,7 @@ function setAllOptions(enabled) {
 
 <template>
   <div class="ai-draft-inputs">
-    <label class="field ai-requirement-field">
+    <label class="field">
       <span>完善要求</span>
       <textarea
         :value="requirement"
@@ -82,26 +89,69 @@ function setAllOptions(enabled) {
         </select>
       </label>
 
-      <div class="ai-context-card">
-        <label class="checkbox-line ai-context-toggle">
+      <label class="field">
+        <span>思考强度</span>
+        <select
+          :value="thinkingLevel"
+          :disabled="disabled || !thinkingSupported"
+          @change="emit('update:thinkingLevel', readInputValue($event))"
+        >
+          <option v-if="!thinkingOptions.length" value="off">当前模型不支持</option>
+          <option v-for="option in thinkingOptions" :key="option.value" :value="option.value">
+            {{ option.label }}
+          </option>
+        </select>
+      </label>
+    </div>
+
+    <!-- One card, two rows: both switches share the same frame so the column
+         never stacks bordered box inside bordered box. -->
+    <div class="ai-option-stack">
+      <label class="ai-option-row ai-context-row" :class="{ 'is-active': useCurrentDraft }">
+        <span class="ai-option-icon" aria-hidden="true"><FileText :size="16" /></span>
+        <span class="ai-option-text">
+          <strong>结合当前已填写内容</strong>
+          <small>{{ useCurrentDraft ? '参考表单现有内容，只修改所选范围' : '忽略表单内容，仅按完善要求生成' }}</small>
+        </span>
+        <span class="ai-toggle" :class="{ active: useCurrentDraft, disabled }">
           <input
             type="checkbox"
             :checked="useCurrentDraft"
             :disabled="disabled"
             @change="emit('update:useCurrentDraft', readInputChecked($event))"
           />
-          <span>结合当前已填写内容进行优化</span>
-        </label>
-        <p class="ai-context-hint">
-          {{ useCurrentDraft ? '助手会参考表单现有内容，只修改所选范围。' : '助手只按完善要求生成，不读取当前表单内容。' }}
-        </p>
-      </div>
+          <span class="ai-toggle-track" aria-hidden="true"></span>
+        </span>
+      </label>
+
+      <label class="ai-option-row ai-stream-card" :class="{ 'is-active': streamingEnabled }">
+        <span class="ai-option-icon" aria-hidden="true"><Radio :size="16" /></span>
+        <span class="ai-option-text">
+          <strong>流式调用</strong>
+          <small>{{ streamingEnabled ? '实时模式：边生成边回传过程' : '稳定模式：一次性返回完整结果' }}</small>
+        </span>
+        <span class="ai-toggle ai-stream-toggle" :class="{ active: streamingEnabled, disabled }">
+          <input
+            type="checkbox"
+            :checked="streamingEnabled"
+            :disabled="disabled"
+            @change="emit('update:streamingEnabled', readInputChecked($event))"
+          />
+          <span class="ai-toggle-track" aria-hidden="true"></span>
+        </span>
+      </label>
     </div>
 
     <details class="ai-scope-disclosure">
       <summary>
-        <span>完善范围</span>
-        <small>{{ selectedOptionCount }} / {{ optionCount }} 已选择</small>
+        <span class="ai-scope-summary-title">
+          <SlidersHorizontal :size="15" aria-hidden="true" />
+          完善范围
+        </span>
+        <span class="ai-scope-summary-meta">
+          <small>{{ selectedOptionCount }} / {{ optionCount }}</small>
+          <ChevronDown :size="16" aria-hidden="true" />
+        </span>
       </summary>
       <div class="ai-scope-toolbar">
         <p>仅勾选需要 AI 回填的部分，减少无关修改。</p>
@@ -111,13 +161,14 @@ function setAllOptions(enabled) {
         </div>
       </div>
       <div class="ai-scope-grid">
-        <label v-for="(enabled, key) in options" :key="key" class="checkbox-line">
+        <label v-for="(enabled, key) in options" :key="key" class="ai-scope-chip" :class="{ 'is-on': enabled }">
           <input
             type="checkbox"
             :checked="enabled"
             :disabled="disabled"
             @change="emit('set-option', key, readInputChecked($event))"
           />
+          <Check :size="12" aria-hidden="true" />
           <span>{{ optionLabel(key) }}</span>
         </label>
       </div>

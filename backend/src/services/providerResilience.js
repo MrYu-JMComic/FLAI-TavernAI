@@ -9,7 +9,9 @@ const CIRCUIT_OPEN_MS = 30_000;
 
 export async function executeProviderRequest(key, operation, options = {}) {
   const normalizedKey = String(key || 'provider:unknown').slice(0, 500);
-  const timeoutMs = clampInteger(options.timeoutMs, 100, 30 * 60_000, 120_000);
+  const timeoutMs = options.timeoutMs === 0
+    ? 0
+    : clampInteger(options.timeoutMs, 100, 30 * 60_000, 120_000);
   const concurrency = clampInteger(options.concurrency, 1, 32, 4);
   const maxRetries = options.idempotent
     ? clampInteger(options.retryBudget, 0, 4, 2)
@@ -21,9 +23,12 @@ export async function executeProviderRequest(key, operation, options = {}) {
   try {
     while (true) {
       attempts += 1;
-      const timeoutSignal = AbortSignal.timeout(timeoutMs);
-      const signal = options.signal ? AbortSignal.any([options.signal, timeoutSignal]) : timeoutSignal;
+      const timeoutSignal = timeoutMs > 0 ? AbortSignal.timeout(timeoutMs) : null;
+      const signal = options.signal && timeoutSignal
+        ? AbortSignal.any([options.signal, timeoutSignal])
+        : options.signal || timeoutSignal || undefined;
       try {
+        signal?.throwIfAborted();
         const result = await operation({ signal, attempt: attempts });
         if (isRetryableResponse(result) && attempts <= maxRetries) {
           await result.body?.cancel?.().catch(() => {});

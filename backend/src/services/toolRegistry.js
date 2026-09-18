@@ -3,7 +3,17 @@ import { sanitizeDiagnosticValue } from './diagnosticRedaction.js';
 import { getConversationMutationContext } from './conversationMutationContext.js';
 
 const groups = [
-  ['character-draft', 'draft', 'request', ['set_character_profile', 'add_regex_rule', 'replace_regex_rules', 'set_character_extensions']],
+  ['character-draft', 'draft', 'request', [
+    'update_character_profile',
+    'update_character_story',
+    'replace_character_regex_rules',
+    'replace_character_render_plugins',
+    'update_character_status_bar',
+    'update_character_agents',
+    'update_character_presentation',
+    'set_character_recommendations'
+  ]],
+  ['character-draft', 'validate', 'request', ['report_character_progress', 'finish_character_draft']],
   ['world-book-draft', 'draft', 'request', ['set_world_book_profile', 'replace_world_book_entries', 'upsert_world_book_entry', 'remove_world_book_entry']],
   ['world-book-draft', 'read', 'read-only', ['preview_world_book_entries']],
   ['status', 'write', 'job-step', ['update_status_bar']],

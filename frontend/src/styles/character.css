@@ -1117,64 +1117,73 @@
   font-weight: 900;
 }
 
+/* ============================================================
+   AI 完善助手 workbench
+   Two panes at desktop width, one column below; every row is a flat
+   band so the panel never nests a bordered card inside another.
+   ============================================================ */
+
 .ai-draft-panel {
   position: relative;
   box-sizing: border-box;
+  container-type: inline-size;
   width: 100%;
   max-width: 100%;
   min-width: 0;
   overflow: hidden;
   padding: 0;
-  border-color: color-mix(in srgb, var(--primary) 22%, var(--line));
-  background:
-    linear-gradient(135deg, color-mix(in srgb, var(--primary-soft) 34%, transparent), transparent 42%),
-    color-mix(in srgb, var(--surface) 92%, transparent);
+  border-color: color-mix(in srgb, var(--primary) 20%, var(--line));
+  background: var(--surface);
 }
 
+/* -- Header: icon · title + run settings · status -- */
 .ai-workbench-header {
-  display: flex;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 12px;
   align-items: center;
-  justify-content: space-between;
-  gap: 16px;
   min-width: 0;
-  padding: 16px 18px;
+  padding: 14px 18px;
   border-bottom: 1px solid color-mix(in srgb, var(--line) 82%, transparent);
-  background: color-mix(in srgb, var(--surface-strong) 62%, transparent);
+  background: color-mix(in srgb, var(--surface-strong) 58%, transparent);
+}
+
+.ai-workbench-icon {
+  display: grid;
+  flex: 0 0 auto;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border: 1px solid color-mix(in srgb, var(--primary) 24%, var(--line));
+  border-radius: 10px;
+  color: var(--primary);
+  background: color-mix(in srgb, var(--primary-soft) 82%, transparent);
 }
 
 .ai-workbench-title {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  gap: 11px;
-  align-items: center;
+  gap: 2px;
   min-width: 0;
 }
 
 .ai-workbench-title h2,
 .ai-workbench-title p {
   margin: 0;
+  min-width: 0;
 }
 
 .ai-workbench-title h2 {
-  font-size: 1.08rem;
+  font-size: 1.04rem;
+  line-height: 1.3;
 }
 
 .ai-workbench-title p {
-  margin-top: 3px;
+  overflow: hidden;
   color: var(--muted);
-  font-size: 0.84rem;
-  line-height: 1.45;
-}
-
-.ai-workbench-icon {
-  display: grid;
-  place-items: center;
-  width: 36px;
-  height: 36px;
-  border: 1px solid color-mix(in srgb, var(--primary) 24%, var(--line));
-  border-radius: 10px;
-  color: var(--primary);
-  background: color-mix(in srgb, var(--primary-soft) 82%, transparent);
+  font-size: 0.78rem;
+  line-height: 1.4;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .ai-workbench-status {
@@ -1182,24 +1191,43 @@
   flex: 0 0 auto;
   align-items: center;
   gap: 6px;
-  min-height: 30px;
+  min-height: 28px;
   border: 1px solid color-mix(in srgb, var(--line) 84%, transparent);
   border-radius: 999px;
-  padding: 0 10px;
+  padding: 0 11px;
   color: var(--muted);
   background: color-mix(in srgb, var(--surface) 86%, transparent);
-  font-size: 0.78rem;
+  font-size: 0.77rem;
   font-weight: 800;
+  white-space: nowrap;
 }
 
-.ai-workbench-status.loading {
+.ai-workbench-status.running {
   color: var(--primary);
   border-color: color-mix(in srgb, var(--primary) 34%, var(--line));
   background: color-mix(in srgb, var(--primary-soft) 72%, var(--surface));
 }
 
-.ai-workbench-status.loading svg {
+.ai-workbench-status.running svg {
   animation: ai-workbench-spin 0.9s linear infinite;
+}
+
+.ai-workbench-status.paused {
+  color: var(--warning);
+  border-color: color-mix(in srgb, var(--warning) 38%, var(--line));
+  background: var(--warning-soft);
+}
+
+.ai-workbench-status.failed {
+  color: var(--danger);
+  border-color: color-mix(in srgb, var(--danger) 38%, var(--line));
+  background: var(--danger-soft);
+}
+
+.ai-workbench-status.completed {
+  color: var(--green);
+  border-color: color-mix(in srgb, var(--green) 38%, var(--line));
+  background: var(--green-soft);
 }
 
 @keyframes ai-workbench-spin {
@@ -1208,15 +1236,35 @@
   }
 }
 
+/* -- Columns -- */
 .ai-workbench-grid {
   display: grid;
-  grid-template-columns: minmax(0, 1fr);
+  grid-template-columns: minmax(340px, 1fr) minmax(0, 1.05fr);
   min-width: 0;
 }
 
-@media (min-width: 980px) {
-  .ai-workbench-grid.has-output {
-    grid-template-columns: minmax(0, 1.08fr) minmax(360px, 0.92fr);
+@container (max-width: 720px) {
+  .ai-workbench-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .ai-workbench-results {
+    border-top: 1px solid color-mix(in srgb, var(--line) 82%, transparent);
+    border-left: 0;
+  }
+}
+
+/* Very narrow panes: let the counters own a line instead of squeezing the
+   heading text next to them. */
+@container (max-width: 480px) {
+  .ai-monitor-heading {
+    grid-template-columns: 26px minmax(0, 1fr);
+  }
+
+  .ai-monitor-counters {
+    grid-column: 2;
+    justify-content: flex-start;
+    margin-top: 6px;
   }
 }
 
@@ -1231,13 +1279,19 @@
 
 .ai-workbench-results {
   border-left: 1px solid color-mix(in srgb, var(--line) 82%, transparent);
-  background: color-mix(in srgb, var(--surface-strong) 42%, transparent);
+  background: color-mix(in srgb, var(--surface-strong) 46%, var(--surface));
 }
 
+/* Nothing has run yet — hide the zeroed counters instead of showing noise. */
+.ai-workbench-results.empty .ai-monitor-counters {
+  display: none;
+}
+
+/* -- Numbered step headings -- */
 .ai-workbench-section-heading {
   display: grid;
-  grid-template-columns: 28px minmax(0, 1fr);
-  gap: 9px;
+  grid-template-columns: 26px minmax(0, 1fr);
+  gap: 10px;
   align-items: center;
   min-width: 0;
 }
@@ -1245,31 +1299,184 @@
 .ai-workbench-section-heading > span {
   display: grid;
   place-items: center;
-  width: 28px;
-  height: 28px;
-  border-radius: 9px;
+  width: 26px;
+  height: 26px;
+  border-radius: 8px;
   color: var(--primary);
   background: var(--primary-soft);
-  font-size: 0.78rem;
+  font-size: 0.76rem;
   font-weight: 900;
 }
 
-.ai-workbench-section-heading div {
+/* Scoped to the text block only: a bare `div` selector here used to also catch
+   .ai-monitor-counters and force the run counters into a stacked grid. */
+.ai-heading-text {
   display: grid;
   gap: 1px;
   min-width: 0;
 }
 
 .ai-workbench-section-heading strong {
-  font-size: 0.9rem;
+  font-size: 0.89rem;
 }
 
 .ai-workbench-section-heading small {
+  overflow: hidden;
   color: var(--muted);
-  font-size: 0.76rem;
+  font-size: 0.75rem;
   line-height: 1.4;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
+.ai-monitor-heading {
+  grid-template-columns: 26px minmax(0, 1fr) auto;
+}
+
+/* One row, never wrapped: the counters are the at-a-glance run scale. */
+.ai-monitor-counters {
+  display: flex;
+  flex: 0 0 auto;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 5px;
+  min-width: max-content;
+}
+
+.ai-monitor-counters span {
+  border: 1px solid color-mix(in srgb, var(--line) 84%, transparent);
+  border-radius: 999px;
+  padding: 2px 8px;
+  color: var(--muted);
+  background: var(--surface);
+  font-size: 0.7rem;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.ai-monitor-empty {
+  display: grid;
+  min-height: 240px;
+  place-content: center;
+  justify-items: center;
+  gap: 8px;
+  border: 1px dashed color-mix(in srgb, var(--line) 88%, transparent);
+  border-radius: 10px;
+  padding: 24px;
+  color: var(--muted);
+  text-align: center;
+}
+
+.ai-monitor-empty-icon {
+  display: grid;
+  place-items: center;
+  width: 42px;
+  height: 42px;
+  border-radius: 12px;
+  color: var(--primary);
+  background: var(--primary-soft);
+}
+
+.ai-monitor-empty strong {
+  color: var(--text);
+  font-size: 0.9rem;
+}
+
+.ai-monitor-empty > span:last-child {
+  max-width: 260px;
+  font-size: 0.78rem;
+  line-height: 1.55;
+}
+
+/* -- Run notices -- */
+.ai-run-alert {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 9px;
+  align-items: center;
+  min-width: 0;
+  border: 1px solid color-mix(in srgb, var(--danger) 34%, var(--line));
+  border-radius: 9px;
+  padding: 10px 11px;
+  color: var(--danger);
+  background: var(--danger-soft);
+  font-size: 0.79rem;
+  line-height: 1.5;
+}
+
+.ai-checkpoint-note {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 9px;
+  align-items: center;
+  min-width: 0;
+  border: 1px solid color-mix(in srgb, var(--green) 30%, var(--line));
+  border-radius: 9px;
+  padding: 10px 11px;
+  color: var(--green);
+  background: var(--green-soft);
+  font-size: 0.79rem;
+  line-height: 1.5;
+}
+
+.ai-run-alert span,
+.ai-checkpoint-note span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.ai-checkpoint-note small {
+  flex: 0 0 auto;
+  color: currentColor;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.ai-run-warnings {
+  display: grid;
+  gap: 7px;
+  min-width: 0;
+  border: 1px solid color-mix(in srgb, var(--warning) 36%, var(--line));
+  border-radius: 9px;
+  padding: 10px 11px;
+  color: var(--warning);
+  background: var(--warning-soft);
+  font-size: 0.79rem;
+}
+
+.ai-run-warnings-title {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  min-width: 0;
+}
+
+.ai-run-warnings-title span {
+  min-width: 20px;
+  border-radius: 999px;
+  padding: 1px 7px;
+  background: color-mix(in srgb, currentColor 14%, transparent);
+  font-size: 0.68rem;
+  font-weight: 800;
+  text-align: center;
+}
+
+.ai-run-warnings ul {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  margin: 0;
+  padding-left: 22px;
+}
+
+.ai-run-warnings li {
+  min-width: 0;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+/* -- Task configuration -- */
 .ai-draft-inputs {
   display: grid;
   gap: 12px;
@@ -1278,9 +1485,9 @@
 
 .ai-config-row {
   display: grid;
-  grid-template-columns: minmax(180px, 0.72fr) minmax(0, 1.28fr);
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 12px;
-  align-items: stretch;
+  align-items: start;
   min-width: 0;
 }
 
@@ -1290,9 +1497,7 @@
   max-height: 280px;
   resize: vertical;
   overflow: auto;
-}
-
-.ai-draft-panel .field textarea {
+  line-height: 1.6;
   scrollbar-width: thin;
   scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
 }
@@ -1330,71 +1535,145 @@
     padding-box;
 }
 
-.ai-draft-button {
-  width: 100%;
-}
-
-.ai-action-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-  max-width: 100%;
-}
-
-.ai-action-row .ai-draft-button,
-.ai-action-row .primary-button,
-.ai-action-row .ghost-button:first-child {
-  flex: 1 1 auto;
-  min-width: 0;
-}
-
-.ai-action-row .ghost-button:last-child {
-  flex: 0 0 auto;
-}
-
-.ai-action-row .ai-draft-button span,
-.ai-action-row .primary-button span,
-.ai-action-row .ghost-button span {
+/* -- Run options: one frame, hairline-separated rows -- */
+.ai-option-stack {
+  display: grid;
   min-width: 0;
   overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--surface) 84%, transparent);
+}
+
+.ai-option-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 11px;
+  align-items: center;
+  min-width: 0;
+  padding: 11px 12px;
+  cursor: pointer;
+}
+
+.ai-option-row + .ai-option-row {
+  border-top: 1px solid color-mix(in srgb, var(--line) 70%, transparent);
+}
+
+.ai-option-row:has(input:disabled) {
+  cursor: not-allowed;
+}
+
+.ai-option-icon {
+  display: grid;
+  flex: 0 0 auto;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border: 1px solid color-mix(in srgb, var(--line) 76%, transparent);
+  border-radius: 9px;
+  color: var(--muted);
+  background: var(--surface-strong);
+  transition: color 160ms ease, border-color 160ms ease, background-color 160ms ease;
+}
+
+.ai-option-row.is-active .ai-option-icon {
+  border-color: color-mix(in srgb, var(--primary) 42%, var(--line));
+  color: var(--primary);
+  background: var(--primary-soft);
+}
+
+.ai-option-text {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.ai-option-text strong {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text);
+  font-size: 0.85rem;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.ai-context-toggle {
-  align-items: flex-start;
-  padding: 0;
-}
-
-.ai-context-toggle.compact {
-  padding: 7px 9px;
-}
-
-.ai-context-hint {
-  margin: 0;
-  color: var(--muted);
-  font-size: 0.8rem;
-  line-height: 1.5;
-}
-
-.ai-context-card {
-  display: grid;
-  align-content: center;
-  gap: 5px;
+.ai-option-text small {
   min-width: 0;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  padding: 10px 11px;
-  background: color-mix(in srgb, var(--surface) 82%, transparent);
+  color: var(--muted);
+  font-size: 0.75rem;
+  font-weight: 600;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
 }
 
+/* -- Switch -- */
+.ai-toggle {
+  position: relative;
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+}
+
+.ai-toggle input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.ai-toggle-track {
+  position: relative;
+  display: block;
+  box-sizing: border-box;
+  width: 40px;
+  height: 22px;
+  border: 1px solid color-mix(in srgb, var(--muted) 48%, var(--line));
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--muted) 18%, var(--surface-strong));
+  transition: border-color 160ms ease, background-color 160ms ease;
+}
+
+.ai-toggle-track::after {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--surface);
+  box-shadow: 0 1px 3px color-mix(in srgb, #000 28%, transparent);
+  content: '';
+  transition: transform 160ms ease;
+}
+
+.ai-toggle input:checked + .ai-toggle-track {
+  border-color: var(--primary);
+  background: var(--primary);
+}
+
+.ai-toggle input:checked + .ai-toggle-track::after {
+  transform: translateX(18px);
+}
+
+.ai-toggle input:focus-visible + .ai-toggle-track {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+
+.ai-toggle.disabled {
+  cursor: not-allowed;
+  opacity: 0.58;
+}
+
+/* -- Scope picker -- */
 .ai-scope-disclosure {
   min-width: 0;
   overflow: hidden;
   border: 1px solid var(--line);
-  border-radius: 8px;
-  background: color-mix(in srgb, var(--surface) 76%, transparent);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--surface) 84%, transparent);
 }
 
 .ai-scope-disclosure > summary {
@@ -1402,8 +1681,8 @@
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  min-height: 42px;
-  padding: 9px 11px;
+  min-height: 44px;
+  padding: 9px 12px;
   cursor: pointer;
   color: var(--text);
   font-size: 0.86rem;
@@ -1415,13 +1694,48 @@
   display: none;
 }
 
+.ai-scope-summary-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ai-scope-summary-title svg {
+  flex: 0 0 auto;
+  color: var(--primary);
+}
+
 .ai-scope-disclosure > summary small {
   flex: 0 0 auto;
   border-radius: 999px;
-  padding: 3px 8px;
+  padding: 3px 9px;
   color: var(--primary);
   background: var(--primary-soft);
-  font-size: 0.74rem;
+  font-size: 0.73rem;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.ai-scope-summary-meta {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.ai-scope-summary-meta > svg {
+  color: var(--muted);
+  transition: transform 160ms ease;
+}
+
+.ai-scope-disclosure[open] .ai-scope-summary-meta > svg {
+  transform: rotate(180deg);
 }
 
 .ai-scope-disclosure[open] > summary {
@@ -1433,13 +1747,16 @@
   align-items: center;
   justify-content: space-between;
   gap: 10px;
-  padding: 10px 11px 0;
+  min-width: 0;
+  padding: 11px 12px 9px;
 }
 
 .ai-scope-toolbar p {
+  flex: 1 1 auto;
+  min-width: 0;
   margin: 0;
   color: var(--muted);
-  font-size: 0.78rem;
+  font-size: 0.77rem;
   line-height: 1.45;
 }
 
@@ -1451,39 +1768,209 @@
 
 .ai-scope-actions .ghost-button {
   min-height: 30px;
-  padding: 4px 9px;
+  padding: 0 11px;
   font-size: 0.76rem;
 }
 
+/* Chips flow into as many columns as fit, so 11 entries never leave an
+   orphan row the way a hard two-column grid did. The track minimum is sized
+   so the longest label ("世界书建议") still fits without an ellipsis. */
 .ai-scope-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 6px 10px;
-  padding: 10px 11px 12px;
+  grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
+  gap: 7px;
+  min-width: 0;
+  padding: 0 12px 12px;
 }
 
-.ai-scope-grid .checkbox-line {
-  min-height: 28px;
+.ai-scope-chip {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  min-width: 0;
+  min-height: 32px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 0 9px;
+  color: var(--muted);
+  background: var(--surface);
+  cursor: pointer;
+  font-size: 0.78rem;
+  font-weight: 800;
+  transition: color 140ms ease, border-color 140ms ease, background-color 140ms ease;
 }
 
-.ai-mod-suggestions {
+.ai-scope-chip input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.ai-scope-chip > svg {
+  flex: 0 0 auto;
+  opacity: 0;
+  transition: opacity 140ms ease;
+}
+
+.ai-scope-chip > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ai-scope-chip.is-on {
+  border-color: color-mix(in srgb, var(--primary) 46%, var(--line));
+  color: var(--primary);
+  background: var(--primary-soft);
+}
+
+.ai-scope-chip.is-on > svg {
+  opacity: 1;
+}
+
+.ai-scope-chip:hover:not(:has(input:disabled)) {
+  border-color: color-mix(in srgb, var(--primary) 34%, var(--line));
+}
+
+.ai-scope-chip:has(input:focus-visible) {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+
+.ai-scope-chip:has(input:disabled) {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+/* -- Actions -- */
+.ai-action-row {
   display: grid;
   gap: 8px;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.ai-draft-button {
+  width: 100%;
+}
+
+.ai-action-secondary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.ai-secondary-action {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.ai-discard-action {
+  color: var(--danger);
+  border-color: color-mix(in srgb, var(--danger) 26%, var(--line));
+}
+
+.ai-discard-action:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--danger) 44%, var(--line));
+  background: var(--danger-soft);
+}
+
+.ai-action-row .primary-button span,
+.ai-action-row .ghost-button span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* -- Mod suggestions -- */
+.ai-mod-suggestions {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+  border: 1px solid color-mix(in srgb, var(--line) 82%, transparent);
+  border-radius: 10px;
+  padding: 12px;
+  background: var(--surface);
+}
+
+.ai-mod-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+}
+
+.ai-mod-head small {
+  flex: 0 0 auto;
+  color: var(--muted);
+  font-size: 0.74rem;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.ai-mod-list {
+  display: grid;
+  gap: 9px;
+  min-width: 0;
 }
 
 .ai-mod-card {
   display: grid;
-  gap: 3px;
-  padding: 9px 10px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: color-mix(in srgb, var(--surface) 88%, transparent);
+  gap: 4px;
+  min-width: 0;
+  border: 0;
+  border-left: 2px solid color-mix(in srgb, var(--primary) 38%, var(--line));
+  border-radius: 0;
+  padding: 1px 0 1px 11px;
+  background: transparent;
 }
 
-.ai-mod-card small,
+.ai-mod-card-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.ai-mod-card-head strong {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 0.84rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ai-mod-card-head small {
+  flex: 0 0 auto;
+  border-radius: 999px;
+  padding: 1px 8px;
+  color: var(--muted);
+  background: var(--surface-strong);
+  font-size: 0.68rem;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
 .ai-mod-card p {
+  min-width: 0;
   margin: 0;
   color: var(--muted);
+  font-size: 0.79rem;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.ai-mod-create {
+  width: 100%;
 }
 
 .advanced-grid {

@@ -40,7 +40,7 @@ export function providerFetchUrl(settings, url, request = {}) {
 
 function resilientProviderFetch(settings, url, request) {
   const method = String(request.method || 'GET').toUpperCase();
-  const { idempotent, requestTrace, traceAuthMode, ...fetchRequest } = request;
+  const { idempotent, requestTrace, timeoutMs, traceAuthMode, ...fetchRequest } = request;
   const resilienceKey = [
     String(settings.providerType || 'custom'),
     String(settings.model || ''),
@@ -53,7 +53,7 @@ function resilientProviderFetch(settings, url, request) {
     }),
     {
       signal: request.signal,
-      timeoutMs: settings.timeoutMs,
+      timeoutMs: timeoutMs ?? settings.timeoutMs,
       concurrency: settings.concurrencyLimit,
       retryBudget: settings.retryBudget,
       idempotent: ['GET', 'HEAD', 'OPTIONS'].includes(method) || idempotent === true

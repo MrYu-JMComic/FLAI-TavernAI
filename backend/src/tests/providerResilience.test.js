@@ -69,3 +69,14 @@ test('provider resilience aborts a call at its configured deadline', async () =>
     { name: 'TimeoutError' }
   );
 });
+
+test('provider resilience keeps caller cancellation when fixed deadlines are disabled', async () => {
+  resetProviderResilienceState();
+  const controller = new AbortController();
+  const cancellation = Object.assign(new Error('cancelled by caller'), { code: 'CALLER_CANCELLED' });
+  const pending = executeProviderRequest('manual-provider', ({ signal }) => new Promise((_resolve, reject) => {
+    signal.addEventListener('abort', () => reject(signal.reason), { once: true });
+  }), { timeoutMs: 0, signal: controller.signal });
+  controller.abort(cancellation);
+  await assert.rejects(pending, { code: 'CALLER_CANCELLED' });
+});

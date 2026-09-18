@@ -36,6 +36,7 @@ export async function generateAnthropicMessage(settings, messages, options = {})
     method: 'POST',
     body: JSON.stringify(requestBody),
     requestTrace: options.requestTrace,
+    timeoutMs: options.timeoutMs,
     signal: options.signal
   });
 
@@ -58,6 +59,7 @@ export async function streamAnthropicMessage(settings, messages, emit, signal, o
     method: 'POST',
     body: JSON.stringify(requestBody),
     requestTrace: options.requestTrace,
+    timeoutMs: options.timeoutMs,
     signal
   });
 
@@ -208,6 +210,7 @@ export async function runAnthropicToolCompletion(settings, messages, tools, exec
       method: 'POST',
       body: JSON.stringify(body),
       requestTrace: options.requestTrace,
+      timeoutMs: options.timeoutMs,
       signal: options.signal
     });
     const json = await readJsonResponse(response);
@@ -223,6 +226,7 @@ export async function runAnthropicToolCompletion(settings, messages, tools, exec
       tools: []
     };
     process.push(step);
+    if (typeof options.onStep === 'function') await options.onStep(step);
     finalContent += parsedContent.content;
     finalReasoning = mergeReasoning(finalReasoning, reasoning);
 
@@ -264,6 +268,9 @@ export async function runAnthropicToolCompletion(settings, messages, tools, exec
       };
       step.tools.push(log);
       toolCalls.push(log);
+      if (typeof options.onToolCall === 'function') {
+        await options.onToolCall({ round: step.round, ...log });
+      }
       toolResults.push({
         type: 'tool_result',
         tool_use_id: call.id,

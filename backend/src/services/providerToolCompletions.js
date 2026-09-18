@@ -92,6 +92,7 @@ export async function runToolCompletion(settings, messages, tools, executeTool, 
         method: 'POST',
         body: JSON.stringify(requestBody),
         requestTrace: options.requestTrace,
+        timeoutMs: options.timeoutMs,
         signal: options.signal
       });
       json = await readJsonResponse(response);
@@ -131,6 +132,7 @@ export async function runToolCompletion(settings, messages, tools, executeTool, 
       tools: []
     };
     process.push(step);
+    if (typeof options.onStep === 'function') await options.onStep(step);
 
     if (!calls.length) {
       const nudge = typeof options.onNoToolCall === 'function'
@@ -169,6 +171,9 @@ export async function runToolCompletion(settings, messages, tools, executeTool, 
       };
       step.tools.push(log);
       toolCalls.push(log);
+      if (typeof options.onToolCall === 'function') {
+        await options.onToolCall({ round: step.round, ...log });
+      }
       nextMessages.push({
         role: 'tool',
         tool_call_id: call.id,
@@ -264,6 +269,7 @@ export async function streamToolCompletion(settings, messages, tools, executeToo
         method: 'POST',
         body: JSON.stringify(requestBody),
         requestTrace: options.requestTrace,
+        timeoutMs: options.timeoutMs,
         signal
       });
 

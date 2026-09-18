@@ -58,7 +58,8 @@ export async function generateOpenAiResponse(settings, messages, options = {}) {
       stream: false
     }),
     signal: options.signal,
-    requestTrace: options.requestTrace
+    requestTrace: options.requestTrace,
+    timeoutMs: options.timeoutMs
   });
 
   const json = await readJsonResponse(response);
@@ -86,7 +87,8 @@ export async function streamOpenAiResponse(settings, messages, emit, signal, opt
       stream: true
     }),
     signal,
-    requestTrace: options.requestTrace
+    requestTrace: options.requestTrace,
+    timeoutMs: options.timeoutMs
   });
 
   if (!response.ok) {
@@ -185,7 +187,8 @@ export async function runOpenAiResponseToolCompletion(settings, messages, tools,
         stream: false
       }),
       signal: options.signal,
-      requestTrace: options.requestTrace
+      requestTrace: options.requestTrace,
+      timeoutMs: options.timeoutMs
     });
     const json = await readJsonResponse(response);
     finalResponse = json;
@@ -201,6 +204,7 @@ export async function runOpenAiResponseToolCompletion(settings, messages, tools,
       tools: []
     };
     process.push(step);
+    if (typeof options.onStep === 'function') await options.onStep(step);
     finalContent = parsedContent.content;
     finalReasoning = mergeReasoning(finalReasoning, reasoning);
 
@@ -236,6 +240,9 @@ export async function runOpenAiResponseToolCompletion(settings, messages, tools,
       };
       step.tools.push(log);
       toolCalls.push(log);
+      if (typeof options.onToolCall === 'function') {
+        await options.onToolCall({ round: step.round, ...log });
+      }
       input.push({
         type: 'function_call_output',
         call_id: call.callId,

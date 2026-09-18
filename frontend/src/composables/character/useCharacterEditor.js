@@ -98,13 +98,24 @@ export function useCharacterEditor({ props, emit }) {
     aiUseCurrentDraft,
     assistantModel,
     assistantModelOptions,
+    assistantStreamingEnabled,
+    assistantThinkingLevel,
+    assistantThinkingOptions,
+    assistantThinkingSupported,
     providerModelOptionsFor
   } = useCharacterAiPreferences(computed(() => props.provider));
 
   const {
     aiLoading,
+    aiCheckpoint,
+    aiCheckpointUpdatedAt,
+    aiHasCheckpoint,
+    aiLastError,
     aiRequirement,
+    aiStatus,
+    aiStatusMessage,
     aiToolCalls,
+    aiWarnings,
     aiProcess,
     aiReasoning,
     aiModSuggestions,
@@ -116,6 +127,10 @@ export function useCharacterEditor({ props, emit }) {
     completeAdvancedSettingsWithAi,
     completeWithAi,
     createSuggestedMods,
+    discardAiSession,
+    resumeCharacterAi,
+    retryCharacterAi,
+    saveAiCheckpoint,
     setAiOptionValue,
     stopAdvancedAi,
     stopCharacterAi
@@ -126,8 +141,11 @@ export function useCharacterEditor({ props, emit }) {
     aiOptions,
     aiUseCurrentDraft,
     assistantModel,
+    assistantStreamingEnabled,
+    assistantThinkingLevel,
     buildPayload: toPayload,
     applyAdvancedSettingsDraft,
+    getSessionId: () => editingCharacterId.value || 'new',
     isDisposed: () => characterFormDisposed,
     notify
   });
@@ -535,6 +553,10 @@ export function useCharacterEditor({ props, emit }) {
         : await createCharacter(payload);
       await syncCharacterWorldBooks(saved.id, { editing, selectedIds: worldBookIds });
       if (!isCurrentFormSubmit(submitToken, { editing, characterId })) return;
+      if (!editing) {
+        cancelCharacterAiGeneration();
+        discardAiSession();
+      }
       establishCharacterDraftBaseline();
       clearCurrentCharacterDraft();
       notify.success(editing ? '角色已保存' : '角色已创建');
@@ -892,20 +914,35 @@ export function useCharacterEditor({ props, emit }) {
     advancedAiLoading,
     advancedAiRequirement,
     aiLoading,
+    aiCheckpoint,
+    aiCheckpointUpdatedAt,
+    aiHasCheckpoint,
+    aiLastError,
     aiModSuggestions,
     aiOptions,
     aiProcess,
     aiReasoning,
     aiRequirement,
+    aiStatus,
+    aiStatusMessage,
     aiToolCalls,
+    aiWarnings,
     aiUseCurrentDraft,
     assistantModel,
     assistantModelOptions,
+    assistantStreamingEnabled,
+    assistantThinkingLevel,
+    assistantThinkingOptions,
+    assistantThinkingSupported,
     characterAiActionBusy,
     completeAdvancedSettingsWithAi,
     completeWithAi,
     createSuggestedMods,
+    discardAiSession,
     modelOverrideOptions,
+    resumeCharacterAi,
+    retryCharacterAi,
+    saveAiCheckpoint,
     setAiOptionValue,
     stopAdvancedAi,
     stopCharacterAi,

@@ -320,7 +320,6 @@ export function createCharactersRouter({
     const effectiveSettings = withModelOverride(settings.value, request.body?.modelOverride);
 
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(new Error('AI 角色助手请求超时，请稍后重试。')), 300000);
     request.on('aborted', () => controller.abort(new Error('客户端已取消角色助手请求。')));
 
     try {
@@ -339,6 +338,9 @@ export function createCharactersRouter({
             current,
             user: request.auth.user,
             options: request.body?.options || {},
+            providerStreaming: request.body?.providerStreaming === true,
+            thinkingLevel: request.body?.thinkingLevel,
+            continuation: request.body?.continuation || {},
             database: db,
             userId: request.auth.user.id,
             signal: controller.signal,
@@ -366,6 +368,8 @@ export function createCharactersRouter({
           current,
           user: request.auth.user,
           options: request.body?.options || {},
+          thinkingLevel: request.body?.thinkingLevel,
+          continuation: request.body?.continuation || {},
           database: db,
           userId: request.auth.user.id,
           signal: controller.signal
@@ -386,8 +390,6 @@ export function createCharactersRouter({
         fallback: abortedMessage || 'AI 角色助手失败，请稍后重试。'
       });
       response.status(status).json({ error: publicError.error, code: publicError.code });
-    } finally {
-      clearTimeout(timeout);
     }
   }));
 
