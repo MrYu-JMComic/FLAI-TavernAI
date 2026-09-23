@@ -929,7 +929,6 @@ export function useChatSubmit({
 
   function handleSubmitFailure(message, content, conversationId, options = {}) {
     rememberLastFailure(message, content, conversationId, options);
-    restoreFailedContentToInput(content, conversationId, options.attachments || lastSubmittedAttachments);
     showError(message);
   }
 
@@ -1447,24 +1446,6 @@ export function useChatSubmit({
     }
   }
 
-  function restoreFailedContentToInput(content, conversationId, attachments = []) {
-    const normalizedContent = normalizeMessageText(content);
-    const normalizedAttachments = normalizeChatAttachments(attachments);
-    const normalizedConversationId = normalizeConversationId(conversationId);
-    if ((!normalizedContent && !normalizedAttachments.length) || !normalizedConversationId || stoppingByUser || submitDisposed) {
-      return false;
-    }
-    if (normalizeConversationId(route.params.id) !== normalizedConversationId) {
-      return false;
-    }
-    if (normalizeMessageText(input.value) || chatAttachments.value.length) {
-      return false;
-    }
-    input.value = normalizedContent;
-    setChatAttachments(normalizedAttachments);
-    return true;
-  }
-
   function rememberLastFailure(message, content, conversationId, options = {}) {
     const normalizedContent = normalizeMessageText(content);
     const normalizedAttachments = normalizeChatAttachments(options.attachments || lastSubmittedAttachments);
@@ -1489,35 +1470,19 @@ export function useChatSubmit({
     }
   }
 
-  function restoreLastFailureInput() {
-    const failure = lastFailure.value;
-    if (!isRestorableFailure(failure)) {
-      return false;
-    }
-    input.value = failure.content;
-    setChatAttachments(failure.attachments || []);
-    clearLastFailure();
-    return true;
-  }
-
   async function retryLastFailure() {
     const failure = lastFailure.value;
-    if (!isRestorableFailure(failure) || !failure.canRetry || sending.value) {
+    if (!isActiveFailure(failure) || !failure.canRetry || sending.value) {
       return false;
     }
-    input.value = failure.content;
-    setChatAttachments(failure.attachments || []);
-    clearLastFailure();
-    await nextTick();
-    await submit();
-    return true;
+    return submitDraft(failure.content, failure.attachments || []);
   }
 
   function dismissLastFailure() {
     clearLastFailure();
   }
 
-  function isRestorableFailure(failure) {
+  function isActiveFailure(failure) {
     return Boolean(
       (failure?.content || failure?.attachments?.length) &&
       failure.conversationId &&
@@ -2164,7 +2129,6 @@ export function useChatSubmit({
     canRegenerateMessage,
     regenerateMessage,
     stop,
-    restoreLastFailureInput,
     retryLastFailure,
     dismissLastFailure,
     addChatAttachmentFiles,

@@ -89,7 +89,7 @@ export function useCharacterEditor({ props, emit }) {
     tags: true,
     regexRules: true,
     renderPlugins: true,
-    worldBookSuggestion: true,
+    worldBook: true,
     advancedSettings: true,
     modSuggestions: true
   });
@@ -119,6 +119,8 @@ export function useCharacterEditor({ props, emit }) {
     aiProcess,
     aiReasoning,
     aiModSuggestions,
+    aiWorldBookDraft,
+    aiWorldBookCreating,
     suggestedModsCreating,
     advancedAiLoading,
     advancedAiRequirement,
@@ -127,6 +129,7 @@ export function useCharacterEditor({ props, emit }) {
     completeAdvancedSettingsWithAi,
     completeWithAi,
     createSuggestedMods,
+    createWorldBookFromAiDraft,
     discardAiSession,
     resumeCharacterAi,
     retryCharacterAi,
@@ -145,12 +148,14 @@ export function useCharacterEditor({ props, emit }) {
     assistantThinkingLevel,
     buildPayload: toPayload,
     applyAdvancedSettingsDraft,
+    onWorldBookCreated: handleAiWorldBookCreated,
     getSessionId: () => editingCharacterId.value || 'new',
     isDisposed: () => characterFormDisposed,
     notify
   });
 
   const {
+    addWorldBookOption,
     canCreateSearchedTag,
     cancelCharacterFormOptions,
     createAndSelectTag,
@@ -173,6 +178,15 @@ export function useCharacterEditor({ props, emit }) {
     notify,
     selectedTags: computed(() => form.selectedTags)
   });
+
+  function handleAiWorldBookCreated(book) {
+    const bookId = String(book?.id || '').trim();
+    if (!bookId) return;
+    addWorldBookOption(book);
+    if (!selectedWorldBookIds.value.includes(bookId)) {
+      setSelectedWorldBookIdsIfChanged([...selectedWorldBookIds.value, bookId]);
+    }
+  }
 
   const {
     backgroundUploading,
@@ -919,6 +933,8 @@ export function useCharacterEditor({ props, emit }) {
     aiHasCheckpoint,
     aiLastError,
     aiModSuggestions,
+    aiWorldBookDraft,
+    aiWorldBookCreating,
     aiOptions,
     aiProcess,
     aiReasoning,
@@ -938,6 +954,7 @@ export function useCharacterEditor({ props, emit }) {
     completeAdvancedSettingsWithAi,
     completeWithAi,
     createSuggestedMods,
+    createWorldBookFromAiDraft,
     discardAiSession,
     modelOverrideOptions,
     resumeCharacterAi,

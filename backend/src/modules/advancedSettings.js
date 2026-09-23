@@ -1,4 +1,4 @@
-import { parseStatusTemplateToken } from '../../../shared/statusTemplateTokens.js';
+import { isStatusTemplateMeterProperty, parseStatusTemplateToken } from '../../../shared/statusTemplateTokens.js';
 import { THINKING_LEVELS } from '../../../shared/providerThinking.js';
 
 const STATUS_BLUEPRINT_VARIABLE_LIMIT = 60;
@@ -407,7 +407,8 @@ function hasExplicitStatusMax(item = {}) {
 }
 
 function isMeterTemplateProperty(property = '') {
-  return ['max', 'percent', 'percentage', 'color', 'display', 'displayValue'].includes(String(property || '').trim());
+  const value = String(property || '').trim();
+  return isStatusTemplateMeterProperty(value) || ['color', 'display', 'displayValue'].includes(value);
 }
 
 function createSkillConfig(enabled, extras = {}) {

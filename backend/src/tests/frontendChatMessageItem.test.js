@@ -47,7 +47,7 @@ test('ChatMessageItem wires edit-and-rerun through the chat orchestration layer'
   );
   assert.match(chatViewScript, /canEditMessage, canDeleteMessage, canRerunMessageEdit, canBranchMessage,/);
   assert.match(chatViewScript, /setEditingMessageContent, saveMessageEdit, prepareMessageEditRerun, removeMessage, copyMessage,/);
-  assert.match(chatViewScript, /submitDraft, submit, continueGeneration, canRegenerateMessage, regenerateMessage, stop, restoreLastFailureInput, retryLastFailure, dismissLastFailure,/);
+  assert.match(chatViewScript, /submitDraft, submit, continueGeneration, canRegenerateMessage, regenerateMessage, stop, retryLastFailure, dismissLastFailure,/);
   assert.match(chatViewScript, /const composerHasDraft = computed\(\(\) => Boolean\(input\.value\.trim\(\) \|\| chatAttachments\.value\.length\)\);/);
   assert.match(
     chatViewScript,

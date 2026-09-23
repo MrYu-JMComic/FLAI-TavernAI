@@ -6,7 +6,7 @@ import { listSceneWorkspace } from '../modules/scenes.js';
 import { completeSceneOrganization } from './sceneOrganizer.js';
 import { hasUsableProvider, runToolCompletion } from './providers.js';
 import { resolveAccessorySkillSettings } from './accessorySkillProvider.js';
-import { parseStatusTemplateToken } from '../../../shared/statusTemplateTokens.js';
+import { isStatusTemplateMeterProperty, parseStatusTemplateToken } from '../../../shared/statusTemplateTokens.js';
 import { createQuest, listQuests, updateQuestObjective } from '../modules/quests.js';
 import { advanceWorldTime, getWorldClock, setWorldWeather } from '../modules/dynamicWorld.js';
 import { performSkillCheck } from '../modules/skillChecks.js';
@@ -493,7 +493,7 @@ function extractStatusTemplatePlaceholderNames(value = '', label = '') {
 }
 
 function isMeterTemplateProperty(value = '') {
-  return ['max', 'percent', 'percentage'].includes(String(value || '').trim());
+  return isStatusTemplateMeterProperty(value);
 }
 
 function normalizeStatusTemplateText(value = '') {

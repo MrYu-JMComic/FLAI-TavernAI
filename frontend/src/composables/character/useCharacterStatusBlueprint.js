@@ -1,5 +1,5 @@
 import { computed, watch } from 'vue';
-import { parseStatusTemplateToken } from '../../../../shared/statusTemplateTokens.js';
+import { isStatusTemplateMeterProperty, parseStatusTemplateToken } from '../../../../shared/statusTemplateTokens.js';
 
 const STATUS_BLUEPRINT_VARIABLE_LIMIT = 60;
 const STATUS_BLUEPRINT_SAMPLE_TEMPLATE = [
@@ -405,7 +405,8 @@ function getStatusVariableTemplateUsage(template = '', name = '') {
 }
 
 function isStatusMeterPlaceholderProperty(property = '') {
-  return ['max', 'percent', 'color', 'display'].includes(String(property || '').trim());
+  const value = String(property || '').trim();
+  return isStatusTemplateMeterProperty(value) || ['color', 'display', 'displayValue'].includes(value);
 }
 
 function countStatusTemplatePlaceholders(template = '') {
@@ -598,7 +599,7 @@ function extractCompositePlaceholderParts(value = '', label = '') {
 }
 
 function isMeterTemplateProperty(value = '') {
-  return ['max', 'percent', 'percentage'].includes(String(value || '').trim());
+  return isStatusTemplateMeterProperty(value);
 }
 
 function isCompositeStatusPlaceholderValue(value = '', name = '') {

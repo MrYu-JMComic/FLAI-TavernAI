@@ -187,7 +187,7 @@ test('character assistant enforces real multi-round writes and carries a workflo
         tags: false,
         regexRules: false,
         renderPlugins: false,
-        worldBookSuggestion: false,
+        worldBook: false,
         advancedSettings: false,
         modSuggestions: false
       }
@@ -206,6 +206,68 @@ test('character assistant enforces real multi-round writes and carries a workflo
     )), true);
     assert.deepEqual(result.checkpoint.actionHistory.map((action) => action.tool), [
       'update_character_profile',
+      'update_character_story',
+      'finish_character_draft'
+    ]);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('character assistant allows a later round to revise a field written by the same tool', async () => {
+  const originalFetch = globalThis.fetch;
+  let round = 0;
+  try {
+    globalThis.fetch = async () => {
+      round += 1;
+      if (round === 1) {
+        return jsonResponse(toolMessage([
+          toolCall('story-draft', 'update_character_story', { persona: '谨慎寡言。' })
+        ]));
+      }
+      if (round === 2) {
+        return jsonResponse(toolMessage([
+          toolCall('story-revision', 'update_character_story', { persona: '谨慎寡言，但会主动保护同伴。' })
+        ]));
+      }
+      return jsonResponse(toolMessage([
+        toolCall('story-finish', 'finish_character_draft', {
+          summary: '人设复核并修订完成。',
+          reviewedSections: ['persona']
+        })
+      ]));
+    };
+
+    const result = await completeCharacterDraft(providerSettings, {
+      requirement: '完善并复核角色人设',
+      current: { name: '雾岚' },
+      options: {
+        profile: false,
+        background: false,
+        worldview: false,
+        persona: true,
+        openingMessage: false,
+        tags: false,
+        regexRules: false,
+        renderPlugins: false,
+        worldBook: false,
+        advancedSettings: false,
+        modSuggestions: false
+      }
+    });
+
+    assert.equal(round, 3);
+    assert.equal(result.character.persona, '谨慎寡言，但会主动保护同伴。');
+    assert.deepEqual(result.toolCalls.slice(0, 2).map((call) => ({
+      name: call.name,
+      ok: call.result.ok,
+      skipped: call.result.skipped === true
+    })), [
+      { name: 'update_character_story', ok: true, skipped: false },
+      { name: 'update_character_story', ok: true, skipped: false }
+    ]);
+    assert.deepEqual(result.checkpoint.actionHistory.map((action) => action.tool), [
+      'update_character_story',
       'update_character_story',
       'finish_character_draft'
     ]);
@@ -448,40 +510,58 @@ test('character assistant redacts prompt and tool protocol fragments from stream
 
 test('fine-grained character tools preserve unrelated agent settings and apply each extension domain', async () => {
   const originalFetch = globalThis.fetch;
+  let round = 0;
   try {
-    globalThis.fetch = async () => jsonResponse(toolMessage([
-      toolCall('progress-tools', 'report_character_progress', {
-        stage: 'drafting',
-        summary: '正在整理可选扩展。',
-        nextAction: '复核状态变量。'
-      }),
-      toolCall('render-tools', 'replace_character_render_plugins', {
-        plugins: [{ label: '折叠旁白', pattern: '<aside>([\\s\\S]+?)</aside>', titleTemplate: '旁白' }]
-      }),
-      toolCall('status-tools', 'update_character_status_bar', {
-        statusBarPrompt: '每轮结束后更新体力。',
-        statusBarBlueprint: {
-          name: '冒险状态',
-          variables: [{ name: '体力', value: 80, max: 100, color: '#27ae60' }]
-        }
-      }),
-      toolCall('agent-tools', 'update_character_agents', {
-        accessorySkills: {
-          economyAgent: { enabled: true, providerProfileId: 'economy-profile' }
-        }
-      }),
-      toolCall('presentation-tools', 'update_character_presentation', {
-        customCss: '.status { color: #27ae60; }'
-      }),
-      toolCall('recommendation-tools', 'set_character_recommendations', {
-        worldBookSuggestion: '补充港口城邦与航线条目。',
-        modSuggestions: [{ name: '航海文风', type: 'style_enhance', content: '保持简洁的航海日志语气。' }]
-      }),
-      toolCall('finish-tools', 'finish_character_draft', {
-        summary: '扩展设置已整理。',
-        reviewedSections: ['renderPlugins', 'advancedSettings', 'worldBookSuggestion', 'modSuggestions']
-      })
-    ]));
+    globalThis.fetch = async () => {
+      round += 1;
+      const calls = [
+        toolCall('progress-tools', 'report_character_progress', {
+          stage: 'drafting',
+          summary: '正在整理可选扩展。',
+          nextAction: '复核状态变量。'
+        }),
+        toolCall('render-tools', 'replace_character_render_plugins', {
+          plugins: [{ label: '折叠旁白', pattern: '<aside>([\\s\\S]+?)</aside>', titleTemplate: '旁白' }]
+        }),
+        toolCall('status-tools', 'update_character_status_bar', {
+          statusBarPrompt: '每轮结束后更新体力。',
+          statusBarBlueprint: {
+            name: '冒险状态',
+            variables: [{ name: '体力', value: 80, max: 100, color: '#27ae60' }]
+          }
+        }),
+        toolCall('agent-tools', 'update_character_agents', {
+          accessorySkills: {
+            economyAgent: { enabled: true, providerProfileId: 'economy-profile' }
+          }
+        }),
+        toolCall('presentation-tools', 'update_character_presentation', {
+          customCss: '.status { color: #27ae60; }'
+        }),
+        toolCall('world-book-tools', 'create_character_world_book', {
+          name: '雾港航路',
+          description: '港口城邦、航线与航海规则。',
+          scanDepth: 6,
+          lorebookContextPercent: 25,
+          entries: [{
+            name: '雾港',
+            triggerKeys: '雾港,港口城邦',
+            content: '雾港是由领航公会治理的港口城邦。',
+            position: 'before_char',
+            group: '港口',
+            role: 0
+          }]
+        }),
+        toolCall('recommendation-tools', 'set_character_recommendations', {
+          modSuggestions: [{ name: '航海文风', type: 'style_enhance', content: '保持简洁的航海日志语气。' }]
+        }),
+        toolCall('finish-tools', 'finish_character_draft', {
+          summary: '扩展设置已整理。',
+          reviewedSections: ['renderPlugins', 'advancedSettings', 'worldBook', 'modSuggestions']
+        })
+      ];
+      return jsonResponse(toolMessage([calls[round - 1]]));
+    };
 
     const result = await completeCharacterDraft(providerSettings, {
       requirement: '增加状态栏、经济助手与航海扩展',
@@ -503,8 +583,11 @@ test('fine-grained character tools preserve unrelated agent settings and apply e
     assert.equal(result.character.authorAdvancedSettings.accessorySkills.memoryAgent.enabled, true);
     assert.equal(result.character.authorAdvancedSettings.accessorySkills.sceneAgent.enabled, true);
     assert.match(result.character.authorAdvancedSettings.customCss, /#27ae60/);
-    assert.match(result.character.worldBookSuggestion, /港口城邦/);
+    assert.equal(result.character.worldBookDraft.name, '雾港航路');
+    assert.equal(result.character.worldBookDraft.entries[0].group, '港口');
+    assert.equal(result.character.worldBookDraft.entries[0].role, 0);
     assert.equal(result.character.modSuggestions.length, 1);
+    assert.equal(round, 8);
     assert.equal(result.toolCalls[0].policy.domain, 'character-draft');
     assert.equal(result.toolCalls[0].result.summary, '正在整理可选扩展。');
   } finally {

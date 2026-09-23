@@ -6,6 +6,7 @@
 import { z } from 'zod';
 import { THINKING_LEVELS } from '../../../shared/providerThinking.js';
 import { CHARACTER_CONTENT_LIMITS } from '../domain/characters/limits.js';
+import { WORLD_BOOK_ENTRY_LIMITS, WORLD_BOOK_LIMITS } from '../domain/worldBooks/limits.js';
 import { JSON_BODY_LIMIT_DEFAULT_BYTES } from '../config.js';
 
 const STATUS_BLUEPRINT_VARIABLE_LIMIT = 60;
@@ -209,36 +210,36 @@ export const createAssetSchema = z.object({
 // ── 世界书相关 ──
 
 export const createWorldBookSchema = z.object({
-  name: z.string().min(1, '名称不能为空').max(80, '名称最多 80 字').trim(),
-  description: z.string().max(2000).trim().optional().default(''),
+  name: z.string().min(1, '名称不能为空').max(WORLD_BOOK_LIMITS.name, '名称最多 80 字').trim(),
+  description: z.string().max(WORLD_BOOK_LIMITS.description).trim().optional().default(''),
   characterId: nullableOptionalString,
-  scanDepth: z.number().int().min(1).max(50).optional().default(1),
-  lorebookContextPercent: z.number().int().min(1).max(100).optional().default(25)
+  scanDepth: z.number().int().min(WORLD_BOOK_LIMITS.scanDepthMin).max(WORLD_BOOK_LIMITS.scanDepthMax).optional().default(1),
+  lorebookContextPercent: z.number().int().min(WORLD_BOOK_LIMITS.contextPercentMin).max(WORLD_BOOK_LIMITS.contextPercentMax).optional().default(25)
 });
 
 export const updateWorldBookSchema = createWorldBookSchema.partial();
 
 export const createWorldBookEntrySchema = z.object({
-  name: z.string().max(100).trim().optional().default(''),
-  triggerKeys: z.string().max(2000).trim().optional().default(''),
-  content: z.string().max(50000).trim().optional().default(''),
+  name: z.string().max(WORLD_BOOK_ENTRY_LIMITS.name).trim().optional().default(''),
+  triggerKeys: z.string().max(WORLD_BOOK_ENTRY_LIMITS.triggerKeys).trim().optional().default(''),
+  content: z.string().max(WORLD_BOOK_ENTRY_LIMITS.content).trim().optional().default(''),
   position: z.enum(['before_char', 'after_char', 'at_start', 'at_depth']).optional().default('before_char'),
   enabled: z.boolean().optional().default(true),
   regexMode: z.boolean().optional().default(false),
   alwaysActive: z.boolean().optional().default(false),
-  depth: z.number().int().min(0).max(10).optional().default(0),
+  depth: z.number().int().min(0).max(WORLD_BOOK_ENTRY_LIMITS.depthMax).optional().default(0),
   role: z.number().int().min(0).max(2).optional().default(0),
-  sticky: z.number().int().min(0).max(9999).nullable().optional(),
-  cooldown: z.number().int().min(0).max(9999).nullable().optional(),
-  delay: z.number().int().min(0).max(9999).nullable().optional(),
+  sticky: z.number().int().min(0).max(WORLD_BOOK_ENTRY_LIMITS.stateDurationMax).nullable().optional(),
+  cooldown: z.number().int().min(0).max(WORLD_BOOK_ENTRY_LIMITS.stateDurationMax).nullable().optional(),
+  delay: z.number().int().min(0).max(WORLD_BOOK_ENTRY_LIMITS.stateDurationMax).nullable().optional(),
   selective: z.boolean().optional().default(false),
   selectiveLogic: z.number().int().min(0).max(2).optional().default(0),
-  keysSecondary: z.string().max(2000).trim().optional().default(''),
-  probability: z.number().int().min(0).max(100).optional().default(100),
+  keysSecondary: z.string().max(WORLD_BOOK_ENTRY_LIMITS.keysSecondary).trim().optional().default(''),
+  probability: z.number().int().min(0).max(WORLD_BOOK_ENTRY_LIMITS.probabilityMax).optional().default(100),
   useProbability: z.boolean().optional().default(false),
-  group: z.string().max(100).trim().optional().default(''),
+  group: z.string().max(WORLD_BOOK_ENTRY_LIMITS.group).trim().optional().default(''),
   groupWeight: z.number().int().min(0).optional().default(0),
-  orderIndex: z.number().int().optional()
+  orderIndex: z.number().int().min(0).optional()
 });
 
 export const updateWorldBookEntrySchema = createWorldBookEntrySchema.partial();

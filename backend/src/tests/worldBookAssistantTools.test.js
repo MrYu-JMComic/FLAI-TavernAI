@@ -1,6 +1,11 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { completeWorldBookDraft, streamWorldBookDraft } from '../services/worldBookAssistant.js';
+import {
+  WORLD_BOOK_DRAFT_SCHEMA,
+  WORLD_BOOK_DRAFT_TOOLS,
+  createCharacterWorldBookTool
+} from '../services/worldBookDraftTools.js';
 
 const settings = { providerType: 'custom', gatewayName: 'Tool Test', baseUrl: 'https://world-tools.test/v1', model: 'test-model', apiKey: 'test-key', extraBody: {} };
 
@@ -40,8 +45,15 @@ for (const mode of [
       assert.ok(requests[0].tools.some((tool) => tool.function.name === 'upsert_world_book_entry'));
       const roleSchema = requests[0].tools.find((tool) => tool.function.name === 'upsert_world_book_entry')
         .function.parameters.properties.changes.properties.role;
-      assert.ok(roleSchema.anyOf.some((variant) => variant.type === 'integer'));
-      assert.ok(roleSchema.anyOf.some((variant) => variant.type === 'string'));
+      assert.equal(roleSchema.type, 'integer');
+      assert.deepEqual(roleSchema.enum, [0, 1, 2]);
+      const entryProperties = requests[0].tools.find((tool) => tool.function.name === 'replace_world_book_entries')
+        .function.parameters.properties.entries.items.properties;
+      assert.equal(entryProperties.name.maxLength, 100);
+      assert.equal(entryProperties.triggerKeys.maxLength, 2000);
+      assert.equal(entryProperties.content.maxLength, 50000);
+      assert.equal(entryProperties.group.maxLength, 100);
+      assert.equal(Object.hasOwn(entryProperties, 'inclusionGroup'), false);
       assert.ok(result.toolCalls.every((call) => call.result.ok), JSON.stringify(result.toolCalls));
       const gate = result.worldBook.entries.find((entry) => entry.id === 'gate-id');
       assert.equal(gate.content, 'The gate opens at noon.');
@@ -86,4 +98,16 @@ test('world book profile and invalid patch calls cannot replace or clear unrelat
   } finally {
     globalThis.fetch = originalFetch;
   }
+});
+
+test('character and standalone world book assistants share the exact draft schema', () => {
+  const characterTool = createCharacterWorldBookTool();
+  const replacementTool = WORLD_BOOK_DRAFT_TOOLS.find((tool) => tool.function.name === 'replace_world_book_entries');
+
+  assert.deepEqual(characterTool.function.parameters, WORLD_BOOK_DRAFT_SCHEMA);
+  assert.deepEqual(
+    characterTool.function.parameters.properties.entries,
+    replacementTool.function.parameters.properties.entries
+  );
+  assert.match(characterTool.function.description, /不会直接写入数据库/);
 });

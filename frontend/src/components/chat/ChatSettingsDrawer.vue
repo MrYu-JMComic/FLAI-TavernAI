@@ -1,7 +1,7 @@
 <script setup>
 import { computed } from 'vue';
 import { ChevronDown, Image as ImageIcon, Save, Upload, X } from '@lucide/vue';
-import { parseStatusTemplateToken } from '../../../../shared/statusTemplateTokens.js';
+import { isStatusTemplateMeterProperty, parseStatusTemplateToken } from '../../../../shared/statusTemplateTokens.js';
 import { buildModelSelectOptions } from '../../services/modelCatalog';
 
 const props = defineProps({
@@ -221,7 +221,7 @@ function isCompositeStatusPlaceholderValue(value = '', name = '') {
 }
 
 function isMeterTemplateProperty(value = '') {
-  return ['max', 'percent', 'percentage'].includes(String(value || '').trim());
+  return isStatusTemplateMeterProperty(value);
 }
 
 function normalizeTemplateVariableName(value = '') {

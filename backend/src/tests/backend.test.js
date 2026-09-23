@@ -1321,8 +1321,9 @@ test('character assistant completes drafts through multiple tool rounds', async 
   globalThis.fetch = async (_url, request = {}) => {
     calls += 1;
     const body = JSON.parse(request.body);
-    assert.equal(body.tools.length, 10);
+    assert.equal(body.tools.length, 11);
     assert.ok(body.tools.some((tool) => tool.function?.name === 'update_character_agents'));
+    assert.ok(body.tools.some((tool) => tool.function?.name === 'create_character_world_book'));
     assert.ok(body.tools.some((tool) => tool.function?.name === 'finish_character_draft'));
     const statusTool = body.tools.find((tool) => tool.function?.name === 'update_character_status_bar');
     const statusBlueprintSchema = statusTool.function.parameters.properties.statusBarBlueprint;
@@ -1553,7 +1554,7 @@ test('character assistant respects disabled generation sections', async () => {
           tags: false,
           regexRules: false,
           renderPlugins: false,
-          worldBookSuggestion: false,
+          worldBook: false,
           advancedSettings: false,
           modSuggestions: false
         }
@@ -1818,11 +1819,11 @@ test('world book assistant normalizes AI draft fields for real entry creation', 
                         triggerKeys: 'duke,house',
                         content: 'The duke house controls the old port.',
                         position: 'at_depth',
-                        role: 'assistant',
+                        role: 2,
                         depth: 3,
                         useProbability: true,
                         probability: 50,
-                        inclusionGroup: 'noble-rumor',
+                        group: 'noble-rumor',
                         groupWeight: 2,
                         sticky: 2,
                         cooldown: 1,
@@ -1883,9 +1884,10 @@ test('world book assistant includes quality guide in complete and stream prompts
   };
   const requiredGuideLines = [
     '把设定拆成原子条目',
-    'triggerKeys 使用能唯一或高精度命中该条目的正式名称',
+    'triggerKeys 与 keysSecondary 都是一个用英文逗号分隔的字符串',
+    '实际保存字段名是 group，不是 inclusionGroup',
     '注入位置必须与用途一致',
-    'alwaysActive、regexMode、probability、sticky、cooldown、delay 和 group 都会改变触发行为'
+    'alwaysActive、regexMode、selective、useProbability、sticky、cooldown、delay 和 group 都会改变触发行为'
   ];
 
   try {
@@ -2051,15 +2053,11 @@ test('world book assistant accepts repaired entries after rejecting a malformed 
 });
 
 test('world book assistant normalizes entry lists without map/filter chains', () => {
-  const assistantSource = fs.readFileSync(new URL('../services/worldBookAssistant.js', import.meta.url), 'utf8');
+  const assistantSource = fs.readFileSync(new URL('../services/worldBookDraftTools.js', import.meta.url), 'utf8');
 
   assert.match(
     assistantSource,
-    /function normalizeUsableEntryList\(entries = \[\]\) \{[\s\S]*for \(let index = 0; index < entries\.length; index \+= 1\) \{[\s\S]*if \(entry\.name && entry\.content\) \{[\s\S]*normalized\.push\(entry\);/
-  );
-  assert.match(
-    assistantSource,
-    /function normalizeDraftEntryList\(entries = \[\]\) \{[\s\S]*for \(let index = 0; index < entries\.length; index \+= 1\) \{[\s\S]*if \(entry\.name \|\| entry\.content\) \{[\s\S]*normalized\.push\(entry\);/
+    /function normalizeWorldBookEntryList\(entries = \[\], options = \{\}\) \{[\s\S]*for \(let index = 0; index < entries\.length; index \+= 1\) \{[\s\S]*if \(keep\) normalized\.push\(entry\);/
   );
   assert.doesNotMatch(
     assistantSource,

@@ -502,7 +502,7 @@ test('status bar templates infer composite placeholder child variables', () => {
 
   assert.match(
     accessoryAgentsSource,
-    /import \{ parseStatusTemplateToken \} from '\.\.\/\.\.\/\.\.\/shared\/statusTemplateTokens\.js';/
+    /import \{ (?:[\w, ]*)parseStatusTemplateToken \} from '\.\.\/\.\.\/\.\.\/shared\/statusTemplateTokens\.js';/
   );
   assert.match(
     accessoryAgentsSource,

@@ -220,22 +220,31 @@
 }
 
 @media (max-width: 560px) {
-  .status-blueprint-toolbar {
+  .status-blueprint-head {
+    flex-direction: column;
     align-items: stretch;
   }
 
-  .status-blueprint-actions {
-    width: 100%;
-    justify-content: stretch;
+  .status-blueprint-head-actions .ghost-button {
+    flex: 1 1 auto;
   }
 
-  .status-blueprint-actions .chat-setting-inline-button {
-    flex: 1 1 104px;
-    justify-content: center;
+  .status-blueprint-block-head {
+    flex-wrap: wrap;
   }
 
-  .status-blueprint-summary > span {
-    flex: 1 1 96px;
+  .status-blueprint-stats {
+    flex-basis: 100%;
+    order: 3;
+    white-space: normal;
+  }
+
+  .status-blueprint-block-head > strong {
+    flex: 1 1 auto;
+  }
+
+  .status-blueprint-reference-body {
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .status-blueprint-vars .status-variable-row,

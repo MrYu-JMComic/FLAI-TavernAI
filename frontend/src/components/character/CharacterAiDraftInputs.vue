@@ -33,7 +33,7 @@ const AI_OPTION_LABELS = {
   tags: '标签',
   regexRules: '正则',
   renderPlugins: '渲染插件',
-  worldBookSuggestion: '世界书建议',
+  worldBook: '世界书创建',
   advancedSettings: '高阶设置',
   modSuggestions: 'Mod 建议'
 };

@@ -806,7 +806,7 @@ test('chat accessory mutation cleanup uses current conversation guards', () => {
       chatAccessorySource,
       /if \(isCurrentStatusBarMutation\(requestToken, conversationId\)\) \{\s*statusBarSaving\.value = false;/g
     ),
-    2
+    3
   );
   assert.doesNotMatch(
     chatAccessorySource,

@@ -162,7 +162,7 @@ test('character assistant normalizes generation options with direct defaults loo
       tags: true,
       regexRules: false,
       renderPlugins: true,
-      worldBookSuggestion: true,
+      worldBook: true,
       advancedSettings: false,
       modSuggestions: true
     });

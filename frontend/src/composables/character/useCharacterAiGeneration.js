@@ -1,13 +1,16 @@
 import { computed, ref } from 'vue';
 import { streamCharacterDraft } from '../../api/characters.js';
 import { createMod } from '../../api/mods.js';
+import { createWorldBook, createWorldBookEntry, deleteWorldBook } from '../../api/worldBooks.js';
+import { recordFrontendDiagnostic } from '../../diagnostics.js';
 import { appendAiToolList, cloneAiToolList } from '../../utils/aiToolLists';
 import { sameListItems } from '../../utils/listReferences';
 import { samePlainValue } from '../../utils/plainValues';
+import { normalizeAiWorldBookDraft, normalizeWorldBookEntryForCreate } from '../../utils/worldBookDraft.js';
 
 const AI_DRAFT_SEED_FIELDS = ['name', 'gender', 'age', 'background', 'worldview', 'persona', 'openingMessage'];
 const AI_SESSION_STORAGE_PREFIX = 'flai-character-ai-session:';
-const AI_SESSION_VERSION = 1;
+const AI_SESSION_VERSION = 2;
 
 export function useCharacterAiGeneration({
   canEdit,
@@ -20,6 +23,7 @@ export function useCharacterAiGeneration({
   assistantThinkingLevel,
   buildPayload,
   applyAdvancedSettingsDraft,
+  onWorldBookCreated,
   getSessionId = () => 'new',
   isDisposed = () => false,
   notify
@@ -30,6 +34,7 @@ export function useCharacterAiGeneration({
   const aiProcess = ref([]);
   const aiReasoning = ref('');
   const aiModSuggestions = ref([]);
+  const aiWorldBookDraft = ref(null);
   const aiCheckpoint = ref(null);
   const aiCheckpointUpdatedAt = ref('');
   const aiStatus = ref('idle');
@@ -37,11 +42,13 @@ export function useCharacterAiGeneration({
   const aiLastError = ref('');
   const aiWarnings = ref([]);
   const suggestedModsCreating = ref(false);
+  const aiWorldBookCreating = ref(false);
   const advancedAiLoading = ref(false);
   const advancedAiRequirement = ref('');
   const aiAbortController = ref(null);
   const advancedAiAbortController = ref(null);
   let suggestedModCreateToken = 0;
+  let worldBookCreateToken = 0;
   let stopRequestedByUser = false;
 
   const aiHasCheckpoint = computed(() => Boolean(aiCheckpoint.value?.character));
@@ -49,6 +56,7 @@ export function useCharacterAiGeneration({
   const characterAiActionBusy = computed(() => (
     aiLoading.value
     || advancedAiLoading.value
+    || aiWorldBookCreating.value
     || Boolean(saving?.value)
     || !canEdit?.value
   ));
@@ -96,6 +104,7 @@ export function useCharacterAiGeneration({
       setAiProcessIfChanged([{ round: 1, reasoning: '', content: '', tools: [], state: 'running' }]);
       aiReasoning.value = '';
       setAiModSuggestionsIfChanged([]);
+      setAiWorldBookDraftIfChanged(null);
       aiCheckpoint.value = null;
       aiCheckpointUpdatedAt.value = '';
     } else {
@@ -127,6 +136,7 @@ export function useCharacterAiGeneration({
         applyEmptyValues: Boolean(aiUseCurrentDraft?.value)
       });
       setAiModSuggestionsIfChanged(result.character?.modSuggestions);
+      setAiWorldBookDraftIfChanged(result.character?.worldBookDraft);
       setAiToolCallsIfChanged(mergeUniqueToolCallLists(aiToolCalls.value, result.toolCalls));
       const resultRoundOffset = result.streamRecovered
         ? highestProcessRound(aiProcess.value)
@@ -214,7 +224,7 @@ export function useCharacterAiGeneration({
           tags: false,
           regexRules: false,
           renderPlugins: false,
-          worldBookSuggestion: false,
+          worldBook: false,
           advancedSettings: true,
           modSuggestions: false,
           optimizeExisting: Boolean(aiUseCurrentDraft?.value)
@@ -238,7 +248,7 @@ export function useCharacterAiGeneration({
           tags: false,
           regexRules: false,
           renderPlugins: false,
-          worldBookSuggestion: false,
+          worldBook: false,
           advancedSettings: true,
           modSuggestions: false
         },
@@ -309,8 +319,79 @@ export function useCharacterAiGeneration({
     }
   }
 
+  async function createWorldBookFromAiDraft() {
+    if (isDisposed() || characterAiActionBusy.value) return;
+    const draft = normalizeAiWorldBookDraft(aiWorldBookDraft.value);
+    if (!draft) {
+      notify?.warning?.('没有可创建的世界书草稿');
+      return;
+    }
+
+    const createToken = ++worldBookCreateToken;
+    aiWorldBookCreating.value = true;
+    let createdBook = null;
+    try {
+      createdBook = await createWorldBook({
+        name: draft.name,
+        description: draft.description,
+        scanDepth: draft.scanDepth,
+        lorebookContextPercent: draft.lorebookContextPercent
+      });
+      if (!isCurrentWorldBookCreate(createToken, draft)) {
+        await rollbackCreatedWorldBook(createdBook);
+        return;
+      }
+      for (let index = 0; index < draft.entries.length; index += 1) {
+        await createWorldBookEntry(
+          createdBook.id,
+          normalizeWorldBookEntryForCreate(draft.entries[index], index)
+        );
+        if (!isCurrentWorldBookCreate(createToken, draft)) {
+          await rollbackCreatedWorldBook(createdBook);
+          return;
+        }
+      }
+      onWorldBookCreated?.({
+        ...createdBook,
+        entryCount: draft.entries.length,
+        updatedAt: new Date().toISOString()
+      });
+      setAiWorldBookDraftIfChanged(null);
+      clearCheckpointWorldBookDraft();
+      persistAiSession();
+      notify?.success?.(`已创建并选中世界书“${draft.name}”，共 ${draft.entries.length} 个条目`);
+    } catch (err) {
+      if (createdBook?.id) await rollbackCreatedWorldBook(createdBook);
+      if (!isActiveWorldBookCreate(createToken)) return;
+      notify?.error?.(err?.message || '创建 AI 世界书失败');
+    } finally {
+      if (isActiveWorldBookCreate(createToken)) {
+        aiWorldBookCreating.value = false;
+      }
+    }
+  }
+
+  async function rollbackCreatedWorldBook(book) {
+    if (!book?.id) return;
+    await deleteWorldBook(book.id).catch((error) => {
+      recordFrontendDiagnostic('character.aiWorldBook.rollbackDelete', error, { bookId: book.id });
+    });
+  }
+
+  function clearCheckpointWorldBookDraft() {
+    if (!aiCheckpoint.value?.character) return;
+    aiCheckpoint.value = {
+      ...aiCheckpoint.value,
+      character: {
+        ...aiCheckpoint.value.character,
+        worldBookDraft: null
+      }
+    };
+  }
+
   function cancelCharacterAiGeneration() {
     suggestedModCreateToken += 1;
+    worldBookCreateToken += 1;
     stopRequestedByUser = false;
     aiAbortController.value?.abort();
     advancedAiAbortController.value?.abort();
@@ -319,6 +400,7 @@ export function useCharacterAiGeneration({
     aiLoading.value = false;
     advancedAiLoading.value = false;
     suggestedModsCreating.value = false;
+    aiWorldBookCreating.value = false;
   }
 
   function saveAiCheckpoint() {
@@ -331,6 +413,7 @@ export function useCharacterAiGeneration({
       applyEmptyValues: Boolean(aiUseCurrentDraft?.value)
     });
     setAiModSuggestionsIfChanged(aiCheckpoint.value.character.modSuggestions);
+    setAiWorldBookDraftIfChanged(aiCheckpoint.value.character.worldBookDraft);
     aiStatusMessage.value = aiStatus.value === 'completed'
       ? '完成结果已保留在角色草稿中'
       : '阶段结果已保存到角色草稿，可继续完善';
@@ -351,6 +434,7 @@ export function useCharacterAiGeneration({
     setAiToolCallsIfChanged([]);
     setAiProcessIfChanged([]);
     setAiModSuggestionsIfChanged([]);
+    setAiWorldBookDraftIfChanged(null);
     try {
       localStorage.removeItem(aiSessionStorageKey());
     } catch {
@@ -375,6 +459,13 @@ export function useCharacterAiGeneration({
 
   function setAiModSuggestionsIfChanged(nextSuggestions) {
     return setAiPlainListIfChanged(aiModSuggestions, nextSuggestions);
+  }
+
+  function setAiWorldBookDraftIfChanged(nextDraft) {
+    const normalizedDraft = normalizeAiWorldBookDraft(nextDraft);
+    if (samePlainValue(aiWorldBookDraft.value, normalizedDraft)) return false;
+    aiWorldBookDraft.value = normalizedDraft;
+    return true;
   }
 
   function setAiWarningsIfChanged(nextWarnings) {
@@ -514,6 +605,7 @@ export function useCharacterAiGeneration({
       updatedAt
     };
     aiCheckpointUpdatedAt.value = updatedAt;
+    setAiWorldBookDraftIfChanged(character.worldBookDraft);
   }
 
   function buildContinuationPayload() {
@@ -580,6 +672,7 @@ export function useCharacterAiGeneration({
       setAiProcessIfChanged(stored.process);
       setAiToolCallsIfChanged(stored.toolCalls);
       setAiModSuggestionsIfChanged(stored.modSuggestions);
+      setAiWorldBookDraftIfChanged(stored.checkpoint?.character?.worldBookDraft);
       aiLastError.value = String(stored.lastError || '');
       setAiWarningsIfChanged(stored.warnings);
       aiStatus.value = stored.status === 'running' ? 'paused' : normalizeAiStatus(stored.status);
@@ -688,6 +781,15 @@ export function useCharacterAiGeneration({
       && aiModSuggestions.value === sourceSuggestions;
   }
 
+  function isActiveWorldBookCreate(createToken) {
+    return !isDisposed() && createToken === worldBookCreateToken;
+  }
+
+  function isCurrentWorldBookCreate(createToken, sourceDraft) {
+    return isActiveWorldBookCreate(createToken)
+      && samePlainValue(aiWorldBookDraft.value, sourceDraft);
+  }
+
   return {
     aiLoading,
     aiCheckpoint,
@@ -702,6 +804,8 @@ export function useCharacterAiGeneration({
     aiProcess,
     aiReasoning,
     aiModSuggestions,
+    aiWorldBookDraft,
+    aiWorldBookCreating,
     suggestedModsCreating,
     advancedAiLoading,
     advancedAiRequirement,
@@ -710,6 +814,7 @@ export function useCharacterAiGeneration({
     completeAdvancedSettingsWithAi,
     completeWithAi,
     createSuggestedMods,
+    createWorldBookFromAiDraft,
     discardAiSession,
     resumeCharacterAi,
     retryCharacterAi,

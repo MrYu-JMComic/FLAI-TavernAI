@@ -148,14 +148,16 @@ test('chat thinking preference can be turned off for always-reasoning models', (
   assert.equal(submit.thinkingEnabled.value, false);
 });
 
-test('chat submit remembers failed prompts for visible recovery actions', async () => {
+test('chat submit keeps failed prompts in the retry snapshot without restoring the composer', async () => {
   const originalFetch = globalThis.fetch;
   const previousUser = { id: 'old-user', role: 'user', content: 'Old prompt' };
   const previousAssistant = { id: 'old-assistant', role: 'assistant', content: 'Old reply' };
   const messages = shallowRef([previousUser, previousAssistant]);
   const errors = [];
 
+  let requestCount = 0;
   globalThis.fetch = async (url, request = {}) => {
+    requestCount += 1;
     assert.equal(String(url), '/api/conversations/conv-1/messages');
     assert.equal(JSON.parse(request.body).stream, false);
     return jsonResponse({
@@ -181,19 +183,20 @@ test('chat submit remembers failed prompts for visible recovery actions', async 
     assert.equal(submit.lastFailure.value.content, 'Recover this prompt');
     assert.equal(submit.lastFailure.value.conversationId, 'conv-1');
     assert.equal(submit.lastFailure.value.canRetry, true);
-    assert.equal(submit.input.value, 'Recover this prompt');
+    assert.equal(submit.input.value, '');
     assert.deepEqual(messages.value, [previousUser, previousAssistant]);
 
-    assert.equal(submit.restoreLastFailureInput(), true);
-    assert.equal(submit.input.value, 'Recover this prompt');
-    assert.equal(submit.lastFailure.value, null);
+    assert.equal(submit.restoreLastFailureInput, undefined);
+    assert.equal(await submit.retryLastFailure(), true);
+    assert.equal(requestCount, 2);
+    assert.equal(submit.input.value, '');
   } finally {
     globalThis.fetch = originalFetch;
   }
 });
 
 for (const stream of [false, true]) {
-  test(`chat submit restores the complete draft after ${stream ? 'stream' : 'JSON'} context budget rejection`, async () => {
+  test(`chat submit preserves a retry snapshot after ${stream ? 'stream' : 'JSON'} context budget rejection`, async () => {
     const originalFetch = globalThis.fetch;
     const originalWindow = globalThis.window;
     const previousMessages = [
@@ -252,8 +255,8 @@ for (const stream of [false, true]) {
       await submit.submit();
 
       assert.equal(errors.at(-1), '上下文超过当前输入预算');
-      assert.equal(submit.input.value, 'Keep the complete rejected draft');
-      assert.deepEqual(submit.chatAttachments.value, [attachment]);
+      assert.equal(submit.input.value, '');
+      assert.deepEqual(submit.chatAttachments.value, []);
       assert.deepEqual(messages.value, previousMessages);
       assert.equal(submit.lastFailure.value.canRetry, true);
       assert.equal(submit.lastFailure.value.content, 'Keep the complete rejected draft');
@@ -567,7 +570,7 @@ test('chat continueGeneration streams from the continue endpoint without a local
   }
 });
 
-test('chat submit restores failed stream prompts without removing previous messages', async () => {
+test('chat submit keeps failed stream prompts out of the composer without removing previous messages', async () => {
   const originalFetch = globalThis.fetch;
   const originalWindow = globalThis.window;
   const previousUser = { id: 'old-user', role: 'user', content: 'Old prompt' };
@@ -613,7 +616,7 @@ test('chat submit restores failed stream prompts without removing previous messa
     await submit.submit();
 
     assert.equal(errors[0], 'Provider failed');
-    assert.equal(submit.input.value, 'Stream failed prompt');
+    assert.equal(submit.input.value, '');
     assert.equal(submit.lastFailure.value.content, 'Stream failed prompt');
     assert.equal(messages.value[0], previousUser);
     assert.equal(messages.value[1], previousAssistant);
@@ -770,7 +773,7 @@ test('chat submit image generation switch can explicitly disable image output', 
   }
 });
 
-test('chat submit does not overwrite a newer draft when restoring failed prompts', async () => {
+test('chat submit does not overwrite a newer draft when recording a failed prompt', async () => {
   const originalFetch = globalThis.fetch;
   const previousUser = { id: 'old-user', role: 'user', content: 'Old prompt' };
   const previousAssistant = { id: 'old-assistant', role: 'assistant', content: 'Old reply' };

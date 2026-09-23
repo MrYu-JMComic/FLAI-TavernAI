@@ -237,7 +237,7 @@ const {
   sending, requestPending, usage, lastFailure, latestWorldBookMatches,
   canSend, canContinueGeneration, canToggleThinking, canToggleImageGeneration, canUseStream, canAddAttachments, chatProviderCapabilities,
   canGenerateImages,
-  submitDraft, submit, continueGeneration, canRegenerateMessage, regenerateMessage, stop, restoreLastFailureInput, retryLastFailure, dismissLastFailure,
+  submitDraft, submit, continueGeneration, canRegenerateMessage, regenerateMessage, stop, retryLastFailure, dismissLastFailure,
   addChatAttachmentFiles, removeChatAttachment, clearChatAttachments,
   setSelectedPresetId, toggleUseStream, toggleThinking, toggleImageGeneration, setThinkingLevel, setImageModel,
   cleanup: cleanupSubmit
@@ -396,12 +396,6 @@ async function copyLastFailureMessage() {
       return;
     }
     notify.error(error?.message || '复制失败，请手动选择错误信息。');
-  }
-}
-
-function restoreFailureToComposer() {
-  if (restoreLastFailureInput()) {
-    scheduleComposerLayoutUpdate({ focus: true });
   }
 }
 
@@ -1484,10 +1478,6 @@ watch([showWorldBookMatchSummary, worldBookMatchSummary], ([shouldShow, matches]
             >
               <RotateCcw :size="16" />
               <span>重试发送</span>
-            </button>
-            <button class="chat-recovery-button" type="button" :disabled="sending" @click="restoreFailureToComposer">
-              <RotateCcw :size="16" />
-              <span>放回输入框</span>
             </button>
             <button class="chat-recovery-button" type="button" @click="openModelSwitcher">
               <Bot :size="16" />

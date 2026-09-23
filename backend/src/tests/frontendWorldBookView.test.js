@@ -192,8 +192,10 @@ test('WorldBookView scans position options directly for labels and AI entries', 
   );
   assert.match(
     worldBookViewScript,
-    /function normalizeAiEntryForCreate\(entry = \{\}\) \{[\s\S]*position: getPositionOptionByValue\(entry\.position\) \? entry\.position : 'before_char'/
+    /import \{ normalizeWorldBookEntryForCreate \} from '\.\.\/utils\/worldBookDraft\.js';/
   );
+  assert.match(worldBookViewScript, /createWorldBookEntry\(createdBook\.id, normalizeWorldBookEntryForCreate\(entry\)\)/);
+  assert.doesNotMatch(worldBookViewScript, /function normalizeAiEntryForCreate/);
   assert.doesNotMatch(worldBookViewScript, /positionOptions\.find/);
   assert.doesNotMatch(worldBookViewScript, /positionOptions\.some/);
 });

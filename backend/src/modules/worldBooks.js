@@ -1,6 +1,7 @@
 import { newId, nowIso } from '../security.js';
 import { normalizeBoolean } from '../utils/boolean.js';
 import { normalizeFiniteNumber } from '../utils/number.js';
+import { WORLD_BOOK_ENTRY_LIMITS, WORLD_BOOK_LIMITS } from '../domain/worldBooks/limits.js';
 import {
   listLinkedCharacterIds,
   listOwnedWorldBookRows,
@@ -51,7 +52,7 @@ export function createWorldBook(database, userId, payload) {
   const id = newId();
   const timestamp = nowIso();
   const name = normalizeName(payload.name);
-  const description = String(payload.description || '').trim().slice(0, 2000);
+  const description = String(payload.description || '').trim().slice(0, WORLD_BOOK_LIMITS.description);
   const characterId = normalizeOwnedCharacterId(database, userId, payload.characterId);
   const scanDepth = normalizeScanDepth(payload.scanDepth);
   const lorebookContextPercent = normalizeLorebookContextPercent(payload.lorebookContextPercent);
@@ -73,7 +74,7 @@ export function updateWorldBook(database, userId, bookId, payload) {
   }
 
   const name = normalizeName(payload.name ?? existing.name);
-  const description = String(payload.description ?? existing.description).trim().slice(0, 2000);
+  const description = String(payload.description ?? existing.description).trim().slice(0, WORLD_BOOK_LIMITS.description);
   const characterId = payload.characterId !== undefined
     ? normalizeOwnedCharacterId(database, userId, payload.characterId)
     : (existing.character_id ?? null);
@@ -761,7 +762,7 @@ function touchWorldBook(database, bookId) {
 
 function normalizeName(name) {
   const value = String(name || '').trim();
-  if (!value || value.length > 80) {
+  if (!value || value.length > WORLD_BOOK_LIMITS.name) {
     throw new Error('世界书名称长度需为 1-80 个字符');
   }
   return value;
@@ -769,12 +770,12 @@ function normalizeName(name) {
 
 function normalizeLorebookContextPercent(value) {
   const normalized = normalizeFiniteNumber(value, 25);
-  return Math.max(1, Math.min(100, normalized));
+  return Math.max(WORLD_BOOK_LIMITS.contextPercentMin, Math.min(WORLD_BOOK_LIMITS.contextPercentMax, normalized));
 }
 
 function normalizeScanDepth(value, fallback = 1) {
   const normalized = Math.trunc(normalizeFiniteNumber(value, fallback));
-  return Math.max(1, Math.min(50, normalized));
+  return Math.max(WORLD_BOOK_LIMITS.scanDepthMin, Math.min(WORLD_BOOK_LIMITS.scanDepthMax, normalized));
 }
 
 function normalizeContextSize(value) {
@@ -816,9 +817,9 @@ function normalizeMessageCount(value, fallback = 0) {
 function normalizeEntryPayload(payload = {}, fallback = {}) {
   payload = payload ?? {};
   fallback = fallback ?? {};
-  const name = String(payload.name || '').trim().slice(0, 120);
-  const triggerKeys = String(payload.triggerKeys || '').trim().slice(0, 2000);
-  const content = String(payload.content || '').slice(0, 10000);
+  const name = String(payload.name || '').trim().slice(0, WORLD_BOOK_ENTRY_LIMITS.name);
+  const triggerKeys = String(payload.triggerKeys || '').trim().slice(0, WORLD_BOOK_ENTRY_LIMITS.triggerKeys);
+  const content = String(payload.content || '').slice(0, WORLD_BOOK_ENTRY_LIMITS.content);
   const position = ['before_char', 'after_char', 'at_start', 'at_depth'].includes(payload.position)
     ? payload.position
     : 'before_char';
@@ -829,11 +830,11 @@ function normalizeEntryPayload(payload = {}, fallback = {}) {
   const depth = normalizeEntryDepth(payload.depth);
   const selective = normalizeBoolean(payload.selective) ? 1 : 0;
   const selectiveLogic = normalizeEntryEnumNumber(payload.selectiveLogic, fallback.selectiveLogic);
-  const keysSecondary = String(payload.keysSecondary || '').trim().slice(0, 2000);
+  const keysSecondary = String(payload.keysSecondary || '').trim().slice(0, WORLD_BOOK_ENTRY_LIMITS.keysSecondary);
 
   const probability = normalizeEntryProbability(payload.probability);
   const useProbability = normalizeBoolean(payload.useProbability) ? 1 : 0;
-  const group = String(payload.group || '').trim().slice(0, 100);
+  const group = String(payload.group || '').trim().slice(0, WORLD_BOOK_ENTRY_LIMITS.group);
   const groupWeight = normalizeEntryGroupWeight(payload.groupWeight);
   const role = normalizeEntryEnumNumber(payload.role, fallback.role);
 
@@ -850,11 +851,11 @@ function normalizeClampedEntryNumber(value, fallback, min, max) {
 }
 
 function normalizeEntryDepth(value) {
-  return normalizeClampedEntryNumber(value, 0, 0, 10);
+  return normalizeClampedEntryNumber(value, 0, 0, WORLD_BOOK_ENTRY_LIMITS.depthMax);
 }
 
 function normalizeEntryProbability(value) {
-  return normalizeClampedEntryNumber(value, 100, 0, 100);
+  return normalizeClampedEntryNumber(value, 100, 0, WORLD_BOOK_ENTRY_LIMITS.probabilityMax);
 }
 
 function normalizeEntryGroupWeight(value) {
@@ -884,7 +885,9 @@ function normalizeOptionalEntryNumber(value) {
     return null;
   }
   const numeric = Number(value);
-  return Number.isFinite(numeric) ? Math.max(0, Math.min(9999, numeric)) : null;
+  return Number.isFinite(numeric)
+    ? Math.max(0, Math.min(WORLD_BOOK_ENTRY_LIMITS.stateDurationMax, numeric))
+    : null;
 }
 
 function toWorldBook(row) {

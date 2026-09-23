@@ -36,6 +36,7 @@ import { appendAiToolList, cloneAiToolList } from '../utils/aiToolLists';
 import { downloadJsonFile, todayStamp } from '../utils/downloadJson.js';
 import { countOwnObjectKeys } from '../utils/objectKeys';
 import { samePlainValue } from '../utils/plainValues';
+import { normalizeWorldBookEntryForCreate } from '../utils/worldBookDraft.js';
 
 const props = defineProps({
   route: { type: Object, required: true },
@@ -842,7 +843,7 @@ async function createBookFromAiDraft() {
       lorebookContextPercent: aiDraft.value.lorebookContextPercent || 25
     });
     for (const entry of aiDraft.value.entries || []) {
-      await createWorldBookEntry(createdBook.id, normalizeAiEntryForCreate(entry));
+      await createWorldBookEntry(createdBook.id, normalizeWorldBookEntryForCreate(entry));
     }
     if (!isCurrentWorldBookRouteMutation(mutationToken, routeKey)) return;
     notify.success(`世界书已创建，并写入 ${aiDraftEntryCount.value} 个条目`);
@@ -915,20 +916,6 @@ function clampNumber(value, min, max, fallback) {
 function nullableNumber(value) {
   if (value === null || value === undefined || value === '') return null;
   return Math.max(0, Math.floor(Number(value) || 0));
-}
-
-function normalizeAiEntryForCreate(entry = {}) {
-  return {
-    ...entry,
-    position: getPositionOptionByValue(entry.position) ? entry.position : 'before_char',
-    depth: clampNumber(entry.depth, 0, 10, 0),
-    role: clampNumber(entry.role, 0, 2, 0),
-    probability: clampNumber(entry.probability, 0, 100, 100),
-    groupWeight: Math.max(0, Number(entry.groupWeight) || 0),
-    sticky: nullableNumber(entry.sticky),
-    cooldown: nullableNumber(entry.cooldown),
-    delay: nullableNumber(entry.delay)
-  };
 }
 
 function aiStreamHandlers(mutationToken, routeKey) {

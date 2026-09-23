@@ -1,6 +1,6 @@
 import { newId, nowIso } from '../security.js';
 import { parseJson } from '../utils/json.js';
-import { parseStatusTemplateToken } from '../../../shared/statusTemplateTokens.js';
+import { isStatusTemplateMeterProperty, parseStatusTemplateToken } from '../../../shared/statusTemplateTokens.js';
 import { recordWorldEvent } from './worldEvents.js';
 
 export const STATUS_BAR_VARIABLE_LIMIT = 60;
@@ -503,7 +503,8 @@ function hasExplicitMax(variable) {
 }
 
 function isMeterTemplateProperty(property = '') {
-  return ['max', 'percent', 'percentage', 'color', 'display', 'displayValue'].includes(String(property || '').trim());
+  const value = String(property || '').trim();
+  return isStatusTemplateMeterProperty(value) || ['color', 'display', 'displayValue'].includes(value);
 }
 
 function toStatusBar(row) {

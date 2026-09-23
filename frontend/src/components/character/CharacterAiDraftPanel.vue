@@ -14,6 +14,7 @@ import CharacterAiDraftActions from './CharacterAiDraftActions.vue';
 import CharacterAiDraftInputs from './CharacterAiDraftInputs.vue';
 import CharacterAiModSuggestions from './CharacterAiModSuggestions.vue';
 import CharacterAiProcessPanel from './CharacterAiProcessPanel.vue';
+import CharacterAiWorldBookDraft from './CharacterAiWorldBookDraft.vue';
 
 const props = defineProps({
   assistantModel: { type: String, default: '' },
@@ -37,11 +38,14 @@ const props = defineProps({
   thinkingSupported: { type: Boolean, default: false },
   toolCalls: { type: Array, default: () => [] },
   useCurrentDraft: { type: Boolean, default: true },
-  warnings: { type: Array, default: () => [] }
+  warnings: { type: Array, default: () => [] },
+  worldBookDraft: { type: Object, default: null },
+  worldBookDraftCreating: { type: Boolean, default: false }
 });
 
 const emit = defineEmits([
   'complete',
+  'create-world-book',
   'create-suggested-mods',
   'discard-session',
   'resume',
@@ -62,6 +66,7 @@ const hasOutput = computed(() => (
   || props.process.length > 0
   || props.toolCalls.length > 0
   || props.suggestions.length > 0
+  || Boolean(props.worldBookDraft)
   || props.warnings.length > 0
 ));
 
@@ -220,6 +225,14 @@ const headerMeta = computed(() => {
           :status="status"
           :status-message="statusMessage"
           :tool-calls="toolCalls"
+        />
+
+        <CharacterAiWorldBookDraft
+          v-if="worldBookDraft"
+          :draft="worldBookDraft"
+          :creating="worldBookDraftCreating"
+          :disabled="disabled"
+          @create="emit('create-world-book')"
         />
 
         <CharacterAiModSuggestions

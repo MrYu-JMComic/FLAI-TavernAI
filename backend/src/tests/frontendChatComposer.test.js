@@ -225,7 +225,8 @@ test('ChatView wires composer quick model changes through the guarded model save
 
 test('ChatView exposes chat failure recovery and world book match dialog entry', () => {
   assert.match(chatViewScript, /lastFailure, latestWorldBookMatches/);
-  assert.match(chatViewScript, /restoreLastFailureInput, retryLastFailure, dismissLastFailure/);
+  assert.match(chatViewScript, /retryLastFailure, dismissLastFailure/);
+  assert.doesNotMatch(chatViewScript, /restoreLastFailureInput|restoreFailureToComposer/);
   assert.match(chatViewScript, /const activeChatFailure = computed\(\(\) => \{[\s\S]*failure\?\.conversationId === props\.route\.params\.id/);
   assert.match(chatViewScript, /const worldBookMatchSummary = computed\(\(\) => \{[\s\S]*positionLabel: worldBookPositionLabel\(match\.position\)[\s\S]*roleLabel: worldBookRoleLabel\(match\.role\)/);
   assert.match(chatViewScript, /const showWorldBookMatchSummary = computed\(\(\) => effectiveChatAppearance\.value\.showWorldBookMatches !== false\);/);
@@ -233,7 +234,7 @@ test('ChatView exposes chat failure recovery and world book match dialog entry',
   assert.match(chatViewScript, /function hasWorldBookMatchesForMessage\(message\) \{[\s\S]*latestAssistantMessage\.value\?\.id === message\.id[\s\S]*worldBookMatchSummary\.value\.length/);
   assert.match(chatViewScript, /function openWorldBookMatchDialog\(message\) \{[\s\S]*worldBookMatchDialogOpen\.value = true;/);
   assert.match(chatViewTemplate, /v-if="activeChatFailure"[\s\S]*class="chat-recovery-panel"/);
-  assert.match(chatViewTemplate, /@click="restoreFailureToComposer"/);
+  assert.doesNotMatch(chatViewTemplate, /放回输入框|restoreFailureToComposer/);
   assert.match(chatViewTemplate, /@click="retryFailureFromPanel"/);
   assert.match(chatViewTemplate, /@click="openModelSwitcher"/);
   assert.match(chatViewTemplate, /@click="emit\('navigate', 'settings'\)"/);
