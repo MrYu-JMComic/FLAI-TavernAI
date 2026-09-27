@@ -1,22 +1,34 @@
 <script setup>
-import { computed, onBeforeUnmount, ref, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue';
 import { ChevronDown } from '@lucide/vue';
+import { renderStatusTemplate } from '../../../shared/statusTemplateRenderer.js';
+import {
+  adjustStatusVariableValue,
+  buildStatusDisplayVariable,
+  cycleStatusVariableValue,
+  normalizeStatusVariableKey
+} from '../../../shared/statusVariables.js';
 import { buildScopedChatCss } from '../utils/chatAppearance';
 import { recordFrontendDiagnostic } from '../diagnostics.js';
 import { copyTextToClipboard } from '../utils/clipboard.js';
 import {
+  STATUS_BAR_TEMPLATE_ALLOWED_ATTRS,
   STATUS_BAR_TEMPLATE_ALLOWED_TAGS,
+  STATUS_BAR_TEMPLATE_DATA_ATTR_LIMIT,
+  STATUS_BAR_TEMPLATE_DATA_ATTR_PREFIX,
   escapeStatusBarTemplateHtml as escapeHtml,
   isSafeStatusBarCssValue as isSafeCssValue,
+  namespaceStatusBarKeyframes,
   sanitizeStatusBarStyleBlock as sanitizeStyleBlock,
   sanitizeStatusBarStyleText as sanitizeStyleText
 } from '../utils/statusBarTemplateSecurity';
-
-const VALID_VARIANTS = ['default', 'compact', 'minimal', 'neon'];
-const VALID_DENSITIES = ['default', 'cozy', 'compact'];
-const VALID_EFFECTS = ['glow', 'striped', 'pulse'];
-const VALID_DISPLAY_MODES = ['immersive', 'compact'];
-const VALID_CHAR_STATUSES = ['active', 'dead', 'forgotten', 'left', 'hidden'];
+import {
+  STATUS_BAR_DENSITIES as VALID_DENSITIES,
+  STATUS_BAR_DISPLAY_MODES as VALID_DISPLAY_MODES,
+  STATUS_BAR_EFFECTS as VALID_EFFECTS,
+  STATUS_BAR_LAYOUTS as VALID_LAYOUTS,
+  STATUS_BAR_VARIANTS as VALID_VARIANTS
+} from '../utils/statusBarOptions.js';
 
 const STATUS_LABELS = {
   active: '在线',
@@ -31,6 +43,11 @@ const UPDATE_STATUS_META = {
   updated: { key: 'updated', label: '本轮已同步' },
   'not-updated': { key: 'not-updated', label: '等待新回复' }
 };
+
+// `.sb-val` nodes whose template content is a placeholder are marked before
+// rendering so the label auto-sync below only fixes hard-coded values.
+const SB_VAL_OPEN_TAG = /<([a-z][\w-]*)(\s[^<>]*?\bclass\s*=\s*(["'])[^"']*\bsb-val\b[^"']*\3[^<>]*?)(\/?)>/gi;
+const TEMPLATE_TOKEN_TEST = /\{\{[^{}]+\}\}|\{\s*[\w一-龥][\w一-龥 .-]*\}/;
 
 const props = defineProps({
   statusBar: {
@@ -52,19 +69,29 @@ const props = defineProps({
   embedded: {
     type: Boolean,
     default: false
+  },
+  // { user, char } for the {{user}} / {{char}} built-ins.
+  context: {
+    type: Object,
+    default: () => ({})
   }
 });
 
-const emit = defineEmits(['collapse', 'quick-reply', 'send', 'update-variables', 'open-settings']);
+const emit = defineEmits(['collapse', 'quick-reply', 'send', 'update-variables', 'open-settings', 'script-action']);
 const collapsed = ref(false);
 const effectiveCollapsed = computed(() => !props.embedded && collapsed.value);
 const templateScopeId = ref(`flai-sb-${Math.random().toString(36).slice(2, 10)}`);
+const customTemplateRef = ref(null);
+// Toggle / tab choices survive re-renders: the rendered HTML always starts
+// from the authored state and these are re-applied on top of it.
+const templateUiState = { toggled: new Map(), tabs: new Map() };
 let customTemplateStyleElement = null;
 
 const cfg = computed(() => {
   const raw = props.templateConfig || {};
   const variant = isAllowedTemplateOption(VALID_VARIANTS, raw.variant) ? raw.variant : 'default';
   const density = isAllowedTemplateOption(VALID_DENSITIES, raw.density) ? raw.density : 'default';
+  const layout = isAllowedTemplateOption(VALID_LAYOUTS, raw.layout) ? raw.layout : 'grid';
   const effects = normalizeTemplateEffects(raw.effects);
   const accentColor = typeof raw.accentColor === 'string' && raw.accentColor.trim()
     ? raw.accentColor.trim()
@@ -73,7 +100,7 @@ const cfg = computed(() => {
   const displayMode = isAllowedTemplateOption(VALID_DISPLAY_MODES, raw.displayMode) ? raw.displayMode : 'compact';
   const characters = Array.isArray(raw.characters) ? raw.characters : [];
   const quickReplies = Array.isArray(raw.quickReplies) ? raw.quickReplies : [];
-  return { variant, density, effects, accentColor, customCss, displayMode, characters, quickReplies };
+  return { variant, density, layout, effects, accentColor, customCss, displayMode, characters, quickReplies };
 });
 
 function isAllowedTemplateOption(options, value) {
@@ -113,14 +140,19 @@ const displayCharacters = computed(() => {
   return normalizeDisplayCharacters(cfg.value.characters);
 });
 
+const templateContext = computed(() => ({
+  user: String(props.context?.user || ''),
+  char: String(props.context?.char || '')
+}));
+
 const customTemplate = computed(() => {
   const raw = String(props.statusBar?.template || '').trim();
   if (!raw || raw[0] === '{') {
     return { html: '', css: '' };
   }
-  const extracted = extractTemplateStyleBlocks(interpolateTemplate(raw));
+  const extracted = extractTemplateStyleBlocks(interpolateTemplate(markBoundTemplateValues(raw)));
   const styleBlocks = [];
-  const html = sanitizeTemplateHtml(extracted.html, styleBlocks, collectTemplatedValueLabels(raw));
+  const html = sanitizeTemplateHtml(extracted.html, styleBlocks);
   const css = buildCustomTemplateCss(
     extracted.styleBlocks,
     styleBlocks,
@@ -138,6 +170,7 @@ const wrapperClasses = computed(() => {
   if (props.embedded) classes.push('sb-embedded');
   if (cfg.value.variant !== 'default') classes.push(`sb-${cfg.value.variant}`);
   if (cfg.value.density !== 'default') classes.push(`sb-density-${cfg.value.density}`);
+  if (cfg.value.layout !== 'grid') classes.push(`sb-layout-${cfg.value.layout}`);
   for (const fx of cfg.value.effects) {
     classes.push(`sb-fx-${fx}`);
   }
@@ -178,11 +211,17 @@ const updateStatusMeta = computed(() => UPDATE_STATUS_META[props.updateStatus] |
 
 watch(collapseStorageKey, (key) => {
   collapsed.value = readCollapsedState(key);
+  templateUiState.toggled.clear();
+  templateUiState.tabs.clear();
 }, { immediate: true });
 
 watch(customTemplateCss, (css) => {
   syncCustomTemplateStyle(css);
 }, { immediate: true });
+
+watch([customTemplateHtml, customTemplateRef], () => {
+  nextTick(applyTemplateUiState);
+}, { flush: 'post' });
 
 watch(() => props.collapseRequest, (request) => {
   if (!request || collapsed.value) {
@@ -299,6 +338,13 @@ function barStyle(variable) {
   };
 }
 
+// Long text and longer lists take a full row so they are shown completely
+// instead of being squeezed into a narrow tile.
+function isWideVariable(variable) {
+  if (variable.kind === 'list') return variable.items.length > 3 || variable.displayValue.length > 16;
+  return variable.kind === 'text' && [...variable.displayValue].length > 16;
+}
+
 function charStyle(ch) {
   const style = {};
   if (ch.accentColor) style['--sb-ch-accent'] = ch.accentColor;
@@ -324,19 +370,38 @@ function onCustomTemplateClick(event) {
     return;
   }
   const action = String(target.getAttribute('data-sb-action') || '').trim().toLowerCase();
-  const text = String(
-    target.getAttribute('data-sb-text') ||
-      target.getAttribute('data-sb-reply') ||
-      target.getAttribute('data-sb-copy') ||
-      target.textContent ||
-      ''
-  ).trim();
+  const text = readActionText(target);
   if (['quick-reply', 'reply', 'option'].includes(action)) {
     onQuickReply(text);
     return;
   }
+  if (action === 'send') {
+    if (text) emit('send', text);
+    return;
+  }
   if (action === 'copy') {
     copyTemplateText(text);
+    return;
+  }
+  if (action === 'set' || action === 'adjust' || action === 'cycle') {
+    emitVariableAction(action, target);
+    return;
+  }
+  if (action === 'toggle') {
+    toggleTemplateTarget(target);
+    return;
+  }
+  if (action === 'tab') {
+    activateTemplateTab(target);
+    return;
+  }
+  if (action === 'script') {
+    const name = String(target.getAttribute('data-sb-script') || '').trim();
+    if (name) emit('script-action', { name, value: String(target.getAttribute('data-sb-value') ?? ''), text });
+    return;
+  }
+  if (action === 'open-settings') {
+    emit('open-settings');
     return;
   }
   if (action === 'collapse') {
@@ -349,6 +414,102 @@ function onCustomTemplateClick(event) {
       return;
     }
     toggleCollapsed();
+  }
+}
+
+function readActionText(target) {
+  return String(
+    target.getAttribute('data-sb-text') ||
+      target.getAttribute('data-sb-reply') ||
+      target.getAttribute('data-sb-copy') ||
+      target.textContent ||
+      ''
+  ).trim();
+}
+
+// set / adjust / cycle compute the next value from the rendered variable so
+// meters stay inside min~max; the owner persists the change.
+function emitVariableAction(action, target) {
+  const name = String(target.getAttribute('data-sb-var') || '').trim();
+  if (!name) return;
+  const variable = findDisplayVariable(name);
+  let value;
+  if (action === 'adjust') {
+    if (!variable) return;
+    value = adjustStatusVariableValue(variable, target.getAttribute('data-sb-delta'));
+  } else if (action === 'cycle') {
+    value = cycleStatusVariableValue(variable || {}, target.getAttribute('data-sb-options'));
+  } else {
+    value = coerceActionValue(target.getAttribute('data-sb-value'), variable);
+  }
+  emit('update-variables', [{ name: variable?.name || name, value }]);
+}
+
+function coerceActionValue(raw, variable) {
+  const text = String(raw ?? '').trim();
+  if (!variable || (variable.kind !== 'meter' && variable.kind !== 'number')) {
+    return text;
+  }
+  const numeric = Number(text);
+  if (!text || !Number.isFinite(numeric)) return text;
+  return variable.kind === 'meter' ? adjustStatusVariableValue({ ...variable, value: numeric }, 0) : numeric;
+}
+
+function toggleTemplateTarget(target) {
+  const selector = String(target.getAttribute('data-sb-target') || '').trim();
+  if (!selector) return;
+  templateUiState.toggled.set(selector, !templateUiState.toggled.get(selector));
+  applyTemplateUiState();
+}
+
+function activateTemplateTab(target) {
+  const selector = String(target.getAttribute('data-sb-target') || '').trim();
+  if (!selector) return;
+  templateUiState.tabs.set(templateTabGroup(target), selector);
+  applyTemplateUiState();
+}
+
+function templateTabGroup(trigger) {
+  return String(trigger.getAttribute('data-sb-group') || 'default').trim() || 'default';
+}
+
+function applyTemplateUiState() {
+  const container = customTemplateRef.value;
+  if (!container?.querySelectorAll) return;
+  for (const [selector, flipped] of templateUiState.toggled) {
+    for (const element of queryTemplateElements(container, selector)) {
+      if (!element.hasAttribute('data-sb-initial-hidden')) {
+        element.setAttribute('data-sb-initial-hidden', element.classList.contains('sb-hidden') ? '1' : '0');
+      }
+      const initiallyHidden = element.getAttribute('data-sb-initial-hidden') === '1';
+      element.classList.toggle('sb-hidden', flipped ? !initiallyHidden : initiallyHidden);
+    }
+    for (const trigger of queryTemplateElements(container, '[data-sb-action="toggle"]')) {
+      if (String(trigger.getAttribute('data-sb-target') || '').trim() === selector) {
+        trigger.classList.toggle('sb-active', flipped);
+        trigger.setAttribute('aria-pressed', String(flipped));
+      }
+    }
+  }
+  for (const [group, activeSelector] of templateUiState.tabs) {
+    for (const trigger of queryTemplateElements(container, '[data-sb-action="tab"]')) {
+      if (templateTabGroup(trigger) !== group) continue;
+      const selector = String(trigger.getAttribute('data-sb-target') || '').trim();
+      const active = selector === activeSelector;
+      trigger.classList.toggle('sb-active', active);
+      trigger.setAttribute('aria-selected', String(active));
+      for (const panel of queryTemplateElements(container, selector)) {
+        panel.classList.toggle('sb-hidden', !active);
+      }
+    }
+  }
+}
+
+function queryTemplateElements(container, selector) {
+  try {
+    return Array.from(container.querySelectorAll(selector));
+  } catch {
+    return [];
   }
 }
 
@@ -403,36 +564,22 @@ function writeCollapsedState(key, value) {
 }
 
 function interpolateTemplate(template) {
-  return resolveTemplateText(template, { escape: true });
-}
-
-function resolveTemplateText(value, options = {}) {
-  const depth = Number.isFinite(Number(options.depth)) ? Number(options.depth) : 0;
-  const text = String(value ?? '');
-  if (!text || depth > MAX_TEMPLATE_RESOLVE_DEPTH) {
-    return text;
-  }
-  return text.replace(/\{\{\s*([^{}]+?)\s*\}\}|\{([\w\u4e00-\u9fa5 .-]+)\}/g, (_, doubleToken, singleToken) => {
-    const resolved = resolveTemplateToken(doubleToken || singleToken, depth + 1);
-    return options.escape ? escapeHtml(resolved) : String(resolved ?? '');
+  return renderStatusTemplate(template, {
+    resolveVariable: findDisplayVariable,
+    listVariables: () => displayVariables.value,
+    escape: escapeHtml,
+    context: templateContext.value
   });
 }
 
-function resolveTemplateToken(token, depth = 0) {
-  const parsed = parseStatusTemplateToken(token);
-  const rawName = parsed.rawName.trim();
-  const rawProp = parsed.rawProperty.trim() || 'value';
-  if (!rawName) return '';
-  const variable = findDisplayVariable(rawName);
-  if (!variable) return '';
-  if (rawProp === 'max') return variable.isMeter ? variable.max : '';
-  if (rawProp === 'percent') return variable.isMeter ? `${Math.round(variable.percentage)}%` : '';
-  if (rawProp === 'percentage') return variable.isMeter ? Math.round(variable.percentage) : '';
-  if (rawProp === 'display' || rawProp === 'displayValue') {
-    return cleanResolvedTemplateText(resolveTemplateText(variable.displayValue, { depth }));
-  }
-  if (rawProp === 'color') return variable.color;
-  return cleanResolvedTemplateText(resolveTemplateText(variable.value, { depth }));
+function markBoundTemplateValues(template) {
+  return String(template || '').replace(SB_VAL_OPEN_TAG, (full, tag, attrs, _quote, selfClosing, offset, source) => {
+    if (selfClosing) return full;
+    const start = offset + full.length;
+    const close = source.toLowerCase().indexOf(`</${tag.toLowerCase()}`, start);
+    const inner = source.slice(start, close < 0 ? source.length : close);
+    return TEMPLATE_TOKEN_TEST.test(inner) ? `<${tag}${attrs} data-sb-bound="1">` : full;
+  });
 }
 
 function extractTemplateStyleBlocks(template) {
@@ -447,7 +594,8 @@ function extractTemplateStyleBlocks(template) {
 function buildCustomTemplateCss(extractedStyleBlocks, inlineStyleBlocks, scopeSelector) {
   let cssText = appendSafeStyleBlocks('', extractedStyleBlocks);
   cssText = appendSafeStyleBlocks(cssText, inlineStyleBlocks);
-  return cssText ? buildScopedChatCss(cssText, scopeSelector) : '';
+  if (!cssText) return '';
+  return buildScopedChatCss(namespaceStatusBarKeyframes(cssText, templateScopeId.value), scopeSelector);
 }
 
 function appendSafeStyleBlocks(cssText, blocks) {
@@ -491,7 +639,6 @@ function sanitizeTemplateHtml(html, styleBlocks = []) {
   }
   const parser = new window.DOMParser();
   const doc = parser.parseFromString(String(html || ''), 'text/html');
-  const allowedAttrs = new Set(['aria-label', 'class', 'data-sb-action', 'data-sb-copy', 'data-sb-reply', 'data-sb-text', 'role', 'style', 'title', 'type']);
   const nodes = doc.body.querySelectorAll('*');
   for (let nodeIndex = 0; nodeIndex < nodes.length; nodeIndex += 1) {
     const node = nodes[nodeIndex];
@@ -512,7 +659,11 @@ function sanitizeTemplateHtml(html, styleBlocks = []) {
     for (let attrIndex = attrs.length - 1; attrIndex >= 0; attrIndex -= 1) {
       const attr = attrs[attrIndex];
       const name = attr.name.toLowerCase();
-      if (name.startsWith('on') || !allowedAttrs.has(name)) {
+      if (name.startsWith(STATUS_BAR_TEMPLATE_DATA_ATTR_PREFIX)) {
+        node.setAttribute(attr.name, String(attr.value || '').slice(0, STATUS_BAR_TEMPLATE_DATA_ATTR_LIMIT));
+        continue;
+      }
+      if (name.startsWith('on') || !STATUS_BAR_TEMPLATE_ALLOWED_ATTRS.has(name)) {
         node.removeAttribute(attr.name);
         continue;
       }
@@ -525,12 +676,14 @@ function sanitizeTemplateHtml(html, styleBlocks = []) {
         }
         continue;
       }
-      if (name === 'type' && tag === 'button') {
-        node.setAttribute('type', 'button');
+      // `hidden` becomes the sb-hidden class so toggle / tab can show it again.
+      if (name === 'hidden') {
+        node.removeAttribute(attr.name);
+        node.classList.add('sb-hidden');
         continue;
       }
-      if (name.startsWith('data-sb-')) {
-        node.setAttribute(attr.name, String(attr.value || '').slice(0, 500));
+      if (name === 'type' && tag === 'button') {
+        node.setAttribute('type', 'button');
       }
     }
     if (tag === 'button') {
@@ -543,22 +696,7 @@ function sanitizeTemplateHtml(html, styleBlocks = []) {
 }
 
 function normalizeDisplayVariable(variable, fallbackColor) {
-  const rawValue = variable?.value;
-  const numberValue = Number(rawValue);
-  const hasNumberValue = isNumericLike(rawValue) && Number.isFinite(numberValue);
-  const max = Number(variable?.max);
-  const isMeter = hasNumberValue && Number.isFinite(max) && max > 0;
-  const value = hasNumberValue ? numberValue : String(rawValue ?? '').trim();
-  const percentage = isMeter ? Math.min(100, Math.max(0, (numberValue / max) * 100)) : 0;
-  return {
-    name: variable?.name || '?',
-    value,
-    max: isMeter ? max : '',
-    percentage,
-    isMeter,
-    color: variable?.color || fallbackColor || defaultColor(variable?.name),
-    displayValue: isMeter ? `${formatStatusNumber(numberValue)}/${formatStatusNumber(max)}` : (String(rawValue ?? '').trim() || '—')
-  };
+  return buildStatusDisplayVariable(variable, fallbackColor || defaultColor(variable?.name));
 }
 
 function normalizeDisplayVariables(variables, fallbackColor) {
@@ -583,35 +721,16 @@ function normalizeDisplayCharacters(characters) {
   return rows;
 }
 
-function isNumericLike(value) {
-  if (typeof value === 'number') {
-    return Number.isFinite(value);
-  }
-  const text = String(value ?? '').trim();
-  return /^[-+]?(?:\d+|\d*\.\d+)$/.test(text);
-}
-
-function formatStatusNumber(value) {
-  return Number.isInteger(value) ? String(value) : String(Number(value.toFixed(2)));
-}
-
 function findDisplayVariable(name) {
-  const key = normalizeVariableKey(name);
+  const key = normalizeStatusVariableKey(name);
   const variables = displayVariables.value;
   for (let index = 0; index < variables.length; index += 1) {
     const item = variables[index];
-    if (normalizeVariableKey(item.name) === key) {
+    if (normalizeStatusVariableKey(item.name) === key) {
       return item;
     }
   }
   return null;
-}
-
-function normalizeVariableKey(value) {
-  return String(value || '')
-    .replace(/[\s\u3000:\uFF1A;\uFF1B,\uFF0C.\u3002\u3001/\\|()[\]{}"'`~!@#$%^&*_+=?<>-]+/g, '')
-    .trim()
-    .toLowerCase();
 }
 
 function applyTemplateRowVariables(root) {
@@ -620,11 +739,26 @@ function applyTemplateRowVariables(root) {
   }
   const pairs = findTemplateValuePairs(root);
   for (const { label, value } of pairs) {
+    if (value.hasAttribute('data-sb-bound')) {
+      continue;
+    }
     const variable = findDisplayVariable(label);
     if (variable && value) {
-      value.textContent = templateDisplayValue(variable);
+      value.textContent = resolveDisplayText(variable.displayValue);
     }
   }
+}
+
+// Display text may itself hold placeholders ("平静 {{姓名}}"); it is written
+// with textContent, so no escaping is needed here.
+function resolveDisplayText(text) {
+  const value = String(text ?? '');
+  if (!TEMPLATE_TOKEN_TEST.test(value)) return value;
+  return cleanResolvedTemplateText(renderStatusTemplate(value, {
+    resolveVariable: findDisplayVariable,
+    listVariables: () => displayVariables.value,
+    context: templateContext.value
+  }));
 }
 
 function normalizeTemplateValueText(root) {
@@ -634,20 +768,10 @@ function normalizeTemplateValueText(root) {
   const values = root.querySelectorAll('.sb-val');
   for (let index = 0; index < values.length; index += 1) {
     const value = values[index];
-    value.textContent = cleanResolvedTemplateText(value.textContent);
+    if (!value.children.length) {
+      value.textContent = cleanResolvedTemplateText(value.textContent);
+    }
   }
-}
-
-function templateDisplayValue(variable) {
-  const value = String(variable?.displayValue ?? '');
-  if (!hasTemplateToken(value)) {
-    return value;
-  }
-  return cleanResolvedTemplateText(resolveTemplateText(value));
-}
-
-function hasTemplateToken(value) {
-  return /\{\{\s*[^{}]+?\s*\}\}|\{[\w\u4e00-\u9fa5 .-]+\}/.test(String(value ?? ''));
 }
 
 function cleanResolvedTemplateText(value) {
@@ -656,7 +780,7 @@ function cleanResolvedTemplateText(value) {
     .trim()
     .replace(/^[\s>›|,，:：;；/]+|[\s>›|,，:：;；/]+$/g, '')
     .trim();
-  return /[A-Za-z0-9\u4e00-\u9fff]/.test(text) ? text : '';
+  return /[\p{L}\p{N}\p{Emoji_Presentation}]/u.test(text) ? text : '';
 }
 
 function findTemplateValuePairs(root) {
@@ -723,18 +847,18 @@ function findInlineLabelBeforeValue(value) {
       break;
     }
     text = `${node.textContent || ''}${text}`;
-    if (/[:\uFF1A\n\r]/.test(node.textContent || '') || text.length > 60) {
+    if (/[:：\n\r]/.test(node.textContent || '') || text.length > 60) {
       break;
     }
   }
-  const match = text.match(/([^:\uFF1A\n\r]{1,40})[:\uFF1A]?\s*$/);
+  const match = text.match(/([^:：\n\r]{1,40})[:：]?\s*$/);
   return templateLabelText(match?.[1] || '');
 }
 
 function templateLabelText(value) {
   return String(value || '')
     .replace(/<[^>]*>/g, '')
-    .replace(/^[\s\u3000:\uFF1A;\uFF1B,\uFF0C.\u3002]+|[\s\u3000:\uFF1A;\uFF1B,\uFF0C.\u3002]+$/g, '')
+    .replace(/^[\s　:：;；,，.。]+|[\s　:：;；,，.。]+$/g, '')
     .replace(/\s+/g, ' ')
     .trim();
 }
@@ -811,85 +935,90 @@ function templateLabelText(value) {
         </button>
       </div>
 
-      <div class="status-bar-collapse-body" :class="{ 'status-bar-collapse-body-custom': hasCustomTemplate }">
-        <div v-if="hasCustomTemplate" class="status-bar-custom" @click="onCustomTemplateClick" v-html="customTemplateHtml"></div>
-        <template v-else>
-          <div v-if="hasContent" class="status-bar-header">
-            <span class="status-bar-label">状态同步</span>
-            <span class="status-bar-context">关联最新 AI 回复</span>
-            <span
-              v-if="embedded"
-              class="flai-statusbar-update-badge"
-              :class="`is-${updateStatusMeta.key}`"
-              role="status"
-              aria-live="polite"
-            >
-              <span class="flai-statusbar-update-dot" aria-hidden="true"></span>
-              <span>{{ updateStatusMeta.label }}</span>
-            </span>
-            <span class="status-bar-name">{{ statusBar.name || '状态栏' }}</span>
-          </div>
-          <div v-if="hasContent" class="status-bar-variables">
-            <div
-              v-for="(variable, index) in displayVariables"
-              :key="index"
-              class="status-bar-variable"
-            >
-              <div class="variable-header">
-                <span class="variable-name">{{ variable.name }}</span>
-                <span class="variable-value">{{ variable.displayValue }}</span>
-              </div>
-              <div v-if="variable.isMeter" class="variable-bar-track">
-                <div class="variable-bar-fill" :style="barStyle(variable)"></div>
-              </div>
+      <div
+        v-if="hasCustomTemplate"
+        ref="customTemplateRef"
+        class="status-bar-custom"
+        @click="onCustomTemplateClick"
+        v-html="customTemplateHtml"
+      ></div>
+      <template v-else>
+        <div v-if="hasContent && !hasImmersiveContent" class="status-bar-variables">
+          <div
+            v-for="(variable, index) in displayVariables"
+            :key="index"
+            class="status-bar-variable"
+            :class="[`is-${variable.kind}`, { 'is-wide': isWideVariable(variable) }]"
+          >
+            <div class="variable-header">
+              <span class="variable-name" :title="variable.name">{{ variable.name }}</span>
+              <span v-if="variable.kind === 'meter' || variable.kind === 'number'" class="variable-value">{{ variable.displayValue }}</span>
             </div>
-          </div>
-
-          <div v-if="hasImmersiveContent" class="sb-characters-section">
             <div
-              v-for="entry in displayCharacters"
-              :key="entry.key"
-              class="sb-char-card"
-              :class="statusClass(entry.character.status)"
-              :style="charStyle(entry.character)"
+              v-if="variable.isMeter"
+              class="variable-bar-track"
+              role="progressbar"
+              :aria-label="variable.name"
+              :aria-valuemin="variable.min"
+              :aria-valuemax="variable.max"
+              :aria-valuenow="variable.value"
             >
-              <div class="sb-char-header">
-                <span class="sb-char-name">{{ entry.character.name }}</span>
-                <span v-if="entry.character.role" class="sb-char-role">{{ entry.character.role }}</span>
-                <span class="sb-char-status" :class="statusClass(entry.character.status)">{{ statusLabel(entry.character.status) }}</span>
-              </div>
-              <p v-if="entry.character.note" class="sb-char-note">{{ entry.character.note }}</p>
-              <div v-if="entry.variables.length" class="sb-char-variables">
-                <div
-                  v-for="(v, vi) in entry.variables"
-                  :key="vi"
-                  class="sb-char-variable"
-                >
-                  <div class="variable-header">
-                    <span class="variable-name">{{ v.name }}</span>
-                    <span class="variable-value">{{ v.displayValue }}</span>
-                  </div>
-                  <div v-if="v.isMeter" class="variable-bar-track">
-                    <div class="variable-bar-fill" :style="barStyle(v)"></div>
-                  </div>
+              <div class="variable-bar-fill" :style="barStyle(variable)"></div>
+            </div>
+            <div v-else-if="variable.kind === 'list'" class="variable-chips">
+              <span v-for="(item, itemIndex) in variable.items" :key="itemIndex" class="variable-chip">{{ item }}</span>
+              <span v-if="!variable.items.length" class="variable-text">—</span>
+            </div>
+            <p v-else-if="variable.kind === 'text'" class="variable-text">{{ variable.displayValue }}</p>
+          </div>
+        </div>
+
+        <div v-if="hasImmersiveContent" class="sb-characters-section">
+          <div
+            v-for="entry in displayCharacters"
+            :key="entry.key"
+            class="sb-char-card"
+            :class="statusClass(entry.character.status)"
+            :style="charStyle(entry.character)"
+          >
+            <div class="sb-char-header">
+              <span class="sb-char-name">{{ entry.character.name }}</span>
+              <span v-if="entry.character.role" class="sb-char-role">{{ entry.character.role }}</span>
+              <span class="sb-char-status" :class="statusClass(entry.character.status)">{{ statusLabel(entry.character.status) }}</span>
+            </div>
+            <p v-if="entry.character.note" class="sb-char-note">{{ entry.character.note }}</p>
+            <div v-if="entry.variables.length" class="sb-char-variables">
+              <div
+                v-for="(v, vi) in entry.variables"
+                :key="vi"
+                class="sb-char-variable"
+                :class="`is-${v.kind}`"
+              >
+                <div class="variable-header">
+                  <span class="variable-name" :title="v.name">{{ v.name }}</span>
+                  <span v-if="v.kind === 'meter' || v.kind === 'number'" class="variable-value">{{ v.displayValue }}</span>
                 </div>
+                <div v-if="v.isMeter" class="variable-bar-track">
+                  <div class="variable-bar-fill" :style="barStyle(v)"></div>
+                </div>
+                <p v-else-if="v.kind !== 'number'" class="variable-text">{{ v.displayValue }}</p>
               </div>
             </div>
           </div>
+        </div>
 
-          <div v-if="cfg.quickReplies.length" class="sb-quick-replies">
-            <button
-              v-for="(qr, qi) in cfg.quickReplies"
-              :key="qi"
-              class="sb-quick-reply-btn"
-              type="button"
-              @click="onQuickReply(qr.text)"
-            >
-              {{ qr.label }}
-            </button>
-          </div>
-        </template>
-      </div>
+        <div v-if="cfg.quickReplies.length" class="sb-quick-replies">
+          <button
+            v-for="(qr, qi) in cfg.quickReplies"
+            :key="qi"
+            class="sb-quick-reply-btn"
+            type="button"
+            @click="onQuickReply(qr.text)"
+          >
+            {{ qr.label }}
+          </button>
+        </div>
+      </template>
     </template>
   </div>
 </template>
@@ -898,6 +1027,10 @@ function templateLabelText(value) {
 /* -- Scoped CSS variable bridge -- */
 .status-bar-root {
   --sb-accent: var(--primary, #8f3f2f);
+  --sb-surface: var(--surface, #fffaf2);
+  --sb-text: var(--text, #241f1b);
+  --sb-muted: var(--muted, #75685e);
+  --sb-line: var(--line, rgba(62, 48, 38, 0.14));
 }
 
 /* -- Base Card -- */
@@ -905,17 +1038,19 @@ function templateLabelText(value) {
   position: relative;
   display: grid;
   gap: 12px;
+  min-width: 0;
   overflow: hidden;
-  border: 1px solid color-mix(in srgb, var(--sb-accent, var(--primary, #8f3f2f)) 18%, var(--line, rgba(62,48,38,0.14)));
-  border-radius: 18px;
-  padding: 15px 16px;
+  border: 1px solid color-mix(in srgb, var(--sb-accent) 18%, var(--sb-line));
+  border-radius: 16px;
+  padding: 14px 16px;
+  color: var(--sb-text);
   background:
-    radial-gradient(circle at 100% 0%, color-mix(in srgb, var(--sb-accent, var(--primary, #8f3f2f)) 10%, transparent), transparent 38%),
+    radial-gradient(circle at 100% 0%, color-mix(in srgb, var(--sb-accent) 9%, transparent), transparent 40%),
     linear-gradient(145deg,
-      color-mix(in srgb, var(--surface, #fffaf2) 96%, transparent),
-      color-mix(in srgb, var(--surface, #fffaf2) 78%, var(--bg, #f5efe6)));
+      color-mix(in srgb, var(--sb-surface) 96%, transparent),
+      color-mix(in srgb, var(--sb-surface) 80%, var(--bg, #f5efe6)));
   box-shadow:
-    0 10px 28px color-mix(in srgb, var(--text, #241f1b) 8%, transparent),
+    0 10px 28px color-mix(in srgb, var(--sb-text) 7%, transparent),
     inset 0 1px 0 color-mix(in srgb, #ffffff 48%, transparent);
   backdrop-filter: blur(14px);
   transition: box-shadow 0.2s ease, border-color 0.2s ease;
@@ -927,8 +1062,8 @@ function templateLabelText(value) {
   inset: 0 auto 0 0;
   width: 3px;
   background: linear-gradient(180deg,
-    var(--sb-accent, var(--primary, #8f3f2f)),
-    color-mix(in srgb, var(--sb-accent, var(--primary, #8f3f2f)) 24%, transparent));
+    var(--sb-accent),
+    color-mix(in srgb, var(--sb-accent) 24%, transparent));
   opacity: 0.82;
   pointer-events: none;
 }
@@ -964,7 +1099,7 @@ function templateLabelText(value) {
 
 .flai-statusbar-collapsed-card:hover .flai-statusbar-title,
 .flai-statusbar-summary:hover .flai-statusbar-title {
-  color: var(--sb-accent, var(--primary, #8f3f2f));
+  color: var(--sb-accent);
 }
 
 .flai-statusbar-action {
@@ -974,7 +1109,7 @@ function templateLabelText(value) {
   justify-content: center;
   gap: 4px;
   margin-left: auto;
-  color: var(--sb-accent, var(--primary, #8f3f2f));
+  color: var(--sb-accent);
   font-size: 0.72rem;
   font-weight: 800;
   white-space: nowrap;
@@ -1010,8 +1145,8 @@ function templateLabelText(value) {
   flex: 0 0 auto;
   padding: 2px 8px;
   border-radius: 6px;
-  color: var(--sb-accent, var(--primary, #8f3f2f));
-  background: color-mix(in srgb, var(--sb-accent, var(--primary, #8f3f2f)) 12%, transparent);
+  color: var(--sb-accent);
+  background: color-mix(in srgb, var(--sb-accent) 12%, transparent);
   font-size: 0.68rem;
   font-weight: 800;
   line-height: 1.6;
@@ -1020,7 +1155,7 @@ function templateLabelText(value) {
 .flai-statusbar-title {
   min-width: 0;
   overflow: hidden;
-  color: var(--text, #241f1b);
+  color: var(--sb-text);
   font-size: 0.82rem;
   font-weight: 800;
   text-overflow: ellipsis;
@@ -1029,7 +1164,7 @@ function templateLabelText(value) {
 
 .flai-statusbar-meta {
   flex: 0 0 auto;
-  color: var(--muted, #75685e);
+  color: var(--sb-muted);
   font-size: 0.72rem;
   font-weight: 700;
   white-space: nowrap;
@@ -1038,7 +1173,7 @@ function templateLabelText(value) {
 .flai-statusbar-meta::before {
   content: '·';
   margin-right: 8px;
-  color: color-mix(in srgb, var(--muted, #75685e) 58%, transparent);
+  color: color-mix(in srgb, var(--sb-muted) 58%, transparent);
 }
 
 .flai-statusbar-update-badge {
@@ -1049,10 +1184,10 @@ function templateLabelText(value) {
   gap: 5px;
   min-height: 24px;
   padding: 0 9px;
-  border: 1px solid color-mix(in srgb, var(--muted, #75685e) 22%, transparent);
+  border: 1px solid color-mix(in srgb, var(--sb-muted) 22%, transparent);
   border-radius: 999px;
-  color: color-mix(in srgb, var(--muted, #75685e) 92%, var(--text, #241f1b));
-  background: color-mix(in srgb, var(--muted, #75685e) 7%, transparent);
+  color: color-mix(in srgb, var(--sb-muted) 92%, var(--sb-text));
+  background: color-mix(in srgb, var(--sb-muted) 7%, transparent);
   font-size: 0.68rem;
   font-weight: 800;
   line-height: 1;
@@ -1092,10 +1227,10 @@ function templateLabelText(value) {
   min-width: 68px;
   min-height: 30px;
   padding: 0 10px;
-  border: 1px solid color-mix(in srgb, var(--line, rgba(62,48,38,0.14)) 82%, transparent);
+  border: 1px solid color-mix(in srgb, var(--sb-line) 82%, transparent);
   border-radius: 999px;
-  color: var(--sb-accent, var(--primary, #8f3f2f));
-  background: color-mix(in srgb, var(--surface, #fffaf2) 88%, transparent);
+  color: var(--sb-accent);
+  background: color-mix(in srgb, var(--sb-surface) 88%, transparent);
   box-shadow: 0 4px 12px rgba(67, 45, 30, 0.08);
   font-family: inherit;
   font-size: 0.72rem;
@@ -1106,8 +1241,8 @@ function templateLabelText(value) {
 
 .flai-statusbar-toggle:hover {
   transform: translateY(-1px);
-  border-color: color-mix(in srgb, var(--sb-accent, var(--primary, #8f3f2f)) 42%, var(--line, rgba(62,48,38,0.14)));
-  background: color-mix(in srgb, var(--sb-accent, var(--primary, #8f3f2f)) 10%, var(--surface, #fffaf2));
+  border-color: color-mix(in srgb, var(--sb-accent) 42%, var(--sb-line));
+  background: color-mix(in srgb, var(--sb-accent) 10%, var(--sb-surface));
 }
 
 @keyframes statusBarUpdatePulse {
@@ -1129,15 +1264,11 @@ function templateLabelText(value) {
   transform: rotate(180deg);
 }
 
-.status-bar-collapse-body {
-  min-width: 0;
-}
-
 .status-bar-custom {
   min-width: 0;
   max-width: 100%;
   overflow-x: hidden;
-  color: var(--text, #2d2420);
+  color: var(--sb-text);
   line-height: 1.55;
   white-space: normal;
   word-break: break-word;
@@ -1152,116 +1283,37 @@ function templateLabelText(value) {
   word-break: break-word;
 }
 
-.status-bar-custom :deep(.sb-panel),
-.status-bar-custom :deep(.sb-section),
-.status-bar-custom :deep(.sb-row),
-.status-bar-custom :deep(.sb-line),
-.status-bar-custom :deep(.sb-val) {
-  min-width: 0;
-  max-width: 100%;
-  white-space: normal;
-  overflow-wrap: anywhere;
-  word-break: break-word;
-}
-
-.status-bar-custom :deep(.sb-label) {
-  white-space: nowrap;
-}
-
-.status-bar-custom :deep(button) {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-height: 28px;
-  margin: 2px 4px 2px 0;
-  padding: 0 10px;
-  border: 1px solid color-mix(in srgb, var(--sb-accent, var(--primary, #8f3f2f)) 28%, transparent);
-  border-radius: 8px;
-  color: var(--sb-accent, var(--primary, #8f3f2f));
-  background: color-mix(in srgb, var(--sb-accent, var(--primary, #8f3f2f)) 10%, var(--surface, #fffaf2));
-  font: inherit;
-  font-size: 0.76rem;
-  font-weight: 800;
-  cursor: pointer;
-}
-
-.status-bar-custom :deep(button:hover) {
-  border-color: color-mix(in srgb, var(--sb-accent, var(--primary, #8f3f2f)) 46%, transparent);
-  background: color-mix(in srgb, var(--sb-accent, var(--primary, #8f3f2f)) 16%, var(--surface, #fffaf2));
-}
-
 :root[data-theme="dark"] .status-bar-container {
   background:
     linear-gradient(135deg,
-      color-mix(in srgb, var(--surface, #24201d) 88%, transparent),
-      color-mix(in srgb, var(--surface, #24201d) 72%, transparent));
+      color-mix(in srgb, var(--sb-surface) 88%, transparent),
+      color-mix(in srgb, var(--sb-surface) 72%, transparent));
   box-shadow:
     0 2px 16px rgba(0, 0, 0, 0.18),
     inset 0 1px 0 color-mix(in srgb, #ffffff 6%, transparent);
 }
 
-/* -- Header -- */
-.status-bar-header {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 11px;
-}
-
-.status-bar-label {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 2px 8px;
-  border-radius: 6px;
-  color: var(--sb-accent);
-  background: color-mix(in srgb, var(--sb-accent) 12%, transparent);
-  font-size: 0.68rem;
-  font-weight: 800;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  line-height: 1.6;
-}
-
-.status-bar-label::before {
-  content: '';
-  display: inline-block;
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--sb-accent);
-  opacity: 0.7;
-}
-
-.status-bar-name {
-  margin-left: auto;
-  font-size: 0.82rem;
-  font-weight: 750;
-  color: var(--muted, #75685e);
-  letter-spacing: 0.02em;
-}
-
-.status-bar-context {
-  font-size: 0.64rem;
-  color: var(--muted, #75685e);
-  opacity: 0.72;
-  letter-spacing: 0.01em;
-}
-
-/* -- Variables Grid -- */
+/* -- Variables -- */
 .status-bar-variables {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 168px), 1fr));
   gap: 9px;
 }
 
 .status-bar-variable {
+  display: grid;
+  align-content: start;
+  gap: 7px;
   min-width: 0;
   padding: 10px 11px;
-  border: 1px solid color-mix(in srgb, var(--line, rgba(62,48,38,0.14)) 68%, transparent);
+  border: 1px solid color-mix(in srgb, var(--sb-line) 68%, transparent);
   border-radius: 11px;
-  background: color-mix(in srgb, var(--surface, #fffaf2) 72%, transparent);
+  background: color-mix(in srgb, var(--sb-surface) 72%, transparent);
   box-shadow: inset 0 1px 0 color-mix(in srgb, #fff 28%, transparent);
+}
+
+.status-bar-variable.is-wide {
+  grid-column: 1 / -1;
 }
 
 .variable-header {
@@ -1269,33 +1321,70 @@ function templateLabelText(value) {
   justify-content: space-between;
   align-items: baseline;
   gap: 8px;
-  margin-bottom: 7px;
+  min-width: 0;
 }
 
 .variable-name {
   min-width: 0;
   overflow: hidden;
-  font-size: 0.78rem;
+  font-size: 0.76rem;
   font-weight: 750;
-  color: var(--text, #241f1b);
+  color: var(--sb-muted);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .variable-value {
+  flex: 0 0 auto;
+  max-width: 70%;
   overflow: hidden;
-  font-size: 0.74rem;
+  font-size: 0.8rem;
   font-weight: 800;
-  color: var(--muted, #75685e);
+  color: var(--sb-text);
   font-variant-numeric: tabular-nums;
   text-align: right;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
+.status-bar-variable.is-number .variable-value {
+  font-size: 0.98rem;
+}
+
+.variable-text {
+  margin: 0;
+  color: var(--sb-text);
+  font-size: 0.82rem;
+  font-weight: 650;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.variable-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  min-width: 0;
+}
+
+.variable-chip {
+  max-width: 100%;
+  overflow: hidden;
+  padding: 2px 8px;
+  border: 1px solid color-mix(in srgb, var(--sb-accent) 22%, transparent);
+  border-radius: 999px;
+  color: color-mix(in srgb, var(--sb-accent) 78%, var(--sb-text));
+  background: color-mix(in srgb, var(--sb-accent) 8%, transparent);
+  font-size: 0.74rem;
+  font-weight: 700;
+  line-height: 1.5;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .variable-bar-track {
   height: 6px;
-  background: color-mix(in srgb, var(--line, rgba(62,48,38,0.14)) 50%, transparent);
+  background: color-mix(in srgb, var(--sb-line) 50%, transparent);
   border-radius: 999px;
   overflow: hidden;
 }
@@ -1307,6 +1396,45 @@ function templateLabelText(value) {
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.1);
 }
 
+/* -- Layout: list (one row per variable) -- */
+.sb-layout-list .status-bar-variables {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0;
+}
+
+.sb-layout-list .status-bar-variable {
+  grid-template-columns: minmax(72px, 28%) minmax(0, 1fr);
+  align-items: center;
+  column-gap: 12px;
+  padding: 8px 2px;
+  border: 0;
+  border-bottom: 1px dashed color-mix(in srgb, var(--sb-line) 80%, transparent);
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.sb-layout-list .status-bar-variable:last-child {
+  border-bottom: 0;
+}
+
+.sb-layout-list .status-bar-variable.is-wide {
+  grid-column: auto;
+}
+
+.sb-layout-list .variable-header {
+  display: contents;
+}
+
+.sb-layout-list .variable-value {
+  justify-self: end;
+  max-width: 100%;
+}
+
+.sb-layout-list .variable-bar-track {
+  grid-column: 2;
+}
+
 /* ---------------------------------------
    VARIANT -- compact
    --------------------------------------- */
@@ -1315,34 +1443,12 @@ function templateLabelText(value) {
   border-radius: 10px;
 }
 
-.sb-compact .status-bar-header {
-  margin-bottom: 6px;
-}
-
-.sb-compact .status-bar-label {
-  font-size: 0.62rem;
-  padding: 1px 6px;
-}
-
-.sb-compact .status-bar-name {
-  font-size: 0.76rem;
-}
-
 .sb-compact .status-bar-variables {
-  gap: 8px;
+  gap: 7px;
 }
 
 .sb-compact .status-bar-variable {
-  flex: 1 1 100px;
-  min-width: 80px;
-}
-
-.sb-compact .variable-name {
-  font-size: 0.76rem;
-}
-
-.sb-compact .variable-value {
-  font-size: 0.7rem;
+  padding: 8px 9px;
 }
 
 .sb-compact .variable-bar-track {
@@ -1355,23 +1461,17 @@ function templateLabelText(value) {
 .sb-minimal {
   padding: 8px 10px;
   border-radius: 8px;
-  border: 1px solid color-mix(in srgb, var(--line) 40%, transparent);
+  border: 1px solid color-mix(in srgb, var(--sb-line) 40%, transparent);
   background: transparent;
   box-shadow: none;
   backdrop-filter: none;
 }
 
-.sb-minimal .status-bar-header {
-  margin-bottom: 4px;
-}
-
-.sb-minimal .status-bar-label {
-  font-size: 0.6rem;
-  padding: 1px 5px;
-}
-
-.sb-minimal .status-bar-name {
-  font-size: 0.72rem;
+.sb-minimal .status-bar-variable {
+  padding: 4px 2px;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
 }
 
 .sb-minimal .variable-bar-track {
@@ -1391,17 +1491,11 @@ function templateLabelText(value) {
   border-color: color-mix(in srgb, var(--sb-accent) 30%, transparent);
   background:
     linear-gradient(135deg,
-      color-mix(in srgb, var(--surface) 60%, transparent),
+      color-mix(in srgb, var(--sb-surface) 60%, transparent),
       color-mix(in srgb, var(--sb-accent) 6%, transparent));
   box-shadow:
     0 0 18px color-mix(in srgb, var(--sb-accent) 10%, transparent),
     0 2px 12px rgba(0, 0, 0, 0.06);
-}
-
-.sb-neon .status-bar-label {
-  color: var(--sb-accent);
-  background: color-mix(in srgb, var(--sb-accent) 18%, transparent);
-  box-shadow: 0 0 8px color-mix(in srgb, var(--sb-accent) 14%, transparent);
 }
 
 .sb-neon .variable-bar-track {
@@ -1415,18 +1509,93 @@ function templateLabelText(value) {
 }
 
 /* ---------------------------------------
+   VARIANT -- glass
+   --------------------------------------- */
+.sb-glass {
+  border-color: color-mix(in srgb, #ffffff 42%, var(--sb-line));
+  background:
+    linear-gradient(135deg,
+      color-mix(in srgb, var(--sb-surface) 58%, transparent),
+      color-mix(in srgb, var(--sb-surface) 32%, transparent));
+  box-shadow:
+    0 12px 32px color-mix(in srgb, var(--sb-text) 10%, transparent),
+    inset 0 1px 0 color-mix(in srgb, #ffffff 60%, transparent);
+  backdrop-filter: blur(22px) saturate(1.3);
+}
+
+.sb-glass .status-bar-variable {
+  border-color: color-mix(in srgb, #ffffff 36%, transparent);
+  background: color-mix(in srgb, var(--sb-surface) 40%, transparent);
+}
+
+/* ---------------------------------------
+   VARIANT -- parchment
+   --------------------------------------- */
+.sb-parchment {
+  --sb-accent: #8a5a2b;
+  --sb-surface: #fbf3e2;
+  --sb-text: #3b2a1a;
+  --sb-muted: #7a6147;
+  --sb-line: rgba(122, 84, 44, 0.26);
+  border-color: rgba(122, 84, 44, 0.32);
+  background:
+    radial-gradient(circle at 12% 18%, rgba(255, 255, 255, 0.55), transparent 42%),
+    linear-gradient(160deg, #fbf1dc, #f2e1bd);
+  box-shadow: 0 8px 24px rgba(92, 62, 30, 0.14), inset 0 0 28px rgba(146, 101, 50, 0.12);
+  font-family: "Noto Serif SC", "Songti SC", "SimSun", serif;
+}
+
+.sb-parchment .status-bar-variable {
+  border-color: rgba(122, 84, 44, 0.2);
+  background: rgba(255, 250, 238, 0.62);
+  box-shadow: none;
+}
+
+/* ---------------------------------------
+   VARIANT -- terminal
+   --------------------------------------- */
+.sb-terminal {
+  --sb-accent: #3ddc84;
+  --sb-surface: #0f1512;
+  --sb-text: #c8f7d8;
+  --sb-muted: #7fbf95;
+  --sb-line: rgba(61, 220, 132, 0.22);
+  border-color: rgba(61, 220, 132, 0.3);
+  background: linear-gradient(180deg, #0d1310, #111a15);
+  box-shadow: 0 8px 26px rgba(0, 0, 0, 0.3), inset 0 0 0 1px rgba(61, 220, 132, 0.06);
+  font-family: ui-monospace, "Cascadia Code", "Fira Code", Consolas, monospace;
+}
+
+.sb-terminal .status-bar-variable {
+  border-color: rgba(61, 220, 132, 0.16);
+  border-radius: 6px;
+  background: rgba(61, 220, 132, 0.04);
+  box-shadow: none;
+}
+
+.sb-terminal .variable-bar-track {
+  border-radius: 2px;
+  background: rgba(61, 220, 132, 0.12);
+}
+
+.sb-terminal .variable-bar-fill {
+  border-radius: 2px;
+  box-shadow: 0 0 8px rgba(61, 220, 132, 0.4);
+}
+
+.sb-terminal .variable-chip {
+  border-radius: 4px;
+}
+
+/* ---------------------------------------
    DENSITY -- cozy
    --------------------------------------- */
 .sb-density-cozy {
   padding: 18px 20px;
 }
 
-.sb-density-cozy .status-bar-header {
-  margin-bottom: 14px;
-}
-
 .sb-density-cozy .status-bar-variables {
-  gap: 16px;
+  gap: 14px;
 }
 
 .sb-density-cozy .variable-bar-track {
@@ -1438,10 +1607,6 @@ function templateLabelText(value) {
    --------------------------------------- */
 .sb-density-compact {
   padding: 8px 10px;
-}
-
-.sb-density-compact .status-bar-header {
-  margin-bottom: 6px;
 }
 
 .sb-density-compact .status-bar-variables {
@@ -1510,10 +1675,7 @@ function templateLabelText(value) {
   50% { opacity: 0.65; }
 }
 
-/* ---------------------------------------
-   EFFECT -- combined glow+striped+pulse
-   --------------------------------------- */
-.sb-fx-glow.sb-fx-striped.sb-fx-pulse .variable-bar-fill {
+.sb-fx-striped.sb-fx-pulse .variable-bar-fill {
   animation:
     sbBarPulse 2s ease-in-out infinite,
     sbStripedMove 0.8s linear infinite;
@@ -1529,26 +1691,25 @@ function templateLabelText(value) {
   backdrop-filter: none;
 }
 
-.sb-immersive .status-bar-header,
-.sb-immersive .status-bar-variables {
+.sb-immersive::before {
   display: none;
 }
 
 .sb-characters-section {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 220px), 1fr));
   gap: 8px;
-  margin-top: 0;
 }
 
 .sb-char-card {
-  --sb-ch-accent: var(--sb-accent, var(--primary, #8f3f2f));
+  --sb-ch-accent: var(--sb-accent);
+  min-width: 0;
   padding: 10px 12px;
-  border: 1px solid color-mix(in srgb, var(--sb-ch-accent) 18%, var(--line, rgba(62,48,38,0.14)));
-  border-radius: 10px;
+  border: 1px solid color-mix(in srgb, var(--sb-ch-accent) 18%, var(--sb-line));
+  border-radius: 12px;
   background:
     linear-gradient(135deg,
-      color-mix(in srgb, var(--surface, #fffaf2) 88%, transparent),
+      color-mix(in srgb, var(--sb-surface) 88%, transparent),
       color-mix(in srgb, var(--sb-ch-accent) 4%, transparent));
 }
 
@@ -1557,13 +1718,16 @@ function templateLabelText(value) {
   align-items: center;
   gap: 8px;
   flex-wrap: wrap;
+  min-width: 0;
   margin-bottom: 4px;
 }
 
 .sb-char-name {
+  min-width: 0;
   font-size: 0.88rem;
   font-weight: 800;
-  color: var(--text, #241f1b);
+  color: var(--sb-text);
+  overflow-wrap: anywhere;
 }
 
 .sb-char-role {
@@ -1594,8 +1758,8 @@ function templateLabelText(value) {
 }
 
 .sb-char-status-forgotten {
-  color: var(--muted, #75685e);
-  background: color-mix(in srgb, var(--muted) 12%, transparent);
+  color: var(--sb-muted);
+  background: color-mix(in srgb, var(--sb-muted) 12%, transparent);
 }
 
 .sb-char-status-left {
@@ -1604,39 +1768,40 @@ function templateLabelText(value) {
 }
 
 .sb-char-status-hidden {
-  color: var(--muted, #75685e);
-  background: color-mix(in srgb, var(--muted) 8%, transparent);
+  color: var(--sb-muted);
+  background: color-mix(in srgb, var(--sb-muted) 8%, transparent);
   opacity: 0.7;
 }
 
 .sb-char-card.sb-char-status-hidden {
   opacity: 0.55;
   border-style: dashed;
-  border-color: color-mix(in srgb, var(--line, rgba(62,48,38,0.14)) 60%, transparent);
-  background: color-mix(in srgb, var(--surface, #fffaf2) 40%, transparent);
+  border-color: color-mix(in srgb, var(--sb-line) 60%, transparent);
+  background: color-mix(in srgb, var(--sb-surface) 40%, transparent);
 }
 
 .sb-char-card.sb-char-status-hidden .sb-char-name {
-  color: var(--muted, #75685e);
+  color: var(--sb-muted);
 }
 
 .sb-char-note {
   margin: 4px 0 6px;
   font-size: 0.78rem;
-  color: var(--muted, #75685e);
-  line-height: 1.4;
+  color: var(--sb-muted);
+  line-height: 1.45;
 }
 
 .sb-char-variables {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 120px), 1fr));
+  gap: 8px 10px;
   margin-top: 6px;
 }
 
 .sb-char-variable {
-  flex: 1 1 120px;
-  min-width: 100px;
+  display: grid;
+  gap: 5px;
+  min-width: 0;
 }
 
 .status-bar-container.sb-collapsed,
@@ -1648,12 +1813,12 @@ function templateLabelText(value) {
   min-height: 48px;
   gap: 0;
   padding: 10px 14px;
-  border: 1px solid color-mix(in srgb, var(--line, rgba(62,48,38,0.14)) 80%, transparent);
+  border: 1px solid color-mix(in srgb, var(--sb-line) 80%, transparent);
   border-radius: 14px;
   background:
     linear-gradient(135deg,
-      color-mix(in srgb, var(--surface, #fffaf2) 86%, transparent),
-      color-mix(in srgb, var(--sb-accent, var(--primary, #8f3f2f)) 6%, transparent));
+      color-mix(in srgb, var(--sb-surface) 86%, transparent),
+      color-mix(in srgb, var(--sb-accent) 6%, transparent));
   box-shadow:
     0 2px 12px rgba(67, 45, 30, 0.06),
     inset 0 1px 0 color-mix(in srgb, #ffffff 32%, transparent);
@@ -1665,37 +1830,32 @@ function templateLabelText(value) {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
-  margin-top: 12px;
 }
 
 .sb-quick-reply-btn {
   min-height: 32px;
+  max-width: 100%;
   padding: 0 12px;
-  border: 1px solid color-mix(in srgb, var(--sb-accent, var(--primary)) 30%, var(--line, rgba(62,48,38,0.14)));
+  border: 1px solid color-mix(in srgb, var(--sb-accent) 30%, var(--sb-line));
   border-radius: 8px;
-  color: var(--sb-accent, var(--primary, #8f3f2f));
-  background: color-mix(in srgb, var(--sb-accent, var(--primary)) 8%, var(--surface, #fffaf2));
+  color: var(--sb-accent);
+  background: color-mix(in srgb, var(--sb-accent) 8%, var(--sb-surface));
   font-size: 0.8rem;
   font-weight: 700;
   cursor: pointer;
+  overflow-wrap: anywhere;
   transition: background 0.15s, border-color 0.15s;
 }
 
 .sb-quick-reply-btn:hover {
-  background: color-mix(in srgb, var(--sb-accent, var(--primary)) 16%, var(--surface, #fffaf2));
-  border-color: color-mix(in srgb, var(--sb-accent, var(--primary)) 50%, var(--line));
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .sb-quick-reply-btn {
-    transition: none;
-  }
+  background: color-mix(in srgb, var(--sb-accent) 16%, var(--sb-surface));
+  border-color: color-mix(in srgb, var(--sb-accent) 50%, var(--sb-line));
 }
 
 @media (max-width: 768px) {
   .status-bar-container {
     padding: 10px 12px;
-    border-radius: 10px;
+    border-radius: 12px;
   }
 
   .flai-statusbar-toggle {
@@ -1705,42 +1865,13 @@ function templateLabelText(value) {
     font-size: 0.68rem;
   }
 
-  .status-bar-header {
-    margin-bottom: 8px;
-  }
-
-  .status-bar-label {
-    font-size: 0.62rem;
-    padding: 1px 6px;
-  }
-
-  .status-bar-name {
-    font-size: 0.76rem;
-  }
-
   .status-bar-variables {
+    grid-template-columns: repeat(auto-fill, minmax(min(100%, 140px), 1fr));
     gap: 8px;
   }
 
-  .status-bar-variable {
-    flex: 1 1 100px;
-    min-width: 80px;
-  }
-
-  .variable-name {
-    font-size: 0.76rem;
-  }
-
-  .variable-value {
-    font-size: 0.7rem;
-  }
-
-  .variable-bar-track {
-    height: 5px;
-  }
-
   .sb-characters-section {
-    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+    grid-template-columns: repeat(auto-fill, minmax(min(100%, 180px), 1fr));
     gap: 6px;
   }
 
@@ -1748,40 +1879,8 @@ function templateLabelText(value) {
     padding: 8px 10px;
   }
 
-  .sb-char-name {
-    font-size: 0.82rem;
-  }
-
-  .sb-char-role {
-    font-size: 0.68rem;
-    padding: 1px 5px;
-  }
-
-  .sb-char-status {
-    font-size: 0.64rem;
-    padding: 1px 5px;
-  }
-
-  .sb-char-note {
-    font-size: 0.74rem;
-  }
-
-  .sb-char-variables {
-    gap: 8px;
-  }
-
-  .sb-char-variable {
-    flex: 1 1 100px;
-    min-width: 80px;
-  }
-
-  .sb-quick-replies {
-    gap: 4px;
-    margin-top: 8px;
-  }
-
   .sb-quick-reply-btn {
-    min-height: 28px;
+    min-height: 30px;
     padding: 0 10px;
     font-size: 0.76rem;
   }
@@ -1813,94 +1912,37 @@ function templateLabelText(value) {
 
   .flai-statusbar-toggle {
     min-width: 56px;
-    min-height: 28px;
-    padding: 0 8px;
-  }
-
-  .status-bar-header {
-    margin-bottom: 6px;
-  }
-
-  .status-bar-label {
-    font-size: 0.58rem;
-    padding: 1px 5px;
-  }
-
-  .status-bar-name {
-    font-size: 0.72rem;
   }
 
   .status-bar-variables {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 6px;
   }
 
   .status-bar-variable {
-    flex: 1 1 80px;
-    min-width: 60px;
+    padding: 8px 9px;
   }
 
-  .variable-name {
-    font-size: 0.7rem;
-  }
-
-  .variable-value {
-    font-size: 0.66rem;
-  }
-
-  .variable-bar-track {
-    height: 4px;
+  .sb-layout-list .status-bar-variables {
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .sb-characters-section {
     grid-template-columns: 1fr;
-    gap: 6px;
-  }
-
-  .sb-char-card {
-    padding: 6px 8px;
-  }
-
-  .sb-char-header {
-    gap: 4px;
-  }
-
-  .sb-char-name {
-    font-size: 0.78rem;
-  }
-
-  .sb-char-role {
-    font-size: 0.64rem;
-  }
-
-  .sb-char-status {
-    font-size: 0.6rem;
-  }
-
-  .sb-char-note {
-    font-size: 0.7rem;
-  }
-
-  .sb-char-variable {
-    flex: 1 1 80px;
-    min-width: 60px;
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .sb-fx-glow {
+  .sb-fx-glow,
+  .sb-fx-striped .variable-bar-fill,
+  .sb-fx-pulse .variable-bar-fill,
+  .flai-statusbar-update-badge.is-updating .flai-statusbar-update-dot {
     animation: none;
   }
 
-  .sb-fx-striped .variable-bar-fill {
-    animation: none;
-  }
-
-  .sb-fx-pulse .variable-bar-fill {
-    animation: none;
-  }
-
-  .sb-fx-glow.sb-fx-striped.sb-fx-pulse .variable-bar-fill {
-    animation: none;
+  .sb-quick-reply-btn,
+  .variable-bar-fill {
+    transition: none;
   }
 }
 </style>

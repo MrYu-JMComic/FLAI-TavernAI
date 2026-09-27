@@ -1,5 +1,6 @@
 import { isPhoneViewport } from '../composables/useViewport.js';
 import { THINKING_LEVELS } from '../../../shared/providerThinking.js';
+import { adjustStatusVariableValue, normalizeStatusVariableKey, resolveStatusVariableKind } from '../../../shared/statusVariables.js';
 
 const defaultAppearance = () => ({
   desktopBackgroundUrl: '',
@@ -126,6 +127,7 @@ export function buildChatScriptContext({
   messageScroller = null,
   composer = null,
   messages = [],
+  statusBar = null,
   query = null,
   queryAll = null,
   notify = null,
@@ -136,7 +138,10 @@ export function buildChatScriptContext({
   scrollToBottom = null,
   setCssVar = null,
   requestPaint = null,
-  wait = null
+  wait = null,
+  updateStatusVariables = null,
+  insertText = null,
+  sendMessage = null
 } = {}) {
   return {
     conversation,
@@ -151,6 +156,7 @@ export function buildChatScriptContext({
     messageScroller,
     composer,
     messages,
+    statusBar: snapshotStatusBarForScript(statusBar),
     query,
     queryAll,
     notify,
@@ -162,8 +168,43 @@ export function buildChatScriptContext({
     setCssVar,
     requestPaint,
     wait,
+    updateStatusVariables,
+    insertText,
+    sendMessage,
     isMobile: isPhoneViewport()
   };
+}
+
+// Plain, clonable view of the status bar handed to scripts; `type` is the
+// resolved kind so scripts never have to guess meter vs text.
+export function snapshotStatusBarForScript(statusBar) {
+  if (!statusBar || typeof statusBar !== 'object') return null;
+  const variables = [];
+  for (const variable of Array.isArray(statusBar.variables) ? statusBar.variables : []) {
+    if (!variable?.name) continue;
+    const kind = resolveStatusVariableKind(variable);
+    variables.push({
+      name: String(variable.name),
+      value: variable.value,
+      type: kind,
+      ...(kind === 'meter' ? { min: Number(variable.min) || 0, max: Number(variable.max) || 100 } : {}),
+      unit: String(variable.unit || ''),
+      color: String(variable.color || '')
+    });
+  }
+  return {
+    name: String(statusBar.name || ''),
+    variables,
+    template: String(statusBar.template || '')
+  };
+}
+
+function findScriptStatusVariable(statusBar, name) {
+  const key = normalizeStatusVariableKey(name);
+  for (const variable of statusBar?.variables || []) {
+    if (normalizeStatusVariableKey(variable.name) === key) return variable;
+  }
+  return null;
 }
 
 export async function runChatCustomScript(source, ctx = {}) {
@@ -173,6 +214,7 @@ export async function runChatCustomScript(source, ctx = {}) {
   }
 
   const cleanupFns = [];
+  const listeners = new Map();
   const scriptContext = buildChatScriptContext(ctx);
   const context = {
     ...scriptContext,
@@ -180,6 +222,23 @@ export async function runChatCustomScript(source, ctx = {}) {
       if (typeof fn === 'function') {
         cleanupFns.push(fn);
       }
+    },
+    on(event, fn) {
+      addScriptListener(listeners, event, fn);
+    },
+    onAction(name, fn) {
+      addScriptListener(listeners, `action:${String(name || '').trim()}`, fn);
+    },
+    getVar(name) {
+      return findScriptStatusVariable(context.statusBar, name)?.value;
+    },
+    setVar(name, value) {
+      return scriptContext.updateStatusVariables?.([{ name, value }]);
+    },
+    adjustVar(name, delta) {
+      const variable = findScriptStatusVariable(context.statusBar, name);
+      if (!variable) return undefined;
+      return scriptContext.updateStatusVariables?.([{ name: variable.name, value: adjustStatusVariableValue(variable, delta) }]);
     },
     query(selector, root = ctx.root) {
       return root?.querySelector?.(selector) || null;
@@ -215,6 +274,7 @@ export async function runChatCustomScript(source, ctx = {}) {
       messageScroller,
       composer,
       messages,
+      statusBar,
       query,
       queryAll,
       notify,
@@ -226,6 +286,14 @@ export async function runChatCustomScript(source, ctx = {}) {
       setCssVar,
       requestPaint,
       wait,
+      updateStatusVariables,
+      insertText,
+      sendMessage,
+      getVar,
+      setVar,
+      adjustVar,
+      on,
+      onAction,
       isMobile,
       onCleanup
     } = ctx;
@@ -249,11 +317,39 @@ export async function runChatCustomScript(source, ctx = {}) {
     cleanupFns.push(result);
   }
 
-  if (!cleanupFns.length) {
+  if (!cleanupFns.length && !listeners.size) {
     return null;
   }
 
-  return () => runCustomScriptCleanup(cleanupFns);
+  const dispose = () => runCustomScriptCleanup(cleanupFns);
+  dispose.emit = (event, payload) => {
+    if (event === 'status') context.statusBar = snapshotStatusBarForScript(payload);
+    dispatchScriptEvent(listeners, event, payload);
+  };
+  return dispose;
+}
+
+function addScriptListener(listeners, event, fn) {
+  const name = String(event || '').trim();
+  if (!name || typeof fn !== 'function') return;
+  if (!listeners.has(name)) listeners.set(name, []);
+  listeners.get(name).push(fn);
+}
+
+// `action` events carry { name, value, text } and reach both on('action') and
+// the matching onAction(name) handlers.
+function dispatchScriptEvent(listeners, event, payload) {
+  const names = [String(event || '')];
+  if (event === 'action' && payload?.name) names.push(`action:${payload.name}`);
+  for (const name of names) {
+    for (const fn of listeners.get(name) || []) {
+      try {
+        fn(event === 'status' ? snapshotStatusBarForScript(payload) : payload);
+      } catch {
+        // A failing listener must not break the host page.
+      }
+    }
+  }
 }
 
 function runCustomScriptCleanup(cleanupFns) {
@@ -305,10 +401,29 @@ const SANDBOX_CALLABLE_API = Object.freeze([
   'scrollToBottom',
   'setCssVar',
   'requestPaint',
-  'wait'
+  'wait',
+  'updateStatusVariables',
+  'setVar',
+  'adjustVar',
+  'insertText',
+  'sendMessage',
+  'query',
+  'queryAll'
 ]);
+const SANDBOX_STATUS_WRITERS = new Set(['setVar', 'adjustVar']);
+const SANDBOX_QUERY_RESULT_LIMIT = 50;
 
 const SANDBOX_SCRIPT_TIMEOUT_MS = 10000;
+
+function isSandboxCallable(context, name) {
+  if (name === 'notify') {
+    return Boolean(context.notify) && (typeof context.notify === 'function' || typeof context.notify === 'object');
+  }
+  if (SANDBOX_STATUS_WRITERS.has(name)) {
+    return typeof context.updateStatusVariables === 'function';
+  }
+  return typeof context[name] === 'function';
+}
 
 function runCustomScriptInSandbox(script, context) {
   const frame = document.createElement('iframe');
@@ -318,11 +433,13 @@ function runCustomScriptInSandbox(script, context) {
   frame.style.display = 'none';
   const token = `flai-chat-script-${Date.now()}-${Math.random()}`;
   const serialized = serializeSandboxContext(context);
-  const callable = SANDBOX_CALLABLE_API.filter((name) => typeof context[name] === 'function');
+  const callable = SANDBOX_CALLABLE_API.filter((name) => isSandboxCallable(context, name));
   const source = `<!doctype html><script>
     const TOKEN = ${JSON.stringify(token)};
     const pending = new Map();
     const cleanupFns = [];
+    const listeners = new Map();
+    let scriptContext = null;
     let nextCallId = 1;
     let started = false;
     let cleaning = false;
@@ -340,6 +457,21 @@ function runCustomScriptInSandbox(script, context) {
         }
       });
     }
+    function addListener(name, fn) {
+      const key = String(name || '').trim();
+      if (!key || typeof fn !== 'function' || cleaning) return;
+      if (!listeners.has(key)) listeners.set(key, []);
+      listeners.get(key).push(fn);
+    }
+    function dispatch(event, payload) {
+      const names = [String(event || '')];
+      if (event === 'action' && payload && payload.name) names.push('action:' + payload.name);
+      for (const name of names) {
+        for (const fn of listeners.get(name) || []) {
+          try { fn(payload); } catch {}
+        }
+      }
+    }
     async function cleanup() {
       if (cleaning) return;
       cleaning = true;
@@ -347,6 +479,7 @@ function runCustomScriptInSandbox(script, context) {
         try { await cleanupFns[index](); } catch {}
       }
       cleanupFns.length = 0;
+      listeners.clear();
       closed = true;
     }
     window.addEventListener('message', async (event) => {
@@ -361,6 +494,12 @@ function runCustomScriptInSandbox(script, context) {
         else entry.resolve(data.value);
         return;
       }
+      if (data.type === 'event') {
+        if (closed || !scriptContext) return;
+        if (data.event === 'status') scriptContext.statusBar = data.payload;
+        dispatch(data.event, data.payload);
+        return;
+      }
       if (data.type === 'cleanup' && !cleaning) {
         await cleanup();
         parent.postMessage({ token: TOKEN, type: 'cleanup_done' }, '*');
@@ -369,14 +508,32 @@ function runCustomScriptInSandbox(script, context) {
       if (data.type !== 'run' || started) return;
       started = true;
       const ctx = data.context || {};
+      scriptContext = ctx;
       for (const name of data.callable || []) ctx[name] = (...args) => call(name, args);
+      if (typeof ctx.notify === 'function') {
+        const send = ctx.notify;
+        ctx.notify = Object.assign((text, type) => send(text, type), {
+          info: (text) => send(text, 'info'),
+          success: (text) => send(text, 'success'),
+          warning: (text) => send(text, 'warning'),
+          error: (text) => send(text, 'error')
+        });
+      }
+      ctx.getVar = (name) => {
+        const target = String(name == null ? '' : name).trim().toLowerCase();
+        const variables = (ctx.statusBar && ctx.statusBar.variables) || [];
+        const found = variables.find((item) => String(item.name).trim().toLowerCase() === target);
+        return found ? found.value : undefined;
+      };
+      ctx.on = (name, fn) => addListener(name, fn);
+      ctx.onAction = (name, fn) => addListener('action:' + String(name || '').trim(), fn);
       ctx.onCleanup = (fn) => {
         if (typeof fn === 'function' && !cleaning) cleanupFns.push(fn);
       };
       try {
         const result = await (new Function('ctx', 'return (async () => {' + data.script + '})()'))(ctx);
         if (typeof result === 'function') cleanupFns.push(result);
-        parent.postMessage({ token: TOKEN, type: 'done', hasCleanup: cleanupFns.length > 0 }, '*');
+        parent.postMessage({ token: TOKEN, type: 'done', hasCleanup: cleanupFns.length > 0 || listeners.size > 0 }, '*');
       } catch (error) {
         await cleanup();
         parent.postMessage({ token: TOKEN, type: 'error', message: String(error?.message || error) }, '*');
@@ -406,6 +563,13 @@ function runCustomScriptInSandbox(script, context) {
       frame.contentWindow?.postMessage({ token, type: 'cleanup' }, '*');
       return cleanupPromise;
     };
+    // Host events (status changes, template button actions) for listeners the
+    // script registered with on() / onAction().
+    dispose.emit = (event, payload) => {
+      if (disposed || cleanupPromise || !completed) return;
+      const data = event === 'status' ? snapshotStatusBarForScript(payload) : payload;
+      frame.contentWindow?.postMessage({ token, type: 'event', event, payload: cloneableOrNull(data) }, '*');
+    };
     const onMessage = (event) => {
       // The frame has an opaque origin, so identity is established by the
       // source window, not by event.origin.
@@ -413,7 +577,7 @@ function runCustomScriptInSandbox(script, context) {
       const data = event.data;
       if (!data || data.token !== token) return;
       if (data.type === 'call') {
-        respondToSandboxCall(frame, token, data, context);
+        respondToSandboxCall(frame, token, data, context, callable);
         return;
       }
       if (data.type === 'error') {
@@ -447,19 +611,58 @@ function runCustomScriptInSandbox(script, context) {
   });
 }
 
-async function respondToSandboxCall(frame, token, data, context) {
+async function respondToSandboxCall(frame, token, data, context, callable = SANDBOX_CALLABLE_API) {
   const reply = { token, type: 'call-result', callId: data.callId };
-  const handler = SANDBOX_CALLABLE_API.includes(data.name) ? context[data.name] : null;
-  if (typeof handler !== 'function') {
-    frame.contentWindow?.postMessage({ ...reply, error: `API 不可用: ${String(data.name)}` }, '*');
+  const name = String(data.name);
+  const args = Array.isArray(data.args) ? data.args : [];
+  if (!SANDBOX_CALLABLE_API.includes(name) || !callable.includes(name)) {
+    frame.contentWindow?.postMessage({ ...reply, error: `API 不可用: ${name}` }, '*');
     return;
   }
   try {
-    const value = await handler(...(Array.isArray(data.args) ? data.args : []));
+    let value;
+    if (name === 'notify') {
+      value = await callScriptNotify(context.notify, args[0], args[1]);
+    } else if (name === 'query') {
+      value = describeScriptElement(await context.query(String(args[0] ?? '')));
+    } else if (name === 'queryAll') {
+      const nodes = await context.queryAll(String(args[0] ?? ''));
+      value = [];
+      for (const node of Array.isArray(nodes) ? nodes.slice(0, SANDBOX_QUERY_RESULT_LIMIT) : []) {
+        value.push(describeScriptElement(node));
+      }
+    } else {
+      value = await context[name](...args);
+    }
     frame.contentWindow?.postMessage({ ...reply, value: cloneableOrNull(value) }, '*');
   } catch (error) {
     frame.contentWindow?.postMessage({ ...reply, error: String(error?.message || error) }, '*');
   }
+}
+
+// notify(text, type) works with either the app's notify object or a plain
+// callback (tests and embedders).
+function callScriptNotify(notify, text, type) {
+  const message = String(text ?? '');
+  if (typeof notify === 'function') return notify(message, type);
+  const level = ['success', 'warning', 'error', 'info'].includes(type) ? type : 'info';
+  const method = notify?.[level] || notify?.info || notify?.show;
+  return typeof method === 'function' ? method.call(notify, message) : undefined;
+}
+
+// DOM nodes never cross into the sandbox; scripts get a read-only summary.
+function describeScriptElement(node) {
+  if (!node || typeof node !== 'object' || !node.tagName) return null;
+  const dataset = {};
+  for (const [key, value] of Object.entries(node.dataset || {})) {
+    dataset[key] = String(value).slice(0, 200);
+  }
+  return {
+    tag: String(node.tagName).toLowerCase(),
+    text: String(node.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 500),
+    className: typeof node.className === 'string' ? node.className : '',
+    dataset
+  };
 }
 
 function cloneableOrNull(value) {

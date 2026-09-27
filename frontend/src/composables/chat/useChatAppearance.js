@@ -28,6 +28,10 @@ export function useChatAppearance({
   openSettings,
   closeSettings,
   scrollToBottom,
+  getStatusBar,
+  updateStatusVariables,
+  insertText,
+  sendMessage,
   setActiveConversationIfChanged,
   showActionNotice,
   showError
@@ -250,6 +254,7 @@ export function useChatAppearance({
         messageScroller: messageScroller.value,
         composer: composerWrap.value?.textareaRef || composerTextarea.value,
         messages: messages.value,
+        statusBar: typeof getStatusBar === 'function' ? getStatusBar() : null,
         notify: scopedAppearanceNotify(applyToken, conversationId),
         openSidebar: scopedAppearanceAction(applyToken, conversationId, openSidebar),
         closeSidebar: scopedAppearanceAction(applyToken, conversationId, closeSidebar),
@@ -260,7 +265,10 @@ export function useChatAppearance({
           chatShellRef.value?.style.setProperty(String(name || '').trim(), String(value || ''));
         }),
         requestPaint: () => waitForCurrentAppearanceFrame(applyToken, conversationId),
-        wait: (duration) => waitForCurrentAppearanceMs(duration, applyToken, conversationId)
+        wait: (duration) => waitForCurrentAppearanceMs(duration, applyToken, conversationId),
+        updateStatusVariables: scopedAppearanceAction(applyToken, conversationId, updateStatusVariables),
+        insertText: scopedAppearanceAction(applyToken, conversationId, insertText),
+        sendMessage: scopedAppearanceAction(applyToken, conversationId, sendMessage)
       });
       if (!isCurrentAppearanceApply(applyToken, conversationId)) {
         if (typeof cleanup === 'function') {
@@ -274,6 +282,15 @@ export function useChatAppearance({
         return;
       }
       notify.warning(formatCustomScriptErrorMessage(err));
+    }
+  }
+
+  // Forwards host events (status changes, template "script" buttons) to the
+  // running custom script, if it registered listeners.
+  function dispatchCustomScriptEvent(event, payload) {
+    const cleanup = customAppearanceCleanup.value;
+    if (!appearanceDisposed && typeof cleanup?.emit === 'function') {
+      cleanup.emit(event, payload);
     }
   }
 
@@ -603,6 +620,7 @@ export function useChatAppearance({
     setCastTrackingEnabled,
     updateCastTracking,
     applyConversationAppearance,
+    dispatchCustomScriptEvent,
     cleanupConversationAppearance,
     disposeConversationAppearance,
     handleAppearanceBackgroundUpload,

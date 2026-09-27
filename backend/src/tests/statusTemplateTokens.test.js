@@ -6,19 +6,34 @@ import { normalizeStatusBarBlueprint } from '../modules/advancedSettings.js';
 
 const advancedSettingsSource = readFileSync(new URL('../modules/advancedSettings.js', import.meta.url), 'utf8');
 
-test('status template token helper keeps the complete suffix after the first dot', () => {
+test('status template token helper splits a trailing property but keeps dotted names whole', () => {
   assert.deepEqual(parseStatusTemplateToken('HP.max'), {
     rawName: 'HP',
     rawProperty: 'max'
   });
+  // Only a known property is split off, so per-character names survive.
+  assert.deepEqual(parseStatusTemplateToken('林晚.好感'), {
+    rawName: '林晚.好感',
+    rawProperty: ''
+  });
+  assert.deepEqual(parseStatusTemplateToken('林晚.好感.percent'), {
+    rawName: '林晚.好感',
+    rawProperty: 'percent'
+  });
   assert.deepEqual(parseStatusTemplateToken('Mood.text.value'), {
-    rawName: 'Mood',
-    rawProperty: 'text.value'
+    rawName: 'Mood.text',
+    rawProperty: 'value'
   });
   assert.deepEqual(parseStatusTemplateToken('Focus'), {
     rawName: 'Focus',
     rawProperty: ''
   });
+  assert.deepEqual(parseStatusTemplateToken('getvar::HP'), {
+    rawName: 'HP',
+    rawProperty: ''
+  });
+  // Built-ins are never variables.
+  assert.deepEqual(parseStatusTemplateToken('user'), { rawName: '', rawProperty: '' });
 });
 
 test('advanced settings status blueprint placeholders use the shared token parser', () => {
@@ -35,7 +50,7 @@ test('advanced settings status blueprint placeholders use the shared token parse
     })),
     [
       { name: 'HP', value: 0, max: 100 },
-      { name: 'Mood', value: '', max: undefined },
+      { name: 'Mood.text', value: '', max: undefined },
       { name: 'Focus', value: 0, max: 100 }
     ]
   );

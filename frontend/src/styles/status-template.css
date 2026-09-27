@@ -1,0 +1,379 @@
+/*
+ * Built-in classes for custom status-bar templates (documented in
+ * shared/statusTemplateSyntax.js). Every selector is wrapped in :where() so it
+ * has zero specificity: a template's own <style> rules always win.
+ * Colours come from the status bar root: --sb-accent, --sb-surface,
+ * --sb-text, --sb-muted and --sb-line.
+ */
+
+:where(.status-bar-custom) :where(button) {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  min-height: 30px;
+  max-width: 100%;
+  padding: 0 11px;
+  border: 1px solid color-mix(in srgb, var(--sb-accent) 28%, transparent);
+  border-radius: 8px;
+  color: var(--sb-accent);
+  background: color-mix(in srgb, var(--sb-accent) 9%, var(--sb-surface));
+  font: inherit;
+  font-size: 0.78rem;
+  font-weight: 750;
+  line-height: 1.2;
+  cursor: pointer;
+  transition: background var(--duration-fast, 140ms) ease, border-color var(--duration-fast, 140ms) ease, transform var(--duration-fast, 140ms) ease;
+}
+
+:where(.status-bar-custom) :where(button:hover) {
+  border-color: color-mix(in srgb, var(--sb-accent) 48%, transparent);
+  background: color-mix(in srgb, var(--sb-accent) 16%, var(--sb-surface));
+}
+
+:where(.status-bar-custom) :where(button:active) {
+  transform: translateY(1px);
+}
+
+:where(.status-bar-custom) :where(button:focus-visible) {
+  outline: 2px solid color-mix(in srgb, var(--sb-accent) 55%, transparent);
+  outline-offset: 2px;
+}
+
+:where(.status-bar-custom) :where(.sb-hidden) {
+  display: none !important;
+}
+
+/* -- Containers -- */
+:where(.status-bar-custom) :where(.sb-card) {
+  display: grid;
+  gap: 10px;
+  padding: 14px 16px;
+  border: 1px solid color-mix(in srgb, var(--sb-accent) 18%, var(--sb-line));
+  border-radius: 14px;
+  background:
+    radial-gradient(circle at 100% 0%, color-mix(in srgb, var(--sb-accent) 9%, transparent), transparent 42%),
+    color-mix(in srgb, var(--sb-surface) 92%, transparent);
+  box-shadow: 0 8px 24px color-mix(in srgb, var(--sb-text) 7%, transparent);
+}
+
+:where(.status-bar-custom) :where(.sb-title) {
+  margin: 0;
+  color: var(--sb-text);
+  font-size: 0.95rem;
+  font-weight: 800;
+  line-height: 1.35;
+}
+
+:where(.status-bar-custom) :where(.sb-subtitle) {
+  margin: -6px 0 0;
+  color: var(--sb-muted);
+  font-size: 0.74rem;
+  font-weight: 600;
+}
+
+:where(.status-bar-custom) :where(.sb-grid) {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 150px), 1fr));
+  gap: 8px;
+}
+
+:where(.status-bar-custom) :where(.sb-cols) {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px 14px;
+}
+
+:where(.status-bar-custom) :where(.sb-stack) {
+  display: grid;
+  gap: 8px;
+}
+
+/* -- Label / value rows -- */
+:where(.status-bar-custom) :where(.sb-row) {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+  padding: 3px 0;
+}
+
+:where(.status-bar-custom) :where(.sb-label) {
+  flex: 0 0 auto;
+  color: var(--sb-muted);
+  font-size: 0.76rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+:where(.status-bar-custom) :where(.sb-val) {
+  min-width: 0;
+  color: var(--sb-text);
+  font-size: 0.84rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  overflow-wrap: anywhere;
+}
+
+/* -- Meters -- */
+:where(.status-bar-custom) :where(.sb-track) {
+  --p: 0;
+  --c: var(--sb-accent);
+  height: 7px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--sb-line) 55%, transparent);
+}
+
+:where(.status-bar-custom) :where(.sb-fill) {
+  width: calc(var(--p, 0) * 1%);
+  max-width: 100%;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--c, var(--sb-accent));
+  transition: width 0.5s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+:where(.status-bar-custom) :where(.sb-ring) {
+  --p: 0;
+  --c: var(--sb-accent);
+  display: inline-grid;
+  place-items: center;
+  width: 64px;
+  aspect-ratio: 1;
+  border-radius: 50%;
+  background:
+    radial-gradient(closest-side, var(--sb-surface) 74%, transparent 75% 100%),
+    conic-gradient(var(--c) calc(var(--p) * 1%), color-mix(in srgb, var(--sb-line) 70%, transparent) 0);
+  color: var(--sb-text);
+  font-size: 0.8rem;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+
+:where(.status-bar-custom) :where(.sb-stat) {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, var(--sb-line) 70%, transparent);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--sb-surface) 70%, transparent);
+}
+
+:where(.status-bar-custom) :where(.sb-stat strong, .sb-stat b) {
+  color: var(--sb-text);
+  font-size: 1.2rem;
+  font-weight: 850;
+  line-height: 1.15;
+  font-variant-numeric: tabular-nums;
+}
+
+:where(.status-bar-custom) :where(.sb-stat-label) {
+  color: var(--sb-muted);
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
+/* -- Chips, badges, tabs -- */
+:where(.status-bar-custom) :where(.sb-chips) {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+:where(.status-bar-custom) :where(.sb-chip) {
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  padding: 2px 9px;
+  border: 1px solid color-mix(in srgb, var(--sb-accent) 22%, transparent);
+  border-radius: 999px;
+  color: color-mix(in srgb, var(--sb-accent) 78%, var(--sb-text));
+  background: color-mix(in srgb, var(--sb-accent) 8%, transparent);
+  font-size: 0.74rem;
+  font-weight: 700;
+  line-height: 1.55;
+}
+
+:where(.status-bar-custom) :where(.sb-badge) {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 7px;
+  border-radius: 6px;
+  color: #fff;
+  background: var(--sb-accent);
+  font-size: 0.68rem;
+  font-weight: 800;
+  line-height: 1.6;
+}
+
+:where(.status-bar-custom) :where(.sb-tabs) {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 3px;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--sb-line) 32%, transparent);
+}
+
+:where(.status-bar-custom) :where(.sb-tab) {
+  flex: 1 1 auto;
+  min-height: 28px;
+  border-color: transparent;
+  color: var(--sb-muted);
+  background: transparent;
+}
+
+:where(.status-bar-custom) :where(.sb-tab.sb-active, .sb-tab[aria-selected="true"]) {
+  border-color: color-mix(in srgb, var(--sb-accent) 26%, transparent);
+  color: var(--sb-accent);
+  background: var(--sb-surface);
+  box-shadow: 0 2px 8px color-mix(in srgb, var(--sb-text) 8%, transparent);
+}
+
+:where(.status-bar-custom) :where(.sb-panel) {
+  display: grid;
+  gap: 8px;
+}
+
+:where(.status-bar-custom) :where(.sb-actions) {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+:where(.status-bar-custom) :where(.sb-actions button) {
+  margin: 0;
+}
+
+/* -- Text helpers -- */
+:where(.status-bar-custom) :where(.sb-note) {
+  margin: 0;
+  padding: 7px 10px;
+  border-radius: 9px;
+  color: var(--sb-muted);
+  background: color-mix(in srgb, var(--sb-line) 26%, transparent);
+  font-size: 0.78rem;
+  line-height: 1.5;
+}
+
+:where(.status-bar-custom) :where(.sb-divider) {
+  height: 1px;
+  margin: 4px 0;
+  border: 0;
+  background: color-mix(in srgb, var(--sb-line) 80%, transparent);
+}
+
+:where(.status-bar-custom) :where(.sb-muted) {
+  color: var(--sb-muted);
+}
+
+:where(.status-bar-custom) :where(.sb-accent) {
+  color: var(--sb-accent);
+}
+
+:where(.status-bar-custom) :where(.sb-good) {
+  --c: var(--success, #2f6d5a);
+  color: var(--success, #2f6d5a);
+}
+
+:where(.status-bar-custom) :where(.sb-warn) {
+  --c: var(--warning, #9a6418);
+  color: var(--warning, #9a6418);
+}
+
+:where(.status-bar-custom) :where(.sb-bad) {
+  --c: var(--danger, #b33d3a);
+  color: var(--danger, #b33d3a);
+}
+
+:where(.status-bar-custom) :where(.sb-note.sb-good) {
+  background: var(--success-soft, #dfeee8);
+}
+
+:where(.status-bar-custom) :where(.sb-note.sb-warn) {
+  background: var(--warning-soft, #f7ecd4);
+}
+
+:where(.status-bar-custom) :where(.sb-note.sb-bad) {
+  background: var(--danger-soft, #f7e4e1);
+}
+
+/* -- Themes -- */
+:where(.status-bar-custom) :where(.sb-theme-glass) {
+  border: 1px solid color-mix(in srgb, #ffffff 44%, var(--sb-line));
+  border-radius: 16px;
+  background:
+    linear-gradient(135deg,
+      color-mix(in srgb, var(--sb-surface) 60%, transparent),
+      color-mix(in srgb, var(--sb-surface) 30%, transparent));
+  box-shadow: 0 12px 32px color-mix(in srgb, var(--sb-text) 10%, transparent), inset 0 1px 0 color-mix(in srgb, #ffffff 60%, transparent);
+  backdrop-filter: blur(20px) saturate(1.3);
+}
+
+:where(.status-bar-custom) :where(.sb-theme-parchment) {
+  --sb-accent: #8a5a2b;
+  --sb-surface: #fbf3e2;
+  --sb-text: #3b2a1a;
+  --sb-muted: #7a6147;
+  --sb-line: rgba(122, 84, 44, 0.26);
+  color: #3b2a1a;
+  border: 1px solid rgba(122, 84, 44, 0.3);
+  border-radius: 12px;
+  background:
+    radial-gradient(circle at 12% 18%, rgba(255, 255, 255, 0.55), transparent 42%),
+    linear-gradient(160deg, #fbf1dc, #f2e1bd);
+  box-shadow: inset 0 0 28px rgba(146, 101, 50, 0.12);
+  font-family: "Noto Serif SC", "Songti SC", "SimSun", serif;
+}
+
+:where(.status-bar-custom) :where(.sb-theme-terminal) {
+  --sb-accent: #3ddc84;
+  --sb-surface: #0f1512;
+  --sb-text: #c8f7d8;
+  --sb-muted: #7fbf95;
+  --sb-line: rgba(61, 220, 132, 0.22);
+  color: #c8f7d8;
+  border: 1px solid rgba(61, 220, 132, 0.3);
+  border-radius: 10px;
+  background: linear-gradient(180deg, #0d1310, #111a15);
+  font-family: ui-monospace, "Cascadia Code", "Fira Code", Consolas, monospace;
+}
+
+:where(.status-bar-custom) :where(.sb-theme-neon) {
+  --sb-accent: #d946ef;
+  --sb-surface: #150f24;
+  --sb-text: #f5e9ff;
+  --sb-muted: #c4b5fd;
+  --sb-line: rgba(217, 70, 239, 0.3);
+  color: #f5e9ff;
+  border: 1px solid rgba(217, 70, 239, 0.4);
+  border-radius: 14px;
+  background:
+    radial-gradient(circle at 0% 0%, rgba(34, 211, 238, 0.18), transparent 45%),
+    linear-gradient(135deg, #150f24, #1f1238);
+  box-shadow: 0 0 22px rgba(217, 70, 239, 0.25), inset 0 0 18px rgba(34, 211, 238, 0.08);
+}
+
+:where(.status-bar-custom) :where(.sb-theme-glass, .sb-theme-parchment, .sb-theme-terminal, .sb-theme-neon):not(:where(.sb-card)) {
+  padding: 12px 14px;
+}
+
+@media (max-width: 480px) {
+  :where(.status-bar-custom) :where(.sb-cols) {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  :where(.status-bar-custom) :where(.sb-card) {
+    padding: 12px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :where(.status-bar-custom) :where(button, .sb-fill) {
+    transition: none;
+  }
+}

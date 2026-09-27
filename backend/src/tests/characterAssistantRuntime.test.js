@@ -595,6 +595,113 @@ test('fine-grained character tools preserve unrelated agent settings and apply e
   }
 });
 
+test('character plan phase withholds write tools and returns a plan without a character', async () => {
+  const originalFetch = globalThis.fetch;
+  const events = [];
+  let requestBody = null;
+  try {
+    globalThis.fetch = async (_url, request = {}) => {
+      requestBody = JSON.parse(request.body);
+      return jsonResponse(toolMessage([
+        toolCall('plan-1', 'submit_character_plan', {
+          steps: [
+            { section: 'persona', intent: '重写说话方式', detail: '保留口癖' },
+            { section: 'regexRules', intent: '越界步骤应被丢弃' }
+          ],
+          risks: ['会覆盖现有人设']
+        })
+      ]));
+    };
+
+    const result = await streamCharacterDraft(providerSettings, {
+      requirement: '改写人设',
+      current: { name: '澄灯', persona: '旧人设' },
+      options: { profile: false, background: false, worldview: false, persona: true, openingMessage: false, tags: false, regexRules: false, renderPlugins: false, worldBook: false, advancedSettings: false, modSuggestions: false },
+      planMode: true,
+      emit: (event, data) => events.push({ event, data })
+    });
+
+    const toolNames = requestBody.tools.map((tool) => tool.function.name);
+    assert.deepEqual(toolNames.sort(), ['report_character_progress', 'submit_character_plan']);
+    assert.equal(result.phase, 'plan');
+    assert.equal(Object.hasOwn(result, 'character'), false);
+    assert.deepEqual(result.plan.steps.map((step) => step.section), ['persona']);
+    assert.deepEqual(result.plan.risks, ['会覆盖现有人设']);
+    assert.ok(events.some(({ event, data }) => event === 'plan' && data.steps.length === 1));
+    assert.equal(events.some(({ event }) => event === 'checkpoint'), false);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('character execution follows the approved plan ledger and refuses to finish early', async () => {
+  const originalFetch = globalThis.fetch;
+  const requests = [];
+  let round = 0;
+  try {
+    globalThis.fetch = async (_url, request = {}) => {
+      requests.push(JSON.parse(request.body));
+      round += 1;
+      const calls = round === 1
+        ? [toolCall('finish-early', 'finish_character_draft', { summary: '提前结束', reviewedSections: [] })]
+        : round === 2
+          ? [toolCall('story-1', 'update_character_story', { persona: '新人设' })]
+          : [toolCall('finish-2', 'finish_character_draft', { summary: '人设已重写', reviewedSections: ['persona'] })];
+      return jsonResponse(toolMessage(calls));
+    };
+
+    const result = await completeCharacterDraft(providerSettings, {
+      requirement: '改写人设',
+      current: { name: '澄灯', persona: '旧人设' },
+      options: { persona: true, openingMessage: true },
+      planMode: true,
+      plan: {
+        approved: true,
+        extraRequirement: '保留口癖',
+        steps: [
+          { id: 'step-1', section: 'persona', intent: '重写说话方式' },
+          { id: 'step-2', section: 'openingMessage', intent: '改为夜场', selected: false }
+        ]
+      }
+    });
+
+    const systemPrompt = requests[0].messages[0].content;
+    assert.match(systemPrompt, /计划步骤 1（persona）：重写说话方式/);
+    assert.doesNotMatch(systemPrompt, /改为夜场/);
+    assert.equal(JSON.parse(requests[0].messages[1].content).planExtraRequirement, '保留口癖');
+    assert.ok(requests[0].tools.some((tool) => tool.function.name === 'update_character_story'));
+
+    assert.equal(result.toolCalls[0].result.error, 'PLAN_STEPS_REMAIN');
+    assert.equal(result.toolCalls[0].result.workflow.plan.nextStep.section, 'persona');
+    assert.equal(result.toolCalls[1].result.workflow.plan.completed, 1);
+    assert.equal(result.character.persona, '新人设');
+    assert.equal(result.planProgress.completed, 1);
+    assert.deepEqual(result.planProgress.remaining, []);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('character assistant without plan mode sends no plan tool or ledger', async () => {
+  const originalFetch = globalThis.fetch;
+  let requestBody = null;
+  try {
+    globalThis.fetch = async (_url, request = {}) => {
+      requestBody = JSON.parse(request.body);
+      return jsonResponse(toolMessage([
+        toolCall('finish-plain', 'finish_character_draft', { summary: '检查完毕', reviewedSections: [] })
+      ]));
+    };
+    const result = await completeCharacterDraft(providerSettings, { requirement: '检查', current: { name: '澄灯' } });
+    assert.equal(requestBody.tools.some((tool) => tool.function.name === 'submit_character_plan'), false);
+    assert.equal(Object.hasOwn(result.toolCalls[0].result.workflow, 'plan'), false);
+    assert.equal(result.planProgress, null);
+    assert.equal(result.phase, undefined);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 function toolMessage(toolCalls) {
   return {
     choices: [{ message: { role: 'assistant', content: null, tool_calls: toolCalls } }]
