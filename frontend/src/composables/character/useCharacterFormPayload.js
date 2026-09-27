@@ -51,15 +51,16 @@ export function defaultRenderPlugin() {
 
 export function createDefaultAccessorySkills() {
   return {
-    sceneAgent: { enabled: false, modelOverride: '' },
-    worldDirector: { enabled: false, modelOverride: '' },
-    gameHud: { enabled: false, modelOverride: '' },
-    encounterMode: { enabled: false, modelOverride: '' },
-    rewardMode: { enabled: false, modelOverride: '' },
-    statusBarAgent: { enabled: 'auto', modelOverride: '' },
-    economyAgent: { enabled: false, modelOverride: '' },
-    talentPrompt: { enabled: false, modelOverride: '' },
-    cgScene: { enabled: false, modelOverride: '' }
+    sceneAgent: createDefaultAccessorySkill(false),
+    worldDirector: createDefaultAccessorySkill(false),
+    gameHud: createDefaultAccessorySkill(false),
+    encounterMode: createDefaultAccessorySkill(false),
+    rewardMode: createDefaultAccessorySkill(false),
+    statusBarAgent: createDefaultAccessorySkill('auto'),
+    economyAgent: createDefaultAccessorySkill(false),
+    talentPrompt: createDefaultAccessorySkill(false),
+    cgScene: createDefaultAccessorySkill(false),
+    memoryAgent: createDefaultAccessorySkill('auto')
   };
 }
 
@@ -71,7 +72,9 @@ export function normalizeAccessorySkillsForPayload(input = {}) {
     const source = input?.[key] || {};
     normalized[key] = {
       enabled: normalizeSkillEnabled(source.enabled, defaults[key].enabled),
-      modelOverride: String(source.modelOverride || source.model_override || '').trim()
+      modelOverride: String(source.modelOverride || source.model_override || '').trim().slice(0, 100),
+      providerProfileId: String(source.providerProfileId || source.provider_profile_id || '').trim().slice(0, 160),
+      tools: normalizeAccessorySkillTools(source.tools)
     };
   }
   return normalized;
@@ -101,7 +104,9 @@ export function hasNonDefaultAccessorySkills(skills = {}) {
     const fallback = defaults[key] || {};
     if (
       normalizeSkillEnabled(current.enabled, fallback.enabled) !== fallback.enabled ||
-      String(current.modelOverride || current.model_override || '').trim()
+      String(current.modelOverride || current.model_override || '').trim() ||
+      String(current.providerProfileId || current.provider_profile_id || '').trim() ||
+      hasAccessorySkillToolOverrides(current.tools)
     ) {
       return true;
     }
@@ -114,6 +119,38 @@ export function normalizeSkillEnabled(value, fallback = false) {
   if (value === true || value === 'true' || value === 'on') return true;
   if (value === false || value === 'false' || value === 'off') return false;
   return fallback;
+}
+
+function createDefaultAccessorySkill(enabled) {
+  return {
+    enabled,
+    modelOverride: '',
+    providerProfileId: '',
+    tools: {}
+  };
+}
+
+function normalizeAccessorySkillTools(value) {
+  const source = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+  const tools = {};
+  let count = 0;
+  for (const key in source) {
+    if (!Object.prototype.hasOwnProperty.call(source, key)) continue;
+    const name = String(key || '').trim().slice(0, 40);
+    if (!/^[a-z][a-z0-9_.]*$/.test(name)) continue;
+    tools[name] = source[key] === true || source[key] === 'true' || source[key] === 'on' || source[key] === 1;
+    count += 1;
+    if (count >= 24) break;
+  }
+  return tools;
+}
+
+function hasAccessorySkillToolOverrides(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  for (const key in value) {
+    if (Object.prototype.hasOwnProperty.call(value, key)) return true;
+  }
+  return false;
 }
 
 function normalizeBoolean(value, fallback = false) {

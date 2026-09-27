@@ -372,6 +372,25 @@
   align-content: start;
 }
 
+.character-studio-full-form {
+  display: grid;
+  gap: var(--space-4);
+  min-width: 0;
+}
+
+.character-studio-full-section {
+  min-width: 0;
+  scroll-margin-top: var(--space-4);
+}
+
+.character-studio-full-section > .form-panel,
+.character-studio-full-section > section {
+  width: 100%;
+  min-width: 0;
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-xs);
+}
+
 .character-studio-stage > .form-panel {
   width: 100%;
   min-width: 0;

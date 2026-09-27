@@ -47,6 +47,7 @@ test('router module keeps the legacy hash URL shape with named routes', () => {
   assert.match(routerSource, /path: '\/login',\s*name: 'login'/);
   assert.match(routerSource, /path: '\/register',\s*name: 'register'/);
   assert.match(routerSource, /path: '\/settings',\s*name: 'settings'/);
+  assert.match(routerSource, /path: '\/admin',\s*name: 'admin'/);
   assert.match(routerSource, /path: '\/extensions',\s*name: 'extensions'/);
   assert.match(routerSource, /path: '\/characters\/new',\s*name: 'characterNew'/);
   assert.match(routerSource, /path: '\/characters\/:id\/edit',\s*name: 'characterEdit'/);

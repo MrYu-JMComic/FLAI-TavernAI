@@ -12,6 +12,12 @@ export function fetchTowns() {
   return apiRequest('/api/towns');
 }
 
+export function deleteTown(townId) {
+  return apiRequest(townPath(townId), {
+    method: 'DELETE'
+  });
+}
+
 export function fetchTownSnapshot(townId, { eventLimit = 50 } = {}) {
   const params = new URLSearchParams();
   if (Number.isFinite(Number(eventLimit)) && Number(eventLimit) > 0) {
@@ -41,8 +47,22 @@ export function advanceTownWithAi(townId) {
   });
 }
 
+export function stepTownSimulation(townId, steps = 1) {
+  return apiRequest(townPath(townId, '/step'), { method: 'POST', body: JSON.stringify({ steps }) });
+}
+
+export function rebuildTownMap(townId, architecture) {
+  return apiRequest(townPath(townId, '/map/rebuild'), { method: 'POST', body: JSON.stringify({ architecture }) });
+}
+
 export function fetchTownResidents(townId) {
   return apiRequest(townPath(townId, '/residents'));
+}
+
+export function deleteTownResident(townId, residentId) {
+  return apiRequest(residentPath(townId, residentId), {
+    method: 'DELETE'
+  });
 }
 
 export function fetchTownResidentCognition(townId, residentId) {

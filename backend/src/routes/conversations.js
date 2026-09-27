@@ -37,6 +37,9 @@ import {
   validate
 } from '../validations/schemas.js';
 import { listConversationRows } from '../repositories/conversationRepository.js';
+import { writeConversationCheckpoint } from '../repositories/conversationSnapshotRepository.js';
+import { assertConversationIdle, invalidateConversationTimeline } from '../services/conversationTimeline.js';
+import { getConversationMutationContext } from '../services/conversationMutationContext.js';
 
 export { createSavesRouter } from './conversationSaves.js';
 
@@ -54,7 +57,7 @@ export function createConversationsRouter(ctx) {
       ? getConversationUsageSummaries(db, request.auth.user.id, page.rows.map((row) => row.id))
       : getConversationUsageSummaries(db, request.auth.user.id);
     const items = page.rows.map((row) => ({
-        ...toConversation(row, db),
+        ...toConversation(row, db, request.auth.user.id),
         usage: usageSummaries.get(row.id) || emptyUsageSummary()
       }));
     if (query.pagination === 'cursor') {
@@ -112,6 +115,8 @@ export function createConversationsRouter(ctx) {
         });
       }
 
+      db.prepare("UPDATE conversations SET state_status = 'ready' WHERE id = ?").run(conversationId);
+      writeConversationCheckpoint(db, request.auth.user.id, conversationId);
       touchCharacter(db, request.auth.user.id, character.id);
       return getConversation(request.auth.user.id, conversationId);
     });
@@ -126,6 +131,18 @@ export function createConversationsRouter(ctx) {
     response.json({ ok: true, deletedId: request.params.id });
   });
 
+  router.use('/:id', requireAuth, (request, response, next) => {
+    if (!['POST', 'PUT', 'PATCH', 'DELETE'].includes(request.method)
+      || /^\/(?:messages(?:\/|$)|saves(?:\/|$)|processing(?:\/|$)|context\/(?:preview|budget)$)/.test(request.path)) return next();
+    const conversation = db.prepare('SELECT id FROM conversations WHERE id = ? AND user_id = ?').get(request.params.id, request.auth.user.id);
+    if (!conversation) return next();
+    try {
+      assertConversationIdle(db, request.auth.user.id, request.params.id, { allowJobId: getConversationMutationContext()?.jobId });
+      next();
+    } catch (error) {
+      response.status(error.status || 409).json({ error: error.message, code: error.code, jobId: error.jobId || '' });
+    }
+  });
   router.use('/:id', createConversationGenerationRouter(ctx));
   router.use('/:id', createConversationMessagesRouter(ctx));
   router.use('/:id', createConversationSettingsRouter(ctx));
@@ -139,6 +156,9 @@ export function createConversationsRouter(ctx) {
   // ── Internal helpers ──
 
   function deleteConversation(userId, conversationId) {
+    if (db.prepare('SELECT id FROM conversations WHERE user_id = ? AND id = ?').get(userId, conversationId)) {
+      invalidateConversationTimeline(db, userId, conversationId);
+    }
     const result = db
       .prepare('DELETE FROM conversations WHERE user_id = ? AND id = ?')
       .run(userId, conversationId);
@@ -156,6 +176,7 @@ export function createConversationsRouter(ctx) {
       return [];
     }
     const existingPlaceholders = existing.map(() => '?').join(', ');
+    for (const id of existing) invalidateConversationTimeline(db, userId, id);
     db.prepare(`DELETE FROM conversations WHERE user_id = ? AND id IN (${existingPlaceholders})`).run(userId, ...existing);
     return existing;
   }

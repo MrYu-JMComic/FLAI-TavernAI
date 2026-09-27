@@ -2,7 +2,8 @@ import 'dotenv/config';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { createApp } from './app.js';
-import { appConfig } from './config.js';
+import { appConfig, withAppConfigDefaults } from './config.js';
+import { performDatabaseMaintenance } from './db/runtime.js';
 import { startTownSimulationEngine } from './modules/townEngine.js';
 import { cleanupExpiredSessions } from './security.js';
 import { migrateLegacyAvatarUploads } from './services/avatars.js';
@@ -11,9 +12,16 @@ import { sanitizeDiagnosticText } from './services/diagnosticRedaction.js';
 import { logger } from './services/logger.js';
 import { createDefaultJobHandlers } from './services/jobs/jobHandlers.js';
 import { startJobWorker } from './services/jobs/jobWorker.js';
+import { recoverInterruptedGenerations } from './services/conversationTimeline.js';
+import { sweepConversationDerivedStorage } from './services/conversationRetention.js';
+import { recoverInterruptedPromptTraces } from './services/promptTrace.js';
+
+// Daily backups copy the main database file, so the WAL is folded back into
+// it regularly to keep that copy small and the checkpoint cheap.
+const DATABASE_MAINTENANCE_INTERVAL_MS = 15 * 60 * 1000;
 
 export async function startServer(context = {}) {
-  const config = context.config || appConfig;
+  const config = withAppConfigDefaults(context.config || appConfig);
   const applicationLogger = context.logger || logger;
   let database;
   let databasePath;
@@ -36,13 +44,14 @@ export async function startServer(context = {}) {
         })
     });
   }
-  const backupOptions = { database, databasePath };
+  const backupOptions = { database, databasePath, retention: config.backupRetention };
 
   migrateLegacyAvatarUploads(database);
   cleanupExpiredSessions(database);
 
   const app = createApp({
     db: database,
+    databasePath,
     config,
     logger: applicationLogger,
     backupService: {
@@ -56,8 +65,14 @@ export async function startServer(context = {}) {
       message: sanitizeDiagnosticText(error?.message || error)
     })
   });
+  recoverInterruptedGenerations(database);
+  recoverInterruptedPromptTraces(database);
+  const pruned = sweepConversationDerivedStorage(database);
+  if (pruned.recoverySaves || pruned.jobSteps || pruned.checkpoints) {
+    applicationLogger.info('conversation_retention_sweep', pruned);
+  }
   const stopJobWorker = startJobWorker(database, {
-    handlers: context.jobHandlers || createDefaultJobHandlers(database),
+    handlers: context.jobHandlers || createDefaultJobHandlers(database, { config }),
     onError: (error, job) => applicationLogger.error('job_worker_error', {
       jobId: job?.id,
       type: job?.type,
@@ -75,6 +90,14 @@ export async function startServer(context = {}) {
   }, 60 * 60 * 1000);
   sessionCleanupTimer.unref?.();
   const stopDailyBackup = scheduleDailyBackup(backupOptions);
+  const maintenanceTimer = setInterval(() => {
+    try {
+      performDatabaseMaintenance(database);
+    } catch (error) {
+      applicationLogger.warn('database_maintenance_failed', { message: String(error?.message || error) });
+    }
+  }, DATABASE_MAINTENANCE_INTERVAL_MS);
+  maintenanceTimer.unref?.();
 
   const server = await listen(app, config.port);
   applicationLogger.info('server_listening', { url: `http://localhost:${config.port}` });
@@ -85,11 +108,12 @@ export async function startServer(context = {}) {
     closing = closeServer(server).then(() => {
       applicationLogger.info('server_shutdown_started', { signal });
       clearInterval(sessionCleanupTimer);
+      clearInterval(maintenanceTimer);
       stopTownEngine?.();
       return stopJobWorker?.();
     }).then(() => {
       stopDailyBackup?.();
-      database.exec('PRAGMA wal_checkpoint(TRUNCATE)');
+      performDatabaseMaintenance(database);
       database.close();
       applicationLogger.info('server_database_closed');
     });

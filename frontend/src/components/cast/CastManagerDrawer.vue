@@ -5,6 +5,7 @@ import {
   Eraser,
   MoreHorizontal,
   RefreshCw,
+  Settings2,
   Sparkles,
   Users,
   X,
@@ -20,18 +21,25 @@ import CastMemoryTab from './CastMemoryTab.vue';
 import CastOrganizerBar from './CastOrganizerBar.vue';
 import CastProfileTab from './CastProfileTab.vue';
 import CastRoster from './CastRoster.vue';
+import CastAgentSettingsDialog from './CastAgentSettingsDialog.vue';
 
 const props = defineProps({
   open: { type: Boolean, default: false },
   conversationId: { type: String, default: '' },
   trackingEnabled: { type: Boolean, default: false },
   trackingSaving: { type: Boolean, default: false },
+  trackingSettings: { type: Object, default: () => ({}) },
+  agentOperations: { type: Array, default: () => [] },
+  mainProvider: { type: Object, default: null },
+  mainModelOptions: { type: Array, default: () => [] },
+  mainThinkingLevel: { type: String, default: '' },
 });
-const emit = defineEmits(['close', 'update-tracking']);
+const emit = defineEmits(['close', 'update-tracking', 'update-tracking-settings']);
 const notify = useNotify();
 const manager = useCastManager({
   conversationId: computed(() => props.conversationId),
   open: computed(() => props.open),
+  mainThinkingLevel: computed(() => props.mainThinkingLevel),
   notify,
 });
 provide(CAST_MANAGER_CONTEXT, manager);
@@ -41,6 +49,7 @@ const titleRef = ref(null);
 const organizerRef = ref(null);
 const mobileActionsRef = ref(null);
 const mobilePage = ref('roster');
+const agentSettingsOpen = ref(false);
 const confirmation = reactive({
   open: false,
   title: '',
@@ -191,6 +200,21 @@ function updateTracking(event) {
   closeMobileActions();
 }
 
+function openAgentSettings() {
+  closeMobileActions();
+  agentSettingsOpen.value = true;
+}
+
+function closeAgentSettings() {
+  if (props.trackingSaving) return;
+  agentSettingsOpen.value = false;
+}
+
+function saveAgentSettings(payload) {
+  emit('update-tracking-settings', payload);
+  agentSettingsOpen.value = false;
+}
+
 async function runMobileCleanup() {
   closeMobileActions();
   await requestCleanup();
@@ -297,6 +321,9 @@ function handleKeydown(event) {
             <span aria-hidden="true"></span>
             <b>{{ trackingSaving ? '保存中' : '自动同步' }}</b>
           </label>
+          <button type="button" class="cast-icon-button cast-desktop-action" title="NPC 管理 Agent 设置" aria-label="NPC 管理 Agent 设置" :disabled="trackingSaving" @click="openAgentSettings">
+            <Settings2 :size="18" aria-hidden="true" />
+          </button>
           <button type="button" class="cast-button secondary cast-header-command cast-desktop-action" title="全局整理" aria-label="全局整理" :disabled="manager.organizer.running || manager.hasUnsavedChanges.value" @click="openGlobalOrganizer">
             <Sparkles :size="17" aria-hidden="true" />
             <span>全局整理</span>
@@ -322,6 +349,10 @@ function handleKeydown(event) {
                   @change="updateTracking"
                 />
               </label>
+              <button type="button" :disabled="trackingSaving" @click="openAgentSettings">
+                <Settings2 :size="17" aria-hidden="true" />
+                <span>Agent 设置</span>
+              </button>
               <button type="button" :disabled="manager.organizer.running || manager.hasUnsavedChanges.value" @click="openGlobalOrganizer">
                 <Sparkles :size="17" aria-hidden="true" />
                 <span>全局整理</span>
@@ -341,6 +372,18 @@ function handleKeydown(event) {
           </button>
         </div>
       </header>
+
+      <CastAgentSettingsDialog
+        :open="agentSettingsOpen"
+        :settings="trackingSettings"
+        :operations="agentOperations"
+        :main-provider="mainProvider"
+        :main-model-options="mainModelOptions"
+        :main-thinking-level="mainThinkingLevel"
+        :saving="trackingSaving"
+        @close="closeAgentSettings"
+        @save="saveAgentSettings"
+      />
 
       <div class="cast-manager-live" aria-live="polite" aria-atomic="true">
         <p v-if="manager.errors.sync">{{ manager.errors.sync }}</p>

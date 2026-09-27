@@ -2,9 +2,23 @@
   "version": "0.0.1",
   "configurations": [
     {
+      "name": "backend-review",
+      "runtimeExecutable": "cmd",
+      "runtimeArgs": [
+        "/c",
+        "set APP_SECRET=flai-review-secret&& set FLAI_DB_PATH=:memory:&& set FLAI_ENABLE_MOCK_PROVIDER=true&& set NODE_ENV=test&& set LOG_LEVEL=info&& set PORT=3211&& set AUTH_RATE_LIMIT_MAX=10000&& set API_RATE_LIMIT_MAX=10000&& set AUTHENTICATED_API_RATE_LIMIT_MAX=10000&& set CLIENT_ORIGIN=http://localhost:5175,http://127.0.0.1:5175&& node src/server.js"
+      ],
+      "cwd": "backend",
+      "port": 3211,
+      "autoPort": false
+    },
+    {
       "name": "frontend-review",
-      "runtimeExecutable": "npm",
-      "runtimeArgs": ["run", "dev", "--", "--port", "5175"],
+      "runtimeExecutable": "cmd",
+      "runtimeArgs": [
+        "/c",
+        "set VITE_API_PROXY_TARGET=http://127.0.0.1:3211&& npm run dev -- --host 127.0.0.1 --port 5175"
+      ],
       "cwd": "frontend",
       "port": 5175,
       "autoPort": false

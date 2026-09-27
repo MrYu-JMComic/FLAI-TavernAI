@@ -280,11 +280,12 @@ export function useSettingsPresets({ isExtensionsPage, notify } = {}) {
   }
 
   function buildPresetPayload() {
+    const maxTokens = Math.round(Number(presetForm.maxTokens));
     return {
       name: presetForm.name,
       systemPrompt: presetForm.systemPrompt,
       temperature: Number(presetForm.temperature),
-      maxTokens: Math.round(Number(presetForm.maxTokens)),
+      maxTokens: Number.isSafeInteger(maxTokens) ? Math.max(0, maxTokens) : 0,
       topP: Number(presetForm.topP),
       frequencyPenalty: Number(presetForm.frequencyPenalty),
       presencePenalty: Number(presetForm.presencePenalty)
@@ -324,7 +325,7 @@ function defaultPresetForm() {
     name: '',
     systemPrompt: '',
     temperature: 1.0,
-    maxTokens: 4096,
+    maxTokens: 0,
     topP: 1.0,
     frequencyPenalty: 0,
     presencePenalty: 0

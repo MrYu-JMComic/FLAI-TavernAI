@@ -5,6 +5,7 @@ import { buildCastOrganizerMessages } from '../prompts/castOrganizerPrompt.js';
 import { buildCastOrganizerSnapshot } from './castContextBuilder.js';
 import { applyCastChangePlan } from './castPlanService.js';
 import { parseOrRepairCastPlan } from './castPlanGenerator.js';
+import { retryProviderCall } from '../providerRetry.js';
 
 export async function organizeConversationCast(options = {}) {
   const {
@@ -19,6 +20,8 @@ export async function organizeConversationCast(options = {}) {
     idempotencyKey = '',
     signal,
     generate = generateCompletion,
+    quotaManaged = false,
+    allowedOperations = null,
     onProgress = async () => {},
   } = options;
   try {
@@ -33,18 +36,21 @@ export async function organizeConversationCast(options = {}) {
       requirement,
       castSnapshot,
       messages: normalizeEvidenceMessages(messages),
+      allowedOperations,
     });
+    const thinkingLevel = String(options.thinkingLevel || '').trim();
     const generationOptions = {
-      thinkingEnabled: false,
+      thinkingEnabled: thinkingLevel ? thinkingLevel !== 'off' : options.thinkingEnabled !== false,
+      ...(thinkingLevel ? { thinkingLevel } : {}),
       temperature: 0,
       maxTokens: scope === 'member' ? 6_000 : 12_000,
       timeoutMs: 120_000,
       signal,
+      ...(quotaManaged ? {} : { database, userId }),
     };
-    const result = await generate(
-      settings,
-      organizerMessages,
-      generationOptions
+    const result = await retryProviderCall(
+      () => generate(settings, organizerMessages, generationOptions),
+      { signal, retryDelaysMs: options.retryDelaysMs, onRetry: (error, attempt) => onProgress('generating', { retrying: attempt, error: error?.publicMessage || error?.message }) }
     );
     throwIfAborted(signal);
     await onProgress('validating', {});
@@ -58,6 +64,7 @@ export async function organizeConversationCast(options = {}) {
       validationOptions: {
         sourceKind: 'ai_organize',
         scope,
+        allowedOperations,
       },
       onRepair: () => onProgress('validating', { repairAttempted: true }),
     });
@@ -68,7 +75,9 @@ export async function organizeConversationCast(options = {}) {
       sourceKind: 'ai_organize',
       scope,
       scopeMemberId,
+      evidenceMessageIds: normalizeEvidenceMessages(messages).map((message) => message.id),
       idempotencyKey: idempotencyKey || `cast-organize:${newId()}`,
+      allowedOperations,
     });
     const summary = {
       summary: plan.summary,
@@ -80,6 +89,7 @@ export async function organizeConversationCast(options = {}) {
       providerType: result.providerType || settings.providerType || '',
       model: result.model || settings.model || '',
       usage: result.usage || null,
+      thinkingLevel,
     };
     await onProgress('done', summary);
     return summary;

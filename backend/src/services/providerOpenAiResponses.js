@@ -9,7 +9,7 @@ import {
 import { normalizeProviderExtraBody } from './providerExtraBody.js';
 import { providerFetch, readJsonResponse, responseErrorText } from './providerHttp.js';
 import { normalizeProviderModel } from './providerModels.js';
-import { normalizeToolCompletionRounds } from './providerNumbers.js';
+import { normalizeToolCompletionRounds, normalizeProviderNumber } from './providerNumbers.js';
 import { parseSse } from './providerSse.js';
 import { createStreamEmitQueue } from './providerStreamEmit.js';
 import {
@@ -27,17 +27,39 @@ export function usesResponsesApi(settings = {}) {
   return Boolean(settings.supportsReasoning && ['openai', 'xai'].includes(settings.providerType));
 }
 
+function responseExtraBody(settings, options = {}) {
+  const extraBody = normalizeProviderExtraBody(settings.extraBody);
+  if (!options.unlimitedOutput) return extraBody;
+  const sanitized = { ...extraBody };
+  delete sanitized.max_output_tokens;
+  delete sanitized.max_completion_tokens;
+  delete sanitized.max_tokens;
+  delete sanitized.maxOutputTokens;
+  delete sanitized.maxCompletionTokens;
+  delete sanitized.maxTokens;
+  return sanitized;
+}
+
+function responseOutputLimit(options) {
+  if (options.unlimitedOutput) return {};
+  const limit = normalizeProviderNumber(options.maxTokens);
+  return limit != null && limit > 0 ? { max_output_tokens: Math.floor(limit) } : {};
+}
+
 export async function generateOpenAiResponse(settings, messages, options = {}) {
   const response = await providerFetch(settings, '/responses', {
     method: 'POST',
     body: JSON.stringify({
-      ...normalizeProviderExtraBody(settings.extraBody),
+      ...responseExtraBody(settings, options),
       model: resolveProviderModel(settings, options),
       input: convertMessagesForOpenAiResponses(messages),
       reasoning: buildOpenAiReasoning(settings, options),
+      ...responseOutputLimit(options),
       stream: false
     }),
-    signal: options.signal
+    signal: options.signal,
+    requestTrace: options.requestTrace,
+    timeoutMs: options.timeoutMs
   });
 
   const json = await readJsonResponse(response);
@@ -55,15 +77,18 @@ export async function generateOpenAiResponse(settings, messages, options = {}) {
 
 export async function streamOpenAiResponse(settings, messages, emit, signal, options = {}) {
   const response = await providerFetch(settings, '/responses', {
-    method: 'POST',
-    body: JSON.stringify({
-      ...normalizeProviderExtraBody(settings.extraBody),
+      method: 'POST',
+      body: JSON.stringify({
+      ...responseExtraBody(settings, options),
       model: resolveProviderModel(settings, options),
       input: convertMessagesForOpenAiResponses(messages),
       reasoning: buildOpenAiReasoning(settings, options),
+      ...responseOutputLimit(options),
       stream: true
     }),
-    signal
+    signal,
+    requestTrace: options.requestTrace,
+    timeoutMs: options.timeoutMs
   });
 
   if (!response.ok) {
@@ -151,16 +176,19 @@ export async function runOpenAiResponseToolCompletion(settings, messages, tools,
     const response = await providerFetch(settings, '/responses', {
       method: 'POST',
       body: JSON.stringify({
-        ...normalizeProviderExtraBody(settings.extraBody),
+        ...responseExtraBody(settings, options),
         model: resolveProviderModel(settings, options),
         input,
         reasoning: buildOpenAiReasoning(settings, options),
+        ...responseOutputLimit(options),
         tools: responseTools,
         tool_choice: convertToolChoiceForOpenAiResponses(options.toolChoice),
         ...(previousResponseId ? { previous_response_id: previousResponseId } : {}),
         stream: false
       }),
-      signal: options.signal
+      signal: options.signal,
+      requestTrace: options.requestTrace,
+      timeoutMs: options.timeoutMs
     });
     const json = await readJsonResponse(response);
     finalResponse = json;
@@ -176,6 +204,7 @@ export async function runOpenAiResponseToolCompletion(settings, messages, tools,
       tools: []
     };
     process.push(step);
+    if (typeof options.onStep === 'function') await options.onStep(step);
     finalContent = parsedContent.content;
     finalReasoning = mergeReasoning(finalReasoning, reasoning);
 
@@ -198,16 +227,22 @@ export async function runOpenAiResponseToolCompletion(settings, messages, tools,
         call.name,
         call.arguments,
         call,
-        options.signal
+        options.signal,
+        tools,
+        { database: options.database, userId: options.userId }
       );
       const result = prepared.result;
       const log = {
         name: call.name,
         arguments: call.arguments,
+        policy: prepared.policy,
         result
       };
       step.tools.push(log);
       toolCalls.push(log);
+      if (typeof options.onToolCall === 'function') {
+        await options.onToolCall({ round: step.round, ...log });
+      }
       input.push({
         type: 'function_call_output',
         call_id: call.callId,

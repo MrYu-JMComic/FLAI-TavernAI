@@ -94,6 +94,8 @@ export async function generateMultiRoleTurns(settings, request, options = {}) {
       });
       const result = await complete(settings, messages, {
         signal,
+        database,
+        userId,
         timeoutMs: clampInteger(options.timeoutMs, 5_000, 180_000, 60_000),
       });
       const content = String(result?.content || '').trim();

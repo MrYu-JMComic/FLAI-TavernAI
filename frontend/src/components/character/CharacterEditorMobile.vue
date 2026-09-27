@@ -72,7 +72,11 @@ function leaveSection() {
 <template>
   <div class="character-mobile">
     <form class="character-mobile-form" novalidate @submit.prevent="editor.submit">
-      <section v-show="!openSectionId" class="character-mobile-hub">
+      <section
+        v-show="!openSectionId"
+        class="character-mobile-hub"
+        :class="{ 'full-form-active': editor.isCharacterCreationFullForm }"
+      >
         <header class="character-mobile-identity">
           <div class="character-mobile-avatar">
             <img v-if="editor.form.avatarUrl" :src="editor.form.avatarUrl" :alt="editor.form.name || '角色头像'" />
@@ -112,7 +116,7 @@ function leaveSection() {
               type="button"
               @click="editor.setCharacterCreationMode(editor.isCharacterCreationWizardActive ? 'full' : 'wizard')"
             >
-              {{ editor.isCharacterCreationWizardActive ? '全部设置' : '回到向导' }}
+              {{ editor.isCharacterCreationWizardActive ? '完整表单' : '回到向导' }}
             </button>
           </div>
           <div v-if="editor.isCharacterCreationWizardActive" class="character-mobile-wizard-steps">
@@ -133,11 +137,37 @@ function leaveSection() {
           </p>
         </div>
 
-        <div v-for="group in editor.sectionGroups" :key="group.id" class="character-mobile-group">
-          <p class="character-mobile-group-label">{{ group.label }}</p>
+        <template v-if="!editor.isCharacterCreationWizardAvailable">
+          <div v-for="group in editor.sectionGroups" :key="group.id" class="character-mobile-group">
+            <p class="character-mobile-group-label">{{ group.label }}</p>
+            <button
+              v-for="section in group.sections"
+              :key="section.id"
+              class="character-mobile-section-item"
+              :data-section-id="section.id"
+              type="button"
+              @click="enterSection(section.id)"
+            >
+              <span class="character-mobile-section-text">
+                <strong>{{ section.label }}</strong>
+                <small>{{ section.hint }}</small>
+              </span>
+              <small
+                v-if="editor.sectionStatus(section.id).text"
+                class="character-mobile-section-status"
+                :class="editor.sectionStatus(section.id).state"
+              >
+                {{ editor.sectionStatus(section.id).text }}
+              </small>
+              <ChevronRight :size="18" />
+            </button>
+          </div>
+        </template>
+
+        <nav v-else class="character-mobile-full-nav" aria-label="角色创建分区">
           <button
-            v-for="section in group.sections"
-            :key="section.id"
+            v-for="section in editor.visibleSections"
+            :key="`full-${section.id}`"
             class="character-mobile-section-item"
             :data-section-id="section.id"
             type="button"
@@ -156,6 +186,17 @@ function leaveSection() {
             </small>
             <ChevronRight :size="18" />
           </button>
+        </nav>
+
+        <div v-if="editor.isCharacterCreationFullForm && !openSectionId" class="character-mobile-full-form">
+          <div
+            v-for="section in editor.visibleSections"
+            :key="section.id"
+            class="character-mobile-full-section"
+            :data-section-id="section.id"
+          >
+            <CharacterSectionOutlet :section-id="section.id" />
+          </div>
         </div>
 
         <div v-if="editor.isEditing" class="character-mobile-manage">
@@ -209,7 +250,7 @@ function leaveSection() {
           :disabled="actionBusy"
         >
           <Save :size="18" />
-          <span>{{ editor.saving ? '保存中...' : (editor.isEditing ? '保存角色' : '创建角色') }}</span>
+          <span>{{ editor.saving ? '保存中...' : (editor.isEditing || editor.isCharacterCreationFullForm ? '保存角色' : '创建角色') }}</span>
         </button>
         <button v-else class="primary-button character-mobile-primary" type="button" @click="editor.navigateHome">
           <span>返回角色列表</span>

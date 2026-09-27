@@ -28,11 +28,15 @@ import {
   resolveThinkingControl
 } from '../../../shared/providerThinking.js';
 
+const REQUIRED_MAX_TOKENS_FALLBACK = 128_000;
+
 export async function generateAnthropicMessage(settings, messages, options = {}) {
   const requestBody = buildAnthropicBody(settings, messages, false, options);
   const response = await providerFetch(settings, '/messages', {
     method: 'POST',
     body: JSON.stringify(requestBody),
+    requestTrace: options.requestTrace,
+    timeoutMs: options.timeoutMs,
     signal: options.signal
   });
 
@@ -54,6 +58,8 @@ export async function streamAnthropicMessage(settings, messages, emit, signal, o
   const response = await providerFetch(settings, '/messages', {
     method: 'POST',
     body: JSON.stringify(requestBody),
+    requestTrace: options.requestTrace,
+    timeoutMs: options.timeoutMs,
     signal
   });
 
@@ -139,10 +145,12 @@ export function buildAnthropicBody(settings, messages, stream, options = {}) {
 
 function buildAnthropicRequestBody(settings, system, messages, stream, options = {}) {
   options = options ?? {};
-  const extraBody = normalizeProviderExtraBody(settings.extraBody);
+  const extraBody = sanitizeAnthropicExtraBody(settings.extraBody, options);
   const maxTokens = firstPositiveProviderNumber(
-    [options.maxTokens, extraBody.max_tokens, extraBody.maxTokens],
-    4096
+    options.unlimitedOutput
+      ? [extraBody.max_tokens, extraBody.maxTokens]
+      : [options.maxTokens, extraBody.max_tokens, extraBody.maxTokens],
+    REQUIRED_MAX_TOKENS_FALLBACK
   );
   const body = {
     ...extraBody,
@@ -167,6 +175,19 @@ function buildAnthropicRequestBody(settings, system, messages, stream, options =
   return body;
 }
 
+function sanitizeAnthropicExtraBody(value, options = {}) {
+  const extraBody = normalizeProviderExtraBody(value);
+  if (!options.unlimitedOutput) return extraBody;
+  const sanitized = { ...extraBody };
+  delete sanitized.max_tokens;
+  delete sanitized.max_output_tokens;
+  delete sanitized.max_completion_tokens;
+  delete sanitized.maxTokens;
+  delete sanitized.maxOutputTokens;
+  delete sanitized.maxCompletionTokens;
+  return sanitized;
+}
+
 export async function runAnthropicToolCompletion(settings, messages, tools, executeTool, options = {}) {
   const maxRounds = normalizeToolCompletionRounds(options.maxRounds);
   const converted = convertMessagesForAnthropic(messages);
@@ -188,6 +209,8 @@ export async function runAnthropicToolCompletion(settings, messages, tools, exec
     const response = await providerFetch(settings, '/messages', {
       method: 'POST',
       body: JSON.stringify(body),
+      requestTrace: options.requestTrace,
+      timeoutMs: options.timeoutMs,
       signal: options.signal
     });
     const json = await readJsonResponse(response);
@@ -203,6 +226,7 @@ export async function runAnthropicToolCompletion(settings, messages, tools, exec
       tools: []
     };
     process.push(step);
+    if (typeof options.onStep === 'function') await options.onStep(step);
     finalContent += parsedContent.content;
     finalReasoning = mergeReasoning(finalReasoning, reasoning);
 
@@ -231,16 +255,22 @@ export async function runAnthropicToolCompletion(settings, messages, tools, exec
         call.name,
         call.arguments,
         call,
-        options.signal
+        options.signal,
+        tools,
+        { database: options.database, userId: options.userId }
       );
       const result = prepared.result;
       const log = {
         name: call.name,
         arguments: call.arguments,
+        policy: prepared.policy,
         result
       };
       step.tools.push(log);
       toolCalls.push(log);
+      if (typeof options.onToolCall === 'function') {
+        await options.onToolCall({ round: step.round, ...log });
+      }
       toolResults.push({
         type: 'tool_result',
         tool_use_id: call.id,
@@ -544,7 +574,8 @@ function normalizeAnthropicToolUses(content = []) {
     toolUses.push({
       id: item.id || newIdForToolUse(item.name),
       name: item.name,
-      arguments: item.input && typeof item.input === 'object' ? item.input : parseJson(item.input || '{}', {})
+      arguments: item.input && typeof item.input === 'object' ? item.input : parseJson(item.input || '{}', {}),
+      raw: item
     });
   }
   return toolUses;

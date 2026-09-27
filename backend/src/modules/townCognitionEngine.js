@@ -1,4 +1,6 @@
 import { normalizeTownResidentCognitionPlan } from '../services/townCognitionAssistant.js';
+import { activeTownConditions, normalizeTownLifeProfile, normalizeTownLifeState } from '../../../shared/townLife.js';
+import { townVenue } from '../../../shared/townAssets.js';
 import {
   createTownReflection,
   evaluateTownReflectionNeed,
@@ -23,7 +25,12 @@ export function buildTownResidentCognitionContext(database, userId, townId, resi
     .find((item) => item.id === residentId);
   if (!resident) return null;
   const locations = normalizeLocations(town.mapConfig?.locations);
-  const recentEvents = listTownEvents(database, userId, townId, { limit: 12 }) || [];
+  const recentEvents = (listTownEvents(database, userId, townId, { limit: 50 }) || []).filter((event) => (
+    event.residentId === residentId
+    || Array.isArray(event.payload?.participantIds) && event.payload.participantIds.includes(residentId)
+    || event.eventType === 'world.opening'
+    || event.source === 'player' && !event.payload?.locationId
+  )).slice(-12);
   const eventQuery = recentEvents.slice(-6).map((event) => `${event.title} ${event.detail}`).join(' ');
   const query = [
     resident.profile?.goal,
@@ -56,10 +63,10 @@ export function buildTownResidentCognitionContext(database, userId, townId, resi
     world: {
       id: town.id,
       name: town.name,
-      description: town.description,
-      creationPrompt: town.creationPrompt,
+      description: town.settings.publicDescription || town.settings.environment?.atmosphere || '',
       rules: Array.isArray(town.settings?.worldRules) ? town.settings.worldRules : [],
-      environment: town.settings?.environment || {}
+      environment: town.settings?.environment || {},
+      conditions: activeTownConditions(town)
     },
     time: {
       currentDay: town.currentDay,
@@ -79,7 +86,9 @@ export function buildTownResidentCognitionContext(database, userId, townId, resi
       currentLocation: resident.currentLocation,
       currentActivity: resident.state?.currentActivity || '',
       currentIntention: resident.state?.currentIntention || '',
-      reflectionThreshold: resident.reflectionThreshold
+      reflectionThreshold: resident.reflectionThreshold,
+      simulation: normalizeTownLifeProfile(resident.profile, locations, resident.currentLocation),
+      life: normalizeTownLifeState(resident.state, normalizeTownLifeProfile(resident.profile, locations, resident.currentLocation))
     },
     reflectionStatus: evaluateTownReflectionNeed(database, userId, townId, residentId),
     unreflectedMemories: unreflectedMemories.map(toContextMemory),
@@ -154,15 +163,11 @@ export function applyTownResidentCognitionPlan(database, userId, townId, residen
     });
 
     if (activeItem) {
-      const location = locationMap.get(activeItem.locationId);
-      const point = residentLocationPoint(database, userId, townId, location, residentId);
       updateTownResidentState(database, userId, townId, residentId, {
-        currentLocation: location.name,
         state: {
-          currentActivity: activeItem.activity,
           currentIntention: activeItem.intention,
-          mapX: point.x,
-          mapY: point.y,
+          plannedActivity: activeItem.activity,
+          life: { ...context.resident.life, action: { ...context.resident.life.action, remainingMinutes: 0 } },
           lastAiCognitionTick: context.time.tick
         }
       });
@@ -235,7 +240,8 @@ function sameIds(left, right) {
 
 function normalizeLocations(value) {
   const rows = Array.isArray(value) ? value : [];
-  return rows.map((location) => ({
+  return rows.map((location) => townVenue({
+    ...location,
     id: String(location?.id || ''),
     name: String(location?.name || ''),
     kind: String(location?.kind || ''),
@@ -255,19 +261,6 @@ function toContextMemory(memory) {
   };
 }
 
-function residentLocationPoint(database, userId, townId, location, residentId) {
-  const town = getTown(database, userId, townId);
-  const buildings = Array.isArray(town?.mapConfig?.buildings)
-    ? town.mapConfig.buildings.filter((building) => building.locationId === location.id)
-    : [];
-  if (!buildings.length) return { x: location.x, y: location.y };
-  const building = buildings[hashText(residentId) % buildings.length];
-  return {
-    x: Math.round((location.x + Number(building.x || location.x)) / 2),
-    y: Math.round((location.y + Number(building.y || location.y)) / 2)
-  };
-}
-
 function townCognitionConflict(message) {
   const error = new Error(message);
   error.code = 'TOWN_AI_COGNITION_CONFLICT';
@@ -276,14 +269,4 @@ function townCognitionConflict(message) {
 
 function townTick(town) {
   return ((town.currentDay - 1) * 1440) + town.minuteOfDay;
-}
-
-function hashText(value) {
-  let hash = 2166136261;
-  const text = String(value || '');
-  for (let index = 0; index < text.length; index += 1) {
-    hash ^= text.charCodeAt(index);
-    hash = Math.imul(hash, 16777619);
-  }
-  return hash >>> 0;
 }

@@ -30,6 +30,11 @@ test('root admin APIs summarize operations without exposing session or provider 
       assert.equal(secondUsersResponse.status, 200);
       assert.notEqual(secondUsers.users[0].id, users.users[0].id);
 
+      const searchResponse = await fetch(`${baseUrl}/api/admin/users?search=regular-user`);
+      const searchResult = await searchResponse.json();
+      assert.equal(searchResponse.status, 200);
+      assert.deepEqual(searchResult.users.map((user) => user.id), ['regular-user']);
+
       const sessionsResponse = await fetch(`${baseUrl}/api/admin/sessions`);
       const sessionsText = await sessionsResponse.text();
       const sessions = JSON.parse(sessionsText);
@@ -52,9 +57,24 @@ test('root admin APIs summarize operations without exposing session or provider 
       assert.equal(quotaResponse.status, 200);
       assert.equal(quota.maxConcurrentAiJobs, 7);
 
+      const unlimitedQuotaResponse = await fetch(`${baseUrl}/api/admin/users/regular-user/quota`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ maxDailyRequests: null })
+      });
+      const unlimitedQuota = await unlimitedQuotaResponse.json();
+      assert.equal(unlimitedQuotaResponse.status, 200);
+      assert.equal(unlimitedQuota.maxDailyRequests, null);
+
       const revokeResponse = await fetch(`${baseUrl}/api/admin/sessions/admin-session`, { method: 'DELETE' });
       assert.equal(revokeResponse.status, 200);
       assert.equal(database.prepare('SELECT COUNT(*) AS count FROM sessions').get().count, 0);
+
+      const selfDeleteResponse = await fetch(`${baseUrl}/api/admin/users/root-user`, { method: 'DELETE' });
+      assert.equal(selfDeleteResponse.status, 409);
+      const deleteResponse = await fetch(`${baseUrl}/api/admin/users/regular-user`, { method: 'DELETE' });
+      assert.equal(deleteResponse.status, 200);
+      assert.equal(database.prepare('SELECT COUNT(*) AS count FROM users').get().count, 1);
     });
   } finally {
     database.close();

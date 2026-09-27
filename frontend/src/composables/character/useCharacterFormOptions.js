@@ -63,6 +63,23 @@ export function useCharacterFormOptions({
     return true;
   }
 
+  function addWorldBookOption(book) {
+    const id = String(book?.id || '').trim();
+    if (!id) return false;
+    const nextBooks = [];
+    let replaced = false;
+    for (const currentBook of worldBooks.value) {
+      if (String(currentBook?.id || '') === id) {
+        nextBooks.push(book);
+        replaced = true;
+      } else {
+        nextBooks.push(currentBook);
+      }
+    }
+    if (!replaced) nextBooks.push(book);
+    return setWorldBooksIfChanged(nextBooks);
+  }
+
   function setAvailableTagsIfChanged(nextTags) {
     const normalizedTags = Array.isArray(nextTags) ? nextTags : [];
     if (sameListItems(availableTags.value, normalizedTags, sameTagOption)) {
@@ -194,6 +211,7 @@ export function useCharacterFormOptions({
   }
 
   return {
+    addWorldBookOption,
     availableTags,
     canCreateSearchedTag,
     cancelCharacterFormOptions,

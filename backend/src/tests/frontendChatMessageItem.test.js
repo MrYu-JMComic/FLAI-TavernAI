@@ -15,7 +15,7 @@ const stylesSource = readFrontendStyles();
 
 test('ChatMessageItem freezes the edit box while a message action is busy', () => {
   assert.match(chatMessageItemScript, /messageActionBusy: \{ type: Boolean, default: false \}/);
-  assert.match(chatViewTemplate, /:message-action-busy="messageActionBusy === message\.id \|\| branchBusy"/);
+  assert.match(chatViewTemplate, /:message-action-busy="Boolean\(messageActionBusy \|\| branchBusy \|\| requestPending \|\| loading \|\| swipeLoading\.size\)"/);
   assert.match(chatViewTemplate, /@update:editing-message-content="setEditingMessageContent"/);
   assert.match(chatMessageItemTemplate, /<div v-if="editingMessageId === message\.id" class="message-edit-box" :aria-busy="messageActionBusy">/);
   assert.match(chatMessageItemTemplate, /<textarea[\s\S]*:disabled="messageActionBusy"[\s\S]*@input="onEditingMessageInput"/);
@@ -47,7 +47,7 @@ test('ChatMessageItem wires edit-and-rerun through the chat orchestration layer'
   );
   assert.match(chatViewScript, /canEditMessage, canDeleteMessage, canRerunMessageEdit, canBranchMessage,/);
   assert.match(chatViewScript, /setEditingMessageContent, saveMessageEdit, prepareMessageEditRerun, removeMessage, copyMessage,/);
-  assert.match(chatViewScript, /submitDraft, submit, continueGeneration, stop, restoreLastFailureInput, retryLastFailure, dismissLastFailure,/);
+  assert.match(chatViewScript, /submitDraft, submit, continueGeneration, canRegenerateMessage, regenerateMessage, stop, retryLastFailure, dismissLastFailure,/);
   assert.match(chatViewScript, /const composerHasDraft = computed\(\(\) => Boolean\(input\.value\.trim\(\) \|\| chatAttachments\.value\.length\)\);/);
   assert.match(
     chatViewScript,
@@ -65,8 +65,10 @@ test('ChatMessageItem wires edit-and-rerun through the chat orchestration layer'
   );
   assert.match(
     chatMessageActionsSource,
-    /async function prepareMessageEditRerun\(message\) \{[\s\S]*const tailMessageIds = collectPersistedMessageIdsFrom\(messageId\);[\s\S]*for \(let index = tailMessageIds\.length - 1; index >= 0; index -= 1\) {[\s\S]*await deleteMessage\(conversationId, targetId\);[\s\S]*return \{ content, attachments \};/
+    /async function prepareMessageEditRerun\(message\) \{[\s\S]*const tailMessageIds = collectPersistedMessageIdsFrom\(messageId\);[\s\S]*const result = await truncateMessages\(conversationId, messageId\);[\s\S]*return \{ content, attachments \};/
   );
+  // Rerunning an edited prompt removes the tail as one history change instead of one request per message.
+  assert.doesNotMatch(chatMessageActionsSource, /await deleteMessage\(conversationId, targetId\)/);
 });
 
 test('ChatMessageItem binds continue generation to the latest message row', () => {
@@ -203,15 +205,15 @@ test('ChatMessageItem renders persisted asset URL attachments', () => {
 });
 
 test('ChatMessageItem locks swipe navigation while a swipe is loading', () => {
-  assert.match(chatViewTemplate, /:swipe-loading="swipeLoading\.has\(message\.id\) \|\| messageActionBusy === message\.id \|\| branchBusy"/);
+  assert.match(chatViewTemplate, /:swipe-loading="Boolean\(swipeLoading\.size \|\| messageActionBusy \|\| branchBusy \|\| requestPending \|\| loading\)"/);
   assert.match(chatMessageItemTemplate, /:disabled="!swipeCanPrev \|\| swipeLoading"/);
   assert.match(chatMessageItemTemplate, /:disabled="!swipeCanNext \|\| swipeLoading"/);
   assert.match(chatMessageItemTemplate, /:aria-busy="swipeLoading"/);
   assert.match(
     chatMessageActionsSource,
-    /function isSwipeActionLocked\(messageId\) \{\s*const stateId = normalizeMessageUiId\(messageId\);\s*return Boolean\(messageActionBusy\.value \|\| branchBusy\.value \|\| swipeLoading\.value\.has\(stateId\)\);/
+    /function isMessageMutationLocked\(\) \{\s*return Boolean\(isConversationBusy\(\) \|\| messageActionBusy\.value \|\| branchBusy\.value \|\| swipeLoading\.value\.size\);/
   );
-  assert.match(chatMessageActionsSource, /const target = getCurrentSwipeTarget\(message\);\s*if \(!target \|\| isSwipeActionLocked\(target\.messageId\)\) return;/);
+  assert.match(chatMessageActionsSource, /const target = getCurrentSwipeTarget\(message\);\s*if \(!target \|\| isMessageMutationLocked\(\)\) return;/);
 });
 
 test('ChatMessageItem disables branch creation for messages that cannot be branched', () => {
@@ -232,7 +234,7 @@ test('ChatMessageItem disables branch creation for messages that cannot be branc
 test('ChatMessageItem locks edit and delete actions while a branch action is busy', () => {
   assert.match(
     chatMessageActionsSource,
-    /function isMessageMutationLocked\(\) \{\s*return Boolean\(messageActionBusy\.value \|\| branchBusy\.value\);/
+    /function isMessageMutationLocked\(\) \{\s*return Boolean\(isConversationBusy\(\) \|\| messageActionBusy\.value \|\| branchBusy\.value \|\| swipeLoading\.value\.size\);/
   );
   assert.match(
     chatMessageActionsSource,
@@ -244,5 +246,5 @@ test('ChatMessageItem locks edit and delete actions while a branch action is bus
   );
   assert.match(chatViewTemplate, /:can-edit="canEditMessage\(message\)"/);
   assert.match(chatViewTemplate, /:can-delete="canDeleteMessage\(message\)"/);
-  assert.match(chatViewTemplate, /:message-action-busy="messageActionBusy === message\.id \|\| branchBusy"/);
+  assert.match(chatViewTemplate, /:message-action-busy="Boolean\(messageActionBusy \|\| branchBusy \|\| requestPending \|\| loading \|\| swipeLoading\.size\)"/);
 });

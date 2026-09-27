@@ -83,6 +83,23 @@
   min-width: 0;
 }
 
+.character-mobile-full-form {
+  display: grid;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.character-mobile-full-section {
+  min-width: 0;
+}
+
+.character-mobile-full-section > .form-panel,
+.character-mobile-full-section > section {
+  width: 100%;
+  min-width: 0;
+  border-radius: var(--radius-sm);
+}
+
 .character-mobile-identity {
   display: grid;
   grid-template-columns: 56px minmax(0, 1fr);
@@ -264,6 +281,13 @@
   display: grid;
   gap: var(--space-1);
   min-width: 0;
+}
+
+/* Keep the section directory reachable near the top even when the full form
+   is expanded; users can jump into a single sheet without scrolling through
+   every panel first. */
+.character-mobile-hub.full-form-active .character-mobile-group {
+  order: -1;
 }
 
 .character-mobile-group-label {

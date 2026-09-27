@@ -15,9 +15,10 @@ const unitNumber = z.number().finite().min(0).max(1);
 const revisionSchema = z.number().int().min(1).max(2_147_483_647);
 
 const evidenceSchema = z.object({
-  messageId: idSchema,
-  quote: z.string().trim().min(1).max(1_000),
-}).strict();
+  messageId: idSchema.optional(),
+  quote: z.string().trim().max(1_000).optional(),
+  kind: z.enum(['fact', 'intent', 'hypothesis']).optional(),
+});
 
 const memberRefSchema = z.object({
   memberId: idSchema.optional(),
@@ -57,11 +58,11 @@ const memoryCreateChangesSchema = z.object({
   forgottenAt: z.string().max(80).nullable().optional(),
   linkedMemoryIds: z.array(idSchema).max(32).optional(),
   sharedMemberIds: z.array(idSchema).max(32).optional(),
-}).strict();
+});
 
 const memoryUpdateChangesSchema = memoryCreateChangesSchema.partial().extend({
   revision: revisionSchema.optional(),
-}).strict().refine((value) => Object.keys(value).length > 0, {
+}).refine((value) => Object.keys(value).length > 0, {
   message: 'Memory update must contain at least one change',
 });
 
@@ -71,11 +72,11 @@ const behaviorCreateChangesSchema = z.object({
   action: z.string().trim().min(1).max(4_000),
   priority: z.number().int().min(-1_000).max(1_000).optional(),
   enabled: z.boolean().optional(),
-}).strict();
+});
 
 const behaviorUpdateChangesSchema = behaviorCreateChangesSchema.partial().extend({
   revision: revisionSchema.optional(),
-}).strict().refine((value) => Object.keys(value).length > 0, {
+}).refine((value) => Object.keys(value).length > 0, {
   message: 'Behavior update must contain at least one change',
 });
 
@@ -217,9 +218,14 @@ export function buildCastChangePlanJsonSchema(options = {}) {
   }
   operationItems.oneOf = selectedVariants;
   schema.properties.operations.maxItems = maxOperations;
-  if (requireEvidence) {
-    for (const variant of selectedVariants) {
+  for (const variant of selectedVariants) {
+    const operationName = variant.properties.op.const;
+    if (requireEvidence || (options.requireMemoryEvidence === true && operationName === 'memory.create')) {
       variant.required = [...new Set([...(variant.required || []), 'evidence'])];
+    }
+    if (!requireEvidence && options.requireMemoryEvidence === true && operationName === 'memory.update') {
+      variant.if = { properties: { changes: { anyOf: [{ required: ['content'] }, { required: ['memoryType'] }] } } };
+      variant.then = { required: ['evidence'] };
     }
   }
   return schema;
@@ -239,7 +245,7 @@ export function parseCastChangePlanText(text) {
 }
 
 export function validateCastChangePlan(value) {
-  const result = castChangePlanSchema.safeParse(value);
+  const result = castChangePlanSchema.safeParse(normalizePlanInput(value));
   if (!result.success) {
     const details = result.error.issues.map((issue) => ({
       path: issue.path.join('.'),
@@ -269,8 +275,28 @@ export function assertCastPlanPermissions(plan, options = {}) {
       if (!allowed.has(operation.op)) {
         throw planError(`Auto sync cannot perform ${operation.op}`, 'CAST_PLAN_FORBIDDEN_OPERATION');
       }
-      if (!operation.evidence) {
-        throw planError('Every auto sync operation requires evidence', 'CAST_PLAN_EVIDENCE');
+    }
+  }
+  // Conversation settings may narrow the operation library further for auto sync and AI organize.
+  if (Array.isArray(options.allowedOperations) && ['auto_sync', 'ai_organize'].includes(sourceKind)) {
+    const allowed = new Set(options.allowedOperations);
+    for (const operation of plan.operations) {
+      if (!allowed.has(operation.op)) {
+        throw planError(`This conversation does not allow the NPC agent to perform ${operation.op}`, 'CAST_PLAN_FORBIDDEN_OPERATION');
+      }
+    }
+  }
+  if (sourceKind === 'auto_sync' || sourceKind === 'ai_organize') {
+    for (const operation of plan.operations) {
+      const kind = operation.evidence?.kind;
+      if (!kind || kind === 'fact') continue;
+      const isTypedMemory = ['memory.create', 'memory.update'].includes(operation.op);
+      // Preserve intentions as intentions, without rejecting an entire turn
+      // because the model used "event" as its generic memory type.
+      if (isTypedMemory) operation.changes.memoryType = kind;
+      const isIntentBehavior = kind === 'intent' && ['behavior.create', 'behavior.update'].includes(operation.op);
+      if (!isTypedMemory && !isIntentBehavior) {
+        throw planError('Intent or hypothesis evidence must stay in a memory of the same type, not completed-event state', 'CAST_PLAN_EVIDENCE');
       }
     }
   }
@@ -278,6 +304,38 @@ export function assertCastPlanPermissions(plan, options = {}) {
     throw planError('Cast change plan contains an unknown operation', 'CAST_PLAN_OPERATION');
   }
   return plan;
+}
+
+function normalizePlanInput(value) {
+  if (!value || typeof value !== 'object' || !Array.isArray(value.operations)) return value;
+  return { ...value, operations: value.operations.map((operation) => {
+    if (!operation || typeof operation !== 'object') return operation;
+    const next = { ...operation };
+    if (next.evidence === null) delete next.evidence;
+    if (next.evidence && typeof next.evidence === 'object') {
+      next.evidence = Object.fromEntries(Object.entries(next.evidence).filter(([, item]) => item != null && item !== ''));
+    }
+    if (!/^(?:memory|behavior)\.(?:create|update)$/.test(next.op)) return next;
+    if (next.target?.memberId && next.target?.name) next.target = { ...next.target, name: undefined };
+    if (next.changes && typeof next.changes === 'object' && !Array.isArray(next.changes)) {
+      next.changes = { ...next.changes };
+      for (const key of ['memoryType', 'layer', 'importance', 'emotionalIntensity', 'decayRate', 'reinforcementCount', 'linkedMemoryIds', 'sharedMemberIds', 'behaviorType', 'triggerCondition', 'priority', 'enabled']) {
+        if (next.changes[key] === null) delete next.changes[key];
+      }
+      for (const key of ['importance', 'emotionalIntensity', 'decayRate', 'priority', 'reinforcementCount']) {
+        const raw = next.changes[key];
+        if (typeof raw !== 'string' || !raw.trim()) continue;
+        const numeric = Number(raw.replace(/%$/, ''));
+        if (Number.isFinite(numeric)) next.changes[key] = raw.endsWith('%') ? numeric / 100 : numeric;
+      }
+      for (const key of ['importance', 'emotionalIntensity', 'decayRate']) {
+        if (typeof next.changes[key] === 'number' && Number.isFinite(next.changes[key])) {
+          next.changes[key] = Math.max(0, Math.min(1, next.changes[key]));
+        }
+      }
+    }
+    return next;
+  }) };
 }
 
 function normalizeSchemaOperationNames(value) {

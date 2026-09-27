@@ -8,21 +8,21 @@ import { describeProviderCapabilities } from './providerCapabilities.js';
 import { searchUserContent } from './fullTextSearch.js';
 import { measureSync } from './performanceMetrics.js';
 import { getSelectedProviderProfileRow } from '../repositories/providerProfileRepository.js';
+import { buildConversationCompletionOptions } from './conversationContextBudget.js';
 import {
-  PROMPT_PIPELINE_HISTORY_LIMIT,
   buildPromptPipeline,
   sanitizePromptMessagesForPreview
 } from './promptPipeline.js';
 
-export function buildConversationContextPreview(database, user, conversationId, payload = {}) {
+export function buildConversationContextPreview(database, user, conversationId, payload = {}, providerSettings) {
   return measureSync(
     'context.preview',
-    () => buildConversationContextPreviewUnmeasured(database, user, conversationId, payload),
+    () => buildConversationContextPreviewUnmeasured(database, user, conversationId, payload, providerSettings),
     { rows: (result) => (result?.messages?.length || 0) + (result?.retrieval?.returned || 0) }
   );
 }
 
-function buildConversationContextPreviewUnmeasured(database, user, conversationId, payload = {}) {
+function buildConversationContextPreviewUnmeasured(database, user, conversationId, payload = {}, providerSettings) {
   const conversation = getConversation(database, user.id, conversationId);
   if (!conversation) {
     return null;
@@ -33,6 +33,12 @@ function buildConversationContextPreviewUnmeasured(database, user, conversationI
   }
 
   const activePreset = getPreviewPreset(database, user.id, payload);
+  const providerRow = getSelectedProviderProfileRow(database, user.id);
+  const settings = providerSettings || {
+    providerType: providerRow?.provider_type || '', model: providerRow?.model || '',
+    supportsReasoning: Boolean(providerRow?.supports_reasoning), extraBody: parseJson(providerRow?.extra_body, {})
+  };
+  const completionOptions = buildConversationCompletionOptions(settings, conversation.contextBudget, payload, activePreset);
   const pipeline = buildPromptPipeline(database, {
     character,
     conversation,
@@ -41,13 +47,16 @@ function buildConversationContextPreviewUnmeasured(database, user, conversationI
     userAttachments: resolveChatAttachmentsForModel(database, user.id, payload.attachments),
     history: getRecentMessages(database, user.id, conversation.id),
     activePreset,
+    providerSettings: settings,
+    tokenBudget: { ...conversation.contextBudget, reservedOutputTokens: completionOptions.maxTokens },
+    tools: settings.extraBody?.tools,
     contextBudgetCharacters: payload.contextBudgetCharacters ?? payload.contextBudgetChars ?? payload.contextBudget,
     // Preview must not consume sticky/cooldown/delay state or advance the message counter.
     persistWorldBookState: false,
     resolveAttachmentsForModel: (attachments) => resolveChatAttachmentsForModel(database, user.id, attachments)
   });
   const providerDiagnostics = buildProviderDiagnostics(database, user.id);
-  const retrievalQuery = String(payload.searchQuery || pipeline.input || '').trim();
+  const retrievalQuery = String(payload.searchQuery || pipeline.input.processed || '').trim();
   const retrieval = searchUserContent(database, user.id, retrievalQuery, {
     conversationId: conversation.id,
     limit: payload.searchLimit || 12
@@ -64,6 +73,7 @@ function buildConversationContextPreviewUnmeasured(database, user, conversationI
     sections: pipeline.sections,
     priority: pipeline.priority,
     budget: pipeline.budget,
+    selectionManifest: pipeline.selectionManifest,
     retrieval: {
       query: retrieval.query,
       evidence: retrieval.results,
@@ -129,6 +139,8 @@ function getConversation(database, userId, conversationId) {
     userId: row.user_id,
     characterId: row.character_id,
     title: row.title,
+    stateStatus: row.state_status || 'legacy',
+    contextBudget: parseJson(row.context_budget_json, {}),
     userSettings: normalizeAdvancedSettings(parseJson(row.user_advanced_settings, {})),
     authorSettings: normalizeAdvancedSettings(parseJson(row.author_advanced_settings, {})),
     createdAt: row.created_at,
@@ -139,13 +151,12 @@ function getConversation(database, userId, conversationId) {
 function getRecentMessages(database, userId, conversationId) {
   const rows = database
     .prepare(
-      `SELECT role, content, attachments_json, reasoning, created_at
+      `SELECT id, revision, role, content, attachments_json, reasoning, created_at
        FROM messages
        WHERE user_id = ? AND conversation_id = ?
-       ORDER BY created_at DESC, rowid DESC
-       LIMIT ?`
+       ORDER BY created_at DESC, rowid DESC`
     )
-    .all(userId, conversationId, PROMPT_PIPELINE_HISTORY_LIMIT);
+    .all(userId, conversationId);
   const messages = [];
   for (let index = rows.length - 1; index >= 0; index -= 1) {
     const row = rows[index];
@@ -153,6 +164,8 @@ function getRecentMessages(database, userId, conversationId) {
       continue;
     }
     messages.push({
+      id: row.id,
+      revision: row.revision,
       role: row.role,
       content: row.content,
       attachments: parseJson(row.attachments_json, [])

@@ -43,6 +43,7 @@ import { createStreamEmitQueue } from './providerStreamEmit.js';
 import { providerStreamErrorMessage } from './providerStreamErrors.js';
 import { runToolCompletion, streamToolCompletion } from './providerToolCompletions.js';
 import { normalizeProviderBaseUrl, trimSlash } from './providerUrls.js';
+import { withProviderQuota } from './quotas.js';
 
 export { generateImage } from './providerImageGeneration.js';
 export { isImageGenerationModel } from './providerImageModels.js';
@@ -74,6 +75,7 @@ export function normalizeProviderRow(row) {
     gatewayName: row.gateway_name,
     baseUrl: row.base_url,
     model: normalizeProviderModel(row.provider_type, row.model),
+    imageModel: row.image_model || '',
     supportsReasoning: Boolean(row.supports_reasoning),
     allowPrivateNetwork: Boolean(row.allow_private_network),
     extraBody: parseJson(row.extra_body, {}),
@@ -265,6 +267,7 @@ function sortObject(value) {
 export const NON_STREAM_COMPLETION_TIMEOUT_MS = 300_000;
 
 function buildNonStreamSignal(options = {}) {
+  if (options.timeoutMs === 0) return options.signal;
   const timeoutMs = Number.isFinite(options.timeoutMs) && options.timeoutMs > 0
     ? options.timeoutMs
     : NON_STREAM_COMPLETION_TIMEOUT_MS;
@@ -273,6 +276,16 @@ function buildNonStreamSignal(options = {}) {
 }
 
 export async function generateCompletion(settings, messages, options = {}) {
+  options = options ?? {};
+  return withProviderQuota(
+    options.database,
+    options.userId,
+    () => generateCompletionInternal(settings, messages, { ...options, __quotaHandled: true }),
+    options
+  );
+}
+
+async function generateCompletionInternal(settings, messages, options = {}) {
   options = options ?? {};
   if (!hasUsableProvider(settings)) {
     return mockCompletion(messages, settings);
@@ -298,6 +311,8 @@ export async function generateCompletion(settings, messages, options = {}) {
   const response = await providerFetch(settings, '/chat/completions', {
     method: 'POST',
     body: JSON.stringify(buildProviderBody(settings, messages, false, options)),
+    requestTrace: options.requestTrace,
+    timeoutMs: options.timeoutMs,
     signal
   });
 
@@ -306,6 +321,16 @@ export async function generateCompletion(settings, messages, options = {}) {
 }
 
 export async function streamCompletion(settings, messages, emit, signal, options = {}) {
+  options = options ?? {};
+  return withProviderQuota(
+    options.database,
+    options.userId,
+    () => streamCompletionInternal(settings, messages, emit, signal, { ...options, __quotaHandled: true }),
+    options
+  );
+}
+
+async function streamCompletionInternal(settings, messages, emit, signal, options = {}) {
   options = options ?? {};
   if (!hasUsableProvider(settings)) {
     const streamEmit = createStreamEmitQueue(emit);
@@ -329,6 +354,8 @@ export async function streamCompletion(settings, messages, emit, signal, options
   const response = await providerFetch(settings, '/chat/completions', {
     method: 'POST',
     body: JSON.stringify(buildProviderBody(settings, messages, true, options)),
+    requestTrace: options.requestTrace,
+    timeoutMs: options.timeoutMs,
     signal
   });
 

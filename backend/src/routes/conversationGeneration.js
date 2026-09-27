@@ -2,7 +2,6 @@ import { Router } from 'express';
 import { getCharacter } from '../modules/characters.js';
 import { getDefaultPreset, getPreset } from '../modules/presets.js';
 import { getStatusBar } from '../modules/statusBars.js';
-import { runAccessoryAgents } from '../services/accessoryAgents.js';
 import {
   normalizeChatAttachments,
   prepareUserChatAttachmentsForStorage,
@@ -10,8 +9,7 @@ import {
   resolveChatAttachmentsForModel
 } from '../services/chatAttachments.js';
 import { createConversationAssistantResultService } from '../services/conversationAssistantResults.js';
-import { recordAutomaticConversationMemories } from '../services/conversationMemoryExtraction.js';
-import { projectConversationCast } from '../services/cast/castProjector.js';
+import { beginConversationGeneration, endConversationGeneration, enqueueConversationPostprocessing } from '../services/conversationTimeline.js';
 import {
   createChatDiagnosticId,
   hasAssistantPayload,
@@ -20,9 +18,13 @@ import {
 import { streamAssistantResponse } from '../services/conversationStreamResponse.js';
 import { buildPromptPipeline } from '../services/promptPipeline.js';
 import {
+  buildConversationCompletionOptions,
+  resolveConversationThinkingLevel
+} from '../services/conversationContextBudget.js';
+import { tryCreatePromptTrace, finishPromptTrace } from '../services/promptTrace.js';
+import {
   generateCompletion,
-  generateImage,
-  isImageGenerationModel
+  generateImage
 } from '../services/providers.js';
 import {
   createConversationMessage,
@@ -32,8 +34,9 @@ import {
   updateConversationTimestamp,
   writeSse
 } from './helpers.js';
-import { continueMessageSchema, sendMessageSchema, validate } from '../validations/schemas.js';
-import { normalizeThinkingLevel } from '../../../shared/providerThinking.js';
+import { continueMessageSchema, regenerateMessageSchema, sendMessageSchema, validate } from '../validations/schemas.js';
+import { routeErrorPayload } from './errorResponse.js';
+import { withSavepoint } from '../modules/savepoint.js';
 
 const CONTINUATION_PROMPT = [
   '从上一条 assistant 回复的末尾直接续写尚未完成的内容。',
@@ -43,6 +46,7 @@ const CONTINUATION_PROMPT = [
 
 export function createConversationGenerationRouter(ctx) {
   const { db, requireAuth, asyncRoute, newId, nowIso } = ctx;
+  const config = ctx.config || {};
   const getChatProviderSettings = (userId) => getChatProviderSettingsFromContext(ctx, userId);
   // Generation only needs authorization + settings; skip the O(messages) usage scan.
   const getConversation = (userId, conversationId) =>
@@ -53,23 +57,30 @@ export function createConversationGenerationRouter(ctx) {
     newId,
     nowIso,
     createConversationMessage,
-    updateConversationTimestamp
-  });
-  // Single-process server: an in-memory set is enough to serialize generation
-  // per conversation and avoid interleaved assistant messages.
-  const generatingConversations = new Set();
-
-  function tryLockGeneration(conversationId, response) {
-    if (generatingConversations.has(conversationId)) {
-      response.status(409).json({ error: '该对话正在生成回复，请等待完成后再试', accepted: false });
-      return false;
+    updateConversationTimestamp,
+    onAssistantSaved: ({ userId, conversation, assistantMessage, ticket }) => {
+      finishPromptTrace(ticket?.requestTrace, { status: 'completed', assistantMessageId: assistantMessage.id, usage: assistantMessage.usage });
+      return enqueueConversationPostprocessing(db, userId, conversation.id, assistantMessage.id, {
+        thinkingLevel: ticket?.thinkingLevel,
+        thinkingEnabled: ticket?.thinkingEnabled,
+      });
     }
-    generatingConversations.add(conversationId);
-    return true;
+  });
+
+  function rememberGenerationThinking(ticket, settings, completionOptions) {
+    if (!ticket) return;
+    ticket.thinkingLevel = resolveConversationThinkingLevel(settings, completionOptions);
+    ticket.thinkingEnabled = ticket.thinkingLevel !== 'off';
   }
 
-  function unlockGeneration(conversationId) {
-    generatingConversations.delete(conversationId);
+  function tryLockGeneration(userId, conversationId, response) {
+    try {
+      return beginConversationGeneration(db, userId, conversationId, { backgroundSafe: true });
+    } catch (error) {
+      if (error.status !== 409) throw error;
+      response.status(409).json({ error: error.message, code: error.code, jobId: error.jobId || '', accepted: false });
+      return null;
+    }
   }
 
   router.post('/messages', requireAuth, validate(sendMessageSchema), asyncRoute(async (request, response) => {
@@ -85,17 +96,22 @@ export function createConversationGenerationRouter(ctx) {
       return;
     }
 
-    if (!tryLockGeneration(conversation.id, response)) {
+    const ticket = tryLockGeneration(request.auth.user.id, conversation.id, response);
+    if (!ticket) {
       return;
     }
     try {
-      await handleSendMessage(request, response, conversation, character);
+      await handleSendMessage(request, response, conversation, character, ticket);
+    } catch (error) {
+      finishFailedTrace(ticket, error);
+      throw error;
     } finally {
-      unlockGeneration(conversation.id);
+      finishFailedTrace(ticket);
+      endConversationGeneration(db, ticket);
     }
   }));
 
-  async function handleSendMessage(request, response, conversation, character) {
+  async function handleSendMessage(request, response, conversation, character, ticket) {
     const userText = String(request.body?.content || request.body?.message || '').trim();
     try {
       validateChatAttachmentsForUpload(request.body?.attachments);
@@ -120,58 +136,72 @@ export function createConversationGenerationRouter(ctx) {
       ? getPreset(db, request.auth.user.id, presetId)
       : getDefaultPreset(db, request.auth.user.id);
 
-    let preparedUserAttachments;
-    try {
-      preparedUserAttachments = prepareUserChatAttachmentsForStorage(
-        db,
-        request.auth.user.id,
-        conversation.id,
-        userAttachmentCandidates
-      );
-    } catch (error) {
-      response.status(400).json({ error: error?.message || '聊天图片附件无效' });
-      return;
-    }
-    if (!userText && !preparedUserAttachments.storedAttachments.length) {
-      response.status(400).json({ error: '消息不能为空' });
+    const modelUserAttachments = resolveChatAttachmentsForModel(db, request.auth.user.id, userAttachmentCandidates);
+    if (modelUserAttachments.length !== userAttachmentCandidates.length) {
+      response.status(400).json({ error: '聊天图片附件无效或不可访问', accepted: false });
       return;
     }
 
+    const aiOptions = { ...buildConversationCompletionOptions(settings.value, conversation.contextBudget, request.body || {}, activePreset), signal: ticket.signal };
+    rememberGenerationThinking(ticket, settings.value, aiOptions);
+    let commitWorldBookState;
     const promptPipeline = buildPromptPipeline(db, {
       character,
       conversation,
       user: request.auth.user,
       content: userText,
       history: listRecentConversationMessageRows(db, request.auth.user.id, conversation.id),
-      userAttachments: preparedUserAttachments.modelAttachments,
+      userAttachments: modelUserAttachments,
       activePreset,
+      providerSettings: settings.value,
+      tokenBudget: { ...conversation.contextBudget, reservedOutputTokens: aiOptions.maxTokens },
+      tools: settings.value.extraBody?.tools,
+      deferWorldBookStateCommit: (commit) => { commitWorldBookState = commit; },
       resolveAttachmentsForModel: (attachments) => resolveChatAttachmentsForModel(db, request.auth.user.id, attachments)
     });
+    if (!shouldUseImageGeneration(request.body) && rejectBudgetOverflow(response, promptPipeline)) return;
     const rules = promptPipeline.rules;
     const processedUserText = promptPipeline.input.processed;
     const worldBookMatches = promptPipeline.worldBookMatches;
     const modelMessages = promptPipeline.modelMessages;
     const statusBar = promptPipeline.statusBar;
 
-    const userMessage = createConversationMessage(db, newId, nowIso, {
-      userId: request.auth.user.id,
-      conversationId: conversation.id,
-      role: 'user',
-      content: userText,
-      attachments: preparedUserAttachments.storedAttachments,
-      reasoning: '',
-      usage: null
-    });
-    updateConversationTimestamp(db, nowIso, request.auth.user.id, conversation.id);
-    const aiOptions = buildAiOptions(request.body || {}, activePreset);
+    let userMessage;
+    try {
+      userMessage = withSavepoint(db, 'sp_accept_chat_input', () => {
+        const prepared = prepareUserChatAttachmentsForStorage(db, request.auth.user.id, conversation.id, userAttachmentCandidates);
+        const message = createConversationMessage(db, newId, nowIso, {
+          userId: request.auth.user.id, conversationId: conversation.id, role: 'user', content: userText,
+          attachments: prepared.storedAttachments, reasoning: '', usage: null
+        });
+        updateConversationTimestamp(db, nowIso, request.auth.user.id, conversation.id);
+        commitWorldBookState?.();
+        return message;
+      });
+    } catch (error) {
+      const publicError = routeErrorPayload(error, { status: 400, isProduction: config.isProduction, fallback: '消息未保存，请重试。' });
+      response.status(publicError.normalized.status).json({ error: publicError.error, code: publicError.code, accepted: false });
+      return;
+    }
 
-    if (shouldUseImageGeneration(request.body, settings.value, aiOptions)) {
+    if (shouldUseImageGeneration(request.body)) {
       let result;
       try {
-        result = await generateImage(settings.value, processedUserText || userText, aiOptions);
+        result = await generateImage(settings.value, processedUserText || userText, {
+          ...aiOptions,
+          imageModel: request.body?.imageModel,
+          database: db,
+          userId: request.auth.user.id
+        });
       } catch (error) {
-        response.status(400).json({
-          error: error?.message || '生图模型调用失败',
+        const publicError = routeErrorPayload(error, {
+          status: Number.isInteger(error?.status) ? error.status : 400,
+          isProduction: config.isProduction,
+          fallback: '生图模型调用失败'
+        });
+        response.status(publicError.normalized.status).json({
+          error: publicError.error,
+          code: publicError.code,
           accepted: true,
           userMessage,
           worldBookMatches
@@ -182,7 +212,8 @@ export function createConversationGenerationRouter(ctx) {
         userId: request.auth.user.id,
         conversation,
         character,
-        result
+        result,
+        ticket
       });
       if (!assistantMessage) {
         response.status(502).json({
@@ -206,13 +237,19 @@ export function createConversationGenerationRouter(ctx) {
       return;
     }
 
-    const completionOptions = aiOptions;
+    ticket.requestTrace = tryCreatePromptTrace(db, {
+      userId: request.auth.user.id, conversationId: conversation.id, ticket,
+      pipeline: promptPipeline, settings: settings.value, sourceMessageId: userMessage.id, operation: 'send'
+    });
+    const completionOptions = { ...aiOptions, requestTrace: ticket.requestTrace };
 
     if (request.body?.stream !== false) {
       await streamAssistantResponse({
         request,
         response,
         userId: request.auth.user.id,
+        database: db,
+        config,
         conversation,
         character,
         rules,
@@ -225,15 +262,19 @@ export function createConversationGenerationRouter(ctx) {
         completionOptions,
         writeSse,
         getStatusBar: () => getStatusBar(db, request.auth.user.id, conversation.id),
-        saveAssistantResult: assistantResults.saveAssistantResult,
-        saveInterruptedAssistantResult: assistantResults.saveInterruptedAssistantResult,
-        startAccessoryAgentsInBackground: (options) => startAccessoryAgentsInBackground({ db, ...options })
+        saveAssistantResult: (options) => assistantResults.saveAssistantResult({ ...options, ticket }),
+        saveInterruptedAssistantResult: (options) => assistantResults.saveInterruptedAssistantResult({ ...options, ticket })
       });
       return;
     }
 
-    const result = await generateCompletion(settings.value, modelMessages, completionOptions);
+    const result = await generateCompletion(settings.value, modelMessages, {
+      ...completionOptions,
+      database: db,
+      userId: request.auth.user.id
+    });
     if (!hasAssistantPayload(result)) {
+      finishPromptTrace(ticket.requestTrace, { status: 'empty', usage: result.usage, errorCode: 'PROVIDER_EMPTY' });
       const diagnosticId = createChatDiagnosticId();
       logAssistantPayloadFailure({
         diagnosticId,
@@ -263,12 +304,14 @@ export function createConversationGenerationRouter(ctx) {
       character,
       rules,
       result,
+      ticket,
       macroContext: {
         userName: request.auth.user.displayName || request.auth.user.username || '用户',
         charName: character.name || ''
       }
     });
     if (!assistantMessage) {
+      finishPromptTrace(ticket.requestTrace, { status: 'empty', usage: result.usage, errorCode: 'POSTPROCESS_EMPTY' });
       const diagnosticId = createChatDiagnosticId();
       logAssistantPayloadFailure({
         diagnosticId,
@@ -303,16 +346,6 @@ export function createConversationGenerationRouter(ctx) {
       accessoryBackground: true
     });
 
-    startAccessoryAgentsInBackground({
-      db,
-      userId: request.auth.user.id,
-      conversation,
-      character,
-      userMessage,
-      assistantMessage,
-      settings: settings.value,
-      statusBar: latestStatusBar || statusBar
-    });
   }
 
   router.post('/messages/continue', requireAuth, validate(continueMessageSchema), asyncRoute(async (request, response) => {
@@ -328,17 +361,22 @@ export function createConversationGenerationRouter(ctx) {
       return;
     }
 
-    if (!tryLockGeneration(conversation.id, response)) {
+    const ticket = tryLockGeneration(request.auth.user.id, conversation.id, response);
+    if (!ticket) {
       return;
     }
     try {
-      await handleContinueMessage(request, response, conversation, character);
+      await handleContinueMessage(request, response, conversation, character, ticket);
+    } catch (error) {
+      finishFailedTrace(ticket, error);
+      throw error;
     } finally {
-      unlockGeneration(conversation.id);
+      finishFailedTrace(ticket);
+      endConversationGeneration(db, ticket);
     }
   }));
 
-  async function handleContinueMessage(request, response, conversation, character) {
+  async function handleContinueMessage(request, response, conversation, character, ticket) {
     const history = listRecentConversationMessageRows(db, request.auth.user.id, conversation.id);
     if (!hasContinuableAssistant(history)) {
       response.status(400).json({ error: '没有可继续的回复' });
@@ -355,7 +393,9 @@ export function createConversationGenerationRouter(ctx) {
     const activePreset = presetId
       ? getPreset(db, request.auth.user.id, presetId)
       : getDefaultPreset(db, request.auth.user.id);
-    const aiOptions = buildAiOptions(request.body || {}, activePreset);
+    const aiOptions = { ...buildConversationCompletionOptions(settings.value, conversation.contextBudget, request.body || {}, activePreset), signal: ticket.signal };
+    rememberGenerationThinking(ticket, settings.value, aiOptions);
+    let commitWorldBookState;
     const promptPipeline = buildPromptPipeline(db, {
       character,
       conversation,
@@ -363,6 +403,10 @@ export function createConversationGenerationRouter(ctx) {
       content: '',
       history,
       activePreset,
+      providerSettings: settings.value,
+      tokenBudget: { ...conversation.contextBudget, reservedOutputTokens: aiOptions.maxTokens },
+      tools: settings.value.extraBody?.tools,
+      deferWorldBookStateCommit: (commit) => { commitWorldBookState = commit; },
       appendUserMessage: false,
       continuationPrompt: CONTINUATION_PROMPT,
       resolveAttachmentsForModel: (attachments) => resolveChatAttachmentsForModel(db, request.auth.user.id, attachments)
@@ -371,13 +415,22 @@ export function createConversationGenerationRouter(ctx) {
     const worldBookMatches = promptPipeline.worldBookMatches;
     const modelMessages = promptPipeline.modelMessages;
     const statusBar = promptPipeline.statusBar;
-    const completionOptions = aiOptions;
+    if (rejectBudgetOverflow(response, promptPipeline)) return;
+    commitWorldBookState?.();
+    ticket.requestTrace = tryCreatePromptTrace(db, {
+      userId: request.auth.user.id, conversationId: conversation.id, ticket,
+      pipeline: promptPipeline, settings: settings.value,
+      sourceMessageId: history.findLast((message) => message.role === 'assistant')?.id || '', operation: 'continue'
+    });
+    const completionOptions = { ...aiOptions, requestTrace: ticket.requestTrace };
 
     if (request.body?.stream !== false) {
       await streamAssistantResponse({
         request,
         response,
         userId: request.auth.user.id,
+        database: db,
+        config,
         conversation,
         character,
         rules,
@@ -390,15 +443,19 @@ export function createConversationGenerationRouter(ctx) {
         completionOptions,
         writeSse,
         getStatusBar: () => getStatusBar(db, request.auth.user.id, conversation.id),
-        saveAssistantResult: assistantResults.saveAssistantResult,
-        saveInterruptedAssistantResult: assistantResults.saveInterruptedAssistantResult,
-        startAccessoryAgentsInBackground: (options) => startAccessoryAgentsInBackground({ db, ...options })
+        saveAssistantResult: (options) => assistantResults.saveAssistantResult({ ...options, ticket }),
+        saveInterruptedAssistantResult: (options) => assistantResults.saveInterruptedAssistantResult({ ...options, ticket })
       });
       return;
     }
 
-    const result = await generateCompletion(settings.value, modelMessages, completionOptions);
+    const result = await generateCompletion(settings.value, modelMessages, {
+      ...completionOptions,
+      database: db,
+      userId: request.auth.user.id
+    });
     if (!hasAssistantPayload(result)) {
+      finishPromptTrace(ticket.requestTrace, { status: 'empty', usage: result.usage, errorCode: 'PROVIDER_EMPTY' });
       const diagnosticId = createChatDiagnosticId();
       logAssistantPayloadFailure({
         diagnosticId,
@@ -428,12 +485,14 @@ export function createConversationGenerationRouter(ctx) {
       character,
       rules,
       result,
+      ticket,
       macroContext: {
         userName: request.auth.user.displayName || request.auth.user.username || '用户',
         charName: character.name || ''
       }
     });
     if (!assistantMessage) {
+      finishPromptTrace(ticket.requestTrace, { status: 'empty', usage: result.usage, errorCode: 'POSTPROCESS_EMPTY' });
       const diagnosticId = createChatDiagnosticId();
       logAssistantPayloadFailure({
         diagnosticId,
@@ -468,64 +527,190 @@ export function createConversationGenerationRouter(ctx) {
       accessoryBackground: true
     });
 
-    startAccessoryAgentsInBackground({
-      db,
-      userId: request.auth.user.id,
-      conversation,
+  }
+
+  router.post('/messages/:messageId/regenerate', requireAuth, validate(regenerateMessageSchema), asyncRoute(async (request, response) => {
+    const conversation = getConversation(request.auth.user.id, request.params.id);
+    if (!conversation) {
+      response.status(404).json({ error: '对话不存在' });
+      return;
+    }
+
+    const character = getCharacter(db, request.auth.user.id, conversation.characterId);
+    if (!character) {
+      response.status(404).json({ error: '角色不存在' });
+      return;
+    }
+
+    const ticket = tryLockGeneration(request.auth.user.id, conversation.id, response);
+    if (!ticket) {
+      return;
+    }
+    try {
+      await handleRegenerateMessage(request, response, conversation, character, ticket);
+    } catch (error) {
+      finishFailedTrace(ticket, error);
+      throw error;
+    } finally {
+      finishFailedTrace(ticket);
+      endConversationGeneration(db, ticket);
+    }
+  }));
+
+  async function handleRegenerateMessage(request, response, conversation, character, ticket) {
+    const fullHistory = listRecentConversationMessageRows(db, request.auth.user.id, conversation.id);
+    const targetId = String(request.params.messageId || '').trim();
+    const targetIndex = fullHistory.findIndex((message) => message.id === targetId);
+    const target = targetIndex >= 0 ? fullHistory[targetIndex] : null;
+    if (!target || target.role !== 'assistant') {
+      response.status(404).json({ error: '要重新生成的回复不存在', accepted: false });
+      return;
+    }
+    if (targetIndex !== fullHistory.length - 1) {
+      response.status(400).json({ error: '只能重新生成最后一条回复。要修改更早的回复，请先创建分支或删除后续消息。', code: 'REGENERATE_NOT_LATEST', accepted: false });
+      return;
+    }
+    const history = fullHistory.slice(0, targetIndex);
+    if (!history.some((message) => message.role === 'user')) {
+      response.status(400).json({ error: '开场白没有对应的用户输入，无法重新生成。', code: 'REGENERATE_NO_USER_TURN', accepted: false });
+      return;
+    }
+
+    const settings = getChatProviderSettings(request.auth.user.id);
+    if (!settings.ok) {
+      response.status(400).json({ error: settings.error, accepted: false });
+      return;
+    }
+
+    const presetId = String(request.body?.presetId || '').trim();
+    const activePreset = presetId
+      ? getPreset(db, request.auth.user.id, presetId)
+      : getDefaultPreset(db, request.auth.user.id);
+    const aiOptions = { ...buildConversationCompletionOptions(settings.value, conversation.contextBudget, request.body || {}, activePreset), signal: ticket.signal };
+    rememberGenerationThinking(ticket, settings.value, aiOptions);
+    let commitWorldBookState;
+    const promptPipeline = buildPromptPipeline(db, {
       character,
+      conversation,
+      user: request.auth.user,
+      content: '',
+      history,
+      activePreset,
+      providerSettings: settings.value,
+      tokenBudget: { ...conversation.contextBudget, reservedOutputTokens: aiOptions.maxTokens },
+      tools: settings.value.extraBody?.tools,
+      deferWorldBookStateCommit: (commit) => { commitWorldBookState = commit; },
+      appendUserMessage: false,
+      resolveAttachmentsForModel: (attachments) => resolveChatAttachmentsForModel(db, request.auth.user.id, attachments)
+    });
+    const rules = promptPipeline.rules;
+    const worldBookMatches = promptPipeline.worldBookMatches;
+    const modelMessages = promptPipeline.modelMessages;
+    const statusBar = promptPipeline.statusBar;
+    if (rejectBudgetOverflow(response, promptPipeline)) return;
+    commitWorldBookState?.();
+    ticket.requestTrace = tryCreatePromptTrace(db, {
+      userId: request.auth.user.id, conversationId: conversation.id, ticket,
+      pipeline: promptPipeline, settings: settings.value, sourceMessageId: target.id, operation: 'regenerate'
+    });
+    const completionOptions = { ...aiOptions, requestTrace: ticket.requestTrace };
+    const macroContext = {
+      userName: request.auth.user.displayName || request.auth.user.username || '用户',
+      charName: character.name || ''
+    };
+    const saveRegenerated = (options) => {
+      const assistantMessage = assistantResults.saveRegeneratedAssistantResult({ ...options, ticket, targetMessageId: target.id });
+      if (assistantMessage) {
+        finishPromptTrace(ticket.requestTrace, { status: 'completed', assistantMessageId: assistantMessage.id, usage: assistantMessage.usage });
+      }
+      return assistantMessage;
+    };
+
+    if (request.body?.stream !== false) {
+      await streamAssistantResponse({
+        request,
+        response,
+        userId: request.auth.user.id,
+        database: db,
+        config,
+        conversation,
+        character,
+        rules,
+        modelMessages,
+        settings: settings.value,
+        userMessage: null,
+        statusBar,
+        worldBookMatches,
+        thinkingEnabled: completionOptions.thinkingEnabled,
+        completionOptions,
+        writeSse,
+        getStatusBar: () => getStatusBar(db, request.auth.user.id, conversation.id),
+        saveAssistantResult: saveRegenerated,
+        // An interrupted regeneration leaves the previous reply untouched.
+        saveInterruptedAssistantResult: () => null
+      });
+      return;
+    }
+
+    const result = await generateCompletion(settings.value, modelMessages, {
+      ...completionOptions,
+      database: db,
+      userId: request.auth.user.id
+    });
+    if (!hasAssistantPayload(result)) {
+      finishPromptTrace(ticket.requestTrace, { status: 'empty', usage: result.usage, errorCode: 'PROVIDER_EMPTY' });
+      const diagnosticId = createChatDiagnosticId();
+      logAssistantPayloadFailure({
+        diagnosticId, stage: 'provider-empty', mode: 'regenerate-json', request, conversation, character,
+        settings: settings.value, result, modelMessages, worldBookMatches
+      });
+      response.status(502).json({
+        error: '模型没有返回正文，请重试或检查当前模型/网关是否支持该对话格式。',
+        diagnosticId, accepted: true, userMessage: null, provider: result.provider, worldBookMatches
+      });
+      return;
+    }
+    const assistantMessage = saveRegenerated({ userId: request.auth.user.id, conversation, character, rules, result, macroContext });
+    if (!assistantMessage) {
+      finishPromptTrace(ticket.requestTrace, { status: 'empty', usage: result.usage, errorCode: 'POSTPROCESS_EMPTY' });
+      const diagnosticId = createChatDiagnosticId();
+      logAssistantPayloadFailure({
+        diagnosticId, stage: 'postprocess-empty', mode: 'regenerate-json', request, conversation, character,
+        settings: settings.value, result, modelMessages, worldBookMatches
+      });
+      response.status(502).json({
+        error: '模型回复被处理后为空，请检查输出正则或重试。',
+        diagnosticId, accepted: true, userMessage: null, provider: result.provider, worldBookMatches
+      });
+      return;
+    }
+    response.json({
       userMessage: null,
       assistantMessage,
-      settings: settings.value,
-      statusBar: latestStatusBar || statusBar
+      usage: assistantMessage.usage,
+      provider: result.provider,
+      worldBookMatches,
+      statusBar: getStatusBar(db, request.auth.user.id, conversation.id),
+      accessoryBackground: true
     });
   }
 
-  function startAccessoryAgentsInBackground(options) {
-    queueMicrotask(() => {
-      try {
-        recordAutomaticConversationMemories(options.db, options.userId, options.conversation.id, {
-          userMessage: options.userMessage,
-          assistantMessage: options.assistantMessage
-        });
-      } catch (error) {
-        console.warn('[conversation-memory] automatic extraction failed:', error?.message || error);
-      }
-      runAccessoryAgents(options).catch((error) => {
-        console.warn('[accessory-agents] background update failed:', error?.message || error);
-      });
-      projectConversationCast({
-        database: options.db,
-        userId: options.userId,
-        conversation: options.conversation,
-        userMessage: options.userMessage,
-        assistantMessage: options.assistantMessage,
-        settings: options.settings
-      }).catch((error) => {
-        console.warn('[cast-sync] background update failed:', error?.message || error);
-      });
+  function rejectBudgetOverflow(response, pipeline) {
+    if (!pipeline.budget.overTokenBudget) return false;
+    response.status(400).json({
+      error: pipeline.budget.overContextWindow
+        ? '系统提示词、对话与预留回复合计超过模型上下文窗口，请减少上下文或调整窗口配置。'
+        : '当前输入与最近完整对话超过对话 Token 上限，请提高对话上限或缩短草稿后重试。',
+      code: 'CONTEXT_BUDGET_EXCEEDED', accepted: false, budget: pipeline.budget
     });
+    return true;
   }
 
-  function buildAiOptions(body = {}, activePreset = null) {
-    const hasThinkingLevel = body?.thinkingLevel !== undefined && body?.thinkingLevel !== null;
-    const thinkingLevel = hasThinkingLevel
-      ? normalizeThinkingLevel(body.thinkingLevel, body?.thinkingEnabled === false ? 'off' : 'high')
-      : '';
-    const aiOptions = {
-      thinkingEnabled: thinkingLevel ? thinkingLevel !== 'off' : body?.thinkingEnabled !== false
-    };
-    if (thinkingLevel) {
-      aiOptions.thinkingLevel = thinkingLevel;
-    }
-
-    if (activePreset) {
-      aiOptions.temperature = activePreset.temperature;
-      aiOptions.maxTokens = activePreset.maxTokens;
-      aiOptions.topP = activePreset.topP;
-      aiOptions.frequencyPenalty = activePreset.frequencyPenalty;
-      aiOptions.presencePenalty = activePreset.presencePenalty;
-    }
-    return aiOptions;
+  function finishFailedTrace(ticket, error) {
+    const code = error?.code || ticket.signal?.reason?.code || '';
+    const status = code === 'CONVERSATION_TIMELINE_CHANGED' ? 'stale'
+      : ticket.signal?.aborted || error?.name === 'AbortError' ? 'cancelled' : 'failed';
+    finishPromptTrace(ticket.requestTrace, { status, errorCode: code });
   }
 
   function hasContinuableAssistant(history = []) {
@@ -540,14 +725,8 @@ export function createConversationGenerationRouter(ctx) {
     return false;
   }
 
-  function shouldUseImageGeneration(body = {}, settings = {}, aiOptions = {}) {
-    if (body?.imageGeneration === true) {
-      return true;
-    }
-    if (body?.imageGeneration === false) {
-      return false;
-    }
-    return isImageGenerationModel(settings, aiOptions);
+  function shouldUseImageGeneration(body = {}) {
+    return body?.imageGeneration === true;
   }
 
   return router;

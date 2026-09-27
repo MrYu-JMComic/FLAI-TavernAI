@@ -274,11 +274,11 @@ test('ChatView guards conversation load side effects after route-changing awaits
   );
   assert.match(
     chatViewScript,
-    /await applyConversationAppearance\(\);\s*if \(!isCurrentConversationLoad\(requestToken, conversationId\)\) return;\s*\/\/ Parallel: these 4 operations are independent of each other/
+    /await applyConversationAppearance\(\);\s*if \(!isCurrentConversationLoad\(requestToken, conversationId\)\) return;[\s\S]*restoreMessageScrollPosition\(messages\);[\s\S]*await Promise\.all\(/
   );
   assert.match(
     chatViewScript,
-    /catch \(err\) \{\s*if \(!isCurrentConversationLoad\(requestToken, conversationId\)\) return;\s*showError\(err\.message\);\s*} finally \{\s*if \(isCurrentConversationLoad\(requestToken, conversationId\)\) \{/
+    /catch \(err\) \{\s*if \(!isCurrentConversationLoad\(requestToken, conversationId\)\) return;[\s\S]*showError\(err\.message\);\s*} finally \{\s*if \(isCurrentConversationLoad\(requestToken, conversationId\)\) \{/
   );
   assert.doesNotMatch(chatViewScript, /requestToken !== conversationLoadToken \|\| props\.route\.params\.id !== conversationId/);
 });
@@ -353,26 +353,28 @@ test('chat conversation list summary comparisons use direct loops', () => {
   assert.doesNotMatch(chatConversationSource, /currentList\.every\(/);
 });
 
-test('chat conversation stable serialization uses direct loops', () => {
-  assert.match(
-    chatConversationSource,
-    /function stableSerialize\(value\) \{[\s\S]*if \(Array\.isArray\(value\)\) \{\s*return stableSerializeArray\(value\);[\s\S]*return stableSerializeObject\(value\);[\s\S]*\}/
-  );
-  assert.match(
-    chatConversationSource,
-    /function stableSerializeArray\(items\) \{\s*let serialized = '\[';[\s\S]*for \(let index = 0; index < items\.length; index \+= 1\) \{[\s\S]*Object\.prototype\.hasOwnProperty\.call\(items, index\)[\s\S]*const serializedItem = stableSerialize\(items\[index\]\);[\s\S]*if \(typeof serializedItem !== 'undefined'\) \{[\s\S]*serialized \+= serializedItem;[\s\S]*return `\$\{serialized\}\]`;[\s\S]*\}/
-  );
-  assert.match(
-    chatConversationSource,
-    /function stableSerializeObject\(value\) \{\s*const keys = collectStableObjectKeys\(value\);[\s\S]*for \(let index = 0; index < keys\.length; index \+= 1\) \{[\s\S]*const key = keys\[index\];[\s\S]*serialized \+= `\$\{JSON\.stringify\(key\)\}:\$\{stableSerialize\(value\[key\]\)\}`;[\s\S]*return `\$\{serialized\}\}`;[\s\S]*\}/
-  );
-  assert.match(
-    chatConversationSource,
-    /function collectStableObjectKeys\(value\) \{\s*const keys = \[\];[\s\S]*for \(const key in value\) \{[\s\S]*Object\.prototype\.hasOwnProperty\.call\(value, key\)[\s\S]*keys\.push\(key\);[\s\S]*return keys\.sort\(\);[\s\S]*\}/
-  );
-  assert.doesNotMatch(chatConversationSource, /value\.map\(\(item\) => stableSerialize\(item\)\)\.join/);
-  assert.doesNotMatch(chatConversationSource, /\.map\(\(key\) => `\$\{JSON\.stringify\(key\)\}:\$\{stableSerialize\(value\[key\]\)\}`\)/);
-  assert.doesNotMatch(chatConversationSource, /Object\.keys\(value\)\.sort\(\)/);
+test('chat conversation comparisons reuse plain equality without serialized copies', () => {
+  assert.match(chatConversationSource, /import \{ samePlainValue \} from/);
+  assert.doesNotMatch(chatConversationSource, /stableSerialize|sameStableValue/);
+});
+
+test('message refresh reuses unaffected rows across edits, insertion and deletion', () => {
+  const chat = useChatConversation({ route: { params: {} }, emit() {}, showError() {} });
+  const source = Array.from({ length: 1000 }, (_, index) => createMessage({ id: `msg-${index}` }));
+  chat.setMessagesIfChanged(source);
+  const before = [...chat.messages.value];
+  const refreshed = structuredClone(source);
+  refreshed[500].content = 'Edited reply';
+  refreshed.splice(10, 1);
+  refreshed.unshift(createMessage({ id: 'new-message' }));
+  assert.equal(chat.setMessagesIfChanged(refreshed), true);
+  assert.equal(chat.messages.value[1], before[0]);
+  assert.equal(chat.messages.value[10], before[9]);
+  assert.equal(chat.messages.value[11], before[11]);
+  assert.notEqual(chat.messages.value[500], before[500]);
+  assert.equal(chat.messages.value[999], before[999]);
+  assert.equal(chat.setMessagesIfChanged(structuredClone(refreshed)), false);
+  chat.cleanup();
 });
 
 test('chat sidebar initial open state falls back to window width without matchMedia', () => {

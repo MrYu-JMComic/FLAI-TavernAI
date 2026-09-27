@@ -16,7 +16,7 @@ import {
   saveAvatarInput,
   saveBackgroundImageInput
 } from '../services/avatars.js';
-import { normalizeAdvancedSettings } from './advancedSettings.js';
+import { normalizeAdvancedSettings, sanitizeAuthorAdvancedSettings } from './advancedSettings.js';
 import { withSavepoint } from './savepoint.js';
 import {
   createCursorScope,
@@ -639,7 +639,7 @@ function normalizeRegexRules(rules = []) {
       pattern,
       replacement: String(rule.replacement || '').slice(0, 1000),
       flags,
-      scope: ['input', 'output', 'both'].includes(rule.scope) ? rule.scope : 'input',
+      scope: ['input', 'output', 'both', 'display'].includes(rule.scope) ? rule.scope : 'input',
       enabled: normalizeBoolean(rule.enabled, true),
       groupName: String(rule.groupName || '全局').trim().slice(0, 60) || '全局',
       priority: Math.max(0, Math.round(normalizeFiniteNumber(rule.priority))),
@@ -731,7 +731,10 @@ function toCharacter(row, regexRules = undefined, viewerId = undefined) {
     openingMessage: row.opening_message || '',
     tags: legacyTags,
     renderPlugins: normalizeRenderPlugins(parseJson(row.render_plugins, []), { rejectUnsafe: false }),
-    authorAdvancedSettings: parseJson(row.author_advanced_settings, {}),
+    authorAdvancedSettings: sanitizeAuthorAdvancedSettings(
+      parseJson(row.author_advanced_settings, {}),
+      { allowDangerous: isOwner }
+    ),
     likeCount: Number(row.like_count || 0),
     favoriteCount: Number(row.favorite_count || 0),
     likedByMe: Boolean(row.liked_by_me),

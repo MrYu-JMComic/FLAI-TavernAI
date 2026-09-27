@@ -1321,10 +1321,12 @@ test('character assistant completes drafts through multiple tool rounds', async 
   globalThis.fetch = async (_url, request = {}) => {
     calls += 1;
     const body = JSON.parse(request.body);
-    assert.equal(body.tools.length, 4);
-    assert.ok(body.tools.some((tool) => tool.function?.name === 'set_character_extensions'));
-    const extensionsTool = body.tools.find((tool) => tool.function?.name === 'set_character_extensions');
-    const statusBlueprintSchema = extensionsTool.function.parameters.properties.statusBarBlueprint;
+    assert.equal(body.tools.length, 11);
+    assert.ok(body.tools.some((tool) => tool.function?.name === 'update_character_agents'));
+    assert.ok(body.tools.some((tool) => tool.function?.name === 'create_character_world_book'));
+    assert.ok(body.tools.some((tool) => tool.function?.name === 'finish_character_draft'));
+    const statusTool = body.tools.find((tool) => tool.function?.name === 'update_character_status_bar');
+    const statusBlueprintSchema = statusTool.function.parameters.properties.statusBarBlueprint;
     const statusValueSchema = statusBlueprintSchema.properties.variables.items.properties.value;
     assert.deepEqual(statusValueSchema.oneOf.map((schema) => schema.type), ['number', 'string']);
     assert.match(statusBlueprintSchema.description, /\{\{姓名\}\}/);
@@ -1345,11 +1347,20 @@ test('character assistant completes drafts through multiple tool rounds', async 
                   id: 'call-1',
                   type: 'function',
                   function: {
-                    name: 'set_character_profile',
+                    name: 'update_character_profile',
                     arguments: JSON.stringify({
                       name: '澄灯',
-                      persona: '会把 {user} 当作熟客，但不会越界。',
                       tags: ['温和', '推理']
+                    })
+                  }
+                },
+                {
+                  id: 'call-story',
+                  type: 'function',
+                  function: {
+                    name: 'update_character_story',
+                    arguments: JSON.stringify({
+                      persona: '会把 {user} 当作熟客，但不会越界。'
                     })
                   }
                 }
@@ -1370,15 +1381,12 @@ test('character assistant completes drafts through multiple tool rounds', async 
               content: null,
               tool_calls: [
                 {
-                  id: 'call-2',
+                  id: 'call-story-retry',
                   type: 'function',
                   function: {
-                    name: 'add_regex_rule',
+                    name: 'update_character_story',
                     arguments: JSON.stringify({
-                      label: '称呼替换',
-                      pattern: '老板',
-                      replacement: '掌柜',
-                      scope: 'input'
+                      persona: '会把 {user} 当作熟客，但不会越界。'
                     })
                   }
                 }
@@ -1389,10 +1397,37 @@ test('character assistant completes drafts through multiple tool rounds', async 
       });
     }
 
-    return jsonResponse({
-      choices: [{ message: { role: 'assistant', content: '设定已完成。' } }],
-      usage: { total_tokens: 88 }
-    });
+    if (calls === 3) {
+      return jsonResponse({
+        choices: [
+          {
+            message: {
+              role: 'assistant',
+              content: null,
+              tool_calls: [
+                {
+                  id: 'call-2',
+                  type: 'function',
+                  function: {
+                    name: 'replace_character_regex_rules',
+                    arguments: JSON.stringify({
+                      rules: [{
+                        label: '称呼替换',
+                        pattern: '老板',
+                        replacement: '掌柜',
+                        scope: 'input'
+                      }]
+                    })
+                  }
+                }
+              ]
+            }
+          }
+        ]
+      });
+    }
+
+    return finishedCharacterDraftResponse('设定已完成。', ['profile', 'persona', 'tags', 'regexRules']);
   };
 
   let result;
@@ -1417,12 +1452,13 @@ test('character assistant completes drafts through multiple tool rounds', async 
     globalThis.fetch = originalFetch;
   }
 
-  assert.equal(calls, 3);
+  assert.equal(calls, 4);
   assert.equal(result.character.name, '澄灯');
   assert.match(result.character.persona, /\{user\}/);
   assert.deepEqual(result.character.tags, ['温和', '推理']);
   assert.equal(result.character.regexRules[0].pattern, '老板');
-  assert.equal(result.toolCalls.length, 2);
+  assert.equal(result.toolCalls.length, 5);
+  assert.equal(result.toolCalls.at(-1).name, 'finish_character_draft');
 });
 
 test('character assistant respects disabled generation sections', async () => {
@@ -1431,6 +1467,11 @@ test('character assistant respects disabled generation sections', async () => {
     globalThis.fetch = async (_url, request = {}) => {
       const body = JSON.parse(request.body);
       assert.match(body.messages[0].content, /允许修改的部分仅限/);
+      assert.deepEqual(body.tools.map((tool) => tool.function?.name), [
+        'update_character_story',
+        'report_character_progress',
+        'finish_character_draft'
+      ]);
       return jsonResponse({
         choices: [
           {
@@ -1442,12 +1483,21 @@ test('character assistant respects disabled generation sections', async () => {
                   id: 'call-disabled',
                   type: 'function',
                   function: {
-                    name: 'set_character_profile',
+                    name: 'update_character_profile',
                     arguments: JSON.stringify({
                       name: 'Changed Name',
-                      persona: 'Changed persona',
-                      background: 'Changed background',
                       tags: ['changed']
+                    })
+                  }
+                },
+                {
+                  id: 'call-story',
+                  type: 'function',
+                  function: {
+                    name: 'update_character_story',
+                    arguments: JSON.stringify({
+                      persona: 'Changed persona',
+                      background: 'Changed background'
                     })
                   }
                 },
@@ -1455,11 +1505,20 @@ test('character assistant respects disabled generation sections', async () => {
                   id: 'call-regex',
                   type: 'function',
                   function: {
-                    name: 'add_regex_rule',
+                    name: 'replace_character_regex_rules',
                     arguments: JSON.stringify({
-                      label: 'Blocked rule',
-                      pattern: 'foo',
-                      replacement: 'bar'
+                      rules: [{ label: 'Blocked rule', pattern: 'foo', replacement: 'bar' }]
+                    })
+                  }
+                },
+                {
+                  id: 'call-finish-disabled',
+                  type: 'function',
+                  function: {
+                    name: 'finish_character_draft',
+                    arguments: JSON.stringify({
+                      summary: 'Persona updated.',
+                      reviewedSections: ['persona']
                     })
                   }
                 }
@@ -1495,7 +1554,7 @@ test('character assistant respects disabled generation sections', async () => {
           tags: false,
           regexRules: false,
           renderPlugins: false,
-          worldBookSuggestion: false,
+          worldBook: false,
           advancedSettings: false,
           modSuggestions: false
         }
@@ -1512,7 +1571,7 @@ test('character assistant respects disabled generation sections', async () => {
   }
 });
 
-test('character assistant ignores null tool arguments', async () => {
+test('character assistant rejects null tool arguments without changing the draft', async () => {
   const originalFetch = globalThis.fetch;
   let calls = 0;
   try {
@@ -1530,7 +1589,7 @@ test('character assistant ignores null tool arguments', async () => {
                     id: 'character-null-profile',
                     type: 'function',
                     function: {
-                      name: 'set_character_profile',
+                      name: 'update_character_profile',
                       arguments: 'null'
                     }
                   }
@@ -1540,9 +1599,7 @@ test('character assistant ignores null tool arguments', async () => {
           ]
         });
       }
-      return jsonResponse({
-        choices: [{ message: { role: 'assistant', content: 'No profile changes.' } }]
-      });
+      return finishedCharacterDraftResponse('No profile changes.');
     };
 
     const result = await completeCharacterDraft(
@@ -1567,41 +1624,40 @@ test('character assistant ignores null tool arguments', async () => {
     assert.equal(calls, 2);
     assert.equal(result.character.name, 'Original Name');
     assert.equal(result.character.persona, 'Original persona');
-    assert.equal(result.toolCalls[0].result.ok, true);
-    assert.deepEqual(result.toolCalls[0].result.applied, {});
+    assert.equal(result.toolCalls[0].result.ok, false);
+    assert.equal(result.toolCalls[0].result.error, 'TOOL_ARGUMENTS_INVALID');
   } finally {
     globalThis.fetch = originalFetch;
   }
 });
 
-test('character assistant ignores non-object loose JSON fallback', async () => {
+test('character assistant rejects natural-language JSON fallback', async () => {
   const originalFetch = globalThis.fetch;
   try {
     globalThis.fetch = async () => jsonResponse({
       choices: [{ message: { role: 'assistant', content: 'null' } }]
     });
 
-    const result = await completeCharacterDraft(
-      {
-        providerType: 'deepseek',
-        gatewayName: 'DeepSeek',
-        baseUrl: 'https://api.deepseek.com',
-        model: 'deepseek-v4-flash',
-        apiKey: 'sk-test',
-        extraBody: {}
-      },
-      {
-        requirement: 'keep current draft',
-        current: {
-          name: 'Existing Draft',
-          persona: 'Existing persona'
+    await assert.rejects(
+      completeCharacterDraft(
+        {
+          providerType: 'deepseek',
+          gatewayName: 'DeepSeek',
+          baseUrl: 'https://api.deepseek.com',
+          model: 'deepseek-v4-flash',
+          apiKey: 'sk-test',
+          extraBody: {}
+        },
+        {
+          requirement: 'keep current draft',
+          current: {
+            name: 'Existing Draft',
+            persona: 'Existing persona'
+          }
         }
-      }
+      ),
+      (error) => error?.code === 'CHARACTER_ASSISTANT_FORMAT_MISMATCH'
     );
-
-    assert.equal(result.character.name, 'Existing Draft');
-    assert.equal(result.character.persona, 'Existing persona');
-    assert.equal(result.toolCalls.length, 0);
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -1617,9 +1673,7 @@ test('character assistant treats null request as defaults', async () => {
       assert.equal(payload.optimizeExisting, false);
       assert.equal(payload.currentCharacter.name, '');
 
-      return jsonResponse({
-        choices: [{ message: { role: 'assistant', content: 'null' } }]
-      });
+      return finishedCharacterDraftResponse('Empty draft validated.');
     };
 
     const result = await completeCharacterDraft(
@@ -1636,13 +1690,13 @@ test('character assistant treats null request as defaults', async () => {
 
     assert.equal(result.character.name, '');
     assert.equal(result.character.regexRules.length, 0);
-    assert.equal(result.toolCalls.length, 0);
+    assert.equal(result.toolCalls.length, 1);
   } finally {
     globalThis.fetch = originalFetch;
   }
 });
 
-test('character assistant skips non-object generated array entries', async () => {
+test('character assistant rejects non-object generated array entries without partial writes', async () => {
   const originalFetch = globalThis.fetch;
   let calls = 0;
   try {
@@ -1660,7 +1714,7 @@ test('character assistant skips non-object generated array entries', async () =>
                     id: 'character-mixed-regex',
                     type: 'function',
                     function: {
-                      name: 'replace_regex_rules',
+                      name: 'replace_character_regex_rules',
                       arguments: JSON.stringify({
                         rules: [
                           null,
@@ -1671,16 +1725,25 @@ test('character assistant skips non-object generated array entries', async () =>
                     }
                   },
                   {
-                    id: 'character-mixed-extensions',
+                    id: 'character-mixed-render-plugins',
                     type: 'function',
                     function: {
-                      name: 'set_character_extensions',
+                      name: 'replace_character_render_plugins',
                       arguments: JSON.stringify({
-                        renderPlugins: [
+                        plugins: [
                           null,
                           'not a render plugin',
                           { label: 'Valid fold', pattern: '\\[note\\]([\\s\\S]+?)\\[/note\\]', titleTemplate: 'Note' }
-                        ],
+                        ]
+                      })
+                    }
+                  },
+                  {
+                    id: 'character-mixed-recommendations',
+                    type: 'function',
+                    function: {
+                      name: 'set_character_recommendations',
+                      arguments: JSON.stringify({
                         modSuggestions: [
                           null,
                           'not a mod',
@@ -1695,9 +1758,7 @@ test('character assistant skips non-object generated array entries', async () =>
           ]
         });
       }
-      return jsonResponse({
-        choices: [{ message: { role: 'assistant', content: 'Done.' } }]
-      });
+      return finishedCharacterDraftResponse('Invalid generated entries skipped.');
     };
 
     const result = await completeCharacterDraft(
@@ -1713,9 +1774,11 @@ test('character assistant skips non-object generated array entries', async () =>
     );
 
     assert.equal(calls, 2);
-    assert.deepEqual(result.character.regexRules.map((rule) => rule.pattern), ['foo']);
-    assert.deepEqual(result.character.renderPlugins.map((plugin) => plugin.label), ['Valid fold']);
-    assert.deepEqual(result.character.modSuggestions.map((mod) => mod.name), ['Valid Mod']);
+    assert.deepEqual(result.character.regexRules, []);
+    assert.deepEqual(result.character.renderPlugins, []);
+    assert.deepEqual(result.character.modSuggestions, []);
+    assert.equal(result.toolCalls.length, 4);
+    assert.ok(result.toolCalls.slice(0, 3).every((call) => call.result.error === 'TOOL_ARGUMENTS_INVALID'));
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -1756,11 +1819,11 @@ test('world book assistant normalizes AI draft fields for real entry creation', 
                         triggerKeys: 'duke,house',
                         content: 'The duke house controls the old port.',
                         position: 'at_depth',
-                        role: 'assistant',
+                        role: 2,
                         depth: 3,
                         useProbability: true,
                         probability: 50,
-                        inclusionGroup: 'noble-rumor',
+                        group: 'noble-rumor',
                         groupWeight: 2,
                         sticky: 2,
                         cooldown: 1,
@@ -1821,9 +1884,10 @@ test('world book assistant includes quality guide in complete and stream prompts
   };
   const requiredGuideLines = [
     '把设定拆成原子条目',
-    'triggerKeys 使用能唯一或高精度命中该条目的正式名称',
+    'triggerKeys 与 keysSecondary 都是一个用英文逗号分隔的字符串',
+    '实际保存字段名是 group，不是 inclusionGroup',
     '注入位置必须与用途一致',
-    'alwaysActive、regexMode、probability、sticky、cooldown、delay 和 group 都会改变触发行为'
+    'alwaysActive、regexMode、selective、useProbability、sticky、cooldown、delay 和 group 都会改变触发行为'
   ];
 
   try {
@@ -1927,39 +1991,44 @@ test('world book assistant includes quality guide in complete and stream prompts
   }
 });
 
-test('world book assistant skips non-object AI entries', async () => {
+test('world book assistant accepts repaired entries after rejecting a malformed batch', async () => {
   const originalFetch = globalThis.fetch;
+  let calls = 0;
   try {
-    globalThis.fetch = async () => jsonResponse({
-      choices: [
-        {
-          message: {
-            role: 'assistant',
-            content: null,
-            tool_calls: [
-              {
-                id: 'wb-mixed-entries',
-                type: 'function',
-                function: {
-                  name: 'replace_world_book_entries',
-                  arguments: JSON.stringify({
-                    entries: [
-                      null,
-                      'not an entry',
-                      {
-                        name: 'Hidden Gate',
-                        triggerKeys: 'gate,hidden',
-                        content: 'The hidden gate opens at moonrise.'
-                      }
-                    ]
-                  })
+    globalThis.fetch = async (_url, request = {}) => {
+      calls += 1;
+      if (calls === 2) assert.match(request.body, /TOOL_ARGUMENTS_INVALID/);
+      if (calls > 2) return jsonResponse({ choices: [{ message: { role: 'assistant', content: 'Done.' } }] });
+      return jsonResponse({
+        choices: [
+          {
+            message: {
+              role: 'assistant',
+              content: null,
+              tool_calls: [
+                {
+                  id: 'wb-mixed-entries',
+                  type: 'function',
+                  function: {
+                    name: 'replace_world_book_entries',
+                    arguments: JSON.stringify({
+                      entries: [
+                        ...(calls === 1 ? [null, 'not an entry'] : []),
+                        {
+                          name: 'Hidden Gate',
+                          triggerKeys: 'gate,hidden',
+                          content: 'The hidden gate opens at moonrise.'
+                        }
+                      ]
+                    })
+                  }
                 }
-              }
-            ]
+              ]
+            }
           }
-        }
-      ]
-    });
+        ]
+      });
+    };
 
     const result = await completeWorldBookDraft(
       {
@@ -1976,21 +2045,19 @@ test('world book assistant skips non-object AI entries', async () => {
     assert.equal(result.worldBook.entries.length, 1);
     assert.equal(result.worldBook.entries[0].name, 'Hidden Gate');
     assert.equal(result.worldBook.entries[0].content, 'The hidden gate opens at moonrise.');
+    assert.equal(result.toolCalls[0].result.error, 'TOOL_ARGUMENTS_INVALID');
+    assert.equal(calls, 3);
   } finally {
     globalThis.fetch = originalFetch;
   }
 });
 
 test('world book assistant normalizes entry lists without map/filter chains', () => {
-  const assistantSource = fs.readFileSync(new URL('../services/worldBookAssistant.js', import.meta.url), 'utf8');
+  const assistantSource = fs.readFileSync(new URL('../services/worldBookDraftTools.js', import.meta.url), 'utf8');
 
   assert.match(
     assistantSource,
-    /function normalizeUsableEntryList\(entries = \[\]\) \{[\s\S]*for \(let index = 0; index < entries\.length; index \+= 1\) \{[\s\S]*if \(entry\.name && entry\.content\) \{[\s\S]*normalized\.push\(entry\);/
-  );
-  assert.match(
-    assistantSource,
-    /function normalizeDraftEntryList\(entries = \[\]\) \{[\s\S]*for \(let index = 0; index < entries\.length; index \+= 1\) \{[\s\S]*if \(entry\.name \|\| entry\.content\) \{[\s\S]*normalized\.push\(entry\);/
+    /function normalizeWorldBookEntryList\(entries = \[\], options = \{\}\) \{[\s\S]*for \(let index = 0; index < entries\.length; index \+= 1\) \{[\s\S]*if \(keep\) normalized\.push\(entry\);/
   );
   assert.doesNotMatch(
     assistantSource,
@@ -2702,6 +2769,7 @@ test('conversation appearance settings persist empty values and custom code', ()
     customJsEnabled: true,
     customJsRiskAccepted: true,
     showWorldBookMatches: true,
+    highlightDialogue: true,
     castTracking: { enabled: false }
   });
 
@@ -2756,6 +2824,7 @@ test('conversation appearance treats null input as defaults', () => {
     customJsRiskAccepted: false,
     statusBarPrompt: '',
     showWorldBookMatches: true,
+    highlightDialogue: true,
     castTracking: { enabled: false }
   });
 });
@@ -5235,6 +5304,25 @@ function jsonResponse(value) {
   });
 }
 
+function finishedCharacterDraftResponse(summary = 'Draft validated.', reviewedSections = []) {
+  return jsonResponse({
+    choices: [{
+      message: {
+        role: 'assistant',
+        content: null,
+        tool_calls: [{
+          id: `finish-character-${summary.length}`,
+          type: 'function',
+          function: {
+            name: 'finish_character_draft',
+            arguments: JSON.stringify({ summary, reviewedSections })
+          }
+        }]
+      }
+    }]
+  });
+}
+
 test('world book schema accepts null characterId for unlinked books', () => {
   const createResult = createWorldBookSchema.safeParse({
     name: 'Unlinked World Book',
@@ -7260,7 +7348,11 @@ test('advanced settings helpers treat null inputs as defaults', () => {
   assert.equal(normalized.statusBarBlueprint.variables.length, 0);
   assert.equal(normalized.accessorySkills.statusBarAgent.enabled, 'auto');
 
-  const merged = mergeAdvancedSettings({ statusBarPrompt: 'author prompt', showWorldBookMatches: false }, null);
+  const merged = mergeAdvancedSettings(
+    { statusBarPrompt: 'author prompt', showWorldBookMatches: false },
+    null,
+    { allowAuthorDangerous: true }
+  );
   assert.equal(merged.statusBarPrompt, 'author prompt');
   assert.equal(merged.showWorldBookMatches, false);
   assert.equal(
@@ -7400,6 +7492,7 @@ test('conversation settings invalid lorebook rolls back appearance inside transa
         customJsEnabled: false,
         customJsRiskAccepted: false,
         showWorldBookMatches: true,
+        highlightDialogue: true,
         castTracking: { enabled: false }
       });
 
@@ -7489,6 +7582,7 @@ test('conversation settings save succeeds inside an existing transaction', async
         customJsEnabled: false,
         customJsRiskAccepted: false,
         showWorldBookMatches: true,
+        highlightDialogue: true,
         castTracking: { enabled: false }
       });
       assert.equal(
@@ -7509,6 +7603,7 @@ test('conversation settings save succeeds inside an existing transaction', async
       customJsEnabled: false,
       customJsRiskAccepted: false,
       showWorldBookMatches: true,
+      highlightDialogue: true,
       castTracking: { enabled: false }
     });
     assert.equal(

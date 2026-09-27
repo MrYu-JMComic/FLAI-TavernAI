@@ -54,7 +54,7 @@ function createEmptyForm() {
     name: '',
     systemPrompt: '',
     temperature: 1.0,
-    maxTokens: 4096,
+    maxTokens: 0,
     topP: 1.0,
     frequencyPenalty: 0,
     presencePenalty: 0,
@@ -149,7 +149,7 @@ function startEdit(preset) {
     name: currentPreset.name || '',
     systemPrompt: currentPreset.systemPrompt || '',
     temperature: Number(currentPreset.temperature) || 1.0,
-    maxTokens: Math.round(Number(currentPreset.maxTokens)) || 4096,
+    maxTokens: normalizeMaxTokens(currentPreset.maxTokens),
     topP: Number(currentPreset.topP) || 1.0,
     frequencyPenalty: Number(currentPreset.frequencyPenalty) || 0,
     presencePenalty: Number(currentPreset.presencePenalty) || 0,
@@ -180,7 +180,7 @@ async function handleSave() {
     name: form.value.name.trim(),
     systemPrompt: form.value.systemPrompt,
     temperature: clamp(form.value.temperature, 0, 2),
-    maxTokens: clampInt(form.value.maxTokens, 1, 128000),
+    maxTokens: clampInt(form.value.maxTokens, 0, 128000),
     topP: clamp(form.value.topP, 0, 1),
     frequencyPenalty: clamp(form.value.frequencyPenalty, -2, 2),
     presencePenalty: clamp(form.value.presencePenalty, -2, 2),
@@ -332,6 +332,16 @@ function clampInt(value, min, max) {
   if (!Number.isFinite(num)) return min;
   return Math.min(max, Math.max(min, num));
 }
+
+function normalizeMaxTokens(value) {
+  const number = Number(value);
+  return Number.isFinite(number) && number >= 0 ? Math.min(128000, Math.round(number)) : 0;
+}
+
+function formatMaxTokens(value) {
+  const number = Number(value);
+  return number === 0 ? '不限制' : Number.isFinite(number) ? number.toLocaleString('zh-CN') : '不限制';
+}
 </script>
 
 <template>
@@ -402,7 +412,7 @@ function clampInt(value, min, max) {
             <p v-else class="preset-card-prompt muted-text">无系统提示词</p>
             <div class="preset-card-params">
               <span>T={{ preset.temperature }}</span>
-              <span>Max={{ preset.maxTokens }}</span>
+              <span>输出={{ formatMaxTokens(preset.maxTokens) }}</span>
               <span>TopP={{ preset.topP }}</span>
             </div>
             <div class="preset-card-actions" @click.stop>
@@ -458,14 +468,15 @@ function clampInt(value, min, max) {
             />
           </label>
           <label class="field">
-            <span>Max Tokens</span>
+            <span>输出 Token 上限</span>
             <input
               v-model.number="form.maxTokens"
               type="number"
-              min="1"
+              min="0"
               max="128000"
               step="1"
             />
+            <small class="muted-text">填 0 表示不限制输出，由模型或供应商决定。</small>
           </label>
           <label class="field">
             <span>Top P ({{ form.topP }})</span>

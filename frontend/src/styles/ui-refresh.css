@@ -38,7 +38,8 @@
   position: sticky;
   top: 0;
   z-index: var(--z-sticky);
-  min-height: 72px;
+  min-height: 68px;
+  padding-block: 10px;
   border-bottom: 1px solid color-mix(in srgb, var(--line) 78%, transparent);
   background: var(--surface-glass);
   box-shadow: 0 1px 0 color-mix(in srgb, #fff 46%, transparent);
@@ -47,10 +48,10 @@
 }
 
 .topnav {
-  padding: 5px;
-  border: 1px solid color-mix(in srgb, var(--line) 78%, transparent);
-  border-radius: var(--radius-md);
-  background: color-mix(in srgb, var(--surface-strong) 68%, transparent);
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
 }
 
 .topnav button,
@@ -59,7 +60,14 @@
 }
 
 .topnav button.active {
-  box-shadow: var(--shadow-xs);
+  color: var(--primary-strong);
+  background: var(--primary-soft);
+  box-shadow: none;
+}
+
+.topnav button:hover:not(.active) {
+  color: var(--text);
+  background: var(--surface-hover);
 }
 
 .page-shell {
@@ -81,7 +89,7 @@
 .home-layout-shell {
   --home-page-padding-top: clamp(20px, 3vw, 40px);
   --home-control-sticky-top: 0px;
-  --home-page-gutter: clamp(20px, 3vw, 40px);
+  --home-page-gutter: clamp(20px, 2vw, 32px);
 }
 
 .home-layout-shell .page-shell {
@@ -96,14 +104,13 @@
 }
 
 .section-heading h1,
-.home-hero h1,
 .worldbook-overview h1 {
   font-size: var(--font-2xl);
-  letter-spacing: -0.035em;
+  letter-spacing: 0;
   line-height: var(--leading-tight);
 }
 
-:where(.form-panel, .balance-panel, .worldbook-library-panel, .home-control-panel, .preset-card) {
+:where(.form-panel, .balance-panel, .worldbook-library-panel, .preset-card) {
   border-color: color-mix(in srgb, var(--line) 82%, transparent);
   border-radius: var(--radius-md);
   background: color-mix(in srgb, var(--surface) 94%, transparent);
@@ -122,40 +129,23 @@
 /* Home */
 
 .home-layout-shell .home-control-panel {
-  margin-inline: calc(-1 * var(--home-page-gutter));
-  padding-inline: calc(var(--home-page-gutter) + 10px);
-  border-radius: var(--radius-md);
-  transition:
-    border-color var(--duration-fast) var(--ease-standard),
-    border-radius var(--duration-fast) var(--ease-standard),
-    box-shadow var(--duration-fast) var(--ease-standard);
+  border-radius: 0;
+  transition: box-shadow var(--duration-fast) var(--ease-standard);
 }
 
 .home-layout-shell .home-control-panel.is-pinned {
-  border-top-color: transparent;
-  border-radius: 0 0 var(--radius-md) var(--radius-md);
-}
-
-.home-hero {
-  border-radius: var(--radius-xl);
-  box-shadow: var(--shadow-md);
+  box-shadow: 0 1px 0 var(--line);
 }
 
 .home-primary-action,
 .home-secondary-action,
-.home-quick-action,
-.home-control-panel,
 .home-character-card {
-  border-radius: var(--radius-md);
-}
-
-.home-quick-row {
-  gap: 12px;
+  border-radius: 8px;
 }
 
 .home-character-card {
   border-color: color-mix(in srgb, var(--line) 82%, transparent);
-  box-shadow: var(--shadow-sm);
+  box-shadow: var(--shadow-xs);
 }
 
 .home-character-summary {
@@ -1031,7 +1021,7 @@
     border-right: 0;
     border-bottom: 0;
     border-left: 0;
-    border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+    border-radius: 0;
     background: var(--surface-glass);
     box-shadow: 0 -12px 34px color-mix(in srgb, var(--bg) 28%, transparent);
     backdrop-filter: blur(24px) saturate(1.12);
@@ -1048,17 +1038,13 @@
     border-radius: var(--radius-md);
     color: var(--muted);
     background: transparent;
-    font-size: 0.68rem;
+    font-size: 0.75rem;
     font-weight: 750;
   }
 
   .mobile-bottom-nav button.active {
-    color: var(--primary);
+    color: var(--primary-strong);
     background: var(--primary-soft);
-  }
-
-  .home-hero {
-    border-radius: var(--radius-lg);
   }
 
   .home-character-summary {

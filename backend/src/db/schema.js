@@ -44,6 +44,7 @@ export function initializeDatabase(database) {
       gateway_name TEXT NOT NULL,
       base_url TEXT NOT NULL,
       model TEXT NOT NULL,
+      image_model TEXT NOT NULL DEFAULT '',
       encrypted_api_key TEXT,
       api_key_hint TEXT,
       supports_reasoning INTEGER NOT NULL DEFAULT 0,
@@ -61,6 +62,7 @@ export function initializeDatabase(database) {
       gateway_name TEXT NOT NULL,
       base_url TEXT NOT NULL,
       model TEXT NOT NULL,
+      image_model TEXT NOT NULL DEFAULT '',
       encrypted_api_key TEXT,
       api_key_hint TEXT,
       supports_reasoning INTEGER NOT NULL DEFAULT 0,
@@ -208,6 +210,8 @@ export function initializeDatabase(database) {
   ensureColumn(database, 'conversation_memories', 'source_excerpt', "TEXT NOT NULL DEFAULT ''");
   ensureColumn(database, 'sessions', 'token_hash', 'TEXT');
   ensureColumn(database, 'provider_settings', 'allow_private_network', 'INTEGER NOT NULL DEFAULT 0');
+  ensureColumn(database, 'provider_settings', 'image_model', "TEXT NOT NULL DEFAULT ''");
+  ensureColumn(database, 'provider_presets', 'image_model', "TEXT NOT NULL DEFAULT ''");
   database.exec(`
     CREATE TABLE IF NOT EXISTS character_likes (
       user_id TEXT NOT NULL,
@@ -365,7 +369,7 @@ export function initializeDatabase(database) {
       name TEXT NOT NULL DEFAULT '未命名预设',
       system_prompt TEXT NOT NULL DEFAULT '',
       temperature REAL NOT NULL DEFAULT 1.0,
-      max_tokens INTEGER NOT NULL DEFAULT 4096,
+      max_tokens INTEGER NOT NULL DEFAULT 0,
       top_p REAL NOT NULL DEFAULT 1.0,
       frequency_penalty REAL NOT NULL DEFAULT 0,
       presence_penalty REAL NOT NULL DEFAULT 0,
@@ -652,6 +656,9 @@ export function initializeDatabase(database) {
 
     CREATE TABLE IF NOT EXISTS talent_pools (
       id TEXT PRIMARY KEY,
+      user_id TEXT,
+      owner_type TEXT NOT NULL DEFAULT 'system',
+      read_only INTEGER NOT NULL DEFAULT 1,
       name TEXT NOT NULL,
       description TEXT NOT NULL DEFAULT '',
       talents_json TEXT NOT NULL DEFAULT '[]',
@@ -801,6 +808,12 @@ export function initializeDatabase(database) {
   ensureColumn(database, 'conversation_memories', 'emotional_intensity', 'REAL NOT NULL DEFAULT 0');
 
   applyStartupMigrations(database, { getCachedTableColumns });
+  ensureColumn(
+    database,
+    'user_quotas',
+    'max_structured_storage_bytes',
+    'INTEGER NOT NULL DEFAULT 268435456'
+  );
   createDatabaseIndexes(database);
 }
 

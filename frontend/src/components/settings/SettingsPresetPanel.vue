@@ -55,6 +55,11 @@ function isPresetDefaultBusy(id) {
 function isPresetDeleteBusy(id) {
   return props.actionBusyId === presetDeleteActionId(id);
 }
+
+function formatMaxTokens(value) {
+  const number = Number(value);
+  return number === 0 ? '不限制' : Number.isFinite(number) ? number.toLocaleString('zh-CN') : '不限制';
+}
 </script>
 
 <template>
@@ -119,8 +124,9 @@ function isPresetDeleteBusy(id) {
           <input :value="form.temperature" type="range" min="0" max="2" step="0.1" :disabled="actionBusy" @input="updateField('temperature', readNumberInputValue($event))" />
         </label>
         <label class="field">
-          <span>Max Tokens</span>
-          <input :value="form.maxTokens" type="number" min="1" max="128000" step="1" :disabled="actionBusy" @input="updateField('maxTokens', readNumberInputValue($event))" />
+          <span>输出 Token 上限</span>
+          <input :value="form.maxTokens" type="number" min="0" max="128000" step="1" :disabled="actionBusy" @input="updateField('maxTokens', readNumberInputValue($event))" />
+          <small class="muted-text">填 0 表示不限制输出，由模型或供应商决定。</small>
         </label>
         <label class="field">
           <span>Top P ({{ form.topP }})</span>
@@ -153,7 +159,7 @@ function isPresetDeleteBusy(id) {
           <span v-if="preset.isDefault" class="default-badge">默认</span>
         </div>
         <div class="preset-card-params">
-          <small>T={{ preset.temperature }} · max={{ preset.maxTokens }} · topP={{ preset.topP }}</small>
+          <small>T={{ preset.temperature }} · 输出={{ formatMaxTokens(preset.maxTokens) }} · topP={{ preset.topP }}</small>
         </div>
         <p v-if="preset.systemPrompt" class="preset-card-prompt">{{ preset.systemPrompt.slice(0, 100) }}{{ preset.systemPrompt.length > 100 ? '...' : '' }}</p>
         <div class="preset-card-actions">

@@ -47,6 +47,23 @@ export function createAppDatabase(filename = path.join(dataDir, 'flai.sqlite'), 
   }
 }
 
+/**
+ * Periodic upkeep for a long-lived connection: fold the WAL back into the main
+ * file and let SQLite refresh planner statistics for the tables it has used.
+ * `PRAGMA optimize` only considers tables queried on this connection, so it
+ * has to run after real traffic rather than at open.
+ */
+export function performDatabaseMaintenance(database, options = {}) {
+  const checkpoint = options.checkpoint === false
+    ? null
+    : database.prepare('PRAGMA wal_checkpoint(TRUNCATE)').get();
+  database.exec('PRAGMA optimize');
+  return {
+    checkpointed: checkpoint ? Number(checkpoint.checkpointed ?? -1) : null,
+    walFrames: checkpoint ? Number(checkpoint.log ?? -1) : null
+  };
+}
+
 function execWithDatabaseLockRetry(database, statement, options = {}) {
   const maxAttempts = Math.max(1, Number(options.maxAttempts || 6));
   const delayMs = Math.max(25, Number(options.delayMs || 150));

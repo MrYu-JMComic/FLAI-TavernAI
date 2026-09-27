@@ -10,11 +10,13 @@ export function updateTownClockRecord(database, userId, town, payload = {}) {
     ? town.simulationStatus
     : normalizeTownSimulationStatus(payload.simulationStatus);
   const timestamp = nowIso();
+  const settings = { ...town.settings };
+  if (payload.realSecondsPerTick !== undefined) settings.realSecondsPerTick = clampInteger(payload.realSecondsPerTick, 1, 60, 4);
   database.prepare(
     `UPDATE town_worlds
-     SET current_day = ?, minute_of_day = ?, simulation_status = ?, engine_checkpoint_at = ?, updated_at = ?
+     SET current_day = ?, minute_of_day = ?, simulation_status = ?, engine_checkpoint_at = ?, updated_at = ?, settings_json = ?
      WHERE id = ? AND user_id = ?`
-  ).run(currentDay, minuteOfDay, simulationStatus, timestamp, timestamp, town.id, userId);
+  ).run(currentDay, minuteOfDay, simulationStatus, timestamp, timestamp, JSON.stringify(settings), town.id, userId);
 }
 
 export function calculateTownTick(town) {

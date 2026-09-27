@@ -3,8 +3,12 @@
  * These were extracted from server.js during the modularization refactor.
  */
 
-import { normalizeAdvancedSettings, mergeAdvancedSettings } from '../modules/advancedSettings.js';
-import { summarizeUsageSnapshots } from '../services/providers.js';
+import {
+  normalizeAdvancedSettings,
+  mergeAdvancedSettings,
+  sanitizeAuthorAdvancedSettings
+} from '../modules/advancedSettings.js';
+import { hasUsableProvider, summarizeUsageSnapshots } from '../services/providers.js';
 import { parseJson } from '../utils/json.js';
 import {
   createCursorScope,
@@ -13,6 +17,9 @@ import {
   normalizeCursorLimit
 } from '../services/cursorPagination.js';
 import { measureSync } from '../services/performanceMetrics.js';
+import { isSafeAttachmentUrl } from '../services/chatAttachments.js';
+import { withSavepoint } from '../modules/savepoint.js';
+import { finishConversationHistoryChange, prepareConversationHistoryChange } from '../services/conversationTimeline.js';
 
 export { parseJson };
 
@@ -91,21 +98,32 @@ function waitForResponseDrain(response) {
   });
 }
 
-export function toConversation(row, db) {
-  const authorAdvancedSettings = normalizeAdvancedSettings(parseJson(row.author_advanced_settings, {}));
+export function toConversation(row, db, viewerId = '') {
+  const isCharacterOwner = Boolean(viewerId && row.character_user_id && row.character_user_id === viewerId);
+  const authorAdvancedSettings = sanitizeAuthorAdvancedSettings(
+    parseJson(row.author_advanced_settings, {}),
+    { allowDangerous: isCharacterOwner }
+  );
   const rawUserAdvancedSettings = {
     ...mergeConversationAppearance(row),
     ...parseJson(row.user_advanced_settings, {})
   };
   const userAdvancedSettings = normalizeAdvancedSettings(rawUserAdvancedSettings);
-  const mergedSettings = mergeAdvancedSettings(authorAdvancedSettings, rawUserAdvancedSettings);
+  const mergedSettings = mergeAdvancedSettings(authorAdvancedSettings, rawUserAdvancedSettings, {
+    allowAuthorDangerous: isCharacterOwner
+  });
   return {
     id: row.id,
     characterId: row.character_id,
     title: row.title,
+    timelineRevision: row.timeline_revision || 1,
+    stateStatus: row.state_status || 'legacy',
     chatLorebookId: row.chat_lorebook_id || null,
+    contextBudget: parseJson(row.context_budget_json, {}),
     settings: mergedSettings,
     authorSettings: authorAdvancedSettings,
+    authorDangerousAllowed: isCharacterOwner,
+    isCharacterOwner,
     userSettings: userAdvancedSettings,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -193,7 +211,7 @@ export function emptyUsageSummary() {
 export function getConversationForUser(db, userId, conversationId, options = {}) {
   const row = db
     .prepare(
-      `SELECT conversations.*, characters.name AS character_name, characters.avatar_url, characters.author_advanced_settings
+      `SELECT conversations.*, characters.user_id AS character_user_id, characters.name AS character_name, characters.avatar_url, characters.author_advanced_settings
        FROM conversations
        JOIN characters ON characters.id = conversations.character_id
        WHERE conversations.user_id = ? AND conversations.id = ?`
@@ -202,7 +220,7 @@ export function getConversationForUser(db, userId, conversationId, options = {})
   if (!row) {
     return null;
   }
-  const conversation = toConversation(row, db);
+  const conversation = toConversation(row, db, userId);
   // The generation hot path only needs authorization + settings; skip the
   // O(messages) usage aggregation there via includeUsage: false.
   if (options.includeUsage === false) {
@@ -212,11 +230,14 @@ export function getConversationForUser(db, userId, conversationId, options = {})
 }
 
 export function toMessage(row) {
+  const rawAttachments = parseJson(row.attachments_json, []);
   return {
     id: row.id,
+    revision: row.revision || 1,
+    postprocessState: row.postprocess_state || 'untracked',
     role: row.role,
     content: row.content,
-    attachments: parseJson(row.attachments_json, []),
+    attachments: sanitizeMessageAttachments(rawAttachments),
     reasoning: row.reasoning || '',
     usage: parseJson(row.usage_json, null),
     createdAt: row.created_at
@@ -300,13 +321,19 @@ export function updateConversationTimestamp(db, nowIso, userId, conversationId) 
 }
 
 export function updateConversationMessage(db, nowIso, userId, conversationId, messageId, payload) {
+  const existing = getConversationMessage(db, userId, conversationId, messageId);
+  if (!existing || existing.content === payload.content) return existing;
+  return withSavepoint(db, 'sp_edit_conversation_history', () => {
+  const prepared = prepareConversationHistoryChange(db, userId, conversationId, messageId);
   db.prepare(
     `UPDATE messages
      SET content = ?
      WHERE user_id = ? AND conversation_id = ? AND id = ?`
   ).run(payload.content, userId, conversationId, messageId);
   updateConversationTimestamp(db, nowIso, userId, conversationId);
-  return getConversationMessage(db, userId, conversationId, messageId);
+  const timeline = finishConversationHistoryChange(db, userId, conversationId, prepared);
+  return { ...getConversationMessage(db, userId, conversationId, messageId), timeline };
+  });
 }
 
 export function deleteConversationMessage(db, nowIso, userId, conversationId, messageId) {
@@ -314,26 +341,59 @@ export function deleteConversationMessage(db, nowIso, userId, conversationId, me
   if (!existing) {
     return null;
   }
-
+  return withSavepoint(db, 'sp_delete_conversation_history', () => {
+  const prepared = prepareConversationHistoryChange(db, userId, conversationId, messageId);
   const result = db
     .prepare('DELETE FROM messages WHERE user_id = ? AND conversation_id = ? AND id = ?')
     .run(userId, conversationId, messageId);
   if (result.changes > 0) {
     updateConversationTimestamp(db, nowIso, userId, conversationId);
   }
+  const timeline = result.changes > 0 ? finishConversationHistoryChange(db, userId, conversationId, prepared) : null;
   return result.changes > 0
-    ? { deletedId: messageId, deletedReasoning: Boolean(existing.reasoning) }
+    ? { deletedId: messageId, deletedReasoning: Boolean(existing.reasoning), timeline }
     : null;
+  });
+}
+
+/**
+ * Delete a message and everything after it as one history change. Rerunning an
+ * edited prompt previously deleted each tail message separately, which produced
+ * one recovery snapshot and one job cancellation per message.
+ */
+export function deleteConversationMessagesFrom(db, nowIso, userId, conversationId, messageId) {
+  const rows = db
+    .prepare(
+      `SELECT id FROM messages
+       WHERE user_id = ? AND conversation_id = ?
+       ORDER BY created_at ASC, rowid ASC`
+    )
+    .all(userId, conversationId);
+  const index = rows.findIndex((row) => row.id === messageId);
+  if (index < 0) {
+    return null;
+  }
+  const targets = rows.slice(index).map((row) => row.id);
+  return withSavepoint(db, 'sp_truncate_conversation_history', () => {
+    const prepared = prepareConversationHistoryChange(db, userId, conversationId, messageId);
+    const remove = db.prepare('DELETE FROM messages WHERE user_id = ? AND conversation_id = ? AND id = ?');
+    const deletedIds = [];
+    for (const targetId of targets) {
+      if (remove.run(userId, conversationId, targetId).changes > 0) deletedIds.push(targetId);
+    }
+    updateConversationTimestamp(db, nowIso, userId, conversationId);
+    const timeline = finishConversationHistoryChange(db, userId, conversationId, prepared);
+    return { deletedIds, timeline };
+  });
 }
 
 export function listRecentConversationMessageRows(db, userId, conversationId) {
   const rows = db
     .prepare(
-      `SELECT role, content, attachments_json, reasoning, created_at
+      `SELECT id, revision, role, content, attachments_json, reasoning, created_at
        FROM messages
        WHERE user_id = ? AND conversation_id = ?
-       ORDER BY created_at DESC, rowid DESC
-       LIMIT 20`
+       ORDER BY created_at DESC, rowid DESC`
     )
     .all(userId, conversationId);
   const recentMessages = [];
@@ -365,13 +425,38 @@ export function createConversationMessage(db, newId, nowIso, {
     conversationId,
     role,
     content,
-    JSON.stringify(Array.isArray(attachments) ? attachments : []),
+    JSON.stringify(sanitizeMessageAttachments(attachments)),
     reasoning || '',
     usage ? JSON.stringify(usage) : null,
     nowIso()
   );
 
   return toMessage(db.prepare('SELECT * FROM messages WHERE id = ?').get(id));
+}
+
+function sanitizeMessageAttachments(attachments = []) {
+  const source = Array.isArray(attachments) ? attachments : [];
+  const normalized = [];
+  for (const attachment of source) {
+    if (!attachment || typeof attachment !== 'object') {
+      continue;
+    }
+    const url = String(attachment.url || '').trim();
+    const dataUrl = String(attachment.dataUrl || '').trim();
+    const candidate = url || dataUrl;
+    if (!isSafeAttachmentUrl(candidate)) {
+      continue;
+    }
+    normalized.push({
+      ...attachment,
+      ...(url ? { url } : { dataUrl }),
+      ...(attachment.mimeType ? { mimeType: String(attachment.mimeType).trim().toLowerCase() } : {})
+    });
+    if (normalized.length >= 4) {
+      break;
+    }
+  }
+  return normalized;
 }
 
 export function normalizeIdList(ids) {
@@ -406,7 +491,7 @@ export function getChatProviderSettingsFromContext(ctx, userId) {
   if (settings.apiKeyError) {
     return { ok: false, error: settings.apiKeyError };
   }
-  const providerReady = ctx.hasUsableProvider(settings);
+  const providerReady = (ctx.hasUsableProvider || hasUsableProvider)(settings);
   if (!settings.apiKey && !providerReady) {
     if (ctx.mockProviderEnabled) {
       return { ok: true, value: mockProviderSettings(settings) };

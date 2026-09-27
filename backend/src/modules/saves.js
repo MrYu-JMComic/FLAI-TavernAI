@@ -1,6 +1,10 @@
 import { newId, nowIso } from '../security.js';
 import { parseJson } from '../utils/json.js';
 import { withSavepoint } from './savepoint.js';
+import { sanitizeChatAttachments } from '../services/chatAttachments.js';
+import { restoreConversationWorldBookState } from '../services/worldBooks/worldBookStateService.js';
+import { captureConversationSnapshot, clearConversationSnapshotState, restoreConversationSnapshot, writeConversationCheckpoint } from '../repositories/conversationSnapshotRepository.js';
+import { assertConversationIdle, invalidateConversationTimeline } from '../services/conversationTimeline.js';
 
 // ── Save CRUD ──
 
@@ -10,7 +14,7 @@ export function listSaves(database, userId, conversationId) {
   }
   return database
     .prepare(
-      `SELECT id, conversation_id, name, preview, created_at
+      `SELECT id, conversation_id, name, preview, kind, created_at
        FROM saves
        WHERE user_id = ? AND conversation_id = ?
        ORDER BY created_at DESC, rowid DESC`
@@ -28,6 +32,7 @@ export function getSave(database, userId, saveId) {
 
 export function createSave(database, userId, conversationId, payload) {
   assertConversationAccess(database, userId, conversationId);
+  assertConversationIdle(database, userId, conversationId);
   const id = newId();
   const timestamp = nowIso();
   const name = normalizeSaveName(payload.name);
@@ -36,13 +41,13 @@ export function createSave(database, userId, conversationId, payload) {
 
   database
     .prepare(
-      `INSERT INTO saves (id, conversation_id, user_id, name, snapshot, preview, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO saves (id, conversation_id, user_id, name, snapshot, preview, kind, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, 'manual', ?)`
     )
     .run(id, conversationId, userId, name, JSON.stringify(snapshot), preview, timestamp);
 
   return toSaveSummary(
-    database.prepare('SELECT id, conversation_id, name, preview, created_at FROM saves WHERE id = ?').get(id)
+    database.prepare('SELECT id, conversation_id, name, preview, kind, created_at FROM saves WHERE id = ?').get(id)
   );
 }
 
@@ -64,7 +69,7 @@ export function updateSave(database, userId, saveId, payload, requestedConversat
     .run(name, saveId, userId);
 
   return toSaveSummary(
-    database.prepare('SELECT id, conversation_id, name, preview, created_at FROM saves WHERE id = ?').get(saveId)
+    database.prepare('SELECT id, conversation_id, name, preview, kind, created_at FROM saves WHERE id = ?').get(saveId)
   );
 }
 
@@ -96,8 +101,17 @@ export function loadSave(database, userId, saveId, requestedConversationId = '')
   }
 
   const targetConversationId = row.conversation_id;
+  if (snapshot.version && snapshot.version !== 2) {
+    throw Object.assign(new Error('Unsupported conversation snapshot version'), { code: 'SNAPSHOT_VERSION_UNSUPPORTED', status: 400 });
+  }
+  const completeSnapshot = snapshot.version === 2;
 
   withSavepoint(database, 'sp_load_save', () => {
+    invalidateConversationTimeline(database, userId, targetConversationId);
+    if (completeSnapshot) {
+      restoreConversationSnapshot(database, userId, targetConversationId, snapshot);
+    } else {
+      clearConversationSnapshotState(database, userId, targetConversationId);
     // Clear existing messages for this conversation
     database
       .prepare('DELETE FROM messages WHERE user_id = ? AND conversation_id = ?')
@@ -116,13 +130,20 @@ export function loadSave(database, userId, saveId, requestedConversationId = '')
           targetConversationId,
           msg.role,
           msg.content,
-          JSON.stringify(normalizeSnapshotAttachments(msg.attachments)),
+          JSON.stringify(sanitizeChatAttachments(msg.attachments)),
           msg.reasoning || '',
           msg.usage ? JSON.stringify(msg.usage) : null,
           msg.createdAt || nowIso()
         );
       }
     }
+
+    restoreConversationWorldBookState(database, targetConversationId, snapshot.worldBookState);
+    }
+    const stateStatus = completeSnapshot && !['pending', 'stale', 'needs_rebuild'].includes(snapshot.stateStatus)
+      ? 'ready' : completeSnapshot ? 'needs_rebuild' : 'legacy_partial';
+    database.prepare('UPDATE conversations SET state_status = ? WHERE id = ?').run(stateStatus, targetConversationId);
+    if (stateStatus === 'ready') writeConversationCheckpoint(database, userId, targetConversationId);
 
     // Update conversation timestamp
     database
@@ -132,54 +153,19 @@ export function loadSave(database, userId, saveId, requestedConversationId = '')
 
   return {
     conversationId: targetConversationId,
-    messageCount: Array.isArray(snapshot.messages) ? snapshot.messages.length : 0
+    messageCount: Array.isArray(snapshot.messages) ? snapshot.messages.length : 0,
+    snapshotVersion: completeSnapshot ? 2 : 1,
+    stateStatus: database.prepare('SELECT state_status FROM conversations WHERE id = ?').get(targetConversationId).state_status,
+    warnings: completeSnapshot ? [] : ['旧存档缺少完整剧情状态，未保留读档前的人物、物品、场景或经济数据。']
   };
 }
 
 // ── Snapshot Logic ──
 
 function buildSnapshot(database, userId, conversationId) {
-  const messages = database
-    .prepare(
-      `SELECT id, role, content, attachments_json, reasoning, usage_json, created_at
-       FROM messages
-       WHERE user_id = ? AND conversation_id = ?
-       ORDER BY created_at ASC, rowid ASC`
-    )
-    .all(userId, conversationId)
-    .map((row) => ({
-      id: row.id,
-      role: row.role,
-      content: row.content,
-      attachments: normalizeSnapshotAttachments(parseJson(row.attachments_json, [])),
-      reasoning: row.reasoning || '',
-      usage: parseJson(row.usage_json, null),
-      createdAt: row.created_at
-    }));
-
-  return {
-    messages,
-    savedAt: nowIso()
-  };
-}
-
-function normalizeSnapshotAttachments(attachments = []) {
-  const source = Array.isArray(attachments) ? attachments : [];
-  const normalized = [];
-  for (const attachment of source) {
-    if (!attachment || typeof attachment !== 'object') {
-      continue;
-    }
-    normalized.push({
-      type: String(attachment.type || 'image'),
-      dataUrl: String(attachment.dataUrl || ''),
-      mimeType: String(attachment.mimeType || ''),
-      name: String(attachment.name || ''),
-      alt: String(attachment.alt || ''),
-      size: Number.isFinite(Number(attachment.size)) ? Number(attachment.size) : 0
-    });
-  }
-  return normalized;
+  const snapshot = captureConversationSnapshot(database, userId, conversationId);
+  snapshot.messages = snapshot.messages.map((message) => ({ ...message, attachments: sanitizeChatAttachments(message.attachments) }));
+  return snapshot;
 }
 
 function buildPreview(snapshot) {
@@ -233,6 +219,7 @@ function toSaveSummary(row) {
     conversationId: row.conversation_id,
     name: row.name,
     preview: row.preview || '',
+    kind: row.kind === 'recovery' ? 'recovery' : 'manual',
     createdAt: row.created_at
   };
 }
@@ -244,6 +231,7 @@ function toSaveDetail(row) {
     name: row.name,
     snapshot: parseJson(row.snapshot, {}),
     preview: row.preview || '',
+    kind: row.kind === 'recovery' ? 'recovery' : 'manual',
     createdAt: row.created_at
   };
 }

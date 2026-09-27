@@ -1,18 +1,27 @@
 import { Router } from 'express';
-import { appConfig } from '../config.js';
+import { appConfig, withAppConfigDefaults } from '../config.js';
 import { createAsset, deleteAsset, getAssetForViewer, listAssets } from '../modules/assets.js';
 import {
+  batchReviewConversationMemories,
   confirmConversationMemory,
   createConversationMemory,
   deleteConversationMemory,
   disableConversationMemory,
+  listConversationMemoryConflictCandidates,
   listConversationMemories,
+  mergeConversationMemories,
+  pinConversationMemory,
   rollbackConversationMemory,
+  undoConversationMemoryMerge,
   updateConversationMemory
 } from '../modules/conversationMemories.js';
 import { getConversationBranchTree } from '../modules/branches.js';
 import { getWorldBook } from '../modules/worldBooks.js';
 import { buildConversationContextPreview } from '../services/contextPreview.js';
+import { getDefaultPreset } from '../modules/presets.js';
+import { getChatProviderSettingsFromContext } from './helpers.js';
+import { readConversationContextBudget, updateConversationContextBudget, describeConversationContextBudget } from '../services/conversationContextBudget.js';
+import { listPromptTraces, getPromptTrace } from '../services/promptTrace.js';
 import { buildDiagnosticsExport } from '../services/diagnosticsExport.js';
 import { buildExportEnvelope, importExportEnvelope } from '../services/exportEnvelopes.js';
 import { buildProjectSnapshot } from '../services/projectSnapshot.js';
@@ -20,9 +29,12 @@ import { describeProviderCapabilities, listProviderCapabilities, probeProviderHe
 import { providerWithSecret } from '../services/providers.js';
 import { buildWorldBookMatchPreview } from '../services/worldBookMatchPreview.js';
 import { createAssetSchema, validate } from '../validations/schemas.js';
+import { applyProviderNetworkPolicy } from '../services/providerNetworkPolicy.js';
+import { sendRouteError } from './errorResponse.js';
 
 export function createUpgradeRouter(ctx) {
   const { db, requireAuth, asyncRoute } = ctx;
+  const config = withAppConfigDefaults(ctx.config || appConfig);
   const router = Router();
 
   router.get('/app/bootstrap', requireAuth, (request, response) => {
@@ -30,8 +42,8 @@ export function createUpgradeRouter(ctx) {
     const provider = providerRow ? ctx.providerWithSecret(providerRow) : null;
     response.json({
       app: {
-        serviceName: appConfig.serviceName,
-        version: appConfig.version
+        serviceName: config.serviceName,
+        version: config.version
       },
       user: request.auth.user,
       profile: ctx.getUserProfile(request.auth.user.id),
@@ -52,7 +64,7 @@ export function createUpgradeRouter(ctx) {
   });
 
   router.post('/providers/health', requireAuth, asyncRoute(async (request, response) => {
-    const settings = buildProviderHealthSettings(ctx, request.auth.user.id, request.body || {});
+    const settings = buildProviderHealthSettings(ctx, request.auth.user.id, request.body || {}, request.auth.user);
     response.json(await probeProviderHealth(settings));
   }));
 
@@ -66,7 +78,7 @@ export function createUpgradeRouter(ctx) {
       const { base64Data: _base64Data, dataUrl: _dataUrl, ...summary } = asset;
       response.status(201).json(summary);
     } catch (error) {
-      response.status(400).json({ error: error?.message || '资产保存失败' });
+      sendRouteError(response, error, { status: 400, isProduction: config.isProduction, fallback: '资产保存失败' });
     }
   });
 
@@ -90,12 +102,45 @@ export function createUpgradeRouter(ctx) {
   });
 
   router.post('/conversations/:id/context/preview', requireAuth, (request, response) => {
-    const preview = buildConversationContextPreview(db, request.auth.user, request.params.id, request.body || {});
+    const settings = getChatProviderSettingsFromContext(ctx, request.auth.user.id);
+    const preview = buildConversationContextPreview(db, request.auth.user, request.params.id, request.body || {}, settings.value);
     if (!preview) {
       response.status(404).json({ error: '对话不存在' });
       return;
     }
     response.json(preview);
+  });
+
+  router.get('/conversations/:id/context/budget', requireAuth, (request, response) => {
+    const budget = readConversationContextBudget(db, request.auth.user.id, request.params.id);
+    if (!budget) return response.status(404).json({ error: 'Conversation not found' });
+    const settings = getChatProviderSettingsFromContext(ctx, request.auth.user.id);
+    response.json(describeConversationContextBudget(budget, settings.value, getDefaultPreset(db, request.auth.user.id)));
+  });
+
+  router.put('/conversations/:id/context/budget', requireAuth, (request, response) => {
+    try {
+      const settings = getChatProviderSettingsFromContext(ctx, request.auth.user.id);
+      const budget = updateConversationContextBudget(db, request.auth.user.id, request.params.id, request.body, settings.value);
+      if (!budget) return response.status(404).json({ error: 'Conversation not found' });
+      response.json(describeConversationContextBudget(budget, settings.value, getDefaultPreset(db, request.auth.user.id)));
+    } catch (error) {
+      sendRouteError(response, error, { status: error.status || 400, isProduction: config.isProduction, fallback: 'Context budget could not be saved' });
+    }
+  });
+
+  router.get('/conversations/:id/context/traces', requireAuth, (request, response) => {
+    const traces = listPromptTraces(db, request.auth.user.id, request.params.id);
+    if (!traces) return response.status(404).json({ error: 'Conversation not found' });
+    response.setHeader('Cache-Control', 'no-store');
+    response.json({ traces });
+  });
+
+  router.get('/conversations/:id/context/traces/:traceId', requireAuth, (request, response) => {
+    const trace = getPromptTrace(db, request.auth.user.id, request.params.id, request.params.traceId);
+    if (!trace) return response.status(404).json({ error: 'Request trace not found' });
+    response.setHeader('Cache-Control', 'no-store');
+    response.json(trace);
   });
 
   router.get('/conversations/:id/memories', requireAuth, (request, response) => {
@@ -118,8 +163,36 @@ export function createUpgradeRouter(ctx) {
       }
       response.status(201).json(memory);
     } catch (error) {
-      response.status(400).json({ error: error?.message || '记忆保存失败' });
+      sendRouteError(response, error, { status: 400, isProduction: config.isProduction, fallback: '记忆保存失败' });
     }
+  });
+
+  router.get('/conversations/:id/memories/conflicts', requireAuth, (request, response) => {
+    const candidates = listConversationMemoryConflictCandidates(db, request.auth.user.id, request.params.id);
+    if (!candidates) {
+      response.status(404).json({ error: '对话不存在' });
+      return;
+    }
+    response.json({ candidates });
+  });
+
+  router.post('/conversations/:id/memories/batch', requireAuth, (request, response) => {
+    handleMemoryMutation(response, config, () => {
+      const memories = batchReviewConversationMemories(db, request.auth.user.id, request.params.id, request.body || {});
+      return memories ? { memories } : null;
+    });
+  });
+
+  router.post('/conversations/:id/memories/merge', requireAuth, (request, response) => {
+    handleMemoryMutation(response, config, () => mergeConversationMemories(
+      db, request.auth.user.id, request.params.id, request.body || {}
+    ));
+  });
+
+  router.post('/conversations/:id/memories/merges/:operationId/undo', requireAuth, (request, response) => {
+    handleMemoryMutation(response, config, () => undoConversationMemoryMerge(
+      db, request.auth.user.id, request.params.id, request.params.operationId
+    ));
   });
 
   router.put('/conversations/:id/memories/:memoryId', requireAuth, (request, response) => {
@@ -137,7 +210,7 @@ export function createUpgradeRouter(ctx) {
       }
       response.json(memory);
     } catch (error) {
-      response.status(400).json({ error: error?.message || '记忆更新失败' });
+      sendRouteError(response, error, { status: 400, isProduction: config.isProduction, fallback: '记忆更新失败' });
     }
   });
 
@@ -148,6 +221,12 @@ export function createUpgradeRouter(ctx) {
       return;
     }
     response.json(memory);
+  });
+
+  router.post('/conversations/:id/memories/:memoryId/pin', requireAuth, (request, response) => {
+    handleMemoryMutation(response, config, () => pinConversationMemory(
+      db, request.auth.user.id, request.params.id, request.params.memoryId, request.body || {}
+    ));
   });
 
   router.post('/conversations/:id/memories/:memoryId/disable', requireAuth, (request, response) => {
@@ -220,16 +299,35 @@ export function createUpgradeRouter(ctx) {
       }
       response.status(result.dryRun ? 200 : 201).json(result);
     } catch (error) {
-      response.status(400).json({ error: error?.message || '导入失败' });
+      sendRouteError(response, error, { status: 400, isProduction: config.isProduction, fallback: '导入失败' });
     }
   });
 
   return router;
 }
 
-function buildProviderHealthSettings(ctx, userId, payload = {}) {
+function handleMemoryMutation(response, config, operation) {
+  try {
+    const result = operation();
+    if (!result) {
+      response.status(404).json({ error: '对话或记忆不存在' });
+      return;
+    }
+    response.json(result);
+  } catch (error) {
+    sendRouteError(response, error, {
+      status: Number(error?.status) || 400,
+      isProduction: config.isProduction,
+      fallback: '记忆审阅操作失败'
+    });
+  }
+}
+
+function buildProviderHealthSettings(ctx, userId, payload = {}, user = {}) {
+  const config = withAppConfigDefaults(ctx.config || appConfig);
   if (!Object.keys(payload).length) {
-    return providerWithSecret(ctx.getProviderRow(userId));
+    const saved = providerWithSecret(ctx.getProviderRow(userId));
+    return applyProviderNetworkPolicy(saved, config, user);
   }
   const providerId = String(payload.providerId || '').trim();
   const row = ctx.getProviderRow(userId, providerId);
@@ -239,7 +337,7 @@ function buildProviderHealthSettings(ctx, userId, payload = {}) {
     throw error;
   }
   const saved = providerWithSecret(row);
-  return {
+  return applyProviderNetworkPolicy({
     ...saved,
     providerType: payload.providerType || saved.providerType,
     gatewayName: payload.gatewayName || saved.gatewayName,
@@ -249,7 +347,7 @@ function buildProviderHealthSettings(ctx, userId, payload = {}) {
     extraBody: payload.extraBody ?? saved.extraBody,
     apiKey: String(payload.apiKey || '').trim() || saved.apiKey,
     apiKeySet: Boolean(payload.apiKey || saved.apiKeySet)
-  };
+  }, config, user);
 }
 
 function stripProviderSecret(provider = {}) {

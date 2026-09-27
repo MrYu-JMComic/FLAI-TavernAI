@@ -1,7 +1,7 @@
 import { generateTownFromBlueprint } from '../../modules/townWorldGenerator.js';
 import { recordAutomaticConversationMemories } from '../conversationMemoryExtraction.js';
 import { organizeConversationCast } from '../cast/castOrganizer.js';
-import { listRecentConversationEvidenceMessages } from '../../repositories/castRepository.js';
+import { resolveCastAgentThinking } from '../cast/castAgentSettings.js';
 import { getConversationForUser } from '../../routes/helpers.js';
 import { completeWorldBookDraft } from '../worldBookAssistant.js';
 import { generateTownWorldBlueprint } from '../townWorldAssistant.js';
@@ -9,12 +9,22 @@ import { hasUsableProvider, providerWithSecret } from '../providers.js';
 import { recordAutomationAudit } from '../automationAudit.js';
 import { executeProviderTask } from '../providerTaskRouter.js';
 import { getSelectedProviderProfileRow } from '../../repositories/providerProfileRepository.js';
+import { appConfig, withAppConfigDefaults } from '../../config.js';
+import { applyProviderNetworkPolicy } from '../providerNetworkPolicy.js';
+import { runConversationPostprocessing, runRecoverableConversationStep } from './conversationPostprocessing.js';
 
-export function createDefaultJobHandlers(database) {
+export function createDefaultJobHandlers(database, options = {}) {
+  const config = withAppConfigDefaults(options.config || appConfig);
   return {
+    'conversation.postprocess': async (environment) => runConversationPostprocessing(database, environment, {
+      config,
+      settings: options.providerSettings
+        ? options.providerSettings(environment.job.userId)
+        : providerSettings(database, environment.job.userId, config, { allowUnavailable: true })
+    }),
     'town.generate': async ({ job, payload, signal, progress }) => {
       progress(5, { phase: 'provider' });
-      const settings = providerSettings(database, job.userId);
+      const settings = providerSettings(database, job.userId, config);
       progress(15, { phase: 'generating' });
       const routed = await executeProviderTask(database, {
         userId: job.userId,
@@ -60,12 +70,14 @@ export function createDefaultJobHandlers(database) {
         }
       };
     },
-    'cast.organize': async ({ job, payload, signal, progress }) => {
+    'cast.organize': async (environment) => {
+      const { job, payload, signal, progress } = environment;
+      return runRecoverableConversationStep(database, environment, 'cast:organize', async (guarded) => {
       const conversationId = requiredText(payload.conversationId, 'conversationId');
       const conversation = getConversationForUser(database, job.userId, conversationId, { includeUsage: false });
       if (!conversation) throw jobFailure('Conversation not found.', 'CONVERSATION_NOT_FOUND');
-      const settings = providerSettings(database, job.userId);
-      const messages = listRecentConversationEvidenceMessages(database, conversationId, { limit: 80 });
+      const settings = providerSettings(database, job.userId, config);
+      const messages = readJobEvidence(database, job.userId, payload);
       const routed = await executeProviderTask(database, {
         userId: job.userId,
         jobId: job.id,
@@ -74,7 +86,7 @@ export function createDefaultJobHandlers(database) {
         routing: payload.routing,
         signal,
         operation: (routeSettings) => organizeConversationCast({
-          database,
+          database: guarded,
           userId: job.userId,
           conversationId,
           settings: routeSettings,
@@ -83,6 +95,11 @@ export function createDefaultJobHandlers(database) {
           requirement: payload.requirement,
           messages,
           signal,
+          ...resolveCastAgentThinking(routeSettings, {}, {
+            mainThinkingLevel: payload.thinkingLevel,
+            mainThinkingEnabled: payload.thinkingEnabled,
+          }),
+          quotaManaged: true,
           idempotencyKey: `job:${job.id}`,
           onProgress: (phase, data) => progress(castProgress(phase), { phase, ...data })
         })
@@ -100,20 +117,19 @@ export function createDefaultJobHandlers(database) {
         after: routed.result
       });
       return { ...routed.result, providerRoute: routed.route };
+      });
     },
-    'memory.extract': async ({ job, payload, progress }) => {
+    'memory.extract': async (environment) => {
+      const { job, payload, progress } = environment;
+      return runRecoverableConversationStep(database, environment, 'memory:extract', (guarded) => {
       const conversationId = requiredText(payload.conversationId, 'conversationId');
       const conversation = getConversationForUser(database, job.userId, conversationId, { includeUsage: false });
       if (!conversation) throw jobFailure('Conversation not found.', 'CONVERSATION_NOT_FOUND');
-      const messages = database.prepare(
-        `SELECT id, role, content FROM messages
-         WHERE conversation_id = ? AND user_id = ? AND role IN ('user', 'assistant')
-         ORDER BY created_at DESC, rowid DESC LIMIT 20`
-      ).all(conversationId, job.userId).reverse();
-      const userMessage = [...messages].reverse().find((message) => message.role === 'user') || {};
-      const assistantMessage = [...messages].reverse().find((message) => message.role === 'assistant') || {};
+      const messages = readJobEvidence(database, job.userId, payload);
+      const userMessage = messages.find((message) => message.id === payload.userMessageId) || {};
+      const assistantMessage = messages.find((message) => message.id === payload.assistantMessageId) || {};
       progress(50, { phase: 'extracting' });
-      const memories = recordAutomaticConversationMemories(database, job.userId, conversationId, {
+      const memories = recordAutomaticConversationMemories(guarded, job.userId, conversationId, {
         userMessage,
         assistantMessage
       });
@@ -128,10 +144,11 @@ export function createDefaultJobHandlers(database) {
         after: { memories }
       });
       return { memories };
+      });
     },
     'world-book.assist': async ({ job, payload, signal, progress }) => {
       progress(10, { phase: 'provider' });
-      const settings = providerSettings(database, job.userId);
+      const settings = providerSettings(database, job.userId, config);
       progress(25, { phase: 'generating' });
       const current = payload.current && typeof payload.current === 'object' ? payload.current : {};
       const routed = await executeProviderTask(database, {
@@ -165,13 +182,29 @@ export function createDefaultJobHandlers(database) {
   };
 }
 
-function providerSettings(database, userId) {
+function providerSettings(database, userId, config, options = {}) {
   const row = getSelectedProviderProfileRow(database, userId);
   const settings = providerWithSecret(row);
   if (!hasUsableProvider(settings) || settings.providerType === 'mock') {
+    if (options.allowUnavailable) return settings;
     throw jobFailure('A usable non-mock provider is required.', 'JOB_PROVIDER_UNAVAILABLE');
   }
-  return settings;
+  const user = database.prepare(
+    'SELECT id, is_root_admin AS isRootAdmin FROM users WHERE id = ?'
+  ).get(userId) || { id: userId };
+  return applyProviderNetworkPolicy(settings, config, user);
+}
+
+function readJobEvidence(database, userId, payload) {
+  if (!Array.isArray(payload.evidenceRefs)) {
+    throw jobFailure('Task predates versioned inputs; schedule it again.', 'JOB_SOURCE_UNVERSIONED');
+  }
+  const read = database.prepare('SELECT id, role, content, revision FROM messages WHERE id = ? AND user_id = ? AND conversation_id = ?');
+  return payload.evidenceRefs.map((ref) => {
+    const message = read.get(ref.id, userId, payload.conversationId);
+    if (!message || message.revision !== ref.revision) throw jobFailure('Source history changed.', 'JOB_SOURCE_STALE');
+    return message;
+  });
 }
 
 function requiredText(value, field) {

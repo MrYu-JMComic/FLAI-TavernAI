@@ -65,7 +65,7 @@ test('SaveLoadPanel disables all item actions while one save item mutation is bu
 test('SaveLoadPanel preserves save-list references for unchanged refresh results', () => {
   assert.match(
     saveLoadPanelScript,
-    /const sortedSaves = computed\(\(\) => saves\.value\);/
+    /const sortedSaves = computed\(\(\) => \(recoveryOpen\.value \? \[\.\.\.manualSaves\.value, \.\.\.recoverySaves\.value\] : manualSaves\.value\)\);/
   );
   assert.match(
     saveLoadPanelScript,

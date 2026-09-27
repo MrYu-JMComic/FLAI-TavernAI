@@ -6,6 +6,7 @@ const props = defineProps({
   balanceLoading: { type: Boolean, default: false },
   canCheckBalance: { type: Boolean, default: false },
   canFetchModels: { type: Boolean, default: false },
+  isRootAdmin: { type: Boolean, default: false },
   controlsBusy: { type: Boolean, default: false },
   form: { type: Object, required: true },
   modelLoading: { type: Boolean, default: false },
@@ -17,6 +18,7 @@ const props = defineProps({
   providerCapability: { type: Object, default: null },
   providerCapabilityError: { type: String, default: '' },
   providerActionLoading: { type: Boolean, default: false },
+  providerNetworkPolicy: { type: Object, default: () => ({}) },
   selectedProviderId: { type: String, default: '' },
   saving: { type: Boolean, default: false }
 });
@@ -59,6 +61,60 @@ const capabilityItems = computed(() => {
     enabled: Boolean(capabilities[definition.key])
   }));
 });
+const imageModelOptions = computed(() => {
+  const options = new Map();
+  const add = (id, label = id) => {
+    const value = String(id || '').trim();
+    if (value && !options.has(value)) {
+      options.set(value, label || value);
+    }
+  };
+  const providerDefaults = {
+    openai: [['gpt-image-1.5', 'GPT Image 1.5'], ['gpt-image-2', 'GPT Image 2']],
+    gemini: [
+      ['gemini-3.1-flash-image', 'Gemini 3.1 Flash Image'],
+      ['gemini-3-pro-image', 'Gemini 3 Pro Image'],
+      ['gemini-2.5-flash-image', 'Gemini 2.5 Flash Image']
+    ],
+    xai: [['grok-imagine-image', 'Grok Imagine Image'], ['grok-imagine-image-quality', 'Grok Imagine Image Quality'], ['grok-imagine-image-2.0', 'Grok Imagine Image 2.0']]
+  };
+  for (const [id, label] of providerDefaults[props.form.providerType] || []) {
+    add(id, label);
+  }
+  for (const model of props.modelOptions) {
+    const id = String(model?.id || '').trim();
+    if (/(?:image|imagen|imagine|wanx|flux|dall-e)/i.test(id)
+      && isImageModelAllowedForProvider(props.form, id)) {
+      add(id, model?.label || id);
+    }
+  }
+  add(props.form.imageModel, props.form.imageModel);
+  return Array.from(options, ([id, label]) => ({ id, label }));
+});
+
+function isImageModelAllowedForProvider(provider = {}, model = '') {
+  const providerType = String(provider.providerType || 'custom').trim().toLowerCase();
+  const normalizedModel = String(model || '').trim().toLowerCase();
+  if (/^gemini-(?:3\.1-flash-image|3-pro-image|2\.5-flash-image)$/i.test(normalizedModel)) {
+    return providerType === 'gemini'
+      || providerType === 'custom' && isOfficialGeminiBaseUrl(provider.baseUrl);
+  }
+  if (normalizedModel === 'gpt-image-1.5' || normalizedModel === 'gpt-image-2') {
+    return providerType === 'openai' || providerType === 'custom';
+  }
+  if (/^grok-imagine-image(?:-quality|-2\.0)?$/i.test(normalizedModel)) {
+    return providerType === 'xai' || providerType === 'custom';
+  }
+  return providerType === 'custom';
+}
+
+function isOfficialGeminiBaseUrl(baseUrl = '') {
+  try {
+    return new URL(String(baseUrl || '').trim()).hostname === 'generativelanguage.googleapis.com';
+  } catch {
+    return false;
+  }
+}
 
 function readInputValue(event) {
   const target = event?.target;
@@ -103,7 +159,7 @@ function selectProvider(event) {
     </div>
     <div class="provider-profile-toolbar">
       <label class="field provider-profile-picker">
-        <span>当前供应商</span>
+        <span>配置档案</span>
         <select
           :value="selectedProviderId"
           :disabled="controlsBusy || providers.length < 2"
@@ -123,7 +179,7 @@ function selectProvider(event) {
           class="icon-button"
           type="button"
           title="添加 AI 供应商"
-          aria-label="添加 AI 供应商"
+          aria-label="添加配置档案"
           :disabled="controlsBusy"
           @click="emit('add-provider')"
         >
@@ -133,7 +189,7 @@ function selectProvider(event) {
           class="icon-button provider-delete-button"
           type="button"
           title="删除当前 AI 供应商"
-          aria-label="删除当前 AI 供应商"
+          aria-label="删除配置档案"
           :disabled="controlsBusy || providers.length <= 1"
           @click="emit('remove-provider')"
         >
@@ -193,6 +249,23 @@ function selectProvider(event) {
           {{ probeMessage }}
         </p>
       </div>
+      <label class="field image-model-field">
+        <span>图片模型</span>
+        <input
+          :value="form.imageModel"
+          aria-label="生图"
+          list="provider-image-model-options"
+          :disabled="controlsBusy"
+          placeholder="例如 gpt-image-2 或 gemini-3.1-flash-image"
+          @input="updateTrimmedField('imageModel', $event)"
+        />
+        <datalist id="provider-image-model-options">
+          <option v-for="model in imageModelOptions" :key="model.id" :value="model.id">
+            {{ model.label }}
+          </option>
+        </datalist>
+        <small class="field-hint">聊天模型负责对话；开启图片调用时使用这里的模型。</small>
+      </label>
     </div>
 
     <div class="provider-capability-panel" :aria-label="`${providerCapabilityName} 能力`">
@@ -231,6 +304,23 @@ function selectProvider(event) {
       <input :checked="form.clearApiKey" type="checkbox" :disabled="controlsBusy" @change="updateField('clearApiKey', readInputChecked($event))" />
       <span>清除已保存密钥 {{ form.apiKeyHint ? `（当前：${form.apiKeyHint}）` : '' }}</span>
     </label>
+    <label v-if="isRootAdmin" class="checkbox-line">
+      <input
+        :checked="form.allowPrivateNetwork"
+        type="checkbox"
+        :disabled="controlsBusy || !providerNetworkPolicy.enabled"
+        @change="updateField('allowPrivateNetwork', readInputChecked($event))"
+      />
+      <span>允许本地或私网 Provider（仅 root）</span>
+    </label>
+    <p v-if="isRootAdmin" class="muted-text provider-private-network-hint">
+      <template v-if="providerNetworkPolicy.enabled">
+        部署已启用私网 Provider；仅 root 账户可以连接。
+      </template>
+      <template v-else>
+        部署未启用；设置 {{ providerNetworkPolicy.settingName || 'ALLOW_PRIVATE_PROVIDER_NETWORK_DEV' }}=true 并重启后端。
+      </template>
+    </p>
     <details class="provider-advanced-settings">
       <summary>
         <span>高级模型参数</span>

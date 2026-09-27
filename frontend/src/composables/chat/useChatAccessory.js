@@ -7,11 +7,7 @@ import {
   saveConversationAccessorySkills,
   saveStatusBar
 } from '../../api/chat.js';
-import {
-  STATUS_BAR_TEMPLATE_VALIDATOR_ALLOWED_TAGS,
-  STATUS_BAR_TEMPLATE_VOID_TAGS,
-  hasDangerousStatusBarCss
-} from '../../utils/statusBarTemplateSecurity.js';
+import { collectStatusBarTemplateRawIssues } from '../../utils/statusBarTemplateValidation.js';
 
 const VALID_VARIANTS = ['default', 'compact', 'minimal', 'neon'];
 const VALID_DENSITIES = ['default', 'cozy', 'compact'];
@@ -28,10 +24,37 @@ const ACCESSORY_SKILL_DEFAULTS = [
   { key: 'encounterMode', enabled: false, modelOverride: '' },
   { key: 'rewardMode', enabled: false, modelOverride: '' },
   { key: 'statusBarAgent', enabled: 'auto', modelOverride: '' },
+  // The memory agent can follow the main provider or name a saved profile, and exposes a tool library.
+  { key: 'memoryAgent', enabled: 'auto', modelOverride: '', providerProfileId: '', tools: {} },
   { key: 'economyAgent', enabled: false, modelOverride: '' },
   { key: 'talentPrompt', enabled: false, modelOverride: '' },
   { key: 'cgScene', enabled: false, modelOverride: '' }
 ];
+
+function extraSkillFields(defaultSkill, source = {}) {
+  const extras = {};
+  if (Object.prototype.hasOwnProperty.call(defaultSkill, 'providerProfileId')) {
+    extras.providerProfileId = String(source.providerProfileId || source.provider_profile_id || '').trim();
+  }
+  if (Object.prototype.hasOwnProperty.call(defaultSkill, 'tools')) {
+    const tools = {};
+    const raw = source.tools && typeof source.tools === 'object' ? source.tools : {};
+    for (const name of Object.keys(raw)) tools[name] = raw[name] === true;
+    extras.tools = tools;
+  }
+  return extras;
+}
+
+function sameSkillTools(current, next) {
+  const left = current && typeof current === 'object' ? current : {};
+  const right = next && typeof next === 'object' ? next : {};
+  const leftKeys = Object.keys(left);
+  if (leftKeys.length !== Object.keys(right).length) return false;
+  for (const key of leftKeys) {
+    if (left[key] !== right[key]) return false;
+  }
+  return true;
+}
 
 function parseCharacter(raw) {
   if (!raw || typeof raw !== 'object') return null;
@@ -195,81 +218,7 @@ function prependAccessorySkillResult(result, currentResults = []) {
 }
 
 function validateStatusBarCustomTemplate(template) {
-  const raw = String(template || '').trim();
-  const issues = [];
-  if (!raw) {
-    return ['自定义模板不能为空；如果只想显示变量，请切回“内置样式”。'];
-  }
-  if (raw[0] === '{') {
-    return [];
-  }
-  if (/<\s*script\b|<\/\s*script\s*>/i.test(raw)) {
-    issues.push('自定义模板不支持 <script> 或 JavaScript。');
-  }
-  if (/<\s*(iframe|object|embed|link|meta|base|form|input|textarea|select)\b/i.test(raw)) {
-    issues.push('自定义模板只能使用安全展示标签，不支持表单、外链或嵌入标签。');
-  }
-  if (/\son[a-z]+\s*=/i.test(raw) || /javascript:/i.test(raw)) {
-    issues.push('自定义模板不支持 onClick 等事件属性或 javascript: 链接。');
-  }
-  if (/\{\{\s*\}\}|\{\s*\}/.test(raw)) {
-    issues.push('占位符不能为空，请使用 {{HP}}、{{HP.max}} 或 {HP}。');
-  }
-  if ((raw.match(/\{\{/g) || []).length !== (raw.match(/\}\}/g) || []).length) {
-    issues.push('双花括号占位符数量不匹配，请检查 {{变量}} 是否闭合。');
-  }
-
-  const styleBlocks = raw.match(/<style\b[^>]*>[\s\S]*?<\/style>/gi) || [];
-  for (const block of styleBlocks) {
-    const css = block.replace(/^<style\b[^>]*>/i, '').replace(/<\/style>$/i, '');
-    if (hasDangerousStatusBarCss(css)) {
-      issues.push('CSS 不支持 @import、url()、expression()、behavior 或 javascript:。');
-      break;
-    }
-    if (!hasBalancedCssBraces(css)) {
-      issues.push('CSS 花括号不成对，请检查 <style> 里的规则。');
-      break;
-    }
-  }
-
-  const stack = [];
-  const tagPattern = /<\s*(\/?)([a-z][\w:-]*)(?:\s[^<>]*)?>/gi;
-  let match;
-  while ((match = tagPattern.exec(raw))) {
-    const tag = match[2].toLowerCase();
-    const isClosing = match[1] === '/';
-    const tagText = match[0];
-    if (!STATUS_BAR_TEMPLATE_VALIDATOR_ALLOWED_TAGS.has(tag)) {
-      issues.push(`不支持 <${tag}> 标签；请改用 div/span/p/ul/li 等展示标签。`);
-      continue;
-    }
-    if (isClosing) {
-      const previous = stack.pop();
-      if (previous !== tag) {
-        issues.push(`标签闭合顺序不正确：遇到 </${tag}>，但上一个未闭合标签是 <${previous || '无'}>。`);
-        break;
-      }
-      continue;
-    }
-    if (!STATUS_BAR_TEMPLATE_VOID_TAGS.has(tag) && !/\/\s*>$/.test(tagText)) {
-      stack.push(tag);
-    }
-  }
-  if (stack.length) {
-    issues.push(`标签未闭合：<${stack[stack.length - 1]}>。`);
-  }
-
-  return collectStatusBarTemplateIssues(issues);
-}
-
-function hasBalancedCssBraces(css) {
-  let depth = 0;
-  for (const char of String(css || '')) {
-    if (char === '{') depth += 1;
-    if (char === '}') depth -= 1;
-    if (depth < 0) return false;
-  }
-  return depth === 0;
+  return collectStatusBarTemplateIssues(collectStatusBarTemplateRawIssues(template));
 }
 
 function collectStatusBarTemplateIssues(issues) {
@@ -304,6 +253,8 @@ export function useChatAccessory({ conversation, setActiveConversationIfChanged,
   const accessorySettingsOpen = ref(false);
   const accessorySaving = ref(false);
   const accessorySkillResults = ref([]);
+  const memoryAgentTools = ref([]);
+  const castAgentOperations = ref([]);
   const economyAccounts = ref([]);
   let statusBarLoadToken = 0;
   let statusBarMutationToken = 0;
@@ -340,6 +291,7 @@ export function useChatAccessory({ conversation, setActiveConversationIfChanged,
     { key: 'encounterMode', label: '遭遇与回合行动', auto: false },
     { key: 'rewardMode', label: '战利品与奖励结算', auto: false },
     { key: 'statusBarAgent', label: '状态栏 Agent', auto: true },
+    { key: 'memoryAgent', label: '记忆 Agent', auto: true, configurable: true },
     { key: 'economyAgent', label: '经济识别', auto: false },
     { key: 'talentPrompt', label: '天赋提示', auto: false },
     { key: 'cgScene', label: 'CG 场景', auto: false }
@@ -523,12 +475,24 @@ export function useChatAccessory({ conversation, setActiveConversationIfChanged,
         return;
       }
       syncAccessorySkills(payload.skills);
+      syncMemoryAgentTools(payload.memoryAgentTools);
+      syncCastAgentOperations(payload.castAgentOperations);
     } catch {
       if (!isCurrentAccessorySkillsLoad(requestToken, conversationId)) {
         return;
       }
       syncAccessorySkills(conversation.value?.settings?.accessorySkills);
     }
+  }
+
+  function syncMemoryAgentTools(next) {
+    if (!Array.isArray(next)) return;
+    memoryAgentTools.value = next;
+  }
+
+  function syncCastAgentOperations(next) {
+    if (!Array.isArray(next)) return;
+    castAgentOperations.value = next;
   }
 
   function isCurrentStatusBarLoad(requestToken, conversationId) {
@@ -549,7 +513,8 @@ export function useChatAccessory({ conversation, setActiveConversationIfChanged,
       const defaultSkill = ACCESSORY_SKILL_DEFAULTS[index];
       skills[defaultSkill.key] = {
         enabled: defaultSkill.enabled,
-        modelOverride: defaultSkill.modelOverride
+        modelOverride: defaultSkill.modelOverride,
+        ...extraSkillFields(defaultSkill, defaultSkill)
       };
     }
     return skills;
@@ -562,7 +527,8 @@ export function useChatAccessory({ conversation, setActiveConversationIfChanged,
       const source = next?.[key] || {};
       const normalizedSkill = {
         enabled: normalizeSkillEnabled(source.enabled, defaultSkill.enabled),
-        modelOverride: String(source.modelOverride || source.model_override || '').trim()
+        modelOverride: String(source.modelOverride || source.model_override || '').trim(),
+        ...extraSkillFields(defaultSkill, source)
       };
       if (!sameAccessorySkillConfig(accessorySkills[key], normalizedSkill)) {
         accessorySkills[key] = normalizedSkill;
@@ -572,7 +538,19 @@ export function useChatAccessory({ conversation, setActiveConversationIfChanged,
 
   function sameAccessorySkillConfig(current = {}, next = {}) {
     return current?.enabled === next?.enabled
-      && current?.modelOverride === next?.modelOverride;
+      && current?.modelOverride === next?.modelOverride
+      && (current?.providerProfileId || '') === (next?.providerProfileId || '')
+      && sameSkillTools(current?.tools, next?.tools);
+  }
+
+  function updateAccessorySkill(key, patch = {}) {
+    const current = accessorySkills[key];
+    if (!current) return null;
+    const next = { ...current, ...patch };
+    if (!sameAccessorySkillConfig(current, next)) {
+      accessorySkills[key] = next;
+    }
+    return accessorySkills[key];
   }
 
   function normalizeSkillEnabled(value, fallback = false) {
@@ -600,6 +578,8 @@ export function useChatAccessory({ conversation, setActiveConversationIfChanged,
         return;
       }
       syncAccessorySkills(payload.skills);
+      syncMemoryAgentTools(payload.memoryAgentTools);
+      syncCastAgentOperations(payload.castAgentOperations);
       updateActiveConversationIfChanged({
         ...conversation.value,
         settings: {
@@ -723,6 +703,83 @@ export function useChatAccessory({ conversation, setActiveConversationIfChanged,
   function isCurrentSkillResult(data = {}) {
     const eventConversationId = String(data?.conversationId || '').trim();
     return Boolean(eventConversationId && eventConversationId === conversation.value?.id);
+  }
+
+  // Declarative template buttons (data-sb-action="set" / "adjust") and custom
+  // scripts change variables through here so every write goes through the same
+  // save endpoint and guard tokens as the editor.
+  async function applyStatusBarVariableUpdates(updates = []) {
+    const conversationId = conversation.value?.id;
+    const current = statusBar.value;
+    if (accessoryDisposed || !conversationId || !current || statusBarSaving.value) return false;
+    const nextVariables = mergeStatusBarVariableUpdates(current.variables, updates);
+    if (nextVariables === current.variables) return false;
+    const requestToken = ++statusBarMutationToken;
+    statusBarSaving.value = true;
+    try {
+      const result = await saveStatusBar(conversationId, {
+        name: current.name || '状态栏',
+        variables: normalizeStatusVariablesForPayload(nextVariables),
+        template: current.template || ''
+      });
+      if (!isCurrentStatusBarMutation(requestToken, conversationId)) return false;
+      applyStatusBarUpdate(result, { syncForm: !statusBarEditorOpen.value });
+      return true;
+    } catch (err) {
+      if (!isCurrentStatusBarMutation(requestToken, conversationId)) return false;
+      showError(err?.message || '状态栏变量更新失败');
+      return false;
+    } finally {
+      if (isCurrentStatusBarMutation(requestToken, conversationId)) {
+        statusBarSaving.value = false;
+      }
+    }
+  }
+
+  function mergeStatusBarVariableUpdates(variables = [], updates = []) {
+    const sourceVariables = Array.isArray(variables) ? variables : [];
+    const sourceUpdates = Array.isArray(updates) ? updates : [];
+    const pending = new Map();
+    for (const update of sourceUpdates) {
+      const name = String(update?.name || '').trim();
+      const key = statusVariableKey(name);
+      if (!name || !key || update.value === undefined) continue;
+      pending.set(key, { name, value: update.value, max: update.max });
+    }
+    if (!pending.size) return sourceVariables;
+    let changed = false;
+    const nextVariables = [];
+    for (const variable of sourceVariables) {
+      const key = statusVariableKey(variable?.name);
+      const update = pending.get(key);
+      if (!update) {
+        nextVariables.push(variable);
+        continue;
+      }
+      pending.delete(key);
+      const hasMax = hasExplicitVariableMax(update);
+      if (Object.is(variable?.value, update.value) && (!hasMax || Object.is(variable?.max, Number(update.max)))) {
+        nextVariables.push(variable);
+        continue;
+      }
+      changed = true;
+      nextVariables.push({ ...variable, value: update.value, ...(hasMax ? { max: Number(update.max) } : {}) });
+    }
+    for (const update of pending.values()) {
+      if (nextVariables.length >= STATUS_BAR_VARIABLE_LIMIT) break;
+      changed = true;
+      nextVariables.push({
+        name: update.name,
+        value: update.value,
+        ...(hasExplicitVariableMax(update) ? { max: Number(update.max) } : {}),
+        color: ''
+      });
+    }
+    return changed ? nextVariables : sourceVariables;
+  }
+
+  function statusVariableKey(value) {
+    return String(value || '').trim().toLowerCase();
   }
 
   async function deleteStatusBarAction() {
@@ -1076,6 +1133,9 @@ export function useChatAccessory({ conversation, setActiveConversationIfChanged,
     accessorySettingsOpen,
     accessorySaving,
     accessorySkills,
+    memoryAgentTools,
+    castAgentOperations,
+    updateAccessorySkill,
     accessorySkillResults,
     economyAccounts,
     accessorySkillItems,
@@ -1099,6 +1159,7 @@ export function useChatAccessory({ conversation, setActiveConversationIfChanged,
     addStatusBarVariable,
     removeStatusBarVariable,
     saveStatusBarChanges,
+    applyStatusBarVariableUpdates,
     deleteStatusBarAction,
     openStatusBarEditor,
     closeStatusBarEditor,

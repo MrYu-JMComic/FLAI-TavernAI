@@ -40,7 +40,7 @@ test('town AI context includes world rules, current schedules, recent events and
   database.close();
 });
 
-test('paused town applies a validated AI turn using map building coordinates and records its timeline and memories', () => {
+test('paused town applies a reachable AI turn and records its timeline and memories', () => {
   const database = createAppDatabase(':memory:');
   const fixture = createTestWorld(database, 'town-ai-apply');
   const intervention = recordTownEvent(database, fixture.userId, fixture.town.id, {
@@ -66,12 +66,12 @@ test('paused town applies a validated AI turn using map building coordinates and
   const keeper = result.snapshot.residents.find((resident) => resident.id === fixture.keeper.id);
   const herbalist = result.snapshot.residents.find((resident) => resident.id === fixture.herbalist.id);
   assert.equal(keeper.currentLocation, '鹿鸣药圃');
-  assert.equal(keeper.state.mapX, 830);
-  assert.equal(keeper.state.mapY, 380);
+  assert.equal(keeper.state.mapX, 800);
+  assert.equal(keeper.state.mapY, 360);
   assert.equal(keeper.state.currentActivity, '带鹿鸣检查发光药草');
-  assert.equal(herbalist.currentLocation, '星痕石桥');
-  assert.equal(herbalist.state.mapX, 330);
-  assert.equal(herbalist.state.mapY, 240);
+  assert.equal(herbalist.currentLocation, '鹿鸣药圃');
+  assert.equal(herbalist.state.mapX, 830);
+  assert.equal(herbalist.state.mapY, 380);
 
   const events = listTownEvents(database, fixture.userId, fixture.town.id, { limit: 200 });
   const aiEvent = events.find((event) => event.source === 'ai-town-engine');
@@ -307,8 +307,8 @@ function createTurnPlan(fixture, respondsToEventId = '') {
       },
       {
         residentId: fixture.herbalist.id,
-        locationId: 'location-bridge',
-        activity: '在石桥旁比较药草光向',
+        locationId: 'location-garden',
+        activity: '在药圃比较药草光向',
         intention: '验证星尘草与桥墩异响的关联',
         mood: '专注',
         memory: '石衡带来的钟声线索与药草偏转完全吻合。',

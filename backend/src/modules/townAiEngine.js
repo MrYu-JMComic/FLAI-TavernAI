@@ -1,4 +1,10 @@
 import { nowIso } from '../security.js';
+import { createHash } from 'node:crypto';
+import { townVenue } from '../../../shared/townAssets.js';
+import { activeTownConditions, isTownLocationAvailable, normalizeTownLifeProfile, normalizeTownLifeState } from '../../../shared/townLife.js';
+import { simulateTownLife, townReachableLocations } from './townLifeSimulation.js';
+import { findTownJourney } from './townNavigation.js';
+import { eligibleTownIntervention, townWithIntervention } from './townWorldConditions.js';
 import { normalizeTownTurnPlan } from '../services/townTurnAssistant.js';
 import { clampInteger } from '../utils/number.js';
 import {
@@ -19,8 +25,10 @@ const DEFAULT_TICK_MINUTES = 15;
 const AMBIENT_SOURCE_KINDS = Object.freeze(['engine-ambient']);
 
 export function buildTownTurnContext(database, userId, townId) {
-  const town = getTown(database, userId, townId);
+  let town = getTown(database, userId, townId);
   if (!town) return null;
+  const pending = eligibleTownIntervention(town, getPendingTownIntervention(database, userId, townId));
+  town = townWithIntervention(town, pending);
   const residents = listTownResidents(database, userId, townId) || [];
   const recentEvents = listTownEvents(database, userId, townId, { limit: 12 }) || [];
   const locations = normalizeLocations(town.mapConfig?.locations);
@@ -30,7 +38,8 @@ export function buildTownTurnContext(database, userId, townId) {
       currentDay: town.currentDay,
       minuteOfDay: town.minuteOfDay,
       tick: townTick(town),
-      updatedAt: town.updatedAt
+      updatedAt: town.updatedAt,
+      residents: residentVersion(residents)
     },
     world: {
       id: town.id,
@@ -38,7 +47,8 @@ export function buildTownTurnContext(database, userId, townId) {
       description: town.description,
       creationPrompt: town.creationPrompt,
       rules: Array.isArray(town.settings?.worldRules) ? town.settings.worldRules : [],
-      environment: town.settings?.environment || {}
+      environment: town.settings?.environment || {},
+      conditions: activeTownConditions(town)
     },
     time: {
       currentDay: town.currentDay,
@@ -66,13 +76,13 @@ export function buildTownTurnContext(database, userId, townId) {
       occurredTick: event.occurredTick
     })),
     pendingIntervention: normalizePendingIntervention(
-      getPendingTownIntervention(database, userId, townId)
+      pending
     )
   };
 }
 
 export function applyTownTurnPlan(database, userId, townId, plan, options = {}) {
-  const town = getTown(database, userId, townId);
+  let town = getTown(database, userId, townId);
   if (!town) return null;
   if (town.simulationStatus !== 'paused') {
     throw townAiConflict('请先暂停世界，再进行 AI 推演。');
@@ -82,8 +92,11 @@ export function applyTownTurnPlan(database, userId, townId, plan, options = {}) 
     throw townAiConflict('世界状态已发生变化，请重新进行 AI 推演。');
   }
   const residents = listTownResidents(database, userId, townId) || [];
+  if (options.expectedVersion && (options.expectedVersion.updatedAt !== town.updatedAt || options.expectedVersion.residents !== residentVersion(residents))) {
+    throw townAiConflict('居民或世界状态已发生变化，请重新进行 AI 推演。');
+  }
   const locations = normalizeLocations(town.mapConfig?.locations);
-  const pendingIntervention = getPendingTownIntervention(database, userId, townId);
+  const pendingIntervention = eligibleTownIntervention(town, getPendingTownIntervention(database, userId, townId));
   if ((pendingIntervention?.id || '') !== plan?.event?.respondsToEventId) {
     throw townAiConflict('待处理世界事件已发生变化，请重新进行 AI 推演。');
   }
@@ -93,27 +106,41 @@ export function applyTownTurnPlan(database, userId, townId, plan, options = {}) 
   const residentMap = new Map(residents.map((resident) => [resident.id, resident]));
   const locationMap = new Map(locations.map((location) => [location.id, location]));
   const respondsToEventId = eventPlan.respondsToEventId;
+  town = townWithIntervention(town, pendingIntervention);
 
   const tickMinutes = clampInteger(town.settings?.tickMinutes, 1, 240, DEFAULT_TICK_MINUTES);
   const nextClock = advanceClock(town, tickMinutes);
   const nextTick = townTick(nextClock);
+  for (const action of actions) {
+    const resident = residentMap.get(action.residentId);
+    const location = townVenue(locationMap.get(action.locationId));
+    const route = findTownJourney(town, resident, location);
+    const profile = normalizeTownLifeProfile(resident.profile, locations, resident.currentLocation);
+    const life = normalizeTownLifeState(resident.state, profile);
+    if (!route || route.minutes > tickMinutes || !isTownLocationAvailable(town, location, nextTick)) {
+      throw new Error('AI 行动无法在本回合到达已开放的目标地点');
+    }
+    if (!['personal', 'explore', 'relax'].includes(action.actionKind) && !location.services.includes(action.actionKind)) throw new Error('AI 行动与地点提供的设施不符');
+    if (action.actionKind === 'work' && profile.workLocationId !== location.id) throw new Error('AI 不能在未安排的工作地点领取工资');
+    if (action.actionKind === 'eat' && life.money < (profile.homeLocationId === location.id ? 2 : 8)) throw new Error('居民余额不足以执行 AI 用餐计划');
+    if ((life.needs.energy < 10 || life.needs.hunger < 10) && !['sleep', 'eat', 'care'].includes(action.actionKind)) throw new Error('居民需要先处理紧急生活需求');
+  }
+  const physical = simulateTownLife(town, residents, tickMinutes, { actions: new Map(actions.map((action) => [action.residentId, action])) });
+  for (const action of actions) {
+    const resident = physical.residents.find((item) => item.id === action.residentId);
+    if (resident.state.life.journey || resident.currentLocation !== locationMap.get(action.locationId).name) throw new Error('AI 行动的通勤尚未完成，不能记录为已经发生');
+  }
   database.exec('BEGIN');
   try {
-    for (let index = 0; index < actions.length; index += 1) {
-      const action = actions[index];
-      const resident = residentMap.get(action.residentId);
-      const location = locationMap.get(action.locationId);
-      const point = residentLocationPoint(town, location, resident, index);
+    database.prepare('UPDATE town_worlds SET settings_json = ? WHERE id = ? AND user_id = ?').run(JSON.stringify(town.settings), townId, userId);
+    for (const resident of physical.residents) {
+      const action = actions.find((item) => item.residentId === resident.id);
       updateTownResidentState(database, userId, townId, resident.id, {
-        currentLocation: location.name,
+        currentLocation: resident.currentLocation,
         state: {
-          mood: action.mood,
-          currentActivity: action.activity,
-          currentIntention: action.intention,
-          mapX: point.x,
-          mapY: point.y,
+          ...resident.state,
+          ...(action ? { mood: action.mood, currentActivity: action.activity, currentIntention: action.intention, lastAiActionTick: nextTick } : {}),
           lastActionTick: nextTick,
-          lastAiActionTick: nextTick
         }
       });
     }
@@ -178,6 +205,7 @@ export function applyTownTurnPlan(database, userId, townId, plan, options = {}) 
 }
 
 function buildResidentContext(database, userId, town, resident, eventQuery) {
+  const simulation = normalizeTownLifeProfile(resident.profile, town.mapConfig?.locations || [], resident.currentLocation);
   const query = [
     resident.profile?.goal,
     resident.state?.currentIntention,
@@ -204,6 +232,9 @@ function buildResidentContext(database, userId, town, resident, eventQuery) {
     currentLocation: resident.currentLocation,
     currentActivity: resident.state?.currentActivity || '',
     currentIntention: resident.state?.currentIntention || '',
+    simulation,
+    life: normalizeTownLifeState(resident.state, simulation),
+    reachableLocations: townReachableLocations(town, resident, clampInteger(town.settings?.tickMinutes, 1, 240, DEFAULT_TICK_MINUTES)),
     currentSchedule: scheduleItem ? {
       activity: scheduleItem.activity,
       location: scheduleItem.location,
@@ -221,7 +252,8 @@ function buildResidentContext(database, userId, town, resident, eventQuery) {
 
 function normalizeLocations(value) {
   const rows = Array.isArray(value) ? value : [];
-  return rows.map((location) => ({
+  return rows.map((location) => townVenue({
+    ...location,
     id: String(location?.id || ''),
     name: String(location?.name || ''),
     kind: String(location?.kind || ''),
@@ -237,20 +269,10 @@ function normalizePendingIntervention(event) {
     id: event.id,
     title: event.title,
     detail: event.detail,
-    occurredTick: event.occurredTick
-  };
-}
-
-function residentLocationPoint(town, location, resident, index) {
-  const buildings = Array.isArray(town.mapConfig?.buildings)
-    ? town.mapConfig.buildings.filter((building) => building.locationId === location.id)
-    : [];
-  if (!buildings.length) return { x: location.x, y: location.y };
-  const offset = (hashText(resident.id) + index) % buildings.length;
-  const building = buildings[offset];
-  return {
-    x: Math.round((location.x + Number(building.x || location.x)) / 2),
-    y: Math.round((location.y + Number(building.y || location.y)) / 2)
+    occurredTick: event.occurredTick,
+    effect: event.payload?.effect || 'observation',
+    locationId: event.payload?.locationId || '',
+    durationMinutes: event.payload?.durationMinutes || 0
   };
 }
 
@@ -272,12 +294,6 @@ function townTick(town) {
   return ((town.currentDay - 1) * 1440) + town.minuteOfDay;
 }
 
-function hashText(value) {
-  let hash = 2166136261;
-  const text = String(value || '');
-  for (let index = 0; index < text.length; index += 1) {
-    hash ^= text.charCodeAt(index);
-    hash = Math.imul(hash, 16777619);
-  }
-  return hash >>> 0;
+function residentVersion(residents) {
+  return createHash('sha256').update(JSON.stringify(residents.map(({ id, state, profile, currentLocation, updatedAt }) => ({ id, state, profile, currentLocation, updatedAt })))).digest('hex');
 }

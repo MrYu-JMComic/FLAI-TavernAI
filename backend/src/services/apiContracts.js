@@ -72,6 +72,37 @@ export function buildOpenApiDocument(config = appConfig) {
         get: operation('List world books', true, 'WorldBookList'),
         post: operation('Create a world book', true, 'WorldBook')
       },
+      '/talent-pools': {
+        get: operation('List user-owned talent pools', true, 'TalentPoolList'),
+        post: operation('Create a talent pool', true, 'TalentPool')
+      },
+      '/talent-pools/{id}': {
+        get: operation('Read a talent pool', true, 'TalentPool'),
+        put: operation('Update a talent pool', true, 'TalentPool'),
+        delete: operation('Delete a talent pool', true, 'OkResponse')
+      },
+      '/providers/models': {
+        get: operation('List models for the selected provider', true, 'ProviderModelList'),
+        post: operation('Probe models for provider settings', true, 'ProviderModelList')
+      },
+      '/providers': {
+        get: operation('List provider profiles and network policy', true, 'ProviderBundle'),
+        post: operation('Create a provider profile', true, 'ProviderBundle')
+      },
+      '/providers/{providerId}': {
+        put: operation('Update a provider profile', true, 'ProviderSettings'),
+        delete: operation('Delete a provider profile', true, 'ProviderBundle')
+      },
+      '/providers/{providerId}/select': {
+        post: operation('Select a provider profile', true, 'ProviderBundle')
+      },
+      '/settings/provider': {
+        get: operation('Read the selected provider settings', true, 'ProviderSettings'),
+        put: operation('Update the selected provider settings', true, 'ProviderSettings')
+      },
+      '/providers/health': {
+        post: operation('Probe provider health', true, 'ProviderHealth')
+      },
       '/towns': {
         get: operation('List simulation towns', true, 'TownList'),
         post: operation('Create a simulation town', true, 'Town')
@@ -87,6 +118,15 @@ export function buildOpenApiDocument(config = appConfig) {
       '/envelopes/{kind}/import': { post: operation('Dry-run or import a versioned data envelope', true, 'ImportReport') },
       '/admin/overview': { get: operation('Read root administrator overview', true, 'AdminOverview') },
       '/admin/users': { get: operation('List users and quota state', true, 'AdminUserList') },
+      '/admin/users/{id}/quota': {
+        put: operation('Update a user request quota', true, 'AdminUserQuota')
+      },
+      '/admin/users/{id}': {
+        delete: operation('Delete a user account', true, 'AdminUserDelete')
+      },
+      '/admin/users/{id}/usage/requests/reset': {
+        post: operation('Reset a user daily request count', true, 'DailyUsage')
+      },
       '/admin/sessions': { get: operation('List revocable sessions', true, 'AdminSessionList') },
       '/admin/jobs': { get: operation('List jobs across users', true, 'JobList') },
       '/admin/audit': { get: operation('List shared automation audit events', true, 'AutomationAuditList') },
@@ -147,9 +187,26 @@ export function buildOpenApiDocument(config = appConfig) {
         }),
         ContextPreview: { type: 'object' },
         WorldBook: { type: 'object' },
-        WorldBookList: objectSchema({ worldBooks: { type: 'array', items: { type: 'object' } } }),
+        WorldBookList: { type: 'array', items: { $ref: '#/components/schemas/WorldBook' } },
         Town: { type: 'object' },
-        TownList: objectSchema({ towns: { type: 'array', items: { type: 'object' } } }),
+        TownList: { type: 'array', items: { $ref: '#/components/schemas/Town' } },
+        TalentPool: { type: 'object' },
+        TalentPoolList: { type: 'array', items: { $ref: '#/components/schemas/TalentPool' } },
+        ProviderModelList: objectSchema({ models: { type: 'array', items: { type: 'object' } } }),
+        ProviderSettings: { type: 'object' },
+        ProviderNetworkPolicy: objectSchema({
+          enabled: { type: 'boolean' },
+          settingName: { type: 'string' },
+          environment: { type: 'string' },
+          requiresRoot: { type: 'boolean' },
+          mockProvider: { type: 'boolean' }
+        }),
+        ProviderBundle: objectSchema({
+          providers: { type: 'array', items: { $ref: '#/components/schemas/ProviderSettings' } },
+          selectedProviderId: { type: 'string' },
+          providerNetworkPolicy: { $ref: '#/components/schemas/ProviderNetworkPolicy' }
+        }),
+        ProviderHealth: { type: 'object' },
         Job: { type: 'object' },
         JobList: objectSchema({ jobs: { type: 'array', items: { type: 'object' } } }),
         JobEventList: objectSchema({
@@ -161,6 +218,17 @@ export function buildOpenApiDocument(config = appConfig) {
         ImportReport: { type: 'object' },
         AdminOverview: { type: 'object' },
         AdminUserList: objectSchema({ users: { type: 'array', items: { type: 'object' } } }),
+        AdminUserQuota: { type: 'object' },
+        AdminUserDelete: objectSchema({ ok: { type: 'boolean' }, userId: { type: 'string' } }),
+        DailyUsage: objectSchema({
+          userId: { type: 'string' },
+          date: { type: 'string', format: 'date' },
+          requestCount: { type: 'integer' },
+          inputTokens: { type: 'integer' },
+          outputTokens: { type: 'integer' },
+          costMicros: { type: 'integer' },
+          updatedAt: { type: 'string' }
+        }),
         AdminSessionList: objectSchema({ sessions: { type: 'array', items: { type: 'object' } } }),
         AutomationAuditList: objectSchema({ events: { type: 'array', items: { type: 'object' } } }),
         AdminProviderState: { type: 'object' },

@@ -1,6 +1,7 @@
 import { newId, nowIso } from '../security.js';
 import { normalizeBoolean } from '../utils/boolean.js';
 import { normalizeFiniteNumber } from '../utils/number.js';
+import { WORLD_BOOK_ENTRY_LIMITS, WORLD_BOOK_LIMITS } from '../domain/worldBooks/limits.js';
 import {
   listLinkedCharacterIds,
   listOwnedWorldBookRows,
@@ -51,7 +52,7 @@ export function createWorldBook(database, userId, payload) {
   const id = newId();
   const timestamp = nowIso();
   const name = normalizeName(payload.name);
-  const description = String(payload.description || '').trim().slice(0, 2000);
+  const description = String(payload.description || '').trim().slice(0, WORLD_BOOK_LIMITS.description);
   const characterId = normalizeOwnedCharacterId(database, userId, payload.characterId);
   const scanDepth = normalizeScanDepth(payload.scanDepth);
   const lorebookContextPercent = normalizeLorebookContextPercent(payload.lorebookContextPercent);
@@ -73,7 +74,7 @@ export function updateWorldBook(database, userId, bookId, payload) {
   }
 
   const name = normalizeName(payload.name ?? existing.name);
-  const description = String(payload.description ?? existing.description).trim().slice(0, 2000);
+  const description = String(payload.description ?? existing.description).trim().slice(0, WORLD_BOOK_LIMITS.description);
   const characterId = payload.characterId !== undefined
     ? normalizeOwnedCharacterId(database, userId, payload.characterId)
     : (existing.character_id ?? null);
@@ -322,7 +323,9 @@ export function matchWorldBookEntries(database, characterId, texts, options = {}
   }
 
   // Message count for sticky/cooldown/delay tracking
-  const messageCount = resolveMessageCount(database, options.messageCount, !persistState);
+  const conversationId = String(options.conversationId || '').trim();
+  if (conversationId && !database.prepare('SELECT id FROM conversations WHERE id = ?').get(conversationId)) return [];
+  const messageCount = resolveMessageCount(database, options.messageCount, !persistState, conversationId);
 
   // Collect book IDs from both character_id column and character_world_books junction table
   const bookIdSet = new Set();
@@ -365,24 +368,10 @@ export function matchWorldBookEntries(database, characterId, texts, options = {}
     return [];
   }
 
-  // Resolve scan_depth: use the maximum scan_depth across all bound books, or options override
-  const scanDepthRow = database
-    .prepare(`SELECT MAX(scan_depth) AS max_depth FROM world_books WHERE id IN (${allBookIds.map(() => '?').join(',')})`)
-    .get(...allBookIds);
-  const defaultScanDepth = normalizeScanDepth(scanDepthRow?.max_depth);
-  const scanDepth = options.scanDepth != null
-    ? normalizeScanDepth(options.scanDepth, defaultScanDepth)
-    : defaultScanDepth;
-
-  // Build scan text from recent N messages
-  const scanTexts = filteredTexts.slice(-scanDepth);
-  const combinedScanText = scanTexts.join('\n');
-  const lowerCombined = combinedScanText.toLowerCase();
-
   const placeholders = allBookIds.map(() => '?').join(',');
   const entries = database
     .prepare(
-      `SELECT wbe.*, wb.name AS world_book_name
+      `SELECT wbe.*, wb.name AS world_book_name, wb.scan_depth AS book_scan_depth
        FROM world_book_entries wbe
        JOIN world_books wb ON wb.id = wbe.world_book_id
        WHERE wbe.world_book_id IN (${placeholders}) AND wbe.enabled = 1
@@ -393,13 +382,11 @@ export function matchWorldBookEntries(database, characterId, texts, options = {}
   const { entryIds, entryById } = indexWorldBookEntries(entries);
 
   // Load or create state for all entries
-  const entryStates = getEntryStates(database, entryIds);
+  const entryStates = getEntryStates(database, entryIds, conversationId);
 
   // Ensure in-memory state for all entries; missing rows are created at persist time.
-  const missingStateEntryIds = new Set();
   for (const entry of entries) {
     if (!entryStates.has(entry.id)) {
-      missingStateEntryIds.add(entry.id);
       entryStates.set(entry.id, {
         last_activated_message: 0,
         last_deactivated_message: 0,
@@ -444,7 +431,16 @@ export function matchWorldBookEntries(database, characterId, texts, options = {}
   }
 
   // Phase 2: Match by trigger keys (string or regex), with cooldown/delay filtering
-  matchPassWithState(entries, lowerCombined, combinedScanText, matchedIds, matched, entryStates, messageCount);
+  const scans = new Map();
+  for (const entry of entries) {
+    const scanDepth = normalizeScanDepth(options.scanDepth, normalizeScanDepth(entry.book_scan_depth));
+    if (!scans.has(scanDepth)) {
+      const rawText = filteredTexts.slice(-scanDepth).join('\n');
+      scans.set(scanDepth, { rawText, lowerText: rawText.toLowerCase() });
+    }
+    entry._scanText = scans.get(scanDepth);
+  }
+  matchPassWithState(entries, '', '', matchedIds, matched, entryStates, messageCount, true);
 
   // Phase 2.5: Group inclusion - keep only one entry per group via weighted random
   applyGroupInclusion(entryById, matched, matchedIds);
@@ -498,27 +494,30 @@ export function matchWorldBookEntries(database, characterId, texts, options = {}
     matched.sort((a, b) => (a.orderIndex ?? 0) - (b.orderIndex ?? 0));
 
     let accumulated = 0;
-    for (let i = 0; i < matched.length; i++) {
-      accumulated += Math.ceil((matched[i].content || '').length / 4);
-      if (accumulated > budget) {
-        matched.splice(i);
-        break;
-      }
+    let kept = 0;
+    for (const entry of matched) {
+      const cost = Math.ceil((entry.content || '').length / 4);
+      if (accumulated + cost > budget) continue;
+      accumulated += cost;
+      matched[kept++] = entry;
     }
+    matched.length = kept;
   }
 
   // Phase 5: Update entry states based on entries that survived final pruning,
   // batched in one savepoint so per-entry writes commit atomically.
   if (persistState) {
-    withSavepoint(database, 'sp_world_book_entry_state', () => {
-      if (missingStateEntryIds.size) {
-        const insertState = database.prepare('INSERT OR IGNORE INTO world_book_entry_state (entry_id) VALUES (?)');
-        for (const entryId of missingStateEntryIds) {
-          insertState.run(entryId);
-        }
+    const commitState = (includedEntryIds = toMatchedIdSet(matched)) => {
+      const activeIds = new Set();
+      for (const entry of matched) {
+        if (includedEntryIds.has(entry.id)) activeIds.add(entry.id);
       }
-      updateEntryStates(database, entries, toMatchedIdSet(matched), entryStates, messageCount);
-    });
+      withSavepoint(database, 'sp_world_book_entry_state', () => {
+        updateEntryStates(database, entries, activeIds, entryStates, messageCount, conversationId);
+      });
+    };
+    if (typeof options.deferStateCommit === 'function') options.deferStateCommit(commitState);
+    else commitState();
   }
 
   return matched;
@@ -552,7 +551,7 @@ function indexWorldBookEntries(entries) {
   return { entryIds, entryById };
 }
 
-function matchPassWithState(entries, lowerText, rawText, matchedIds, matched, entryStates, messageCount) {
+function matchPassWithState(entries, lowerText, rawText, matchedIds, matched, entryStates, messageCount, useEntryScan = false) {
   for (const entry of entries) {
     if (matchedIds.has(entry.id)) {
       continue;
@@ -582,7 +581,8 @@ function matchPassWithState(entries, lowerText, rawText, matchedIds, matched, en
       }
     }
 
-    if (matchesWorldBookEntry(entry, lowerText, rawText)) {
+    const scan = useEntryScan ? entry._scanText : null;
+    if (matchesWorldBookEntry(entry, scan?.lowerText ?? lowerText, scan?.rawText ?? rawText)) {
       matched.push(toMatchedEntry(entry));
       matchedIds.add(entry.id);
     }
@@ -678,20 +678,27 @@ const ROLE_MAP = { 0: 'system', 1: 'user', 2: 'assistant' };
  * @param {Array} entries - Matched world book entries with position='at_depth'
  * @returns {Array} - The modified messages array
  */
-export function injectAtDepthEntries(messages, entries) {
+export function injectAtDepthEntries(messages, entries, options = {}) {
   const atDepthEntries = collectAtDepthEntries(entries);
   if (!atDepthEntries.length) {
     return messages;
   }
 
-  // Sort by depth descending so deeper entries are inserted first (preserving relative positions)
-  atDepthEntries.sort((a, b) => (b.depth || 0) - (a.depth || 0));
-
+  // Resolve all positions against the original tail; inserted entries consume no depth.
+  const originalLength = messages.length;
+  const insertions = new Map();
   for (const entry of atDepthEntries) {
-    const depth = Math.max(0, Math.min(entry.depth || 0, messages.length));
-    const insertIndex = messages.length - depth;
+    const depth = Math.min(normalizeEntryDepth(entry.depth), originalLength);
+    const insertIndex = originalLength - depth;
     const role = ROLE_MAP[entry.role] || 'system';
-    messages.splice(insertIndex, 0, { role, content: entry.content });
+    const message = options.createMessage
+      ? options.createMessage(entry, role)
+      : { role, content: entry.content };
+    if (!insertions.has(insertIndex)) insertions.set(insertIndex, []);
+    insertions.get(insertIndex).push(message);
+  }
+  for (const index of [...insertions.keys()].sort((a, b) => b - a)) {
+    messages.splice(index, 0, ...insertions.get(index));
   }
 
   return messages;
@@ -708,7 +715,7 @@ function collectAtDepthEntries(entries) {
       continue;
     }
     const entry = entries[index];
-    if (entry.position === 'at_depth') {
+    if (entry?.position === 'at_depth') {
       atDepthEntries.push(entry);
     }
   }
@@ -755,7 +762,7 @@ function touchWorldBook(database, bookId) {
 
 function normalizeName(name) {
   const value = String(name || '').trim();
-  if (!value || value.length > 80) {
+  if (!value || value.length > WORLD_BOOK_LIMITS.name) {
     throw new Error('世界书名称长度需为 1-80 个字符');
   }
   return value;
@@ -763,12 +770,12 @@ function normalizeName(name) {
 
 function normalizeLorebookContextPercent(value) {
   const normalized = normalizeFiniteNumber(value, 25);
-  return Math.max(1, Math.min(100, normalized));
+  return Math.max(WORLD_BOOK_LIMITS.contextPercentMin, Math.min(WORLD_BOOK_LIMITS.contextPercentMax, normalized));
 }
 
 function normalizeScanDepth(value, fallback = 1) {
   const normalized = Math.trunc(normalizeFiniteNumber(value, fallback));
-  return Math.max(1, Math.min(50, normalized));
+  return Math.max(WORLD_BOOK_LIMITS.scanDepthMin, Math.min(WORLD_BOOK_LIMITS.scanDepthMax, normalized));
 }
 
 function normalizeContextSize(value) {
@@ -782,11 +789,11 @@ function normalizeContextSize(value) {
   return normalized > 0 ? normalized : null;
 }
 
-function resolveMessageCount(database, value, peek = false) {
+function resolveMessageCount(database, value, peek = false, conversationId = '') {
   if (value == null) {
-    return peek ? peekNextMessageCount(database) : getNextMessageCount(database);
+    return peek ? peekNextMessageCount(database, conversationId) : getNextMessageCount(database, conversationId);
   }
-  return normalizeMessageCount(value, null) ?? (peek ? peekNextMessageCount(database) : getNextMessageCount(database));
+  return normalizeMessageCount(value, null) ?? (peek ? peekNextMessageCount(database, conversationId) : getNextMessageCount(database, conversationId));
 }
 
 function normalizeMessageCount(value, fallback = 0) {
@@ -810,9 +817,9 @@ function normalizeMessageCount(value, fallback = 0) {
 function normalizeEntryPayload(payload = {}, fallback = {}) {
   payload = payload ?? {};
   fallback = fallback ?? {};
-  const name = String(payload.name || '').trim().slice(0, 120);
-  const triggerKeys = String(payload.triggerKeys || '').trim().slice(0, 2000);
-  const content = String(payload.content || '').slice(0, 10000);
+  const name = String(payload.name || '').trim().slice(0, WORLD_BOOK_ENTRY_LIMITS.name);
+  const triggerKeys = String(payload.triggerKeys || '').trim().slice(0, WORLD_BOOK_ENTRY_LIMITS.triggerKeys);
+  const content = String(payload.content || '').slice(0, WORLD_BOOK_ENTRY_LIMITS.content);
   const position = ['before_char', 'after_char', 'at_start', 'at_depth'].includes(payload.position)
     ? payload.position
     : 'before_char';
@@ -823,11 +830,11 @@ function normalizeEntryPayload(payload = {}, fallback = {}) {
   const depth = normalizeEntryDepth(payload.depth);
   const selective = normalizeBoolean(payload.selective) ? 1 : 0;
   const selectiveLogic = normalizeEntryEnumNumber(payload.selectiveLogic, fallback.selectiveLogic);
-  const keysSecondary = String(payload.keysSecondary || '').trim().slice(0, 2000);
+  const keysSecondary = String(payload.keysSecondary || '').trim().slice(0, WORLD_BOOK_ENTRY_LIMITS.keysSecondary);
 
   const probability = normalizeEntryProbability(payload.probability);
   const useProbability = normalizeBoolean(payload.useProbability) ? 1 : 0;
-  const group = String(payload.group || '').trim().slice(0, 100);
+  const group = String(payload.group || '').trim().slice(0, WORLD_BOOK_ENTRY_LIMITS.group);
   const groupWeight = normalizeEntryGroupWeight(payload.groupWeight);
   const role = normalizeEntryEnumNumber(payload.role, fallback.role);
 
@@ -844,11 +851,11 @@ function normalizeClampedEntryNumber(value, fallback, min, max) {
 }
 
 function normalizeEntryDepth(value) {
-  return normalizeClampedEntryNumber(value, 0, 0, 10);
+  return normalizeClampedEntryNumber(value, 0, 0, WORLD_BOOK_ENTRY_LIMITS.depthMax);
 }
 
 function normalizeEntryProbability(value) {
-  return normalizeClampedEntryNumber(value, 100, 0, 100);
+  return normalizeClampedEntryNumber(value, 100, 0, WORLD_BOOK_ENTRY_LIMITS.probabilityMax);
 }
 
 function normalizeEntryGroupWeight(value) {
@@ -878,7 +885,9 @@ function normalizeOptionalEntryNumber(value) {
     return null;
   }
   const numeric = Number(value);
-  return Number.isFinite(numeric) ? Math.max(0, Math.min(9999, numeric)) : null;
+  return Number.isFinite(numeric)
+    ? Math.max(0, Math.min(WORLD_BOOK_ENTRY_LIMITS.stateDurationMax, numeric))
+    : null;
 }
 
 function toWorldBook(row) {

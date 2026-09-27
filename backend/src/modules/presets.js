@@ -157,7 +157,7 @@ function normalizePresetPayload(payload = {}, existing = null) {
   const name = normalizeName(payload.name ?? existing?.name ?? '未命名预设');
   const systemPrompt = String(payload.systemPrompt ?? payload.system_prompt ?? existing?.system_prompt ?? '');
   const temperature = clampNumber(payload.temperature ?? existing?.temperature ?? 1.0, 0, 2);
-  const maxTokens = clampInteger(payload.maxTokens ?? payload.max_tokens ?? existing?.max_tokens ?? 4096, 1, 128000);
+  const maxTokens = clampInteger(payload.maxTokens ?? payload.max_tokens ?? existing?.max_tokens ?? 0, 0, 128000);
   const topP = clampNumber(payload.topP ?? payload.top_p ?? existing?.top_p ?? 1.0, 0, 1);
   const frequencyPenalty = clampNumber(payload.frequencyPenalty ?? payload.frequency_penalty ?? existing?.frequency_penalty ?? 0, -2, 2);
   const presencePenalty = clampNumber(payload.presencePenalty ?? payload.presence_penalty ?? existing?.presence_penalty ?? 0, -2, 2);

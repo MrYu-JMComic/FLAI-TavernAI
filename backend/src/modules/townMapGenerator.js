@@ -1,3 +1,7 @@
+import { TOWN_ASSETS, townArchitecture, townVenue } from '../../../shared/townAssets.js';
+import { distanceToSegment, pointTouchesTownWater } from '../../../shared/townGeometry.js';
+import { buildTownRoads } from './townNavigation.js';
+
 const MAP_WIDTH = 1600;
 const MAP_HEIGHT = 900;
 
@@ -29,20 +33,26 @@ export function generateProceduralTownMap(blueprint, creationPrompt = '') {
   };
   const seed = hashText(`${creationPrompt}\u0000${JSON.stringify(seedBlueprint)}`);
   const random = createRandom(seed);
-  const locations = layoutLocations(sourceLocations, environment.settlementPattern, random);
-  const roads = buildRoads(locations, random);
-  const buildings = buildBuildings(locations, blueprint.environment, random);
-  const terrainPatches = buildTerrainPatches(random);
   const waterBodies = buildWaterBodies(environment.water, random);
-  const decorations = buildDecorations(environment.biome, random);
+  const architecture = townArchitecture(environment, sourceLocations);
+  const locations = layoutLocations(sourceLocations, environment.settlementPattern, random, waterBodies);
+  const roads = buildTownRoads(locations, waterBodies, MAP_WIDTH, MAP_HEIGHT, architecture);
+  const buildings = buildBuildings(locations, architecture, random, waterBodies, roads);
+  const terrainPatches = buildTerrainPatches(random);
+  const decorations = buildDecorations(environment.biome, random, waterBodies, roads, buildings);
   return {
     renderMode: 'procedural-v1',
+    generatorVersion: 2,
+    assetCatalogVersion: 1,
+    architecture,
     width: MAP_WIDTH,
     height: MAP_HEIGHT,
     seed,
     biome,
     atmosphere: String(environment.atmosphere || ''),
-    palette: BIOME_PALETTES[biome],
+    palette: architecture === 'modern'
+      ? { ...BIOME_PALETTES[biome], ...(['temperate', 'coastal'].includes(biome) ? { ground: '#94b397', groundAlt: '#719779' } : {}), road: '#bdc7c4', roadEdge: '#6c837a', wall: '#e0e7df', roof: '#647f89' }
+      : BIOME_PALETTES[biome],
     locations,
     roads,
     buildings,
@@ -52,17 +62,47 @@ export function generateProceduralTownMap(blueprint, creationPrompt = '') {
   };
 }
 
-function layoutLocations(source, pattern = 'clustered', random) {
+function layoutLocations(source, pattern = 'clustered', random, waterBodies) {
   const count = Math.max(1, source.length);
   const locations = [];
   for (let index = 0; index < count; index += 1) {
-    const point = patternPoint(pattern, index, count, random, locations);
-    const row = source[index];
+    const row = townVenue(source[index]);
+    const asset = TOWN_ASSETS[row.assetId];
+    const footprint = Math.hypot(asset.width, asset.height) / 2 + 6;
+    const preferred = patternPoint(pattern, index, count, random, locations);
+    const candidates = [preferred];
+    for (let y = 110; y <= MAP_HEIGHT - 90; y += 115) {
+      for (let x = 110; x <= MAP_WIDTH - 90; x += 125) candidates.push({ x: x + jitter(random, 8), y: y + jitter(random, 8) });
+    }
+    const valid = candidates.filter((point) => (
+      point.x >= 90 && point.x <= MAP_WIDTH - 90 && point.y >= 90 && point.y <= MAP_HEIGHT - 90
+      && !pointTouchesTownWater(point, waterBodies, 72)
+      && locations.every((location) => distance(point, location) >= (count > 12 ? 125 : 160) && distance(point, { x: location.buildingX, y: location.buildingY }) >= location.footprint + 30)
+    )).sort((a, b) => distance(a, preferred) - distance(b, preferred));
+    let placement = null;
+    for (const point of valid) {
+      for (const [dx, dy] of [[0, -1], [1, 0], [-1, 0], [0, 1]]) {
+        const plot = { x: Math.round(point.x + dx * (footprint + 36)), y: Math.round(point.y + dy * (footprint + 36)) };
+        if (plot.x < footprint + 10 || plot.x > MAP_WIDTH - footprint - 10 || plot.y < footprint + 10 || plot.y > MAP_HEIGHT - footprint - 10) continue;
+        if (pointTouchesTownWater(plot, waterBodies, footprint)) continue;
+        if (locations.some((location) => distance(plot, location) < footprint + 30 || distance(plot, { x: location.buildingX, y: location.buildingY }) < footprint + location.footprint + 48)) continue;
+        placement = { point, plot };
+        break;
+      }
+      if (placement) break;
+    }
+    if (!placement) throw new Error('地图没有足够的可用陆地容纳地点，请减少地点或调整水体。');
+    const { point, plot } = placement;
     locations.push({
       ...row,
       x: Math.round(point.x),
       y: Math.round(point.y),
-      radius: 72 + (Number(row.importance) || 3) * 12
+      radius: 72,
+      buildingX: plot.x,
+      buildingY: plot.y,
+      footprint,
+      labelX: Math.round(point.x),
+      labelY: Math.round(point.y + 65)
     });
   }
   return locations;
@@ -114,56 +154,50 @@ function scatteredPoint(random, existing, marginX, marginY) {
   return candidate;
 }
 
-function buildRoads(locations, random) {
-  const roads = [];
-  for (let index = 1; index < locations.length; index += 1) {
-    const current = locations[index];
-    let nearest = locations[0];
-    for (let candidateIndex = 1; candidateIndex < index; candidateIndex += 1) {
-      const candidate = locations[candidateIndex];
-      if (distance(current, candidate) < distance(current, nearest)) nearest = candidate;
-    }
-    roads.push(makeRoad(current, nearest, random));
-  }
-  if (locations.length > 3) {
-    roads.push(makeRoad(locations[0], locations[locations.length - 1], random));
-  }
-  return roads;
-}
-
-function makeRoad(from, to, random) {
-  const midpoint = {
-    x: (from.x + to.x) / 2 + jitter(random, 48),
-    y: (from.y + to.y) / 2 + jitter(random, 48)
-  };
-  return {
-    id: `road-${from.id}-${to.id}`,
-    from: from.id,
-    to: to.id,
-    points: [{ x: from.x, y: from.y }, midpoint, { x: to.x, y: to.y }]
-  };
-}
-
-function buildBuildings(locations, environment, random) {
-  const densityBonus = environment?.settlementPattern === 'clustered' ? 2 : 0;
-  const buildings = [];
+function buildBuildings(locations, architecture, random, waterBodies, roads) {
+  const buildings = locations.map((location) => {
+    const asset = TOWN_ASSETS[location.assetId];
+    return { id: `building-${location.id}-1`, locationId: location.id, kind: location.assetId, assetId: location.assetId,
+      architecture, landmark: true, x: location.buildingX, y: location.buildingY, width: asset.width, height: asset.height,
+      rotation: 0, variant: Math.floor(random() * 4), floors: architecture === 'modern' ? asset.floors : Math.min(2, asset.floors) };
+  });
   for (const location of locations) {
-    const count = Math.min(15, 3 + location.importance * 2 + densityBonus);
-    for (let index = 0; index < count; index += 1) {
-      const angle = (index / count) * Math.PI * 2 + random() * 0.5;
-      const radius = 42 + random() * location.radius;
-      const width = 28 + Math.round(random() * 34);
-      const height = 22 + Math.round(random() * 28);
+    const count = location.assetId === 'park' || location.assetId === 'car' ? 1 : 2 + Math.floor(location.importance / 2);
+    for (let index = 1; index < count; index += 1) {
+      const assetId = 'house';
+      const asset = TOWN_ASSETS[assetId];
+      const scale = 0.6 + random() * 0.15;
+      const width = Math.round(asset.width * scale);
+      const height = Math.round(asset.height * scale);
+      const clearance = Math.hypot(width, height) / 2 + 6;
+      let point = null;
+      for (let attempt = 0; attempt < 80; attempt += 1) {
+        const angle = attempt / 12 * Math.PI * 2;
+        const radius = 52 + Math.floor(attempt / 12) * 14;
+        const candidate = { x: Math.round(location.x + Math.cos(angle) * radius), y: Math.round(location.y + Math.sin(angle) * radius) };
+        if (candidate.x < clearance || candidate.x > MAP_WIDTH - clearance || candidate.y < clearance || candidate.y > MAP_HEIGHT - clearance) continue;
+        if (pointTouchesTownWater(candidate, waterBodies, clearance)) continue;
+        if (buildings.some((building) => distance(building, candidate) < clearance + Math.hypot(building.width, building.height) / 2 + 6)) continue;
+        if (roads.some((road) => road.points.slice(1).some((to, segment) => distanceToSegment(candidate, road.points[segment], to) < clearance + 14))) continue;
+        point = candidate;
+        break;
+      }
+      if (!point) {
+        continue;
+      }
       buildings.push({
         id: `building-${location.id}-${index + 1}`,
         locationId: location.id,
-        kind: index === 0 ? location.kind : 'house',
-        x: Math.round(clamp(location.x + Math.cos(angle) * radius, 45, MAP_WIDTH - 45)),
-        y: Math.round(clamp(location.y + Math.sin(angle) * radius * 0.68, 45, MAP_HEIGHT - 45)),
+        kind: assetId,
+        assetId,
+        architecture,
+        landmark: false,
+        ...point,
         width,
         height,
-        rotation: Math.round((random() - 0.5) * 18),
-        floors: index === 0 ? Math.min(3, 1 + Math.ceil(location.importance / 2)) : 1
+        rotation: 0,
+        variant: Math.floor(random() * 4),
+        floors: architecture === 'modern' ? asset.floors : Math.min(2, asset.floors)
       });
     }
   }
@@ -223,16 +257,20 @@ function buildWaterBodies(type, random) {
   return [];
 }
 
-function buildDecorations(biome, random) {
+function buildDecorations(biome, random, waterBodies, roads, buildings) {
   const decorations = [];
   const treeChance = ['forest', 'temperate', 'swamp', 'fantasy'].includes(biome) ? 0.72 : 0.34;
   for (let index = 0; index < 130; index += 1) {
-    decorations.push({
+    const item = {
       kind: random() < treeChance ? 'tree' : 'rock',
       x: Math.round(25 + random() * (MAP_WIDTH - 50)),
       y: Math.round(25 + random() * (MAP_HEIGHT - 50)),
       scale: Number((0.55 + random() * 0.8).toFixed(2))
-    });
+    };
+    if (pointTouchesTownWater(item, waterBodies, 14)) continue;
+    if (buildings.some((building) => distance(item, building) < Math.hypot(building.width, building.height) / 2 + 18)) continue;
+    if (roads.some((road) => road.points.slice(1).some((to, segment) => distanceToSegment(item, road.points[segment], to) < 25))) continue;
+    decorations.push(item);
   }
   return decorations;
 }
@@ -264,8 +302,4 @@ function jitter(random, amount) {
 
 function distance(first, second) {
   return Math.hypot(first.x - second.x, first.y - second.y);
-}
-
-function clamp(value, minimum, maximum) {
-  return Math.min(maximum, Math.max(minimum, value));
 }

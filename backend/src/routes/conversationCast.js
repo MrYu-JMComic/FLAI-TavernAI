@@ -1,4 +1,6 @@
 import { Router } from 'express';
+import { normalizeAdvancedSettings } from '../modules/advancedSettings.js';
+import { resolveCastAgentOperations, resolveCastAgentSettings } from '../services/cast/castAgentSettings.js';
 import { getCharacter } from '../modules/characters.js';
 import {
   cleanupEmptyCastMembers,
@@ -34,6 +36,9 @@ import {
   getCastRoster,
 } from '../services/cast/castQueryService.js';
 import { organizeConversationCast } from '../services/cast/castOrganizer.js';
+import { assertCurrentGeneration, beginConversationGeneration, endConversationGeneration } from '../services/conversationTimeline.js';
+import { createConversationDatabaseFacade, withConversationMutationContext } from '../services/conversationMutationContext.js';
+import { writeConversationCheckpoint } from '../repositories/conversationSnapshotRepository.js';
 import { listRecentConversationEvidenceMessages } from '../repositories/castRepository.js';
 import {
   getLatestCastSyncStatus,
@@ -65,9 +70,11 @@ import {
   castRosterQuerySchema,
   validate,
 } from '../validations/schemas.js';
+import { routeErrorPayload } from './errorResponse.js';
 
 export function createConversationCastRouter(ctx) {
   const { db, requireAuth } = ctx;
+  const config = ctx.config || {};
   const organizeCast = ctx.organizeConversationCast || organizeConversationCast;
   const asyncRoute = ctx.asyncRoute || ((handler) => (
     (request, response, next) => Promise.resolve(handler(request, response, next)).catch(next)
@@ -137,6 +144,14 @@ export function createConversationCastRouter(ctx) {
       if (!settings.ok) return response.status(400).json({ error: settings.error });
       const character = getCharacter(db, request.auth.user.id, conversation.characterId);
       if (!character) return response.status(404).json({ error: '角色不存在' });
+      const castTracking = normalizeAdvancedSettings(conversation.settings || {}).castTracking;
+      const agentProvider = resolveCastAgentSettings(db, request.auth.user.id, settings.value, castTracking, {
+        config,
+        mainThinkingLevel: request.body.thinkingLevel,
+        mainThinkingEnabled: request.body.thinkingEnabled,
+      });
+      const allowedOperations = resolveCastAgentOperations(castTracking, 'ai_organize');
+      const ticket = beginConversationGeneration(db, request.auth.user.id, conversation.id);
       const controller = new AbortController();
       request.once('aborted', () => controller.abort());
       response.once('close', () => {
@@ -152,26 +167,36 @@ export function createConversationCastRouter(ctx) {
       response.flushHeaders?.();
       try {
         const messages = listRecentConversationEvidenceMessages(db, conversation.id, { limit: 80 });
-        await organizeCast({
-          database: db,
+        await withConversationMutationContext({ assert: () => assertCurrentGeneration(db, ticket) }, () => organizeCast({
+          database: createConversationDatabaseFacade(db),
           userId: request.auth.user.id,
           conversationId: conversation.id,
-          settings: settings.value,
+          settings: agentProvider.settings,
+          thinkingLevel: agentProvider.thinkingLevel,
+          thinkingEnabled: agentProvider.thinkingEnabled,
+          allowedOperations,
           scope: request.body.scope,
           scopeMemberId: request.body.memberId || '',
           requirement: request.body.requirement,
           messages,
-          signal: controller.signal,
+          signal: AbortSignal.any([controller.signal, ticket.signal]),
           onProgress: (phase, data) => writeSse(response, 'progress', { phase, ...data }),
-        });
+        }));
+        writeConversationCheckpoint(db, request.auth.user.id, conversation.id);
       } catch (error) {
         const failure = serializeCastPlanError(error);
+        const publicError = routeErrorPayload(error, {
+          status: Number.isInteger(error?.statusCode) ? error.statusCode : 400,
+          isProduction: config.isProduction,
+          fallback: '人物整理失败'
+        });
         await writeSse(response, 'error', {
           ...failure,
-          error: error?.message || '人物整理失败',
-          code: error?.code || 'CAST_ORGANIZE_FAILED',
+          error: publicError.error,
+          code: publicError.code || error?.code || 'CAST_ORGANIZE_FAILED',
         });
       } finally {
+        endConversationGeneration(db, ticket);
         if (!response.writableEnded) response.end();
       }
     })

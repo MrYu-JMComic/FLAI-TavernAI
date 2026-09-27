@@ -46,9 +46,18 @@ import {
   providerStreamErrorMessage
 } from './providerStreamErrors.js';
 import { executeProviderTool } from './providerToolResults.js';
+import { withProviderQuota } from './quotas.js';
 
 export async function runToolCompletion(settings, messages, tools, executeTool, options = {}) {
   options = options ?? {};
+  if (options.database && options.userId && options.__quotaHandled !== true) {
+    return withProviderQuota(
+      options.database,
+      options.userId,
+      () => runToolCompletion(settings, messages, tools, executeTool, { ...options, __quotaHandled: true }),
+      options
+    );
+  }
   if (!hasUsableProvider(settings)) {
     throw new Error('请先在用户页保存 API Key / SK，并确认网关和模型可用。');
   }
@@ -82,6 +91,8 @@ export async function runToolCompletion(settings, messages, tools, executeTool, 
       response = await providerFetch(settings, '/chat/completions', {
         method: 'POST',
         body: JSON.stringify(requestBody),
+        requestTrace: options.requestTrace,
+        timeoutMs: options.timeoutMs,
         signal: options.signal
       });
       json = await readJsonResponse(response);
@@ -121,6 +132,7 @@ export async function runToolCompletion(settings, messages, tools, executeTool, 
       tools: []
     };
     process.push(step);
+    if (typeof options.onStep === 'function') await options.onStep(step);
 
     if (!calls.length) {
       const nudge = typeof options.onNoToolCall === 'function'
@@ -146,16 +158,22 @@ export async function runToolCompletion(settings, messages, tools, executeTool, 
         call.name,
         call.arguments,
         call,
-        options.signal
+        options.signal,
+        tools,
+        { database: options.database, userId: options.userId }
       );
       const result = prepared.result;
       const log = {
         name: call.name,
         arguments: call.arguments,
+        policy: prepared.policy,
         result
       };
       step.tools.push(log);
       toolCalls.push(log);
+      if (typeof options.onToolCall === 'function') {
+        await options.onToolCall({ round: step.round, ...log });
+      }
       nextMessages.push({
         role: 'tool',
         tool_call_id: call.id,
@@ -190,6 +208,22 @@ export async function runToolCompletion(settings, messages, tools, executeTool, 
 
 export async function streamToolCompletion(settings, messages, tools, executeTool, emit, signal, options = {}) {
   options = options ?? {};
+  if (options.database && options.userId && options.__quotaHandled !== true) {
+    return withProviderQuota(
+      options.database,
+      options.userId,
+      () => streamToolCompletion(
+        settings,
+        messages,
+        tools,
+        executeTool,
+        emit,
+        signal,
+        { ...options, __quotaHandled: true }
+      ),
+      options
+    );
+  }
   const streamEmit = createStreamEmitQueue(emit);
   if (!hasUsableProvider(settings)) {
     const result = await streamMockCompletion(messages, streamEmit.emit, settings);
@@ -234,6 +268,8 @@ export async function streamToolCompletion(settings, messages, tools, executeToo
       response = await providerFetch(settings, '/chat/completions', {
         method: 'POST',
         body: JSON.stringify(requestBody),
+        requestTrace: options.requestTrace,
+        timeoutMs: options.timeoutMs,
         signal
       });
 
@@ -392,11 +428,12 @@ export async function streamToolCompletion(settings, messages, tools, executeToo
     });
 
     for (const call of calls) {
-      const prepared = await executeProviderTool(executeTool, call.name, call.arguments, call, signal);
+      const prepared = await executeProviderTool(executeTool, call.name, call.arguments, call, signal, tools, { database: options.database, userId: options.userId });
       const result = prepared.result;
       const log = {
         name: call.name,
         arguments: call.arguments,
+        policy: prepared.policy,
         result
       };
       toolCalls.push(log);

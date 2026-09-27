@@ -79,6 +79,38 @@ test('provider URL policy accepts DNS fake-IP proxy mappings but rejects literal
   );
 });
 
+test('reserved test hosts skip DNS through fetchProviderRequest without a local resolver', async () => {
+  const originalFetch = globalThis.fetch;
+  let calls = 0;
+  globalThis.fetch = async () => {
+    calls += 1;
+    return new Response('{}', { status: 200, headers: { 'Content-Type': 'application/json' } });
+  };
+  try {
+    const response = await fetchProviderRequest('https://provider.test/v1/models', {}, {
+      resolveDns: true,
+      isProduction: false
+    });
+    assert.equal(response.status, 200);
+    assert.equal(calls, 1);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('a caller-provided lookup still governs reserved test hosts', async () => {
+  await assert.rejects(
+    assertProviderUrlAllowed('https://provider.test/v1/models', {
+      resolveDns: true,
+      isProduction: false,
+      lookup: async () => {
+        throw Object.assign(new Error('getaddrinfo ENOTFOUND provider.test'), { code: 'ENOTFOUND' });
+      }
+    }),
+    { code: 'PROVIDER_HOST_UNRESOLVED' }
+  );
+});
+
 test('provider redirects cannot cross into metadata or private networks', async () => {
   const originalFetch = globalThis.fetch;
   let calls = 0;

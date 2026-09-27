@@ -26,7 +26,9 @@ export function listConversationRows(database, userId, options = {}) {
 
   const rows = measureSync('sqlite.conversations.list', () => database.prepare(
     `SELECT conversations.*, conversations.rowid AS _cursor_rowid,
-            characters.name AS character_name, characters.avatar_url
+            characters.user_id AS character_user_id,
+            characters.name AS character_name, characters.avatar_url,
+            characters.author_advanced_settings
      FROM conversations
      JOIN characters ON characters.id = conversations.character_id
      WHERE ${clauses.join(' AND ')}

@@ -58,29 +58,29 @@ test('three-step creation validates the name, updates the summary, and enters ed
   await expect(page.getByRole('button', { name: /角色天赋/ })).toBeVisible();
 });
 
-test('the desktop studio renders one section at a time and protects unsaved navigation', async ({ page }) => {
+test('the desktop studio renders the full form and protects unsaved navigation', async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 900 });
   await registerUser(page, uniqueSuffix());
   await openCharacterCreator(page);
 
   await page.getByRole('button', { name: /完整表单/ }).click();
-  await expect(page.getByLabel('角色背景内容')).toHaveCount(0);
+  await expect(page.getByLabel('角色背景内容')).toBeVisible();
   await expect(page.locator('#section-basic')).toBeVisible();
   await page.locator('#character-name').fill('未保存的工作台角色');
   await expect(page.locator('.character-save-state')).toContainText('有未保存更改');
 
-  // Switching sections swaps the stage rather than scrolling a long form.
+  // The directory remains available while the full form stays rendered.
   const nav = page.locator('.character-studio-nav');
   await nav.getByRole('button', { name: /角色设定/ }).click();
   await expect(page.getByLabel('角色背景内容')).toBeVisible();
-  await expect(page.locator('#section-basic')).toHaveCount(0);
+  await expect(page.locator('#section-basic')).toBeVisible();
 
   const codeNavButton = nav.getByRole('button', { name: /扩展代码/ });
   await codeNavButton.click();
   await expect(codeNavButton).toHaveClass(/active/);
   const codeGroup = page.locator('#section-custom-code');
   await expect(codeGroup.getByRole('textbox', { name: '角色自定义 CSS' })).toBeVisible();
-  await expect(page.locator('#section-settings')).toHaveCount(0);
+  await expect(page.locator('#section-settings')).toBeVisible();
 
   const cssEnabledCheckbox = codeGroup.getByRole('checkbox', { name: '启用角色自定义 CSS' });
   await cssEnabledCheckbox.check();

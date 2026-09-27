@@ -1,5 +1,9 @@
 import { performance } from 'node:perf_hooks';
-import { assertDailyCostQuota, normalizeProviderUsage, recordProviderUsage } from './quotas.js';
+import {
+  normalizeProviderUsage,
+  reserveProviderCost,
+  settleProviderCost
+} from './quotas.js';
 
 export async function executeProviderTask(database, options = {}) {
   const {
@@ -12,7 +16,7 @@ export async function executeProviderTask(database, options = {}) {
     operation
   } = options;
   if (typeof operation !== 'function') throw new TypeError('Provider task operation is required.');
-  assertDailyCostQuota(database, userId);
+  const reservation = reserveProviderCost(database, userId);
   const routes = buildRoutes(settings, routing);
   let lastError;
   for (let index = 0; index < routes.length; index += 1) {
@@ -25,7 +29,7 @@ export async function executeProviderTask(database, options = {}) {
         signal
       });
       const usage = normalizeProviderUsage(result?.usage || {});
-      recordProviderUsage(database, userId, usage);
+      settleProviderCost(database, reservation, usage);
       const event = recordProviderRoute(database, {
         userId,
         jobId,

@@ -91,7 +91,7 @@ Write-ReviewOutput "Log: $reviewLogFile"
 Write-ReviewOutput "=== 门下省审核 ===" -ForegroundColor Cyan
 
 # 1. 编码检查
-Write-ReviewOutput "`n[1/6] 编码检查..." -ForegroundColor Yellow
+Write-ReviewOutput "`n[1/9] 编码检查..." -ForegroundColor Yellow
 try {
     if ((Invoke-LoggedNativeCommand -File "node" -Arguments @("scripts/check-encoding.mjs")) -ne 0) {
         $failures += "编码检查失败"
@@ -101,7 +101,7 @@ try {
 }
 
 # 2. 未引用组件诊断（非阻断）
-Write-ReviewOutput "`n[2/6] 未引用 Vue 组件诊断..." -ForegroundColor Yellow
+Write-ReviewOutput "`n[2/9] 未引用 Vue 组件诊断..." -ForegroundColor Yellow
 try {
     if ((Invoke-LoggedNativeCommand -File "node" -Arguments @("scripts/find-unreferenced-vue-components.mjs")) -ne 0) {
         Write-ReviewOutput "未引用组件诊断脚本返回非零状态，已作为非阻断提示处理。" -ForegroundColor DarkYellow
@@ -111,7 +111,7 @@ try {
 }
 
 # 3. Vue 控件可访问性诊断（非阻断）
-Write-ReviewOutput "`n[3/6] Vue 控件可访问性诊断..." -ForegroundColor Yellow
+Write-ReviewOutput "`n[3/9] Vue 控件可访问性诊断..." -ForegroundColor Yellow
 try {
     if ((Invoke-LoggedNativeCommand -File "node" -Arguments @("scripts/find-inaccessible-vue-controls.mjs")) -ne 0) {
         Write-ReviewOutput "Vue 控件可访问性诊断脚本返回非零状态，已作为非阻断提示处理。" -ForegroundColor DarkYellow
@@ -121,7 +121,7 @@ try {
 }
 
 # 4. 后端测试
-Write-ReviewOutput "`n[4/6] 后端测试..." -ForegroundColor Yellow
+Write-ReviewOutput "`n[4/9] 后端测试..." -ForegroundColor Yellow
 try {
     if ((Invoke-LoggedNativeCommand -File "npm" -WorkingDirectory "backend" -Arguments @("test")) -ne 0) {
         $failures += "后端测试失败"
@@ -131,7 +131,7 @@ try {
 }
 
 # 5. 前端构建
-Write-ReviewOutput "`n[5/6] 前端构建..." -ForegroundColor Yellow
+Write-ReviewOutput "`n[5/9] 前端构建..." -ForegroundColor Yellow
 try {
     if ((Invoke-LoggedNativeCommand -File "npm" -WorkingDirectory "frontend" -Arguments @("run", "build")) -ne 0) {
         $failures += "前端构建失败"
@@ -140,8 +140,40 @@ try {
     $failures += "前端构建执行异常: $_"
 }
 
-# 6. Git 状态检查
-Write-ReviewOutput "`n[6/6] Git 状态检查..." -ForegroundColor Yellow
+# 6. 生产依赖审计
+Write-ReviewOutput "`n[6/9] 生产依赖审计..." -ForegroundColor Yellow
+foreach ($auditDirectory in @("backend", "frontend")) {
+    try {
+        if ((Invoke-LoggedNativeCommand -File "npm" -WorkingDirectory $auditDirectory -Arguments @("audit", "--omit=dev", "--audit-level=moderate")) -ne 0) {
+            $failures += "$auditDirectory 生产依赖审计失败"
+        }
+    } catch {
+        $failures += "$auditDirectory 生产依赖审计执行异常: $_"
+    }
+}
+
+# 7. 前端单元测试
+Write-ReviewOutput "`n[7/9] 前端单元测试..." -ForegroundColor Yellow
+try {
+    if ((Invoke-LoggedNativeCommand -File "npm" -WorkingDirectory "frontend" -Arguments @("run", "test:unit")) -ne 0) {
+        $failures += "前端单元测试失败"
+    }
+} catch {
+    $failures += "前端单元测试执行异常: $_"
+}
+
+# 8. 端到端测试
+Write-ReviewOutput "`n[8/9] 端到端测试..." -ForegroundColor Yellow
+try {
+    if ((Invoke-LoggedNativeCommand -File "npm" -WorkingDirectory "frontend" -Arguments @("run", "test:e2e")) -ne 0) {
+        $failures += "端到端测试失败"
+    }
+} catch {
+    $failures += "端到端测试执行异常: $_"
+}
+
+# 9. Git 状态检查
+Write-ReviewOutput "`n[9/9] Git 状态检查..." -ForegroundColor Yellow
 try {
     if ((Invoke-LoggedNativeCommand -File "git" -Arguments @("diff", "--check")) -ne 0) {
         $failures += "Git working tree diff whitespace check failed"

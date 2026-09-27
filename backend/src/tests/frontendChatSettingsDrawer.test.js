@@ -26,7 +26,7 @@ test('ChatSettingsDrawer keeps close actions visible but locked while saves are 
 });
 
 test('ChatSettingsDrawer locks appearance controls while saving appearance', () => {
-  assert.equal(countMatches(chatSettingsDrawerTemplate, /:disabled="appearanceSaving"/g), 16);
+  assert.equal(countMatches(chatSettingsDrawerTemplate, /:disabled="appearanceSaving"/g), 17);
   assert.equal(countMatches(chatSettingsDrawerTemplate, /:class="{ 'is-disabled': appearanceSaving }"/g), 2);
   assert.match(chatSettingsDrawerTemplate, /:disabled="worldBooksLoading \|\| appearanceSaving"/);
   assert.match(chatSettingsDrawerTemplate, /:aria-busy="appearanceSaving"/);
@@ -51,10 +51,12 @@ test('ChatSettingsDrawer hosts the image generation mode switch', () => {
   assert.match(chatSettingsDrawerScript, /Image as ImageIcon/);
   assert.match(chatSettingsDrawerScript, /sending: \{ type: Boolean, default: false \}/);
   assert.match(chatSettingsDrawerScript, /imageGenerationEnabled: \{ type: Boolean, default: true \}/);
+  assert.match(chatSettingsDrawerScript, /canGenerateImages: \{ type: Boolean, default: false \}/);
   assert.match(chatSettingsDrawerScript, /canToggleImageGeneration: \{ type: Boolean, default: false \}/);
   assert.match(chatSettingsDrawerScript, /'toggle-image-generation'/);
   assert.match(chatSettingsDrawerTemplate, /class="chat-setting-toggle image-generation-setting"[\s\S]*:checked="canToggleImageGeneration && imageGenerationEnabled"[\s\S]*:disabled="sending \|\| !canToggleImageGeneration"[\s\S]*@change="emit\('toggle-image-generation'\)"/);
   assert.match(chatSettingsDrawerTemplate, /<ImageIcon :size="15" \/>[\s\S]*\{\{ canToggleImageGeneration && imageGenerationEnabled \? '生成图片' : '文字回复' \}\}/);
+  assert.match(chatSettingsDrawerTemplate, /list="chat-image-model-options"[\s\S]*:disabled="sending \|\| !canGenerateImages"/);
   assert.match(stylesSource, /\.chat-setting-toggle-copy strong\s*{[\s\S]*display:\s*inline-flex;[\s\S]*align-items:\s*center;[\s\S]*gap:\s*6px;/);
 });
 

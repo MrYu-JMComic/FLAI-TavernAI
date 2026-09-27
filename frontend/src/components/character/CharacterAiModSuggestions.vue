@@ -10,24 +10,31 @@ const emit = defineEmits(['create']);
 </script>
 
 <template>
-  <div class="ai-mod-suggestions">
-    <div class="ai-tool-title">
-      <ListChecks :size="16" />
-      <span>AI Mod 建议 {{ suggestions.length }}</span>
+  <section class="ai-mod-suggestions" aria-label="AI Mod 建议">
+    <header class="ai-mod-head">
+      <span class="ai-tool-title">
+        <ListChecks :size="15" />
+        <span>Mod 建议</span>
+      </span>
+      <small>{{ suggestions.length }} 项</small>
+    </header>
+    <div class="ai-mod-list">
+      <article v-for="(mod, index) in suggestions" :key="index" class="ai-mod-card">
+        <div class="ai-mod-card-head">
+          <strong>{{ mod.name }}</strong>
+          <small>{{ mod.type || 'system' }}</small>
+        </div>
+        <p>{{ mod.description || mod.content }}</p>
+      </article>
     </div>
-    <article v-for="(mod, index) in suggestions" :key="index" class="ai-mod-card">
-      <strong>{{ mod.name }}</strong>
-      <small>{{ mod.type || 'system' }}</small>
-      <p>{{ mod.description || mod.content }}</p>
-    </article>
     <button
-      class="ghost-button"
+      class="ghost-button ai-mod-create"
       type="button"
       :disabled="creating"
       @click="emit('create')"
     >
-      <Plus :size="16" />
+      <Plus :size="15" />
       <span>{{ creating ? '创建中...' : '创建这些 Mod' }}</span>
     </button>
-  </div>
+  </section>
 </template>

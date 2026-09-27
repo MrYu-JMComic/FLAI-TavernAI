@@ -39,11 +39,15 @@ const saveName = ref('');
 const renamingId = ref('');
 const renameValue = ref('');
 const busyId = ref('');
+const recoveryOpen = ref(false);
 let savesLoadToken = 0;
 let savesMutationToken = 0;
 let savePanelDisposed = false;
 
-const sortedSaves = computed(() => saves.value);
+const manualSaves = computed(() => saves.value.filter((save) => save?.kind !== 'recovery'));
+const recoverySaves = computed(() => saves.value.filter((save) => save?.kind === 'recovery'));
+// Automatic recovery points stay folded until the user asks for them.
+const sortedSaves = computed(() => (recoveryOpen.value ? [...manualSaves.value, ...recoverySaves.value] : manualSaves.value));
 const hasSaveItemActionBusy = computed(() => Boolean(busyId.value));
 const saveActionBusy = computed(() => saving.value || hasSaveItemActionBusy.value);
 const savePanelBusy = computed(() => loading.value || saveActionBusy.value);
@@ -153,6 +157,7 @@ function sameSaveSummary(current = {}, next = {}) {
     && current?.conversationId === next?.conversationId
     && current?.name === next?.name
     && current?.preview === next?.preview
+    && current?.kind === next?.kind
     && current?.createdAt === next?.createdAt;
 }
 
@@ -228,6 +233,7 @@ async function doLoadSave(item) {
     const result = await loadSave(currentItem.id, conversationId);
     if (!isCurrentSaveMutation(mutationToken, conversationId)) return;
     if (!isCurrentSaveLoadResult(result, conversationId)) return;
+    for (const warning of result.warnings || []) notify.warning(warning);
     notify.success(`已恢复 ${result.messageCount} 条消息`);
     emit('loaded', { ...result, conversationId });
   } catch (err) {
@@ -433,12 +439,13 @@ function requestClose() {
                 <span>重试</span>
               </button>
             </div>
-            <p v-else-if="!sortedSaves.length" class="save-empty">暂无存档，点击上方按钮创建第一个存档</p>
+            <p v-else-if="!saves.length" class="save-empty">暂无存档，点击上方按钮创建第一个存档</p>
+            <p v-else-if="!sortedSaves.length" class="save-empty">暂无手动存档</p>
             <div
               v-for="item in sortedSaves"
               :key="item.id"
               class="save-item"
-              :class="{ busy: isSaveItemBusy(item) }"
+              :class="{ busy: isSaveItemBusy(item), recovery: item.kind === 'recovery' }"
               :aria-busy="isSaveItemBusy(item)"
             >
               <div class="save-item-body">
@@ -474,6 +481,7 @@ function requestClose() {
                 <template v-else>
                   <strong class="save-item-name">{{ item.name }}</strong>
                   <small class="save-item-time">{{ formatTime(item.createdAt) }}</small>
+                  <small v-if="item.kind === 'recovery'" class="save-item-kind">自动</small>
                 </template>
                 <p class="save-item-preview" :title="item.preview">{{ item.preview || '无预览' }}</p>
               </div>
@@ -513,6 +521,15 @@ function requestClose() {
                 </button>
               </div>
             </div>
+            <button
+              v-if="!loading && !loadError && recoverySaves.length"
+              class="save-recovery-toggle"
+              type="button"
+              :aria-expanded="recoveryOpen"
+              @click="recoveryOpen = !recoveryOpen"
+            >
+              {{ recoveryOpen ? '收起自动恢复点' : `显示 ${recoverySaves.length} 个自动恢复点` }}
+            </button>
           </div>
         </div>
       </div>
@@ -697,6 +714,38 @@ function requestClose() {
   font-size: 0.75rem;
   color: var(--muted, #75685e);
   margin-top: 2px;
+}
+
+.save-item-kind {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 0 6px;
+  border-radius: 999px;
+  font-size: 0.7rem;
+  line-height: 1.5;
+  color: var(--muted, #75685e);
+  border: 1px solid var(--line, rgba(62, 48, 38, 0.14));
+}
+
+.save-item.recovery {
+  opacity: 0.85;
+}
+
+.save-recovery-toggle {
+  width: 100%;
+  margin-top: 8px;
+  padding: 8px 12px;
+  border: 1px dashed var(--line, rgba(62, 48, 38, 0.2));
+  border-radius: 10px;
+  background: transparent;
+  color: var(--muted, #75685e);
+  font: inherit;
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+
+.save-recovery-toggle:hover {
+  color: var(--text, #2f2620);
 }
 
 .save-item-preview {

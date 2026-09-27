@@ -23,6 +23,7 @@ const presets = {
     gatewayName: 'OpenAI',
     baseUrl: 'https://api.openai.com/v1',
     model: 'gpt-4.1-mini',
+    imageModel: 'gpt-image-2',
     supportsReasoning: false,
     extraBody: '{}'
   },
@@ -30,6 +31,7 @@ const presets = {
     gatewayName: 'DeepSeek',
     baseUrl: 'https://api.deepseek.com',
     model: 'deepseek-v4-flash',
+    imageModel: '',
     supportsReasoning: true,
     extraBody: '{}'
   },
@@ -37,6 +39,7 @@ const presets = {
     gatewayName: 'Gemini',
     baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai',
     model: 'gemini-2.5-flash',
+    imageModel: 'gemini-3.1-flash-image',
     supportsReasoning: true,
     extraBody: JSON.stringify(
       {
@@ -56,6 +59,7 @@ const presets = {
     gatewayName: 'Anthropic',
     baseUrl: 'https://api.anthropic.com/v1',
     model: 'claude-sonnet-4-6',
+    imageModel: '',
     supportsReasoning: true,
     extraBody: '{}'
   },
@@ -63,6 +67,7 @@ const presets = {
     gatewayName: 'xAI',
     baseUrl: 'https://api.x.ai/v1',
     model: 'grok-4.1',
+    imageModel: 'grok-imagine-image',
     supportsReasoning: true,
     extraBody: '{}'
   },
@@ -70,6 +75,7 @@ const presets = {
     gatewayName: 'Mistral',
     baseUrl: 'https://api.mistral.ai/v1',
     model: 'mistral-medium-3-5',
+    imageModel: '',
     supportsReasoning: true,
     extraBody: '{}'
   },
@@ -77,6 +83,7 @@ const presets = {
     gatewayName: 'Qwen',
     baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
     model: 'qwen3-plus',
+    imageModel: '',
     supportsReasoning: true,
     extraBody: '{}'
   },
@@ -84,6 +91,7 @@ const presets = {
     gatewayName: 'Z.AI GLM',
     baseUrl: 'https://api.z.ai/api/paas/v4',
     model: 'glm-5.1',
+    imageModel: '',
     supportsReasoning: true,
     extraBody: '{}'
   },
@@ -91,6 +99,7 @@ const presets = {
     gatewayName: 'Kimi',
     baseUrl: 'https://api.moonshot.cn/v1',
     model: 'kimi-k2.5',
+    imageModel: '',
     supportsReasoning: true,
     extraBody: '{}'
   },
@@ -98,18 +107,20 @@ const presets = {
     gatewayName: '自定义网关',
     baseUrl: '',
     model: '',
+    imageModel: '',
     supportsReasoning: false,
     extraBody: '{}'
   }
 };
 
-export function useSettingsProvider({ isPersonalPage, notify, emitProviderSaved } = {}) {
+export function useSettingsProvider({ isPersonalPage, notify, emitProviderSaved, user } = {}) {
   const form = reactive({
     id: '',
     providerType: 'deepseek',
     gatewayName: 'DeepSeek',
     baseUrl: 'https://api.deepseek.com',
     model: 'deepseek-v4-flash',
+    imageModel: '',
     apiKey: '',
     apiKeySet: false,
     apiKeyHint: '',
@@ -117,6 +128,7 @@ export function useSettingsProvider({ isPersonalPage, notify, emitProviderSaved 
     apiKeyError: '',
     clearApiKey: false,
     supportsReasoning: true,
+    allowPrivateNetwork: false,
     extraBody: '{}'
   });
   const saving = ref(false);
@@ -131,6 +143,13 @@ export function useSettingsProvider({ isPersonalPage, notify, emitProviderSaved 
   const selectedProviderId = ref('');
   const providerCapabilityLoadError = ref('');
   const providerActionLoading = ref(false);
+  const providerNetworkPolicy = ref({
+    enabled: false,
+    settingName: 'ALLOW_PRIVATE_PROVIDER_NETWORK_DEV',
+    environment: 'development',
+    requiresRoot: true,
+    mockProvider: false
+  });
   const balance = ref(null);
   const settingsModelOptions = computed(() => buildModelSelectOptions(modelOptions.value, form.model));
   const providerControlsBusy = computed(() => (
@@ -139,8 +158,13 @@ export function useSettingsProvider({ isPersonalPage, notify, emitProviderSaved 
   const currentProviderCapability = computed(() => findCurrentProviderCapability());
   const providerFormDirty = computed(() => !samePlainValue(providerFormSnapshot(), providerFormBaseline));
   const canCheckBalance = computed(() => form.providerType === 'deepseek' && form.apiKeySet && !form.apiKeyNeedsReset);
+  const isRootAdmin = computed(() => Boolean(user?.value?.isRootAdmin));
   const canFetchModels = computed(() => Boolean(
     form.baseUrl && (form.apiKey || form.apiKeySet || canUseNoAuthProvider())
+    && (
+      !isLocalOrPrivateBaseUrl(form.baseUrl)
+      || (isRootAdmin.value && providerNetworkPolicy.value.enabled)
+    )
   ));
   let modelLoadToken = 0;
   let providerSaveToken = 0;
@@ -154,6 +178,7 @@ export function useSettingsProvider({ isPersonalPage, notify, emitProviderSaved 
       form.gatewayName,
       form.baseUrl,
       Boolean(form.apiKey || form.apiKeySet),
+      form.imageModel,
       form.supportsReasoning,
       form.extraBody
     ],
@@ -186,6 +211,7 @@ export function useSettingsProvider({ isPersonalPage, notify, emitProviderSaved 
       gatewayName: preset.gatewayName,
       baseUrl: preset.baseUrl,
       model: preset.model,
+      imageModel: preset.imageModel || '',
       supportsReasoning: preset.supportsReasoning,
       extraBody: preset.extraBody
     });
@@ -412,9 +438,11 @@ export function useSettingsProvider({ isPersonalPage, notify, emitProviderSaved 
       gatewayName: form.gatewayName,
       baseUrl: form.baseUrl,
       model: form.model,
+      imageModel: form.imageModel,
       apiKey: form.apiKey,
       apiKeySet: form.apiKeySet,
       supportsReasoning: form.supportsReasoning,
+      allowPrivateNetwork: form.allowPrivateNetwork,
       extraBody: form.extraBody
     };
   }
@@ -425,9 +453,11 @@ export function useSettingsProvider({ isPersonalPage, notify, emitProviderSaved 
       && form.gatewayName === request.gatewayName
       && form.baseUrl === request.baseUrl
       && form.model === request.model
+      && form.imageModel === request.imageModel
       && form.apiKey === request.apiKey
       && form.apiKeySet === request.apiKeySet
       && form.supportsReasoning === request.supportsReasoning
+      && form.allowPrivateNetwork === request.allowPrivateNetwork
       && form.extraBody === request.extraBody;
   }
 
@@ -445,9 +475,11 @@ export function useSettingsProvider({ isPersonalPage, notify, emitProviderSaved 
       gatewayName: form.gatewayName,
       baseUrl: form.baseUrl,
       model: form.model,
+      imageModel: form.imageModel,
       apiKey: form.apiKey,
       clearApiKey: form.clearApiKey,
       supportsReasoning: form.supportsReasoning,
+      allowPrivateNetwork: form.allowPrivateNetwork,
       extraBody: form.extraBody
     };
   }
@@ -457,9 +489,11 @@ export function useSettingsProvider({ isPersonalPage, notify, emitProviderSaved 
       && form.gatewayName === payload.gatewayName
       && form.baseUrl === payload.baseUrl
       && form.model === payload.model
+      && form.imageModel === payload.imageModel
       && form.apiKey === payload.apiKey
       && form.clearApiKey === payload.clearApiKey
       && form.supportsReasoning === payload.supportsReasoning
+      && form.allowPrivateNetwork === payload.allowPrivateNetwork
       && form.extraBody === payload.extraBody;
   }
 
@@ -493,6 +527,7 @@ export function useSettingsProvider({ isPersonalPage, notify, emitProviderSaved 
       gatewayName: settings.gatewayName,
       baseUrl: settings.baseUrl,
       model: settings.model,
+      imageModel: settings.imageModel || '',
       apiKey: '',
       apiKeySet: settings.apiKeySet,
       apiKeyHint: settings.apiKeyHint || '',
@@ -500,6 +535,7 @@ export function useSettingsProvider({ isPersonalPage, notify, emitProviderSaved 
       apiKeyError: settings.apiKeyError || '',
       clearApiKey: false,
       supportsReasoning: settings.supportsReasoning,
+      allowPrivateNetwork: Boolean(settings.allowPrivateNetwork),
       extraBody: JSON.stringify(settings.extraBody || {}, null, 2)
     });
     selectedProviderId.value = form.id;
@@ -509,6 +545,12 @@ export function useSettingsProvider({ isPersonalPage, notify, emitProviderSaved 
 
   function applyProviderBundle(bundle = {}) {
     const profiles = Array.isArray(bundle.providers) ? bundle.providers : [];
+    if (bundle.providerNetworkPolicy && typeof bundle.providerNetworkPolicy === 'object') {
+      providerNetworkPolicy.value = {
+        ...providerNetworkPolicy.value,
+        ...bundle.providerNetworkPolicy
+      };
+    }
     setProviderListIfChanged(providerProfiles, profiles);
     const nextSelectedId = String(
       bundle.selectedProviderId || profiles.find((provider) => provider?.selected)?.id || ''
@@ -536,9 +578,11 @@ export function useSettingsProvider({ isPersonalPage, notify, emitProviderSaved 
       gatewayName: form.gatewayName,
       baseUrl: form.baseUrl,
       model: form.model,
+      imageModel: form.imageModel,
       apiKey: form.apiKey,
       clearApiKey: form.clearApiKey,
       supportsReasoning: form.supportsReasoning,
+      allowPrivateNetwork: form.allowPrivateNetwork,
       extraBody: form.extraBody
     };
   }
@@ -747,6 +791,7 @@ export function useSettingsProvider({ isPersonalPage, notify, emitProviderSaved 
     balanceLoading,
     canCheckBalance,
     canFetchModels,
+    isRootAdmin,
     checkBalance,
     currentProviderCapability,
     form,
@@ -760,6 +805,7 @@ export function useSettingsProvider({ isPersonalPage, notify, emitProviderSaved 
     providerCapabilityLoadError,
     providerActionLoading,
     providerControlsBusy,
+    providerNetworkPolicy,
     providerProfiles,
     removeProvider,
     resetProviderAsyncScope,

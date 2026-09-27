@@ -40,6 +40,9 @@ export function buildContextDirectorPrompt(context = {}) {
     'Do not quote or mechanically list the supplied context back to the user.',
     'Do not treat unsupported off-screen changes as established facts.'
   ];
+  if (source.stateStatus && source.stateStatus !== 'ready') {
+    lines.push('Background state synchronization is incomplete. Stored cast, location, status and memory may lag behind the dialogue. Continue from the latest narrated events; do not reset the scene or ignore conversation history because a structured field is absent or older.');
+  }
 
   if (hasWorldBookContext(source)) {
     lines.push(
@@ -53,6 +56,7 @@ export function buildContextDirectorPrompt(context = {}) {
       '',
       'Use enabled long-term memory as continuity evidence. Do not treat archived, disabled, vague, or contradictory memory as a current fact, and do not expose memory labels.'
     );
+    lines.push('Conversation memory supports narrative continuity, not universal character knowledge. A character knows a remembered event only when their own experience or explicit communication supports it.');
   }
 
   if (hasText(source.statusBarContext)) {

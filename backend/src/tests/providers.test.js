@@ -4,6 +4,7 @@ import test from 'node:test';
 
 const {
   generateCompletion,
+  generateImage,
   runToolCompletion,
   streamCompletion,
   streamToolCompletion,
@@ -89,6 +90,138 @@ test('Anthropic streaming reports a friendly error when the response body is mis
           () => {}
         ),
         /AI \u6d41\u5f0f\u54cd\u5e94\u4e0d\u53ef\u7528/
+      );
+    }
+  );
+});
+
+test('GPT Image 2 uses the dedicated generations payload without response_format', async () => {
+  let requestUrl = '';
+  let request;
+  await withMockFetch(
+    async (url, options = {}) => {
+      requestUrl = String(url);
+      request = options;
+      return jsonResponse({ data: [{ b64_json: 'aGVsbG8=' }] });
+    },
+    async () => {
+      const result = await generateImage(
+        {
+          providerType: 'openai',
+          gatewayName: 'OpenAI',
+          baseUrl: 'https://api.openai.com/v1',
+          model: 'gpt-4.1-mini',
+          imageModel: 'gpt-image-2',
+          apiKey: 'sk-openai-test',
+          extraBody: {}
+        },
+        'A test image',
+        { outputFormat: 'png' }
+      );
+
+      const body = JSON.parse(request.body);
+      assert.equal(requestUrl, 'https://api.openai.com/v1/images/generations');
+      assert.equal(body.model, 'gpt-image-2');
+      assert.equal(body.output_format, 'png');
+      assert.equal(Object.hasOwn(body, 'response_format'), false);
+      assert.equal(request.headers.Authorization, 'Bearer sk-openai-test');
+      assert.equal(result.model, 'gpt-image-2');
+      assert.match(result.attachments[0].dataUrl, /^data:image\/png;base64,/);
+    }
+  );
+});
+
+test('Gemini image generation through a proxy uses the OpenAI-compatible endpoint', async () => {
+  let requestUrl = '';
+  let request;
+  await withMockFetch(
+    async (url, options = {}) => {
+      requestUrl = String(url);
+      request = options;
+      return jsonResponse({ data: [{ b64_json: 'aGVsbG8=' }] });
+    },
+    async () => {
+      const result = await generateImage(
+        {
+          providerType: 'gemini',
+          gatewayName: 'Gemini Proxy',
+          baseUrl: 'https://proxy.example/v1',
+          model: 'gemini-3.1-flash',
+          imageModel: 'gemini-3.1-flash-image',
+          apiKey: 'sk-gemini-proxy-test',
+          extraBody: {}
+        },
+        'A test image'
+      );
+
+      const body = JSON.parse(request.body);
+      assert.equal(requestUrl, 'https://proxy.example/v1/images/generations');
+      assert.equal(body.model, 'gemini-3.1-flash-image');
+      assert.equal(request.headers.Authorization, 'Bearer sk-gemini-proxy-test');
+      assert.equal(request.headers['x-goog-api-key'], undefined);
+      assert.equal(result.model, 'gemini-3.1-flash-image');
+    }
+  );
+});
+
+test('Codex/custom gateways reject Gemini image models before the OpenAI image endpoint', async () => {
+  let providerFetchCount = 0;
+  await withMockFetch(
+    async () => {
+      providerFetchCount += 1;
+      return jsonResponse({ data: [{ b64_json: 'aGVsbG8=' }] });
+    },
+    async () => {
+      await assert.rejects(
+        () => generateImage(
+          {
+            providerType: 'custom',
+            gatewayName: 'Codex',
+            baseUrl: 'http://127.0.0.1:8317/v1',
+            model: 'gpt-5.4-mini',
+            imageModel: 'gemini-3.1-flash-image',
+            apiKey: 'sk-codex-test',
+            extraBody: {}
+          },
+          'A test image'
+        ),
+        (error) => {
+          assert.match(error.message, /Gemini.*不能发送到当前 Codex\/OpenAI-compatible 图片接口/);
+          assert.match(error.message, /gpt-image-2/);
+          return true;
+        }
+      );
+      assert.equal(providerFetchCount, 0);
+    }
+  );
+});
+
+test('image generation explains missing Codex image auth', async () => {
+  await withMockFetch(
+    async () => jsonResponse({
+      error: { message: 'auth_not_found: no auth available (providers=codex, model=gpt-image-2)' }
+    }, { status: 503 }),
+    async () => {
+      await assert.rejects(
+        () => generateImage(
+          {
+            providerType: 'custom',
+            gatewayName: 'Codex',
+            baseUrl: 'http://127.0.0.1:8317/v1',
+            model: 'gpt-5.4-mini',
+            imageModel: 'gpt-image-2',
+            apiKey: 'sk-codex-test',
+            extraBody: {}
+          },
+          'A test image'
+        ),
+        (error) => {
+          assert.equal(error.code, 'IMAGE_AUTH_UNAVAILABLE');
+          assert.equal(error.status, 503);
+          assert.match(error.message, /图片模型鉴权失败/);
+          assert.match(error.message, /gpt-image-2/);
+          return true;
+        }
       );
     }
   );
@@ -1018,7 +1151,7 @@ test('tool cancellation errors are rethrown instead of becoming provider tool re
             extraBody: {}
           },
           [{ role: 'user', content: 'Read it.' }],
-          [],
+          [{ type: 'function', function: { name: 'read_value', parameters: { type: 'object', properties: {} } } }],
           async () => { throw abortError; },
           { maxRounds: 2 }
         ),

@@ -4,6 +4,7 @@ import {
   ArrowLeft,
   Brain,
   CalendarClock,
+  Building2,
   ChevronRight,
   CirclePause,
   CirclePlay,
@@ -12,13 +13,16 @@ import {
   Globe,
   History,
   Lightbulb,
+  Layers,
   MapPinned,
   MessageSquareText,
   Minus,
   Plus,
   PlusCircle,
   Radio,
+  RefreshCw,
   Send,
+  SkipForward,
   Sparkles,
   Users,
   X
@@ -34,7 +38,11 @@ import {
   recallTownMemories,
   updateTownClock
 } from '../../api.js';
+import { rebuildTownMap, stepTownSimulation } from '../../api/towns.js';
+import { TOWN_ASSETS, townArchitecture, townResidentSprite, townVenue } from '../../../../shared/townAssets.js';
+import { activeTownConditions, isTownLocationAvailable, normalizeTownLifeProfile, normalizeTownLifeState } from '../../../../shared/townLife.js';
 import TownGeneratedMap from './TownGeneratedMap.vue';
+import TownAssetPreview from './TownAssetPreview.vue';
 
 const emit = defineEmits(['navigate']);
 
@@ -79,13 +87,29 @@ const agents = ref([]);
 const events = ref([]);
 const selectedAgentId = ref('');
 const followingAgentId = ref('');
-const detailTab = ref('timeline');
+const detailTab = ref('life');
 const memoriesByResident = ref({});
 const cognitionByResident = ref({});
 const day = ref(1);
 const minute = ref(480);
 const isRunning = ref(false);
 const zoom = ref(1);
+const mapPan = ref({ x: 0, y: 0 });
+const isPanning = ref(false);
+const showMapLabels = ref(false);
+const selectedLocationId = ref('');
+const assetLibraryOpen = ref(false);
+const assetDialog = ref(null);
+const assetArchitecture = ref('modern');
+const NEED_LABELS = { energy: '精力', hunger: '饱腹', hygiene: '清洁', social: '社交', fun: '乐趣' };
+const TRAIT_LABELS = { openness: '开放', conscientiousness: '自律', extraversion: '外向', agreeableness: '友善', sensitivity: '敏感' };
+const ASSET_LABELS = { house: '住宅', apartment: '公寓', office: '办公楼', workshop: '工坊', shop: '商店', cafe: '餐饮', hotel: '旅馆', park: '公园', clinic: '诊所', school: '学校', hall: '公共会堂', station: '车站', harbor: '港口', lighthouse: '灯塔', car: '车辆' };
+const assetCatalog = Object.entries(TOWN_ASSETS).map(([id, asset]) => ({ id, ...asset }));
+const ACTION_LABELS = { sleep: '睡眠', eat: '用餐', wash: '洗漱', work: '工作', social: '社交', relax: '休息', explore: '探索', learn: '学习', care: '休养', personal: '个人事务' };
+const REASON_LABELS = { energy: '精力不足，优先休息', hunger: '饱腹度下降，需要用餐', hygiene: '需要洗漱', social: '希望与人交流', fun: '需要放松', festival: '附近的聚会吸引了注意', 'sleep-time': '按作息休息', 'work-time': '按职业作息工作', curiosity: '受好奇心驱动', 'personal-goal': '推进个人目标', schedule: '执行已规划日程', 'ai-plan': '执行 AI 推演计划', closed: '目标地点暂停开放', unreachable: '目标地点不可达', 'no-venue': '当前没有合适设施' };
+let selectionVersion = 0;
+let disposed = false;
+let dragStart = null;
 const mapDisplay = ref({ width: 0, height: 0 });
 const isLoading = ref(true);
 const snapshotRequestActive = ref(false);
@@ -100,6 +124,10 @@ const eventComposerOpen = ref(false);
 const worldCreatorOpen = ref(false);
 const timelineOpen = ref(false);
 const eventDraft = ref('');
+const eventEffect = ref('observation');
+const eventLocationId = ref('');
+const eventDuration = ref(180);
+const CONDITION_LABELS = { rain: '降雨', festival: '聚会', closure: '暂停营业' };
 const worldPrompt = ref('');
 const worldCreationError = ref('');
 const syncNotice = ref('正在连接世界档案…');
@@ -112,6 +140,26 @@ const selectedAgent = computed(() => (
 ));
 const worldMap = computed(() => ({ ...FALLBACK_MAP, ...(world.value?.mapConfig || {}) }));
 const usesProceduralMap = computed(() => worldMap.value.renderMode === 'procedural-v1');
+const venues = computed(() => (worldMap.value.locations || []).map(townVenue));
+const selectedLocation = computed(() => venues.value.find((location) => location.id === selectedLocationId.value));
+const locationResidents = computed(() => agents.value.filter((agent) => !agent.life.journey && agent.currentLocation === selectedLocation.value?.name));
+const selectedLocationOpen = computed(() => selectedLocation.value && isTownLocationAvailable(world.value, selectedLocation.value, currentTownTick()));
+const worldConditions = computed(() => world.value ? activeTownConditions(world.value) : []);
+const selectedLife = computed(() => selectedAgent.value.life || normalizeTownLifeState());
+const relationships = computed(() => agents.value.filter((agent) => agent.id !== selectedAgent.value.id).map((agent) => ({
+  id: agent.id, name: agent.name, ...(selectedLife.value.relationships[agent.id] || { affinity: 0, trust: 0, familiarity: 0 })
+})).sort((a, b) => b.familiarity - a.familiarity));
+const mapAgents = computed(() => {
+  const scale = Math.max(0.1, mapDisplay.value.width / worldMap.value.width * zoom.value);
+  const groups = [];
+  const ordered = [...agents.value].sort((a, b) => Number(b.id === selectedAgentId.value) - Number(a.id === selectedAgentId.value));
+  for (const agent of ordered) {
+    const group = groups.find((item) => Math.hypot(item.agent.mapX - agent.mapX, item.agent.mapY - agent.mapY) * scale < 30);
+    if (group) group.count += 1;
+    else groups.push({ agent, count: 1 });
+  }
+  return groups;
+});
 const formattedTime = computed(() => formatMinute(minute.value));
 const worldStatusLabel = computed(() => (isRunning.value ? '运行中' : '已暂停'));
 const tickMinutes = computed(() => Number(world.value?.settings?.tickMinutes) || 15);
@@ -133,6 +181,7 @@ const reflectionProgress = computed(() => {
 });
 const stageStyle = computed(() => ({
   '--town-zoom': zoom.value,
+  transform: `translate(${mapPan.value.x}px, ${mapPan.value.y}px) scale(${zoom.value})`,
   width: mapDisplay.value.width ? `${mapDisplay.value.width}px` : '100%',
   aspectRatio: `${worldMap.value.width} / ${worldMap.value.height}`
 }));
@@ -148,10 +197,13 @@ const activeConversation = computed(() => {
 
 onMounted(async () => {
   await loadWorlds();
+  await bindMapResizeObserver();
   startPollingIfRunning();
 });
 
 onBeforeUnmount(() => {
+  disposed = true;
+  selectionVersion += 1;
   stopPolling();
   if (syncNoticeTimer) window.clearTimeout(syncNoticeTimer);
   mapResizeObserver?.disconnect();
@@ -195,12 +247,17 @@ async function loadWorlds(preferredTownId = '') {
 
 async function selectWorld(nextTownId) {
   if (!nextTownId || aiStepBusy.value || cognitionBusy.value) return;
+  const version = ++selectionVersion;
+  stopPolling();
   const snapshot = await fetchTownSnapshot(nextTownId, { eventLimit: 200 });
+  if (disposed || version !== selectionVersion) return;
   townId.value = nextTownId;
   window.localStorage.setItem('flai-town-active-id', nextTownId);
   memoriesByResident.value = {};
   cognitionByResident.value = {};
   followingAgentId.value = '';
+  selectedLocationId.value = '';
+  resetView();
   applyTownSnapshot(snapshot);
   await bindMapResizeObserver();
 }
@@ -226,8 +283,11 @@ async function refreshSnapshot() {
     || worldCreatorOpen.value
   ) return;
   snapshotRequestActive.value = true;
+  const activeTownId = townId.value;
+  const version = selectionVersion;
   try {
-    applyTownSnapshot(await fetchTownSnapshot(townId.value, { eventLimit: 200 }));
+    const snapshot = await fetchTownSnapshot(activeTownId, { eventLimit: 200 });
+    if (!disposed && version === selectionVersion && activeTownId === townId.value) applyTownSnapshot(snapshot);
   } catch (error) {
     showSyncNotice(`共享状态读取失败：${error.message}`);
   } finally {
@@ -236,7 +296,9 @@ async function refreshSnapshot() {
 }
 
 function applyTownSnapshot(snapshot) {
-  if (!snapshot?.town) return;
+  if (!snapshot?.town || disposed) return;
+  const changedTick = world.value?.id === snapshot.town.id && currentTownTick() !== (snapshot.town.currentDay - 1) * 1440 + snapshot.town.minuteOfDay;
+  if (changedTick) { memoriesByResident.value = {}; cognitionByResident.value = {}; }
   world.value = snapshot.town;
   day.value = Number(snapshot.town.currentDay) || 1;
   minute.value = Number(snapshot.town.minuteOfDay) || 0;
@@ -249,6 +311,8 @@ function applyTownSnapshot(snapshot) {
     selectedAgentId.value = agents.value[0]?.id || '';
   }
   void nextTick().then(bindMapResizeObserver);
+  if (followingAgentId.value) void nextTick().then(centerFollowingAgent);
+  if (changedTick && ['memory', 'cognition'].includes(detailTab.value)) void nextTick().then(() => setDetailTab(detailTab.value));
 }
 
 function toViewAgent(row, index) {
@@ -258,6 +322,7 @@ function toViewAgent(row, index) {
   const height = Number(worldMap.value.height) || FALLBACK_MAP.height;
   const legacyX = Number(profile.x);
   const legacyY = Number(profile.y);
+  const simulation = normalizeTownLifeProfile(profile, venues.value, row.currentLocation);
   return {
     id: row.id,
     name: row.name,
@@ -268,12 +333,14 @@ function toViewAgent(row, index) {
     activities: normalizeTextList(profile.activities, ['观察周围']),
     dialogue: normalizeTextList(profile.dialogue, ['这里今天有些不一样。']),
     memories: [],
-    sprite: profile.sprite || { column: (index % 6) * 2 + 1, row: index % 2 === 0 ? 2 : 6 },
+    sprite: profile.sprite || townResidentSprite(index),
     mapX: finiteCoordinate(state.mapX, profile.mapX, Number.isFinite(legacyX) ? legacyX * width / 100 : width / 2),
     mapY: finiteCoordinate(state.mapY, profile.mapY, Number.isFinite(legacyY) ? legacyY * height / 100 : height / 2),
     currentActivity: state.currentActivity || '',
     currentIntention: state.currentIntention || '',
-    currentLocation: row.currentLocation || ''
+    currentLocation: row.currentLocation || '',
+    simulation,
+    life: normalizeTownLifeState(state, simulation)
   };
 }
 
@@ -285,6 +352,7 @@ function toViewEvent(event) {
     type: event.payload?.uiType || eventTypeFromName(event.eventType),
     eventType: event.eventType,
     source: event.source,
+    speech: event.payload?.speech || null,
     residentId: event.residentId || '',
     participantIds: Array.isArray(event.payload?.participantIds) ? event.payload.participantIds : [],
     occurredTick: Number(event.occurredTick) || 0
@@ -352,6 +420,33 @@ async function toggleSimulation() {
   }
 }
 
+async function singleStep() {
+  if (!townId.value || isRunning.value || simulationBusy.value || aiStepBusy.value || cognitionBusy.value) return;
+  const activeTownId = townId.value;
+  simulationBusy.value = true;
+  try {
+    const result = await stepTownSimulation(activeTownId);
+    if (activeTownId === townId.value) {
+      memoriesByResident.value = {};
+      cognitionByResident.value = {};
+      applyTownSnapshot(result.snapshot);
+    }
+  } catch (error) {
+    showSyncNotice(`推进失败：${error.message}`, 0);
+  } finally { simulationBusy.value = false; }
+}
+
+async function changeSpeed(event) {
+  if (simulationBusy.value || aiStepBusy.value || cognitionBusy.value) return;
+  const activeTownId = townId.value;
+  simulationBusy.value = true;
+  try {
+    const updated = await updateTownClock(activeTownId, { realSecondsPerTick: Number(event.target.value) });
+    if (activeTownId === townId.value) world.value = updated;
+  } catch (error) { showSyncNotice(`倍速设置失败：${error.message}`); }
+  finally { simulationBusy.value = false; }
+}
+
 async function advanceWithAi() {
   if (!townId.value || aiStepBusy.value || cognitionBusy.value) return;
   if (isRunning.value) {
@@ -380,8 +475,9 @@ async function advanceWithAi() {
 }
 
 async function submitWorldEvent() {
-  const text = eventDraft.value.trim();
+  const text = eventDraft.value.trim() || CONDITION_LABELS[eventEffect.value] || '';
   if (!text || !townId.value || eventSubmitting.value || aiStepBusy.value || cognitionBusy.value) return;
+  if (eventEffect.value === 'closure' && !eventLocationId.value) return;
   eventSubmitting.value = true;
   try {
     await createTownEvent(townId.value, {
@@ -389,7 +485,7 @@ async function submitWorldEvent() {
       source: 'player',
       title: text,
       detail: text,
-      payload: { uiType: 'intervention' },
+      payload: { uiType: 'intervention', effect: eventEffect.value, locationId: eventLocationId.value, durationMinutes: Number(eventDuration.value) },
       occurredTick: currentTownTick()
     });
     eventDraft.value = '';
@@ -406,6 +502,8 @@ async function submitWorldEvent() {
 function openEventComposer() {
   if (aiStepBusy.value || cognitionBusy.value) return;
   eventComposerOpen.value = true;
+  eventEffect.value = 'observation';
+  eventLocationId.value = selectedLocationId.value || '';
   window.requestAnimationFrame(() => document.querySelector('[data-town-event-input]')?.focus());
 }
 
@@ -416,7 +514,7 @@ function closeEventComposer() {
 
 function selectAgent(agentId) {
   selectedAgentId.value = agentId;
-  detailTab.value = 'timeline';
+  detailTab.value = 'life';
 }
 
 async function setDetailTab(tab) {
@@ -424,17 +522,21 @@ async function setDetailTab(tab) {
   const agentId = selectedAgent.value.id;
   if (!townId.value || !agentId) return;
   if (tab === 'memory' && !memoriesByResident.value[agentId]) {
+    if (memoryLoading.value) return;
+    const activeTownId = townId.value;
+    const activeTick = currentTownTick();
     memoryLoading.value = true;
     try {
       const rows = await recallTownMemories(townId.value, agentId, {
         query: `${selectedAgent.value.goal} ${currentActivity(selectedAgent.value)}`,
         limit: 8
       });
-      memoriesByResident.value = { ...memoriesByResident.value, [agentId]: rows.map((item) => item.content) };
+      if (activeTownId === townId.value && activeTick === currentTownTick()) memoriesByResident.value = { ...memoriesByResident.value, [agentId]: rows.map((item) => item.content) };
     } catch (error) {
       showSyncNotice(`记忆读取失败：${error.message}`);
     } finally {
       memoryLoading.value = false;
+      if (!disposed && detailTab.value === 'memory' && (activeTownId !== townId.value || activeTick !== currentTownTick() || agentId !== selectedAgent.value.id)) void setDetailTab('memory');
     }
   }
   if (tab === 'cognition') await loadTownResidentCognition(agentId);
@@ -444,15 +546,17 @@ async function loadTownResidentCognition(agentId, force = false) {
   if (!townId.value || !agentId || cognitionLoading.value) return;
   if (!force && cognitionByResident.value[agentId]) return;
   const activeTownId = townId.value;
+  const activeTick = currentTownTick();
   cognitionLoading.value = true;
   try {
     const cognition = await fetchTownResidentCognition(activeTownId, agentId);
-    if (townId.value !== activeTownId) return;
+    if (townId.value !== activeTownId || activeTick !== currentTownTick()) return;
     cognitionByResident.value = { ...cognitionByResident.value, [agentId]: cognition };
   } catch (error) {
     showSyncNotice(`居民认知读取失败：${error.message}`);
   } finally {
     cognitionLoading.value = false;
+    if (!disposed && detailTab.value === 'cognition' && (activeTownId !== townId.value || activeTick !== currentTownTick() || agentId !== selectedAgent.value.id)) void loadTownResidentCognition(selectedAgent.value.id);
   }
 }
 
@@ -486,6 +590,7 @@ async function planResidentCognition() {
 function toggleFollowing() {
   if (!selectedAgent.value.id) return;
   followingAgentId.value = followingAgentId.value === selectedAgent.value.id ? '' : selectedAgent.value.id;
+  if (followingAgentId.value) centerFollowingAgent();
 }
 
 function currentActivity(agent) {
@@ -493,16 +598,11 @@ function currentActivity(agent) {
 }
 
 function currentDialogue(agent) {
-  const dialogue = agent.dialogue || EMPTY_AGENT.dialogue;
-  const index = Math.floor(currentTownTick() / Math.max(1, tickMinutes.value)) % dialogue.length;
-  return dialogue[index] || EMPTY_AGENT.dialogue[0];
+  return recentEvents.value.find((event) => event.speech?.residentId === agent.id && currentTownTick() - event.occurredTick <= tickMinutes.value)?.speech?.text || '';
 }
 
 function showDialogueBubble(agent) {
-  if (!agents.value.length) return false;
-  const index = agents.value.indexOf(agent);
-  const phase = Math.floor(currentTownTick() / Math.max(1, tickMinutes.value));
-  return index === phase % agents.value.length || selectedAgentId.value === agent.id;
+  return selectedAgentId.value === agent.id && Boolean(currentDialogue(agent));
 }
 
 function agentStyle(agent) {
@@ -526,11 +626,95 @@ function spriteStyle(agent) {
 }
 
 function zoomBy(delta) {
-  zoom.value = Math.min(1.45, Math.max(0.8, Number((zoom.value + delta).toFixed(2))));
+  zoom.value = Math.min(3, Math.max(0.8, Number((zoom.value + delta).toFixed(2))));
+  clampPan();
 }
 
 function resetView() {
   zoom.value = 1;
+  mapPan.value = { x: 0, y: 0 };
+}
+
+function beginMapDrag(event) {
+  if (event.target.closest('button, select, .town-location-detail') || event.button !== 0) return;
+  dragStart = { x: event.clientX, y: event.clientY, pan: { ...mapPan.value } };
+  isPanning.value = true;
+  followingAgentId.value = '';
+  mapViewport.value?.setPointerCapture(event.pointerId);
+}
+
+function moveMapDrag(event) {
+  if (!dragStart) return;
+  mapPan.value = { x: dragStart.pan.x + event.clientX - dragStart.x, y: dragStart.pan.y + event.clientY - dragStart.y };
+  clampPan();
+}
+
+function endMapDrag() { dragStart = null; isPanning.value = false; }
+
+function clampPan() {
+  const viewport = mapViewport.value;
+  if (!viewport) return;
+  const maximumX = Math.max(0, (mapDisplay.value.width * zoom.value - viewport.clientWidth) / 2);
+  const maximumY = Math.max(0, (mapDisplay.value.height * zoom.value - Math.max(1, viewport.clientHeight - 64)) / 2);
+  mapPan.value = { x: Math.max(-maximumX, Math.min(maximumX, mapPan.value.x)), y: Math.max(-maximumY, Math.min(maximumY, mapPan.value.y)) };
+}
+
+function centerFollowingAgent() {
+  const agent = agents.value.find((row) => row.id === followingAgentId.value);
+  if (!agent) return;
+  zoom.value = Math.max(1.5, zoom.value);
+  mapPan.value = { x: (0.5 - agent.mapX / worldMap.value.width) * mapDisplay.value.width * zoom.value, y: (0.5 - agent.mapY / worldMap.value.height) * mapDisplay.value.height * zoom.value };
+  clampPan();
+}
+
+async function openAssetLibrary() {
+  assetArchitecture.value = worldMap.value.architecture || townArchitecture({}, venues.value);
+  assetLibraryOpen.value = true;
+  await nextTick();
+  assetDialog.value?.querySelector('select')?.focus();
+}
+
+async function closeAssetLibrary() {
+  assetLibraryOpen.value = false;
+  await nextTick();
+  document.querySelector('[data-town-assets-trigger]')?.focus();
+}
+
+async function rebuildCurrentMap() {
+  if (!townId.value || isRunning.value || simulationBusy.value || aiStepBusy.value || cognitionBusy.value) return;
+  if (!window.confirm('重建会保留居民、记忆与时间，重新安排建筑和道路，并结束当前通勤。是否继续？')) return;
+  const activeTownId = townId.value;
+  simulationBusy.value = true;
+  try {
+    const snapshot = await rebuildTownMap(activeTownId, assetArchitecture.value);
+    if (townId.value !== activeTownId) return;
+    applyTownSnapshot(snapshot);
+    selectedLocationId.value = '';
+    followingAgentId.value = '';
+    resetView();
+    await closeAssetLibrary();
+    showSyncNotice('地图已重建，居民与记忆已保留。');
+  } catch (error) { showSyncNotice(`地图重建失败：${error.message}`, 0); }
+  finally { simulationBusy.value = false; }
+}
+
+function assetDialogKeydown(event) {
+  if (event.key === 'Escape') { event.stopPropagation(); void closeAssetLibrary(); return; }
+  if (event.key !== 'Tab') return;
+  const controls = [...assetDialog.value.querySelectorAll('button:not(:disabled), select, [tabindex="0"]')];
+  const target = event.shiftKey && document.activeElement === controls[0] ? controls.at(-1) : !event.shiftKey && document.activeElement === controls.at(-1) ? controls[0] : null;
+  if (target) { event.preventDefault(); target.focus(); }
+}
+
+function mapKeydown(event) {
+  if (event.key === 'Escape' && selectedLocationId.value) { selectedLocationId.value = ''; mapViewport.value?.focus(); return; }
+  if (event.target !== mapViewport.value) return;
+  const offsets = { ArrowLeft: [40, 0], ArrowRight: [-40, 0], ArrowUp: [0, 40], ArrowDown: [0, -40] };
+  if (!offsets[event.key]) return;
+  event.preventDefault();
+  followingAgentId.value = '';
+  mapPan.value = { x: mapPan.value.x + offsets[event.key][0], y: mapPan.value.y + offsets[event.key][1] };
+  clampPan();
 }
 
 async function bindMapResizeObserver() {
@@ -550,7 +734,7 @@ function updateMapDisplay() {
   const viewport = mapViewport.value;
   if (!viewport) return;
   const availableWidth = viewport.clientWidth;
-  const availableHeight = viewport.clientHeight;
+  const availableHeight = Math.max(1, viewport.clientHeight - 64);
   const ratio = worldMap.value.width / worldMap.value.height;
   let width = availableWidth;
   let height = width / ratio;
@@ -559,6 +743,7 @@ function updateMapDisplay() {
     width = height * ratio;
   }
   mapDisplay.value = { width: Math.max(1, width), height: Math.max(1, height) };
+  clampPan();
 }
 
 function currentTownTick() {
@@ -639,7 +824,7 @@ function showSyncNotice(message, duration = 3200) {
 </script>
 
 <template>
-  <section class="town-play-shell">
+  <section class="town-play-shell" :class="{ running: isRunning }">
     <header class="town-command-bar">
       <div class="town-command-primary">
         <button class="town-icon-button" type="button" aria-label="返回角色库" title="返回角色库" @click="emit('navigate', 'home')">
@@ -661,6 +846,7 @@ function showSyncNotice(message, duration = 3200) {
       </div>
 
       <div class="town-command-actions">
+        <label v-if="townId" class="town-speed-control"><span>倍速</span><select :value="world.settings?.realSecondsPerTick || 4" aria-label="模拟速度" :disabled="simulationBusy || aiStepBusy || cognitionBusy" @change="changeSpeed"><option :value="8">0.5x</option><option :value="4">1x</option><option :value="2">2x</option><option :value="1">4x</option></select></label>
         <button v-if="townId" class="town-control-button" type="button" aria-label="打开时间线" title="打开时间线" @click="timelineOpen = true">
           <History :size="18" /><span>时间线</span>
         </button>
@@ -681,6 +867,15 @@ function showSyncNotice(message, duration = 3200) {
           <CirclePlay v-else :size="18" />
           <span>{{ isRunning ? '暂停运行' : '继续运行' }}</span>
         </button>
+        <button
+          v-if="townId"
+          class="town-control-button"
+          type="button"
+          aria-label="单步推进生活模拟"
+          :title="`推进 ${tickMinutes} 分钟`"
+          :disabled="isRunning || simulationBusy || aiStepBusy || cognitionBusy"
+          @click="singleStep"
+        ><SkipForward :size="18" /><span>单步</span></button>
         <button
           v-if="townId"
           class="town-control-button ai-step"
@@ -731,17 +926,17 @@ function showSyncNotice(message, duration = 3200) {
 
     <template v-else>
       <div class="town-simulation-grid">
-        <section ref="mapViewport" class="town-map-viewport" :style="mapViewportStyle" :aria-label="`${world.name}地图`">
+        <section ref="mapViewport" class="town-map-viewport" :class="{ dragging: isPanning }" :style="mapViewportStyle" :aria-label="`${world.name}地图`" tabindex="0" @pointerdown="beginMapDrag" @pointermove="moveMapDrag" @pointerup="endMapDrag" @pointercancel="endMapDrag" @keydown="mapKeydown">
           <div class="town-map-stage" :style="stageStyle">
-            <TownGeneratedMap v-if="usesProceduralMap" :map-config="worldMap" :label="`${world.name}的 AI 生成地图`" />
+            <TownGeneratedMap v-if="usesProceduralMap" :map-config="worldMap" :minute="minute" :label="`${world.name}的 AI 生成地图`" />
             <img v-else-if="worldMap.imageUrl" :src="worldMap.imageUrl" :alt="`${world.name}旧版地图`" />
             <div v-else class="town-map-unavailable">这个旧世界没有可显示的地图数据</div>
-            <span v-for="location in worldMap.locations" :key="location.id" class="town-location-marker" :style="locationStyle(location)">{{ location.name }}</span>
-            <button v-for="agent in agents" :key="agent.id" class="town-agent" :class="{ selected: selectedAgentId === agent.id, following: followingAgentId === agent.id }" :style="agentStyle(agent)" type="button" @click.stop="selectAgent(agent.id)">
+            <button v-for="location in venues" :key="location.id" class="town-location-marker" :class="{ active: selectedLocationId === location.id }" :style="locationStyle(location)" type="button" :title="location.name" :aria-label="`查看地点：${location.name}`" @click.stop="selectedLocationId = selectedLocationId === location.id ? '' : location.id"><Building2 :size="16" /><span v-if="showMapLabels || selectedLocationId === location.id || zoom >= 1.6">{{ location.name }}</span></button>
+            <button v-for="{ agent, count } in mapAgents" :key="agent.id" class="town-agent" :class="{ selected: selectedAgentId === agent.id, following: followingAgentId === agent.id, traveling: Boolean(agent.life.journey) }" :style="agentStyle(agent)" type="button" :aria-label="count > 1 ? `${agent.name}等 ${count} 位居民` : agent.name" @click.stop="selectAgent(agent.id)">
               <span v-if="showDialogueBubble(agent)" class="town-dialogue-bubble">{{ currentDialogue(agent) }}</span>
               <span class="town-agent-name">{{ agent.name }}</span>
               <span class="town-agent-sprite" :style="spriteStyle(agent)" aria-hidden="true"></span>
-              <span class="town-agent-activity">{{ agent.currentLocation || currentActivity(agent) }}</span>
+              <span v-if="count > 1" class="town-agent-cluster">{{ count }}</span>
             </button>
           </div>
           <div class="town-map-tools" aria-label="地图缩放">
@@ -749,14 +944,24 @@ function showSyncNotice(message, duration = 3200) {
             <strong>{{ Math.round(zoom * 100) }}%</strong>
             <button type="button" aria-label="放大地图" @click="zoomBy(0.1)"><Plus :size="17" /></button>
             <button type="button" aria-label="重置地图视角" @click="resetView"><Crosshair :size="17" /></button>
+            <button type="button" aria-label="显示地点名称" title="显示地点名称" :aria-pressed="showMapLabels" @click="showMapLabels = !showMapLabels"><MapPinned :size="17" /></button>
           </div>
-          <div class="town-map-summary"><Users :size="16" /><span>{{ agents.length }} 位居民正在活动</span></div>
+          <button class="town-asset-library-trigger" type="button" data-town-assets-trigger aria-label="打开素材库" title="素材库" @click="openAssetLibrary"><Layers :size="18" /><span>素材库</span></button>
+          <div v-if="worldConditions.length" class="town-world-conditions"><span v-for="condition in worldConditions.slice(0, 3)" :key="condition.sourceEventId">{{ CONDITION_LABELS[condition.kind] }} · {{ Math.max(0, condition.endsAt - currentTownTick()) }} 分钟</span></div>
+          <div class="town-map-summary"><Users :size="16" /><span>{{ agents.length }} 位居民 · {{ venues.length }} 处地点</span></div>
+          <aside v-if="selectedLocation" class="town-location-detail" aria-label="地点详情">
+            <header><div><small>{{ ASSET_LABELS[selectedLocation.assetId] }}</small><h2>{{ selectedLocation.name }}</h2></div><button type="button" aria-label="关闭地点详情" @click="selectedLocationId = ''"><X :size="18" /></button></header>
+            <p>{{ selectedLocation.description }}</p>
+            <div class="town-venue-state"><span :class="{ closed: !selectedLocationOpen }">{{ selectedLocationOpen ? '开放中' : '已关闭' }}</span><span>{{ locationResidents.length }} / {{ selectedLocation.capacity }} 人</span><span>{{ formatMinute(selectedLocation.opensAt) }} - {{ formatScheduleMinute(selectedLocation.closesAt) }}</span></div>
+            <div class="town-venue-services"><span v-for="service in selectedLocation.services" :key="service">{{ ACTION_LABELS[service] }}</span></div>
+            <div class="town-venue-residents"><button v-for="agent in locationResidents" :key="agent.id" type="button" @click="selectAgent(agent.id); selectedLocationId = ''"><Users :size="14" />{{ agent.name }}</button></div>
+          </aside>
         </section>
 
         <aside class="town-agent-panel" aria-label="居民面板">
           <div class="town-panel-heading"><div><p>居民面板</p><h2>正在发生的生活</h2></div><Users :size="20" /></div>
-          <div class="town-agent-list" role="list">
-            <button v-for="agent in agents" :key="agent.id" class="town-agent-row" :class="{ active: selectedAgentId === agent.id }" type="button" @click="selectAgent(agent.id)">
+          <div class="town-agent-list" role="group" aria-label="居民列表">
+            <button v-for="agent in agents" :key="agent.id" class="town-agent-row" :class="{ active: selectedAgentId === agent.id }" :aria-pressed="selectedAgentId === agent.id" type="button" @click="selectAgent(agent.id)">
               <span><strong>{{ agent.name }}</strong><small>{{ agent.role }}</small></span>
               <span class="town-agent-row-state">{{ currentActivity(agent) }}</span>
               <ChevronRight :size="16" />
@@ -768,9 +973,11 @@ function showSyncNotice(message, duration = 3200) {
               <div><p>{{ selectedAgent.role }} · 心情 {{ selectedAgent.mood }}</p><h2>{{ selectedAgent.name }}</h2></div>
               <button class="town-follow-button" :class="{ active: followingAgentId === selectedAgent.id }" type="button" :disabled="!selectedAgent.id" @click="toggleFollowing"><Eye :size="16" /><span>{{ followingAgentId === selectedAgent.id ? '跟随中' : '跟随' }}</span></button>
             </div>
-            <p class="town-agent-summary">{{ selectedAgent.summary }}</p>
-            <div class="town-agent-facts"><p><span>当前行动</span><strong>{{ currentActivity(selectedAgent) }}</strong></p><p><span>个人目标</span><strong>{{ selectedAgent.goal }}</strong></p></div>
+            <div class="town-agent-live"><strong>{{ currentActivity(selectedAgent) }}</strong><span v-if="selectedLife.journey">{{ Math.ceil(selectedLife.journey.minutes - selectedLife.journey.elapsedMinutes) }} 分钟后抵达</span><small>{{ REASON_LABELS[selectedLife.decision.reason] || selectedAgent.currentLocation }}</small></div>
+            <details class="town-persona-details"><summary>人设与目标</summary><p class="town-agent-summary">{{ selectedAgent.summary }}</p><p>{{ selectedAgent.goal }}</p></details>
             <div class="town-detail-tabs" role="tablist">
+              <button role="tab" :aria-selected="detailTab === 'life'" :class="{ active: detailTab === 'life' }" type="button" @click="setDetailTab('life')"><Users :size="15" /><span>生活</span></button>
+              <button role="tab" :aria-selected="detailTab === 'relationships'" :class="{ active: detailTab === 'relationships' }" type="button" @click="setDetailTab('relationships')"><MessageSquareText :size="15" /><span>关系</span></button>
               <button role="tab" :aria-selected="detailTab === 'timeline'" :class="{ active: detailTab === 'timeline' }" type="button" @click="setDetailTab('timeline')">
                 <History :size="15" />
                 <span>动态</span>
@@ -784,7 +991,17 @@ function showSyncNotice(message, duration = 3200) {
                 <span>认知</span>
               </button>
             </div>
-            <div v-if="detailTab === 'timeline'" class="town-detail-content">
+            <section v-if="detailTab === 'life'" class="town-life-content" aria-label="居民生活状态">
+              <dl class="town-needs-grid"><div v-for="(label, key) in NEED_LABELS" :key="key"><dt>{{ label }}</dt><dd><meter :value="selectedLife.needs[key]" min="0" max="100" low="25" high="60" optimum="80" :aria-label="`${label} ${Math.round(selectedLife.needs[key])}`"></meter><output>{{ Math.round(selectedLife.needs[key]) }}</output></dd></div></dl>
+              <div class="town-life-economy"><span>余额<strong>{{ selectedLife.money.toFixed(2) }}</strong></span><span>累计收入<strong>{{ selectedLife.earned.toFixed(2) }}</strong></span><span>累计支出<strong>{{ selectedLife.spent.toFixed(2) }}</strong></span></div>
+              <div class="town-trait-list"><span v-for="(label, key) in TRAIT_LABELS" :key="key">{{ label }}<strong>{{ Math.round(selectedAgent.simulation?.personality[key] || 0) }}</strong></span></div>
+              <div class="town-life-skills"><span>工作技能 {{ selectedLife.skills.work.toFixed(1) }}</span><span>学习技能 {{ selectedLife.skills.learning.toFixed(1) }}</span></div>
+            </section>
+            <div v-else-if="detailTab === 'relationships'" class="town-relationship-list" aria-label="居民关系">
+              <button v-for="relationship in relationships" :key="relationship.id" type="button" @click="selectAgent(relationship.id)"><strong>{{ relationship.name }}</strong><span>熟悉 {{ relationship.familiarity }} · 亲近 {{ relationship.affinity }} · 信任 {{ relationship.trust }}</span><ChevronRight :size="16" /></button>
+              <p v-if="!relationships.length" class="town-detail-empty">暂无其他居民。</p>
+            </div>
+            <div v-else-if="detailTab === 'timeline'" class="town-detail-content">
               <article v-for="event in selectedAgentEvents" :key="event.id"><small>{{ formatEventTime(event) }} · {{ eventTypeLabel(event.type) }}</small><p>{{ event.text }}</p></article>
               <p v-if="!selectedAgentEvents.length" class="town-detail-empty">这位居民还没有个人动态。</p>
             </div>
@@ -796,7 +1013,7 @@ function showSyncNotice(message, duration = 3200) {
               </p>
               <p v-if="!memoryLoading && !selectedMemories.length">尚未形成可检索的记忆。</p>
             </div>
-            <div v-else class="town-cognition-content">
+            <div v-else-if="detailTab === 'cognition'" class="town-cognition-content">
               <p v-if="cognitionLoading" class="town-cognition-loading">正在读取反思与日程…</p>
               <template v-else>
                 <section class="town-cognition-status">
@@ -848,6 +1065,14 @@ function showSyncNotice(message, duration = 3200) {
       </footer>
     </template>
 
+    <div v-if="assetLibraryOpen" class="town-event-backdrop" @click.self="closeAssetLibrary">
+      <section ref="assetDialog" class="town-asset-library" role="dialog" aria-modal="true" aria-label="小镇素材库" @keydown="assetDialogKeydown">
+        <header><div><h2>小镇素材库</h2><span>{{ assetCatalog.length }} 种建筑与设施</span></div><label>风格<select v-model="assetArchitecture" aria-label="素材风格"><option value="modern">现代</option><option value="traditional">传统</option><option value="fantasy">奇幻</option></select></label><button type="button" aria-label="关闭素材库" @click="closeAssetLibrary"><X :size="20" /></button></header>
+        <div class="town-asset-grid"><article v-for="asset in assetCatalog" :key="asset.id"><TownAssetPreview :asset-id="asset.id" :architecture="assetArchitecture" :label="ASSET_LABELS[asset.id]" /><h3>{{ ASSET_LABELS[asset.id] }}</h3><p>{{ asset.services.map((key) => ACTION_LABELS[key]).join(' · ') }}</p></article></div>
+        <footer><button class="town-control-button" type="button" :disabled="isRunning || simulationBusy || aiStepBusy || cognitionBusy" :title="isRunning ? '暂停世界后重建地图' : '按当前风格重新生成地图布局'" @click="rebuildCurrentMap"><RefreshCw :size="17" /><span>{{ simulationBusy ? '重建中...' : '重建当前地图' }}</span></button></footer>
+      </section>
+    </div>
+
     <div v-if="worldCreatorOpen" class="town-event-backdrop" @click.self="closeWorldCreator">
       <form class="town-event-dialog town-world-dialog" @submit.prevent="submitNewWorld">
         <div class="town-event-dialog-head"><div><p>新世界</p><h2>把世界构想交给 AI</h2></div><button type="button" aria-label="关闭" @click="closeWorldCreator"><X :size="19" /></button></div>
@@ -873,8 +1098,13 @@ function showSyncNotice(message, duration = 3200) {
       <form class="town-event-dialog" @submit.prevent="submitWorldEvent">
         <div class="town-event-dialog-head"><div><p>上帝视角</p><h2>向世界投放一个事件</h2></div><button type="button" aria-label="关闭" @click="closeEventComposer"><X :size="19" /></button></div>
         <p>事件会进入完整时间线，并由居民在后续模拟阶段理解和响应。</p>
+        <div class="town-event-fields">
+          <label>事件类型<select v-model="eventEffect" aria-label="事件类型"><option value="observation">叙事事件</option><option value="rain">降雨</option><option value="festival">聚会</option><option value="closure">暂停营业</option></select></label>
+          <label>发生地点<select v-model="eventLocationId" aria-label="事件地点" :required="eventEffect === 'closure'"><option value="">全镇</option><option v-for="location in venues" :key="location.id" :value="location.id">{{ location.name }}</option></select></label>
+          <label v-if="eventEffect !== 'observation'">持续时间<select v-model="eventDuration" aria-label="事件持续时间"><option :value="60">1 小时</option><option :value="180">3 小时</option><option :value="360">6 小时</option></select></label>
+        </div>
         <textarea v-model="eventDraft" data-town-event-input rows="4" maxlength="180" aria-label="世界事件描述" placeholder="例如：港口的钟楼在午夜敲响了十三次。"></textarea>
-        <div class="town-event-dialog-actions"><span>{{ eventDraft.length }}/180</span><button type="button" @click="closeEventComposer">取消</button><button class="primary" type="submit" :disabled="!eventDraft.trim() || eventSubmitting"><Send :size="16" /><span>{{ eventSubmitting ? '写入世界…' : '投放事件' }}</span></button></div>
+        <div class="town-event-dialog-actions"><span>{{ eventDraft.length }}/180</span><button type="button" @click="closeEventComposer">取消</button><button class="primary" type="submit" :disabled="(!eventDraft.trim() && eventEffect === 'observation') || (eventEffect === 'closure' && !eventLocationId) || eventSubmitting"><Send :size="16" /><span>{{ eventSubmitting ? '写入世界…' : '投放事件' }}</span></button></div>
       </form>
     </div>
   </section>

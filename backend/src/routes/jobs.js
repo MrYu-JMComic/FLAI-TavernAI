@@ -3,17 +3,18 @@ import { z } from 'zod';
 import {
   cancelJob,
   getJob,
-  JOB_TYPES,
+  PUBLIC_JOB_TYPES,
   listJobEvents,
   listJobs,
   submitJob,
+  retryJob,
   TERMINAL_JOB_STATUSES
 } from '../services/jobs/jobQueue.js';
 import { writeSse } from './helpers.js';
 import { validate } from '../validations/schemas.js';
 
 const submitJobSchema = z.object({
-  type: z.enum(JOB_TYPES),
+  type: z.enum(PUBLIC_JOB_TYPES),
   payload: z.record(z.string(), z.unknown()).optional().default({}),
   idempotencyKey: z.string().max(200).trim().optional()
 }).strict();
@@ -64,6 +65,12 @@ export function createJobsRouter(ctx) {
       return;
     }
     response.json(job);
+  });
+
+  router.post('/:jobId/retry', requireAuth, (request, response) => {
+    const job = retryJob(db, request.auth.user.id, request.params.jobId);
+    if (!job) { response.status(404).json({ error: '任务不存在' }); return; }
+    response.status(202).json(job);
   });
 
   router.get('/:jobId/events', requireAuth, validate(jobEventQuerySchema, 'query'), (request, response) => {

@@ -91,3 +91,48 @@ function insertConversation(database, { userId, conversationId, characterId }) {
     'INSERT INTO conversations (id, user_id, character_id, title, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)'
   ).run(conversationId, userId, characterId, 'Auto Memory Test', timestamp, timestamp);
 }
+
+test('memory extraction accepts narrated facts from either participant but not hypothetical outcomes', () => {
+  const candidates = extractConversationMemoryCandidates({
+    userText: 'I prefer brief replies. The player found a gold crown.',
+    assistantText: 'I prefer coffee. Mira found a silver key. If Mira entered Silver Harbor, she might find a crown.'
+  });
+  assert.equal(candidates.filter((candidate) => candidate.memoryType === 'preference').length, 1);
+  assert.equal(candidates.find((candidate) => candidate.memoryType === 'preference').sourceRole, 'user');
+  assert.ok(candidates.some((candidate) => candidate.content.includes('silver key')));
+  assert.ok(candidates.some((candidate) => candidate.content.includes('gold crown') && candidate.sourceRole === 'user'));
+  assert.ok(candidates.every((candidate) => !/coffee|Silver Harbor/.test(candidate.content)));
+  assert.deepEqual(extractConversationMemoryCandidates({ messages: [{ role: 'system', content: 'Mira found a key.' }] }), []);
+});
+
+test('user-authored completed actions remain eligible for pending memory', () => {
+  const completed = extractConversationMemoryCandidates({ userText: '\u6211\u628a\u94a5\u5319\u4ea4\u7ed9\u4e86\u5979\u3002' });
+  assert.ok(completed.some((candidate) => candidate.memoryType === 'event' && candidate.sourceRole === 'user'));
+  const planned = extractConversationMemoryCandidates({ userText: '\u6211\u60f3\u628a\u94a5\u5319\u4ea4\u7ed9\u5979\u3002' });
+  assert.equal(planned.length, 0);
+});
+
+test('quoted preferences and temporary requests do not become user preferences', () => {
+  const candidates = extractConversationMemoryCandidates({
+    userText: 'Mira said "I prefer coffee." I want to enter the palace. I dislike cold tea.'
+  });
+  assert.equal(candidates.length, 1);
+  assert.match(candidates[0].content, /I dislike cold tea/);
+});
+
+test('a missing source message ID never borrows evidence from the other speaker', (t) => {
+  const database = createAppDatabase(':memory:');
+  t.after(() => database.close());
+  const userId = 'missing-memory-source';
+  const conversationId = 'missing-memory-source-conversation';
+  insertUser(database, userId);
+  const character = createCharacter(database, userId, { name: 'Memory source' });
+  insertConversation(database, { userId, conversationId, characterId: character.id });
+  const memories = recordAutomaticConversationMemories(database, userId, conversationId, {
+    userMessage: { content: 'I prefer moon tea.' },
+    assistantMessage: { id: 'unrelated-assistant', content: 'Understood.' }
+  });
+  assert.equal(memories.length, 1);
+  assert.equal(memories[0].sourceMessageId, '');
+  assert.equal(memories[0].enabled, false);
+});

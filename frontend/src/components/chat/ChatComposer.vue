@@ -4,6 +4,7 @@ import { Bot, Brain, ChevronDown, ImagePlus, Send, Sparkles, Square, X } from '@
 
 const props = defineProps({
   input: { type: String, default: '' },
+  draftStatus: { type: String, default: 'empty' },
   sending: { type: Boolean, default: false },
   canSend: { type: Boolean, default: false },
   useStream: { type: Boolean, default: true },
@@ -230,6 +231,7 @@ defineExpose({ wrapRef, textareaRef });
         @input="onComposerInput"
         @keydown.enter.exact="submitComposer({ isEnter: true, event: $event })"
       />
+      <p v-if="draftStatus === 'unavailable'" class="chat-draft-status" role="status">草稿未暂存</p>
       <div v-if="attachments.length" class="composer-attachments" aria-label="待发送图片">
         <figure v-for="attachment in attachments" :key="attachment.id" class="composer-attachment">
           <img :src="attachmentPreviewUrl(attachment)" :alt="attachmentLabel(attachment)" />
@@ -374,3 +376,13 @@ defineExpose({ wrapRef, textareaRef });
     </form>
   </footer>
 </template>
+
+<style scoped>
+.chat-draft-status {
+  margin: 0;
+  color: var(--text);
+  font-size: 0.8125rem;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+</style>

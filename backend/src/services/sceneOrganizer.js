@@ -45,7 +45,7 @@ export async function completeSceneOrganization(settings, request = {}) {
     }
     if (name === 'finish_scene_organization') { state.summary = String(args.summary || '场景资料已整理'); return { ok: true, stop: true }; }
     return { ok: false, error: 'Unsupported scene tool' };
-  }, { maxRounds: 12, thinkingEnabled: false, signal: state.signal });
+  }, { maxRounds: 12, thinkingEnabled: false, signal: state.signal, database: state.database, userId: state.userId });
   state.cleanup = consolidateSceneWorkspace(state.database, state.userId, state.conversationId);
   return { ok: true, summary: state.summary || '场景资料已整理', changes: state.changes, cleanup: state.cleanup, workspace: listSceneWorkspace(state.database, state.userId, state.conversationId) };
 }

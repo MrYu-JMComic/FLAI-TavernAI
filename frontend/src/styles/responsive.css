@@ -45,6 +45,10 @@
     border-left: 0;
   }
 
+  .ai-workbench-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
   .home-toolbar {
     grid-template-columns: minmax(0, 1fr) minmax(150px, 210px) auto;
   }
@@ -518,12 +522,17 @@
 
   /* -- Editor layout: tighter phone flow -- */
   .ai-workbench-header {
-    align-items: flex-start;
-    padding: 14px;
+    align-items: center;
+    padding: 13px 14px;
+  }
+
+  .ai-workbench-title p {
+    display: none;
   }
 
   .ai-workbench-config,
   .ai-workbench-results {
+    gap: 12px;
     padding: 14px;
   }
 
@@ -531,9 +540,29 @@
     grid-template-columns: minmax(0, 1fr);
   }
 
+  /* Counters drop to their own line rather than squeezing into the title. */
+  .ai-monitor-heading {
+    grid-template-columns: 26px minmax(0, 1fr);
+  }
+
+  .ai-monitor-counters {
+    grid-column: 2;
+    justify-content: flex-start;
+    margin-top: 6px;
+  }
+
   .ai-scope-toolbar {
-    align-items: flex-start;
+    align-items: stretch;
     flex-direction: column;
+    gap: 8px;
+  }
+
+  .ai-scope-actions .ghost-button {
+    flex: 1 1 auto;
+  }
+
+  .ai-scope-grid {
+    grid-template-columns: repeat(auto-fill, minmax(94px, 1fr));
   }
 
   /* -- Form grid: single column on tablet -- */
@@ -798,14 +827,14 @@
 
 @media (max-width: 620px) {
   .brand-button {
-    justify-content: center;
-    width: var(--touch-min, 44px);
+    justify-content: flex-start;
+    width: auto;
     min-width: var(--touch-min, 44px);
-    gap: 0;
+    gap: 8px;
   }
 
   .brand-button > span:not(.brand-mark) {
-    display: none;
+    display: block;
   }
 
   .settings-section-nav {

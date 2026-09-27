@@ -1,6 +1,7 @@
 import { newId, nowIso } from '../security.js';
 import { parseJson } from '../utils/json.js';
 import { withSavepoint } from './savepoint.js';
+import { finishConversationHistoryChange, prepareConversationHistoryChange } from '../services/conversationTimeline.js';
 
 export function listSwipes(db, userId, messageId) {
   const rows = db
@@ -78,22 +79,13 @@ export function setActiveSwipe(db, userId, messageId, swipeId) {
   if (!message) return null;
 
   // Use a savepoint to keep the read-modify-write sequence atomic
+  let timeline = null;
   withSavepoint(db, 'sp_set_active_swipe', () => {
-    // Save current message content as a swipe if it doesn't already exist
-    const existingSwipe = db
-      .prepare('SELECT id FROM message_swipes WHERE message_id = ? AND user_id = ? AND content = ?')
-      .get(messageId, userId, message.content);
-    if (!existingSwipe) {
-      createSwipe(db, userId, messageId, {
-        content: message.content,
-        reasoning: message.reasoning || '',
-        usage: parseJson(message.usage_json, null)
-      });
-    }
-
-    // Update message with swipe content
-    db.prepare('UPDATE messages SET content = ?, reasoning = ?, usage_json = ? WHERE id = ?')
-      .run(swipe.content, swipe.reasoning, swipe.usage_json, messageId);
+    timeline = replaceMessageWithAlternative(db, userId, message, {
+      content: swipe.content,
+      reasoning: swipe.reasoning,
+      usage: parseJson(swipe.usage_json, null)
+    });
   });
 
   // Return updated state
@@ -113,6 +105,41 @@ export function setActiveSwipe(db, userId, messageId, swipeId) {
     usage: parseJson(swipe.usage_json, null),
     createdAt: swipe.created_at,
     swipeCount: rows.length + 1,
-    activeIndex: activeIdx >= 0 ? activeIdx + 1 : 0
+    activeIndex: activeIdx >= 0 ? activeIdx + 1 : 0,
+    timeline
   };
+}
+
+/**
+ * Replace a message's text with an alternative (an existing swipe or a freshly
+ * regenerated reply). The previous text is retained as a swipe, so no recovery
+ * save is written; the timeline still restores the pre-message checkpoint and
+ * re-queues postprocessing for the new content.
+ */
+export function replaceMessageWithAlternative(db, userId, message, next, options = {}) {
+  const content = String(next.content ?? '');
+  const reasoning = String(next.reasoning ?? '');
+  const usageJson = next.usage ? JSON.stringify(next.usage) : null;
+  const changed = message.content !== content;
+  const prepared = changed
+    ? prepareConversationHistoryChange(db, userId, message.conversation_id, message.id, { recoverySave: false })
+    : null;
+  const existingSwipe = db
+    .prepare('SELECT id FROM message_swipes WHERE message_id = ? AND user_id = ? AND content = ?')
+    .get(message.id, userId, message.content);
+  if (!existingSwipe && String(message.content || '').trim()) {
+    createSwipe(db, userId, message.id, {
+      content: message.content,
+      reasoning: message.reasoning || '',
+      usage: parseJson(message.usage_json, null)
+    });
+  }
+  db.prepare('UPDATE messages SET content = ?, reasoning = ?, usage_json = ? WHERE id = ?')
+    .run(content, reasoning, usageJson, message.id);
+  return prepared ? finishConversationHistoryChange(db, userId, message.conversation_id, prepared, options) : null;
+}
+
+export function countSwipes(db, userId, messageId) {
+  const row = db.prepare('SELECT COUNT(*) AS count FROM message_swipes WHERE message_id = ? AND user_id = ?').get(messageId, userId);
+  return Number(row?.count) || 0;
 }

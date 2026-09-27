@@ -184,6 +184,25 @@ export function deleteMessage(conversationId, messageId) {
   });
 }
 
+export function truncateMessages(conversationId, fromMessageId) {
+  return apiRequest(`/api/conversations/${conversationId}/messages/truncate`, {
+    method: 'POST',
+    body: JSON.stringify({ fromMessageId })
+  });
+}
+
+export function regenerateMessage(conversationId, messageId, payload = {}, signal) {
+  return apiRequest(`/api/conversations/${conversationId}/messages/${messageId}/regenerate`, {
+    method: 'POST',
+    body: JSON.stringify({ ...payload, stream: false }),
+    signal
+  });
+}
+
+export function streamRegenerateMessage(conversationId, messageId, payload = {}, handlers = {}, signal) {
+  return streamSSE(`/api/conversations/${conversationId}/messages/${messageId}/regenerate`, payload, handlers, signal);
+}
+
 export function sendMessage(conversationId, payload, signal) {
   return apiRequest(`/api/conversations/${conversationId}/messages`, {
     method: 'POST',

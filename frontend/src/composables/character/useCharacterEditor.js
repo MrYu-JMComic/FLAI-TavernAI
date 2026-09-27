@@ -89,7 +89,7 @@ export function useCharacterEditor({ props, emit }) {
     tags: true,
     regexRules: true,
     renderPlugins: true,
-    worldBookSuggestion: true,
+    worldBook: true,
     advancedSettings: true,
     modSuggestions: true
   });
@@ -98,16 +98,29 @@ export function useCharacterEditor({ props, emit }) {
     aiUseCurrentDraft,
     assistantModel,
     assistantModelOptions,
+    assistantStreamingEnabled,
+    assistantThinkingLevel,
+    assistantThinkingOptions,
+    assistantThinkingSupported,
     providerModelOptionsFor
   } = useCharacterAiPreferences(computed(() => props.provider));
 
   const {
     aiLoading,
+    aiCheckpoint,
+    aiCheckpointUpdatedAt,
+    aiHasCheckpoint,
+    aiLastError,
     aiRequirement,
+    aiStatus,
+    aiStatusMessage,
     aiToolCalls,
+    aiWarnings,
     aiProcess,
     aiReasoning,
     aiModSuggestions,
+    aiWorldBookDraft,
+    aiWorldBookCreating,
     suggestedModsCreating,
     advancedAiLoading,
     advancedAiRequirement,
@@ -116,6 +129,11 @@ export function useCharacterEditor({ props, emit }) {
     completeAdvancedSettingsWithAi,
     completeWithAi,
     createSuggestedMods,
+    createWorldBookFromAiDraft,
+    discardAiSession,
+    resumeCharacterAi,
+    retryCharacterAi,
+    saveAiCheckpoint,
     setAiOptionValue,
     stopAdvancedAi,
     stopCharacterAi
@@ -126,13 +144,18 @@ export function useCharacterEditor({ props, emit }) {
     aiOptions,
     aiUseCurrentDraft,
     assistantModel,
+    assistantStreamingEnabled,
+    assistantThinkingLevel,
     buildPayload: toPayload,
     applyAdvancedSettingsDraft,
+    onWorldBookCreated: handleAiWorldBookCreated,
+    getSessionId: () => editingCharacterId.value || 'new',
     isDisposed: () => characterFormDisposed,
     notify
   });
 
   const {
+    addWorldBookOption,
     canCreateSearchedTag,
     cancelCharacterFormOptions,
     createAndSelectTag,
@@ -155,6 +178,15 @@ export function useCharacterEditor({ props, emit }) {
     notify,
     selectedTags: computed(() => form.selectedTags)
   });
+
+  function handleAiWorldBookCreated(book) {
+    const bookId = String(book?.id || '').trim();
+    if (!bookId) return;
+    addWorldBookOption(book);
+    if (!selectedWorldBookIds.value.includes(bookId)) {
+      setSelectedWorldBookIdsIfChanged([...selectedWorldBookIds.value, bookId]);
+    }
+  }
 
   const {
     backgroundUploading,
@@ -309,6 +341,7 @@ export function useCharacterEditor({ props, emit }) {
     currentCharacterWizardStep,
     goToNextCharacterWizardStep,
     goToPreviousCharacterWizardStep,
+    isCharacterCreationFullForm,
     isCharacterCreationWizardActive,
     isCharacterCreationWizardAvailable,
     isCharacterSectionVisibleInCurrentMode,
@@ -534,6 +567,10 @@ export function useCharacterEditor({ props, emit }) {
         : await createCharacter(payload);
       await syncCharacterWorldBooks(saved.id, { editing, selectedIds: worldBookIds });
       if (!isCurrentFormSubmit(submitToken, { editing, characterId })) return;
+      if (!editing) {
+        cancelCharacterAiGeneration();
+        discardAiSession();
+      }
       establishCharacterDraftBaseline();
       clearCurrentCharacterDraft();
       notify.success(editing ? '角色已保存' : '角色已创建');
@@ -837,6 +874,7 @@ export function useCharacterEditor({ props, emit }) {
     currentCharacterWizardStep,
     goToNextCharacterWizardStep,
     goToPreviousCharacterWizardStep,
+    isCharacterCreationFullForm,
     isCharacterCreationWizardActive,
     isCharacterCreationWizardAvailable,
     setCharacterCreationMode,
@@ -890,20 +928,38 @@ export function useCharacterEditor({ props, emit }) {
     advancedAiLoading,
     advancedAiRequirement,
     aiLoading,
+    aiCheckpoint,
+    aiCheckpointUpdatedAt,
+    aiHasCheckpoint,
+    aiLastError,
     aiModSuggestions,
+    aiWorldBookDraft,
+    aiWorldBookCreating,
     aiOptions,
     aiProcess,
     aiReasoning,
     aiRequirement,
+    aiStatus,
+    aiStatusMessage,
     aiToolCalls,
+    aiWarnings,
     aiUseCurrentDraft,
     assistantModel,
     assistantModelOptions,
+    assistantStreamingEnabled,
+    assistantThinkingLevel,
+    assistantThinkingOptions,
+    assistantThinkingSupported,
     characterAiActionBusy,
     completeAdvancedSettingsWithAi,
     completeWithAi,
     createSuggestedMods,
+    createWorldBookFromAiDraft,
+    discardAiSession,
     modelOverrideOptions,
+    resumeCharacterAi,
+    retryCharacterAi,
+    saveAiCheckpoint,
     setAiOptionValue,
     stopAdvancedAi,
     stopCharacterAi,

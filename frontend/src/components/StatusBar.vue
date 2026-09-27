@@ -1,9 +1,9 @@
 <script setup>
 import { computed, onBeforeUnmount, ref, watch } from 'vue';
 import { ChevronDown } from '@lucide/vue';
-import { parseStatusTemplateToken } from '../../../shared/statusTemplateTokens.js';
 import { buildScopedChatCss } from '../utils/chatAppearance';
 import { recordFrontendDiagnostic } from '../diagnostics.js';
+import { copyTextToClipboard } from '../utils/clipboard.js';
 import {
   STATUS_BAR_TEMPLATE_ALLOWED_TAGS,
   escapeStatusBarTemplateHtml as escapeHtml,
@@ -17,7 +17,6 @@ const VALID_DENSITIES = ['default', 'cozy', 'compact'];
 const VALID_EFFECTS = ['glow', 'striped', 'pulse'];
 const VALID_DISPLAY_MODES = ['immersive', 'compact'];
 const VALID_CHAR_STATUSES = ['active', 'dead', 'forgotten', 'left', 'hidden'];
-const MAX_TEMPLATE_RESOLVE_DEPTH = 4;
 
 const STATUS_LABELS = {
   active: '在线',
@@ -56,7 +55,7 @@ const props = defineProps({
   }
 });
 
-const emit = defineEmits(['collapse', 'quick-reply']);
+const emit = defineEmits(['collapse', 'quick-reply', 'send', 'update-variables', 'open-settings']);
 const collapsed = ref(false);
 const effectiveCollapsed = computed(() => !props.embedded && collapsed.value);
 const templateScopeId = ref(`flai-sb-${Math.random().toString(36).slice(2, 10)}`);
@@ -121,7 +120,7 @@ const customTemplate = computed(() => {
   }
   const extracted = extractTemplateStyleBlocks(interpolateTemplate(raw));
   const styleBlocks = [];
-  const html = sanitizeTemplateHtml(extracted.html, styleBlocks);
+  const html = sanitizeTemplateHtml(extracted.html, styleBlocks, collectTemplatedValueLabels(raw));
   const css = buildCustomTemplateCss(
     extracted.styleBlocks,
     styleBlocks,
@@ -358,26 +357,9 @@ async function copyTemplateText(text) {
     return;
   }
   try {
-    if (navigator?.clipboard?.writeText) {
-      await navigator.clipboard.writeText(text);
-      return;
-    }
-  } catch {
-    // Fall back to a temporary textarea below.
-  }
-  const textarea = document.createElement('textarea');
-  textarea.value = text;
-  textarea.setAttribute('readonly', '');
-  textarea.style.position = 'fixed';
-  textarea.style.opacity = '0';
-  document.body.appendChild(textarea);
-  try {
-    textarea.select();
-    document.execCommand('copy');
+    await copyTextToClipboard(text);
   } catch {
     // Copy buttons are optional; ignore unavailable clipboard APIs.
-  } finally {
-    document.body.removeChild(textarea);
   }
 }
 

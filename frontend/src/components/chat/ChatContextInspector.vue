@@ -1,28 +1,24 @@
 <script setup>
 import { computed, onBeforeUnmount, ref, watch } from 'vue';
 import {
-  Ban,
   Brain,
-  Check,
   Cpu,
   Database,
   FileText,
   Image,
   ListTree,
   RefreshCw,
-  RotateCcw,
   Scissors,
   X
 } from '@lucide/vue';
 import {
-  confirmConversationMemory,
-  disableConversationMemory,
   fetchConversationBranchTree,
-  fetchConversationMemories,
-  previewConversationContext,
-  rollbackConversationMemory
+  previewConversationContext
 } from '../../api/chat.js';
 import { useNotify } from '../../composables/useNotify';
+import ChatContextBudget from './ChatContextBudget.vue';
+import ChatPromptHistory from './ChatPromptHistory.vue';
+import ConversationMemoryReview from './ConversationMemoryReview.vue';
 
 const props = defineProps({
   open: { type: Boolean, default: false },
@@ -38,9 +34,15 @@ const notify = useNotify();
 const loading = ref(false);
 const loadError = ref('');
 const preview = ref(null);
-const memories = ref([]);
 const branchTree = ref(null);
-const memoryActionBusyId = ref('');
+const activeView = ref('preview');
+const tabs = [
+  { id: 'preview', label: '预览' },
+  { id: 'memory', label: '记忆' },
+  { id: 'history', label: '实际请求' },
+  { id: 'budget', label: '预算' }
+];
+const memoryRefreshKey = ref(0);
 let inspectorLoadToken = 0;
 let inspectorDisposed = false;
 
@@ -139,12 +141,13 @@ const budgetStats = computed(() => {
   const budget = preview.value?.budget || {};
   const diagnostics = preview.value?.diagnostics || {};
   return [
-    { key: 'tokens', label: '估算 Token', value: formatNumber(budget.estimatedTokens) },
-    { key: 'chars', label: '上下文字符', value: formatNumber(budget.characters) },
-    { key: 'limit', label: '预算上限', value: formatNumber(budget.limitCharacters) },
+    { key: 'tokens', label: '对话 Token', value: formatNumber(budget.conversationTokens) },
+    { key: 'system', label: '系统上下文 Token（独立）', value: formatNumber(budget.systemTokens) },
+    { key: 'total', label: '总输入 Token', value: formatNumber(budget.estimatedTokens) },
+    { key: 'limit', label: '输入上下文 Token 上限', value: formatNumber(budget.tokenBudget?.inputTokenLimit) },
     { key: 'cuts', label: '裁剪项', value: formatNumber(budget.truncation?.length || 0) },
     { key: 'messages', label: '消息数', value: formatNumber(diagnostics.messageCount) },
-    { key: 'history', label: '历史轮数', value: formatNumber(diagnostics.historyCount) },
+    { key: 'history', label: '历史消息数', value: formatNumber(diagnostics.historyCount) },
     { key: 'worldbook', label: '世界书命中', value: formatNumber(diagnostics.worldBookMatchCount) },
     { key: 'images', label: '图片片段', value: formatNumber(budget.imageParts ?? diagnostics.imagePartCount) }
   ];
@@ -215,20 +218,6 @@ const truncationRows = computed(() => {
     });
   }
   return rows;
-});
-
-const memoryStats = computed(() => {
-  const stats = { pending: 0, enabled: 0, disabled: 0 };
-  for (const memory of memories.value) {
-    if (memory?.pending) {
-      stats.pending += 1;
-    } else if (memory?.enabled) {
-      stats.enabled += 1;
-    } else {
-      stats.disabled += 1;
-    }
-  }
-  return stats;
 });
 
 const branchSummaryTags = computed(() => {
@@ -310,7 +299,6 @@ watch(() => props.open, (isOpen) => {
 watch(() => props.conversationId, () => {
   inspectorLoadToken += 1;
   preview.value = null;
-  memories.value = [];
   branchTree.value = null;
   loadError.value = '';
   if (props.open) {
@@ -340,16 +328,14 @@ async function loadInspector(options = {}) {
   }
   loadError.value = '';
   try {
-    const [nextPreview, memoryResult, branchTreeResult] = await Promise.all([
+    const [nextPreview, branchTreeResult] = await Promise.all([
       previewConversationContext(conversationId, buildPreviewPayload()),
-      fetchConversationMemories(conversationId),
       fetchConversationBranchTree(conversationId)
     ]);
     if (!isCurrentLoad(loadToken, conversationId)) {
       return;
     }
     preview.value = nextPreview || null;
-    memories.value = Array.isArray(memoryResult?.memories) ? memoryResult.memories : [];
     branchTree.value = branchTreeResult || null;
   } catch (error) {
     if (!isCurrentLoad(loadToken, conversationId)) {
@@ -408,48 +394,22 @@ function normalizePreviewAttachments(attachments = []) {
   return normalized;
 }
 
-async function mutateMemory(memory, action) {
-  const conversationId = String(props.conversationId || '').trim();
-  const memoryId = String(memory?.id || '').trim();
-  if (!conversationId || !memoryId || memoryActionBusyId.value) {
-    return;
-  }
-  memoryActionBusyId.value = `${action}:${memoryId}`;
-  try {
-    let updated = null;
-    if (action === 'confirm') {
-      updated = await confirmConversationMemory(conversationId, memoryId);
-      notify.success('记忆已确认');
-    } else if (action === 'disable') {
-      updated = await disableConversationMemory(conversationId, memoryId);
-      notify.success('记忆已禁用');
-    } else if (action === 'rollback') {
-      updated = await rollbackConversationMemory(conversationId, memoryId);
-      notify.success('记忆已回滚');
-    }
-    emit('memory-updated', updated);
-    await loadInspector({ quiet: true });
-  } catch (error) {
-    notify.error(error?.message || '记忆操作失败');
-  } finally {
-    memoryActionBusyId.value = '';
-  }
+async function handleMemoryChanged(result) {
+  memoryRefreshKey.value += 1;
+  emit('memory-updated', result);
+  await loadInspector({ quiet: true });
 }
 
-function isMemoryBusy(memory, action) {
-  return memoryActionBusyId.value === `${action}:${memory?.id || ''}`;
-}
-
-function canConfirmMemory(memory) {
-  return Boolean(memory && !memory.archived && !memory.enabled);
-}
-
-function canDisableMemory(memory) {
-  return Boolean(memory && !memory.archived && memory.enabled);
-}
-
-function canRollbackMemory(memory) {
-  return Boolean(memory && !memory.archived);
+function handleTabKeydown(event, index) {
+  let nextIndex = index;
+  if (event.key === 'ArrowRight') nextIndex = (index + 1) % tabs.length;
+  else if (event.key === 'ArrowLeft') nextIndex = (index - 1 + tabs.length) % tabs.length;
+  else if (event.key === 'Home') nextIndex = 0;
+  else if (event.key === 'End') nextIndex = tabs.length - 1;
+  else return;
+  event.preventDefault();
+  activeView.value = tabs[nextIndex].id;
+  event.currentTarget.parentElement?.querySelectorAll('[role="tab"]')[nextIndex]?.focus();
 }
 
 function previewMessageText(message) {
@@ -485,38 +445,6 @@ function appendPreviewLine(text, line) {
 function formatNumber(value) {
   const number = Number(value);
   return Number.isFinite(number) ? Math.round(number).toLocaleString('zh-CN') : '-';
-}
-
-function memoryTypeLabel(type) {
-  if (type === 'relationship') return '关系';
-  if (type === 'location') return '地点';
-  if (type === 'preference') return '偏好';
-  if (type === 'fact') return '事实';
-  if (type === 'summary') return '摘要';
-  return '事件';
-}
-
-function memoryStateLabel(memory) {
-  if (memory?.pending) return '待确认';
-  if (memory?.enabled) return '已启用';
-  return '已禁用';
-}
-
-function memoryAuditLabel(memory) {
-  const parts = [];
-  const sourceKind = String(memory?.sourceKind || '').trim();
-  if (sourceKind) {
-    parts.push(sourceKind === 'auto' ? '自动提取' : sourceKind === 'import' ? '导入' : '手动');
-  }
-  const confidence = Number(memory?.confidence);
-  if (Number.isFinite(confidence)) {
-    parts.push(`置信度 ${Math.round(confidence * 100)}%`);
-  }
-  const sourceMessageId = String(memory?.sourceMessageId || '').trim();
-  if (sourceMessageId) {
-    parts.push(`来源 ${sourceMessageId}`);
-  }
-  return parts.join(' · ');
 }
 
 function branchPointLabel(branchPoint) {
@@ -662,6 +590,7 @@ function worldBookRoleLabel(role) {
 </script>
 
 <template>
+  <Teleport to="body">
   <div
     v-if="open"
     class="chat-context-inspector-overlay"
@@ -687,7 +616,7 @@ function worldBookRoleLabel(role) {
             type="button"
             aria-label="刷新上下文检查器"
             title="刷新"
-            :disabled="loading || Boolean(memoryActionBusyId)"
+            :disabled="loading"
             :aria-busy="loading"
             @click="loadInspector()"
           >
@@ -705,8 +634,14 @@ function worldBookRoleLabel(role) {
         </div>
       </header>
 
-      <div class="chat-context-inspector-body" :aria-busy="loading">
+      <nav class="chat-context-tabs" role="tablist" aria-label="上下文检查视图">
+        <button v-for="(tab, index) in tabs" :id="`context-tab-${tab.id}`" :key="tab.id" type="button" role="tab" :aria-selected="activeView === tab.id" :aria-controls="`context-panel-${tab.id}`" :tabindex="activeView === tab.id ? 0 : -1" :class="{ active: activeView === tab.id }" @click="activeView = tab.id" @keydown="handleTabKeydown($event, index)">{{ tab.label }}</button>
+      </nav>
+
+      <div :id="`context-panel-${activeView}`" class="chat-context-inspector-body" role="tabpanel" :aria-labelledby="`context-tab-${activeView}`" :aria-busy="loading">
         <p v-if="loadError" class="chat-context-inspector-error" role="alert">{{ loadError }}</p>
+
+        <template v-if="activeView === 'preview'">
 
         <section class="chat-context-section">
           <h3>
@@ -849,62 +784,6 @@ function worldBookRoleLabel(role) {
 
         <section class="chat-context-section">
           <h3>
-            <Brain :size="15" />
-            长期记忆
-          </h3>
-          <div class="chat-context-tags">
-            <span>待确认 {{ memoryStats.pending }}</span>
-            <span>已启用 {{ memoryStats.enabled }}</span>
-            <span>已禁用 {{ memoryStats.disabled }}</span>
-          </div>
-          <ul v-if="memories.length" class="chat-context-memory-list">
-            <li v-for="memory in memories" :key="memory.id">
-              <div class="chat-context-memory-copy">
-                <span>{{ memoryTypeLabel(memory.memoryType) }} · {{ memoryStateLabel(memory) }}</span>
-                <strong v-if="memory.subject">{{ memory.subject }}</strong>
-                <p>{{ memory.content }}</p>
-                <small v-if="memoryAuditLabel(memory)">{{ memoryAuditLabel(memory) }}</small>
-                <small v-if="memory.sourceExcerpt">{{ memory.sourceExcerpt }}</small>
-              </div>
-              <div class="chat-context-memory-actions">
-                <button
-                  v-if="canConfirmMemory(memory)"
-                  type="button"
-                  :disabled="Boolean(memoryActionBusyId)"
-                  :aria-busy="isMemoryBusy(memory, 'confirm')"
-                  @click="mutateMemory(memory, 'confirm')"
-                >
-                  <Check :size="14" />
-                  确认
-                </button>
-                <button
-                  v-if="canDisableMemory(memory)"
-                  type="button"
-                  :disabled="Boolean(memoryActionBusyId)"
-                  :aria-busy="isMemoryBusy(memory, 'disable')"
-                  @click="mutateMemory(memory, 'disable')"
-                >
-                  <Ban :size="14" />
-                  禁用
-                </button>
-                <button
-                  v-if="canRollbackMemory(memory)"
-                  type="button"
-                  :disabled="Boolean(memoryActionBusyId)"
-                  :aria-busy="isMemoryBusy(memory, 'rollback')"
-                  @click="mutateMemory(memory, 'rollback')"
-                >
-                  <RotateCcw :size="14" />
-                  回滚
-                </button>
-              </div>
-            </li>
-          </ul>
-          <p v-else class="chat-context-empty">暂无长期记忆</p>
-        </section>
-
-        <section class="chat-context-section">
-          <h3>
             <ListTree :size="15" />
             附加上下文
           </h3>
@@ -915,16 +794,22 @@ function worldBookRoleLabel(role) {
             </li>
           </ul>
         </section>
+        </template>
+
+        <ConversationMemoryReview v-else-if="activeView === 'memory'" :conversation-id="conversationId" :open="open" :refresh-key="memoryRefreshKey" @changed="handleMemoryChanged" />
+        <ChatPromptHistory v-else-if="activeView === 'history'" :conversation-id="conversationId" :open="open" />
+        <ChatContextBudget v-else :conversation-id="conversationId" :open="open" @changed="loadInspector({ quiet: true })" />
       </div>
     </aside>
   </div>
+  </Teleport>
 </template>
 
 <style scoped>
 .chat-context-inspector-overlay {
   position: fixed;
   inset: 0;
-  z-index: 126;
+  z-index: var(--z-modal, 120);
   display: flex;
   justify-content: flex-end;
   background: rgba(15, 23, 42, 0.3);
@@ -936,28 +821,65 @@ function worldBookRoleLabel(role) {
   display: grid;
   width: min(480px, calc(100vw - 20px));
   height: 100%;
-  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-rows: auto auto minmax(0, 1fr);
   border-left: 1px solid color-mix(in srgb, var(--primary) 20%, var(--line));
   color: var(--text);
   background: color-mix(in srgb, var(--surface) 96%, #ffffff 4%);
   box-shadow: -18px 0 54px rgba(15, 23, 42, 0.18);
 }
 
+.chat-context-tabs {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 4px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--line);
+}
+
+.chat-context-tabs button {
+  min-width: 0;
+  min-height: 34px;
+  padding: 5px 6px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  color: var(--muted);
+  background: transparent;
+  cursor: pointer;
+  font: inherit;
+  font-size: .76rem;
+  font-weight: 700;
+}
+
+.chat-context-tabs button.active {
+  color: var(--primary);
+  border-color: color-mix(in srgb, var(--primary) 28%, var(--line));
+  background: var(--primary-soft);
+}
+
+.chat-context-tabs button:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
 .chat-context-inspector-head,
 .chat-context-inspector-actions,
 .chat-context-inspector-kicker,
 .chat-context-section h3,
-.chat-context-hit-head,
-.chat-context-memory-actions button {
+.chat-context-hit-head {
   display: flex;
   align-items: center;
 }
 
 .chat-context-inspector-head {
+  flex-wrap: wrap;
   justify-content: space-between;
   gap: 14px;
   padding: 18px 18px 14px;
   border-bottom: 1px solid color-mix(in srgb, var(--line) 72%, transparent);
+}
+
+.chat-context-inspector-head > div:first-child {
+  min-width: 0;
 }
 
 .chat-context-inspector-kicker {
@@ -971,6 +893,7 @@ function worldBookRoleLabel(role) {
   margin: 5px 0 0;
   font-size: 1.08rem;
   line-height: 1.25;
+  overflow-wrap: anywhere;
 }
 
 .chat-context-inspector-actions {
@@ -1050,7 +973,6 @@ function worldBookRoleLabel(role) {
 .chat-context-hit-list li,
 .chat-context-message-list li,
 .chat-context-truncation-list li,
-.chat-context-memory-list li,
 .chat-context-extra-list li {
   min-width: 0;
   border: 1px solid color-mix(in srgb, var(--line) 70%, transparent);
@@ -1081,7 +1003,6 @@ function worldBookRoleLabel(role) {
 .chat-context-message-list,
 .chat-context-hit-list,
 .chat-context-truncation-list,
-.chat-context-memory-list,
 .chat-context-branch-list,
 .chat-context-extra-list {
   display: grid;
@@ -1148,8 +1069,7 @@ function worldBookRoleLabel(role) {
 .chat-context-hit-list strong,
 .chat-context-truncation-list strong,
 .chat-context-branch-main strong,
-.chat-context-extra-list strong,
-.chat-context-memory-copy strong {
+.chat-context-extra-list strong {
   color: var(--text);
   font-size: 0.82rem;
   overflow-wrap: anywhere;
@@ -1158,8 +1078,7 @@ function worldBookRoleLabel(role) {
 .chat-context-message-list p,
 .chat-context-truncation-list p,
 .chat-context-branch-list p,
-.chat-context-extra-list p,
-.chat-context-memory-copy p {
+.chat-context-extra-list p {
   display: -webkit-box;
   margin: 0;
   overflow: hidden;
@@ -1175,8 +1094,6 @@ function worldBookRoleLabel(role) {
 .chat-context-truncation-list span,
 .chat-context-branch-main span,
 .chat-context-branch-list small,
-.chat-context-memory-copy span,
-.chat-context-memory-copy small,
 .chat-context-worldbook-diagnostics span,
 .chat-context-worldbook-diagnostics small {
   color: var(--muted);
@@ -1232,46 +1149,6 @@ function worldBookRoleLabel(role) {
   min-width: 0;
 }
 
-.chat-context-memory-list li {
-  display: grid;
-  gap: 10px;
-  padding: 11px;
-}
-
-.chat-context-memory-copy {
-  display: grid;
-  gap: 4px;
-  min-width: 0;
-}
-
-.chat-context-memory-copy small {
-  display: block;
-  padding-top: 2px;
-}
-
-.chat-context-memory-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 7px;
-}
-
-.chat-context-memory-actions button {
-  gap: 5px;
-  min-height: 30px;
-  padding: 0 9px;
-  border: 1px solid color-mix(in srgb, var(--line) 78%, transparent);
-  border-radius: 8px;
-  color: var(--text);
-  background: color-mix(in srgb, var(--surface) 86%, transparent);
-  font-size: 0.76rem;
-  font-weight: 750;
-}
-
-.chat-context-memory-actions button:hover:not(:disabled) {
-  border-color: color-mix(in srgb, var(--primary) 32%, var(--line));
-  background: var(--primary-soft);
-}
-
 .chat-context-extra-list li.active {
   border-color: color-mix(in srgb, var(--primary) 28%, var(--line));
 }
@@ -1288,6 +1165,10 @@ function worldBookRoleLabel(role) {
   .chat-context-stat-grid,
   .chat-context-priority-list {
     grid-template-columns: 1fr;
+  }
+
+  .chat-context-tabs button {
+    min-height: var(--touch-min);
   }
 }
 </style>

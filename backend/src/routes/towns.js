@@ -25,10 +25,12 @@ import {
   getTownResidentCognition
 } from '../modules/townCognitionEngine.js';
 import { runTownSimulationStep } from '../modules/townEngine.js';
-import { generateTownFromBlueprint } from '../modules/townWorldGenerator.js';
+import { withSavepoint } from '../modules/savepoint.js';
+import { generateTownFromBlueprint, rebuildTownMap } from '../modules/townWorldGenerator.js';
 import { generateTownResidentCognitionPlan } from '../services/townCognitionAssistant.js';
 import { generateTownTurnPlan } from '../services/townTurnAssistant.js';
 import { generateTownWorldBlueprint } from '../services/townWorldAssistant.js';
+import { sendRouteError } from './errorResponse.js';
 import {
   advanceTownSchema,
   createTownEventSchema,
@@ -37,6 +39,7 @@ import {
   createTownResidentSchema,
   createTownSchema,
   generateTownSchema,
+  rebuildTownMapSchema,
   saveTownScheduleSchema,
   updateTownClockSchema,
   validate
@@ -47,6 +50,7 @@ const TOWN_AI_STEP_TIMEOUT_MS = 3 * 60 * 1000;
 
 export function createTownsRouter(ctx) {
   const { db, requireAuth, withListCache, getChatProviderSettings } = ctx;
+  const config = ctx.config || {};
   const asyncHandler = ctx.asyncRoute || ((handler) => (request, response, next) => {
     Promise.resolve(handler(request, response, next)).catch(next);
   });
@@ -82,7 +86,9 @@ export function createTownsRouter(ctx) {
     request.once('aborted', abortOnDisconnect);
     try {
       const generated = await generateBlueprint(settings.value, request.body.prompt, {
-        signal: controller.signal
+        signal: controller.signal,
+        database: db,
+        userId: request.auth.user.id
       });
       const snapshot = generateTownFromBlueprint(db, request.auth.user.id, {
         prompt: request.body.prompt,
@@ -101,10 +107,16 @@ export function createTownsRouter(ctx) {
       });
     } catch (error) {
       if (!request.aborted && !response.destroyed) {
-        const message = controller.signal.aborted
+        const status = controller.signal.aborted ? 504 : Number(error?.status) === 429 ? 429 : 400;
+        const abortedMessage = controller.signal.aborted
           ? controller.signal.reason?.message || 'AI 世界生成已中断。'
-          : error.message;
-        response.status(controller.signal.aborted ? 504 : 400).json({ error: message });
+          : '';
+        sendRouteError(response, error, {
+          status,
+          isProduction: config.isProduction,
+          publicMessage: abortedMessage || undefined,
+          fallback: abortedMessage || 'AI 世界生成失败。'
+        });
       }
     } finally {
       clearTimeout(timeout);
@@ -142,6 +154,29 @@ export function createTownsRouter(ctx) {
     response.json(result);
   });
 
+  router.post('/:townId/map/rebuild', requireAuth, validate(rebuildTownMapSchema), (request, response) => {
+    const town = getTown(db, request.auth.user.id, request.params.townId);
+    if (!town) return notFound(response, '小镇不存在');
+    if (town.simulationStatus !== 'paused') return response.status(409).json({ error: '请先暂停世界再重建地图。' });
+    const snapshot = rebuildTownMap(db, request.auth.user.id, request.params.townId, request.body.architecture);
+    if (!snapshot) return notFound(response, '小镇不存在');
+    response.json(snapshot);
+  });
+
+  router.post('/:townId/step', requireAuth, validate(advanceTownSchema), (request, response) => {
+    const town = getTown(db, request.auth.user.id, request.params.townId);
+    if (!town) return notFound(response, '小镇不存在');
+    if (town.simulationStatus !== 'paused') return response.status(409).json({ error: '请先暂停世界再单步推进。' });
+    const result = withSavepoint(db, 'sp_town_manual_steps', () => {
+      let latest;
+      for (let index = 0; index < request.body.steps; index += 1) {
+        latest = runTownSimulationStep(db, request.auth.user.id, town.id, { force: true });
+      }
+      return latest;
+    });
+    response.json({ ...result, steps: request.body.steps });
+  });
+
   router.post('/:townId/advance-ai', requireAuth, asyncHandler(async (request, response) => {
     const context = buildTownTurnContext(db, request.auth.user.id, request.params.townId);
     if (!context) return notFound(response, '小镇不存在');
@@ -162,9 +197,14 @@ export function createTownsRouter(ctx) {
     const abortOnDisconnect = () => controller.abort(new Error('客户端已取消 AI 世界推演。'));
     request.once('aborted', abortOnDisconnect);
     try {
-      const generated = await generateTurn(settings.value, context, { signal: controller.signal });
+      const generated = await generateTurn(settings.value, context, {
+        signal: controller.signal,
+        database: db,
+        userId: request.auth.user.id
+      });
       const result = applyTownTurnPlan(db, request.auth.user.id, request.params.townId, generated.plan, {
-        expectedTick: context.version.tick
+        expectedTick: context.version.tick,
+        expectedVersion: context.version
       });
       response.json({
         ...result,
@@ -179,11 +219,16 @@ export function createTownsRouter(ctx) {
     } catch (error) {
       if (!request.aborted && !response.destroyed) {
         const aborted = controller.signal.aborted;
-        const message = aborted
+        const status = aborted ? 504 : Number(error?.status) === 429 ? 429 : error.code === 'TOWN_AI_STEP_CONFLICT' ? 409 : 400;
+        const abortedMessage = aborted
           ? controller.signal.reason?.message || 'AI 世界推演已中断。'
-          : error.message;
-        const status = aborted ? 504 : error.code === 'TOWN_AI_STEP_CONFLICT' ? 409 : 400;
-        response.status(status).json({ error: message });
+          : '';
+        sendRouteError(response, error, {
+          status,
+          isProduction: config.isProduction,
+          publicMessage: abortedMessage || undefined,
+          fallback: abortedMessage || 'AI 世界推演失败。'
+        });
       }
     } finally {
       clearTimeout(timeout);
@@ -256,7 +301,11 @@ export function createTownsRouter(ctx) {
     const abortOnDisconnect = () => controller.abort(new Error('客户端已取消 AI 居民反思与规划。'));
     request.once('aborted', abortOnDisconnect);
     try {
-      const generated = await generateCognition(settings.value, context, { signal: controller.signal });
+      const generated = await generateCognition(settings.value, context, {
+        signal: controller.signal,
+        database: db,
+        userId: request.auth.user.id
+      });
       const result = applyTownResidentCognitionPlan(
         db,
         request.auth.user.id,
@@ -278,11 +327,16 @@ export function createTownsRouter(ctx) {
     } catch (error) {
       if (!request.aborted && !response.destroyed) {
         const aborted = controller.signal.aborted;
-        const message = aborted
+        const status = aborted ? 504 : Number(error?.status) === 429 ? 429 : error.code === 'TOWN_AI_COGNITION_CONFLICT' ? 409 : 400;
+        const abortedMessage = aborted
           ? controller.signal.reason?.message || 'AI 居民反思与规划已中断。'
-          : error.message;
-        const status = aborted ? 504 : error.code === 'TOWN_AI_COGNITION_CONFLICT' ? 409 : 400;
-        response.status(status).json({ error: message });
+          : '';
+        sendRouteError(response, error, {
+          status,
+          isProduction: config.isProduction,
+          publicMessage: abortedMessage || undefined,
+          fallback: abortedMessage || 'AI 居民反思与规划失败。'
+        });
       }
     } finally {
       clearTimeout(timeout);

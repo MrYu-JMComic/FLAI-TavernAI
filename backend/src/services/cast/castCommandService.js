@@ -276,6 +276,9 @@ export function createCastMemory(database, userId, conversationId, memberId, pay
     const contentKey = castContentKey(content);
     const duplicate = findCastMemoryByContentKey(database, conversationId, member.id, contentKey);
     if (duplicate) {
+      // A different generic label is not a reason to reject the whole turn.
+      // Reinforcement preserves the original type, including intent/hypothesis.
+      const reinforcedAt = nowIso();
       const reinforced = {
         ...duplicate,
         importance: Math.max(duplicate.importance, clampUnit(payload.importance, duplicate.importance)),
@@ -283,10 +286,11 @@ export function createCastMemory(database, userId, conversationId, memberId, pay
           duplicate.emotionalIntensity,
           clampUnit(payload.emotionalIntensity, duplicate.emotionalIntensity)
         ),
-        lastReinforcedAt: nowIso(),
+        lastReinforcedAt: reinforcedAt,
+        lastDecayedAt: reinforcedAt,
         reinforcementCount: duplicate.reinforcementCount + 1,
         forgottenAt: duplicate.forgottenAt || null,
-        updatedAt: nowIso(),
+        updatedAt: reinforcedAt,
       };
       const after = updateCastMemory(database, reinforced, duplicate.revision);
       if (!after) throw castConflict('Memory changed before it could be reinforced');
@@ -353,6 +357,7 @@ export function updateCastMemoryEntry(
     const contentKey = castContentKey(content);
     const duplicate = findCastMemoryByContentKey(database, conversationId, memberId, contentKey);
     if (duplicate && duplicate.id !== before.id) throw castConflict('A matching memory already exists');
+    const updateTimestamp = nowIso();
     const candidate = normalizeMemoryPayload(database, conversationId, member, {
       ...before,
       ...payload,
@@ -361,8 +366,11 @@ export function updateCastMemoryEntry(
       contentKey,
       sourceKind: context.sourceKind === 'manual' ? before.sourceKind : context.sourceKind,
       sourceMessageId: context.evidence?.messageId || payload.sourceMessageId || before.sourceMessageId,
+      lastDecayedAt: payload.importance !== undefined && context.actor !== 'memory-decay'
+        ? updateTimestamp
+        : payload.lastDecayedAt ?? before.lastDecayedAt,
       createdAt: before.createdAt,
-      updatedAt: nowIso(),
+      updatedAt: updateTimestamp,
     });
     if (sameResource(before, candidate)) return before;
     const expectedRevision = normalizeExpectedRevision(payload.revision, before.revision);
@@ -1280,6 +1288,7 @@ function normalizeMemoryPayload(database, conversationId, member, payload) {
     emotionalIntensity: clampUnit(payload.emotionalIntensity, 0),
     decayRate: clampUnit(payload.decayRate, 0),
     lastReinforcedAt: normalizeNullableText(payload.lastReinforcedAt, 80),
+    lastDecayedAt: normalizeNullableText(payload.lastDecayedAt, 80),
     reinforcementCount: clampInteger(payload.reinforcementCount, 0, 1_000_000, 0),
     forgottenAt: normalizeNullableText(payload.forgottenAt, 80),
     linkedMemoryIds,

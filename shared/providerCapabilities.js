@@ -63,7 +63,7 @@ const providerCapabilityPresets = {
     reasoning: true,
     tools: true,
     vision: true,
-    imageGeneration: true,
+    imageGeneration: false,
     usage: true
   },
   glm: {
@@ -93,8 +93,8 @@ const providerCapabilityPresets = {
 };
 
 const imageGenerationModelsByProvider = {
-  openai: new Set(['gpt-image-2']),
-  xai: new Set(['grok-imagine-image', 'grok-imagine-image-quality']),
+  openai: new Set(['gpt-image-1.5', 'gpt-image-2']),
+  xai: new Set(['grok-imagine-image', 'grok-imagine-image-quality', 'grok-imagine-image-2.0']),
   gemini: new Set([
     'gemini-3.1-flash-image',
     'gemini-3-pro-image',
@@ -120,13 +120,19 @@ export function resolveProviderModelCapabilities(settings = {}, providerCapabili
   const capabilities = providerCapabilities || resolveProviderCapabilities(providerType, settings);
   const model = normalizeProviderModelId(providerType, settings.model);
   const thinking = resolveThinkingControl(providerType, model, capabilities.reasoning);
-  const imageGeneration = Boolean(capabilities.imageGeneration && isKnownImageGenerationModel(providerType, model));
+  // Keep the model-specific flag for transport gates. Image generation itself
+  // is exposed separately as a provider-level capability so a normal chat
+  // model can invoke a dedicated image model.
+  const imageGenerationModel = Boolean(capabilities.imageGeneration && isKnownImageGenerationModel(providerType, model));
+  const imageGeneration = imageGenerationModel;
   return {
     ...capabilities,
-    streaming: Boolean(capabilities.streaming && !imageGeneration),
-    vision: Boolean(capabilities.vision && !imageGeneration),
+    streaming: Boolean(capabilities.streaming && !imageGenerationModel),
+    vision: Boolean(capabilities.vision && !imageGenerationModel),
     imageGeneration,
-    tools: Boolean(capabilities.tools && !imageGeneration),
+    imageGenerationModel,
+    imageGenerationAvailable: Boolean(capabilities.imageGeneration),
+    tools: Boolean(capabilities.tools && !imageGenerationModel),
     model,
     thinking,
     thinkingLevels: thinking.levels

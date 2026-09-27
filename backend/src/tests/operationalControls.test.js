@@ -10,6 +10,8 @@ import {
   consumeDailyRequest,
   getDailyUsage,
   getUserQuota,
+  recordProviderUsage,
+  resetDailyRequestUsage,
   updateUserQuota
 } from '../services/quotas.js';
 import { insertUser } from './routeTestUtils.js';
@@ -78,6 +80,42 @@ test('storage quota includes legacy avatar bytes and avatar save paths', () => {
       }),
       (error) => error.code === 'UPLOAD_QUOTA_EXCEEDED'
     );
+  } finally {
+    database.close();
+  }
+});
+
+test('daily request reset preserves token and cost accounting', () => {
+  const database = createControlsDatabase();
+  const now = new Date('2026-09-08T05:00:00.000Z');
+  try {
+    consumeDailyRequest(database, 'controls-user', { now });
+    recordProviderUsage(database, 'controls-user', {
+      inputTokens: 12,
+      outputTokens: 4,
+      costMicros: 17
+    }, { now });
+
+    const usage = resetDailyRequestUsage(database, 'controls-user', { now });
+
+    assert.equal(usage.requestCount, 0);
+    assert.equal(usage.inputTokens, 12);
+    assert.equal(usage.outputTokens, 4);
+    assert.equal(usage.costMicros, 17);
+  } finally {
+    database.close();
+  }
+});
+
+test('unlimited daily request quota bypasses the request counter boundary', () => {
+  const database = createControlsDatabase();
+  try {
+    updateUserQuota(database, 'controls-user', { maxDailyRequests: null });
+    assert.equal(getUserQuota(database, 'controls-user').maxDailyRequests, null);
+    for (let index = 0; index < 3; index += 1) {
+      consumeDailyRequest(database, 'controls-user');
+    }
+    assert.equal(getDailyUsage(database, 'controls-user').requestCount, 3);
   } finally {
     database.close();
   }

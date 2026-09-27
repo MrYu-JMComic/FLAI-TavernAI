@@ -1,17 +1,17 @@
 :root {
-  color: #20241f;
-  background: #eef2ed;
+  color: #272b30;
+  background: #f3f5f6;
   font-family:
     Inter, "Microsoft YaHei", "PingFang SC", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
     "Segoe UI", sans-serif;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
-  --bg: #eef2ed;
-  --surface: #fbfaf6;
-  --surface-strong: #edf5ef;
-  --line: rgba(44, 57, 48, 0.14);
-  --text: #20241f;
-  --muted: #657064;
+  --bg: #f3f5f6;
+  --surface: #ffffff;
+  --surface-strong: #edf1f2;
+  --line: rgba(39, 43, 48, 0.16);
+  --text: #272b30;
+  --muted: #626a73;
   --primary: #8d4a43;
   --primary-strong: #713932;
   --primary-soft: #efe1dc;
@@ -25,14 +25,15 @@
   --success-soft: #dfeee8;
   --info: #426b78;
   --info-soft: #dfedf0;
+  --chat-dialogue-color: #76511f;
   --shadow: 0 18px 48px rgba(38, 52, 44, 0.13);
   --shadow-xs: 0 1px 2px rgba(38, 52, 44, 0.06);
   --shadow-sm: 0 6px 18px rgba(38, 52, 44, 0.08);
   --shadow-md: 0 14px 34px rgba(38, 52, 44, 0.11);
   --shadow-lg: 0 24px 64px rgba(38, 52, 44, 0.16);
-  --surface-glass: rgba(251, 250, 246, 0.82);
+  --surface-glass: rgba(255, 255, 255, 0.94);
   --surface-raised: #ffffff;
-  --surface-hover: #f4f2ec;
+  --surface-hover: #f0f3f4;
   --focus-ring: color-mix(in srgb, var(--primary) 32%, transparent);
   --radius-xs: 6px;
   --radius-sm: 10px;
@@ -53,7 +54,7 @@
   --font-md: 1rem;
   --font-lg: 1.125rem;
   --font-xl: 1.375rem;
-  --font-2xl: clamp(1.8rem, 3vw, 2.6rem);
+  --font-2xl: 2rem;
   --leading-tight: 1.25;
   --leading-normal: 1.55;
   --leading-reading: 1.82;
@@ -65,10 +66,7 @@
   --z-modal: 120;
   --content-max: 1440px;
   --reading-max: 920px;
-  --app-bg:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.72) 0%, rgba(240, 246, 241, 0.58) 42%, rgba(226, 235, 230, 0.82) 100%),
-    linear-gradient(135deg, rgba(47, 109, 90, 0.1) 0%, transparent 34%, rgba(141, 74, 67, 0.06) 76%, transparent 100%),
-    var(--bg);
+  --app-bg: var(--bg);
   --chat-shell-bg:
     linear-gradient(180deg, #fbfaf6 0%, #eef4ef 48%, #e6eee9 100%);
   --chat-sidebar-bg: color-mix(in srgb, var(--surface) 88%, var(--green-soft));
@@ -84,14 +82,14 @@
 }
 
 :root[data-theme="dark"] {
-  color: #f1f5ee;
-  background: #111614;
-  --bg: #111614;
-  --surface: #1a211e;
-  --surface-strong: #222c27;
-  --line: rgba(218, 233, 222, 0.14);
-  --text: #f1f5ee;
-  --muted: #b7c4ba;
+  color: #eef1f3;
+  background: #16191d;
+  --bg: #16191d;
+  --surface: #202429;
+  --surface-strong: #292f35;
+  --line: rgba(223, 230, 237, 0.18);
+  --text: #eef1f3;
+  --muted: #b5bdc6;
   --primary: #d98775;
   --primary-strong: #f0a18e;
   --primary-soft: rgba(217, 135, 117, 0.19);
@@ -105,18 +103,17 @@
   --success-soft: rgba(130, 184, 162, 0.17);
   --info: #8fbac5;
   --info-soft: rgba(143, 186, 197, 0.15);
+  --chat-dialogue-color: #e4c48b;
   --shadow: 0 18px 48px rgba(0, 0, 0, 0.28);
   --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.24);
   --shadow-sm: 0 8px 22px rgba(0, 0, 0, 0.24);
   --shadow-md: 0 16px 38px rgba(0, 0, 0, 0.32);
   --shadow-lg: 0 28px 72px rgba(0, 0, 0, 0.44);
-  --surface-glass: rgba(26, 33, 30, 0.82);
-  --surface-raised: #232c28;
-  --surface-hover: #29342f;
+  --surface-glass: rgba(32, 36, 41, 0.94);
+  --surface-raised: #292f35;
+  --surface-hover: #30373e;
   --focus-ring: color-mix(in srgb, var(--primary) 42%, transparent);
-  --app-bg:
-    linear-gradient(180deg, rgba(30, 37, 33, 0.96) 0%, rgba(16, 22, 19, 0.98) 100%),
-    var(--bg);
+  --app-bg: var(--bg);
   --chat-shell-bg:
     linear-gradient(180deg, #18201d 0%, #111614 100%);
   --chat-sidebar-bg: #1a211e;

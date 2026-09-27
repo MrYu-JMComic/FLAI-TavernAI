@@ -4,18 +4,23 @@ import { parseJson } from '../../utils/json.js';
 import { assertAiJobQuota } from '../quotas.js';
 import { createCursorScope, decodeCursor, encodeCursor } from '../cursorPagination.js';
 
-export const JOB_TYPES = Object.freeze([
+export const PUBLIC_JOB_TYPES = Object.freeze([
   'town.generate',
   'cast.organize',
   'memory.extract',
   'world-book.assist'
 ]);
+export const CONVERSATION_POSTPROCESS_JOB = 'conversation.postprocess';
+export const JOB_TYPES = Object.freeze([...PUBLIC_JOB_TYPES, CONVERSATION_POSTPROCESS_JOB]);
 export const TERMINAL_JOB_STATUSES = new Set(['succeeded', 'failed', 'cancelled']);
 const JOB_TYPE_SET = new Set(JOB_TYPES);
 const MAX_JOB_PAYLOAD_BYTES = 100_000;
 
 export function submitJob(database, userId, type, payload = {}, options = {}) {
   const normalizedType = normalizeJobType(type);
+  if (normalizedType === CONVERSATION_POSTPROCESS_JOB && options.internal !== true) {
+    throw jobError('This job type is scheduled by the conversation pipeline.', 'JOB_TYPE_INTERNAL', 400);
+  }
   const idempotencyKey = normalizeIdempotencyKey(options.idempotencyKey);
   if (!idempotencyKey) {
     throw jobError('An Idempotency-Key is required.', 'JOB_IDEMPOTENCY_REQUIRED', 400);
@@ -24,9 +29,10 @@ export function submitJob(database, userId, type, payload = {}, options = {}) {
   if (existing) {
     return { ...existing, deduplicated: true };
   }
-  assertAiJobQuota(database, userId);
+  if (options.internal !== true) assertAiJobQuota(database, userId);
 
-  const payloadJson = serializePayload(payload);
+  const boundPayload = bindConversationPayload(database, userId, normalizedType, payload);
+  const payloadJson = serializePayload(boundPayload);
   const id = newId();
   const timestamp = nowIso();
   try {
@@ -34,8 +40,8 @@ export function submitJob(database, userId, type, payload = {}, options = {}) {
       database.prepare(
         `INSERT INTO jobs (
            id, user_id, type, status, payload_json, idempotency_key,
-           max_attempts, created_at, updated_at
-         ) VALUES (?, ?, ?, 'queued', ?, ?, ?, ?, ?)`
+           max_attempts, created_at, updated_at, serial_key
+         ) VALUES (?, ?, ?, 'queued', ?, ?, ?, ?, ?, ?)`
       ).run(
         id,
         userId,
@@ -44,7 +50,8 @@ export function submitJob(database, userId, type, payload = {}, options = {}) {
         idempotencyKey,
         clampInteger(options.maxAttempts, 1, 10, 3),
         timestamp,
-        timestamp
+        timestamp,
+        String(boundPayload?.conversationId || '').trim() ? conversationJobKey(userId, boundPayload.conversationId) : ''
       );
       appendJobEvent(database, id, userId, 'queued', { progress: 0 });
     });
@@ -119,10 +126,22 @@ export function claimNextJob(database, workerId, options = {}) {
     const types = normalizeWorkerTypes(options.types);
     const typeFilter = types.length ? ` AND type IN (${types.map(() => '?').join(', ')})` : '';
     const row = database.prepare(
-      `SELECT id, user_id FROM jobs
+      `SELECT id, user_id FROM jobs candidate
        WHERE status = 'queued' AND cancel_requested = 0 AND attempt < max_attempts${typeFilter}
-       ORDER BY created_at ASC, id ASC LIMIT 1`
-    ).get(...types);
+         AND (serial_key = '' OR NOT EXISTS (
+           SELECT 1 FROM conversations c WHERE c.id = json_extract(candidate.payload_json, '$.conversationId')
+             AND c.active_generation_id <> '' AND c.generation_expires_at > ?
+             AND (candidate.type <> 'conversation.postprocess' OR c.active_generation_id NOT LIKE 'chat:%'
+               OR json_extract(candidate.payload_json, '$.replayLore') = 1)
+         ))
+         AND (serial_key = '' OR NOT EXISTS (
+           SELECT 1 FROM jobs prior WHERE prior.user_id = candidate.user_id
+             AND prior.serial_key = candidate.serial_key AND prior.id <> candidate.id
+             AND (prior.status = 'running' OR (prior.rowid < candidate.rowid
+               AND prior.cancel_requested = 0 AND prior.status = 'queued'))
+         ))
+       ORDER BY created_at ASC, rowid ASC LIMIT 1`
+    ).get(...types, now);
     if (!row) return null;
     const timestamp = nowIso();
     const update = database.prepare(
@@ -171,6 +190,7 @@ export function completeJob(database, jobId, workerId, result = {}) {
      WHERE id = ? AND status = 'running' AND lease_owner = ?`
   ).run(resultJson, timestamp, timestamp, jobId, workerId);
   appendJobEvent(database, jobId, job.user_id, 'succeeded', { progress: 100, result });
+  reconcileConversationJobStatus(database, jobId);
   return true;
 }
 
@@ -192,17 +212,18 @@ export function failJob(database, jobId, workerId, error, options = {}) {
     message,
     attempt: job.attempt
   });
+  reconcileConversationJobStatus(database, jobId);
   return true;
 }
 
 export function cancelJob(database, userId, jobId) {
   const job = getJob(database, userId, jobId);
-  if (!job || TERMINAL_JOB_STATUSES.has(job.status)) return job;
+  if (!job || ['succeeded', 'cancelled'].includes(job.status)) return job;
   const timestamp = nowIso();
-  if (job.status === 'queued') {
+  if (job.status === 'queued' || job.status === 'failed') {
     database.prepare(
       `UPDATE jobs SET status = 'cancelled', cancel_requested = 1, updated_at = ?, finished_at = ?
-       WHERE id = ? AND user_id = ? AND status = 'queued'`
+       WHERE id = ? AND user_id = ? AND status IN ('queued', 'failed')`
     ).run(timestamp, timestamp, jobId, userId);
     appendJobEvent(database, jobId, userId, 'cancelled', {});
   } else {
@@ -212,6 +233,28 @@ export function cancelJob(database, userId, jobId) {
     ).run(timestamp, jobId, userId);
     appendJobEvent(database, jobId, userId, 'cancellation-requested', {});
   }
+  reconcileConversationJobStatus(database, jobId);
+  return getJob(database, userId, jobId);
+}
+
+export function retryJob(database, userId, jobId) {
+  const job = getJob(database, userId, jobId);
+  if (!job || !['failed', 'cancelled'].includes(job.status)) return job;
+  const source = job.payload;
+  if (source.conversationId) {
+    const row = database.prepare('SELECT timeline_revision FROM conversations WHERE id = ? AND user_id = ?').get(source.conversationId, userId);
+    if (!row || row.timeline_revision !== source.timelineRevision) {
+      throw jobError('Source history changed; schedule a new task instead.', 'JOB_SOURCE_STALE', 409);
+    }
+    if (job.error?.code === 'CAST_PLAN_PARTIAL' || hasLaterConversationWork(database, job)) {
+      throw jobError('后续剧情状态已经推进，请通过重建状态恢复旧任务。', 'JOB_REBUILD_REQUIRED', 409);
+    }
+  }
+  database.prepare(`UPDATE jobs SET status = 'queued', cancel_requested = 0, error_code = '', error_message = '',
+    max_attempts = MAX(max_attempts, attempt + 1), finished_at = NULL, updated_at = ? WHERE id = ? AND user_id = ?`)
+    .run(nowIso(), jobId, userId);
+  appendJobEvent(database, jobId, userId, 'retrying', { manual: true });
+  reconcileConversationJobStatus(database, jobId);
   return getJob(database, userId, jobId);
 }
 
@@ -224,6 +267,7 @@ export function finishCancelledJob(database, jobId, workerId) {
        updated_at = ?, finished_at = ? WHERE id = ? AND lease_owner = ?`
   ).run(timestamp, timestamp, jobId, workerId);
   appendJobEvent(database, jobId, job.user_id, 'cancelled', {});
+  reconcileConversationJobStatus(database, jobId);
   return true;
 }
 
@@ -256,6 +300,78 @@ export function recoverExpiredJobs(database, now = Date.now()) {
   return rows.length;
 }
 
+export function getActiveConversationJob(database, userId, conversationId) {
+  const row = database.prepare(`SELECT * FROM jobs WHERE user_id = ? AND serial_key = ?
+    AND status IN ('queued', 'running') ORDER BY rowid LIMIT 1`)
+    .get(userId, conversationJobKey(userId, conversationId));
+  return row ? toJob(row) : null;
+}
+
+export function cancelConversationJobs(database, userId, conversationId) {
+  const rows = database.prepare(`SELECT id FROM jobs WHERE user_id = ? AND serial_key = ?
+    AND status IN ('queued', 'running', 'failed')`).all(userId, conversationJobKey(userId, conversationId));
+  return rows.map((row) => cancelJob(database, userId, row.id));
+}
+
+export function conversationJobKey(userId, conversationId) {
+  return JSON.stringify([String(userId), String(conversationId)]);
+}
+
+export function getConversationProcessingSummary(database, userId, conversationId) {
+  const rows = database.prepare(`SELECT * FROM jobs WHERE user_id = ? AND serial_key = ?
+    AND json_extract(payload_json, '$.timelineRevision') = (SELECT timeline_revision FROM conversations WHERE id = ?)
+    ORDER BY rowid`).all(userId, conversationJobKey(userId, conversationId), conversationId);
+  const pending = rows.filter((job) => ['queued', 'running'].includes(job.status));
+  const failed = rows.filter((job) => ['failed', 'cancelled'].includes(job.status));
+  const row = pending.find((job) => job.status === 'running') || pending[0] || failed[0] || rows.at(-1);
+  if (!row) return null;
+  const job = toJob(row);
+  return { id: job.id, status: job.status, progress: job.progress, error: job.error,
+    pendingCount: pending.length, failedCount: failed.length,
+    canRetry: ['failed', 'cancelled'].includes(job.status) && job.error?.code !== 'CAST_PLAN_PARTIAL' && !hasLaterConversationWork(database, job) };
+}
+
+function hasLaterConversationWork(database, job) {
+  return Boolean(job.serialKey && database.prepare(`SELECT id FROM jobs WHERE user_id = ? AND serial_key = ?
+    AND rowid > (SELECT rowid FROM jobs WHERE id = ?) AND attempt > 0
+    AND json_extract(payload_json, '$.timelineRevision') = ? LIMIT 1`)
+    .get(job.userId, job.serialKey, job.id, job.payload.timelineRevision));
+}
+
+function bindConversationPayload(database, userId, type, payload) {
+  const conversationId = String(payload?.conversationId || '').trim();
+  if (!conversationId) return payload;
+  const conversation = database.prepare('SELECT timeline_revision FROM conversations WHERE id = ? AND user_id = ?').get(conversationId, userId);
+  if (!conversation) return payload;
+  const bound = { ...payload, conversationId, timelineRevision: conversation.timeline_revision };
+  if (type === 'cast.organize' || type === 'memory.extract') {
+    const rows = database.prepare(`SELECT id, role, revision FROM messages WHERE conversation_id = ? AND user_id = ?
+      AND role IN ('user', 'assistant') ORDER BY created_at DESC, rowid DESC LIMIT 80`).all(conversationId, userId).reverse();
+    bound.evidenceRefs = rows.map(({ id, revision }) => ({ id, revision }));
+    if (type === 'memory.extract') {
+      const assistantIndex = rows.findLastIndex((message) => message.role === 'assistant');
+      const assistant = rows[assistantIndex];
+      const user = rows.slice(0, assistantIndex).findLast((message) => message.role === 'user');
+      Object.assign(bound, { assistantMessageId: assistant?.id || '', assistantRevision: assistant?.revision || 0,
+        userMessageId: user?.id || '', userRevision: user?.revision || 0 });
+    }
+  }
+  return bound;
+}
+
+function reconcileConversationJobStatus(database, jobId) {
+  const row = database.prepare('SELECT * FROM jobs WHERE id = ?').get(jobId);
+  if (!row?.serial_key) return;
+  const payload = parseJson(row.payload_json, {});
+  const conversation = database.prepare('SELECT timeline_revision, state_status FROM conversations WHERE id = ? AND user_id = ?')
+    .get(payload.conversationId, row.user_id);
+  if (!conversation || conversation.timeline_revision !== payload.timelineRevision) return;
+  const summary = getConversationProcessingSummary(database, row.user_id, payload.conversationId);
+  if (['needs_rebuild', 'stale', 'legacy_partial'].includes(conversation.state_status)) return;
+  const status = summary?.pendingCount ? 'pending' : summary?.failedCount ? 'needs_review' : 'ready';
+  database.prepare('UPDATE conversations SET state_status = ? WHERE id = ?').run(status, payload.conversationId);
+}
+
 function appendJobEvent(database, jobId, userId, type, data) {
   database.prepare(
     'INSERT INTO job_events (job_id, user_id, event_type, data_json, created_at) VALUES (?, ?, ?, ?, ?)'
@@ -285,6 +401,7 @@ function toJob(row) {
     result: row.result_json == null ? null : parseJson(row.result_json, null),
     error: row.error_code || row.error_message ? { code: row.error_code, message: row.error_message } : null,
     idempotencyKey: row.idempotency_key,
+    serialKey: row.serial_key || '',
     progress: Number(row.progress || 0),
     attempt: Number(row.attempt || 0),
     maxAttempts: Number(row.max_attempts || 0),

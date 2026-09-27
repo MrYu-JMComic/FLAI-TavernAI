@@ -151,7 +151,7 @@ function normalizeImportedRule(item = {}, index = 0) {
     pattern,
     replacement: String(item.replacement || '').slice(0, 5000),
     flags,
-    scope: ['input', 'output', 'both'].includes(item.scope) ? item.scope : 'input',
+    scope: ['input', 'output', 'both', 'display'].includes(item.scope) ? item.scope : 'input',
     enabled: normalizeBoolean(item.enabled, true),
     order: normalizeNonNegativeInteger(item.order ?? item.orderIndex, index),
     groupName: String(item.groupName || item.group_name || '全局').trim().slice(0, 50) || '全局',

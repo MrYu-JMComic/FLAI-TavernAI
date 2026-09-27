@@ -25,6 +25,19 @@ test('authenticated request boundary rejects oversized path and query values', (
   assert.match(response.body.error, /过大|Too big/i);
 });
 
+test('authenticated request boundary rejects deep JSON iteratively without a stack overflow', () => {
+  let value = {};
+  for (let depth = 0; depth < 250; depth += 1) {
+    value = { nested: value };
+  }
+  const response = responseStub();
+  validateAuthenticatedRequestBoundary({ params: {}, query: {}, body: value }, response, () => {
+    assert.fail('deep request reached the handler');
+  });
+  assert.equal(response.statusCode, 400);
+  assert.match(response.body.error, /嵌套/);
+});
+
 function responseStub() {
   return {
     statusCode: 200,

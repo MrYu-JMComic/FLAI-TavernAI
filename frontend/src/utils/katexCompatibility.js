@@ -10,6 +10,38 @@ export function normalizeKatexSource(source) {
   return normalizeColorBoxContents(String(source ?? ''));
 }
 
+// Some providers escape TeX twice while serializing Markdown (for example,
+// `\\\\fcolorbox` or `\\\\(`). Collapse only control-sequence-looking runs so
+// ordinary LaTeX row breaks (`\\\\`) and prose backslashes remain untouched.
+export function normalizeEscapedKatexSource(source) {
+  const collapsed = collapseEscapedKatex(String(source ?? ''));
+  const normalized = containsColorBoxCommand(collapsed)
+    ? normalizeNestedDollarMath(collapsed)
+    : collapsed;
+  return normalizeKatexSource(normalized);
+}
+
+export function findColorBoxExpression(source, index = 0) {
+  const text = String(source ?? '');
+  const commandIndex = text.startsWith('\\\\', index) ? index + 1 : index;
+  const command = matchColorBoxCommand(text, commandIndex, commandIndex !== index);
+  if (!command) return null;
+
+  const argumentsList = readBracedArguments(
+    text,
+    commandIndex + command.name.length,
+    command.argumentCount,
+    { recoverArrayClosure: true }
+  );
+  if (!argumentsList) return null;
+
+  return {
+    name: command.name,
+    start: index,
+    end: argumentsList.at(-1).contentEnd + 1
+  };
+}
+
 export function selectKatexSurfaceTextColor(backgroundColor) {
   const backgroundRgb = parseOpaqueRgbColor(backgroundColor);
   if (!backgroundRgb) return '';
@@ -79,7 +111,8 @@ function normalizeColorBoxContents(source) {
     const argumentsList = readBracedArguments(
       source,
       cursor + command.name.length,
-      command.argumentCount
+      command.argumentCount,
+      { recoverArrayClosure: true }
     );
     if (!argumentsList) {
       normalized += source[cursor];
@@ -88,7 +121,11 @@ function normalizeColorBoxContents(source) {
     }
 
     const contentArgument = argumentsList.at(-1);
-    const content = source.slice(contentArgument.contentStart, contentArgument.contentEnd);
+    const content = removeIgnoredCharacters(
+      source.slice(contentArgument.contentStart, contentArgument.contentEnd),
+      contentArgument.ignoredClosers,
+      contentArgument.contentStart
+    );
     const nestedContent = normalizeColorBoxContents(content);
 
     normalized += source.slice(cursor, contentArgument.contentStart);
@@ -100,9 +137,99 @@ function normalizeColorBoxContents(source) {
   return normalized;
 }
 
-function matchColorBoxCommand(source, index) {
+function collapseEscapedKatex(source) {
+  let normalized = '';
+  let cursor = 0;
+
+  while (cursor < source.length) {
+    if (source[cursor] !== '\\') {
+      normalized += source[cursor];
+      cursor += 1;
+      continue;
+    }
+
+    let runEnd = cursor + 1;
+    while (runEnd < source.length && source[runEnd] === '\\') runEnd += 1;
+    const runLength = runEnd - cursor;
+    const nextCharacter = source[runEnd] || '';
+
+    if (runLength >= 2 && runLength % 2 === 0 && isEscapedKatexControl(nextCharacter)) {
+      normalized += '\\';
+      cursor = runEnd;
+      continue;
+    }
+
+    // A generated `\\\\` row break should become the normal TeX `\\` break.
+    if (runLength >= 4 && runLength % 2 === 0 && /(?:\s|&|\[)/u.test(nextCharacter)) {
+      normalized += '\\'.repeat(runLength / 2);
+      cursor = runEnd;
+      continue;
+    }
+
+    normalized += source.slice(cursor, runEnd);
+    cursor = runEnd;
+  }
+
+  return normalized;
+}
+
+function normalizeNestedDollarMath(source) {
+  let normalized = '';
+  let cursor = 0;
+
+  while (cursor < source.length) {
+    if (
+      source[cursor] !== '$'
+      || source[cursor + 1] === '$'
+      || isEscapedControlSequence(source, cursor)
+    ) {
+      normalized += source[cursor];
+      cursor += 1;
+      continue;
+    }
+
+    const close = findUnescapedDollar(source, cursor + 1);
+    if (close === -1) {
+      normalized += source[cursor];
+      cursor += 1;
+      continue;
+    }
+
+    // The complete color-box expression is already in math mode. Dollar
+    // delimiters nested inside it would be interpreted as a second math shift,
+    // so keep their contents and drop only the delimiters.
+    normalized += source.slice(cursor + 1, close);
+    cursor = close + 1;
+  }
+
+  return normalized;
+}
+
+function containsColorBoxCommand(source) {
+  return COLOR_BOX_COMMANDS.some((command) => source.includes(command.name));
+}
+
+function findUnescapedDollar(source, start) {
+  for (let cursor = start; cursor < source.length; cursor += 1) {
+    if (
+      source[cursor] === '$'
+      && source[cursor - 1] !== '$'
+      && source[cursor + 1] !== '$'
+      && !isEscapedControlSequence(source, cursor)
+    ) {
+      return cursor;
+    }
+  }
+  return -1;
+}
+
+function isEscapedKatexControl(character) {
+  return /[A-Za-z(){};,:!%_]/u.test(character);
+}
+
+function matchColorBoxCommand(source, index, allowEscaped = false) {
   if (source[index] !== '\\') return null;
-  if (isEscapedControlSequence(source, index)) return null;
+  if (!allowEscaped && isEscapedControlSequence(source, index)) return null;
 
   for (const command of COLOR_BOX_COMMANDS) {
     if (!source.startsWith(command.name, index)) continue;
@@ -121,12 +248,14 @@ function isEscapedControlSequence(source, index) {
   return precedingBackslashes % 2 === 1;
 }
 
-function readBracedArguments(source, startIndex, argumentCount) {
+function readBracedArguments(source, startIndex, argumentCount, options = {}) {
   const argumentsList = [];
   let cursor = startIndex;
 
   for (let index = 0; index < argumentCount; index += 1) {
-    const argument = readBracedArgument(source, cursor);
+    const argument = readBracedArgument(source, cursor, {
+      recoverArrayClosure: options.recoverArrayClosure && index === argumentCount - 1
+    });
     if (!argument) return null;
     argumentsList.push(argument);
     cursor = argument.contentEnd + 1;
@@ -135,12 +264,13 @@ function readBracedArguments(source, startIndex, argumentCount) {
   return argumentsList;
 }
 
-function readBracedArgument(source, startIndex) {
+function readBracedArgument(source, startIndex, options = {}) {
   let cursor = startIndex;
   while (/\s/u.test(source[cursor] || '')) cursor += 1;
   if (source[cursor] !== '{') return null;
 
   const contentStart = cursor + 1;
+  const ignoredClosers = [];
   let depth = 1;
   for (cursor = contentStart; cursor < source.length; cursor += 1) {
     const character = source[cursor];
@@ -157,14 +287,47 @@ function readBracedArgument(source, startIndex) {
       continue;
     }
     if (character === '}') {
+      if (
+        depth === 1
+        && options.recoverArrayClosure
+        && shouldRecoverArrayClosure(source, contentStart, cursor)
+      ) {
+        ignoredClosers.push(cursor);
+        continue;
+      }
       depth -= 1;
       if (depth === 0) {
-        return { contentStart, contentEnd: cursor };
+        return { contentStart, contentEnd: cursor, ignoredClosers };
       }
     }
   }
 
   return null;
+}
+
+function shouldRecoverArrayClosure(source, contentStart, candidateIndex) {
+  const contentBeforeCandidate = source.slice(contentStart, candidateIndex);
+  if (!/\\begin\s*\{\s*array\*?\s*\}/u.test(contentBeforeCandidate)) return false;
+  if (/\\end\s*\{\s*array\*?\s*\}/u.test(contentBeforeCandidate)) return false;
+
+  let nextIndex = candidateIndex + 1;
+  while (/\s/u.test(source[nextIndex] || '')) nextIndex += 1;
+  if (source[nextIndex] !== '\\' || source[nextIndex + 1] !== '\\') return false;
+
+  return /\\end\s*\{\s*array\*?\s*\}/u.test(source.slice(nextIndex + 2));
+}
+
+function removeIgnoredCharacters(source, ignoredIndices = [], sourceOffset = 0) {
+  if (!ignoredIndices.length) return source;
+
+  const ignored = new Set(ignoredIndices);
+  let normalized = '';
+  for (let index = 0; index < source.length; index += 1) {
+    if (!ignored.has(sourceOffset + index)) {
+      normalized += source[index];
+    }
+  }
+  return normalized;
 }
 
 function wrapDirectMathEnvironment(content) {

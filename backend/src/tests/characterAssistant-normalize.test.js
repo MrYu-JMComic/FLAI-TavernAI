@@ -11,12 +11,29 @@ function jsonResponse(body, init = {}) {
   });
 }
 
+function finishedDraftResponse(summary = 'Draft validated.') {
+  return jsonResponse({
+    choices: [{
+      message: {
+        role: 'assistant',
+        content: null,
+        tool_calls: [{
+          id: `finish-${summary.length}`,
+          type: 'function',
+          function: {
+            name: 'finish_character_draft',
+            arguments: JSON.stringify({ summary, reviewedSections: [] })
+          }
+        }]
+      }
+    }]
+  });
+}
+
 test('character assistant treats null current tags as empty', async () => {
   const originalFetch = globalThis.fetch;
   try {
-    globalThis.fetch = async () => jsonResponse({
-      choices: [{ message: { role: 'assistant', content: 'Done.' } }]
-    });
+    globalThis.fetch = async () => finishedDraftResponse();
 
     const result = await completeCharacterDraft(
       {
@@ -63,7 +80,7 @@ test('character assistant preserves generated content within character field lim
                 id: 'long-character-content',
                 type: 'function',
                 function: {
-                  name: 'set_character_profile',
+                  name: 'update_character_story',
                   arguments: JSON.stringify({ background, worldview, persona, openingMessage })
                 }
               }]
@@ -71,9 +88,7 @@ test('character assistant preserves generated content within character field lim
           }]
         });
       }
-      return jsonResponse({
-        choices: [{ message: { role: 'assistant', content: 'Done.' } }]
-      });
+      return finishedDraftResponse('Long fields validated.');
     };
 
     const result = await completeCharacterDraft(
@@ -107,9 +122,7 @@ test('character assistant normalizes generation options with direct defaults loo
       const body = JSON.parse(request.body);
       const userMessage = body.messages.find((message) => message.role === 'user');
       enabledSections = JSON.parse(userMessage.content).enabledSections;
-      return jsonResponse({
-        choices: [{ message: { role: 'assistant', content: 'Done.' } }]
-      });
+      return finishedDraftResponse('Enabled sections validated.');
     };
 
     await completeCharacterDraft(
@@ -149,7 +162,7 @@ test('character assistant normalizes generation options with direct defaults loo
       tags: true,
       regexRules: false,
       renderPlugins: true,
-      worldBookSuggestion: true,
+      worldBook: true,
       advancedSettings: false,
       modSuggestions: true
     });
@@ -175,9 +188,7 @@ test('character assistant prompts include shared quality guidance', async () => 
     globalThis.fetch = async (_url, request = {}) => {
       const body = JSON.parse(request.body);
       prompts.push(body.messages[0].content);
-      return jsonResponse({
-        choices: [{ message: { role: 'assistant', content: 'Done.' } }]
-      });
+      return finishedDraftResponse('Quality guidance reviewed.');
     };
 
     await completeCharacterDraft(

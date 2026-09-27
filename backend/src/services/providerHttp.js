@@ -29,6 +29,7 @@ export async function providerFetch(settings, endpoint, options = {}) {
   }
   return providerFetchUrl(settings, url, {
     ...options,
+    traceAuthMode: 'anonymous_fallback',
     headers: requestHeaders({ ...settings, apiKey: '' }, options.headers)
   });
 }
@@ -39,7 +40,7 @@ export function providerFetchUrl(settings, url, request = {}) {
 
 function resilientProviderFetch(settings, url, request) {
   const method = String(request.method || 'GET').toUpperCase();
-  const { idempotent, ...fetchRequest } = request;
+  const { idempotent, requestTrace, timeoutMs, traceAuthMode, ...fetchRequest } = request;
   const resilienceKey = [
     String(settings.providerType || 'custom'),
     String(settings.model || ''),
@@ -47,10 +48,12 @@ function resilientProviderFetch(settings, url, request) {
   ].join(':');
   return executeProviderRequest(
     resilienceKey,
-    ({ signal }) => fetchProviderRequest(url, { ...fetchRequest, signal }, providerFetchPolicy(settings)),
+    ({ signal, attempt }) => fetchProviderRequest(url, { ...fetchRequest, signal }, {
+      ...providerFetchPolicy(settings), requestTrace, attempt, traceAuthMode
+    }),
     {
       signal: request.signal,
-      timeoutMs: settings.timeoutMs,
+      timeoutMs: timeoutMs ?? settings.timeoutMs,
       concurrency: settings.concurrencyLimit,
       retryBudget: settings.retryBudget,
       idempotent: ['GET', 'HEAD', 'OPTIONS'].includes(method) || idempotent === true
@@ -66,7 +69,7 @@ export async function readJsonResponseValue(response, options = {}) {
   const text = await response.text().catch(() => '');
   const json = parseJson(text || 'null', null);
   if (json === null) {
-    throw new Error(responseErrorMessage(response, text));
+    throw classifyProviderResponseError(new Error(responseErrorMessage(response, text)), response);
   }
 
   if (!response.ok) {
@@ -80,7 +83,7 @@ export async function readJsonResponseValue(response, options = {}) {
       body: text.length > 2000 ? text.substring(0, 2000) + '...(truncated)' : text,
       json: json
     };
-    throw detailedError;
+    throw classifyProviderResponseError(detailedError, response);
   }
 
   if ((Array.isArray(json) && !options.allowArray) || !json || typeof json !== 'object') {
@@ -108,10 +111,17 @@ export async function fetchProviderRequest(url, request = {}, options = {}) {
 
   for (let redirectCount = 0; redirectCount <= PROVIDER_MAX_REDIRECTS; redirectCount += 1) {
     await assertProviderUrlAllowed(currentUrl, policy);
+    const traceRequestId = safeTraceStarted(options.requestTrace, {
+      url: currentUrl, method: currentRequest.method || 'GET', body: currentRequest.body,
+      attempt: options.attempt || 1, redirectHop: redirectCount, authMode: options.traceAuthMode || 'configured'
+    });
     let response;
     try {
       response = await fetch(currentUrl, currentRequest);
     } catch (error) {
+      safeTraceFinished(options.requestTrace, traceRequestId, {
+        status: currentRequest.signal?.aborted ? 'cancelled' : 'failed', errorCode: error?.code || error?.name || 'NETWORK_ERROR'
+      });
       if (error?.name === 'TimeoutError') {
         const timeoutError = new Error('AI 请求超时，请稍后重试或检查网关状态。', { cause: error });
         timeoutError.code = 'PROVIDER_TIMEOUT';
@@ -129,8 +139,13 @@ export async function fetchProviderRequest(url, request = {}, options = {}) {
       networkError.retryable = true;
       throw networkError;
     }
+    const redirected = [301, 302, 303, 307, 308].includes(response.status);
+    safeTraceFinished(options.requestTrace, traceRequestId, {
+      status: redirected ? 'redirected' : response.ok ? 'response_received' : 'http_error',
+      httpStatus: response.status
+    });
 
-    if (![301, 302, 303, 307, 308].includes(response.status)) {
+    if (!redirected) {
       return response;
     }
     if (redirectCount === PROVIDER_MAX_REDIRECTS) {
@@ -154,12 +169,46 @@ export async function fetchProviderRequest(url, request = {}, options = {}) {
   throw new Error('Provider 重定向失败。');
 }
 
+function safeTraceStarted(requestTrace, request) {
+  try {
+    const callback = requestTrace?.requestStarted;
+    if (typeof callback !== 'function') return null;
+    const requestId = callback.call(requestTrace, request);
+    if (requestId && typeof requestId.then === 'function') {
+      void requestId.catch(() => {});
+      return null;
+    }
+    return requestId;
+  } catch {
+    return null;
+  }
+}
+
+function safeTraceFinished(requestTrace, requestId, result) {
+  if (!requestId) return;
+  try {
+    const callback = requestTrace?.requestFinished;
+    if (typeof callback !== 'function') return;
+    const completion = callback.call(requestTrace, requestId, result);
+    if (completion && typeof completion.then === 'function') void completion.catch(() => {});
+  } catch {
+    // Diagnostics must never alter provider transport behavior.
+  }
+}
+
 function providerFetchPolicy(settings = {}) {
+  const enforceNetworkPolicy = settings.enforcePrivateNetworkPolicy === true;
   return {
+    // Route-created settings carry enforcePrivateNetworkPolicy after the
+    // root/config checks. Legacy direct service callers remain compatible in
+    // development, but cannot opt into this path from an HTTP request.
     allowPrivateNetwork: settings.allowPrivateNetwork === true
-      || (!appConfig.isProduction && appConfig.allowPrivateProviderNetworkInDevelopment),
+      || (!enforceNetworkPolicy && !appConfig.isProduction),
+    enforceNetworkPolicy,
+    privateNetworkErrorMessage: settings.privateNetworkErrorMessage,
     resolveDns: settings.resolveDns,
-    lookup: settings.lookup
+    lookup: settings.lookup,
+    isProduction: settings.isProduction ?? appConfig.isProduction
   };
 }
 
@@ -194,6 +243,31 @@ function shouldRetryProviderWithoutAuth(response, settings) {
 
 export function providerAllowsNoAuth(settings) {
   return settings?.providerType === 'custom' && isLocalOrPrivateBaseUrl(settings.baseUrl);
+}
+
+const GATEWAY_AUTH_UNAVAILABLE_PATTERN = /auth_(?:unavailable|not_found)\s*:\s*no auth available/i;
+
+/**
+ * Attach the upstream status and a retry classification so background jobs can
+ * tell a transient gateway outage (429, 5xx, an empty credential pool) from a
+ * permanent request error. The original message stays on `message` for logs;
+ * `publicMessage` carries the user-facing explanation.
+ */
+export function classifyProviderResponseError(error, response) {
+  const status = Number(response?.status) || 0;
+  if (status) error.status = status;
+  const message = String(error?.message || '');
+  if (GATEWAY_AUTH_UNAVAILABLE_PATTERN.test(message)) {
+    error.code = error.code || 'PROVIDER_AUTH_UNAVAILABLE';
+    error.publicMessage = error.publicMessage
+      || '网关暂时没有可用于该模型的凭据（auth_unavailable），已安排自动重试；若持续出现，请检查代理网关的登录或配额状态。';
+    // A credential pool that is momentarily exhausted usually recovers; a 4xx here still means "try again later".
+    error.retryable = true;
+  } else if (status === 408 || status === 429 || status >= 500) {
+    error.retryable = true;
+    error.publicMessage = error.publicMessage || `AI 网关暂时不可用（HTTP ${status}），已安排自动重试。`;
+  }
+  return error;
 }
 
 function providerJsonErrorMessage(json) {

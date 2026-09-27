@@ -1,6 +1,6 @@
 {
   "name": "flai-tavernai-windows-desktop",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "description": "Local Windows desktop wrapper for FLAI TavernAI.",
   "type": "module",
@@ -12,8 +12,8 @@
     "dist:portable": "electron-builder --win portable"
   },
   "devDependencies": {
-    "electron": "latest",
-    "electron-builder": "latest"
+    "electron": "44.1.1",
+    "electron-builder": "26.15.3"
   },
   "build": {
     "appId": "local.flai.tavernai",

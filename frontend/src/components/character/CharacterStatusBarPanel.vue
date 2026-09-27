@@ -4,6 +4,7 @@ import CharacterStatusBlueprintEditor from './CharacterStatusBlueprintEditor.vue
 defineProps({
   advancedSettings: { type: Object, required: true },
   canEdit: { type: Boolean, default: false },
+  statusBarBlueprintTemplateIssues: { type: Array, default: () => [] },
   statusBarBlueprintTemplateStats: { type: Object, required: true },
   statusBlueprintEditorRows: { type: Array, default: () => [] }
 });
@@ -26,7 +27,7 @@ const emit = defineEmits([
     <header class="character-panel-head">
       <div>
         <h2>状态栏</h2>
-        <p>定义提示词、变量和初始模板，新会话会以此作为状态栏起点。</p>
+        <p>定义更新规则、初始变量和展示模板，新会话会以此作为状态栏起点。</p>
       </div>
     </header>
 
@@ -43,6 +44,7 @@ const emit = defineEmits([
       <CharacterStatusBlueprintEditor
         :blueprint="advancedSettings.statusBarBlueprint"
         :can-edit="canEdit"
+        :issues="statusBarBlueprintTemplateIssues"
         :rows="statusBlueprintEditorRows"
         :stats="statusBarBlueprintTemplateStats"
         @add-variable="emit('add-status-variable')"

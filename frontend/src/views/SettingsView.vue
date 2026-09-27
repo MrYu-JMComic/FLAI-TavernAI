@@ -54,6 +54,7 @@ const {
   balanceLoading,
   canCheckBalance,
   canFetchModels,
+  isRootAdmin,
   checkBalance,
   currentProviderCapability,
   form,
@@ -67,6 +68,7 @@ const {
   providerCapabilityLoadError,
   providerActionLoading,
   providerControlsBusy,
+  providerNetworkPolicy,
   providerProfiles,
   removeProvider,
   resetProviderAsyncScope,
@@ -80,6 +82,7 @@ const {
   updateProviderFormField
 } = useSettingsProvider({
   isPersonalPage,
+  user: computed(() => props.user),
   notify,
   emitProviderSaved: () => emit('provider-saved')
 });
@@ -376,6 +379,7 @@ function resetExtensionAsyncScopes() {
       :balance-loading="balanceLoading"
       :can-check-balance="canCheckBalance"
       :can-fetch-models="canFetchModels"
+      :is-root-admin="isRootAdmin"
       :controls-busy="providerControlsBusy"
       :form="form"
       :model-loading="modelLoading"
@@ -386,6 +390,7 @@ function resetExtensionAsyncScopes() {
       :probe-message="modelProbeMessage"
       :probe-status="modelProbeStatus"
       :provider-action-loading="providerActionLoading"
+      :provider-network-policy="providerNetworkPolicy"
       :providers="providerProfiles"
       :saving="saving"
       :selected-provider-id="selectedProviderId"

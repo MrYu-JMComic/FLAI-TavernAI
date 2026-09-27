@@ -475,6 +475,58 @@ test('cast sync and organization SSE endpoints emit scoped status and terminal e
   }
 });
 
+test('cast organization inherits main thinking unless the NPC agent overrides it', async () => {
+  const database = createAppDatabase(':memory:');
+  const owner = seedConversation(database, 'thinking', 'conversation-thinking');
+  ensureConversationProtagonist(database, owner.userId, owner.conversationId);
+  const calls = [];
+  const app = createCastRoutesApp(database, owner.userId, {
+    getChatProviderSettings: () => ({
+      ok: true,
+      value: { providerType: 'openai', model: 'gpt-5.4', supportsReasoning: true },
+    }),
+    organizeConversationCast: async (options) => {
+      calls.push(options);
+      await options.onProgress('done', { summary: 'No changes', applied: 0 });
+      return { summary: 'No changes', applied: 0 };
+    },
+  });
+
+  try {
+    await withServer(app, async (baseUrl) => {
+      const inherited = await fetch(
+        `${baseUrl}/api/conversations/${owner.conversationId}/cast/organize`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ scope: 'conversation', requirement: '', thinkingLevel: 'high' }),
+        }
+      );
+      assert.equal(inherited.status, 200);
+      await inherited.text();
+      assert.equal(calls[0].thinkingLevel, 'high');
+      assert.equal(calls[0].thinkingEnabled, true);
+
+      database.prepare('UPDATE conversations SET user_advanced_settings = ? WHERE id = ?')
+        .run(JSON.stringify({ castTracking: { enabled: true, thinkingLevel: 'low' } }), owner.conversationId);
+      const overridden = await fetch(
+        `${baseUrl}/api/conversations/${owner.conversationId}/cast/organize`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ scope: 'conversation', requirement: '', thinkingLevel: 'high' }),
+        }
+      );
+      assert.equal(overridden.status, 200);
+      await overridden.text();
+      assert.equal(calls[1].thinkingLevel, 'low');
+      assert.equal(calls[1].thinkingEnabled, true);
+    });
+  } finally {
+    database.close();
+  }
+});
+
 function createCastRoutesApp(database, userId, overrides = {}) {
   const app = express();
   app.use(express.json());

@@ -28,6 +28,28 @@ export function normalizeChatAttachments(attachments = []) {
   return normalized;
 }
 
+export function sanitizeChatAttachments(attachments = []) {
+  return normalizeChatAttachments(attachments);
+}
+
+export function isSafeAttachmentUrl(value) {
+  const text = String(value || '').trim();
+  if (!text || /[\u0000-\u001f\u007f]/.test(text)) {
+    return false;
+  }
+  if (assetIdFromUrl(text) || /^data:image\/(?:png|jpeg|webp);base64,[A-Za-z0-9+/]+={0,2}$/i.test(text)) {
+    return true;
+  }
+  try {
+    const parsed = new URL(text);
+    return (parsed.protocol === 'http:' || parsed.protocol === 'https:')
+      && !parsed.username
+      && !parsed.password;
+  } catch {
+    return false;
+  }
+}
+
 export function prepareChatAttachmentsForStorage(database, userId, conversationId, attachments = []) {
   const candidates = normalizeChatAttachments(attachments);
   const storedAttachments = [];
@@ -103,7 +125,7 @@ function normalizeChatImageAttachment(attachment = {}) {
     };
   }
 
-  if (!assetIdFromUrl(rawUrl)) {
+  if (!isSafeAttachmentUrl(rawUrl) || !assetIdFromUrl(rawUrl)) {
     return null;
   }
   return {

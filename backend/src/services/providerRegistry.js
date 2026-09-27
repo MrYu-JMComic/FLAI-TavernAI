@@ -6,6 +6,7 @@ export const providerPresets = {
     gatewayName: 'OpenAI',
     baseUrl: 'https://api.openai.com/v1',
     model: 'gpt-4.1-mini',
+    imageModel: 'gpt-image-2',
     supportsReasoning: false,
     extraBody: {}
   },
@@ -22,6 +23,7 @@ export const providerPresets = {
     gatewayName: 'Gemini',
     baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai',
     model: 'gemini-2.5-flash',
+    imageModel: 'gemini-3.1-flash-image',
     supportsReasoning: true,
     extraBody: {
       extra_body: {
@@ -46,6 +48,7 @@ export const providerPresets = {
     gatewayName: 'xAI',
     baseUrl: 'https://api.x.ai/v1',
     model: 'grok-4.1',
+    imageModel: 'grok-imagine-image',
     supportsReasoning: true,
     extraBody: {}
   },

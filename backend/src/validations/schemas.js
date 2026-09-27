@@ -6,6 +6,8 @@
 import { z } from 'zod';
 import { THINKING_LEVELS } from '../../../shared/providerThinking.js';
 import { CHARACTER_CONTENT_LIMITS } from '../domain/characters/limits.js';
+import { WORLD_BOOK_ENTRY_LIMITS, WORLD_BOOK_LIMITS } from '../domain/worldBooks/limits.js';
+import { JSON_BODY_LIMIT_DEFAULT_BYTES } from '../config.js';
 
 const STATUS_BLUEPRINT_VARIABLE_LIMIT = 60;
 const BACKGROUND_IMAGE_INPUT_MAX_LENGTH = 6_000_000;
@@ -30,19 +32,31 @@ const thinkingLevelSchema = z.enum(THINKING_LEVELS);
 
 const accessorySkillConfigSchema = z.object({
   enabled: z.union([z.boolean(), z.literal('auto')]).optional(),
-  modelOverride: z.string().max(100).trim().optional().default('')
+  modelOverride: z.string().max(100).trim().optional().default(''),
+  providerProfileId: z.string().max(160).trim().optional().default(''),
+  tools: z.record(z.string().max(40), z.boolean()).optional().default({})
 }).passthrough();
 
 const accessorySkillsSchema = z.object({
+  worldDirector: accessorySkillConfigSchema.optional(),
+  gameHud: accessorySkillConfigSchema.optional(),
+  encounterMode: accessorySkillConfigSchema.optional(),
+  rewardMode: accessorySkillConfigSchema.optional(),
   sceneAgent: accessorySkillConfigSchema.optional(),
   statusBarAgent: accessorySkillConfigSchema.optional(),
   economyAgent: accessorySkillConfigSchema.optional(),
   talentPrompt: accessorySkillConfigSchema.optional(),
-  cgScene: accessorySkillConfigSchema.optional()
+  cgScene: accessorySkillConfigSchema.optional(),
+  memoryAgent: accessorySkillConfigSchema.optional()
 }).partial().optional().default({});
 
 const castTrackingSchema = z.object({
   enabled: booleanLikeSchema.optional().default(false),
+  providerProfileId: z.string().max(160).trim().optional().default(''),
+  modelOverride: z.string().max(100).trim().optional().default(''),
+  thinkingLevel: z.union([thinkingLevelSchema, z.literal('')]).optional(),
+  autoSyncOperations: z.record(z.string().max(40), z.boolean()).optional().default({}),
+  organizeOperations: z.record(z.string().max(40), z.boolean()).optional().default({})
 }).strict().optional().default({ enabled: false });
 
 const statusBarBlueprintVariableSchema = z.object({
@@ -69,6 +83,7 @@ const advancedSettingsSchema = z.object({
   customJsRiskAccepted: booleanLikeSchema.optional().default(false),
   statusBarPrompt: z.string().max(50000).trim().optional().default(''),
   showWorldBookMatches: booleanLikeSchema.optional().default(true),
+  highlightDialogue: booleanLikeSchema.optional(),
   castTracking: castTrackingSchema,
   statusBarBlueprint: statusBarBlueprintSchema,
   accessorySkills: accessorySkillsSchema
@@ -90,7 +105,9 @@ export const registerSchema = z.object({
     .trim(),
   password: z.string()
     .min(6, '密码至少 6 位')
-    .max(128, '密码最多 128 位')
+    .max(128, '密码最多 128 位'),
+  // Optional one-time bootstrap proof. It is never persisted or returned.
+  bootstrapToken: z.string().max(256).optional()
 });
 
 export const loginSchema = registerSchema;
@@ -143,6 +160,7 @@ export const sendMessageSchema = z.object({
   attachments: z.array(chatImageAttachmentSchema).max(4).optional().default([]),
   stream: booleanLikeSchema.optional(),
   imageGeneration: booleanLikeSchema.optional(),
+  imageModel: z.string().max(100).trim().optional(),
   presetId: z.string().optional(),
   thinkingEnabled: booleanLikeSchema.optional(),
   thinkingLevel: thinkingLevelSchema.optional()
@@ -153,6 +171,12 @@ export const continueMessageSchema = z.object({
   presetId: z.string().optional(),
   thinkingEnabled: booleanLikeSchema.optional(),
   thinkingLevel: thinkingLevelSchema.optional()
+});
+
+export const regenerateMessageSchema = continueMessageSchema;
+
+export const truncateMessagesSchema = z.object({
+  fromMessageId: z.string().min(1, '缺少起始消息').max(160).trim()
 });
 
 export const updateMessageSchema = z.object({
@@ -186,36 +210,36 @@ export const createAssetSchema = z.object({
 // ── 世界书相关 ──
 
 export const createWorldBookSchema = z.object({
-  name: z.string().min(1, '名称不能为空').max(80, '名称最多 80 字').trim(),
-  description: z.string().max(2000).trim().optional().default(''),
+  name: z.string().min(1, '名称不能为空').max(WORLD_BOOK_LIMITS.name, '名称最多 80 字').trim(),
+  description: z.string().max(WORLD_BOOK_LIMITS.description).trim().optional().default(''),
   characterId: nullableOptionalString,
-  scanDepth: z.number().int().min(1).max(50).optional().default(1),
-  lorebookContextPercent: z.number().int().min(1).max(100).optional().default(25)
+  scanDepth: z.number().int().min(WORLD_BOOK_LIMITS.scanDepthMin).max(WORLD_BOOK_LIMITS.scanDepthMax).optional().default(1),
+  lorebookContextPercent: z.number().int().min(WORLD_BOOK_LIMITS.contextPercentMin).max(WORLD_BOOK_LIMITS.contextPercentMax).optional().default(25)
 });
 
 export const updateWorldBookSchema = createWorldBookSchema.partial();
 
 export const createWorldBookEntrySchema = z.object({
-  name: z.string().max(100).trim().optional().default(''),
-  triggerKeys: z.string().max(2000).trim().optional().default(''),
-  content: z.string().max(50000).trim().optional().default(''),
+  name: z.string().max(WORLD_BOOK_ENTRY_LIMITS.name).trim().optional().default(''),
+  triggerKeys: z.string().max(WORLD_BOOK_ENTRY_LIMITS.triggerKeys).trim().optional().default(''),
+  content: z.string().max(WORLD_BOOK_ENTRY_LIMITS.content).trim().optional().default(''),
   position: z.enum(['before_char', 'after_char', 'at_start', 'at_depth']).optional().default('before_char'),
   enabled: z.boolean().optional().default(true),
   regexMode: z.boolean().optional().default(false),
   alwaysActive: z.boolean().optional().default(false),
-  depth: z.number().int().min(0).max(10).optional().default(0),
+  depth: z.number().int().min(0).max(WORLD_BOOK_ENTRY_LIMITS.depthMax).optional().default(0),
   role: z.number().int().min(0).max(2).optional().default(0),
-  sticky: z.number().int().min(0).max(9999).nullable().optional(),
-  cooldown: z.number().int().min(0).max(9999).nullable().optional(),
-  delay: z.number().int().min(0).max(9999).nullable().optional(),
+  sticky: z.number().int().min(0).max(WORLD_BOOK_ENTRY_LIMITS.stateDurationMax).nullable().optional(),
+  cooldown: z.number().int().min(0).max(WORLD_BOOK_ENTRY_LIMITS.stateDurationMax).nullable().optional(),
+  delay: z.number().int().min(0).max(WORLD_BOOK_ENTRY_LIMITS.stateDurationMax).nullable().optional(),
   selective: z.boolean().optional().default(false),
   selectiveLogic: z.number().int().min(0).max(2).optional().default(0),
-  keysSecondary: z.string().max(2000).trim().optional().default(''),
-  probability: z.number().int().min(0).max(100).optional().default(100),
+  keysSecondary: z.string().max(WORLD_BOOK_ENTRY_LIMITS.keysSecondary).trim().optional().default(''),
+  probability: z.number().int().min(0).max(WORLD_BOOK_ENTRY_LIMITS.probabilityMax).optional().default(100),
   useProbability: z.boolean().optional().default(false),
-  group: z.string().max(100).trim().optional().default(''),
+  group: z.string().max(WORLD_BOOK_ENTRY_LIMITS.group).trim().optional().default(''),
   groupWeight: z.number().int().min(0).optional().default(0),
-  orderIndex: z.number().int().optional()
+  orderIndex: z.number().int().min(0).optional()
 });
 
 export const updateWorldBookEntrySchema = createWorldBookEntrySchema.partial();
@@ -226,7 +250,7 @@ export const createPresetSchema = z.object({
   name: z.string().max(100).trim().optional().default('未命名预设'),
   systemPrompt: z.string().max(50000).trim().optional().default(''),
   temperature: z.number().min(0).max(2).optional().default(1.0),
-  maxTokens: z.number().int().min(1).max(128000).optional().default(4096),
+  maxTokens: z.number().int().min(0).max(128000).optional().default(0),
   topP: z.number().min(0).max(1).optional().default(1.0),
   frequencyPenalty: z.number().min(-2).max(2).optional().default(0),
   presencePenalty: z.number().min(-2).max(2).optional().default(0),
@@ -273,6 +297,7 @@ export const saveProviderSchema = z.object({
   gatewayName: z.string().max(50).trim().optional().default(''),
   baseUrl: z.string().url().max(500).trim().optional().or(z.literal('')),
   model: z.string().max(100).trim().optional().default(''),
+  imageModel: z.string().max(100).trim().optional(),
   apiKey: z.string().max(500).optional(),
   clearApiKey: z.boolean().optional().default(false),
   supportsReasoning: z.boolean().optional(),
@@ -306,6 +331,7 @@ export const saveConversationSettingsSchema = z.object({
   customJsRiskAccepted: booleanLikeSchema.optional().default(false),
   statusBarPrompt: z.string().max(50000).trim().optional().default(''),
   showWorldBookMatches: booleanLikeSchema.optional().default(true),
+  highlightDialogue: booleanLikeSchema.optional(),
   castTracking: castTrackingSchema,
   chatLorebookId: z.string().max(200).trim().nullable().optional(),
   accessorySkills: accessorySkillsSchema
@@ -534,6 +560,8 @@ export const castOrganizerSchema = z.object({
   scope: z.enum(['member', 'conversation']).default('member'),
   memberId: castIdSchema.optional(),
   requirement: z.string().max(2_000).optional().default(''),
+  thinkingEnabled: booleanLikeSchema.optional(),
+  thinkingLevel: thinkingLevelSchema.optional(),
 }).strict().refine(
   (value) => value.scope === 'conversation' ? !value.memberId : Boolean(value.memberId),
   { message: '单人物整理必须提供 memberId，全对话整理不能提供 memberId' }
@@ -602,7 +630,8 @@ export const generateTownSchema = z.object({
 export const updateTownClockSchema = z.object({
   currentDay: z.number().int().min(1).max(1000000).optional(),
   minuteOfDay: z.number().int().min(0).max(1439).optional(),
-  simulationStatus: z.enum(['paused', 'running']).optional()
+  simulationStatus: z.enum(['paused', 'running']).optional(),
+  realSecondsPerTick: z.number().int().min(1).max(60).optional()
 }).refine((value) => Object.keys(value).length > 0, '至少提供一个时钟字段');
 
 export const advanceTownSchema = z.object({
@@ -700,16 +729,21 @@ const requestQueryBoundarySchema = z.record(
     context.addIssue({ code: 'custom', message: '查询参数过多' });
   }
 });
-const jsonBoundarySchema = z.lazy(() => z.union([
-  z.string(),
-  z.number().finite(),
-  z.boolean(),
-  z.null(),
-  z.array(jsonBoundarySchema).max(10_000),
-  z.record(z.string(), jsonBoundarySchema)
-]));
 
-export function validateAuthenticatedRequestBoundary(request, response, next) {
+export const rebuildTownMapSchema = z.object({ architecture: z.enum(['modern', 'traditional', 'fantasy']) });
+// Keep the request boundary check iterative.  A recursive z.lazy schema can
+// itself overflow the JavaScript stack before Zod has a chance to return a
+// useful 400 response for hostile, deeply nested JSON.
+const jsonBoundarySchema = z.any();
+export const JSON_BOUNDARY_LIMITS = Object.freeze({
+  maxDepth: 100,
+  maxKeys: 10_000,
+  maxArrayLength: 10_000,
+  maxStringLength: 8_000_000,
+  maxBytes: JSON_BODY_LIMIT_DEFAULT_BYTES
+});
+
+export function validateAuthenticatedRequestBoundary(request, response, next, options = {}) {
   const result = z.object({
     params: requestParamBoundarySchema,
     query: requestQueryBoundarySchema,
@@ -720,5 +754,76 @@ export function validateAuthenticatedRequestBoundary(request, response, next) {
     response.status(400).json({ error: message || '请求参数无效' });
     return;
   }
+  const boundaryError = scanJsonBoundary(request.body, {
+    ...JSON_BOUNDARY_LIMITS,
+    ...(options.limits || {})
+  });
+  if (boundaryError) {
+    response.status(400).json({ error: boundaryError });
+    return;
+  }
   next();
+}
+
+export function scanJsonBoundary(value, limits = JSON_BOUNDARY_LIMITS) {
+  if (value === undefined) {
+    return '';
+  }
+  let serializedBytes = 0;
+  try {
+    serializedBytes = Buffer.byteLength(JSON.stringify(value));
+  } catch {
+    return '请求 JSON 无法序列化';
+  }
+  if (serializedBytes > limits.maxBytes) {
+    return '请求 JSON 超出大小限制';
+  }
+
+  const stack = [{ value, depth: 0 }];
+  let keyCount = 0;
+  while (stack.length) {
+    const current = stack.pop();
+    const item = current.value;
+    const depth = current.depth;
+    if (depth > limits.maxDepth) {
+      return '请求 JSON 嵌套层级过深';
+    }
+    if (typeof item === 'string') {
+      if (item.length > limits.maxStringLength) {
+        return '请求 JSON 字符串过长';
+      }
+      continue;
+    }
+    if (typeof item === 'number') {
+      if (!Number.isFinite(item)) {
+        return '请求 JSON 包含无效数字';
+      }
+      continue;
+    }
+    if (item === null || typeof item === 'boolean') {
+      continue;
+    }
+    if (Array.isArray(item)) {
+      if (item.length > limits.maxArrayLength) {
+        return '请求 JSON 数组过长';
+      }
+      for (let index = item.length - 1; index >= 0; index -= 1) {
+        stack.push({ value: item[index], depth: depth + 1 });
+      }
+      continue;
+    }
+    if (typeof item === 'object') {
+      const keys = Object.keys(item);
+      keyCount += keys.length;
+      if (keyCount > limits.maxKeys) {
+        return '请求 JSON 对象字段过多';
+      }
+      for (let index = keys.length - 1; index >= 0; index -= 1) {
+        stack.push({ value: item[keys[index]], depth: depth + 1 });
+      }
+      continue;
+    }
+    return '请求 JSON 类型无效';
+  }
+  return '';
 }

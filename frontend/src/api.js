@@ -157,6 +157,8 @@ export {
 export {
   advanceTownWithAi,
   createTownEvent,
+  deleteTown,
+  deleteTownResident,
   fetchTownResidentCognition,
   fetchTownResidents,
   fetchTownSnapshot,

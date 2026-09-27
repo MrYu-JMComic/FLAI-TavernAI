@@ -4,7 +4,8 @@ export function useChatScroll({
   messageScroller,
   conversationId,
   scrollToMessageFallback,
-  scrollToBottomFallback
+  scrollToBottomFallback,
+  scrollToOffsetFallback
 }) {
   const isScrollPinned = ref(true);
   const distanceToBottom = ref(0);
@@ -23,6 +24,7 @@ export function useChatScroll({
   let restoreScrollRafId = null;
   let scrollStateRafId = null;
   let smoothScrollStateTimer = null;
+  let restoringScroll = false;
 
   const showScrollBottomButton = computed(() => {
     return !isScrollPinned.value && distanceToBottom.value > scrollButtonDistanceThreshold;
@@ -144,6 +146,7 @@ export function useChatScroll({
     if (disposed) {
       return;
     }
+    cancelPendingScrollRestore();
     if (keepPinned) {
       lastManualScrollIntentAt = 0;
       userPausedAutoScroll = false;
@@ -322,6 +325,7 @@ export function useChatScroll({
     if (restoreScrollRafId !== null) {
       cancelScheduledFrame(restoreScrollRafId);
     }
+    restoringScroll = true;
     restoreScrollRafId = scheduleFrame(() => {
       restoreScrollRafId = null;
       if (disposed) {
@@ -329,11 +333,13 @@ export function useChatScroll({
       }
       const el = messageScroller.value;
       if (!el) {
+        restoringScroll = false;
         return;
       }
 
       const saved = readScrollSnapshot();
       if (!saved) {
+        restoringScroll = false;
         if (messages && messages.value.length === 1 && messages.value[0]?.role === 'assistant') {
           el.scrollTop = 0;
           updateScrollState();
@@ -345,6 +351,7 @@ export function useChatScroll({
       }
 
       if (saved.pinned === true) {
+        restoringScroll = false;
         scrollToBottom(false, true);
         return;
       }
@@ -363,19 +370,22 @@ export function useChatScroll({
           keepPinned: false
         })
       ) {
-        scheduleAnchorRestore(saved, fallbackTop, 2);
+        scheduleAnchorRestore(saved, fallbackTop, 12);
         return;
       }
       finishUnpinnedRestore(el, fallbackTop);
     });
   }
 
-  function scheduleAnchorRestore(saved, fallbackTop, attemptsRemaining) {
+  function scheduleAnchorRestore(saved, fallbackTop, attemptsRemaining, stableFrames = 0) {
     restoreScrollRafId = scheduleFrame(() => {
       restoreScrollRafId = null;
       if (disposed) return;
       const el = messageScroller.value;
-      if (!el) return;
+      if (!el) {
+        restoringScroll = false;
+        return;
+      }
       const target = findMessageElement(saved.anchorMessageId);
       if (!target && attemptsRemaining > 0) {
         scheduleAnchorRestore(saved, fallbackTop, attemptsRemaining - 1);
@@ -393,20 +403,38 @@ export function useChatScroll({
         ? Number(saved.anchorOffset)
         : 0;
       const correctedTop = el.scrollTop + targetRect.top - visibleTop - anchorOffset;
-      finishUnpinnedRestore(el, clampScrollTop(el, correctedTop));
+      const nextTop = clampScrollTop(el, correctedTop);
+      const nextStableFrames = Math.abs(el.scrollTop - nextTop) <= 1 ? stableFrames + 1 : 0;
+      setRestoredScrollTop(el, nextTop);
+      // Virtual rows can mount before their final heights arrive. Require
+      // consecutive stable frames, with a bounded retry budget, before saving.
+      if (attemptsRemaining > 0 && nextStableFrames < 3) {
+        scheduleAnchorRestore(saved, fallbackTop, attemptsRemaining - 1, nextStableFrames);
+        return;
+      }
+      finishUnpinnedRestore(el, nextTop);
     });
   }
 
   function cancelPendingScrollRestore() {
+    restoringScroll = false;
     if (restoreScrollRafId === null) return;
     cancelScheduledFrame(restoreScrollRafId);
     restoreScrollRafId = null;
   }
 
   function finishUnpinnedRestore(el, scrollTop) {
-    el.scrollTop = scrollTop;
+    setRestoredScrollTop(el, scrollTop);
+    restoringScroll = false;
     updateScrollState();
     scheduleSaveMessageScrollPosition();
+  }
+
+  function setRestoredScrollTop(el, top) {
+    // Replace virtualizer index reconciliation with the exact reading offset;
+    // otherwise its pending index jump can undo the DOM anchor correction.
+    if (typeof scrollToOffsetFallback === 'function' && scrollToOffsetFallback(top) === true) return;
+    el.scrollTop = top;
   }
 
   function clampScrollTop(el, value) {
@@ -429,7 +457,7 @@ export function useChatScroll({
   }
 
   function scheduleSaveMessageScrollPosition() {
-    if (disposed || typeof window === 'undefined') {
+    if (disposed || restoringScroll || typeof window === 'undefined') {
       return;
     }
     if (scrollSaveTimer) {
@@ -445,7 +473,7 @@ export function useChatScroll({
   }
 
   function saveMessageScrollPosition() {
-    if (disposed || typeof window === 'undefined') {
+    if (disposed || restoringScroll || typeof window === 'undefined') {
       return;
     }
     const el = messageScroller.value;

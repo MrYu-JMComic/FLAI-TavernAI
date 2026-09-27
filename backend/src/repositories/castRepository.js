@@ -204,11 +204,11 @@ export function insertCastMemory(database, memory) {
   database.prepare(
     `INSERT INTO cast_memories (
        id, conversation_id, member_id, memory_type, content, content_key, layer,
-       importance, emotional_intensity, decay_rate, last_reinforced_at,
+       importance, emotional_intensity, decay_rate, last_reinforced_at, last_decayed_at,
        reinforcement_count, forgotten_at, linked_memory_ids_json,
        shared_member_ids_json, source_kind, source_message_id, revision,
        created_at, updated_at
-     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)`
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)`
   ).run(...castMemoryValues(memory));
   return getCastMemory(database, memory.conversationId, memory.memberId, memory.id);
 }
@@ -217,7 +217,7 @@ export function updateCastMemory(database, memory, expectedRevision) {
   const result = database.prepare(
     `UPDATE cast_memories SET
        memory_type = ?, content = ?, content_key = ?, layer = ?, importance = ?,
-       emotional_intensity = ?, decay_rate = ?, last_reinforced_at = ?,
+       emotional_intensity = ?, decay_rate = ?, last_reinforced_at = ?, last_decayed_at = ?,
        reinforcement_count = ?, forgotten_at = ?, linked_memory_ids_json = ?,
        shared_member_ids_json = ?, source_kind = ?, source_message_id = ?,
        revision = revision + 1, updated_at = ?
@@ -231,6 +231,7 @@ export function updateCastMemory(database, memory, expectedRevision) {
     memory.emotionalIntensity,
     memory.decayRate,
     memory.lastReinforcedAt,
+    memory.lastDecayedAt,
     memory.reinforcementCount,
     memory.forgottenAt,
     JSON.stringify(memory.linkedMemoryIds),
@@ -555,6 +556,7 @@ function castMemoryValues(memory) {
     memory.emotionalIntensity,
     memory.decayRate,
     memory.lastReinforcedAt,
+    memory.lastDecayedAt,
     memory.reinforcementCount,
     memory.forgottenAt,
     JSON.stringify(memory.linkedMemoryIds),
@@ -617,6 +619,7 @@ function toCastMemory(row) {
     emotionalIntensity: row.emotional_intensity,
     decayRate: row.decay_rate,
     lastReinforcedAt: row.last_reinforced_at || '',
+    lastDecayedAt: row.last_decayed_at || '',
     reinforcementCount: row.reinforcement_count,
     forgottenAt: row.forgotten_at || '',
     linkedMemoryIds: parseCastJson(row.linked_memory_ids_json, []),

@@ -1,178 +1,27 @@
 <script>
 import { defineComponent, h, onBeforeUnmount, onMounted, ref, watch } from 'vue';
-import MarkdownIt from 'markdown-it';
-import markdownItKatex from '@vscode/markdown-it-katex';
-import katex from 'katex';
-import hljs from 'highlight.js/lib/common';
 import DOMPurify from 'dompurify';
 import { normalizeRegexFlags as normalizeSharedRegexFlags } from '../../../shared/regexFlags.js';
 import { recordFrontendDiagnostic } from '../diagnostics.js';
 import { reconcileDomChildren } from '../utils/domReconciler.js';
-import {
-  normalizeKatexSource,
-  selectKatexSurfaceTextColor
-} from '../utils/katexCompatibility.js';
+import { selectKatexSurfaceTextColor } from '../utils/katexCompatibility.js';
+import { md } from '../utils/markdownRenderer.js';
+import { createMarkdownRenderCache } from '../utils/markdownRenderCache.js';
+import { highlightDialogueQuotes } from '../utils/dialogueQuotes.js';
 import KatexPreviewDialog from './KatexPreviewDialog.vue';
 import 'katex/dist/katex.min.css';
 
-// Initialize markdown-it with highlight.js
-const md = new MarkdownIt({
-  html: false,
-  linkify: true,
-  typographer: true,
-  breaks: true,
-  highlight(str, lang) {
-    if (lang && hljs.getLanguage(lang)) {
-      try {
-        const highlighted = hljs.highlight(str, { language: lang, ignoreIllegals: true }).value;
-        return `<pre class="markdown-code"><code class="hljs language-${lang}">${highlighted}</code></pre>`;
-      } catch (error) {
-        recordFrontendDiagnostic('markdown.highlight', error, { lang });
-      }
-    }
-    const escaped = md.utils.escapeHtml(str);
-    return `<pre class="markdown-code"><code>${escaped}</code></pre>`;
-  }
-});
-
-// Register KaTeX plugin for $...$ and $$...$$ delimiters.
-// The package is CommonJS, so the callable plugin may sit on `.default`.
-const katexPlugin = typeof markdownItKatex === 'function'
-  ? markdownItKatex
-  : markdownItKatex?.default;
-const compatibleKatex = {
-  renderToString(source, options) {
-    return katex.renderToString(normalizeKatexSource(source), options);
-  }
-};
-
-md.use(katexPlugin, {
-  katex: compatibleKatex,
-  throwOnError: false,
-  strict: false,
-  enableBareBlocks: true
-});
-
-// Keep math readable in responsive containers by scaling only formulas whose
-// natural width is larger than their containing paragraph.
-const originalInlineKatexRenderer = md.renderer.rules.math_inline;
-if (typeof originalInlineKatexRenderer === 'function') {
-  md.renderer.rules.math_inline = (tokens, idx, options, env, self) => (
-    `<span class="katex-inline-fit">${originalInlineKatexRenderer(tokens, idx, options, env, self)}</span>`
-  );
-}
-
-// Character codes for backslash delimiter parsing
-const BACKSLASH_CHAR_CODE = 0x5c;
-const OPEN_PAREN_CHAR_CODE = 0x28;
-const OPEN_BRACKET_CHAR_CODE = 0x5b;
-const INLINE_MATH_CLOSE = '\\)';
-const BLOCK_MATH_CLOSE = '\\]';
-
-// Inline rule for \(...\). Unterminated math falls through to plain text so
-// streaming responses never flash a KaTeX error mid-formula.
-function mathInlineParen(state, silent) {
-  const start = state.pos;
-  if (state.src.charCodeAt(start) !== BACKSLASH_CHAR_CODE) return false;
-  if (state.src.charCodeAt(start + 1) !== OPEN_PAREN_CHAR_CODE) return false;
-  const end = state.src.indexOf(INLINE_MATH_CLOSE, start + 2);
-  if (end === -1) return false;
-  const content = state.src.slice(start + 2, end);
-  if (!content.trim()) return false;
-  if (!silent) {
-    const token = state.push('math_inline', 'math', 0);
-    token.markup = '\\(';
-    token.content = content;
-  }
-  state.pos = end + 2;
-  return true;
-}
-
-// Block rule for \[...\]. Emitting a block token keeps the rendered
-// <p class="katex-block"> at the top level instead of nesting it in a paragraph.
-function mathBlockBracket(state, startLine, endLine, silent) {
-  const start = state.bMarks[startLine] + state.tShift[startLine];
-  const max = state.eMarks[startLine];
-  if (state.sCount[startLine] - state.blkIndent >= 4) return false;
-  if (state.src.charCodeAt(start) !== BACKSLASH_CHAR_CODE) return false;
-  if (state.src.charCodeAt(start + 1) !== OPEN_BRACKET_CHAR_CODE) return false;
-
-  const firstLineTail = state.src.slice(start + 2, max);
-  let content = null;
-  let nextLine = startLine;
-  const closeIndex = firstLineTail.indexOf(BLOCK_MATH_CLOSE);
-  if (closeIndex !== -1) {
-    if (firstLineTail.slice(closeIndex + 2).trim()) return false;
-    content = firstLineTail.slice(0, closeIndex);
-  } else {
-    let buffer = firstLineTail;
-    while (content === null) {
-      nextLine += 1;
-      if (nextLine >= endLine) return false;
-      const lineStart = state.bMarks[nextLine] + state.tShift[nextLine];
-      const lineEnd = state.eMarks[nextLine];
-      const line = state.src.slice(lineStart, lineEnd);
-      const lineClose = line.indexOf(BLOCK_MATH_CLOSE);
-      if (lineClose === -1) {
-        buffer += `\n${line}`;
-        continue;
-      }
-      if (line.slice(lineClose + 2).trim()) return false;
-      content = `${buffer}\n${line.slice(0, lineClose)}`;
-    }
-  }
-  if (!content.trim()) return false;
-  if (silent) return true;
-
-  const token = state.push('math_block', 'math', 0);
-  token.block = true;
-  token.markup = '\\[';
-  token.content = content;
-  token.map = [startLine, nextLine + 1];
-  state.line = nextLine + 1;
-  return true;
-}
-
-md.inline.ruler.before('escape', 'math_inline_paren', mathInlineParen);
-md.block.ruler.before('fence', 'math_block_bracket', mathBlockBracket, {
-  alt: ['paragraph', 'blockquote', 'list']
-});
-
-// Custom fence renderer to wrap code blocks properly
-md.renderer.rules.fence = (tokens, idx, options, env, self) => {
-  const token = tokens[idx];
-  const info = token.info ? token.info.trim() : '';
-  const langName = info.split(/\s+/)[0];
-  
-  if (options.highlight) {
-    const highlighted = options.highlight(token.content, langName, info);
-    if (highlighted.indexOf('<pre') !== 0) {
-      return `<pre class="markdown-code"><code class="hljs${langName ? ` language-${langName}` : ''}">${highlighted}</code></pre>`;
-    }
-    return highlighted;
-  }
-  
-  const escaped = md.utils.escapeHtml(token.content);
-  return `<pre class="markdown-code"><code${langName ? ` class="language-${langName}"` : ''}>${escaped}</code></pre>`;
-};
-
-// Cache for rendered HTML
-const renderCache = new Map();
-const MAX_CACHE_SIZE = 200;
+const renderCache = createMarkdownRenderCache();
 const LF_CHAR_CODE = 10;
 const CR_CHAR_CODE = 13;
 const FOLD_CARET = '\u203a';
 const DEFAULT_FOLD_TITLE = '\u6298\u53e0\u5185\u5bb9';
 
-function getCachedRender(text, renderPlugins = []) {
+function getCachedRender(text, renderPlugins = [], cacheResult = true) {
   if (!text) return '';
   const cacheKey = `${text}\n<!--plugins:${buildPluginCacheKey(renderPlugins)}-->`;
-  if (renderCache.has(cacheKey)) {
-    const cached = renderCache.get(cacheKey);
-    renderCache.delete(cacheKey);
-    renderCache.set(cacheKey, cached);
-    return cached;
-  }
+  const cached = cacheResult ? renderCache.get(cacheKey) : undefined;
+  if (cached !== undefined) return cached;
   
   const rawHtml = renderWithPlugins(text, renderPlugins);
   const html = DOMPurify.sanitize(rawHtml, {
@@ -183,13 +32,8 @@ function getCachedRender(text, renderPlugins = []) {
     ADD_ATTR: ['class', 'data-lang', 'open', 'encoding']
   });
   
-  // Evict oldest entries if cache is full
-  if (renderCache.size >= MAX_CACHE_SIZE) {
-    const firstKey = renderCache.keys().next().value;
-    renderCache.delete(firstKey);
-  }
-  
-  renderCache.set(cacheKey, html);
+  // Streaming prefixes are rarely reused and would evict settled history.
+  if (cacheResult) renderCache.set(cacheKey, html);
   return html;
 }
 
@@ -369,6 +213,10 @@ export default defineComponent({
     deferUpdates: {
       type: Boolean,
       default: false
+    },
+    highlightDialogue: {
+      type: Boolean,
+      default: false
     }
   },
   setup(props, { attrs, emit }) {
@@ -378,23 +226,27 @@ export default defineComponent({
     let pendingRenderPlugins = props.renderPlugins;
     let pendingHtml = '';
     let appliedHtml = null;
+    let appliedDialogueHighlight = null;
     let templateElement = null;
     let katexResizeObserver = null;
     let katexFitTimeout = null;
 
     function renderMarkdownNow(text, renderPlugins) {
-      pendingHtml = getCachedRender(text, renderPlugins);
+      pendingHtml = getCachedRender(text, renderPlugins, !props.deferUpdates);
       reconcileRenderedHtml();
     }
 
     function reconcileRenderedHtml() {
       const root = rootElement.value;
-      if (!root || appliedHtml === pendingHtml || typeof document === 'undefined') return;
+      if (!root || typeof document === 'undefined') return;
+      if (appliedHtml === pendingHtml && appliedDialogueHighlight === props.highlightDialogue) return;
       templateElement ||= document.createElement('template');
       templateElement.innerHTML = pendingHtml;
+      if (props.highlightDialogue) highlightDialogueQuotes(templateElement.content);
       reconcileDomChildren(root, templateElement.content);
       applyKatexSurfaceContrast(root);
       appliedHtml = pendingHtml;
+      appliedDialogueHighlight = props.highlightDialogue;
       fitInlineKatex();
       emit('rendered');
     }
@@ -504,8 +356,13 @@ export default defineComponent({
 
     // The typewriter owns the visible update cadence. Commit Markdown after
     // Vue's text update without adding a second animation-frame queue.
-    watch(() => props.text, scheduleRenderedMarkdown, { immediate: true, flush: 'post' });
-    watch(() => buildPluginCacheKey(props.renderPlugins), scheduleRenderedMarkdown, { flush: 'post' });
+    watch(
+      [() => props.text, () => buildPluginCacheKey(props.renderPlugins), () => props.deferUpdates],
+      scheduleRenderedMarkdown,
+      { immediate: true, flush: 'post' }
+    );
+    // The cached HTML is presentation-neutral; toggles only reconcile its DOM.
+    watch(() => props.highlightDialogue, reconcileRenderedHtml, { flush: 'post' });
     onMounted(() => {
       reconcileRenderedHtml();
       fitInlineKatex();
@@ -549,3 +406,9 @@ export default defineComponent({
   }
 });
 </script>
+
+<style scoped>
+.markdown-content :deep(.chat-dialogue-quote) {
+  color: var(--chat-dialogue-color);
+}
+</style>

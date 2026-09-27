@@ -128,7 +128,7 @@ test('CharacterFormView locks AI actions behind one shared busy state', () => {
   );
   assert.match(
     characterAiGenerationSource,
-    /async function completeWithAi\(\)\s*{\s*if \(characterAiActionBusy\.value\) return;/
+    /async function runCharacterAi\(\{ resume = false \} = \{\}\) {\s*if \(characterAiActionBusy\.value\) return;/
   );
   assert.match(
     characterAiGenerationSource,
@@ -174,14 +174,14 @@ test('CharacterFormView locks AI actions behind one shared busy state', () => {
   assert.match(characterAiDraftInputsTemplate, /:checked="useCurrentDraft"[\s\S]*@change="emit\('update:useCurrentDraft', readInputChecked\(\$event\)\)"/);
   assert.match(characterAiDraftInputsTemplate, /class="ai-scope-disclosure"[\s\S]*selectedOptionCount[\s\S]*setAllOptions\(true\)[\s\S]*setAllOptions\(false\)[\s\S]*class="ai-scope-grid"[\s\S]*v-for="\(enabled, key\) in options"/);
   assert.match(characterAiDraftPanelTemplate, /<CharacterAiDraftActions[\s\S]*:disabled="disabled"[\s\S]*:loading="loading"[\s\S]*@complete="emit\('complete'\)"[\s\S]*@stop="emit\('stop'\)"/);
-  assert.match(characterAiDraftPanelTemplate, /<aside v-if="hasOutput" class="ai-workbench-results"[\s\S]*<CharacterAiModSuggestions[\s\S]*<CharacterAiProcessPanel/);
+  assert.match(characterAiDraftPanelTemplate, /<aside class="ai-workbench-results"[\s\S]*<CharacterAiProcessPanel[\s\S]*<CharacterAiModSuggestions/);
   assert.match(characterAiProcessPanelScript, /const latestSummary = computed\(\(\) => \{[\s\S]*props\.process\.length - 1[\s\S]*step\?\.content \|\| step\?\.reasoning/);
   assert.match(characterAiProcessPanelTemplate, /class="ai-process-summary"[\s\S]*class="ai-process-disclosure"[\s\S]*class="ai-process-detail-scroll"/);
   assert.doesNotMatch(characterAiProcessPanelTemplate, /class="ai-(?:process-step|tool-detail)" open/);
-  assert.match(characterAiDraftActionsScript, /import \{ WandSparkles \} from '@lucide\/vue';/);
-  assert.match(characterAiDraftActionsScript, /const emit = defineEmits\(\['complete', 'stop'\]\);/);
-  assert.match(characterAiDraftActionsTemplate, /class="primary-button ai-draft-button"[\s\S]*:disabled="disabled"[\s\S]*:aria-busy="loading"[\s\S]*emit\('complete'\)/);
-  assert.match(characterAiDraftActionsTemplate, /v-if="loading"[\s\S]*emit\('stop'\)/);
+  assert.match(characterAiDraftActionsScript, /WandSparkles/);
+  assert.match(characterAiDraftActionsScript, /const emit = defineEmits\(\[[^\]]*'resume'[^\]]*'retry'[^\]]*'save'[^\]]*'stop'[^\]]*\]\);/);
+  assert.match(characterAiDraftActionsTemplate, /class="primary-button ai-draft-button"[\s\S]*:disabled="disabled"[\s\S]*emit\('complete'\)/);
+  assert.match(characterAiDraftActionsTemplate, /v-else class="primary-button ai-draft-button"[\s\S]*emit\('stop'\)/);
   assert.match(characterAdvancedSettingsPanelTemplate, /class="ghost-button"\s+type="button"\s+:disabled="characterAiActionBusy"\s+:aria-busy="advancedAiLoading"/);
   assert.doesNotMatch(characterFormTemplate, /:disabled="aiLoading \|\| advancedAiLoading"/);
   assert.doesNotMatch(characterFormTemplate, /class="primary-button ai-draft-button" type="button" :disabled="aiLoading"/);
@@ -783,7 +783,7 @@ test('CharacterFormView parses status template tokens without split arrays', () 
 test('CharacterFormView builds status blueprint editor rows without intermediate mapping arrays', () => {
   assert.match(
     characterStatusBlueprintSource,
-    /import \{ parseStatusTemplateToken \} from '\.\.\/\.\.\/\.\.\/\.\.\/shared\/statusTemplateTokens\.js';/
+    /import \{ (?:[\w, ]*)parseStatusTemplateToken \} from '\.\.\/\.\.\/\.\.\/\.\.\/shared\/statusTemplateTokens\.js';/
   );
   const extractPartsStart = characterStatusBlueprintSource.indexOf('function extractCompositePlaceholderParts(value = \'\', label = \'\') {');
   const extractPartsEnd = characterStatusBlueprintSource.indexOf('\nfunction isMeterTemplateProperty', extractPartsStart);
@@ -864,7 +864,10 @@ test('CharacterFormView normalizes accessory skill payloads with a direct defaul
   assert.match(snippet, /for \(const key in defaults\)/);
   assert.match(snippet, /normalized\[key\] = \{/);
   assert.match(snippet, /enabled: normalizeSkillEnabled\(source\.enabled, defaults\[key\]\.enabled\)/);
-  assert.match(snippet, /modelOverride: String\(source\.modelOverride \|\| source\.model_override \|\| ''\)\.trim\(\)/);
+  assert.match(snippet, /modelOverride: String\(source\.modelOverride \|\| source\.model_override \|\| ''\)\.trim\(\)\.slice\(0, 100\)/);
+  assert.match(snippet, /providerProfileId: String\(source\.providerProfileId \|\| source\.provider_profile_id \|\| ''\)\.trim\(\)\.slice\(0, 160\)/);
+  assert.match(snippet, /tools: normalizeAccessorySkillTools\(source\.tools\)/);
+  assert.match(characterFormPayloadSource, /memoryAgent: createDefaultAccessorySkill\('auto'\)/);
   assert.match(snippet, /return normalized;/);
   assert.doesNotMatch(snippet, /Object\.fromEntries/);
   assert.doesNotMatch(snippet, /Object\.keys\(defaults\)\.map/);
@@ -1058,11 +1061,11 @@ test('CharacterFormView preserves unchanged AI process panel references', () => 
   assert.doesNotMatch(characterAiGenerationSource, /\[\.\.\.\(Array\.isArray\(target\.tools\) \? target\.tools : \[\]\), log\]/);
   assert.match(
     characterAiGenerationSource,
-    /async function completeWithAi\(\) \{[\s\S]*setAiToolCallsIfChanged\(\[\]\);[\s\S]*setAiProcessIfChanged\(\[\{ round: 1, reasoning: '等待模型响应\.\.\.', content: '', tools: \[\] \}\]\);[\s\S]*setAiModSuggestionsIfChanged\(\[\]\);/
+    /async function runCharacterAi\(\{ resume = false \} = \{\}\) \{[\s\S]*if \(!resume\) \{[\s\S]*setAiToolCallsIfChanged\(\[\]\);[\s\S]*setAiProcessIfChanged\([\s\S]*state: 'running'[\s\S]*setAiModSuggestionsIfChanged\(\[\]\);/
   );
   assert.match(
     characterAiGenerationSource,
-    /setAiModSuggestionsIfChanged\(result\.character\?\.modSuggestions\);[\s\S]*setAiToolCallsIfChanged\(result\.toolCalls\);[\s\S]*setAiProcessIfChanged\(result\.process\);/
+    /setAiModSuggestionsIfChanged\(result\.character\?\.modSuggestions\);[\s\S]*setAiToolCallsIfChanged\(mergeUniqueToolCallLists\(aiToolCalls\.value, result\.toolCalls\)\);[\s\S]*result\.streamRecovered[\s\S]*mergeProcessLists\(baseProcess, result\.process, resultRoundOffset\)/
   );
   assert.match(
     characterAiGenerationSource,
@@ -1076,22 +1079,22 @@ test('CharacterFormView preserves unchanged AI process panel references', () => 
   assert.match(characterAiDraftPanelTemplate, /<CharacterAiModSuggestions[\s\S]*v-if="suggestions\.length"[\s\S]*:suggestions="suggestions"[\s\S]*:creating="suggestedModsCreating"[\s\S]*@create="emit\('create-suggested-mods'\)"/);
   assert.match(characterAiModSuggestionsScript, /import \{ ListChecks, Plus \} from '@lucide\/vue';/);
   assert.match(characterAiModSuggestionsScript, /const emit = defineEmits\(\['create'\]\);/);
-  assert.match(characterAiModSuggestionsTemplate, /class="ai-mod-suggestions"/);
-  assert.match(characterAiModSuggestionsTemplate, /AI Mod 建议 \{\{ suggestions\.length \}\}/);
+  assert.match(characterAiModSuggestionsTemplate, /class="ai-mod-suggestions" aria-label="AI Mod 建议"/);
+  assert.match(characterAiModSuggestionsTemplate, /class="ai-mod-head"[\s\S]*Mod 建议[\s\S]*\{\{ suggestions\.length \}\} 项/);
   assert.match(characterAiModSuggestionsTemplate, /v-for="\([\s\S]*mod, index[\s\S]*\) in suggestions"/);
   assert.match(characterAiModSuggestionsTemplate, /:disabled="creating"[\s\S]*@click="emit\('create'\)"/);
   assert.match(characterAiModSuggestionsTemplate, /\{\{ creating \? '创建中\.\.\.' : '创建这些 Mod' \}\}/);
   assert.match(
     characterAiGenerationSource,
-    /function aiStreamHandlers\(isCurrent = \(\) => !isDisposed\(\)\) \{[\s\S]*step: \(step = \{\}\) => \{[\s\S]*updateAiProcessStep\(step\.round \|\| 1, \(target\) => \(\{[\s\S]*tools: target\.tools\?\.length \? target\.tools : cloneAiToolList\(step\.tools\)[\s\S]*tool: \(call = \{\}\) => \{[\s\S]*updateAiProcessStep\(call\.round \|\| 1, \(target\) => \(\{[\s\S]*tools: appendAiToolList\(target\.tools, log\)[\s\S]*appendAiToolCall\(log\);/
+    /function aiStreamHandlers\(\{[\s\S]*isCurrent = \(\) => !isDisposed\(\)[\s\S]*roundOffset = 0[\s\S]*step: \(step = \{\}\) => \{[\s\S]*updateAiProcessStep\(round, \(target\) => \(\{[\s\S]*tools: target\.tools\?\.length \? target\.tools : cloneAiToolList\(step\.tools\)[\s\S]*tool: \(call = \{\}\) => \{[\s\S]*tools: appendAiToolList\(target\.tools, log\)[\s\S]*appendAiToolCall\(log\);/
   );
   assert.match(characterFormTemplate, /<CharacterAiDraftPanel[\s\S]*:process="editor\.aiProcess"[\s\S]*:reasoning="editor\.aiReasoning"[\s\S]*:tool-calls="editor\.aiToolCalls"/);
-  assert.match(characterAiDraftPanelTemplate, /<CharacterAiProcessPanel[\s\S]*v-if="process\.length \|\| toolCalls\.length"[\s\S]*:process="process"[\s\S]*:reasoning="reasoning"[\s\S]*:tool-calls="toolCalls"/);
+  assert.match(characterAiDraftPanelTemplate, /<CharacterAiProcessPanel[\s\S]*v-else[\s\S]*:process="process"[\s\S]*:reasoning="reasoning"[\s\S]*:tool-calls="toolCalls"/);
   assert.match(characterAiProcessPanelTemplate, /class="ai-process-text empty">等待模型返回本轮流程\.\.\.<\/p>/);
   assert.match(characterAiProcessPanelTemplate, /class="ai-tool-detail"[\s\S]*<strong>参数<\/strong>[\s\S]*<strong>结果<\/strong>/);
   assert.match(characterAiProcessPanelTemplate, /class="ai-tool-detail-list standalone"[\s\S]*v-for="\(call, index\) in toolCalls"[\s\S]*class="ai-tool-detail"/);
   assert.doesNotMatch(characterAiProcessPanelTemplate, /class="ai-tool-detail" open/);
-  assert.ok(countMatches(characterAiGenerationSource, /setAiProcessIfChanged\(\[\{ round: 1, reasoning: err\?\.message \|\| '[^']+', content: '', tools: \[\] \}\]\);/g) >= 2);
+  assert.match(characterAiGenerationSource, /aiLastError\.value = err\?\.message \|\| 'AI 生成失败';/);
   assert.doesNotMatch(characterAiGenerationSource, /aiToolCalls\.value\s*=(?!=)/);
   assert.doesNotMatch(characterAiGenerationSource, /aiProcess\.value\s*=(?!=)/);
   assert.doesNotMatch(characterAiGenerationSource, /aiModSuggestions\.value\s*=(?!=)/);
@@ -1102,7 +1105,7 @@ test('CharacterFormView preserves unchanged AI process panel references', () => 
   assert.doesNotMatch(characterFormScript, /function setAiToolCallsIfChanged/);
 });
 
-test('CharacterFormView uses single-section navigation', () => {
+test('CharacterFormView uses section navigation and a full creation form', () => {
   assert.match(characterFormScript, /useCharacterSections\(\{[\s\S]*sections: formSections,[\s\S]*isSectionVisible: \(section\) => isCharacterSectionVisibleInCurrentMode\(section\.id\)/);
   assert.match(characterSectionsSource, /const activeSection = ref\(sections\[0\]\?\.id \|\| 'basic'\);/);
   assert.match(characterSectionsSource, /const visibleSections = computed\(getVisibleSections\);/);
@@ -1111,7 +1114,8 @@ test('CharacterFormView uses single-section navigation', () => {
   assert.match(characterSectionsSource, /function goToNextSection\(\)/);
   assert.doesNotMatch(characterSectionsSource, /scrollIntoView|sectionNavRef|syncActiveSectionFromScroll|addEventListener\('scroll'/);
   assert.match(characterEditorDesktopTemplate, /class="character-studio-nav"[\s\S]*editor\.sectionGroups[\s\S]*editor\.activeSection[\s\S]*@click="editor\.setActiveSection\(section\.id\)"/);
-  assert.match(characterEditorDesktopTemplate, /<CharacterSectionOutlet v-if="editor\.activeSection"[\s\S]*:section-id="editor\.activeSection"/);
+  assert.match(characterEditorDesktopTemplate, /editor\.isCharacterCreationFullForm[\s\S]*v-for="section in editor\.visibleSections"/);
+  assert.match(characterEditorDesktopTemplate, /<CharacterSectionOutlet v-else-if="editor\.activeSection"[\s\S]*:section-id="editor\.activeSection"/);
   assert.match(characterEditorMobileTemplate, /class="character-mobile-section-item"[\s\S]*@click="enterSection\(section\.id\)"/);
   assert.match(stylesSource, /\.character-studio-nav\s*\{[\s\S]*position:\s*sticky;[\s\S]*max-height:/);
   assert.match(stylesSource, /\.character-mobile-sheet-head\s*\{[\s\S]*position:\s*sticky;/);
@@ -1140,7 +1144,7 @@ test('CharacterFormView uses an inline AI workbench without covering the form', 
   assert.doesNotMatch(characterAiDraftPanelScript, /dragging|panelPosition|panelSize|defineExpose/);
   assert.doesNotMatch(characterAiDraftPanelTemplate, /pointerdown|resize-handle|reset-panel|--ai-panel/);
   assert.match(characterAiDraftPanelTemplate, /class="ai-workbench-config"[\s\S]*class="ai-workbench-results"/);
-  assert.match(characterAiDraftPanelTemplate, /class="ai-workbench-status" :class="\{ loading \}" aria-live="polite"/);
+  assert.match(characterAiDraftPanelTemplate, /class="ai-workbench-status" :class="status" aria-live="polite"/);
 
   assert.match(
     stylesSource,
@@ -1149,8 +1153,8 @@ test('CharacterFormView uses an inline AI workbench without covering the form', 
   assert.doesNotMatch(stylesSource, /\.ai-draft-panel\s*\{[^}]*position:\s*fixed;/);
   assert.doesNotMatch(stylesSource, /\.ai-draft-panel\s*\{[^}]*resize:\s*both;/);
   assert.match(stylesSource, /\.character-studio-stage > \.form-panel\s*\{[^}]*width:\s*100%;[^}]*min-width:\s*0;/);
-  assert.match(stylesSource, /\.ai-workbench-grid\s*\{[^}]*display:\s*grid;[^}]*grid-template-columns:\s*minmax\(0, 1fr\);/);
-  assert.match(stylesSource, /@media \(min-width: 980px\) \{[\s\S]*\.ai-workbench-grid\.has-output\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1\.08fr\) minmax\(360px, 0\.92fr\);/);
+  assert.match(stylesSource, /\.ai-workbench-grid\s*\{[^}]*display:\s*grid;[^}]*grid-template-columns:\s*minmax\(340px, 1fr\) minmax\(0, 1\.05fr\);/);
+  assert.match(stylesSource, /@container \(max-width: 720px\) \{[\s\S]*\.ai-workbench-grid\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\);/);
   assert.match(stylesSource, /\.ai-workbench-results\s*\{[^}]*border-left:\s*1px solid/);
   assert.match(stylesSource, /\.ai-draft-panel \.field textarea\s*\{[^}]*height:\s*132px;[^}]*max-height:\s*280px;[^}]*resize:\s*vertical;/);
   assert.doesNotMatch(stylesSource, /padding-right:\s*min\(444px, 42vw\)/);
@@ -1167,7 +1171,7 @@ test('CharacterFormView keeps mobile AI assistant output inside the viewport', (
   );
   assert.match(
     stylesSource,
-    /\.ai-process-detail-scroll\s*\{[^}]*display:\s*grid;[^}]*max-height:\s*min\(420px, 48dvh\);[^}]*overflow:\s*auto;/
+    /\.ai-process-detail-scroll\s*\{[^}]*display:\s*grid;[^}]*max-height:\s*min\(520px, 52dvh\);[^}]*overflow:\s*auto;/
   );
   assert.match(
     stylesSource,
@@ -1190,4 +1194,86 @@ test('CharacterFormView keeps mobile AI assistant output inside the viewport', (
     /\.character-mobile-actionbar\s*\{[^}]*position:\s*fixed;[^}]*env\(safe-area-inset-bottom/
   );
   assert.match(stylesSource, /\.ai-tool-detail pre\s*\{[^}]*max-height:\s*220px;[^}]*overflow:\s*auto;/);
+});
+
+test('Character AI workbench keeps one status per row and no nested option cards', () => {
+  // The monitor heading used to echo `statusMessage`, which then repeated again
+  // in the process summary and once more in the trace row. Keep it static so a
+  // failed run reports itself exactly once.
+  assert.match(characterAiDraftPanelTemplate, /<strong>实时运行台<\/strong>\s*<small>模型思考、工具调用与阶段结果<\/small>/);
+  assert.doesNotMatch(characterAiDraftPanelTemplate, /ai-monitor-heading[\s\S]*<small>\{\{ statusMessage/);
+
+  // Trace title, run counts and the expander share the disclosure summary.
+  assert.match(
+    characterAiProcessPanelTemplate,
+    /<details class="ai-process-disclosure" :open="loading">\s*<summary class="ai-process-header">[\s\S]*执行轨迹[\s\S]*\{\{ completedToolCount \}\} 完成 \/ \{\{ toolCalls\.length \}\} 调用[\s\S]*ai-process-caret/
+  );
+  assert.doesNotMatch(characterAiProcessPanelTemplate, /<div class="ai-process-header">/);
+
+  // Both run switches live in one frame instead of two stacked bordered cards.
+  assert.match(
+    characterAiDraftInputsTemplate,
+    /<div class="ai-option-stack">\s*<label class="ai-option-row ai-context-row"[\s\S]*<label class="ai-option-row ai-stream-card"[\s\S]*<\/div>/
+  );
+  assert.match(stylesSource, /\.ai-option-row \+ \.ai-option-row\s*\{[^}]*border-top:\s*1px solid/);
+
+  // Scope toggles are chips in an auto-fill grid so 11 entries never leave an
+  // orphan row, and the counters stay on one line.
+  assert.match(characterAiDraftInputsTemplate, /class="ai-scope-chip" :class="\{ 'is-on': enabled \}"/);
+  assert.match(
+    stylesSource,
+    /\.ai-scope-grid\s*\{[^}]*grid-template-columns:\s*repeat\(auto-fill, minmax\(100px, 1fr\)\);/
+  );
+  assert.match(
+    stylesSource,
+    /\.ai-monitor-counters\s*\{[^}]*flex-wrap:\s*nowrap;[^}]*min-width:\s*max-content;/
+  );
+  assert.match(
+    stylesSource,
+    /@container \(max-width: 480px\) \{[\s\S]*\.ai-monitor-counters\s*\{[^}]*grid-column:\s*2;/
+  );
+
+  // Steps render as a timeline rail rather than a bordered card per round.
+  assert.match(stylesSource, /\.ai-process-step\s*\{[^}]*position:\s*relative;[^}]*border:\s*0;/);
+  assert.match(stylesSource, /\.ai-process-step:last-child::before\s*\{[^}]*display:\s*none;/);
+
+  // The primary call to action keeps full width; checkpoint controls get a row.
+  assert.match(characterAiDraftActionsTemplate, /<div v-if="showSecondary" class="ai-action-secondary">/);
+  assert.match(stylesSource, /\.ai-action-row\s*\{[^}]*display:\s*grid;/);
+});
+
+test('Character AI workbench supports thinking levels and resumable checkpoints', () => {
+  assert.match(characterAiPreferencesSource, /ASSISTANT_THINKING_STORAGE_KEY/);
+  assert.match(characterAiPreferencesSource, /resolveProviderModelCapabilities/);
+  assert.match(characterAiPreferencesSource, /assistantThinkingOptions/);
+  assert.match(characterFormTemplate, /v-model:thinking-level="editor\.assistantThinkingLevel"/);
+  assert.match(characterFormTemplate, /:has-checkpoint="editor\.aiHasCheckpoint"/);
+  assert.match(characterFormTemplate, /@resume="editor\.resumeCharacterAi"/);
+  assert.match(characterFormTemplate, /@save-checkpoint="editor\.saveAiCheckpoint"/);
+  assert.match(characterFormTemplate, /:warnings="editor\.aiWarnings"/);
+  assert.match(characterAiGenerationSource, /checkpoint: \(checkpoint = \{\}\) =>/);
+  assert.match(characterAiGenerationSource, /function persistAiSession\(\)/);
+  assert.match(characterAiGenerationSource, /warnings: normalizeAiWarnings\(aiWarnings\.value\)/);
+  assert.match(characterAiGenerationSource, /setAiWarningsIfChanged\(result\.warnings\)/);
+  assert.match(characterAiGenerationSource, /async function resumeCharacterAi\(\)/);
+  assert.match(characterAiGenerationSource, /pendingToolNames: normalizeStringList\(aiCheckpoint\.value\?\.pendingToolNames\)/);
+  assert.match(characterAiGenerationSource, /actionHistory: normalizeAiActionHistory\(aiCheckpoint\.value\?\.actionHistory\)/);
+  assert.match(characterAiDraftPanelTemplate, /class="ai-workbench-results" :class="\{ empty: !hasOutput \}"/);
+  assert.match(characterAiDraftPanelTemplate, /class="ai-run-warnings"[\s\S]*v-for="\(warning, index\) in warnings"/);
+  assert.match(characterAiDraftPanelTemplate, /<CharacterAiProcessPanel[\s\S]*:status="status"/);
+  assert.match(characterAiProcessPanelTemplate, /class="ai-thinking-status"[\s\S]*查看模型活动/);
+  assert.match(characterAiProcessPanelTemplate, /\{\{ stepTitle\(step, stepIndex\) \}\}/);
+  assert.doesNotMatch(characterAiProcessPanelTemplate, /class="ai-reasoning-disclosure" :open=/);
+  assert.match(characterEditorSource, /if \(!editing\) \{\s*cancelCharacterAiGeneration\(\);\s*discardAiSession\(\);\s*\}/);
+});
+
+test('Character AI workbench exposes a persisted provider streaming switch', () => {
+  assert.match(characterAiPreferencesSource, /ASSISTANT_STREAMING_STORAGE_KEY/);
+  assert.match(characterAiPreferencesSource, /const assistantStreamingEnabled = ref\(loadAssistantStreamingEnabled\(\)\);/);
+  assert.match(characterAiPreferencesSource, /localStorage\.setItem\(ASSISTANT_STREAMING_STORAGE_KEY, value \? 'true' : 'false'\)/);
+  assert.match(characterFormTemplate, /v-model:streaming-enabled="editor\.assistantStreamingEnabled"/);
+  assert.match(characterAiDraftPanelTemplate, /:streaming-enabled="streamingEnabled"[\s\S]*@update:streaming-enabled="emit\('update:streamingEnabled', \$event\)"/);
+  assert.match(characterAiDraftInputsTemplate, /class="ai-option-row ai-stream-card"[\s\S]*class="ai-toggle ai-stream-toggle"[\s\S]*'update:streamingEnabled'/);
+  assert.match(characterAiGenerationSource, /providerStreaming: Boolean\(assistantStreamingEnabled\?\.value\)/);
+  assert.doesNotMatch(characterAiDraftInputsTemplate, /class="ai-scope-disclosure" open/);
 });

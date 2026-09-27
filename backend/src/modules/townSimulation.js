@@ -170,6 +170,8 @@ export function getTownSnapshot(database, userId, townId, options = {}) {
 export function recordTownEvent(database, userId, townId, payload = {}) {
   const town = getTown(database, userId, townId);
   if (!town) return null;
+  if (payload.payload?.locationId && !(town.mapConfig?.locations || []).some((location) => location.id === payload.payload.locationId)) throw new Error('事件引用的地点不存在');
+  if (payload.payload?.effect === 'closure' && !payload.payload.locationId) throw new Error('暂停营业事件必须指定地点');
   return recordTownSimulationEvent(database, userId, town, payload, {
     normalizeResidentId: (residentId) => normalizeResidentId(database, townId, residentId),
     normalizeTick,

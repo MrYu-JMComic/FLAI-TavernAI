@@ -3,10 +3,8 @@ import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 import { useVirtualizer } from '@tanstack/vue-virtual';
 import {
   AlertTriangle,
-  BookOpen,
   Bot,
   ChevronRight,
-  Clock3,
   Compass,
   Download,
   Eye,
@@ -19,10 +17,10 @@ import {
   Search,
   Settings,
   SlidersHorizontal,
-  Sparkles,
   Star,
   Upload,
-  WandSparkles
+  WandSparkles,
+  X
 } from '@lucide/vue';
 import {
   fetchCharacter,
@@ -69,6 +67,7 @@ function saveStoredCharacterSort(value) {
 
 const characters = ref([]);
 const search = ref('');
+const searchInputRef = ref(null);
 const sort = ref(readStoredCharacterSort());
 const sortOptions = [
   { value: 'created', label: '按创建时间' },
@@ -126,10 +125,10 @@ const homeStats = computed(() => {
   const publicCount = stats.publicCount;
   const favoriteCount = stats.favoriteCount;
   return [
-    { label: '全部角色', value: total },
-    { label: '公开角色', value: publicCount },
-    { label: '我的收藏', value: favoriteCount },
-    { label: '标签数量', value: tags.value.length }
+    { label: hasActiveFilters.value ? '匹配角色' : '全部角色', value: total },
+    { label: hasActiveFilters.value ? '其中公开' : '公开角色', value: publicCount },
+    { label: hasActiveFilters.value ? '其中收藏' : '我的收藏', value: favoriteCount },
+    { label: '全部标签', value: tags.value.length }
   ];
 });
 
@@ -141,8 +140,6 @@ const activeFilterLabel = computed(() => {
 });
 
 const hasActiveFilters = computed(() => Boolean(search.value || selectedTag.value));
-
-const currentSortOption = computed(() => getSortOptionByValue(sort.value));
 
 const providerLabel = computed(() => {
   if (!props.provider?.model && !props.provider?.gatewayName) {
@@ -192,12 +189,6 @@ const hotTagRailSummary = computed(() => (
 ));
 
 const hotTagRailLabel = computed(() => `热门标签，${hotTagRailSummary.value}`);
-
-const quickActions = computed(() => [
-  { label: '新角色', icon: Plus, view: 'characterNew', tone: 'primary' },
-  { label: '世界书', icon: BookOpen, view: 'worldBooks', tone: 'quiet' },
-  { label: '模型设置', icon: Settings, view: 'settings', tone: providerReady.value ? 'quiet' : 'warning' }
-]);
 
 const emptyTitle = computed(() => (hasActiveFilters.value ? '没有匹配的角色' : '还没有角色'));
 const emptyCopy = computed(() => (
@@ -253,27 +244,6 @@ function pickRandomizedHotTags(sourceTags, seed, limit) {
     nextTags.push(scoredTags[index].tag);
   }
   return nextTags.sort(compareTagPopularity);
-}
-
-function getSortOptionByValue(value) {
-  const normalizedValue = String(value || '');
-  for (const option of sortOptions) {
-    if (option.value === normalizedValue) {
-      return option;
-    }
-  }
-  return sortOptions[0];
-}
-
-function getNextSortValue(value) {
-  const normalizedValue = String(value || '');
-  for (let index = 0; index < sortOptions.length; index += 1) {
-    if (sortOptions[index]?.value === normalizedValue) {
-      const nextIndex = (index + 1) % sortOptions.length;
-      return sortOptions[nextIndex]?.value || sortOptions[0].value;
-    }
-  }
-  return sortOptions[0].value;
 }
 
 function getTagByName(sourceTags, name) {
@@ -466,8 +436,10 @@ function hashHotTag(value = '') {
 }
 
 function measureContainerWidth() {
-  if (scrollContainerRef.value) {
-    containerWidth.value = scrollContainerRef.value.clientWidth;
+  // Measure the grid spacer, excluding list padding and preserving subpixel width.
+  const gridElement = scrollContainerRef.value?.firstElementChild;
+  if (gridElement) {
+    containerWidth.value = gridElement.getBoundingClientRect().width;
   }
   measureVirtualScrollMargin();
 }
@@ -751,8 +723,9 @@ async function clearFilters() {
   filterClearInProgress = false;
 }
 
-function cycleSort() {
-  sort.value = getNextSortValue(sort.value);
+function clearSearch() {
+  search.value = '';
+  searchInputRef.value?.focus();
 }
 
 async function loadCharacters() {
@@ -1348,90 +1321,43 @@ function formatCount(value) {
 
 <template>
   <section class="page-stack home-workbench" @dragover.prevent @drop.prevent="handleImportDrop">
-    <section class="home-hero">
-      <div class="home-hero-main">
-        <p class="home-eyebrow">
-          <Sparkles :size="16" />
-          <span>角色工作台</span>
-        </p>
+    <header class="home-library-header">
+      <div class="home-library-heading">
         <h1>角色库</h1>
-        <p class="home-hero-copy">管理角色、整理标签，并快速回到正在发生的故事。</p>
-        <p class="home-mobile-summary">
-          <span><strong>{{ characters.length }}</strong> 个角色</span>
-          <span aria-hidden="true">·</span>
-          <span><strong>{{ tags.length }}</strong> 个标签</span>
-          <span aria-hidden="true">·</span>
-          <span class="home-mobile-provider" :class="{ ready: providerReady }" :title="providerLabel">
-            {{ providerReady ? '模型已连接' : '模型未配置' }}
-          </span>
-        </p>
-        <div class="home-hero-actions">
-          <button class="home-primary-action" type="button" @click="emit('navigate', 'characterNew')">
-            <Plus :size="18" />
-            <span>创建角色</span>
-          </button>
-          <label class="home-secondary-action home-file-action" :class="{ disabled: importLoading }">
-            <Upload :size="18" />
-            <span>导入角色卡</span>
-            <input type="file" accept=".json" :disabled="importLoading" @change="handleImportFile" />
-          </label>
-        </div>
-      </div>
-
-      <div class="home-hero-aside" aria-label="首页状态">
-        <div class="home-provider-chip" :class="{ ready: providerReady }">
-          <WandSparkles :size="18" />
-          <div>
-            <span>{{ providerReady ? '当前模型' : '模型状态' }}</span>
-            <strong>{{ providerLabel }}</strong>
+        <dl class="home-library-stats" aria-label="角色库概览">
+          <div v-for="item in homeStats" :key="item.label">
+            <dt>{{ item.label }}</dt>
+            <dd>{{ loading ? '...' : item.value }}</dd>
           </div>
-        </div>
-        <div class="home-stat-grid" aria-label="角色库概览">
-          <div v-for="item in homeStats" :key="item.label" class="home-stat-tile">
-            <strong>{{ item.value }}</strong>
-            <span>{{ item.label }}</span>
-          </div>
-        </div>
+        </dl>
       </div>
-    </section>
+      <div class="home-header-actions">
+        <label class="home-secondary-action home-file-action" :class="{ disabled: importLoading }">
+          <Upload :size="18" aria-hidden="true" />
+          <span>导入角色卡</span>
+          <input type="file" accept=".json" aria-label="导入角色卡" :disabled="importLoading" @change="handleImportFile" />
+        </label>
+        <button class="home-primary-action" type="button" @click="emit('navigate', 'characterNew')">
+          <Plus :size="18" aria-hidden="true" />
+          <span>创建角色</span>
+        </button>
+      </div>
+    </header>
 
-    <button class="home-town-entry" type="button" @click="emit('navigate', 'town')">
-      <span class="home-town-entry-copy">
-        <MapPinned :size="24" aria-hidden="true" />
-        <span>
-          <strong>AI 虚拟小镇</strong>
-          <small>进入独立玩法，观察居民行动、对话，并向世界投放事件。</small>
-        </span>
-      </span>
-      <span class="home-town-entry-action">
-        <span>进入小镇</span>
-        <ChevronRight :size="18" aria-hidden="true" />
-      </span>
-    </button>
-
-    <section class="home-quick-row" aria-label="快捷入口">
-      <button
-        v-for="action in quickActions"
-        :key="action.label"
-        class="home-quick-action"
-        :class="action.tone"
-        type="button"
-        @click="emit('navigate', action.view)"
-      >
-        <component :is="action.icon" :size="18" />
-        <span>{{ action.label }}</span>
+    <div class="home-library-context">
+      <button class="home-provider-chip" :class="{ ready: providerReady }" type="button" :title="providerLabel" aria-label="模型设置" @click="emit('navigate', 'settings')">
+        <WandSparkles :size="18" aria-hidden="true" />
+        <span>{{ providerReady ? '当前模型' : '模型状态' }}</span>
+        <strong>{{ providerLabel }}</strong>
+        <ChevronRight :size="16" aria-hidden="true" />
       </button>
-      <label
-        class="home-quick-action quiet home-quick-import"
-        :class="{ disabled: importLoading }"
-        aria-label="导入角色卡"
-        title="导入角色卡"
-      >
-        <Upload :size="18" />
-        <span>导入</span>
-        <input type="file" accept=".json" aria-label="移动端导入角色卡" :disabled="importLoading" @change="handleImportFile" />
-      </label>
-    </section>
+      <button class="home-town-entry" type="button" @click="emit('navigate', 'town')">
+        <img src="/assets/town/bianjing-night-market.webp" alt="" width="64" height="44" />
+        <MapPinned :size="18" aria-hidden="true" />
+        <strong>AI 虚拟小镇</strong>
+        <ChevronRight :size="18" aria-hidden="true" />
+      </button>
+    </div>
 
     <section
       ref="controlPanelRef"
@@ -1440,27 +1366,17 @@ function formatCount(value) {
       :data-sticky-state="isControlPanelPinned ? 'pinned' : 'resting'"
       aria-label="角色筛选"
     >
-      <label class="home-search-field">
-        <Search :size="18" />
-        <input v-model.trim="search" placeholder="搜索名称、标签或人设" aria-label="搜索名称、标签或人设" />
-      </label>
-      <label class="home-select-field">
-        <Clock3 :size="18" />
+      <div class="home-search-field">
+        <label for="home-character-search"><Search :size="18" aria-hidden="true" /><span class="sr-only">搜索名称、标签或人设</span></label>
+        <input id="home-character-search" ref="searchInputRef" v-model.trim="search" type="search" placeholder="搜索名称、标签或人设" @keydown.esc="clearSearch" />
+        <button v-if="search" class="home-search-clear" type="button" aria-label="清除搜索" title="清除搜索" @click="clearSearch"><X :size="16" aria-hidden="true" /></button>
+      </div>
+      <label class="home-select-field" title="角色排序方式">
+        <SlidersHorizontal :size="18" aria-hidden="true" />
         <select v-model="sort" aria-label="角色排序方式">
           <option v-for="option in sortOptions" :key="option.value" :value="option.value">{{ option.label }}</option>
         </select>
       </label>
-      <button
-        class="home-sort-button"
-        :class="`sort-${sort}`"
-        type="button"
-        :title="`切换排序：${currentSortOption.label}`"
-        :aria-label="`当前排序 ${currentSortOption.label}，点击切换`"
-        @click="cycleSort"
-      >
-        <SlidersHorizontal :size="17" />
-        <span>{{ currentSortOption.label.replace(/^按/, '') }}</span>
-      </button>
       <button class="home-icon-button" type="button" title="重新加载" aria-label="重新加载" :disabled="loading" :aria-busy="loading" @click="retryLoadCharacters">
         <RefreshCw :size="18" />
       </button>
@@ -1469,10 +1385,9 @@ function formatCount(value) {
     <section v-if="topTags.length" class="home-tag-rail" :aria-label="hotTagRailLabel">
       <div class="home-tag-rail-head">
         <span>热门标签</span>
-        <small>{{ hotTagRailSummary }}</small>
       </div>
       <div class="home-tag-chip-row">
-        <button class="home-tag-chip" :class="{ active: !selectedTag }" type="button" @click="selectedTag = ''">
+        <button class="home-tag-chip" :class="{ active: !selectedTag }" :aria-pressed="!selectedTag" type="button" @click="selectedTag = ''">
           <Compass :size="14" />
           <span>全部</span>
         </button>
@@ -1481,6 +1396,8 @@ function formatCount(value) {
           :key="tag.id"
           class="home-tag-chip"
           :class="{ active: selectedTag === tag.name }"
+          :aria-pressed="selectedTag === tag.name"
+          :title="tag.name"
           :style="tag.color ? { '--tag-color': tag.color } : {}"
           type="button"
           @click="selectTag(tag.name)"
@@ -1499,12 +1416,9 @@ function formatCount(value) {
     </section>
 
     <section class="home-section-head">
-      <div>
-        <p>
-          <SlidersHorizontal :size="15" />
-          <span>当前视图</span>
-        </p>
+      <div class="home-results-heading">
         <h2>{{ activeFilterLabel }}</h2>
+        <span class="home-result-count" role="status">{{ loading ? '加载中...' : loadError ? '加载失败' : `${characters.length} 个角色` }}</span>
       </div>
       <button v-if="hasActiveFilters" class="home-text-button" type="button" @click="clearFilters">清除筛选</button>
     </section>
@@ -1632,7 +1546,7 @@ function formatCount(value) {
       </template>
     </section>
 
-    <section v-if="loading" class="home-skeleton-grid redesigned">
+    <section v-if="loading" class="home-skeleton-grid redesigned" aria-label="正在加载角色" aria-busy="true">
       <article v-for="n in 6" :key="n" class="home-skeleton-card">
         <div class="home-skeleton-hero" />
         <div class="home-skeleton-line wide" />
@@ -1683,6 +1597,7 @@ function formatCount(value) {
               type="button"
               :title="character.favoritedByMe ? `取消收藏（${character.favoriteCount || 0}）` : `收藏（${character.favoriteCount || 0}）`"
               :aria-label="character.favoritedByMe ? '取消收藏' : '收藏'"
+              :aria-pressed="Boolean(character.favoritedByMe)"
               :disabled="isReactionPending(character, 'favorite')"
               @click.stop="toggleFavorite(character)"
             >
@@ -1695,6 +1610,7 @@ function formatCount(value) {
               type="button"
               :title="character.likedByMe ? `取消点赞（${character.likeCount || 0}）` : `点赞（${character.likeCount || 0}）`"
               :aria-label="character.likedByMe ? '取消点赞' : '点赞'"
+              :aria-pressed="Boolean(character.likedByMe)"
               :disabled="isReactionPending(character, 'like')"
               @click.stop="toggleLike(character)"
             >
@@ -1706,11 +1622,11 @@ function formatCount(value) {
 
         <div class="home-character-identity">
           <div class="home-character-avatar">
-            <img v-if="character.avatarUrl" :src="character.avatarUrl" :alt="character.name" />
+            <img v-if="character.avatarUrl" :src="character.avatarUrl" :alt="character.name" loading="lazy" decoding="async" />
             <span v-else>{{ getInitial(character.name) }}</span>
           </div>
           <div class="home-character-title">
-            <h2>{{ character.name }}</h2>
+            <h2 :title="character.name">{{ character.name }}</h2>
             <small>{{ character.gender || '未设置' }} · {{ character.age || '年龄未知' }}</small>
           </div>
         </div>
@@ -1722,9 +1638,10 @@ function formatCount(value) {
             v-for="tag in getCharacterTags(character)"
             :key="tag.id || tag.name"
             class="home-card-tag"
+            :title="tag.name"
             :style="tag.color ? { '--tag-color': tag.color } : {}"
           >
-            {{ tag.name }}
+            <span>{{ tag.name }}</span>
           </span>
           <span v-if="getExtraTagCount(character)" class="home-card-tag muted">+{{ getExtraTagCount(character) }}</span>
         </div>
@@ -1777,6 +1694,7 @@ function formatCount(value) {
                   type="button"
                   :title="character.favoritedByMe ? `取消收藏（${character.favoriteCount || 0}）` : `收藏（${character.favoriteCount || 0}）`"
                   :aria-label="character.favoritedByMe ? '取消收藏' : '收藏'"
+                  :aria-pressed="Boolean(character.favoritedByMe)"
                   :disabled="isReactionPending(character, 'favorite')"
                   @click.stop="toggleFavorite(character)"
                 >
@@ -1789,6 +1707,7 @@ function formatCount(value) {
                   type="button"
                   :title="character.likedByMe ? `取消点赞（${character.likeCount || 0}）` : `点赞（${character.likeCount || 0}）`"
                   :aria-label="character.likedByMe ? '取消点赞' : '点赞'"
+                  :aria-pressed="Boolean(character.likedByMe)"
                   :disabled="isReactionPending(character, 'like')"
                   @click.stop="toggleLike(character)"
                 >
@@ -1800,11 +1719,11 @@ function formatCount(value) {
 
             <div class="home-character-identity">
               <div class="home-character-avatar">
-                <img v-if="character.avatarUrl" :src="character.avatarUrl" :alt="character.name" />
+                <img v-if="character.avatarUrl" :src="character.avatarUrl" :alt="character.name" loading="lazy" decoding="async" />
                 <span v-else>{{ getInitial(character.name) }}</span>
               </div>
               <div class="home-character-title">
-                <h2>{{ character.name }}</h2>
+                <h2 :title="character.name">{{ character.name }}</h2>
                 <small>{{ character.gender || '未设置' }} · {{ character.age || '年龄未知' }}</small>
               </div>
             </div>
@@ -1816,9 +1735,10 @@ function formatCount(value) {
                 v-for="tag in getCharacterTags(character)"
                 :key="tag.id || tag.name"
                 class="home-card-tag"
+                :title="tag.name"
                 :style="tag.color ? { '--tag-color': tag.color } : {}"
               >
-                {{ tag.name }}
+                <span>{{ tag.name }}</span>
               </span>
               <span v-if="getExtraTagCount(character)" class="home-card-tag muted">+{{ getExtraTagCount(character) }}</span>
             </div>

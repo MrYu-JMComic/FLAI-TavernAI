@@ -11,6 +11,8 @@ import {
 } from '../modules/statusBars.js';
 import { nowIso } from '../security.js';
 import { getAccessorySkillsPayload } from '../services/accessoryAgents.js';
+import { describeMemoryAgentTools } from '../services/conversationMemoryAgent.js';
+import { describeCastAgentOperations } from '../services/cast/castAgentSettings.js';
 import { getConversationForUser, parseJson } from './helpers.js';
 import { withSavepoint } from '../modules/savepoint.js';
 import {
@@ -100,7 +102,11 @@ export function createConversationSettingsRouter(ctx) {
       response.status(404).json({ error: '对话不存在' });
       return;
     }
-    response.json(getAccessorySkillsPayload(conversation, getStatusBar(db, request.auth.user.id, request.params.id)));
+    response.json({
+      ...getAccessorySkillsPayload(conversation, getStatusBar(db, request.auth.user.id, request.params.id)),
+      memoryAgentTools: describeMemoryAgentTools(),
+      castAgentOperations: describeCastAgentOperations()
+    });
   });
 
   router.put('/accessory-skills', requireAuth, (request, response) => {
@@ -109,7 +115,7 @@ export function createConversationSettingsRouter(ctx) {
       response.status(404).json({ error: '对话不存在' });
       return;
     }
-    response.json(payload);
+    response.json({ ...payload, memoryAgentTools: describeMemoryAgentTools(), castAgentOperations: describeCastAgentOperations() });
   });
 
   router.get('/status-bar', requireAuth, (request, response) => {

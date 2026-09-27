@@ -78,7 +78,7 @@ test('HomeView debounces search reloads while keeping sort and tag changes immed
 
   assert.match(
     homeViewTemplate,
-    /<input v-model\.trim="search" placeholder="[^"]+" aria-label="[^"]+" \/>/
+    /<input id="home-character-search" ref="searchInputRef" v-model\.trim="search" type="search" placeholder="[^"]+" @keydown\.esc="clearSearch" \/>/
   );
   assert.match(homeViewTemplate, /<select v-model="sort" aria-label="[^"]+">/);
 });
@@ -94,12 +94,12 @@ test('HomeView mobile filter controls stick to the internal scroll top', () => {
   );
   assert.match(
     stylesSource,
-    /@media \(max-width: 760px\) \{[\s\S]*\.home-layout-shell\s*\{[\s\S]*--home-control-sticky-top:\s*0px;[\s\S]*\}[\s\S]*\.home-control-panel\s*\{[\s\S]*grid-template-columns:\s*minmax\(0, 1fr\) minmax\(104px, 128px\);/
+    /@media \(max-width: 760px\) \{[\s\S]*\.home-layout-shell\s*\{[\s\S]*--home-control-sticky-top:\s*0px;[\s\S]*\}[\s\S]*\.home-control-panel\s*\{[\s\S]*grid-template-columns:\s*minmax\(0, 1fr\) 44px 44px;/
   );
   assert.match(stylesSource, /\.home-layout-shell\s*\{[\s\S]*--home-control-sticky-top:\s*10px;/);
 });
 
-test('HomeView filter panel morphs its corners only after it becomes pinned', () => {
+test('HomeView filter panel adds a divider when pinned without changing geometry', () => {
   assert.match(homeViewScript, /const controlPanelRef = ref\(null\);/);
   assert.match(homeViewScript, /const isControlPanelPinned = ref\(false\);/);
   assert.match(
@@ -112,11 +112,11 @@ test('HomeView filter panel morphs its corners only after it becomes pinned', ()
   );
   assert.match(
     stylesSource,
-    /\.home-layout-shell \.home-control-panel\s*\{[^}]*border-radius:\s*var\(--radius-md\);[^}]*transition:[^}]*border-radius var\(--duration-fast\) var\(--ease-standard\),[^}]*\}/
+    /\.home-layout-shell \.home-control-panel\s*\{[^}]*border-radius:\s*0;[^}]*transition:\s*box-shadow var\(--duration-fast\) var\(--ease-standard\);[^}]*\}/
   );
   assert.match(
     stylesSource,
-    /\.home-layout-shell \.home-control-panel\.is-pinned\s*\{[^}]*border-top-color:\s*transparent;[^}]*border-radius:\s*0 0 var\(--radius-md\) var\(--radius-md\);[^}]*\}/
+    /\.home-layout-shell \.home-control-panel\.is-pinned\s*\{[^}]*box-shadow:\s*0 1px 0 var\(--line\);[^}]*\}/
   );
 });
 
@@ -199,10 +199,10 @@ test('HomeView desktop layout fills the available page width without a nested ch
   );
 });
 
-test('mobile primary navigation docks edge to edge with only top corners rounded', () => {
+test('mobile primary navigation docks edge to edge and reserves its safe area', () => {
   assert.match(
     stylesSource,
-    /@media \(max-width: 620px\) \{[\s\S]*\.mobile-bottom-nav\s*\{[^}]*right:\s*0;[^}]*bottom:\s*0;[^}]*left:\s*0;[^}]*padding:\s*6px 6px calc\(6px \+ env\(safe-area-inset-bottom, 0px\)\);[^}]*border-right:\s*0;[^}]*border-bottom:\s*0;[^}]*border-left:\s*0;[^}]*border-radius:\s*var\(--radius-lg\) var\(--radius-lg\) 0 0;/
+    /@media \(max-width: 620px\) \{[\s\S]*\.mobile-bottom-nav\s*\{[^}]*right:\s*0;[^}]*bottom:\s*0;[^}]*left:\s*0;[^}]*env\(safe-area-inset-bottom, 0px\)[^}]*border-right:\s*0;[^}]*border-bottom:\s*0;[^}]*border-left:\s*0;[^}]*border-radius:\s*0;/
   );
   assert.match(
     stylesSource,
@@ -243,27 +243,16 @@ test('HomeView refreshes virtual scroll measurements after home content height c
   );
 });
 
-test('HomeView scans sort options and selected hot tags directly', () => {
-  assert.match(homeViewScript, /const currentSortOption = computed\(\(\) => getSortOptionByValue\(sort\.value\)\);/);
+test('HomeView uses a native sort selector and scans selected hot tags directly', () => {
+  assert.match(homeViewTemplate, /<select v-model="sort" aria-label="角色排序方式">/);
+  assert.doesNotMatch(homeViewScript, /function (cycleSort|getNextSortValue|getSortOptionByValue)\(/);
   assert.match(
     homeViewScript,
     /const selectedHotTag = computed\(\(\) => \{[\s\S]*if \(!selectedTag\.value\) \{[\s\S]*return null;[\s\S]*return getTagByName\(tags\.value, selectedTag\.value\);[\s\S]*\}\);/
   );
   assert.match(
     homeViewScript,
-    /function getSortOptionByValue\(value\) \{\s*const normalizedValue = String\(value \|\| ''\);[\s\S]*for \(const option of sortOptions\) \{[\s\S]*if \(option\.value === normalizedValue\) \{[\s\S]*return option;[\s\S]*return sortOptions\[0\];[\s\S]*\}/
-  );
-  assert.match(
-    homeViewScript,
-    /function getNextSortValue\(value\) \{\s*const normalizedValue = String\(value \|\| ''\);[\s\S]*for \(let index = 0; index < sortOptions\.length; index \+= 1\) \{[\s\S]*const nextIndex = \(index \+ 1\) % sortOptions\.length;[\s\S]*return sortOptions\[nextIndex\]\?\.value \|\| sortOptions\[0\]\.value;[\s\S]*return sortOptions\[0\]\.value;[\s\S]*\}/
-  );
-  assert.match(
-    homeViewScript,
     /function getTagByName\(sourceTags, name\) \{\s*const selectedName = String\(name \|\| ''\);[\s\S]*const list = Array\.isArray\(sourceTags\) \? sourceTags : \[\];[\s\S]*for \(const tag of list\) \{[\s\S]*if \(tag\?\.name === selectedName\) \{[\s\S]*return tag;[\s\S]*return null;[\s\S]*\}/
-  );
-  assert.match(
-    homeViewScript,
-    /function cycleSort\(\) \{\s*sort\.value = getNextSortValue\(sort\.value\);[\s\S]*\}/
   );
   assert.doesNotMatch(homeViewScript, /sortOptions\.find\(/);
   assert.doesNotMatch(homeViewScript, /sortOptions\.findIndex\(/);
@@ -481,7 +470,7 @@ test('HomeView ignores stale character import file reads', () => {
     /function cancelImport\(\) {[\s\S]*importFileReadToken \+= 1;[\s\S]*importPreview\.value = null;[\s\S]*}/
   );
   assert.equal(countMatches(homeViewTemplate, /class="home-secondary-action home-file-action" :class="\{ disabled: importLoading \}"/g), 2);
-  assert.equal(countMatches(homeViewTemplate, /<input type="file" accept="\.json" :disabled="importLoading" @change="handleImportFile" \/>/g), 2);
+  assert.equal(countMatches(homeViewTemplate, /<input type="file" accept="\.json"[^>]*:disabled="importLoading" @change="handleImportFile" \/>/g), 2);
 });
 
 test('HomeView keeps character import preview inline with direct edit and import actions', () => {

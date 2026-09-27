@@ -1113,6 +1113,21 @@
   white-space: pre-wrap;
 }
 
+.deep-bubble .markdown-content img {
+  display: block;
+  box-sizing: border-box;
+  width: auto;
+  height: auto;
+  max-width: min(100%, 640px);
+  max-height: min(560px, 56dvh, calc(100dvh - 240px));
+  margin: 12px auto;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-strong);
+  object-fit: contain;
+}
+
 .message-attachments {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(132px, 180px));

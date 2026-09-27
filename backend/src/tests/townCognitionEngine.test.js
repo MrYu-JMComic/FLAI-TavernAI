@@ -31,7 +31,7 @@ test('town cognition context includes threshold evidence, retrieved memories, hi
   const fixture = createCognitionWorld(database, 'town-cognition-context');
   const context = buildTownResidentCognitionContext(database, fixture.userId, fixture.town.id, fixture.resident.id);
 
-  assert.equal(context.world.creationPrompt, '创建一座陨石雨后的山谷聚落。');
+  assert.equal(context.world.creationPrompt, undefined, 'private world creation notes must not reach resident cognition');
   assert.equal(context.time.targetDay, 1);
   assert.equal(context.resident.goal, '确认桥下异响与星尘草的关系');
   assert.equal(context.reflectionStatus.shouldReflect, true);
@@ -65,7 +65,8 @@ test('paused town atomically applies AI reflection, schedule, resident state and
 
   const resident = result.snapshot.residents.find((item) => item.id === fixture.resident.id);
   assert.equal(resident.currentLocation, '星痕石桥');
-  assert.equal(resident.state.currentActivity, '检查桥墩裂缝与回声');
+  assert.equal(resident.state.currentActivity, '巡查石桥');
+  assert.equal(resident.state.plannedActivity, '检查桥墩裂缝与回声');
   assert.equal(resident.state.mapX, 330);
   assert.equal(resident.state.mapY, 240);
 
