@@ -23,7 +23,7 @@
     "cookie-parser": "^1.4.7",
     "cors": "2.8.6",
     "dompurify": "^3.4.14",
-    "dotenv": "17.4.2",
+    "dotenv": "18.0.3",
     "express": "5.2.1",
     "express-rate-limit": "^8.7.0",
     "jsdom": "^30.0.1",
