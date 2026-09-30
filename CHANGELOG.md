@@ -7,6 +7,14 @@
 
 ### Added
 
+- AI 创建助手新增可选的 **Plan 模式**（角色 AI 完善助手与 AI 世界书创建助手都支持，默认关闭）：开启后先跑一次只读规划——服务端在该阶段不下发任何写入工具，模型只能调用 `submit_character_plan` / `submit_world_book_plan` 提交分步计划；用户可逐步勾选、改写步骤说明、追加补充要求后再执行。执行阶段把已审批计划作为权威范围注入提示词，并在每个工具结果的 `workflow.plan` 里维护步骤台账，步骤未全部落实时 `finish_character_draft` 会被拒绝（`PLAN_STEPS_REMAIN`）。规划阶段不返回角色草稿、也不写入阶段结果，因此不会改动表单。
+- AI 世界书创建助手补齐运行时设置，与角色 AI 工作台对齐：助手模型、思考强度、流式/稳定调用、上下文设置（是否结合当前世界书、最大工具轮数 1-100、条目上限 1-30），以及运行状态、状态消息与暂停。此前思考强度被硬编码关闭、只有流式一条路径、工具轮数固定 100，且总是把当前世界书全量作为上下文。
+- 状态栏模板：新增安全表达式 `{{= 体力 * 2}}`（运算、比较、三元、`contains` 与 `min/max/round/clamp/percent/count/join/item/if/default/var` 等函数，纯 AST 求值，不执行 JavaScript）、`{{else if}}` 分支、`{{user}}/{{char}}/{{date}}/{{time}}/{{weekday}}` 内置值、`{{getvar::变量}}` 写法，以及带点变量名（`{{林晚.好感}}`，仅当末段是已知属性时才拆分）。
+- 状态栏变量新增类型：`meter`（数值条，支持 `min` 下限与 `unit` 单位）、`number`（无上限计数）、`text`、`list`（按 、, ; | 分隔的条目，内置视图显示为标签）；旧数据不带 `type` 时行为不变。
+- 状态栏模板过滤器扩充到 40+ 个（`number/unit/sign/clamp/plus/minus/times/divide/fixed/abs`、`bar/stars/repeat/tier/map/if`、`join/first/last/count/slice` 等），并支持遍历 `variables/meters/numbers/texts/lists` 与循环字段 `@index/@first/@last/@total`。
+- 状态栏模板按钮动作新增 `send`、`cycle`、`tab`、`script`、`open-settings`，`adjust` 会按数值条的 `min~max` 自动夹取；新增内置样式类（`sb-card/sb-stat/sb-ring/sb-tabs/sb-panel/sb-badge/sb-hidden` 与 `sb-theme-glass|parchment|terminal|neon` 主题），`<style>` 中允许 `data:` 内联图片，`@keyframes` 自动按状态栏实例改名避免与应用动画冲突。
+- 角色扩展 JS 沙箱新增 `getVar/setVar/adjustVar`、`updateStatusVariables`、`insertText/sendMessage`、`on("status")` 与 `onAction(name)`（响应模板中 `data-sb-action="script"` 的按钮）；`notify(text, type)` 与 `query/queryAll`（返回元素摘要）可用，DOM、cookie 与同源网络仍不可达。
+- AI 完善助手的世界书工具与“AI 世界书创建助手”共用同一套工具与校验：`create_character_world_book` 之后可用 `upsert_world_book_entry`、`remove_world_book_entry` 增量修改，并用 `preview_world_book_entries` 以示例文本自检触发条件；成批创建时被丢弃的不完整条目会在结果中报告数量与原因。
 - 对话：最后一条模型回复可“重新生成”，原回复保留为候选；候选翻页到末尾时同样触发真实重新生成（此前只是把当前内容复制为候选）。新增 `POST /api/conversations/:id/messages/:messageId/regenerate`（JSON 与 SSE）。
 - 对话：编辑用户消息后重跑改为一次 `POST /api/conversations/:id/messages/truncate` 删除整段尾部，只产生一份恢复点和一次同步任务取消。
 - 记忆 Agent：每轮回复后的长期记忆整理改为模型驱动（附属技能 `memoryAgent`，自动/开启/关闭），工具库包含检索记忆、检索历史、记录、修正、合并、失效、置顶与结束，可按会话勾选；供应商不可用或调用失败时回退规则提取。
@@ -16,6 +24,14 @@
 
 ### Changed
 
+- AI 助手的模型 / 思考强度 / 流式 / Plan 开关偏好抽成共享的 `frontend/src/composables/useAssistantRuntimePreferences.js`，角色与世界书两侧不再各写一份 localStorage 读写；助手模型仍是两侧共用的同一项偏好，其余开关按工作台分开存储。
+- `completeWorldBookDraft` 与 `streamWorldBookDraft` 此前是两份几乎逐行相同的实现，现在合并为一个内部运行器，两个导出签名不变（后台任务队列的调用不受影响）。
+- `WorldBookView.vue` 的 AI 助手面板拆成 `components/worldbook/WorldBookAiPanel.vue` 与 `composables/worldbook/useWorldBookAi.js`，视图只保留列表、条目编辑、导入导出与草稿落库；计划审批卡片 `components/AiPlanReview.vue` 由两个助手共用。
+- 状态栏模板语法只有一份定义：`shared/statusTemplateSyntax.js` 同时生成编辑器里的语法速查和 AI 工具说明（角色状态栏工具、扩展 JS 工具），后端测试校验文档列表与渲染器实际实现的过滤器、函数、变量类型一致，AI 不会再被告知渲染器并不支持的语法。
+- 状态栏变量编辑器（角色蓝图与聊天设置）改为每个变量一张卡片：第一行是名称、类型与删除，第二行只显示该类型真正有的字段（数值条才有下限/上限/颜色，数值与计数才有单位），旧的挤在一行的网格与手机端伪标签已移除。沉浸模式下的“角色变量”此前只能填数值/上限/颜色（名称还被截到 20 字），现在与状态栏变量用同一张卡片和同一套类型，可以直接建文本与列表变量——状态栏本来就会渲染这四种类型，只是编辑器填不出来。
+- 状态栏渲染统一走 `shared/statusTemplateRenderer.js`：`StatusBar.vue` 不再自带一套占位符解析，聊天设置抽屉与角色蓝图也改用共享的变量模型与选项列表；聊天状态栏保存上限从 20 个变量修正为与其余各处一致的 60 个。
+- AI 世界书创建助手的工具说明与实际保存行为对齐：补充关键词分段按英文逗号切分且忽略大小写、非正则模式下 `/pattern/i` 分段仍按正则处理、副关键词只做子串匹配、`delay` 从会话首次扫描该条目起算、`orderIndex` 按数组顺序保存，并提示单次工具调用的参数量上限（正文长时改用逐条写入）。
+- 世界书 AI 草稿预览改为中文标注（注入位置、触发词、始终生效），长名称与长正文不再撑破卡片。
 - 自动恢复点存档标记为 `kind = 'recovery'`（迁移 `0018`），存档面板默认折叠；每个会话最多保留 `CONVERSATION_RECOVERY_SAVE_LIMIT`（默认 5）份，已结束或失效任务的步骤快照在 `CONVERSATION_STALE_JOB_STEP_DAYS`（默认 3）天后清理，启动时执行一次全库清理。切换候选不再写恢复点。
 - 依赖主版本升级：`jsdom` 30、`katex` 0.18、`markdown-it` 15、`@lucide/vue` 1.39、`vue-router` 5，以及 `zod`、`vue`、`highlight.js`、Playwright 等小版本；
   `@vscode/markdown-it-katex` 通过 npm override 复用根目录 KaTeX，前端包体减少一份重复的 KaTeX 拷贝。

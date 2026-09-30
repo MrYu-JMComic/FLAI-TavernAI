@@ -115,15 +115,12 @@ const statusBarEditorRows = computed(() => {
     ) {
       continue;
     }
-    const type = normalizeStatusVariableType(variable?.type) || resolveStatusVariableKind(variable);
     rows.push({
       kind: 'variable',
       key: `variable:${index}:${key}`,
       variable,
       index,
-      type,
-      isNumeric: type === 'meter' || type === 'number',
-      valuePlaceholder: type === 'list' ? '长剑、药水、地图' : type === 'text' ? '当前文本' : '当前值'
+      ...statusVariableEditorShape(variable)
     });
   }
 
@@ -323,6 +320,18 @@ function setStatusBarVariableValueFromEvent(name, event) {
     return;
   }
   setStatusBarVariableValue(name, value);
+}
+
+// Derives the editor fields a variable actually has. Shared by the status bar
+// variable list and the per-character variable lists so both offer the same
+// four types the status bar can render.
+function statusVariableEditorShape(variable) {
+  const type = normalizeStatusVariableType(variable?.type) || resolveStatusVariableKind(variable);
+  return {
+    type,
+    isNumeric: type === 'meter' || type === 'number',
+    valuePlaceholder: type === 'list' ? '长剑、药水、地图' : type === 'text' ? '当前文本' : '当前值'
+  };
 }
 
 // Switching type keeps the value usable and drops the fields the new type
@@ -947,14 +956,93 @@ function requestClose() {
                 <div
                   v-for="(v, vi) in ch.variables"
                   :key="vi"
-                  class="variable-editor-row"
+                  class="status-variable-card"
+                  :class="`is-${statusVariableEditorShape(v).type}`"
                 >
-                  <input v-model="v.name" class="variable-input name" type="text" :aria-label="`角色变量 ${vi + 1} 名称`" placeholder="变量名" maxlength="20" />
-                  <input v-model.number="v.value" class="variable-input num" type="number" :aria-label="`角色变量 ${vi + 1} 当前值`" placeholder="值" />
-                  <span class="variable-separator">/</span>
-                  <input v-model.number="v.max" class="variable-input num" type="number" :aria-label="`角色变量 ${vi + 1} 最大值`" placeholder="最大" />
-                  <input :value="colorInputValue(v.color)" class="variable-input color" type="color" title="颜色" @input="setColorValueFromEvent(v, 'color', $event)" />
-                  <button class="variable-remove" type="button" title="删除变量" @click="emit('remove-character-variable', ci, vi)">x</button>
+                  <div class="status-variable-line">
+                    <input
+                      v-model="v.name"
+                      class="variable-input name"
+                      type="text"
+                      :aria-label="`角色变量 ${vi + 1} 名称`"
+                      placeholder="变量名"
+                      maxlength="40"
+                    />
+                    <select
+                      class="variable-input kind"
+                      :value="statusVariableEditorShape(v).type"
+                      :aria-label="`角色变量 ${vi + 1} 类型`"
+                      @change="setStatusBarVariableType(v, $event)"
+                    >
+                      <option v-for="type in STATUS_VARIABLE_TYPES" :key="type" :value="type">
+                        {{ STATUS_VARIABLE_TYPE_LABELS[type] }}
+                      </option>
+                    </select>
+                    <button
+                      class="variable-remove"
+                      type="button"
+                      title="删除变量"
+                      :aria-label="`删除角色变量 ${vi + 1}`"
+                      @click="emit('remove-character-variable', ci, vi)"
+                    >
+                      x
+                    </button>
+                  </div>
+                  <div class="status-variable-line is-detail">
+                    <label class="status-variable-field is-value">
+                      <span>{{ statusVariableEditorShape(v).type === 'list' ? '条目' : '当前值' }}</span>
+                      <input
+                        v-model="v.value"
+                        class="variable-input value"
+                        :type="statusVariableEditorShape(v).isNumeric ? 'number' : 'text'"
+                        :aria-label="`角色变量 ${vi + 1} 当前值`"
+                        :placeholder="statusVariableEditorShape(v).valuePlaceholder"
+                      />
+                    </label>
+                    <template v-if="statusVariableEditorShape(v).type === 'meter'">
+                      <label class="status-variable-field is-num">
+                        <span>下限</span>
+                        <input
+                          v-model.number="v.min"
+                          class="variable-input num"
+                          type="number"
+                          :aria-label="`角色变量 ${vi + 1} 最小值`"
+                          placeholder="0"
+                        />
+                      </label>
+                      <label class="status-variable-field is-num">
+                        <span>上限</span>
+                        <input
+                          v-model.number="v.max"
+                          class="variable-input num"
+                          type="number"
+                          :aria-label="`角色变量 ${vi + 1} 最大值`"
+                          placeholder="100"
+                        />
+                      </label>
+                      <label class="status-variable-field is-color">
+                        <span>颜色</span>
+                        <input
+                          :value="colorInputValue(v.color)"
+                          class="variable-input color"
+                          type="color"
+                          :aria-label="`角色变量 ${vi + 1} 颜色`"
+                          @input="setColorValueFromEvent(v, 'color', $event)"
+                        />
+                      </label>
+                    </template>
+                    <label v-if="statusVariableEditorShape(v).isNumeric" class="status-variable-field is-unit">
+                      <span>单位</span>
+                      <input
+                        v-model="v.unit"
+                        class="variable-input unit"
+                        type="text"
+                        :aria-label="`角色变量 ${vi + 1} 单位`"
+                        placeholder="点 / G"
+                        maxlength="12"
+                      />
+                    </label>
+                  </div>
                 </div>
                 <button class="chat-setting-inline-button small" type="button" @click="emit('add-character-variable', ci)">+ 添加变量</button>
               </div>

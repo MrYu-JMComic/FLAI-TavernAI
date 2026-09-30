@@ -109,12 +109,6 @@
   cursor: pointer;
 }
 
-.variable-separator {
-  color: var(--muted);
-  font-size: 0.82rem;
-  font-weight: 600;
-}
-
 .variable-remove {
   display: grid;
   place-items: center;
@@ -482,6 +476,14 @@
   font-size: 0.78rem;
   font-weight: 700;
   color: var(--muted);
+}
+
+/* Variable cards nested inside a character card read as sub-items: the outer
+   card already draws the surface, so the inner one only needs a hairline. */
+.sb-char-vars > .status-variable-card {
+  padding: 6px 8px;
+  border-color: color-mix(in srgb, var(--line) 60%, transparent);
+  background: color-mix(in srgb, var(--surface-strong) 30%, transparent);
 }
 
 .char-remove {
