@@ -41,7 +41,7 @@ test('status bar template placeholders parse property suffixes without split arr
     })),
     [
       { name: 'HP', value: 0, max: 100 },
-      { name: 'Mood', value: '', max: undefined },
+      { name: 'Mood.text', value: '', max: undefined },
       { name: 'Focus', value: 0, max: 100 }
     ]
   );

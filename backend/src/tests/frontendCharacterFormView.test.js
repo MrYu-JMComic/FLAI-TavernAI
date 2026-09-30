@@ -760,7 +760,7 @@ test('CharacterFormView scans status blueprint variables directly by key', () =>
   );
 });
 
-test('CharacterFormView parses status template tokens without split arrays', () => {
+test('CharacterFormView reads status template references from the shared renderer', () => {
   const usageStart = characterStatusBlueprintSource.indexOf('function getStatusVariableTemplateUsage(template = \'\', name = \'\') {');
   const usageEnd = characterStatusBlueprintSource.indexOf('\nfunction isStatusMeterPlaceholderProperty', usageStart);
   const inferStart = characterStatusBlueprintSource.indexOf('function inferStatusVariablesFromTemplate(template, variables = []) {');
@@ -772,10 +772,13 @@ test('CharacterFormView parses status template tokens without split arrays', () 
   const usageSnippet = characterStatusBlueprintSource.slice(usageStart, usageEnd);
   const inferSnippet = characterStatusBlueprintSource.slice(inferStart, inferEnd);
 
-  assert.match(usageSnippet, /const parsed = parseStatusTemplateToken\(token\);/);
-  assert.match(usageSnippet, /normalizeStatusVariableKey\(parsed\.rawName\) !== target/);
-  assert.match(usageSnippet, /const property = parsed\.rawProperty\.trim\(\);/);
-  assert.match(inferSnippet, /const parsed = parseStatusTemplateToken\(token\);\s*const name = normalizeTemplateVariableName\(parsed\.rawName\);/);
+  assert.match(
+    characterStatusBlueprintSource,
+    /import \{ collectStatusTemplateReferences \} from '\.\.\/\.\.\/\.\.\/\.\.\/shared\/statusTemplateRenderer\.js';/
+  );
+  assert.match(usageSnippet, /for \(const reference of collectStatusTemplateReferences\(template\)\) \{/);
+  assert.match(usageSnippet, /normalizeStatusVariableKey\(reference\.rawName\) !== target/);
+  assert.match(inferSnippet, /for \(const reference of collectStatusTemplateReferences\(template\)\) \{\s*const name = normalizeTemplateVariableName\(reference\.rawName\);/);
   assert.doesNotMatch(characterStatusBlueprintSource, /token\.split\('\.'\)/);
   assert.doesNotMatch(characterStatusBlueprintSource, /propertyParts/);
 });
@@ -783,7 +786,7 @@ test('CharacterFormView parses status template tokens without split arrays', () 
 test('CharacterFormView builds status blueprint editor rows without intermediate mapping arrays', () => {
   assert.match(
     characterStatusBlueprintSource,
-    /import \{ (?:[\w, ]*)parseStatusTemplateToken \} from '\.\.\/\.\.\/\.\.\/\.\.\/shared\/statusTemplateTokens\.js';/
+    /import \{[\s\S]*parseStatusTemplateToken[\s\S]*\} from '\.\.\/\.\.\/\.\.\/\.\.\/shared\/statusTemplateTokens\.js';/
   );
   const extractPartsStart = characterStatusBlueprintSource.indexOf('function extractCompositePlaceholderParts(value = \'\', label = \'\') {');
   const extractPartsEnd = characterStatusBlueprintSource.indexOf('\nfunction isMeterTemplateProperty', extractPartsStart);
@@ -793,6 +796,12 @@ test('CharacterFormView builds status blueprint editor rows without intermediate
   assert.match(extractPartsSnippet, /const parsed = parseStatusTemplateToken\(token\);/);
   assert.match(extractPartsSnippet, /const rawProperty = parsed\.rawProperty\.trim\(\) \|\| 'value';/);
   assert.match(extractPartsSnippet, /const name = normalizeTemplateVariableName\(parsed\.rawName\.trim\(\)\);/);
+  // Editor rows carry the resolved variable type so each row shows only the
+  // fields that type actually has.
+  assert.match(
+    characterStatusBlueprintSource,
+    /const type = resolveStatusBlueprintVariableType\(variable, template\);[\s\S]*isNumeric: type === 'meter' \|\| type === 'number',/
+  );
   assert.doesNotMatch(extractPartsSnippet, /token\.split\('\.'\)\.map/);
 
   assert.match(
@@ -985,7 +994,7 @@ test('CharacterFormView normalizes advanced effects and tag names with direct lo
   );
   assert.match(
     characterStatusBlueprintSource,
-    /function collectAllowedStatusEffects\(effects = \[\]\) \{\s*const currentEffects = Array\.isArray\(effects\) \? effects : \[\];\s*const allowedEffects = \[\];\s*for \(const effect of currentEffects\) \{\s*if \(isAllowedStatusEffect\(effect\)\) \{\s*allowedEffects\.push\(effect\);\s*\}\s*\}\s*return allowedEffects;\s*\}/
+    /function collectAllowedStatusEffects\(effects = \[\]\) \{\s*const currentEffects = Array\.isArray\(effects\) \? effects : \[\];\s*const allowedEffects = \[\];\s*for \(const effect of currentEffects\) \{\s*if \(STATUS_BAR_EFFECTS\.includes\(effect\)\) \{\s*allowedEffects\.push\(effect\);\s*\}\s*\}\s*return allowedEffects;\s*\}/
   );
   assert.match(
     characterStatusBlueprintSource,

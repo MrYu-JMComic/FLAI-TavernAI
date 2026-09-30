@@ -63,7 +63,10 @@ test('status template expressions parse properties, filters and control tokens',
   const condition = parseStatusTemplateExpression('#unless 事件 == "故事尚未开始"');
   assert.equal(condition.kind, 'open');
   assert.equal(condition.control, 'unless');
-  assert.deepEqual(condition.condition.right, { type: 'literal', value: '故事尚未开始' });
+  assert.equal(condition.condition.ast.type, 'binary');
+  assert.equal(condition.condition.ast.operator, '==');
+  assert.deepEqual(condition.condition.ast.right, { type: 'literal', value: '故事尚未开始' });
+  assert.equal(condition.rawName, '事件');
 
   assert.equal(parseStatusTemplateExpression('#while x').kind, 'unknown');
   assert.equal(isStatusTemplateMeterProperty('bar'), true);

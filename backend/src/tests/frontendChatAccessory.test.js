@@ -583,10 +583,16 @@ test('useChatAccessory parses and clones status bar template config with direct 
     chatAccessorySource,
     /function syncTemplateCfgToForm\(\) \{[\s\S]*const cfg = \{\};[\s\S]*let hasConfig = false;[\s\S]*cfg\.variant = statusBarTemplateCfg\.variant;[\s\S]*hasConfig = true;[\s\S]*statusBarForm\.template = hasConfig \? JSON\.stringify\(cfg\) : '';[\s\S]*\}/
   );
+  // Placeholder parsing is shared with the renderer instead of duplicated here.
   assert.match(
     chatAccessorySource,
-    /function parseStatusPlaceholderToken\(token = ''\) \{[\s\S]*const separatorIndex = text\.indexOf\('\.'\);[\s\S]*const nextSeparatorIndex = text\.indexOf\('\.', separatorIndex \+ 1\);[\s\S]*rawName: text\.slice\(0, separatorIndex\)\.trim\(\),[\s\S]*rawProperty: text\.slice\([\s\S]*\)\.trim\(\)[\s\S]*\}/
+    /import \{ isStatusTemplateMeterProperty, parseStatusTemplateToken \} from '\.\.\/\.\.\/\.\.\/\.\.\/shared\/statusTemplateTokens\.js';/
   );
+  assert.match(
+    chatAccessorySource,
+    /const \{ rawName, rawProperty \} = parseStatusTemplateToken\(token\);[\s\S]*isStatusTemplateMeterProperty\(rawProperty\)/
+  );
+  assert.doesNotMatch(chatAccessorySource, /function parseStatusPlaceholderToken/);
   assert.doesNotMatch(chatAccessorySource, /raw\.variables\s*\.\s*filter/);
   assert.doesNotMatch(chatAccessorySource, /parsed\.effects\.filter/);
   assert.doesNotMatch(chatAccessorySource, /parsed\.characters\.map\(parseCharacter\)\.filter/);

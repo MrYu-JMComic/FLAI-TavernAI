@@ -12,6 +12,7 @@ const __dirname = dirname(__filename);
 
 const toolFiles = [
   'accessoryAgents.js',
+  'assistantPlanTools.js',
   'characterAssistant.js',
   'sceneOrganizer.js',
   'worldBookAssistant.js',

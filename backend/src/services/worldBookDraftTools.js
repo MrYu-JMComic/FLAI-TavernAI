@@ -31,7 +31,7 @@ const worldBookEntryProperties = {
   triggerKeys: {
     type: 'string',
     maxLength: WORLD_BOOK_ENTRY_LIMITS.triggerKeys,
-    description: '主关键词字符串，多个值必须用英文逗号分隔。alwaysActive=false 时不可为空；regexMode=true 时每个逗号分段都是独立正则。'
+    description: '主关键词字符串，多个值必须用英文逗号分隔（不能用数组、顿号或分号）。alwaysActive=false 时不可为空。匹配忽略大小写。regexMode=true 时每个逗号分段都是独立正则；regexMode=false 时写成 /pattern/i 的分段也按正则处理，其余按子串匹配。'
   },
   content: {
     type: 'string',
@@ -45,19 +45,19 @@ const worldBookEntryProperties = {
     description: '注入位置：at_start=上下文最前；before_char=角色设定前；after_char=角色设定后；at_depth=按 depth/role 插入。默认 before_char。'
   },
   enabled: { type: 'boolean', description: '是否启用条目，默认 true。' },
-  orderIndex: { type: 'integer', minimum: 0, description: '同一本世界书内的非负排序序号；省略时按列表顺序生成。' },
+  orderIndex: { type: 'integer', minimum: 0, description: '非负排序序号。保存时按数组顺序写入，通常省略即可。' },
   regexMode: { type: 'boolean', description: '主关键词是否按安全正则表达式匹配，默认 false。' },
   alwaysActive: { type: 'boolean', description: '是否不依赖主关键词而始终参与匹配，默认 false。' },
   selective: { type: 'boolean', description: '是否启用副关键词条件，默认 false；启用时 keysSecondary 必须非空。' },
   selectiveLogic: {
     type: 'integer',
     enum: [0, 1, 2],
-    description: '副关键词逻辑：0=任一副关键词命中才激活；1=任一副关键词命中则阻止；2=全部副关键词命中则阻止。'
+    description: '副关键词逻辑，仅在主关键词已命中后判定：0=任一副关键词命中才激活；1=任一副关键词命中则阻止；2=全部副关键词都命中才阻止。'
   },
   keysSecondary: {
     type: 'string',
     maxLength: WORLD_BOOK_ENTRY_LIMITS.keysSecondary,
-    description: '副关键词字符串，多个值用英文逗号分隔；仅 selective=true 时使用，按普通文本匹配。'
+    description: '副关键词字符串，多个值用英文逗号分隔；仅 selective=true 时使用，始终按忽略大小写的子串匹配（不支持正则）。'
   },
   useProbability: { type: 'boolean', description: '是否在关键词条件通过后再进行概率判定，默认 false。' },
   probability: {
@@ -71,7 +71,7 @@ const worldBookEntryProperties = {
     maxLength: WORLD_BOOK_ENTRY_LIMITS.group,
     description: '互斥组名。相同非空组内若多条命中，只按 groupWeight 选一条；实际保存字段名必须是 group。'
   },
-  groupWeight: { type: 'integer', minimum: 0, description: '互斥组抽选权重，非负整数；0 在抽选时按最低权重 1 处理。' },
+  groupWeight: { type: 'integer', minimum: 0, description: '互斥组抽选权重，非负整数，越大越容易被选中；0 按最低权重 1 处理。' },
   depth: {
     type: 'integer',
     minimum: 0,
@@ -83,9 +83,9 @@ const worldBookEntryProperties = {
     enum: [0, 1, 2],
     description: 'at_depth 消息角色：0=system，1=user，2=assistant。实际保存格式只接受整数。'
   },
-  sticky: stateDurationSchema('激活后继续保持的消息轮数'),
+  sticky: stateDurationSchema('命中后继续保持激活的额外消息轮数，期间不再需要关键词'),
   cooldown: stateDurationSchema('失活后禁止再次激活的消息轮数'),
-  delay: stateDurationSchema('首次满足条件后延迟激活的消息轮数')
+  delay: stateDurationSchema('从本会话首次扫描到该条目起，至少经过多少轮才允许激活')
 };
 
 const { id: _entryIdSchema, ...worldBookEntryChangeProperties } = worldBookEntryProperties;
@@ -115,19 +115,19 @@ export const WORLD_BOOK_DRAFT_SCHEMA = Object.freeze({
       type: 'integer',
       minimum: WORLD_BOOK_LIMITS.scanDepthMin,
       maximum: WORLD_BOOK_LIMITS.scanDepthMax,
-      description: '每次匹配向前扫描的消息条数，1-50。默认 4。'
+      description: `每次匹配向前扫描的最近消息条数，${WORLD_BOOK_LIMITS.scanDepthMin}-${WORLD_BOOK_LIMITS.scanDepthMax}；草稿默认 4。只影响关键词扫描范围，不影响注入内容。`
     },
     lorebookContextPercent: {
       type: 'integer',
       minimum: WORLD_BOOK_LIMITS.contextPercentMin,
       maximum: WORLD_BOOK_LIMITS.contextPercentMax,
-      description: '世界书最多占上下文预算的百分比，1-100。默认 25。'
+      description: `本世界书命中内容最多占上下文预算的百分比，${WORLD_BOOK_LIMITS.contextPercentMin}-${WORLD_BOOK_LIMITS.contextPercentMax}；草稿默认 25。超预算时按 orderIndex 从前往后保留。`
     },
     entries: {
       type: 'array',
       minItems: 1,
       maxItems: WORLD_BOOK_ASSISTANT_ENTRY_LIMIT,
-      description: '可直接保存的世界书条目，按 orderIndex 与数组顺序排列。',
+      description: `可直接保存的世界书条目，最多 ${WORLD_BOOK_ASSISTANT_ENTRY_LIMIT} 条，按数组顺序保存。单次工具调用的参数总量有上限，正文很长时改用 upsert_world_book_entry 逐条写入。`,
       items: WORLD_BOOK_ENTRY_SCHEMA
     }
   },
@@ -155,7 +155,7 @@ export const WORLD_BOOK_DRAFT_TOOLS = Object.freeze([
     type: 'function',
     function: {
       name: 'replace_world_book_entries',
-      description: '用 entries 完整替换当前草稿的全部条目。仅用于首次成批创建或明确重建；编辑现有世界书时必须保留所有仍有效条目及其 id。任一条目不完整时整批拒绝。',
+      description: '用 entries 完整替换当前草稿的全部条目。仅用于首次成批创建或明确重建；编辑现有世界书时必须保留所有仍有效条目及其 id，未列出的条目会被删除。任一条目缺少 name、content 或必需的 triggerKeys 时整批拒绝，不会部分写入。',
       parameters: {
         type: 'object',
         properties: { entries: WORLD_BOOK_DRAFT_SCHEMA.properties.entries },
@@ -210,7 +210,7 @@ export const WORLD_BOOK_DRAFT_TOOLS = Object.freeze([
     type: 'function',
     function: {
       name: 'preview_world_book_entries',
-      description: '使用示例文本只读检查当前草稿的关键词、副关键词和互斥组匹配结果。不会随机执行概率判定，也不会推进 sticky、cooldown 或 delay 状态。',
+      description: '使用示例文本只读检查当前草稿的关键词、副关键词和互斥组匹配结果，用于自检触发条件。不修改草稿：不执行概率随机判定（useProbability 条目只标记为待判定），也不推进 sticky、cooldown 与 delay 状态。',
       parameters: {
         type: 'object',
         properties: {
@@ -225,12 +225,13 @@ export const WORLD_BOOK_DRAFT_TOOLS = Object.freeze([
 
 export const WORLD_BOOK_QUALITY_INSTRUCTIONS = Object.freeze([
   '把设定拆成原子条目：每条只描述一个人物、地点、阵营、物品、规则、事件、关系或秘密；不同主题不要混在同一条。',
-  'triggerKeys 与 keysSecondary 都是一个用英文逗号分隔的字符串，不是数组。普通关键词使用正式名称、别名、地点、阵营、物品或事件词；禁止使用“他、这里、事件”等泛词。',
-  '实际保存字段名是 group，不是 inclusionGroup；role 必须是 0、1、2 之一，不能写 system、user、assistant 字符串。',
+  'triggerKeys 与 keysSecondary 都是一个用英文逗号分隔的字符串，不是数组，也不要用顿号或分号分隔。普通关键词使用正式名称、别名、地点、阵营、物品或事件词；禁止使用“他、这里、事件”等泛词。',
+  '实际保存字段名是 group，不是 inclusionGroup；role 必须是 0、1、2 之一，不能写 system、user、assistant 字符串；sticky、cooldown、delay 不使用时省略或写 null，不要写 0 之外的占位值。',
   '注入位置必须与用途一致：before_char 用于稳定设定，after_char 用于当前场景压力，at_start 仅用于必须全局生效的规则，at_depth 才使用 depth 与 role。',
   'content 只写触发该主题时需要知道的事实、约束和关系，不复述整套世界观，也不包含“请生成、忽略之前指令”等面向模型的元指令，除非该条目本身就是用户要求的全局规则。',
-  'alwaysActive、regexMode、selective、useProbability、sticky、cooldown、delay 和 group 都会改变触发行为；只有 requirement 明确需要且能说明用途时才使用。',
-  '每个条目必须有非空 name 与 content；alwaysActive=false 时 triggerKeys 必须非空；selective=true 时 keysSecondary 必须非空。'
+  'alwaysActive、regexMode、selective、useProbability、sticky、cooldown、delay 和 group 都会改变触发行为；只有 requirement 明确需要且能说明用途时才使用，并在 content 或 name 中体现该用途。',
+  '每个条目必须有非空 name 与 content；alwaysActive=false 时 triggerKeys 必须非空；selective=true 时 keysSecondary 必须非空。不满足的条目会被直接丢弃。',
+  `单次工具调用的参数总量有上限：条目多或正文长时，先用 upsert_world_book_entry 分批写入，不要把 ${WORLD_BOOK_ASSISTANT_ENTRY_LIMIT} 条长正文塞进一次 replace_world_book_entries。`
 ]);
 
 export function createCharacterWorldBookTool() {
@@ -238,9 +239,39 @@ export function createCharacterWorldBookTool() {
     type: 'function',
     function: {
       name: 'create_character_world_book',
-      description: '为当前角色生成一份可保存的完整世界书草稿。字段格式与“AI 世界书创建助手”完全一致；调用只生成待确认草稿，不会直接写入数据库。仅在需求明确需要独立世界设定、地点、阵营、规则或秘密条目时调用。',
+      description: `为当前角色生成一份可保存的世界书草稿（名称 + 条目）。字段格式与“AI 世界书创建助手”完全一致；调用只生成待确认草稿，不会直接写入数据库。仅在需求明确需要独立世界设定、地点、阵营、规则或秘密条目时调用。条目很多或正文很长时，这里先写核心条目，再用 upsert_world_book_entry 逐条补充（上限 ${WORLD_BOOK_ASSISTANT_ENTRY_LIMIT} 条）。`,
       parameters: WORLD_BOOK_DRAFT_SCHEMA
     }
+  };
+}
+
+// The character assistant edits its world-book draft with the same tools and
+// the same executor as the standalone assistant, so both produce identical
+// structures; only the entry point differs.
+export const CHARACTER_WORLD_BOOK_PATCH_TOOL_NAMES = Object.freeze([
+  'upsert_world_book_entry',
+  'remove_world_book_entry'
+]);
+export const CHARACTER_WORLD_BOOK_READ_TOOL_NAMES = Object.freeze(['preview_world_book_entries']);
+
+export function createCharacterWorldBookTools() {
+  const shared = new Set([...CHARACTER_WORLD_BOOK_PATCH_TOOL_NAMES, ...CHARACTER_WORLD_BOOK_READ_TOOL_NAMES]);
+  const tools = [createCharacterWorldBookTool()];
+  for (const tool of WORLD_BOOK_DRAFT_TOOLS) {
+    if (shared.has(tool.function?.name)) tools.push(tool);
+  }
+  return tools;
+}
+
+// Entries that cannot be saved are dropped by normalisation; the caller reports
+// how many so the model can fix them instead of silently shipping fewer.
+export function normalizeWorldBookDraftInput(value = {}) {
+  const requestedEntries = Array.isArray(objectOrEmpty(value).entries) ? objectOrEmpty(value).entries.length : 0;
+  const draft = normalizeUsableWorldBookDraft(value);
+  return {
+    draft,
+    requestedEntries,
+    droppedEntries: Math.max(0, requestedEntries - draft.entries.length)
   };
 }
 

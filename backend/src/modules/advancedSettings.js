@@ -1,5 +1,9 @@
 import { isStatusTemplateMeterProperty, parseStatusTemplateToken } from '../../../shared/statusTemplateTokens.js';
 import { THINKING_LEVELS } from '../../../shared/providerThinking.js';
+import {
+  normalizeStatusVariableExtras,
+  normalizeStatusVariableValueForType
+} from '../../../shared/statusVariables.js';
 
 const STATUS_BLUEPRINT_VARIABLE_LIMIT = 60;
 
@@ -244,17 +248,24 @@ function normalizeStatusVariables(value, template = '') {
       continue;
     }
     const hasMax = hasExplicitStatusMax(item);
-    const variableValue = normalizeStatusVariableValue(item?.value, { emptyText: !hasMax });
-    const max = hasMax
-      ? Number(item.max)
-      : typeof variableValue === 'number'
-        ? 100
-        : undefined;
+    const extras = normalizeStatusVariableExtras(item);
+    const variableValue = extras.type
+      ? normalizeStatusVariableValueForType(item?.value, extras.type, { emptyText: true })
+      : normalizeStatusVariableValue(item?.value, { emptyText: !hasMax });
+    // Counters, text and lists never get the implicit meter max of 100.
+    const max = extras.type && extras.type !== 'meter'
+      ? undefined
+      : hasMax
+        ? Number(item.max)
+        : typeof variableValue === 'number'
+          ? 100
+          : undefined;
     normalized.push({
       name,
       value: variableValue,
       ...(max !== undefined ? { max } : {}),
-      color: normalizeColor(item?.color)
+      color: normalizeColor(item?.color),
+      ...extras
     });
   }
   return inferStatusVariablesFromTemplate(template, normalized).slice(0, STATUS_BLUEPRINT_VARIABLE_LIMIT);

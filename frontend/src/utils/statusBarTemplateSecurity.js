@@ -1,3 +1,5 @@
+import { STATUS_TEMPLATE_ACTIONS } from '../../../shared/statusTemplateActions.js';
+
 // Display-only markup a custom status template may use. Anything that can load
 // a remote resource, submit data or run script stays out; `style` is handled
 // separately because its text is sanitised rather than kept as a node.
@@ -63,10 +65,14 @@ export const STATUS_BAR_TEMPLATE_ALLOWED_TAGS = new Set([
 ]);
 
 // Attributes kept on allowed tags. `data-sb-*` is matched by prefix in the
-// sanitiser; everything else must be listed here.
+// sanitiser; everything else must be listed here. `id` stays out on purpose:
+// template ids would land in the app document and could clobber globals.
 export const STATUS_BAR_TEMPLATE_ALLOWED_ATTRS = new Set([
+  'aria-expanded',
   'aria-hidden',
   'aria-label',
+  'aria-pressed',
+  'aria-selected',
   'class',
   'colspan',
   'datetime',
@@ -85,18 +91,12 @@ export const STATUS_BAR_TEMPLATE_ALLOWED_ATTRS = new Set([
   'value'
 ]);
 
-// Declarative button actions: `data-sb-action="<name>"` plus the listed
-// companion attributes. Documented in the editors and in the AI tool prompts.
-export const STATUS_BAR_TEMPLATE_ACTIONS = Object.freeze([
-  { action: 'quick-reply', attrs: ['data-sb-text'], summary: '把文字填入输入框，由用户决定是否发送' },
-  { action: 'send', attrs: ['data-sb-text'], summary: '直接把文字作为一条消息发送' },
-  { action: 'copy', attrs: ['data-sb-copy'], summary: '复制文字到剪贴板' },
-  { action: 'set', attrs: ['data-sb-var', 'data-sb-value'], summary: '把变量设为指定值' },
-  { action: 'adjust', attrs: ['data-sb-var', 'data-sb-delta'], summary: '给数值变量加减指定数值' },
-  { action: 'toggle', attrs: ['data-sb-target'], summary: '显示 / 隐藏模板内匹配选择器的元素' },
-  { action: 'collapse', attrs: [], summary: '收起状态栏' },
-  { action: 'open-settings', attrs: [], summary: '打开会话设置面板' }
-]);
+export const STATUS_BAR_TEMPLATE_DATA_ATTR_PREFIX = 'data-sb-';
+export const STATUS_BAR_TEMPLATE_DATA_ATTR_LIMIT = 500;
+
+// Declarative button actions, documented once in shared/statusTemplateSyntax.js
+// so the editors and the AI tool prompts describe the same set.
+export const STATUS_BAR_TEMPLATE_ACTIONS = STATUS_TEMPLATE_ACTIONS;
 
 export const STATUS_BAR_TEMPLATE_VALIDATOR_ALLOWED_TAGS = new Set([
   ...STATUS_BAR_TEMPLATE_ALLOWED_TAGS,
@@ -105,10 +105,16 @@ export const STATUS_BAR_TEMPLATE_VALIDATOR_ALLOWED_TAGS = new Set([
 
 export const STATUS_BAR_TEMPLATE_VOID_TAGS = new Set(['br', 'hr']);
 
-const STATUS_BAR_TEMPLATE_DANGEROUS_CSS = /@import|expression\s*\(|javascript:|url\s*\(|behavior\s*:/i;
+// Inline images are the only url() allowed: they cannot reach the network.
+const STATUS_BAR_TEMPLATE_DATA_IMAGE_URL = /url\(\s*(["']?)data:image\/[a-z0-9.+-]+;base64,[a-z0-9+/=\s]+\1\s*\)/gi;
+const STATUS_BAR_TEMPLATE_DANGEROUS_CSS = /@import|expression\s*\(|javascript:|url\s*\(|behavior\s*:|-moz-binding/i;
+
+function withoutDataImageUrls(value) {
+  return String(value || '').replace(STATUS_BAR_TEMPLATE_DATA_IMAGE_URL, 'none');
+}
 
 export function hasDangerousStatusBarCss(value) {
-  return STATUS_BAR_TEMPLATE_DANGEROUS_CSS.test(String(value || ''));
+  return STATUS_BAR_TEMPLATE_DANGEROUS_CSS.test(withoutDataImageUrls(value));
 }
 
 export function isSafeStatusBarCssValue(value) {
@@ -166,12 +172,39 @@ function appendSafeStatusBarStylePart(output, part) {
 }
 
 export function sanitizeStatusBarStyleBlock(value) {
-  return String(value || '')
+  const preserved = [];
+  const masked = String(value || '').replace(STATUS_BAR_TEMPLATE_DATA_IMAGE_URL, (match) => {
+    preserved.push(match);
+    return `__FLAI_SB_IMAGE_${preserved.length - 1}__`;
+  });
+  const cleaned = masked
     .replace(/@import[^;]+;?/gi, '')
     .replace(/url\s*\([^)]*\)/gi, '')
     .replace(/expression\s*\([^)]*\)/gi, '')
     .replace(/javascript:/gi, '')
-    .replace(/behavior\s*:/gi, '');
+    .replace(/behavior\s*:/gi, '')
+    .replace(/-moz-binding/gi, '');
+  return cleaned.replace(/__FLAI_SB_IMAGE_(\d+)__/g, (_match, index) => preserved[Number(index)] || 'none');
+}
+
+// Keyframe names are global in CSS, so a template's `@keyframes pulse` would
+// replace the app's own animation. Rename them per status bar and rewrite the
+// animation declarations that use them.
+export function namespaceStatusBarKeyframes(cssText, prefix) {
+  const css = String(cssText || '');
+  const names = new Map();
+  const keyframePattern = /@(-webkit-)?keyframes\s+(-?[_a-zA-Z][\w-]*)/g;
+  let match;
+  while ((match = keyframePattern.exec(css))) {
+    names.set(match[2], `${prefix}-${match[2]}`);
+  }
+  if (!names.size) return css;
+  const renamed = css.replace(keyframePattern, (_full, vendor, name) => `@${vendor || ''}keyframes ${names.get(name)}`);
+  return renamed.replace(/(animation(?:-name)?\s*:\s*)([^;{}]+)/gi, (_full, property, declaration) => (
+    property + declaration.replace(/(^|[\s,])(-?[_a-zA-Z][\w-]*)(?=$|[\s,!])/g, (token, lead, name) => (
+      names.has(name) ? `${lead}${names.get(name)}` : token
+    ))
+  ));
 }
 
 export function escapeStatusBarTemplateHtml(value) {

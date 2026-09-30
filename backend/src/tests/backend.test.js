@@ -1321,9 +1321,13 @@ test('character assistant completes drafts through multiple tool rounds', async 
   globalThis.fetch = async (_url, request = {}) => {
     calls += 1;
     const body = JSON.parse(request.body);
-    assert.equal(body.tools.length, 11);
+    assert.equal(body.tools.length, 14);
     assert.ok(body.tools.some((tool) => tool.function?.name === 'update_character_agents'));
     assert.ok(body.tools.some((tool) => tool.function?.name === 'create_character_world_book'));
+    // The world book draft is edited with the standalone assistant's own tools.
+    assert.ok(body.tools.some((tool) => tool.function?.name === 'upsert_world_book_entry'));
+    assert.ok(body.tools.some((tool) => tool.function?.name === 'remove_world_book_entry'));
+    assert.ok(body.tools.some((tool) => tool.function?.name === 'preview_world_book_entries'));
     assert.ok(body.tools.some((tool) => tool.function?.name === 'finish_character_draft'));
     const statusTool = body.tools.find((tool) => tool.function?.name === 'update_character_status_bar');
     const statusBlueprintSchema = statusTool.function.parameters.properties.statusBarBlueprint;
@@ -1331,7 +1335,8 @@ test('character assistant completes drafts through multiple tool rounds', async 
     assert.deepEqual(statusValueSchema.oneOf.map((schema) => schema.type), ['number', 'string']);
     assert.match(statusBlueprintSchema.description, /\{\{姓名\}\}/);
     assert.match(statusBlueprintSchema.description, /\{\{体力\.percent\}\}/);
-    assert.match(body.messages[0].content, /\{\{变量名\}\}/);
+    assert.match(body.messages[0].content, /bar:10/);
+    assert.match(body.messages[0].content, /{{= /);
     assert.match(body.messages[0].content, /\.sb-val/);
     assert.match(body.messages[0].content, /可变化文本必须放入 variables\[\]\.value/);
 

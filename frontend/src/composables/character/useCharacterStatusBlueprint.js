@@ -1,26 +1,45 @@
 import { computed, watch } from 'vue';
-import { isStatusTemplateMeterProperty, parseStatusTemplateToken } from '../../../../shared/statusTemplateTokens.js';
+import { collectStatusTemplateReferences } from '../../../../shared/statusTemplateRenderer.js';
+import {
+  isStatusTemplateMeterProperty,
+  parseStatusTemplateToken
+} from '../../../../shared/statusTemplateTokens.js';
+import {
+  STATUS_VARIABLE_LIMIT,
+  STATUS_VARIABLE_NAME_LIMIT,
+  STATUS_VARIABLE_TEXT_LIMIT,
+  normalizeStatusVariableExtras,
+  normalizeStatusVariableKey,
+  normalizeStatusVariableType,
+  normalizeStatusVariableValueForType,
+  resolveStatusVariableKind
+} from '../../../../shared/statusVariables.js';
+import {
+  STATUS_BAR_DENSITIES,
+  STATUS_BAR_DISPLAY_MODES,
+  STATUS_BAR_EFFECTS,
+  STATUS_BAR_LAYOUTS,
+  STATUS_BAR_VARIANTS
+} from '../../utils/statusBarOptions.js';
 
-const STATUS_BLUEPRINT_VARIABLE_LIMIT = 60;
+const STATUS_BLUEPRINT_VARIABLE_LIMIT = STATUS_VARIABLE_LIMIT;
+// Shows the features an author is most likely to want next: typed variables,
+// an expression, a conditional note, a list loop and declarative buttons.
 const STATUS_BLUEPRINT_SAMPLE_TEMPLATE = [
-  '<section class="sb-sample-card">',
-  '  <style>',
-  '    .sb-sample-card{display:grid;gap:8px;font-size:13px}',
-  '    .sb-sample-card .sb-row{display:grid;grid-template-columns:72px 1fr;gap:8px;align-items:center}',
-  '    .sb-sample-card .sb-label{color:#6b7280;font-weight:700}',
-  '    .sb-sample-card .sb-val{min-width:0;overflow-wrap:anywhere}',
-  '    .sb-sample-card .sb-track{height:8px;overflow:hidden;border-radius:999px;background:#e5e7eb}',
-  '    .sb-sample-card .sb-fill{height:100%;width:{{体力.percent}};background:{{体力.color}}}',
-  '    .sb-sample-card .sb-actions{display:flex;flex-wrap:wrap;gap:6px}',
-  '    .sb-sample-card button{border:1px solid #d1d5db;border-radius:6px;padding:4px 8px;background:#fff;color:#111827}',
-  '  </style>',
-  '  <div class="sb-row"><span class="sb-label">姓名</span><span class="sb-val">{{姓名}}</span></div>',
-  '  <div class="sb-row"><span class="sb-label">所在地</span><span class="sb-val">{{所在地}}</span></div>',
+  '<section class="sb-card">',
+  '  <div class="sb-title">{{姓名}} · {{所在地}}</div>',
   '  <div class="sb-row"><span class="sb-label">体力</span><span class="sb-val">{{体力}} / {{体力.max}}</span></div>',
-  '  <div class="sb-track"><div class="sb-fill"></div></div>',
+  '  <div class="sb-track" style="--p:{{体力.percentage}};--c:{{体力.color}}"><div class="sb-fill"></div></div>',
+  '  <div class="sb-cols">',
+  '    <div class="sb-stat"><strong>{{金币 | number}}</strong><span class="sb-stat-label">金币</span></div>',
+  '    <div class="sb-stat"><strong>{{= round(体力 / 体力.max * 100)}}%</strong><span class="sb-stat-label">状态</span></div>',
+  '  </div>',
+  '  {{#if 体力 < 30}}<p class="sb-note sb-bad">需要休息</p>{{else if 体力 < 70}}<p class="sb-note sb-warn">略有疲惫</p>{{else}}<p class="sb-note sb-good">状态良好</p>{{/if}}',
+  '  <div class="sb-chips">{{#each 随身物品}}<span class="sb-chip">{{@value}}</span>{{/each}}</div>',
   '  <div class="sb-actions">',
-  '    <button type="button" data-sb-action="quick-reply" data-sb-text="查看状态">查看状态</button>',
-  '    <button type="button" data-sb-action="copy" data-sb-copy="{{姓名}}｜{{所在地}}">复制摘要</button>',
+  '    <button data-sb-action="quick-reply" data-sb-text="查看状态">查看状态</button>',
+  '    <button data-sb-action="adjust" data-sb-var="体力" data-sb-delta="-10">受伤 -10</button>',
+  '    <button data-sb-action="copy" data-sb-copy="{{姓名}}｜{{所在地}}｜体力 {{体力}}">复制摘要</button>',
   '  </div>',
   '</section>'
 ].join('\n');
@@ -100,12 +119,16 @@ export function useCharacterStatusBlueprint({
       ) {
         continue;
       }
+      const type = resolveStatusBlueprintVariableType(variable, template);
       rows.push({
         kind: 'variable',
         key: `variable:${index}:${key}`,
         variable,
         index,
-        isMeter: isStatusBlueprintMeterVariable(variable),
+        type,
+        isMeter: type === 'meter',
+        isNumeric: type === 'meter' || type === 'number',
+        valuePlaceholder: statusValuePlaceholder(type),
         color: normalizeHexColor(variable?.color)
       });
     }
@@ -162,7 +185,29 @@ export function useCharacterStatusBlueprint({
     }
     blueprint.template = STATUS_BLUEPRINT_SAMPLE_TEMPLATE;
     syncStatusBlueprintVariablesFromTemplate();
+    seedStatusBlueprintSampleValues(blueprint);
     notify?.success?.('已套用示例模板并同步变量');
+  }
+
+  // The sample template needs a list and a counter to render meaningfully;
+  // inference alone would make every variable an empty text row.
+  function seedStatusBlueprintSampleValues(blueprint) {
+    const seeds = [
+      { name: '姓名', value: '待定' },
+      { name: '所在地', value: '待定' },
+      { name: '体力', value: 80, max: 100, color: '#27ae60', type: 'meter' },
+      { name: '金币', value: 100, type: 'number', unit: 'G' },
+      { name: '随身物品', value: '长剑、药水、地图', type: 'list' }
+    ];
+    for (const seed of seeds) {
+      const variable = findStatusBlueprintVariable(seed.name);
+      if (!variable) {
+        if (blueprint.variables.length >= STATUS_BLUEPRINT_VARIABLE_LIMIT) break;
+        blueprint.variables.push({ ...seed });
+        continue;
+      }
+      Object.assign(variable, seed);
+    }
   }
 
   function clearStatusBlueprintTemplate() {
@@ -177,10 +222,6 @@ export function useCharacterStatusBlueprint({
     blueprint.template = '';
     syncStatusBlueprintVariablesFromTemplate();
     notify?.success?.('已清空模板，变量仍保留');
-  }
-
-  function isStatusBlueprintMeterVariable(variable = {}) {
-    return shouldTreatStatusVariableAsMeter(variable, form.authorAdvancedSettings.statusBarBlueprint.template);
   }
 
   function getStatusBlueprintVariableValue(name = '') {
@@ -216,6 +257,7 @@ export function useCharacterStatusBlueprint({
     }
     variable.value = normalizeStatusTextVariableValue(value);
     delete variable.max;
+    delete variable.min;
     delete variable.color;
   }
 
@@ -234,19 +276,29 @@ export function useCharacterStatusBlueprint({
     return null;
   }
 
+  // Switching type keeps the variable usable: meters gain a range and colour,
+  // counters and text drop the meter-only fields.
   function setStatusBlueprintVariableMode(variable, mode) {
     if (!canEdit?.value || !variable || typeof variable !== 'object') {
       return;
     }
-    if (mode === 'meter') {
-      variable.value = normalizeStatusMeterVariableValue(variable.value);
+    const type = normalizeStatusVariableType(mode) || 'text';
+    variable.type = type;
+    variable.value = normalizeStatusVariableValueForType(variable.value, type, { emptyText: true });
+    if (type === 'meter') {
       variable.max = normalizeStatusMeterMax(variable.max);
       variable.color = normalizeHexColor(variable.color);
       return;
     }
-    variable.value = normalizeStatusTextVariableValue(variable.value) || defaultStatusTextValueForName(variable.name);
     delete variable.max;
+    delete variable.min;
     delete variable.color;
+    if (type !== 'number') {
+      delete variable.unit;
+      if (!String(variable.value ?? '').trim()) {
+        variable.value = defaultStatusTextValueForName(variable.name);
+      }
+    }
   }
 
   function setStatusBlueprintVariableValueFromEvent(name, event) {
@@ -278,9 +330,14 @@ export function useCharacterStatusBlueprint({
       return;
     }
     const blueprint = ensureStatusBlueprint();
+    if (blueprint.variables.length >= STATUS_BLUEPRINT_VARIABLE_LIMIT) {
+      notify?.warning?.(`变量最多 ${STATUS_BLUEPRINT_VARIABLE_LIMIT} 个`);
+      return;
+    }
     blueprint.variables.push({
       name: `变量 ${blueprint.variables.length + 1}`,
-      value: '待定'
+      value: '待定',
+      type: 'text'
     });
   }
 
@@ -334,6 +391,13 @@ export function hasStatusBarBlueprintContent(blueprint = {}) {
   );
 }
 
+function statusValuePlaceholder(type) {
+  if (type === 'meter') return '数值';
+  if (type === 'number') return '计数';
+  if (type === 'list') return '长剑、药水、地图';
+  return '文本内容';
+}
+
 function normalizeStatusVariableListForPayload(variables = [], template = '') {
   const normalizedVariables = [];
   for (const variable of Array.isArray(variables) ? variables : []) {
@@ -350,34 +414,40 @@ function normalizeStatusVariableForPayload(variable = {}, template = '') {
   if (!name) {
     return { name: '', value: '' };
   }
-  if (!shouldTreatStatusVariableAsMeter(variable, template)) {
+  const extras = normalizeStatusVariableExtras(variable);
+  const type = resolveStatusBlueprintVariableType(variable, template);
+  if (type !== 'meter') {
     return {
       name,
-      value: normalizeStatusTextVariableValue(variable?.value)
+      value: normalizeStatusVariableValueForType(variable?.value, type, { emptyText: true }),
+      ...extras
     };
   }
   return {
     name,
     value: normalizeStatusMeterVariableValue(variable?.value),
-    max: normalizeStatusMeterMax(variable?.max),
-    color: normalizeHexColor(variable?.color)
+    max: normalizeStatusMeterMax(variable?.max, extras.min),
+    color: normalizeHexColor(variable?.color),
+    ...extras
   };
 }
 
-function shouldTreatStatusVariableAsMeter(variable = {}, template = '') {
+// An explicit type always wins. Without one, the template decides (a meter-only
+// placeholder such as {{体力.percent}} marks a meter), and otherwise the legacy
+// rule applies: a numeric value with a max is a meter.
+function resolveStatusBlueprintVariableType(variable = {}, template = '') {
+  const explicit = normalizeStatusVariableType(variable?.type);
+  if (explicit) {
+    return explicit;
+  }
   const name = String(variable?.name || '').trim();
-  if (!name) {
-    return false;
+  if (name) {
+    const usage = getStatusVariableTemplateUsage(template, name);
+    if (usage.meter) {
+      return 'meter';
+    }
   }
-  const usage = getStatusVariableTemplateUsage(template, name);
-  if (usage.meter) {
-    return true;
-  }
-  if (usage.text) {
-    return false;
-  }
-  const value = normalizeStatusVariableValue(variable?.value);
-  return typeof value === 'number' && Number.isFinite(Number(variable?.max));
+  return resolveStatusVariableKind(variable);
 }
 
 function getStatusVariableTemplateUsage(template = '', name = '') {
@@ -386,16 +456,11 @@ function getStatusVariableTemplateUsage(template = '', name = '') {
   if (!target) {
     return usage;
   }
-  const placeholderPattern = /\{\{\s*([^{}]+?)\s*\}\}|\{([\w\u4e00-\u9fa5 ._-]+)\}/g;
-  let match;
-  while ((match = placeholderPattern.exec(String(template || '')))) {
-    const token = String(match[1] || match[2] || '').trim();
-    const parsed = parseStatusTemplateToken(token);
-    if (normalizeStatusVariableKey(parsed.rawName) !== target) {
+  for (const reference of collectStatusTemplateReferences(template)) {
+    if (normalizeStatusVariableKey(reference.rawName) !== target) {
       continue;
     }
-    const property = parsed.rawProperty.trim();
-    if (isStatusMeterPlaceholderProperty(property)) {
+    if (isStatusMeterPlaceholderProperty(reference.rawProperty)) {
       usage.meter = true;
     } else {
       usage.text = true;
@@ -406,11 +471,11 @@ function getStatusVariableTemplateUsage(template = '', name = '') {
 
 function isStatusMeterPlaceholderProperty(property = '') {
   const value = String(property || '').trim();
-  return isStatusTemplateMeterProperty(value) || ['color', 'display', 'displayValue'].includes(value);
+  return isStatusTemplateMeterProperty(value) || value.toLowerCase() === 'color';
 }
 
 function countStatusTemplatePlaceholders(template = '') {
-  return (String(template || '').match(/\{\{\s*[^{}]+?\s*\}\}|\{[\w\u4e00-\u9fa5 ._-]+\}/g) || []).length;
+  return (String(template || '').match(/\{\{\s*[^{}]+?\s*\}\}|\{\s*[\w\u4e00-\u9fa5][\w\u4e00-\u9fa5 ._-]*\}/g) || []).length;
 }
 
 function countStatusTemplateActions(template = '') {
@@ -432,7 +497,7 @@ function countStatusBlueprintVariableStats(variables = [], template = '') {
     if (inferredKeys.has(normalizeStatusVariableKey(variable?.name))) {
       stats.inferred += 1;
     }
-    if (shouldTreatStatusVariableAsMeter(variable, template)) {
+    if (resolveStatusBlueprintVariableType(variable, template) === 'meter') {
       stats.meter += 1;
     }
   }
@@ -441,7 +506,7 @@ function countStatusBlueprintVariableStats(variables = [], template = '') {
 
 function normalizeStatusTextVariableValue(value) {
   const text = String(value ?? '').trim();
-  return text.length > 200 ? text.slice(0, 200) : text;
+  return text.length > STATUS_VARIABLE_TEXT_LIMIT ? text.slice(0, STATUS_VARIABLE_TEXT_LIMIT) : text;
 }
 
 function normalizeStatusMeterVariableValue(value) {
@@ -449,24 +514,10 @@ function normalizeStatusMeterVariableValue(value) {
   return Number.isFinite(numeric) ? numeric : 0;
 }
 
-function normalizeStatusMeterMax(value) {
+function normalizeStatusMeterMax(value, min = 0) {
   const numeric = Number(value);
-  return Number.isFinite(numeric) && numeric > 0 ? numeric : 100;
-}
-
-function normalizeStatusVariableValue(value) {
-  if (typeof value === 'number' && Number.isFinite(value)) {
-    return value;
-  }
-  const text = String(value ?? '').trim();
-  if (!text) {
-    return 0;
-  }
-  const numeric = Number(text);
-  if (Number.isFinite(numeric) && /^[-+]?(?:\d+|\d*\.\d+)$/.test(text)) {
-    return numeric;
-  }
-  return text.length > 200 ? text.slice(0, 200) : text;
+  const floor = Number.isFinite(Number(min)) ? Number(min) : 0;
+  return Number.isFinite(numeric) && numeric > floor ? numeric : Math.max(floor + 1, 100);
 }
 
 function inferStatusVariablesFromTemplate(template, variables = []) {
@@ -479,20 +530,16 @@ function inferStatusVariablesFromTemplate(template, variables = []) {
       seen.add(key);
     }
   }
-  const placeholderPattern = /\{\{\s*([^{}]+?)\s*\}\}|\{([\w\u4e00-\u9fa5 ._-]+)\}/g;
-  let match;
-  while ((match = placeholderPattern.exec(String(template || '')))) {
-    const token = String(match[1] || match[2] || '').trim();
-    const parsed = parseStatusTemplateToken(token);
-    const name = normalizeTemplateVariableName(parsed.rawName);
+  for (const reference of collectStatusTemplateReferences(template)) {
+    const name = normalizeTemplateVariableName(reference.rawName);
     const key = normalizeStatusVariableKey(name);
     if (!name || seen.has(key)) {
       continue;
     }
     inferred.push(
-      shouldTreatStatusVariableAsMeter({ name }, template)
-        ? { name: name.slice(0, 40), value: 0, max: 100, color: '#6c757d' }
-        : { name: name.slice(0, 40), value: defaultStatusTextValueForName(name) }
+      isStatusMeterPlaceholderProperty(reference.rawProperty)
+        ? { name: name.slice(0, STATUS_VARIABLE_NAME_LIMIT), value: 0, max: 100, color: '#6c757d' }
+        : { name: name.slice(0, STATUS_VARIABLE_NAME_LIMIT), value: defaultStatusTextValueForName(name) }
     );
     seen.add(key);
     if (inferred.length >= STATUS_BLUEPRINT_VARIABLE_LIMIT) {
@@ -574,11 +621,13 @@ function extractStatusTemplateCompositeRows(template) {
   return rows;
 }
 
+// "位置 = {{地区}} > {{地点}}" is a wrapper row, not a variable: its editor row
+// edits the referenced text variables instead.
 function extractCompositePlaceholderParts(value = '', label = '') {
   const parts = [];
   const seen = new Set();
   const labelKey = normalizeStatusVariableKey(label);
-  const placeholderPattern = /\{\{\s*([^{}]+?)\s*\}\}|\{([\w\u4e00-\u9fa5 ._-]+)\}/g;
+  const placeholderPattern = /\{\{\s*([^{}]+?)\s*\}\}|\{\s*([\w\u4e00-\u9fa5][\w\u4e00-\u9fa5 ._-]*)\}/g;
   let match;
   while ((match = placeholderPattern.exec(normalizeHtmlText(value)))) {
     const token = String(match[1] || match[2] || '').trim();
@@ -589,7 +638,7 @@ function extractCompositePlaceholderParts(value = '', label = '') {
     if (!name || !key || key === labelKey || seen.has(key)) {
       continue;
     }
-    if (isMeterTemplateProperty(rawProperty)) {
+    if (isStatusMeterPlaceholderProperty(rawProperty)) {
       continue;
     }
     parts.push({ name });
@@ -598,17 +647,13 @@ function extractCompositePlaceholderParts(value = '', label = '') {
   return parts;
 }
 
-function isMeterTemplateProperty(value = '') {
-  return isStatusTemplateMeterProperty(value);
-}
-
 function isCompositeStatusPlaceholderValue(value = '', name = '') {
   return extractCompositePlaceholderParts(value, name).length >= 2;
 }
 
 function isSelfStatusPlaceholder(value = '', name = '') {
   const escaped = escapeRegExp(String(name || '').trim());
-  return Boolean(escaped && new RegExp(`^\\{\\{\\s*${escaped}\\s*\\}\\}$`).test(String(value || '').trim()));
+  return Boolean(escaped && new RegExp(`^\\{\\{?\\s*${escaped}\\s*\\}?\\}$`).test(String(value || '').trim()));
 }
 
 function defaultStatusTextValueForName(name = '') {
@@ -643,16 +688,21 @@ function dedupeStatusVariables(variables = [], template = '') {
 }
 
 function mergeStatusVariable(current, next, template = '') {
-  const useMeter = shouldTreatStatusVariableAsMeter(next, template) || shouldTreatStatusVariableAsMeter(current, template);
+  const useMeter = resolveStatusBlueprintVariableType(next, template) === 'meter'
+    || resolveStatusBlueprintVariableType(current, template) === 'meter';
   if (useMeter) {
     return {
+      ...current,
+      ...next,
       name: next.name || current.name,
       value: normalizeStatusMeterVariableValue(next.value ?? current.value),
-      max: normalizeStatusMeterMax(next.max ?? current.max),
+      max: normalizeStatusMeterMax(next.max ?? current.max, next.min ?? current.min),
       color: normalizeHexColor(next.color || current.color)
     };
   }
   return {
+    ...current,
+    ...next,
     name: next.name || current.name,
     value: normalizeStatusTextVariableValue(next.value || current.value)
   };
@@ -662,15 +712,7 @@ function normalizeTemplateVariableName(value) {
   return normalizeHtmlText(value)
     .replace(/^[\s\u3000:\uFF1A;\uFF1B,\uFF0C.\u3002]+|[\s\u3000:\uFF1A;\uFF1B,\uFF0C.\u3002]+$/g, '')
     .replace(/\s+/g, ' ')
-    .slice(0, 40);
-}
-
-function normalizeStatusVariableKey(value) {
-  return String(value || '')
-    .replace(/<[^>]*>/g, '')
-    .replace(/[\s\u3000:\uFF1A;\uFF1B,\uFF0C.\u3002\u3001/\\|()[\]{}"'`~!@#$%^&*_+=?<>-]+/g, '')
-    .trim()
-    .toLowerCase();
+    .slice(0, STATUS_VARIABLE_NAME_LIMIT);
 }
 
 function sameStatusVariableList(left = [], right = []) {
@@ -693,6 +735,9 @@ function sameStatusVariableForPayload(current, next) {
   return currentVariable.name === nextVariable.name
     && Object.is(currentVariable.value, nextVariable.value)
     && Object.is(currentVariable.max, nextVariable.max)
+    && Object.is(currentVariable.min, nextVariable.min)
+    && String(currentVariable.type || '') === String(nextVariable.type || '')
+    && String(currentVariable.unit || '') === String(nextVariable.unit || '')
     && String(currentVariable.color || '') === String(nextVariable.color || '');
 }
 
@@ -728,9 +773,10 @@ function parseStatusBarTemplateConfig(raw) {
       return {};
     }
     const cfg = {};
-    if (['default', 'compact', 'minimal', 'neon'].includes(parsed.variant)) cfg.variant = parsed.variant;
-    if (['default', 'cozy', 'compact'].includes(parsed.density)) cfg.density = parsed.density;
-    if (['immersive', 'compact'].includes(parsed.displayMode)) cfg.displayMode = parsed.displayMode;
+    if (STATUS_BAR_VARIANTS.includes(parsed.variant)) cfg.variant = parsed.variant;
+    if (STATUS_BAR_DENSITIES.includes(parsed.density)) cfg.density = parsed.density;
+    if (STATUS_BAR_LAYOUTS.includes(parsed.layout)) cfg.layout = parsed.layout;
+    if (STATUS_BAR_DISPLAY_MODES.includes(parsed.displayMode)) cfg.displayMode = parsed.displayMode;
     if (typeof parsed.accentColor === 'string' && parsed.accentColor.trim()) cfg.accentColor = parsed.accentColor.trim();
     if (typeof parsed.customCss === 'string' && parsed.customCss.trim()) cfg.customCss = parsed.customCss.trim();
     if (Array.isArray(parsed.effects)) {
@@ -752,15 +798,11 @@ function collectAllowedStatusEffects(effects = []) {
   const currentEffects = Array.isArray(effects) ? effects : [];
   const allowedEffects = [];
   for (const effect of currentEffects) {
-    if (isAllowedStatusEffect(effect)) {
+    if (STATUS_BAR_EFFECTS.includes(effect)) {
       allowedEffects.push(effect);
     }
   }
   return allowedEffects;
-}
-
-function isAllowedStatusEffect(effect) {
-  return effect === 'glow' || effect === 'striped' || effect === 'pulse';
 }
 
 function normalizeHexColor(value, fallback = '#6c757d') {
