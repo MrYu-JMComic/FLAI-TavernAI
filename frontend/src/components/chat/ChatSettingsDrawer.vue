@@ -1,8 +1,25 @@
 <script setup>
 import { computed } from 'vue';
-import { ChevronDown, Image as ImageIcon, Save, Upload, X } from '@lucide/vue';
+import { BookOpen, ChevronDown, Image as ImageIcon, Save, Upload, X } from '@lucide/vue';
 import { isStatusTemplateMeterProperty, parseStatusTemplateToken } from '../../../../shared/statusTemplateTokens.js';
+import {
+  STATUS_VARIABLE_TYPES,
+  STATUS_VARIABLE_TYPE_LABELS,
+  normalizeStatusVariableType,
+  normalizeStatusVariableValueForType,
+  resolveStatusVariableKind
+} from '../../../../shared/statusVariables.js';
+import { STATUS_BAR_LAYOUT_OPTIONS, STATUS_BAR_VARIANT_OPTIONS } from '../../utils/statusBarOptions.js';
+import { STATUS_TEMPLATE_REFERENCE } from '../../utils/statusTemplateReference.js';
 import { buildModelSelectOptions } from '../../services/modelCatalog';
+
+// Rendered from the SFC template; keep the script bindings visible to source
+// hygiene checks.
+void STATUS_VARIABLE_TYPES;
+void STATUS_VARIABLE_TYPE_LABELS;
+void STATUS_BAR_LAYOUT_OPTIONS;
+void STATUS_BAR_VARIANT_OPTIONS;
+void STATUS_TEMPLATE_REFERENCE;
 
 const props = defineProps({
   open: { type: Boolean, default: false },
@@ -31,7 +48,7 @@ const props = defineProps({
   statusBarForm: { type: Object, default: () => ({}) },
   statusBarTemplateMode: { type: String, default: 'builtin' },
   statusBarTemplateIssues: { type: Array, default: () => [] },
-  statusBarTemplateCfg: { type: Object, default: () => ({ variant: 'default', density: 'default', accentColor: '', effects: [], customCss: '' }) }
+  statusBarTemplateCfg: { type: Object, default: () => ({ variant: 'default', density: 'default', layout: 'grid', accentColor: '', effects: [], customCss: '' }) }
 });
 
 const emit = defineEmits([
@@ -102,7 +119,8 @@ const statusBarEditorRows = computed(() => {
       kind: 'variable',
       key: `variable:${index}:${key}`,
       variable,
-      index
+      index,
+      ...statusVariableEditorShape(variable)
     });
   }
 
@@ -302,6 +320,42 @@ function setStatusBarVariableValueFromEvent(name, event) {
     return;
   }
   setStatusBarVariableValue(name, value);
+}
+
+// Derives the editor fields a variable actually has. Shared by the status bar
+// variable list and the per-character variable lists so both offer the same
+// four types the status bar can render.
+function statusVariableEditorShape(variable) {
+  const type = normalizeStatusVariableType(variable?.type) || resolveStatusVariableKind(variable);
+  return {
+    type,
+    isNumeric: type === 'meter' || type === 'number',
+    valuePlaceholder: type === 'list' ? '长剑、药水、地图' : type === 'text' ? '当前文本' : '当前值'
+  };
+}
+
+// Switching type keeps the value usable and drops the fields the new type
+// does not have, mirroring the character blueprint editor.
+function setStatusBarVariableType(variable, event) {
+  const value = readEventTargetValue(event);
+  const type = normalizeStatusVariableType(value);
+  if (!variable || typeof variable !== 'object' || !type) {
+    return;
+  }
+  variable.type = type;
+  variable.value = normalizeStatusVariableValueForType(variable.value, type, { emptyText: true });
+  if (type === 'meter') {
+    if (!Number.isFinite(Number(variable.max)) || Number(variable.max) <= 0) {
+      variable.max = 100;
+    }
+    return;
+  }
+  delete variable.max;
+  delete variable.min;
+  delete variable.color;
+  if (type !== 'number') {
+    delete variable.unit;
+  }
 }
 
 function modelOverrideOptions(value = '') {
@@ -725,15 +779,35 @@ function requestClose() {
                 <option value="custom">完全自定义</option>
               </select>
             </label>
-            <label v-if="statusBarTemplateMode === 'custom'" class="chat-setting-field compact">
-              <span>自定义模板</span>
-              <textarea
-                v-model="statusBarForm.template"
-                class="chat-code-textarea sb-custom-template"
-                rows="8"
-                placeholder="<div class=&quot;my-status&quot;>HP: {{HP}} / {{HP.max}}</div>"
-              />
-            </label>
+            <template v-if="statusBarTemplateMode === 'custom'">
+              <label class="chat-setting-field compact">
+                <span>自定义模板</span>
+                <textarea
+                  v-model="statusBarForm.template"
+                  class="chat-code-textarea sb-custom-template"
+                  rows="8"
+                  placeholder="<div class=&quot;sb-row&quot;><span class=&quot;sb-label&quot;>HP</span><span class=&quot;sb-val&quot;>{{HP}} / {{HP.max}}</span></div>"
+                />
+              </label>
+              <details class="status-blueprint-reference">
+                <summary>
+                  <BookOpen :size="15" />
+                  <span>语法速查：占位符、变量类型、过滤器、条件循环、表达式、按钮动作、样式类</span>
+                  <ChevronDown :size="15" aria-hidden="true" />
+                </summary>
+                <div class="status-blueprint-reference-body">
+                  <section v-for="group in STATUS_TEMPLATE_REFERENCE" :key="group.key" class="status-blueprint-reference-group">
+                    <h4>{{ group.title }}</h4>
+                    <dl>
+                      <template v-for="item in group.items" :key="item.code">
+                        <dt><code>{{ item.code }}</code></dt>
+                        <dd>{{ item.summary }}</dd>
+                      </template>
+                    </dl>
+                  </section>
+                </div>
+              </details>
+            </template>
             <div v-if="statusBarTemplateIssues.length" class="status-bar-template-alert" role="alert">
               <span>模板需要调整：</span>
               <ul>
@@ -745,10 +819,17 @@ function requestClose() {
               <label class="chat-setting-field compact">
                 <span>样式风格</span>
                 <select v-model="statusBarTemplateCfg.variant">
-                  <option value="default">默认</option>
-                  <option value="compact">紧凑</option>
-                  <option value="minimal">极简</option>
-                  <option value="neon">霓虹</option>
+                  <option v-for="option in STATUS_BAR_VARIANT_OPTIONS" :key="option.value" :value="option.value">
+                    {{ option.label }}
+                  </option>
+                </select>
+              </label>
+              <label class="chat-setting-field compact">
+                <span>排列</span>
+                <select v-model="statusBarTemplateCfg.layout">
+                  <option v-for="option in STATUS_BAR_LAYOUT_OPTIONS" :key="option.value" :value="option.value">
+                    {{ option.label }}
+                  </option>
                 </select>
               </label>
               <label class="chat-setting-field compact">
@@ -875,14 +956,93 @@ function requestClose() {
                 <div
                   v-for="(v, vi) in ch.variables"
                   :key="vi"
-                  class="variable-editor-row"
+                  class="status-variable-card"
+                  :class="`is-${statusVariableEditorShape(v).type}`"
                 >
-                  <input v-model="v.name" class="variable-input name" type="text" :aria-label="`角色变量 ${vi + 1} 名称`" placeholder="变量名" maxlength="20" />
-                  <input v-model.number="v.value" class="variable-input num" type="number" :aria-label="`角色变量 ${vi + 1} 当前值`" placeholder="值" />
-                  <span class="variable-separator">/</span>
-                  <input v-model.number="v.max" class="variable-input num" type="number" :aria-label="`角色变量 ${vi + 1} 最大值`" placeholder="最大" />
-                  <input :value="colorInputValue(v.color)" class="variable-input color" type="color" title="颜色" @input="setColorValueFromEvent(v, 'color', $event)" />
-                  <button class="variable-remove" type="button" title="删除变量" @click="emit('remove-character-variable', ci, vi)">x</button>
+                  <div class="status-variable-line">
+                    <input
+                      v-model="v.name"
+                      class="variable-input name"
+                      type="text"
+                      :aria-label="`角色变量 ${vi + 1} 名称`"
+                      placeholder="变量名"
+                      maxlength="40"
+                    />
+                    <select
+                      class="variable-input kind"
+                      :value="statusVariableEditorShape(v).type"
+                      :aria-label="`角色变量 ${vi + 1} 类型`"
+                      @change="setStatusBarVariableType(v, $event)"
+                    >
+                      <option v-for="type in STATUS_VARIABLE_TYPES" :key="type" :value="type">
+                        {{ STATUS_VARIABLE_TYPE_LABELS[type] }}
+                      </option>
+                    </select>
+                    <button
+                      class="variable-remove"
+                      type="button"
+                      title="删除变量"
+                      :aria-label="`删除角色变量 ${vi + 1}`"
+                      @click="emit('remove-character-variable', ci, vi)"
+                    >
+                      x
+                    </button>
+                  </div>
+                  <div class="status-variable-line is-detail">
+                    <label class="status-variable-field is-value">
+                      <span>{{ statusVariableEditorShape(v).type === 'list' ? '条目' : '当前值' }}</span>
+                      <input
+                        v-model="v.value"
+                        class="variable-input value"
+                        :type="statusVariableEditorShape(v).isNumeric ? 'number' : 'text'"
+                        :aria-label="`角色变量 ${vi + 1} 当前值`"
+                        :placeholder="statusVariableEditorShape(v).valuePlaceholder"
+                      />
+                    </label>
+                    <template v-if="statusVariableEditorShape(v).type === 'meter'">
+                      <label class="status-variable-field is-num">
+                        <span>下限</span>
+                        <input
+                          v-model.number="v.min"
+                          class="variable-input num"
+                          type="number"
+                          :aria-label="`角色变量 ${vi + 1} 最小值`"
+                          placeholder="0"
+                        />
+                      </label>
+                      <label class="status-variable-field is-num">
+                        <span>上限</span>
+                        <input
+                          v-model.number="v.max"
+                          class="variable-input num"
+                          type="number"
+                          :aria-label="`角色变量 ${vi + 1} 最大值`"
+                          placeholder="100"
+                        />
+                      </label>
+                      <label class="status-variable-field is-color">
+                        <span>颜色</span>
+                        <input
+                          :value="colorInputValue(v.color)"
+                          class="variable-input color"
+                          type="color"
+                          :aria-label="`角色变量 ${vi + 1} 颜色`"
+                          @input="setColorValueFromEvent(v, 'color', $event)"
+                        />
+                      </label>
+                    </template>
+                    <label v-if="statusVariableEditorShape(v).isNumeric" class="status-variable-field is-unit">
+                      <span>单位</span>
+                      <input
+                        v-model="v.unit"
+                        class="variable-input unit"
+                        type="text"
+                        :aria-label="`角色变量 ${vi + 1} 单位`"
+                        placeholder="点 / G"
+                        maxlength="12"
+                      />
+                    </label>
+                  </div>
                 </div>
                 <button class="chat-setting-inline-button small" type="button" @click="emit('add-character-variable', ci)">+ 添加变量</button>
               </div>
@@ -916,18 +1076,20 @@ function requestClose() {
             <div
               v-for="row in statusBarEditorRows"
               :key="row.key"
-              class="variable-editor-row"
-              :class="{ 'status-variable-row': row.kind === 'composite', 'is-composite': row.kind === 'composite' }"
+              class="status-variable-card"
+              :class="`is-${row.kind === 'composite' ? 'composite' : row.type}`"
             >
               <template v-if="row.kind === 'composite'">
-                <input
-                  :value="row.label"
-                  class="variable-input name"
-                  type="text"
-                  readonly
-                  :aria-label="`状态栏组合行 ${row.label}`"
-                />
-                <span class="variable-input kind status-composite-kind">组合</span>
+                <div class="status-variable-line">
+                  <input
+                    :value="row.label"
+                    class="variable-input name"
+                    type="text"
+                    readonly
+                    :aria-label="`状态栏组合行 ${row.label}`"
+                  />
+                  <span class="status-variable-type-tag">组合行</span>
+                </div>
                 <div class="status-composite-values">
                   <label
                     v-for="part in row.parts"
@@ -947,44 +1109,90 @@ function requestClose() {
                 </div>
               </template>
               <template v-else>
-              <input
-                v-model="row.variable.name"
-                class="variable-input name"
-                type="text"
-                :aria-label="`状态栏变量 ${row.index + 1} 名称`"
-                placeholder="变量名"
-                maxlength="20"
-              />
-              <input
-                v-model="row.variable.value"
-                class="variable-input num"
-                type="text"
-                :aria-label="`状态栏变量 ${row.index + 1} 当前值`"
-                placeholder="当前值"
-              />
-              <span class="variable-separator">/</span>
-              <input
-                v-model.number="row.variable.max"
-                class="variable-input num"
-                type="number"
-                :aria-label="`状态栏变量 ${row.index + 1} 最大值`"
-                placeholder="最大值"
-              />
-              <input
-                :value="colorInputValue(row.variable.color)"
-                class="variable-input color"
-                type="color"
-                title="颜色"
-                @input="setColorValueFromEvent(row.variable, 'color', $event)"
-              />
-              <button
-                class="variable-remove"
-                type="button"
-                title="删除变量"
-                @click="emit('remove-status-bar-variable', row.index)"
-              >
-                x
-              </button>
+                <div class="status-variable-line">
+                  <input
+                    v-model="row.variable.name"
+                    class="variable-input name"
+                    type="text"
+                    :aria-label="`状态栏变量 ${row.index + 1} 名称`"
+                    placeholder="变量名"
+                    maxlength="40"
+                  />
+                  <select
+                    class="variable-input kind"
+                    :value="row.type"
+                    :aria-label="`状态栏变量 ${row.index + 1} 类型`"
+                    @change="setStatusBarVariableType(row.variable, $event)"
+                  >
+                    <option v-for="type in STATUS_VARIABLE_TYPES" :key="type" :value="type">
+                      {{ STATUS_VARIABLE_TYPE_LABELS[type] }}
+                    </option>
+                  </select>
+                  <button
+                    class="variable-remove"
+                    type="button"
+                    title="删除变量"
+                    :aria-label="`删除状态栏变量 ${row.index + 1}`"
+                    @click="emit('remove-status-bar-variable', row.index)"
+                  >
+                    x
+                  </button>
+                </div>
+                <div class="status-variable-line is-detail">
+                  <label class="status-variable-field is-value">
+                    <span>{{ row.type === 'list' ? '条目' : '当前值' }}</span>
+                    <input
+                      v-model="row.variable.value"
+                      class="variable-input value"
+                      :type="row.isNumeric ? 'number' : 'text'"
+                      :aria-label="`状态栏变量 ${row.index + 1} 当前值`"
+                      :placeholder="row.valuePlaceholder"
+                    />
+                  </label>
+                  <template v-if="row.type === 'meter'">
+                    <label class="status-variable-field is-num">
+                      <span>下限</span>
+                      <input
+                        v-model.number="row.variable.min"
+                        class="variable-input num"
+                        type="number"
+                        :aria-label="`状态栏变量 ${row.index + 1} 最小值`"
+                        placeholder="0"
+                      />
+                    </label>
+                    <label class="status-variable-field is-num">
+                      <span>上限</span>
+                      <input
+                        v-model.number="row.variable.max"
+                        class="variable-input num"
+                        type="number"
+                        :aria-label="`状态栏变量 ${row.index + 1} 最大值`"
+                        placeholder="100"
+                      />
+                    </label>
+                  </template>
+                  <label v-if="row.isNumeric" class="status-variable-field is-unit">
+                    <span>单位</span>
+                    <input
+                      v-model="row.variable.unit"
+                      class="variable-input unit"
+                      type="text"
+                      :aria-label="`状态栏变量 ${row.index + 1} 单位`"
+                      placeholder="点 / G"
+                      maxlength="12"
+                    />
+                  </label>
+                  <label v-if="row.type === 'meter'" class="status-variable-field is-color">
+                    <span>颜色</span>
+                    <input
+                      :value="colorInputValue(row.variable.color)"
+                      class="variable-input color"
+                      type="color"
+                      :aria-label="`状态栏变量 ${row.index + 1} 颜色`"
+                      @input="setColorValueFromEvent(row.variable, 'color', $event)"
+                    />
+                  </label>
+                </div>
               </template>
             </div>
           </div>

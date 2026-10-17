@@ -1,5 +1,5 @@
 <script setup>
-import { provide, reactive } from 'vue';
+import { computed, provide, reactive } from 'vue';
 import { ArrowLeft, Plus, RotateCcw, X } from '@lucide/vue';
 import CharacterEditorDesktop from '../components/character/CharacterEditorDesktop.vue';
 import CharacterEditorMobile from '../components/character/CharacterEditorMobile.vue';
@@ -30,6 +30,12 @@ const emit = defineEmits(['navigate']);
 const { isPhone } = useViewport({ breakpoint: '(max-width: 760px)' });
 const editor = reactive(useCharacterEditor({ props, emit }));
 provide(CHARACTER_EDITOR_KEY, editor);
+
+// The status preview resolves {{user}} / {{char}} the same way a chat does.
+const statusPreviewContext = computed(() => ({
+  user: props.user?.displayName || props.user?.accountName || props.user?.username || '',
+  char: editor.form?.name || ''
+}));
 </script>
 
 <template>
@@ -123,6 +129,7 @@ provide(CHARACTER_EDITOR_KEY, editor);
       v-if="editor.showStatusPreviewDialog"
       :status-bar="editor.statusBarBlueprintPreview"
       :template-config="editor.statusBarBlueprintPreviewConfig"
+      :context="statusPreviewContext"
       @close="editor.showStatusPreviewDialog = false"
     />
   </section>

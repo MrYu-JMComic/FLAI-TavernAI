@@ -1,9 +1,14 @@
 import { newId, nowIso } from '../security.js';
 import { parseJson } from '../utils/json.js';
 import { isStatusTemplateMeterProperty, parseStatusTemplateToken } from '../../../shared/statusTemplateTokens.js';
+import {
+  STATUS_VARIABLE_LIMIT,
+  normalizeStatusVariableExtras,
+  normalizeStatusVariableValueForType
+} from '../../../shared/statusVariables.js';
 import { recordWorldEvent } from './worldEvents.js';
 
-export const STATUS_BAR_VARIABLE_LIMIT = 60;
+export const STATUS_BAR_VARIABLE_LIMIT = STATUS_VARIABLE_LIMIT;
 
 // ── Status Bar CRUD ──
 
@@ -272,7 +277,8 @@ function appendMissingVariableUpdates(variables, updates) {
       name,
       value: update.value,
       ...(hasExplicitMax(update) ? { max: Number(update.max) } : {}),
-      color: normalizeColor(update.color)
+      color: normalizeColor(update.color),
+      ...normalizeStatusVariableExtras(update)
     });
     seen.add(key);
   }
@@ -332,17 +338,24 @@ function normalizeVariables(variables, template = '') {
     }
 
     const hasMax = hasExplicitMax(variable);
-    const value = normalizeVariableValue(variable?.value, { emptyText: !hasMax });
-    const max = hasMax
-      ? Number(variable.max)
-      : typeof value === 'number'
-        ? 100
-        : undefined;
+    const extras = normalizeStatusVariableExtras(variable);
+    const value = extras.type
+      ? normalizeStatusVariableValueForType(variable?.value, extras.type, { emptyText: true })
+      : normalizeVariableValue(variable?.value, { emptyText: !hasMax });
+    // Counters, text and lists never get the implicit meter max of 100.
+    const max = extras.type && extras.type !== 'meter'
+      ? undefined
+      : hasMax
+        ? Number(variable.max)
+        : typeof value === 'number'
+          ? 100
+          : undefined;
     normalized.push({
       name,
       value,
       ...(max !== undefined ? { max } : {}),
-      color: normalizeColor(variable?.color)
+      color: normalizeColor(variable?.color),
+      ...extras
     });
 
     if (normalized.length >= STATUS_BAR_VARIABLE_LIMIT) {

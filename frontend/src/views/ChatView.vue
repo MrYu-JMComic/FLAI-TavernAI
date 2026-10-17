@@ -136,7 +136,7 @@ const {
   syncAccessorySkills, isAccessorySkillActiveLocal,
   saveAccessorySkillChanges, applyStatusBarUpdate, handleSkillResult,
   syncStatusBarForm, addStatusBarVariable, removeStatusBarVariable,
-  saveStatusBarChanges, deleteStatusBarAction,
+  saveStatusBarChanges, deleteStatusBarAction, applyStatusBarVariableUpdates,
   openStatusBarEditor, closeStatusBarEditor, setStatusBarTemplateMode,
   addStatusCharacter, removeStatusCharacter,
   addCharacterVariable, removeCharacterVariable,
@@ -156,7 +156,7 @@ const {
   activeCharacter, activeRenderPlugins,
   syncConversationAppearance, resetConversationAppearance, saveConversationAppearanceChanges,
   setCastTrackingEnabled, updateCastTracking,
-  setChatLorebookId, applyConversationAppearance, disposeConversationAppearance,
+  setChatLorebookId, applyConversationAppearance, dispatchCustomScriptEvent, disposeConversationAppearance,
   handleAppearanceBackgroundUpload, clearAppearanceField, handleSettingsBackgroundUpload,
   loadWorldBooks
 } = useChatAppearance({
@@ -165,8 +165,23 @@ const {
   user: computed(() => props.user), provider: computed(() => props.provider), messages, notify,
   openSidebar, closeSidebar, openSettings, closeSettings,
   scrollToBottom: (...args) => scroll.scrollToBottom(...args),
+  getStatusBar: () => statusBar.value,
+  updateStatusVariables: (updates) => applyStatusBarVariableUpdates(updates),
+  insertText: (text) => handleStatusBarQuickReply(String(text ?? '')),
+  sendMessage: (text) => handleStatusBarSend(text),
   setActiveConversationIfChanged,
   showActionNotice, showError
+});
+
+// {{user}} / {{char}} in custom status templates.
+const statusBarContext = computed(() => ({
+  user: props.user?.displayName || props.user?.accountName || props.user?.username || '',
+  char: activeCharacter()?.name || conversation.value?.characterName || ''
+}));
+
+// Custom scripts that called on('status', fn) see every saved change.
+watch(statusBar, (value) => {
+  dispatchCustomScriptEvent('status', value);
 });
 
 const {
@@ -624,6 +639,32 @@ function handleStatusBarQuickReply(text) {
   const sep = current && !current.endsWith('\n') ? '\n' : '';
   input.value = current + sep + text;
   scheduleComposerLayoutUpdate({ focus: true });
+}
+
+// Template "send" buttons and scripts send directly; when the composer already
+// holds a draft or a reply is running, the text is appended instead so nothing
+// the user typed is lost.
+async function handleStatusBarSend(text) {
+  const message = String(text ?? '').trim();
+  if (!message) return false;
+  const sent = await submitDraft(message);
+  if (!sent) {
+    handleStatusBarQuickReply(message);
+    showActionNotice('当前无法直接发送，已把内容放入输入框', 'info');
+  }
+  return sent;
+}
+
+function handleStatusBarVariableUpdates(updates) {
+  return applyStatusBarVariableUpdates(updates);
+}
+
+function handleStatusBarScriptAction(payload) {
+  dispatchCustomScriptEvent('action', payload);
+}
+
+function openStatusBarSettings() {
+  openWorkspaceTool('appearance');
 }
 
 function appendCopyFallbackToComposer(text) {
@@ -1448,8 +1489,13 @@ watch([showWorldBookMatchSummary, worldBookMatchSummary], ([shouldShow, matches]
                   :status-bar="statusBar"
                   :template-config="statusBarTemplateConfig"
                   :update-status="statusBarUpdateStatus"
+                  :context="statusBarContext"
                   @collapse="statusSummaryExpanded = false"
                   @quick-reply="handleStatusBarQuickReply"
+                  @send="handleStatusBarSend"
+                  @update-variables="handleStatusBarVariableUpdates"
+                  @open-settings="openStatusBarSettings"
+                  @script-action="handleStatusBarScriptAction"
                 />
               </template>
             </ChatStatusSummary>
@@ -1617,7 +1663,12 @@ watch([showWorldBookMatchSummary, worldBookMatchSummary], ([shouldShow, matches]
           :template-config="statusBarTemplateConfig"
           :update-status="statusBarUpdateStatus"
           :collapse-request="statusBarCollapseRequest"
+          :context="statusBarContext"
           @quick-reply="handleStatusBarQuickReply"
+          @send="handleStatusBarSend"
+          @update-variables="handleStatusBarVariableUpdates"
+          @open-settings="openStatusBarSettings"
+          @script-action="handleStatusBarScriptAction"
         />
       </div>
     </aside>

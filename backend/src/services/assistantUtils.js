@@ -1,3 +1,6 @@
+import { resolveProviderModelCapabilities } from '../../../shared/providerCapabilities.js';
+import { resolveThinkingPreferenceLevel } from '../../../shared/providerThinking.js';
+
 export function objectOrEmpty(value) {
   return value && typeof value === 'object' ? value : {};
 }
@@ -40,4 +43,27 @@ export function parseLooseJsonObject(text) {
       return {};
     }
   }
+}
+
+/**
+ * Resolve the thinking budget an assistant run may use. The requested level is
+ * clamped by what the resolved provider/model actually supports so a stored UI
+ * preference can never force an unsupported request body.
+ */
+export function resolveAssistantThinking(settings, requestedLevel) {
+  const control = resolveProviderModelCapabilities(settings).thinking || {};
+  const level = resolveThinkingPreferenceLevel(requestedLevel, control, control.defaultLevel) || 'off';
+  return {
+    enabled: Boolean(control.supported && level !== 'off'),
+    level
+  };
+}
+
+/**
+ * True when a provider-streaming failure is worth retrying in stable
+ * (non-streaming) mode. User aborts and real provider errors are not.
+ */
+export function shouldRecoverAssistantStream(error, signal) {
+  if (signal?.aborted || error?.name === 'AbortError') return false;
+  return /AI 流式响应(?:中断|不可用)/.test(String(error?.message || ''));
 }

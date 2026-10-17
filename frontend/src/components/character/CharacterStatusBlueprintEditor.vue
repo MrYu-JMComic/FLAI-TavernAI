@@ -1,9 +1,13 @@
 <script setup>
 import { BookOpen, ChevronDown, Eye, Plus, RotateCcw, Sparkles, Trash2, TriangleAlert } from '@lucide/vue';
 import { STATUS_TEMPLATE_REFERENCE } from '../../utils/statusTemplateReference.js';
+import { STATUS_VARIABLE_TYPES, STATUS_VARIABLE_TYPE_LABELS } from '../../../../shared/statusVariables.js';
 
-// The reference is rendered from the SFC template; keep the script binding visible to source hygiene checks.
+// Both lists are rendered from the SFC template; keep the script bindings
+// visible to source hygiene checks.
 void STATUS_TEMPLATE_REFERENCE;
+void STATUS_VARIABLE_TYPES;
+void STATUS_VARIABLE_TYPE_LABELS;
 
 defineProps({
   blueprint: { type: Object, required: true },
@@ -81,23 +85,21 @@ const emit = defineEmits([
         <div
           v-for="row in rows"
           :key="row.key"
-          class="variable-editor-row status-variable-row"
-          :class="{
-            'is-composite': row.kind === 'composite',
-            'is-meter': row.kind === 'variable' && row.isMeter,
-            'is-text': row.kind === 'variable' && !row.isMeter
-          }"
+          class="status-variable-card"
+          :class="`is-${row.kind === 'composite' ? 'composite' : row.type}`"
         >
           <template v-if="row.kind === 'composite'">
-            <input
-              :value="row.label"
-              class="variable-input name"
-              type="text"
-              readonly
-              :disabled="!canEdit"
-              :aria-label="`初始状态栏组合行 ${row.label}`"
-            />
-            <span class="variable-input kind status-composite-kind">组合</span>
+            <div class="status-variable-line">
+              <input
+                :value="row.label"
+                class="variable-input name"
+                type="text"
+                readonly
+                :disabled="!canEdit"
+                :aria-label="`初始状态栏组合行 ${row.label}`"
+              />
+              <span class="status-variable-type-tag">组合行</span>
+            </div>
             <div class="status-composite-values">
               <label
                 v-for="part in row.parts"
@@ -118,62 +120,98 @@ const emit = defineEmits([
             </div>
           </template>
           <template v-else>
-            <input
-              v-model="row.variable.name"
-              class="variable-input name"
-              type="text"
-              placeholder="变量名"
-              maxlength="40"
-              :disabled="!canEdit"
-              :aria-label="`初始状态栏变量 ${row.index + 1} 名称`"
-            />
-            <select
-              class="variable-input kind"
-              :value="row.isMeter ? 'meter' : 'text'"
-              :disabled="!canEdit"
-              :aria-label="`初始状态栏变量 ${row.index + 1} 类型`"
-              @change="emit('set-variable-mode', row.variable, $event)"
-            >
-              <option value="text">文本</option>
-              <option value="meter">数值</option>
-            </select>
-            <input
-              v-model="row.variable.value"
-              class="variable-input value"
-              type="text"
-              :placeholder="row.isMeter ? '数值' : '文本内容'"
-              :disabled="!canEdit"
-              :aria-label="`初始状态栏变量 ${row.index + 1} 内容`"
-            />
-            <template v-if="row.isMeter">
-              <span class="variable-separator">/</span>
+            <div class="status-variable-line">
               <input
-                v-model.number="row.variable.max"
-                class="variable-input num"
-                type="number"
-                placeholder="最大"
+                v-model="row.variable.name"
+                class="variable-input name"
+                type="text"
+                placeholder="变量名"
+                maxlength="40"
                 :disabled="!canEdit"
-                :aria-label="`初始状态栏变量 ${row.index + 1} 最大值`"
+                :aria-label="`初始状态栏变量 ${row.index + 1} 名称`"
               />
-              <input
-                :value="row.color"
-                class="variable-input color"
-                type="color"
-                title="颜色"
+              <select
+                class="variable-input kind"
+                :value="row.type"
                 :disabled="!canEdit"
-                @input="emit('set-color', row.variable, 'color', $event)"
-              />
-            </template>
-            <button
-              v-if="canEdit"
-              class="variable-remove"
-              type="button"
-              title="删除变量"
-              :aria-label="`删除初始状态栏变量 ${row.index + 1}`"
-              @click="emit('remove-variable', row.index)"
-            >
-              x
-            </button>
+                :aria-label="`初始状态栏变量 ${row.index + 1} 类型`"
+                @change="emit('set-variable-mode', row.variable, $event)"
+              >
+                <option v-for="type in STATUS_VARIABLE_TYPES" :key="type" :value="type">
+                  {{ STATUS_VARIABLE_TYPE_LABELS[type] }}
+                </option>
+              </select>
+              <button
+                v-if="canEdit"
+                class="variable-remove"
+                type="button"
+                title="删除变量"
+                :aria-label="`删除初始状态栏变量 ${row.index + 1}`"
+                @click="emit('remove-variable', row.index)"
+              >
+                x
+              </button>
+            </div>
+            <div class="status-variable-line is-detail">
+              <label class="status-variable-field is-value">
+                <span>{{ row.type === 'list' ? '条目' : '初始值' }}</span>
+                <input
+                  v-model="row.variable.value"
+                  class="variable-input value"
+                  :type="row.isNumeric ? 'number' : 'text'"
+                  :placeholder="row.valuePlaceholder"
+                  :disabled="!canEdit"
+                  :aria-label="`初始状态栏变量 ${row.index + 1} 内容`"
+                />
+              </label>
+              <template v-if="row.type === 'meter'">
+                <label class="status-variable-field is-num">
+                  <span>下限</span>
+                  <input
+                    v-model.number="row.variable.min"
+                    class="variable-input num"
+                    type="number"
+                    placeholder="0"
+                    :disabled="!canEdit"
+                    :aria-label="`初始状态栏变量 ${row.index + 1} 最小值`"
+                  />
+                </label>
+                <label class="status-variable-field is-num">
+                  <span>上限</span>
+                  <input
+                    v-model.number="row.variable.max"
+                    class="variable-input num"
+                    type="number"
+                    placeholder="100"
+                    :disabled="!canEdit"
+                    :aria-label="`初始状态栏变量 ${row.index + 1} 最大值`"
+                  />
+                </label>
+              </template>
+              <label v-if="row.isNumeric" class="status-variable-field is-unit">
+                <span>单位</span>
+                <input
+                  v-model="row.variable.unit"
+                  class="variable-input unit"
+                  type="text"
+                  placeholder="点 / G"
+                  maxlength="12"
+                  :disabled="!canEdit"
+                  :aria-label="`初始状态栏变量 ${row.index + 1} 单位`"
+                />
+              </label>
+              <label v-if="row.type === 'meter'" class="status-variable-field is-color">
+                <span>颜色</span>
+                <input
+                  :value="row.color"
+                  class="variable-input color"
+                  type="color"
+                  :disabled="!canEdit"
+                  :aria-label="`初始状态栏变量 ${row.index + 1} 颜色`"
+                  @input="emit('set-color', row.variable, 'color', $event)"
+                />
+              </label>
+            </div>
           </template>
         </div>
         <p v-if="!rows.length" class="status-blueprint-vars-empty">
@@ -209,7 +247,7 @@ const emit = defineEmits([
       <textarea
         v-model="blueprint.template"
         rows="8"
-        placeholder="<div class=&quot;sb-row&quot;><span class=&quot;sb-label&quot;>HP</span><span class=&quot;sb-val&quot;>{{HP}} / {{HP.max}}</span></div>&#10;{{#if HP < 30}}<p class=&quot;sb-note sb-bad&quot;>需要休息</p>{{/if}}&#10;<button data-sb-action=&quot;quick-reply&quot; data-sb-text=&quot;查看状态&quot;>查看</button>"
+        placeholder="<div class=&quot;sb-row&quot;><span class=&quot;sb-label&quot;>体力</span><span class=&quot;sb-val&quot;>{{体力}} / {{体力.max}}</span></div>&#10;{{#if 体力 < 30}}<p class=&quot;sb-note sb-bad&quot;>还需休息 {{= 30 - 体力}} 点</p>{{/if}}&#10;<button data-sb-action=&quot;quick-reply&quot; data-sb-text=&quot;查看状态&quot;>查看</button>"
         :disabled="!canEdit"
         spellcheck="false"
         aria-label="完全自定义状态栏模板"
@@ -223,15 +261,15 @@ const emit = defineEmits([
       <details class="status-blueprint-reference">
         <summary>
           <BookOpen :size="15" />
-          <span>语法速查：占位符、过滤器、条件循环、按钮动作、样式类</span>
+          <span>语法速查：占位符、变量类型、过滤器、条件循环、表达式、按钮动作、样式类</span>
           <ChevronDown :size="15" aria-hidden="true" />
         </summary>
         <div class="status-blueprint-reference-body">
-          <section v-for="group in STATUS_TEMPLATE_REFERENCE" :key="group.title" class="status-blueprint-reference-group">
+          <section v-for="group in STATUS_TEMPLATE_REFERENCE" :key="group.key" class="status-blueprint-reference-group">
             <h4>{{ group.title }}</h4>
             <dl>
               <template v-for="item in group.items" :key="item.code">
-                <dt><code v-pre-safe>{{ item.code }}</code></dt>
+                <dt><code>{{ item.code }}</code></dt>
                 <dd>{{ item.summary }}</dd>
               </template>
             </dl>

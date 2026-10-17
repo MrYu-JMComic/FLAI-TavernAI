@@ -8,7 +8,8 @@ const { script: statusBarScript, template: statusBarTemplate, style: statusBarSt
 );
 
 test('StatusBar normalizes display variables and immersive characters with direct loops', () => {
-  assert.match(statusBarScript, /from '..\/..\/..\/shared\/statusTemplateTokens\.js'/);
+  assert.match(statusBarScript, /import \{ renderStatusTemplate \} from '\.\.\/\.\.\/\.\.\/shared\/statusTemplateRenderer\.js';/);
+  assert.match(statusBarScript, /from '\.\.\/\.\.\/\.\.\/shared\/statusVariables\.js';/);
   assert.match(
     statusBarScript,
     /const displayVariables = computed\(\(\) => \{\s*return normalizeDisplayVariables\(props\.statusBar\?\.variables\);\s*\}\);/
@@ -74,7 +75,7 @@ test('StatusBar builds custom template CSS and style text without array pipeline
   );
   assert.match(
     statusBarScript,
-    /function buildCustomTemplateCss\(extractedStyleBlocks, inlineStyleBlocks, scopeSelector\) \{\s*let cssText = appendSafeStyleBlocks\('', extractedStyleBlocks\);\s*cssText = appendSafeStyleBlocks\(cssText, inlineStyleBlocks\);\s*return cssText \? buildScopedChatCss\(cssText, scopeSelector\) : '';\s*\}/
+    /function buildCustomTemplateCss\(extractedStyleBlocks, inlineStyleBlocks, scopeSelector\) \{\s*let cssText = appendSafeStyleBlocks\('', extractedStyleBlocks\);\s*cssText = appendSafeStyleBlocks\(cssText, inlineStyleBlocks\);\s*if \(!cssText\) return '';\s*return buildScopedChatCss\(namespaceStatusBarKeyframes\(cssText, templateScopeId\.value\), scopeSelector\);\s*\}/
   );
   assert.match(
     statusBarScript,
@@ -140,7 +141,10 @@ test('StatusBar custom template click handler tolerates missing event targets', 
 });
 
 test('StatusBar forwards custom collapse actions to its embedded disclosure owner', () => {
-  assert.match(statusBarScript, /const emit = defineEmits\(\['collapse', 'quick-reply'\]\);/);
+  assert.match(
+    statusBarScript,
+    /const emit = defineEmits\(\['collapse', 'quick-reply', 'send', 'update-variables', 'open-settings', 'script-action'\]\);/
+  );
   assert.match(statusBarScript, /if \(effectiveCollapsed\.value\) classes\.push\('sb-collapsed'\);/);
   assert.doesNotMatch(statusBarScript, /if \(collapsed\.value\) classes\.push\('sb-collapsed'\);/);
   assert.match(

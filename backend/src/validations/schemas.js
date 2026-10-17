@@ -8,8 +8,13 @@ import { THINKING_LEVELS } from '../../../shared/providerThinking.js';
 import { CHARACTER_CONTENT_LIMITS } from '../domain/characters/limits.js';
 import { WORLD_BOOK_ENTRY_LIMITS, WORLD_BOOK_LIMITS } from '../domain/worldBooks/limits.js';
 import { JSON_BODY_LIMIT_DEFAULT_BYTES } from '../config.js';
+import {
+  STATUS_VARIABLE_LIMIT,
+  STATUS_VARIABLE_TYPES,
+  STATUS_VARIABLE_UNIT_LIMIT
+} from '../../../shared/statusVariables.js';
 
-const STATUS_BLUEPRINT_VARIABLE_LIMIT = 60;
+const STATUS_BLUEPRINT_VARIABLE_LIMIT = STATUS_VARIABLE_LIMIT;
 const BACKGROUND_IMAGE_INPUT_MAX_LENGTH = 6_000_000;
 const CHAT_IMAGE_INPUT_MAX_LENGTH = 6_000_000;
 const ASSET_IMAGE_INPUT_MAX_LENGTH = 8_500_000;
@@ -62,7 +67,10 @@ const castTrackingSchema = z.object({
 const statusBarBlueprintVariableSchema = z.object({
   name: z.string().max(40).trim().optional().default(''),
   value: z.union([z.number(), z.string().max(200).trim()]).optional().default(0),
-  max: z.number().optional().default(100),
+  type: z.enum(STATUS_VARIABLE_TYPES).optional(),
+  min: z.number().optional(),
+  max: z.number().optional(),
+  unit: z.string().max(STATUS_VARIABLE_UNIT_LIMIT).trim().optional(),
   color: z.string().max(30).trim().optional().default('')
 }).passthrough();
 
@@ -312,9 +320,12 @@ export const saveStatusBarSchema = z.object({
   variables: z.array(z.object({
     name: z.string().min(1).max(40).trim(),
     value: z.union([z.number(), z.string().max(200).trim()]),
+    type: z.enum(STATUS_VARIABLE_TYPES).optional(),
+    min: z.number().optional(),
     max: z.number().optional(),
+    unit: z.string().max(STATUS_VARIABLE_UNIT_LIMIT).trim().optional(),
     color: z.string().max(20).trim().optional().default('')
-  })).max(20).optional().default([]),
+  })).max(STATUS_VARIABLE_LIMIT).optional().default([]),
   template: z.string().max(50000).trim().optional().default('')
 });
 

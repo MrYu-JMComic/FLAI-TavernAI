@@ -8,13 +8,21 @@ import {
   saveStatusBar
 } from '../../api/chat.js';
 import { collectStatusBarTemplateRawIssues } from '../../utils/statusBarTemplateValidation.js';
-
-const VALID_VARIANTS = ['default', 'compact', 'minimal', 'neon'];
-const VALID_DENSITIES = ['default', 'cozy', 'compact'];
-const VALID_EFFECTS = ['glow', 'striped', 'pulse'];
-const VALID_DISPLAY_MODES = ['immersive', 'compact'];
-const VALID_CHAR_STATUSES = ['active', 'dead', 'forgotten', 'left', 'hidden'];
-const STATUS_BAR_VARIABLE_LIMIT = 60;
+import {
+  STATUS_BAR_CHARACTER_STATUSES as VALID_CHAR_STATUSES,
+  STATUS_BAR_DENSITIES as VALID_DENSITIES,
+  STATUS_BAR_DISPLAY_MODES as VALID_DISPLAY_MODES,
+  STATUS_BAR_EFFECTS as VALID_EFFECTS,
+  STATUS_BAR_LAYOUTS as VALID_LAYOUTS,
+  STATUS_BAR_VARIANTS as VALID_VARIANTS
+} from '../../utils/statusBarOptions.js';
+import { isStatusTemplateMeterProperty, parseStatusTemplateToken } from '../../../../shared/statusTemplateTokens.js';
+import {
+  STATUS_VARIABLE_LIMIT as STATUS_BAR_VARIABLE_LIMIT,
+  normalizeStatusVariableExtras,
+  normalizeStatusVariableKey as sharedStatusVariableKey,
+  normalizeStatusVariableValueForType
+} from '../../../../shared/statusVariables.js';
 const STATUS_BAR_TEMPLATE_ISSUE_LIMIT = 5;
 const ACCESSORY_SKILL_RESULT_LIMIT = 8;
 const ACCESSORY_SKILL_DEFAULTS = [
@@ -106,6 +114,7 @@ function parseTemplateConfig(raw) {
     const cfg = {};
     if (VALID_VARIANTS.includes(parsed.variant)) cfg.variant = parsed.variant;
     if (VALID_DENSITIES.includes(parsed.density)) cfg.density = parsed.density;
+    if (VALID_LAYOUTS.includes(parsed.layout)) cfg.layout = parsed.layout;
     if (typeof parsed.accentColor === 'string' && parsed.accentColor.trim()) {
       cfg.accentColor = parsed.accentColor.trim();
     }
@@ -155,6 +164,7 @@ function cloneTemplateConfig(cfg = {}) {
   return {
     variant: cfg.variant,
     density: cfg.density,
+    layout: cfg.layout,
     accentColor: cfg.accentColor,
     effects: cloneTemplateEffects(cfg.effects),
     customCss: cfg.customCss,
@@ -270,6 +280,7 @@ export function useChatAccessory({ conversation, setActiveConversationIfChanged,
   const statusBarTemplateCfg = reactive({
     variant: 'default',
     density: 'default',
+    layout: 'grid',
     accentColor: '',
     effects: [],
     customCss: '',
@@ -404,6 +415,9 @@ export function useChatAccessory({ conversation, setActiveConversationIfChanged,
     return current?.name === next?.name
       && current?.value === next?.value
       && current?.max === next?.max
+      && current?.min === next?.min
+      && current?.type === next?.type
+      && current?.unit === next?.unit
       && current?.color === next?.color;
   }
 
@@ -779,7 +793,7 @@ export function useChatAccessory({ conversation, setActiveConversationIfChanged,
   }
 
   function statusVariableKey(value) {
-    return String(value || '').trim().toLowerCase();
+    return sharedStatusVariableKey(value);
   }
 
   async function deleteStatusBarAction() {
@@ -859,6 +873,7 @@ export function useChatAccessory({ conversation, setActiveConversationIfChanged,
     const parsed = parseTemplateConfig(statusBarForm.template);
     statusBarTemplateCfg.variant = parsed.variant || 'default';
     statusBarTemplateCfg.density = parsed.density || 'default';
+    statusBarTemplateCfg.layout = parsed.layout || 'grid';
     statusBarTemplateCfg.accentColor = parsed.accentColor || '';
     statusBarTemplateCfg.effects = parsed.effects || [];
     statusBarTemplateCfg.customCss = parsed.customCss || '';
@@ -879,6 +894,10 @@ export function useChatAccessory({ conversation, setActiveConversationIfChanged,
     }
     if (statusBarTemplateCfg.density !== 'default') {
       cfg.density = statusBarTemplateCfg.density;
+      hasConfig = true;
+    }
+    if (statusBarTemplateCfg.layout && statusBarTemplateCfg.layout !== 'grid') {
+      cfg.layout = statusBarTemplateCfg.layout;
       hasConfig = true;
     }
     if (statusBarTemplateCfg.accentColor) {
@@ -911,6 +930,7 @@ export function useChatAccessory({ conversation, setActiveConversationIfChanged,
   function resetTemplateCfg() {
     statusBarTemplateCfg.variant = 'default';
     statusBarTemplateCfg.density = 'default';
+    statusBarTemplateCfg.layout = 'grid';
     statusBarTemplateCfg.accentColor = '';
     statusBarTemplateCfg.effects = [];
     statusBarTemplateCfg.customCss = '';
@@ -927,20 +947,27 @@ export function useChatAccessory({ conversation, setActiveConversationIfChanged,
     for (let index = 0; index < variables.length && normalized.length < STATUS_BAR_VARIABLE_LIMIT; index += 1) {
       const variable = variables[index];
       const hasMax = hasExplicitVariableMax(variable);
-      const value = normalizeStatusVariableValue(variable?.value, { emptyText: !hasMax });
+      const extras = normalizeStatusVariableExtras(variable);
+      const value = extras.type
+        ? normalizeStatusVariableValueForType(variable?.value, extras.type, { emptyText: true })
+        : normalizeStatusVariableValue(variable?.value, { emptyText: !hasMax });
       const name = String(variable?.name || '').trim();
       if (!name || isCompositeStatusPlaceholderValue(value, name)) {
         continue;
       }
-      const max = hasMax
-        ? Number(variable.max)
-        : typeof value === 'number'
-          ? 100
-          : undefined;
+      // Counters, text and lists never carry an implicit max of 100.
+      const max = extras.type && extras.type !== 'meter'
+        ? undefined
+        : hasMax
+          ? Number(variable.max)
+          : typeof value === 'number'
+            ? 100
+            : undefined;
       const row = {
         name,
         value,
-        color: String(variable?.color || '').trim()
+        color: String(variable?.color || '').trim(),
+        ...extras
       };
       if (max !== undefined) {
         row.max = max;
@@ -976,9 +1003,9 @@ export function useChatAccessory({ conversation, setActiveConversationIfChanged,
     let match;
     while ((match = placeholderPattern.exec(String(value || '')))) {
       const token = String(match[1] || match[2] || '').trim();
-      const { rawName, rawProperty } = parseStatusPlaceholderToken(token);
+      const { rawName, rawProperty } = parseStatusTemplateToken(token);
       const key = normalizeStatusVariableKey(rawName);
-      if (!key || key === labelKey || seen.has(key) || ['max', 'percent', 'percentage'].includes(rawProperty)) {
+      if (!key || key === labelKey || seen.has(key) || isStatusTemplateMeterProperty(rawProperty)) {
         continue;
       }
       seen.add(key);
@@ -990,23 +1017,7 @@ export function useChatAccessory({ conversation, setActiveConversationIfChanged,
   }
 
   function normalizeStatusVariableKey(value = '') {
-    return String(value || '').trim().toLowerCase();
-  }
-
-  function parseStatusPlaceholderToken(token = '') {
-    const text = String(token || '');
-    const separatorIndex = text.indexOf('.');
-    if (separatorIndex === -1) {
-      return { rawName: text.trim(), rawProperty: 'value' };
-    }
-    const nextSeparatorIndex = text.indexOf('.', separatorIndex + 1);
-    return {
-      rawName: text.slice(0, separatorIndex).trim(),
-      rawProperty: text.slice(
-        separatorIndex + 1,
-        nextSeparatorIndex === -1 ? text.length : nextSeparatorIndex
-      ).trim()
-    };
+    return sharedStatusVariableKey(value);
   }
 
   function setStatusBarTemplateMode(mode) {

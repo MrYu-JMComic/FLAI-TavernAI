@@ -404,6 +404,7 @@ function buildStatusBarMessages(statusBar, observationWindow, statusBarPrompt = 
         '只有当前轮明确产生新状态时才调用 update_status_bar；未变化、无法确认、仅重复旧状态或只有历史回顾时调用 skip_status_bar_update。两种工具每轮只调用一种。',
         '不得把世界设定、旧历史、计划、示例、假设、否定内容、占位符或模板文字写成当前值。',
         '数值量表使用 number；姓名、服装、装备、携带物、地点、心情、事件摘要等文本字段使用简短 string。文本值只包含最终字段值，不带标签、解释、分隔符或模板标记。',
+        'variables[].type 标明格式：meter 是数值条，新值必须落在 min~max 内；number 是没有上限的计数，不要提交 max；list 是用“、”分隔的多个条目，变化时提交完整的新列表；text 是简短文本。unit 只用于展示，不要写进 value。',
         '复合行例如“Location = {{Region}} > {{Place}}”只是展示包装。根据 templateHints.compositeRows 分别更新 Region、Place；绝不能把 Location 包装标签作为子变量值。',
         '若本轮只确认复合行的一部分，只更新对应子变量，保留其余值。',
         '只提交真正变化的变量。不得重排、重命名、删除或重复提交未变化变量。只有 statusBarPrompt 明确要求某个新变量名时才允许创建该变量。',

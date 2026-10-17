@@ -341,6 +341,8 @@ export function createCharactersRouter({
             providerStreaming: request.body?.providerStreaming === true,
             thinkingLevel: request.body?.thinkingLevel,
             continuation: request.body?.continuation || {},
+            planMode: request.body?.planMode === true,
+            plan: request.body?.plan || null,
             database: db,
             userId: request.auth.user.id,
             signal: controller.signal,
@@ -370,6 +372,8 @@ export function createCharactersRouter({
           options: request.body?.options || {},
           thinkingLevel: request.body?.thinkingLevel,
           continuation: request.body?.continuation || {},
+          planMode: request.body?.planMode === true,
+          plan: request.body?.plan || null,
           database: db,
           userId: request.auth.user.id,
           signal: controller.signal

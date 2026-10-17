@@ -1,23 +1,15 @@
 <script setup>
 import { BookOpen, ChevronDown, TriangleAlert } from '@lucide/vue';
+import { STATUS_SCRIPT_API } from '../../../../shared/statusTemplateSyntax.js';
 
 defineProps({
   advancedSettings: { type: Object, required: true },
   canEdit: { type: Boolean, default: false }
 });
 
-// Mirrors the context built in utils/chatAppearance.js; keep the two in sync.
-const SCRIPT_API_REFERENCE = [
-  { code: 'conversation · character · user · provider · settings · messages', summary: '当前会话、角色、用户、供应商、外观设置与消息列表的只读快照' },
-  { code: 'statusBar', summary: '状态栏快照 { name, variables:[{name,value,max,color}], template }' },
-  { code: 'await updateStatusVariables([{ name, value, max }])', summary: '写入状态变量并保存，不存在的变量会新建' },
-  { code: 'insertText(text)', summary: '把文字填入输入框，由用户决定是否发送' },
-  { code: 'notify(text) · setCssVar(name, value) · scrollToBottom()', summary: '提示、设置聊天区 CSS 变量、滚到底部' },
-  { code: 'openSidebar / closeSidebar / openSettings / closeSettings', summary: '打开或收起侧栏与设置面板' },
-  { code: 'query(selector) · queryAll(selector)', summary: '在聊天区内查找元素（沙箱内不可直接访问 DOM 节点）' },
-  { code: 'await wait(ms) · await requestPaint() · state', summary: '延时、等待下一帧、跨脚本运行保留的状态对象' },
-  { code: 'onCleanup(fn) 或 return () => {}', summary: '离开会话或重新应用脚本时执行清理' }
-];
+// Rendered from the shared syntax module, the same source the AI tool
+// descriptions are built from, so both always list the same sandbox API.
+const SCRIPT_API_REFERENCE = STATUS_SCRIPT_API;
 </script>
 
 <template>
