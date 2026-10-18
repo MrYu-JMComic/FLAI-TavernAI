@@ -11,10 +11,10 @@ import {
 } from '../modules/characters.js';
 import {
   getWorldBook,
-  linkWorldBookToCharacter,
+  linkCharacter,
   listCharacterWorldBooks,
-  unlinkWorldBookFromCharacter
-} from '../modules/worldBooks.js';
+  unlinkCharacter
+} from '../services/worldBooks/worldBookService.js';
 import { assetIdFromUrl, assetKinds, deleteAsset, saveAssetInput } from '../modules/assets.js';
 import { setCharacterTags } from '../modules/tags.js';
 import {
@@ -82,7 +82,7 @@ export function createCharactersRouter({
     const payload = prepareCharacterPayload(request.auth.user.id, sanitizeCharacterPayload(request.body));
     const character = createCharacter(db, request.auth.user.id, payload);
     if (worldBookId) {
-      linkWorldBookToCharacter(db, worldBookId, character.id, 0, request.auth.user.id);
+      linkCharacter(db, request.auth.user.id, worldBookId, character.id, 0);
     }
     setCharacterTags(db, request.auth.user.id, character.id, request.body?.tags);
     response.status(201).json(withCharacterTags(withWorldBookId(character)));
@@ -122,7 +122,7 @@ export function createCharactersRouter({
       return;
     }
     if (worldBookId) {
-      linkWorldBookToCharacter(db, worldBookId, character.id, 0, request.auth.user.id);
+      linkCharacter(db, request.auth.user.id, worldBookId, character.id, 0);
     }
     if (Object.prototype.hasOwnProperty.call(request.body || {}, 'tags')) {
       setCharacterTags(db, request.auth.user.id, character.id, request.body.tags);
@@ -341,6 +341,9 @@ export function createCharactersRouter({
             providerStreaming: request.body?.providerStreaming === true,
             thinkingLevel: request.body?.thinkingLevel,
             continuation: request.body?.continuation || {},
+            worldBookContext: request.body?.worldBookContext || {},
+            characterId: request.body?.characterId,
+            history: request.body?.history || [],
             planMode: request.body?.planMode === true,
             plan: request.body?.plan || null,
             database: db,
@@ -372,6 +375,9 @@ export function createCharactersRouter({
           options: request.body?.options || {},
           thinkingLevel: request.body?.thinkingLevel,
           continuation: request.body?.continuation || {},
+          worldBookContext: request.body?.worldBookContext || {},
+          characterId: request.body?.characterId,
+          history: request.body?.history || [],
           planMode: request.body?.planMode === true,
           plan: request.body?.plan || null,
           database: db,
@@ -491,7 +497,7 @@ export function createCharactersRouter({
       return;
     }
     const orderIndex = normalizeFiniteNumber(request.body?.orderIndex);
-    if (!linkWorldBookToCharacter(db, bookId, request.params.id, orderIndex, request.auth.user.id)) {
+    if (!linkCharacter(db, request.auth.user.id, bookId, request.params.id, orderIndex)) {
       response.status(404).json({ error: '世界书不存在' });
       return;
     }
@@ -508,7 +514,7 @@ export function createCharactersRouter({
       response.status(403).json({ error: '只有角色拥有者可以编辑此角色' });
       return;
     }
-    if (!unlinkWorldBookFromCharacter(db, request.params.bookId, request.params.id, request.auth.user.id)) {
+    if (!unlinkCharacter(db, request.auth.user.id, request.params.bookId, request.params.id)) {
       response.status(404).json({ error: '关联不存在' });
       return;
     }

@@ -1,5 +1,4 @@
 import { isPhoneViewport } from '../composables/useViewport.js';
-import { THINKING_LEVELS } from '../../../shared/providerThinking.js';
 import { adjustStatusVariableValue, normalizeStatusVariableKey, resolveStatusVariableKind } from '../../../shared/statusVariables.js';
 
 const defaultAppearance = () => ({
@@ -14,7 +13,6 @@ const defaultAppearance = () => ({
   statusBarPrompt: '',
   showWorldBookMatches: true,
   highlightDialogue: true,
-  castTracking: { enabled: false, providerProfileId: '', modelOverride: '', autoSyncOperations: {}, organizeOperations: {} }
 });
 
 export function createDefaultChatAppearance() {
@@ -38,7 +36,6 @@ export function normalizeChatAppearance(input = {}) {
     statusBarPrompt: normalizeOptionalText(input.statusBarPrompt ?? input.status_bar_prompt ?? ''),
     showWorldBookMatches: normalizeBoolean(input.showWorldBookMatches ?? input.show_world_book_matches, true),
     highlightDialogue: normalizeBoolean(input.highlightDialogue ?? input.highlight_dialogue, true),
-    castTracking: normalizeCastTracking(input.castTracking ?? input.cast_tracking)
   };
 }
 
@@ -77,9 +74,7 @@ export function mergeChatAppearance(author = {}, user = {}, options = {}) {
     highlightDialogue: hasOwnSetting(user, 'highlightDialogue', 'highlight_dialogue')
       ? userSettings.highlightDialogue
       : authorSettings.highlightDialogue,
-    castTracking: hasOwnSetting(user, 'castTracking', 'cast_tracking')
-      ? userSettings.castTracking
-      : authorSettings.castTracking
+
   };
 }
 
@@ -682,33 +677,6 @@ function serializeSandboxContext(context) {
     output[key] = typeof value === 'function' ? null : cloneableOrNull(value);
   }
   return output;
-}
-
-function normalizeCastTracking(value) {
-  const input = value && typeof value === 'object' ? value : {};
-  const thinkingLevel = normalizeOptionalThinkingLevel(input.thinkingLevel ?? input.thinking_level);
-  return {
-    enabled: normalizeBoolean(input.enabled, false),
-    providerProfileId: String(input.providerProfileId || input.provider_profile_id || '').trim(),
-    modelOverride: String(input.modelOverride || input.model_override || '').trim(),
-    ...(thinkingLevel ? { thinkingLevel } : {}),
-    autoSyncOperations: normalizeOperationSwitches(input.autoSyncOperations ?? input.auto_sync_operations),
-    organizeOperations: normalizeOperationSwitches(input.organizeOperations ?? input.organize_operations)
-  };
-}
-
-function normalizeOptionalThinkingLevel(value) {
-  const level = String(value ?? '').trim().toLowerCase();
-  return THINKING_LEVELS.includes(level) ? level : '';
-}
-
-function normalizeOperationSwitches(value) {
-  const source = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
-  const switches = {};
-  for (const key of Object.keys(source)) {
-    switches[key] = source[key] === true;
-  }
-  return switches;
 }
 
 function hasOwnSetting(source, camelKey, snakeKey) {

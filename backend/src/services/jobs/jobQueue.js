@@ -5,8 +5,6 @@ import { assertAiJobQuota } from '../quotas.js';
 import { createCursorScope, decodeCursor, encodeCursor } from '../cursorPagination.js';
 
 export const PUBLIC_JOB_TYPES = Object.freeze([
-  'town.generate',
-  'cast.organize',
   'memory.extract',
   'world-book.assist'
 ]);
@@ -29,7 +27,7 @@ export function submitJob(database, userId, type, payload = {}, options = {}) {
   if (existing) {
     return { ...existing, deduplicated: true };
   }
-  if (options.internal !== true) assertAiJobQuota(database, userId);
+  if (options.internal !== true) assertAiJobQuota(database, userId, { types: JOB_TYPES });
 
   const boundPayload = bindConversationPayload(database, userId, normalizedType, payload);
   const payloadJson = serializePayload(boundPayload);
@@ -240,13 +238,14 @@ export function cancelJob(database, userId, jobId) {
 export function retryJob(database, userId, jobId) {
   const job = getJob(database, userId, jobId);
   if (!job || !['failed', 'cancelled'].includes(job.status)) return job;
+  normalizeJobType(job.type);
   const source = job.payload;
   if (source.conversationId) {
     const row = database.prepare('SELECT timeline_revision FROM conversations WHERE id = ? AND user_id = ?').get(source.conversationId, userId);
     if (!row || row.timeline_revision !== source.timelineRevision) {
       throw jobError('Source history changed; schedule a new task instead.', 'JOB_SOURCE_STALE', 409);
     }
-    if (job.error?.code === 'CAST_PLAN_PARTIAL' || hasLaterConversationWork(database, job)) {
+    if (hasLaterConversationWork(database, job)) {
       throw jobError('后续剧情状态已经推进，请通过重建状态恢复旧任务。', 'JOB_REBUILD_REQUIRED', 409);
     }
   }
@@ -328,7 +327,7 @@ export function getConversationProcessingSummary(database, userId, conversationI
   const job = toJob(row);
   return { id: job.id, status: job.status, progress: job.progress, error: job.error,
     pendingCount: pending.length, failedCount: failed.length,
-    canRetry: ['failed', 'cancelled'].includes(job.status) && job.error?.code !== 'CAST_PLAN_PARTIAL' && !hasLaterConversationWork(database, job) };
+    canRetry: ['failed', 'cancelled'].includes(job.status) && !hasLaterConversationWork(database, job) };
 }
 
 function hasLaterConversationWork(database, job) {
@@ -344,7 +343,7 @@ function bindConversationPayload(database, userId, type, payload) {
   const conversation = database.prepare('SELECT timeline_revision FROM conversations WHERE id = ? AND user_id = ?').get(conversationId, userId);
   if (!conversation) return payload;
   const bound = { ...payload, conversationId, timelineRevision: conversation.timeline_revision };
-  if (type === 'cast.organize' || type === 'memory.extract') {
+  if (type === 'memory.extract') {
     const rows = database.prepare(`SELECT id, role, revision FROM messages WHERE conversation_id = ? AND user_id = ?
       AND role IN ('user', 'assistant') ORDER BY created_at DESC, rowid DESC LIMIT 80`).all(conversationId, userId).reverse();
     bound.evidenceRefs = rows.map(({ id, revision }) => ({ id, revision }));

@@ -30,7 +30,6 @@ import { copyTextToClipboard } from '../utils/clipboard.js';
 const EconomyPanel = defineAsyncComponent(() => import('../components/EconomyPanel.vue'));
 const ScenePanel = defineAsyncComponent(() => import('../components/ScenePanel.vue'));
 const SaveLoadPanel = defineAsyncComponent(() => import('../components/SaveLoadPanel.vue'));
-const CastManagerDrawer = defineAsyncComponent(() => import('../components/cast/CastManagerDrawer.vue'));
 const ChatSettingsDrawer = defineAsyncComponent(() => import('../components/chat/ChatSettingsDrawer.vue'));
 const ChatContextInspector = defineAsyncComponent(() => import('../components/chat/ChatContextInspector.vue'));
 const ChatModelSwitcher = defineAsyncComponent(() => import('../components/chat/ChatModelSwitcher.vue'));
@@ -88,13 +87,6 @@ function navigateToSettingsFromToast() {
   emit('navigate', 'settings');
 }
 
-function openMultiAgentChat(_event) {
-  if (chatViewDisposed || !conversation.value?.id) {
-    return;
-  }
-  emit('navigate', 'multiAgentChat', { id: conversation.value.id });
-}
-
 function showActionNotice(message, type = 'success') {
   const method = notify[type] || notify.info;
   method(message);
@@ -104,13 +96,13 @@ const {
   conversation, conversations, characters, messages,
   loading, error, sidebarLoadError, sidebarLoading, historySearch, sidebarOpen, settingsDrawerOpen,
   selectedConversationIds, conversationActionBusy, startConversationBusy,
-  savePanelOpen, npcPanelOpen, economyPanelOpen,
+  savePanelOpen, economyPanelOpen,
   presetList, selectedPresetId,
   filteredConversations, visibleConversationIds,
   selectedConversationCount, allVisibleConversationsSelected, conversationReady,
   loadSidebarData, reloadSidebarData, startNewConversation, openConversation,
   openSidebar, closeSidebar, openSettings, closeSettings,
-  openSavePanel, closeSavePanel, openNpcPanel, closeNpcPanel,
+  openSavePanel, closeSavePanel,
   openEconomyPanel, closeEconomyPanel,
   toggleConversationSelection, toggleAllVisibleConversations,
   deleteOneConversation, deleteSelectedConversations,
@@ -130,8 +122,8 @@ const {
   statusBar, statusBarForm, statusBarEditorOpen, statusBarSaving,
   statusBarTemplateMode, statusBarTemplateConfig, statusBarTemplateIssues, statusBarTemplateCfg,
   accessorySettingsOpen, accessorySaving, accessorySkills, accessorySkillResults,
-  accessorySkillItems, memoryAgentTools, castAgentOperations, updateAccessorySkill,
-  hasStatusBarContent, showEconomyFeature, showNpcFeature, showSceneFeature, showGameHudFeature, showEncounterFeature, showRewardFeature,
+  accessorySkillItems, memoryAgentTools, updateAccessorySkill,
+  hasStatusBarContent, showEconomyFeature, showSceneFeature, showGameHudFeature, showRewardFeature,
   loadStatusBar, loadEconomyBalance, loadAccessorySkills,
   syncAccessorySkills, isAccessorySkillActiveLocal,
   saveAccessorySkillChanges, applyStatusBarUpdate, handleSkillResult,
@@ -155,7 +147,6 @@ const {
   effectiveChatAppearance, activeChatBackgroundUrl, chatMainStyle, chatScopeSelector,
   activeCharacter, activeRenderPlugins,
   syncConversationAppearance, resetConversationAppearance, saveConversationAppearanceChanges,
-  setCastTrackingEnabled, updateCastTracking,
   setChatLorebookId, applyConversationAppearance, dispatchCustomScriptEvent, disposeConversationAppearance,
   handleAppearanceBackgroundUpload, clearAppearanceField, handleSettingsBackgroundUpload,
   loadWorldBooks
@@ -346,7 +337,6 @@ function openWorkspaceTool(key, event) {
   if (!setActiveWorkspaceTool(key, event)) return;
   if (key === 'appearance') openSettings();
   if (key === 'context') openContextInspector();
-  if (key === 'npc') openNpcPanel();
   if (key === 'economy') openEconomyPanel();
   if (key === 'saves') openSavePanel();
 }
@@ -359,7 +349,6 @@ function closeWorkspaceTool(key = activeTool.value, options = {}) {
 function closeWorkspaceToolSurfaces() {
   if (settingsDrawerOpen.value) closeSettings();
   if (contextInspectorOpen.value) closeContextInspector();
-  if (npcPanelOpen.value) closeNpcPanel();
   if (economyPanelOpen.value) closeEconomyPanel();
   if (savePanelOpen.value) closeSavePanel();
 }
@@ -751,11 +740,7 @@ function handleGameQuickAction(text) {
   if (!normalizedText) return;
   const current = input.value.trim();
   input.value = current ? `${current}\n${normalizedText}` : normalizedText;
-  nextTick(() => {
-    resizeComposerTextarea();
-    const textarea = composerWrap.value?.textareaRef || composerTextarea.value;
-    textarea?.focus?.();
-  });
+  scheduleComposerLayoutUpdate({ focus: true });
 }
 
 function resetAccessoryUpdateStatus() {
@@ -877,10 +862,6 @@ function handleGlobalKeydown(event) {
     closeSettings();
     return;
   }
-  if (event.key === 'Escape' && npcPanelOpen.value) {
-    closeNpcPanel();
-    return;
-  }
   if (event.key === 'Escape' && sidebarOpen.value) {
     closeSidebar();
   }
@@ -908,15 +889,27 @@ let autoSizingTextareaHeight = 0;
 let autoSizingTextareaRafId = null;
 let composerLayoutTickPending = false;
 let composerFocusPending = false;
+let composerContentResizePending = false;
 let composerLayoutTickId = 0;
 let viewportLayoutRafId = null;
 let textareaResizeRafId = null;
+let composerTextareaLayout = '';
 
-function resizeComposerTextarea() {
+function readComposerTextareaLayout(el, maxHeight) {
+  return `${el.getBoundingClientRect().width}:${el.rows}:${maxHeight}`;
+}
+
+function resizeComposerTextarea(onlyIfLayoutChanged = false) {
   if (chatViewDisposed) return;
   const el = composerWrap.value?.textareaRef || composerTextarea.value;
   if (!el) return;
   const maxHeight = readComposerTextareaMaxHeight(el);
+  const layout = readComposerTextareaLayout(el, maxHeight);
+  if (onlyIfLayoutChanged && layout === composerTextareaLayout) {
+    updateComposerDock();
+    return;
+  }
+  composerTextareaLayout = layout;
   el.style.height = 'auto';
   const scrollH = el.scrollHeight;
   const minHeight = isUserResizing ? Math.min(userResizedHeight, maxHeight) : 0;
@@ -941,6 +934,10 @@ function handleTextareaResize() {
   const el = composerWrap.value?.textareaRef || composerTextarea.value;
   if (!el) return;
   const maxH = readComposerTextareaMaxHeight(el);
+  if (readComposerTextareaLayout(el, maxH) !== composerTextareaLayout) {
+    scheduleComposerLayoutUpdate({ layoutOnly: true });
+    return;
+  }
   const h = el.offsetHeight;
   if (isAutoSizingTextarea || Math.abs(h - autoSizingTextareaHeight) <= 1) {
     updateComposerDock();
@@ -982,8 +979,9 @@ function readComposerTextareaMaxHeight(el) {
 function handleViewportResize() {
   if (chatViewDisposed) return;
   chatViewportIsPhone.value = isPhoneViewport();
-  resizeComposerTextarea();
-  updateComposerDock();
+  // Measure after Vue updates the phone/desktop rows. Height-only viewport
+  // changes must not collapse a focused, scrolling textarea for measurement.
+  scheduleComposerLayoutUpdate({ layoutOnly: true });
 }
 
 function scheduleViewportLayoutUpdate() {
@@ -1017,22 +1015,28 @@ function updateComposerDock() {
       return;
     }
 
-    shell.style.setProperty('--chat-composer-height', `${Math.ceil(wrap.getBoundingClientRect().height)}px`);
+    setComposerLayoutProperty(shell, '--chat-composer-height', `${Math.ceil(wrap.getBoundingClientRect().height)}px`);
 
     if (!isPhoneViewport() || !window.visualViewport) {
-      shell.style.setProperty('--chat-keyboard-inset', '0px');
-      shell.style.setProperty('--chat-viewport-top-inset', '0px');
-      shell.style.setProperty('--chat-visual-viewport-height', '100dvh');
+      setComposerLayoutProperty(shell, '--chat-keyboard-inset', '0px');
+      setComposerLayoutProperty(shell, '--chat-viewport-top-inset', '0px');
+      setComposerLayoutProperty(shell, '--chat-visual-viewport-height', '100dvh');
       return;
     }
 
     const viewport = window.visualViewport;
     const viewportTopInset = Math.max(0, viewport.offsetTop || 0);
     const keyboardInset = Math.max(0, window.innerHeight - viewport.height - viewport.offsetTop);
-    shell.style.setProperty('--chat-viewport-top-inset', `${Math.round(viewportTopInset)}px`);
-    shell.style.setProperty('--chat-visual-viewport-height', `${Math.round(viewport.height)}px`);
-    shell.style.setProperty('--chat-keyboard-inset', `${Math.round(keyboardInset)}px`);
+    setComposerLayoutProperty(shell, '--chat-viewport-top-inset', `${Math.round(viewportTopInset)}px`);
+    setComposerLayoutProperty(shell, '--chat-visual-viewport-height', `${Math.round(viewport.height)}px`);
+    setComposerLayoutProperty(shell, '--chat-keyboard-inset', `${Math.round(keyboardInset)}px`);
   });
+}
+
+function setComposerLayoutProperty(shell, name, value) {
+  if (shell.style.getPropertyValue(name) !== value) {
+    shell.style.setProperty(name, value);
+  }
 }
 
 function scheduleChatFrame(callback) {
@@ -1052,6 +1056,7 @@ function cancelChatFrame(frameId) {
 function scheduleComposerLayoutUpdate(options = {}) {
   if (chatViewDisposed) return;
   composerFocusPending = composerFocusPending || Boolean(options.focus);
+  composerContentResizePending = composerContentResizePending || !options.layoutOnly;
   if (composerLayoutTickPending) {
     return;
   }
@@ -1063,12 +1068,14 @@ function scheduleComposerLayoutUpdate(options = {}) {
       return;
     }
     const shouldFocus = composerFocusPending;
+    const resizeForContent = composerContentResizePending;
     composerFocusPending = false;
+    composerContentResizePending = false;
     const el = composerWrap.value?.textareaRef || composerTextarea.value;
     if (shouldFocus && el) {
-      el.focus();
+      el.focus({ preventScroll: true });
     }
-    resizeComposerTextarea();
+    resizeComposerTextarea(!resizeForContent);
     updateComposerDock();
   });
 }
@@ -1077,6 +1084,7 @@ function cancelComposerLayoutWork() {
   composerLayoutTickId += 1;
   composerLayoutTickPending = false;
   composerFocusPending = false;
+  composerContentResizePending = false;
   if (composerDockRafId !== null) {
     cancelChatFrame(composerDockRafId);
     composerDockRafId = null;
@@ -1133,10 +1141,10 @@ onMounted(async () => {
   updateComposerDock();
   window.addEventListener('resize', scheduleViewportLayoutUpdate);
   window.addEventListener('keydown', handleGlobalKeydown);
-  window.addEventListener('focusin', scheduleViewportLayoutUpdate);
-  window.addEventListener('focusout', scheduleViewportLayoutUpdate);
+  window.addEventListener('focusin', updateComposerDock);
+  window.addEventListener('focusout', updateComposerDock);
   window.visualViewport?.addEventListener('resize', scheduleViewportLayoutUpdate);
-  window.visualViewport?.addEventListener('scroll', scheduleViewportLayoutUpdate);
+  window.visualViewport?.addEventListener('scroll', updateComposerDock);
   const wrapEl = composerWrap.value?.wrapRef || composerWrap.value;
   if (wrapEl && typeof ResizeObserver !== 'undefined') {
     composerResizeObserver = new ResizeObserver(() => {
@@ -1168,10 +1176,10 @@ onBeforeUnmount(() => {
   cleanupScroll();
   window.removeEventListener('resize', scheduleViewportLayoutUpdate);
   window.removeEventListener('keydown', handleGlobalKeydown);
-  window.removeEventListener('focusin', scheduleViewportLayoutUpdate);
-  window.removeEventListener('focusout', scheduleViewportLayoutUpdate);
+  window.removeEventListener('focusin', updateComposerDock);
+  window.removeEventListener('focusout', updateComposerDock);
   window.visualViewport?.removeEventListener('resize', scheduleViewportLayoutUpdate);
-  window.visualViewport?.removeEventListener('scroll', scheduleViewportLayoutUpdate);
+  window.visualViewport?.removeEventListener('scroll', updateComposerDock);
   if (composerResizeObserver) {
     composerResizeObserver.disconnect();
     composerResizeObserver = null;
@@ -1346,7 +1354,6 @@ watch([showWorldBookMatchSummary, worldBookMatchSummary], ([shouldShow, matches]
       <div class="chat-context-header">
       <ChatHeader
         :show-economy-feature="showEconomyFeature"
-        :show-npc-feature="showNpcFeature"
         :show-scene-feature="showSceneFeature"
         :conversation-ready="conversationReady"
         :theme="theme"
@@ -1360,11 +1367,9 @@ watch([showWorldBookMatchSummary, worldBookMatchSummary], ([shouldShow, matches]
         @open-status="(event) => openWorkspaceTool('status', event)"
         @open-context="(event) => openWorkspaceTool('context', event)"
         @open-economy="(event) => openWorkspaceTool('economy', event)"
-        @open-npc="(event) => openWorkspaceTool('npc', event)"
         @open-scene="(event) => openWorkspaceTool('scene', event)"
         @open-saves="(event) => openWorkspaceTool('saves', event)"
         @open-settings="(event) => openWorkspaceTool('appearance', event)"
-        @open-multichat="(event) => openMultiAgentChat(event)"
       />
 
       <ChatProcessingStatus
@@ -1381,11 +1386,9 @@ watch([showWorldBookMatchSummary, worldBookMatchSummary], ([shouldShow, matches]
         :refresh-key="latestAssistantMessage?.id || messages.length"
         :enabled="conversationReady"
         :director-result="latestWorldDirectorResult"
-        :encounter-enabled="showEncounterFeature"
         :reward-enabled="showRewardFeature"
         @choose-action="handleGameQuickAction"
         @open-scene="openWorkspaceTool('scene')"
-        @open-npc="openWorkspaceTool('npc')"
       />
       </div>
 
@@ -1678,21 +1681,6 @@ watch([showWorldBookMatchSummary, worldBookMatchSummary], ([shouldShow, matches]
       :conversation-id="conversation.id"
       :open="economyPanelOpen"
       @close="closeWorkspaceTool('economy')"
-    />
-    <CastManagerDrawer
-      v-if="conversation?.id"
-      :conversation-id="conversation.id"
-      :open="npcPanelOpen"
-      :tracking-enabled="Boolean(chatAppearanceForm.castTracking?.enabled)"
-      :tracking-saving="appearanceSaving"
-      :tracking-settings="chatAppearanceForm.castTracking"
-      :agent-operations="castAgentOperations"
-      :main-provider="props.provider"
-      :main-model-options="providerModels"
-      :main-thinking-level="thinkingLevel || 'off'"
-      @close="closeWorkspaceTool('npc')"
-      @update-tracking="setCastTrackingEnabled"
-      @update-tracking-settings="updateCastTracking"
     />
     <ScenePanel
       v-if="conversation?.id && (showSceneFeature || activeTool === 'scene')"

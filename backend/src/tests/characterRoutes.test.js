@@ -4,7 +4,7 @@ import test from 'node:test';
 
 const { createAppDatabase } = await import('../db.js');
 const { createCharacter, getCharacter } = await import('../modules/characters.js');
-const { createWorldBook, getCharacterWorldBookId, getCharacterWorldBookIds, linkWorldBookToCharacter } = await import('../modules/worldBooks.js');
+const { createWorldBook, resolveCharacterWorldBookId, resolveCharacterWorldBookIds, linkCharacter } = await import('../services/worldBooks/worldBookService.js');
 const { createCharactersRouter } = await import('../routes/characters.js');
 const { insertUser, withServer } = await import('./routeTestUtils.js');
 
@@ -110,7 +110,7 @@ test('character create route reports linked worldBookId', async () => {
     const body = await response.json();
     assert.equal(response.status, 201);
     assert.equal(body.worldBookId, book.id);
-    assert.equal(getCharacterWorldBookId(database, body.id), book.id);
+    assert.equal(resolveCharacterWorldBookId(database, body.id), book.id);
   });
 });
 
@@ -137,7 +137,7 @@ test('character patch route reports linked worldBookId', async () => {
     assert.equal(response.status, 200);
     assert.equal(body.id, character.id);
     assert.equal(body.worldBookId, book.id);
-    assert.equal(getCharacterWorldBookId(database, character.id), book.id);
+    assert.equal(resolveCharacterWorldBookId(database, character.id), book.id);
   });
 });
 
@@ -173,7 +173,7 @@ test('character world book unlink rejects foreign legacy junction rows', async (
     .prepare('SELECT COUNT(*) AS count FROM character_world_books WHERE character_id = ? AND world_book_id = ?')
     .get(character.id, otherBook.id);
   assert.equal(row.count, 1);
-  assert.equal(getCharacterWorldBookId(database, character.id), null);
+  assert.equal(resolveCharacterWorldBookId(database, character.id), null);
 });
 
 test('character routes no longer expose legacy import or export branches', async () => {
@@ -211,7 +211,7 @@ test('character worldBookId helper falls back to legacy direct binding', () => {
     characterId: character.id
   });
 
-  assert.equal(getCharacterWorldBookId(database, character.id), book.id);
+  assert.equal(resolveCharacterWorldBookId(database, character.id), book.id);
 });
 
 function createCharacterRoutesApp(database, userId) {
@@ -226,14 +226,14 @@ function createCharacterRoutesApp(database, userId) {
     asyncRoute: (handler) => (request, response, next) => Promise.resolve(handler(request, response, next)).catch(next),
     withCharacterTags: (character) => character,
     withCharacterListExtras: (characters) => {
-      const worldBookIds = getCharacterWorldBookIds(database, characters.map((c) => c.id));
+      const worldBookIds = resolveCharacterWorldBookIds(database, characters.map((c) => c.id));
       return characters.map((character) => ({
         ...character,
         worldBookId: worldBookIds.get(character.id) || null
       }));
     },
     withWorldBookId: (character) => (
-      character ? { ...character, worldBookId: getCharacterWorldBookId(database, character.id) } : character
+      character ? { ...character, worldBookId: resolveCharacterWorldBookId(database, character.id) } : character
     ),
     hasUsableProvider: () => true,
     getChatProviderSettings: () => ({ ok: false, error: 'unused' }),

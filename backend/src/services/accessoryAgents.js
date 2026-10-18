@@ -94,7 +94,7 @@ export async function runAccessoryAgents({
   }
   if (active.worldDirector) {
     jobs.push(['worldDirector', () => runAgentJob('worldDirector', skills.worldDirector, emit, (signal) =>
-      runWorldDirectorAgent({ db, userId, conversation, character, observationWindow, settings, skill: skills.worldDirector, travelEnabled: active.gameHud, encounterEnabled: active.encounterMode, rewardEnabled: active.rewardMode, signal, strictErrors }),
+      runWorldDirectorAgent({ db, userId, conversation, character, observationWindow, settings, skill: skills.worldDirector, travelEnabled: active.gameHud, rewardEnabled: active.rewardMode, signal, strictErrors }),
     { signal: parentSignal })]);
   }
   const results = [];
@@ -265,7 +265,7 @@ async function runSceneAgent({ db, userId, conversation, character, assistantMes
   return { ...result, workspace: listSceneWorkspace(db, userId, conversation.id) };
 }
 
-async function runWorldDirectorAgent({ db, userId, conversation, character, observationWindow, settings, skill, travelEnabled, encounterEnabled, rewardEnabled, signal, strictErrors }) {
+async function runWorldDirectorAgent({ db, userId, conversation, character, observationWindow, settings, skill, travelEnabled, rewardEnabled, signal, strictErrors }) {
   const executions = [];
   if (!hasUsableProvider(settings)) return { executions, skipped: true, reason: 'provider unavailable' };
   const context = {
@@ -279,8 +279,8 @@ async function runWorldDirectorAgent({ db, userId, conversation, character, obse
   await runToolCompletion(
     withModelOverride(settings, skill, db, userId),
     buildWorldDirectorMessages(observationWindow, context),
-    worldDirectorTools({ travelEnabled, encounterEnabled, rewardEnabled }),
-    async (toolName, args) => executeWorldDirectorProposal({ db, userId, conversationId: conversation.id, character, toolName, args, executions, travelEnabled, encounterEnabled, rewardEnabled }),
+    worldDirectorTools({ travelEnabled, rewardEnabled }),
+    async (toolName, args) => executeWorldDirectorProposal({ db, userId, conversationId: conversation.id, character, toolName, args, executions, travelEnabled, rewardEnabled }),
     { maxRounds: 6, thinkingEnabled: false, signal, database: db, userId }
   ).catch((error) => {
     logAccessoryAgentFailure('world-director', error);
@@ -308,7 +308,7 @@ function buildWorldDirectorMessages(observationWindow, context) {
   ];
 }
 
-export async function executeWorldDirectorProposal({ db, userId, conversationId, character, toolName, args, executions = [], travelEnabled = false, encounterEnabled = false, rewardEnabled = false }) {
+export async function executeWorldDirectorProposal({ db, userId, conversationId, character, toolName, args, executions = [], travelEnabled = false, rewardEnabled = false }) {
   let result = null;
   let error = '';
   if (toolName === 'create_quest') {
@@ -548,10 +548,10 @@ function statusBarTool() {
               properties: {
                 name: { type: 'string' },
                 value: {
-                  anyOf: [
-                    { type: 'number' },
-                    { type: 'string', maxLength: 200 }
-                  ]
+                  // Antigravity's Claude bridge rejects this scalar union as
+                  // anyOf. Numeric text is normalized by normalizeStatusValue.
+                  type: ['string', 'number'],
+                  maxLength: 200
                 },
                 max: { type: 'number' },
                 color: { type: 'string' }
@@ -636,11 +636,10 @@ function worldDirectorTools(options = {}) {
     );
   }
   if (options.rewardEnabled) {
-    tools.push(directorTool('propose_reward', 'Propose one bounded reward for a server-confirmed encounter victory or completed quest. The player claims it separately; never invent negative or duplicate quantities.', {
-      sourceType: { type: 'string', enum: ['encounter', 'quest'] }, sourceId: { type: 'string' }, title: { type: 'string', maxLength: 200 },
+    tools.push(directorTool('propose_reward', 'Propose one bounded reward for a server-confirmed completed quest. The player claims it separately; never invent negative or duplicate quantities.', {
+      sourceType: { type: 'string', enum: ['quest'] }, sourceId: { type: 'string' }, title: { type: 'string', maxLength: 200 },
       rewards: { type: 'object', properties: {
         currency: { type: 'array', maxItems: 5, items: { type: 'object', properties: { currencyType: { type: 'string', enum: ['gold','silver','copper','gem','credit'] }, amount: { type: 'integer', minimum: 1, maximum: 1000000 } }, required: ['currencyType','amount'] } },
-        items: { type: 'array', maxItems: 20, items: { type: 'object', properties: { itemCode: { type: 'string', maxLength: 80 }, name: { type: 'string', maxLength: 160 }, quantity: { type: 'integer', minimum: 1, maximum: 9999 }, description: { type: 'string', maxLength: 1000 }, iconKey: { type: 'string', maxLength: 80 } }, required: ['itemCode','name','quantity'] } },
         questProgress: { type: 'array', maxItems: 12, items: { type: 'object', properties: { questId: { type: 'string' }, objectiveId: { type: 'string' }, delta: { type: 'integer', minimum: 1, maximum: 1000000 } }, required: ['questId','objectiveId','delta'] } },
         growthPoints: { type: 'integer', minimum: 0, maximum: 1000000 }
       } }

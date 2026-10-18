@@ -14,8 +14,9 @@ const groups = [
     'set_character_recommendations'
   ]],
   ['character-draft', 'validate', 'request', ['report_character_progress', 'finish_character_draft']],
-  ['world-book-draft', 'draft', 'request', ['set_world_book_profile', 'replace_world_book_entries', 'upsert_world_book_entry', 'remove_world_book_entry']],
-  ['world-book-draft', 'read', 'read-only', ['preview_world_book_entries']],
+  ['world-book-draft', 'draft', 'request', ['create_world_book', 'create_character_world_book', 'set_world_book_profile', 'replace_world_book_entries', 'upsert_world_book_entry', 'remove_world_book_entry']],
+  ['world-book-draft', 'read', 'read-only', ['search_world_books', 'select_world_book', 'read_world_book', 'preview_world_book_entries']],
+  ['world-book-draft', 'validate', 'request', ['finish_world_book_task']],
   ['status', 'write', 'job-step', ['update_status_bar']],
   ['status', 'read', 'read-only', ['skip_status_bar_update']],
   ['memory', 'write', 'job-step', ['record_memory', 'update_memory', 'merge_memories', 'invalidate_memory', 'pin_memory']],
@@ -23,8 +24,7 @@ const groups = [
   ['economy', 'write', 'job-step', ['record_economy_transaction']],
   ['scene', 'write', 'job-step', ['upsert_scene_node', 'upsert_scene_route', 'merge_scene_nodes', 'remove_scene_route']],
   ['scene', 'read', 'read-only', ['finish_scene_organization']],
-  ['world', 'write', 'job-step', ['create_quest', 'advance_quest_objective', 'advance_world_time', 'set_world_weather', 'request_skill_check', 'discover_location', 'travel_to_location', 'propose_reward']],
-  ['town', 'proposal', 'domain-plan', ['create_town_world', 'advance_town_world', 'plan_town_resident_cognition']]
+  ['world', 'write', 'job-step', ['create_quest', 'advance_quest_objective', 'advance_world_time', 'set_world_weather', 'request_skill_check', 'discover_location', 'travel_to_location', 'propose_reward']]
 ];
 const policies = new Map();
 for (const [domain, effect, idempotency, names] of groups) {

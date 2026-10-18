@@ -305,8 +305,7 @@ async function saveItem() {
       ...itemForm.value,
       nodeId: selectedNodeId.value,
       position,
-      ownerType: 'world',
-      itemKind: 'item'
+      ownerType: 'world'
     });
     workspace.value.items.push(item);
     selectedItemId.value = item.id;

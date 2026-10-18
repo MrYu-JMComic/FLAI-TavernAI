@@ -4,6 +4,8 @@ import { executeProviderTool } from '../services/providerToolResults.js';
 import { optimizeTool, optimizeToolSchema } from '../services/toolSchemaOptimizer.js';
 import { adaptToolsForProvider } from '../services/toolProviderAdapter.js';
 import { runToolCompletion, streamToolCompletion } from '../services/providerToolCompletions.js';
+import { describeAiTool } from '../services/toolRegistry.js';
+import { worldBookWorkspaceTools } from '../services/worldBooks/worldBookAssistantWorkspace.js';
 
 const tools = [{
   type: 'function',
@@ -19,11 +21,28 @@ const tools = [{
   }
 }];
 
+test('every workspace tool and character creation alias has a declared draft or read policy', () => {
+  for (const tool of worldBookWorkspaceTools()) {
+    const policy = describeAiTool(tool.function.name);
+    assert.equal(policy.domain, 'world-book-draft', tool.function.name);
+    assert.notEqual(policy.effect, 'unknown');
+    if (['search_world_books', 'select_world_book', 'read_world_book', 'preview_world_book_entries'].includes(tool.function.name)) {
+      assert.equal(policy.effect, 'read');
+      assert.equal(policy.idempotency, 'read-only');
+    }
+  }
+  const alias = describeAiTool('create_character_world_book');
+  assert.equal(alias.domain, 'world-book-draft');
+  assert.equal(alias.effect, 'draft');
+  assert.equal(alias.idempotency, 'request');
+});
+
 test('Gemini tool adaptation preserves union branches, required fields and closed objects', () => {
   const original = [{ type: 'function', function: { name: 'update', parameters: {
     type: 'object', required: ['value'], additionalProperties: false,
     properties: {
       value: { oneOf: [{ type: 'number' }, { type: 'string' }] },
+      scalar: { type: ['string', 'number'], maxLength: 200 },
       closed: { type: 'object', additionalProperties: false },
       nested: { type: 'array', items: { anyOf: [{ type: 'integer' }, { type: 'null' }] } }
     }
@@ -33,10 +52,14 @@ test('Gemini tool adaptation preserves union branches, required fields and close
     assert.deepEqual(adapted.required, ['value']);
     assert.equal(adapted.additionalProperties, false);
     assert.deepEqual(adapted.properties.value.anyOf, [{ type: 'number' }, { type: 'string' }]);
+    assert.deepEqual(adapted.properties.scalar, {
+      anyOf: [{ type: 'string', maxLength: 200 }, { type: 'number' }]
+    });
     assert.equal(adapted.properties.closed.additionalProperties, false);
     assert.deepEqual(adapted.properties.nested.items.anyOf, [{ type: 'integer' }, { type: 'null' }]);
   }
   assert.ok(original[0].function.parameters.properties.value.oneOf);
+  assert.deepEqual(original[0].function.parameters.properties.scalar.type, ['string', 'number']);
 });
 
 test('tool schemas retain exact bounds, strict mode, and closed objects', () => {

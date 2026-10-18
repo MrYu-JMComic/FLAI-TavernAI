@@ -5,11 +5,6 @@ import { createCharacter } from '../modules/characters.js';
 import { branchConversation } from '../modules/branches.js';
 import { createConversationMemory } from '../modules/conversationMemories.js';
 import { captureConversationSnapshot, writeConversationCheckpoint } from '../repositories/conversationSnapshotRepository.js';
-import {
-  createCastMember,
-  ensureConversationProtagonist,
-  upsertCastMemberItem
-} from './cast/castCommandService.js';
 import { extractConversationMemoryCandidates } from './conversationMemoryExtraction.js';
 import { buildPromptPipeline } from './promptPipeline.js';
 import { newId, nowIso } from '../security.js';
@@ -25,7 +20,6 @@ export function runContextQualityEvaluation(options = {}) {
     const cases = [
       measure(timings, 'memory_evidence', () => evaluateMemoryEvidence()),
       measure(timings, 'prompt_context', () => evaluatePromptContext(database, fixture)),
-      measure(timings, 'item_ownership', () => evaluateItemOwnership(database, fixture)),
       measure(timings, 'branch_checkpoint', () => evaluateBranchCheckpoint(database, fixture))
     ];
     const pipelineCase = cases.find((entry) => entry.id === 'prompt_context');
@@ -112,29 +106,6 @@ function evaluatePromptContext(database, fixture) {
   });
 }
 
-function evaluateItemOwnership(database, fixture) {
-  const first = createCastMember(database, fixture.userId, fixture.conversationId, { canonicalName: 'Mira' });
-  const second = createCastMember(database, fixture.userId, fixture.conversationId, { canonicalName: 'Sera' });
-  const item = upsertCastMemberItem(database, fixture.userId, fixture.conversationId, first.id, {
-    id: 'contract-silver-key', itemCode: 'CONTRACT-SILVER-KEY', name: 'Silver key', quantity: 1
-  });
-  let rejectedDuplicateOwner = false;
-  try {
-    upsertCastMemberItem(database, fixture.userId, fixture.conversationId, second.id, {
-      id: item.id, itemCode: item.itemCode, name: item.name, quantity: 1
-    });
-  } catch {
-    rejectedDuplicateOwner = true;
-  }
-  const rows = captureConversationSnapshot(database, fixture.userId, fixture.conversationId, {
-    includeMessages: false
-  }).state.scene_items.filter((entry) => entry.id === 'contract-silver-key');
-  return result('item_ownership', [
-    invariant('duplicate_owner_write_rejected', rejectedDuplicateOwner),
-    invariant('item_has_exactly_one_owner', rows.length === 1 && rows[0].owner_member_id === first.id)
-  ], { erroneousStateChanges: rows.length === 1 && rows[0].owner_member_id === first.id ? 0 : 1 });
-}
-
 function evaluateBranchCheckpoint(database, fixture) {
   const anchor = insertMessage(database, fixture.userId, fixture.conversationId, 'assistant', '月影港的旧篇章结束。');
   const checkpointMemory = createConversationMemory(database, fixture.userId, fixture.conversationId, {
@@ -165,11 +136,8 @@ function createEvaluationFixture(database) {
   const otherConversationId = 'context-quality-foreign-conversation';
   insertConversation(database, conversationId, userId, character.id);
   insertConversation(database, otherConversationId, otherUserId, otherCharacter.id);
-  ensureConversationProtagonist(database, userId, conversationId);
   const hiddenSecret = 'HIDDEN-CONTRACT-SECRET-7F3A';
-  createCastMember(database, userId, conversationId, {
-    canonicalName: 'Veiled Witness', visibility: 'hidden', customStatus: hiddenSecret
-  });
+  createConversationMemory(database, userId, conversationId, { subject: '秘密', content: hiddenSecret, enabled: false });
   const foreignSecret = 'FOREIGN-CONTRACT-SECRET-9C2D';
   createConversationMemory(database, otherUserId, otherConversationId, { subject: '秘密', content: foreignSecret });
   const oldMemory = createConversationMemory(database, userId, conversationId, {

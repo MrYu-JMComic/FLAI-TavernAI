@@ -117,9 +117,9 @@ test('custom gateways infer known model families for explicit intensity', () => 
   assert.equal(unknown.reasoning_effort, 'none');
 });
 
-test('Gemini sanitizes unsupported minimal aliases and cast-level disable overrides stale config', () => {
+test('Gemini sanitizes unsupported minimal aliases and explicit disable overrides stale config', () => {
   const alias = buildChatBody('gemini', 'gemini-3.7-flash-high', 'minimal');
-  const cast = buildProviderBody(
+  const disabled = buildProviderBody(
     {
       providerType: 'custom',
       model: 'gemini-3.7-flash-high',
@@ -138,9 +138,9 @@ test('Gemini sanitizes unsupported minimal aliases and cast-level disable overri
   );
 
   assert.equal(alias.extra_body.google.thinking_config.thinking_level, 'low');
-  assert.equal(cast.extra_body.google.thinking_config.thinking_level, 'low');
-  assert.equal(cast.extra_body.google.thinking_config.include_thoughts, true);
-  assert.equal(JSON.stringify(cast).includes('thinking_level":"minimal'), false);
+  assert.equal(disabled.extra_body.google.thinking_config.thinking_level, 'low');
+  assert.equal(disabled.extra_body.google.thinking_config.include_thoughts, true);
+  assert.equal(JSON.stringify(disabled).includes('thinking_level":"minimal'), false);
 });
 
 test('OpenAI and xAI Responses reasoning objects respect each effort vocabulary', () => {
@@ -204,11 +204,20 @@ test('Anthropic maps adaptive effort and manual budgets', () => {
     false,
     { thinkingLevel: 'off' }
   );
+  // A configured output cap below the thinking budget must be raised above it.
   const manual = buildAnthropicBody(
     { providerType: 'anthropic', model: 'claude-3-7-sonnet', supportsReasoning: true, extraBody: {} },
     messages,
     false,
-    { thinkingLevel: 'high' }
+    { thinkingLevel: 'high', maxTokens: 4096 }
+  );
+  // Anthropic requires max_tokens, so unlimited output sends the required-field
+  // stand-in rather than omitting the field, and it stays above the budget.
+  const unlimited = buildAnthropicBody(
+    { providerType: 'anthropic', model: 'claude-3-7-sonnet', supportsReasoning: true, extraBody: {} },
+    messages,
+    false,
+    { thinkingLevel: 'high', unlimitedOutput: true }
   );
 
   assert.deepEqual(adaptive.thinking, { type: 'adaptive', display: 'summarized' });
@@ -216,9 +225,95 @@ test('Anthropic maps adaptive effort and manual budgets', () => {
   assert.equal(off.thinking, undefined);
   assert.equal(manual.thinking.budget_tokens, 8192);
   assert.equal(manual.max_tokens, 9216);
+  assert.equal(unlimited.thinking.budget_tokens, 8192);
+  assert.equal(unlimited.max_tokens, 128000);
+  assert.ok(unlimited.max_tokens > unlimited.thinking.budget_tokens);
 });
 
 test('chat request schema accepts canonical levels and rejects unknown values', () => {
   assert.equal(sendMessageSchema.parse({ thinkingLevel: 'max' }).thinkingLevel, 'max');
   assert.throws(() => sendMessageSchema.parse({ thinkingLevel: 'ultra' }));
+});
+
+test('Claude 5.5 exposes adaptive effort on native and compatible providers', () => {
+  for (const model of ['claude-opus-5-5', 'claude-sonnet-5-5', 'anthropic/claude-opus-5-5']) {
+    for (const providerType of ['anthropic', 'custom']) {
+      const control = resolveThinkingControl(providerType, model, true);
+      assert.equal(control.strategy, 'anthropic-adaptive');
+      assert.deepEqual(control.levels, ['off', 'low', 'medium', 'high', 'max']);
+      for (const stream of [false, true]) {
+        for (const thinkingLevel of control.levels) {
+          const extraBody = {
+            thinking: { type: 'enabled', budget_tokens: 8192, display: 'summarized' },
+            output_config: { effort: 'high', format: { type: 'json_schema' } }
+          };
+          const settings = { providerType, model, supportsReasoning: true, extraBody };
+          const build = providerType === 'anthropic' ? buildAnthropicBody : buildProviderBody;
+          const body = build(settings, messages, stream, {
+            thinkingLevel,
+            tools: [{ type: 'function', function: { name: 'finish', parameters: { type: 'object', properties: {} } } }]
+          });
+          if (thinkingLevel === 'off') {
+            assert.equal(body.thinking, undefined);
+            assert.equal(body.output_config.effort, undefined);
+          } else {
+            assert.deepEqual(body.thinking, { type: 'adaptive', display: 'summarized' });
+            assert.equal(body.output_config.effort, thinkingLevel);
+          }
+          assert.deepEqual(body.output_config.format, extraBody.output_config.format);
+          assert.equal(body.reasoning_effort, undefined);
+          assert.ok(body.tools.length);
+          assert.equal(extraBody.thinking.type, 'enabled');
+          assert.equal(extraBody.thinking.budget_tokens, 8192);
+          assert.equal(extraBody.output_config.effort, 'high');
+        }
+      }
+    }
+  }
+});
+
+test('adaptive defaults repair legacy budgets and respect thinking toggles', () => {
+  for (const providerType of ['anthropic', 'custom']) {
+    const build = providerType === 'anthropic' ? buildAnthropicBody : buildProviderBody;
+    const settings = {
+      providerType, model: 'claude-opus-5-5', supportsReasoning: true,
+      extraBody: { thinking: { type: 'enabled', budget_tokens: 4096 }, output_config: { effort: 'low' } }
+    };
+    const enabled = build(settings, messages, false, { thinkingEnabled: true });
+    assert.deepEqual(enabled.thinking, { type: 'adaptive', display: 'summarized' });
+    assert.equal(enabled.output_config.effort, 'low');
+    const disabled = build(settings, messages, false, { thinkingEnabled: false });
+    assert.equal(disabled.thinking, undefined);
+    assert.equal(disabled.output_config, undefined);
+    const explicitDisabled = build({ ...settings, extraBody: { thinking: { type: 'disabled' } } }, messages, false);
+    assert.equal(explicitDisabled.thinking, undefined);
+    const defaultBody = build({ ...settings, extraBody: {} }, messages, false);
+    assert.equal(defaultBody.thinking.type, 'adaptive');
+    assert.equal(defaultBody.output_config.effort, 'high');
+  }
+  const migrated = buildProviderBody({
+    providerType: 'custom', model: 'claude-sonnet-5-5', supportsReasoning: true,
+    extraBody: { reasoning_effort: 'medium', thinking: { type: 'enabled', budget_tokens: 4096 } }
+  }, messages, false);
+  assert.equal(migrated.thinking.type, 'adaptive');
+  assert.equal(migrated.output_config.effort, 'medium');
+  assert.equal(migrated.reasoning_effort, undefined);
+});
+
+test('compatible gateways retain all generic effort levels and infer namespaced GPT models', () => {
+  const generic = resolveThinkingControl('custom', 'local-reasoner', true);
+  assert.deepEqual(generic.levels, ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']);
+  for (const level of generic.levels) {
+    assert.equal(buildChatBody('custom', 'local-reasoner', level).reasoning_effort, level === 'off' ? 'none' : level);
+  }
+  const namespaced = resolveThinkingControl('custom', 'openai/gpt-5.6', true);
+  assert.equal(namespaced.inferredProviderType, 'openai');
+  assert.equal(namespaced.defaultLevel, 'medium');
+  assert.equal(buildChatBody('custom', 'openai/gpt-5.6', 'xhigh').reasoning_effort, 'xhigh');
+  const unsupported = buildProviderBody({
+    providerType: 'custom', model: 'claude-opus-5-5', supportsReasoning: false, extraBody: {}
+  }, messages, false, { thinkingLevel: 'high' });
+  assert.equal(unsupported.thinking, undefined);
+  assert.equal(unsupported.output_config, undefined);
+  assert.equal(unsupported.reasoning_effort, undefined);
 });

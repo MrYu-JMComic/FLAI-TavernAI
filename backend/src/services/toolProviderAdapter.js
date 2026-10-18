@@ -63,6 +63,30 @@ function adaptSchemaForGemini(schema) {
 
   const adapted = { ...schema };
 
+  // Gemini's Schema uses a scalar type. Keep every scalar branch and put
+  // string/number constraints on the types where JSON Schema applies them.
+  if (Array.isArray(adapted.type) && adapted.type.every(type => ['string', 'number', 'integer', 'boolean', 'null'].includes(type))) {
+    const typeUnion = { anyOf: adapted.type.map(type => ({ type })) };
+    for (const [types, keys] of [
+      [['string'], ['minLength', 'maxLength', 'pattern', 'format']],
+      [['number', 'integer'], ['minimum', 'maximum', 'exclusiveMinimum', 'exclusiveMaximum', 'multipleOf']]
+    ]) {
+      for (const key of keys) {
+        if (!Object.hasOwn(adapted, key)) continue;
+        for (const branch of typeUnion.anyOf) {
+          if (types.includes(branch.type)) branch[key] = adapted[key];
+        }
+        delete adapted[key];
+      }
+    }
+    delete adapted.type;
+    if (adapted.anyOf || adapted.oneOf) {
+      adapted.allOf = [...(adapted.allOf || []), typeUnion];
+    } else {
+      adapted.anyOf = typeUnion.anyOf;
+    }
+  }
+
   // Gemini Schema supports anyOf. Keep every branch and validate the original
   // oneOf exclusivity locally before execution: https://ai.google.dev/api/caching#Schema
   if (Array.isArray(adapted.oneOf) && !adapted.anyOf) {

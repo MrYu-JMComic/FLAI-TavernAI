@@ -35,10 +35,6 @@ test('deterministic context quality contract satisfies every fixed-story invaria
         ['older_relevant_memory_recalled', true],
         ['recent_history_window_bounded', true]
       ]],
-      ['item_ownership', [
-        ['duplicate_owner_write_rejected', true],
-        ['item_has_exactly_one_owner', true]
-      ]],
       ['branch_checkpoint', [
         ['branch_keeps_checkpoint_memory', true],
         ['branch_excludes_future_memory', true]

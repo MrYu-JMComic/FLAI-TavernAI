@@ -15,6 +15,13 @@ export function streamWorldBookDraft(payload, handlers = {}, signal) {
   return streamAssistantDraft('/api/world-books/complete-draft', payload, handlers, signal);
 }
 
+export function applyWorldBookChanges(payload) {
+  return apiRequest('/api/world-books/apply-changes', {
+    method: 'POST',
+    body: JSON.stringify(payload)
+  });
+}
+
 export function createWorldBook(payload) {
   return apiRequest('/api/world-books', {
     method: 'POST',

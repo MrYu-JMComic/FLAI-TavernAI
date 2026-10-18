@@ -23,6 +23,6 @@ test('list routes stay on batched queries instead of per-row lookups', () => {
   assert.match(charactersSource, /withCharacterListExtras\(characters\)/);
   assert.doesNotMatch(charactersSource, /characters\.map\(\(c\) => withCharacterTags\(withWorldBookId\(c\)\)\)/);
   assert.match(appSource, /function withCharacterListExtras\(characters\)/);
-  assert.match(appSource, /getCharacterWorldBookIds\(db, ids\)/);
+  assert.match(appSource, /resolveCharacterWorldBookIds\(db, ids\)/);
   assert.match(appSource, /getCharacterTagsMap\(db, ids\)/);
 });

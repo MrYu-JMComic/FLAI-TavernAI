@@ -19,6 +19,7 @@ const { describeAiTool } = await import('../services/toolRegistry.js');
 const { createProviderProfile } = await import('../repositories/providerProfileRepository.js');
 const { encryptSecret } = await import('../security.js');
 const { insertUser } = await import('./routeTestUtils.js');
+const { executeProviderTool } = await import('../services/providerToolResults.js');
 
 const usableSettings = Object.freeze({
   id: 'main-profile',
@@ -72,6 +73,133 @@ function scriptedRunner(script) {
   runner.seen = seen;
   return runner;
 }
+
+function validatedRunner(script) {
+  const runner = async (_settings, _messages, tools, execute) => {
+    runner.results = [];
+    for (const [name, args] of script) {
+      const prepared = await executeProviderTool(execute, name, JSON.stringify(args), {}, undefined, tools);
+      runner.results.push(prepared.result);
+      if (prepared.stop) break;
+    }
+    return {};
+  };
+  return runner;
+}
+
+test('all eight memory tools share catalog descriptions and validate their advertised minimum arguments', async () => {
+  const definitions = buildMemoryAgentToolDefinitions(MEMORY_AGENT_TOOLS.map(tool => tool.name));
+  const minimumArguments = {
+    search_memories: {}, search_history: { query: 'key' },
+    record_memory: { memoryType: 'event', content: 'Key received.', sourceMessageId: 'turn-user' },
+    update_memory: { memoryId: 'memory', revision: 1 },
+    merge_memories: { targetId: 'target', targetRevision: 1, sourceItems: [{ id: 'source', revision: 1 }] },
+    invalidate_memory: { memoryId: 'memory', revision: 1, reason: 'Evidence contradicts current state.', sourceMessageId: 'turn-user' },
+    pin_memory: { memoryId: 'memory', revision: 1 }, finish_memory_review: {},
+  };
+  for (const tool of definitions) {
+    assert.equal(tool.function.description, MEMORY_AGENT_TOOLS.find(entry => entry.name === tool.function.name).description);
+    const prepared = await executeProviderTool(async () => ({ ok: true }), tool.function.name, minimumArguments[tool.function.name], {}, undefined, definitions);
+    assert.equal(prepared.result.ok, true, tool.function.name);
+  }
+  for (const [name, args] of [['search_history', { query: '  ' }], ['record_memory', { ...minimumArguments.record_memory, content: '' }]]) {
+    const rejected = await executeProviderTool(() => { throw new Error('must not execute'); }, name, args, {}, undefined, definitions);
+    assert.equal(rejected.result.error, 'TOOL_ARGUMENTS_INVALID');
+  }
+});
+
+test('validated memory writes preserve optional quotes and apply evidence confidence caps on updates', async () => {
+  const env = setup({ enabled: true });
+  try {
+    const seed = createConversationMemory(env.database, env.userId, env.conversationId, { memoryType: 'event', content: 'The player holds the key.', confidence: 0.95 });
+    const runTools = validatedRunner([
+      ['update_memory', { memoryId: seed.id, revision: seed.revision, content: 'Mira now holds the key.' }],
+      ['update_memory', { memoryId: seed.id, revision: seed.revision, content: 'Mira now holds the key.', sourceMessageId: 'turn-assistant', quote: 'Mira received the key.', confidence: 0.99 }],
+      ['record_memory', { memoryType: 'intent', content: 'Mira plans to open the gate.', sourceMessageId: 'turn-assistant', confidence: 0.99 }],
+      ['update_memory', { memoryId: seed.id, revision: seed.revision + 1, confidence: 0.99 }],
+      ['finish_memory_review', {}],
+    ]);
+    const result = await runConversationMemoryAgent({ ...env, settings: usableSettings, runTools });
+    assert.equal(result.finished, true);
+    assert.equal(runTools.results[0].ok, false, 'changing facts needs the advertised source');
+    assert.equal(runTools.results[1].memory.confidence, 0.6);
+    assert.equal(runTools.results[2].memory.confidence, 0.5, 'omitted quote remains supported');
+    assert.equal(runTools.results[3].memory.confidence, 0.6, 'confidence-only changes cannot bypass the cap');
+    assert.equal(runTools.results[3].unchanged, true);
+  } finally { env.database.close(); }
+});
+
+test('validated merge refuses pinned targets, self sources, and archived targets without resurrecting them', async () => {
+  const env = setup({ enabled: true, tools: { invalidate_memory: true, pin_memory: true } });
+  try {
+    const target = createConversationMemory(env.database, env.userId, env.conversationId, { memoryType: 'event', content: 'The player holds the key.' });
+    const source = createConversationMemory(env.database, env.userId, env.conversationId, { memoryType: 'event', content: 'The key is with the player.' });
+    const pinSeed = createConversationMemory(env.database, env.userId, env.conversationId, { memoryType: 'fact', content: 'Harbor guard.' });
+    const pinned = pinConversationMemory(env.database, env.userId, env.conversationId, pinSeed.id, { pinned: true, revision: pinSeed.revision });
+    const runTools = validatedRunner([
+      ['merge_memories', { targetId: pinned.id, targetRevision: pinned.revision, sourceItems: [{ id: source.id, revision: source.revision }] }],
+      ['merge_memories', { targetId: target.id, targetRevision: target.revision, sourceItems: [{ id: target.id, revision: target.revision }] }],
+      ['invalidate_memory', { memoryId: target.id, revision: target.revision, reason: 'The player handed the key to Mira.', sourceMessageId: 'turn-user', quote: 'I handed Mira the silver key.' }],
+      ['merge_memories', { targetId: target.id, targetRevision: target.revision + 1, sourceItems: [{ id: source.id, revision: source.revision }] }],
+      ['pin_memory', { memoryId: target.id, revision: target.revision + 1 }],
+      ['pin_memory', { memoryId: source.id, revision: source.revision }],
+      ['finish_memory_review', {}],
+    ]);
+    const result = await runConversationMemoryAgent({ ...env, settings: usableSettings, runTools });
+    assert.equal(result.finished, true);
+    assert.deepEqual(runTools.results.slice(0, 6).map(entry => entry.ok), [false, false, true, false, false, true]);
+    const stored = new Map(listConversationMemories(env.database, env.userId, env.conversationId, { includeArchived: true }).map(entry => [entry.id, entry]));
+    assert.equal(stored.get(target.id).archived, true);
+    assert.equal(stored.get(source.id).pinned, true);
+    assert.equal(stored.get(pinned.id).revision, pinned.revision);
+  } finally { env.database.close(); }
+});
+
+test('memory searches return complete content and correct totals while history filtering preserves requested hits', async () => {
+  const env = setup({ enabled: true });
+  try {
+    const longContent = 'key '.repeat(100).trim();
+    createConversationMemory(env.database, env.userId, env.conversationId, { memoryType: 'fact', content: longContent });
+    createConversationMemory(env.database, env.userId, env.conversationId, { memoryType: 'fact', content: 'Another key.' });
+    env.database.prepare('INSERT INTO messages(id,user_id,conversation_id,role,content,created_at) VALUES(?,?,?,?,?,?)')
+      .run('old-key-message', env.userId, env.conversationId, 'assistant', 'The silver key was at the gate.', '2025-01-01');
+    const runTools = validatedRunner([
+      ['search_memories', { limit: 1 }], ['search_history', { query: 'key', limit: 1 }], ['finish_memory_review', {}],
+    ]);
+    await runConversationMemoryAgent({ ...env, settings: usableSettings, runTools });
+    assert.equal(runTools.results[0].total, 2);
+    assert.equal(runTools.results[0].memories.length, 1);
+    assert.equal(runTools.results[0].memories[0].contentTruncated, false);
+    assert.equal(runTools.results[1].messages.length, 1);
+    assert.equal(runTools.results[1].messages[0].messageId, 'old-key-message');
+  } finally { env.database.close(); }
+});
+
+test('memory retries refresh revisions after a partial write instead of replaying the initial snapshot', async () => {
+  const env = setup({ enabled: true });
+  try {
+    const seed = createConversationMemory(env.database, env.userId, env.conversationId, { memoryType: 'event', content: 'The player holds the key.' });
+    let calls = 0;
+    const runTools = async (_settings, messages, _tools, execute) => {
+      calls += 1;
+      const snapshot = JSON.parse(messages[1].content);
+      if (calls === 1) {
+        const updated = await execute('update_memory', { memoryId: seed.id, revision: seed.revision, content: 'Mira received the key.', sourceMessageId: 'turn-assistant', quote: 'Mira took the silver key' });
+        assert.equal(updated.ok, true);
+        throw Object.assign(new Error('temporary gateway failure'), { status: 502 });
+      }
+      assert.equal(snapshot.existingMemories.find(memory => memory.id === seed.id).revision, seed.revision + 1);
+      assert.equal(snapshot.previousToolCalls[0].ok, true);
+      await execute('finish_memory_review', {});
+      return {};
+    };
+    const result = await runConversationMemoryAgent({ ...env, settings: usableSettings, runTools, retryDelaysMs: [0] });
+    assert.equal(result.finished, true);
+    assert.equal(calls, 2);
+    assert.equal(result.updated.length, 1);
+    assert.equal(listConversationMemories(env.database, env.userId, env.conversationId).length, 1);
+  } finally { env.database.close(); }
+});
 
 test('memory agent skill defaults to auto and exposes a switchable tool library', () => {
   const skills = normalizeAccessorySkills({});
@@ -194,6 +322,8 @@ test('memory agent falls back to rule extraction when the model is unavailable, 
 
 test('memory agent updates, merges and invalidates only with matching revisions and never touches pinned memories', async () => {
   const env = setup({ enabled: true, tools: { invalidate_memory: true } });
+  env.assistantMessage.content += ' Mira then lost the silver key.';
+  env.database.prepare('UPDATE messages SET content = ? WHERE id = ?').run(env.assistantMessage.content, env.assistantMessage.id);
   const pinnedSeed = createConversationMemory(env.database, env.userId, env.conversationId, { memoryType: 'fact', subject: 'Mira', content: 'Mira guards the harbor.' });
   const pinned = pinConversationMemory(env.database, env.userId, env.conversationId, pinnedSeed.id, { pinned: true, revision: pinnedSeed.revision });
   const first = createConversationMemory(env.database, env.userId, env.conversationId, { memoryType: 'event', subject: 'key', content: 'The key is with the player.' });
@@ -204,7 +334,7 @@ test('memory agent updates, merges and invalidates only with matching revisions 
     ['update_memory', { memoryId: first.id, revision: first.revision, content: 'Mira now holds the silver key.', sourceMessageId: 'turn-assistant', quote: 'Mira took the silver key' }],
     ['merge_memories', { targetId: first.id, targetRevision: first.revision + 1, sourceItems: [{ id: second.id, revision: second.revision }] }],
     ['merge_memories', { targetId: first.id, targetRevision: first.revision + 2, sourceItems: [{ id: pinned.id, revision: pinned.revision }] }],
-    ['invalidate_memory', { memoryId: first.id, revision: first.revision + 2, reason: 'The assistant narrated that Mira lost the key.' }],
+    ['invalidate_memory', { memoryId: first.id, revision: first.revision + 2, reason: 'The assistant narrated that Mira lost the key.', sourceMessageId: 'turn-assistant', quote: 'Mira then lost the silver key.' }],
     ['pin_memory', { memoryId: first.id, revision: first.revision + 3 }],
     ['finish_memory_review', {}]
   ]);

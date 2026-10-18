@@ -1,3 +1,38 @@
+// The world book FTS triggers read `world_books` to resolve an entry's owner, so
+// any rebuild of that table must drop them first and recreate them afterwards:
+// SQLite reparses every trigger during ALTER TABLE ... RENAME, and a trigger that
+// names a table which momentarily does not exist aborts the rename.
+const WORLD_BOOK_FTS_TRIGGERS = `
+  CREATE TRIGGER IF NOT EXISTS fts_world_entries_insert AFTER INSERT ON world_book_entries BEGIN
+    INSERT INTO fts_world_book_entries (entity_id, user_id, world_book_id, name, keywords, content)
+    SELECT new.id, books.user_id, new.world_book_id, new.name,
+           new.trigger_keys || ' ' || new.keys_secondary, new.content
+    FROM world_books books WHERE books.id = new.world_book_id;
+  END;
+  CREATE TRIGGER IF NOT EXISTS fts_world_entries_update AFTER UPDATE ON world_book_entries BEGIN
+    DELETE FROM fts_world_book_entries WHERE entity_id = old.id;
+    INSERT INTO fts_world_book_entries (entity_id, user_id, world_book_id, name, keywords, content)
+    SELECT new.id, books.user_id, new.world_book_id, new.name,
+           new.trigger_keys || ' ' || new.keys_secondary, new.content
+    FROM world_books books WHERE books.id = new.world_book_id;
+  END;
+  CREATE TRIGGER IF NOT EXISTS fts_world_entries_delete AFTER DELETE ON world_book_entries BEGIN
+    DELETE FROM fts_world_book_entries WHERE entity_id = old.id;
+  END;
+`;
+
+export function createWorldBookFtsTriggers(database) {
+  database.exec(WORLD_BOOK_FTS_TRIGGERS);
+}
+
+export function dropWorldBookFtsTriggers(database) {
+  database.exec(`
+    DROP TRIGGER IF EXISTS fts_world_entries_insert;
+    DROP TRIGGER IF EXISTS fts_world_entries_update;
+    DROP TRIGGER IF EXISTS fts_world_entries_delete;
+  `);
+}
+
 export function migrateFullTextSearch(database) {
   database.exec('SAVEPOINT migration_0007_full_text_search');
   try {
@@ -66,24 +101,8 @@ export function migrateFullTextSearch(database) {
       CREATE TRIGGER IF NOT EXISTS fts_memories_delete AFTER DELETE ON conversation_memories BEGIN
         DELETE FROM fts_memories WHERE entity_id = old.id;
       END;
-
-      CREATE TRIGGER IF NOT EXISTS fts_world_entries_insert AFTER INSERT ON world_book_entries BEGIN
-        INSERT INTO fts_world_book_entries (entity_id, user_id, world_book_id, name, keywords, content)
-        SELECT new.id, books.user_id, new.world_book_id, new.name,
-               new.trigger_keys || ' ' || new.keys_secondary, new.content
-        FROM world_books books WHERE books.id = new.world_book_id;
-      END;
-      CREATE TRIGGER IF NOT EXISTS fts_world_entries_update AFTER UPDATE ON world_book_entries BEGIN
-        DELETE FROM fts_world_book_entries WHERE entity_id = old.id;
-        INSERT INTO fts_world_book_entries (entity_id, user_id, world_book_id, name, keywords, content)
-        SELECT new.id, books.user_id, new.world_book_id, new.name,
-               new.trigger_keys || ' ' || new.keys_secondary, new.content
-        FROM world_books books WHERE books.id = new.world_book_id;
-      END;
-      CREATE TRIGGER IF NOT EXISTS fts_world_entries_delete AFTER DELETE ON world_book_entries BEGIN
-        DELETE FROM fts_world_book_entries WHERE entity_id = old.id;
-      END;
     `);
+    createWorldBookFtsTriggers(database);
     database.exec('RELEASE SAVEPOINT migration_0007_full_text_search');
   } catch (error) {
     database.exec('ROLLBACK TO SAVEPOINT migration_0007_full_text_search');

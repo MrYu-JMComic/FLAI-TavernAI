@@ -1,4 +1,4 @@
-import { computed, nextTick, ref } from 'vue';
+import { computed, ref } from 'vue';
 import { isViewportMatch } from '../useViewport.js';
 import {
   createConversation,
@@ -26,7 +26,6 @@ export function useChatConversation({ route, emit, showError }) {
   const conversationActionBusy = ref(false);
   const startConversationBusy = ref(false);
   const savePanelOpen = ref(false);
-  const npcPanelOpen = ref(false);
   const economyPanelOpen = ref(false);
   const presetList = ref([]);
   const selectedPresetId = ref('');
@@ -362,25 +361,6 @@ export function useChatConversation({ route, emit, showError }) {
     savePanelOpen.value = false;
   }
 
-  async function openNpcPanel() {
-    const panelConversationId = conversation.value?.id || '';
-    if (!isCurrentPanelConversation(panelConversationId)) {
-      return;
-    }
-    if (npcPanelOpen.value) {
-      npcPanelOpen.value = false;
-      await nextTick();
-    }
-    if (!isCurrentPanelConversation(panelConversationId)) {
-      return;
-    }
-    npcPanelOpen.value = true;
-  }
-
-  function closeNpcPanel() {
-    npcPanelOpen.value = false;
-  }
-
   function openEconomyPanel() {
     if (!conversationReady.value) {
       return;
@@ -629,13 +609,6 @@ export function useChatConversation({ route, emit, showError }) {
     return !conversationDisposed && actionToken === conversationActionToken;
   }
 
-  function isCurrentPanelConversation(conversationId) {
-    return !conversationDisposed
-      && conversationReady.value
-      && conversation.value?.id === conversationId
-      && route.params.id === conversationId;
-  }
-
   function cleanup() {
     conversationDisposed = true;
     sidebarLoadToken += 1;
@@ -662,7 +635,6 @@ export function useChatConversation({ route, emit, showError }) {
     conversationActionBusy,
     startConversationBusy,
     savePanelOpen,
-    npcPanelOpen,
     economyPanelOpen,
     presetList,
     selectedPresetId,
@@ -683,8 +655,6 @@ export function useChatConversation({ route, emit, showError }) {
     closeSettings,
     openSavePanel,
     closeSavePanel,
-    openNpcPanel,
-    closeNpcPanel,
     openEconomyPanel,
     closeEconomyPanel,
     toggleConversationSelection,

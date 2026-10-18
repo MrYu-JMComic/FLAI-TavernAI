@@ -3,7 +3,7 @@ import { computed, onBeforeUnmount, ref, watch } from 'vue';
 import { Archive, Check, ChevronDown, GitMerge, Pencil, Pin, PinOff, Plus, RefreshCw, RotateCcw, Trash2, X } from '@lucide/vue';
 import { apiRequest } from '../../api/core.js';
 import { useNotify } from '../../composables/useNotify';
-import CastConfirmDialog from '../cast/CastConfirmDialog.vue';
+import ConfirmDialog from '../ConfirmDialog.vue';
 
 const props = defineProps({
   conversationId: { type: String, required: true },
@@ -252,7 +252,7 @@ onBeforeUnmount(() => { disposed = true; loadToken += 1; mutationToken += 1; });
       </form>
     </div>
 
-    <CastConfirmDialog
+    <ConfirmDialog
       :open="Boolean(deleteCandidate)"
       title="删除记忆"
       message="确定永久删除这条记忆？此操作不可撤销。"

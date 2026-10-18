@@ -5,7 +5,7 @@ import test from 'node:test';
 const { createAppDatabase } = await import('../db.js');
 const { createCharacter } = await import('../modules/characters.js');
 const { createConversationMemory, pinConversationMemory } = await import('../modules/conversationMemories.js');
-const { createEntry, createWorldBook } = await import('../modules/worldBooks.js');
+const { createEntry, createWorldBook } = await import('../services/worldBooks/worldBookService.js');
 const { createConversationsRouter } = await import('../routes/conversations.js');
 const { createUpgradeRouter } = await import('../routes/upgrade.js');
 const { hasUsableProvider } = await import('../services/providers.js');

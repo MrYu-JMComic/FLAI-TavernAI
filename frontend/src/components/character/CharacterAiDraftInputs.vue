@@ -1,12 +1,14 @@
 <script setup>
 import { computed } from 'vue';
-import { Check, ChevronDown, FileText, Radio, SlidersHorizontal } from '@lucide/vue';
+import { Check, ChevronDown, ClipboardList, FileText, Radio, SlidersHorizontal } from '@lucide/vue';
+import { CHARACTER_AI_SECTION_LABELS, aiSectionLabel } from '../../utils/aiSectionLabels.js';
 
 const props = defineProps({
   assistantModel: { type: String, default: '' },
   disabled: { type: Boolean, default: false },
   modelOptions: { type: Array, default: () => [] },
   options: { type: Object, required: true },
+  planMode: { type: Boolean, default: false },
   requirement: { type: String, default: '' },
   streamingEnabled: { type: Boolean, default: false },
   thinkingLevel: { type: String, default: 'off' },
@@ -18,25 +20,12 @@ const props = defineProps({
 const emit = defineEmits([
   'set-option',
   'update:assistantModel',
+  'update:planMode',
   'update:requirement',
   'update:streamingEnabled',
   'update:thinkingLevel',
   'update:useCurrentDraft'
 ]);
-
-const AI_OPTION_LABELS = {
-  profile: '基础资料',
-  background: '背景',
-  worldview: '世界观',
-  persona: '人设',
-  openingMessage: '开场白',
-  tags: '标签',
-  regexRules: '正则',
-  renderPlugins: '渲染插件',
-  worldBook: '世界书创建',
-  advancedSettings: '高阶设置',
-  modSuggestions: 'Mod 建议'
-};
 
 function readInputValue(event) {
   const target = event?.target;
@@ -49,7 +38,7 @@ function readInputChecked(event) {
 }
 
 function optionLabel(key) {
-  return AI_OPTION_LABELS[key] || key;
+  return aiSectionLabel(CHARACTER_AI_SECTION_LABELS, key);
 }
 
 const optionCount = computed(() => Object.keys(props.options).length);
@@ -111,7 +100,7 @@ function setAllOptions(enabled) {
         <span class="ai-option-icon" aria-hidden="true"><FileText :size="16" /></span>
         <span class="ai-option-text">
           <strong>结合当前已填写内容</strong>
-          <small>{{ useCurrentDraft ? '参考表单现有内容，只修改所选范围' : '忽略表单内容，仅按完善要求生成' }}</small>
+          <small>{{ useCurrentDraft ? '参考表单现有内容，只修改所选范围' : '按完善要求生成；仍保留本次世界书上下文' }}</small>
         </span>
         <span class="ai-toggle" :class="{ active: useCurrentDraft, disabled }">
           <input
@@ -136,6 +125,23 @@ function setAllOptions(enabled) {
             :checked="streamingEnabled"
             :disabled="disabled"
             @change="emit('update:streamingEnabled', readInputChecked($event))"
+          />
+          <span class="ai-toggle-track" aria-hidden="true"></span>
+        </span>
+      </label>
+
+      <label class="ai-option-row ai-plan-card" :class="{ 'is-active': planMode }">
+        <span class="ai-option-icon" aria-hidden="true"><ClipboardList :size="16" /></span>
+        <span class="ai-option-text">
+          <strong>Plan 模式</strong>
+          <small>{{ planMode ? '先出计划，勾选确认后才写入表单' : '直接执行：模型边想边改表单' }}</small>
+        </span>
+        <span class="ai-toggle" :class="{ active: planMode, disabled }">
+          <input
+            type="checkbox"
+            :checked="planMode"
+            :disabled="disabled"
+            @change="emit('update:planMode', readInputChecked($event))"
           />
           <span class="ai-toggle-track" aria-hidden="true"></span>
         </span>

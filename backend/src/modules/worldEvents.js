@@ -167,6 +167,5 @@ function isAutomatedSource(value) {
 function auditDomain(eventType) {
   if (eventType.startsWith('economy.')) return 'economy';
   if (eventType.startsWith('quest.')) return 'task';
-  if (eventType.startsWith('cast.')) return 'cast';
   return 'world';
 }

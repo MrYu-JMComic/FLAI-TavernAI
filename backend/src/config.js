@@ -2,9 +2,6 @@ import { readFileSync } from 'node:fs';
 
 const backendPackage = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
 
-export const TOWN_WORLD_GENERATION_TIMEOUT_DEFAULT_MS = 8 * 60 * 1000;
-export const TOWN_WORLD_GENERATION_TIMEOUT_MIN_MS = 60 * 1000;
-export const TOWN_WORLD_GENERATION_TIMEOUT_MAX_MS = 30 * 60 * 1000;
 export const JSON_BODY_LIMIT_DEFAULT_BYTES = 12 * 1024 * 1024;
 
 export const appConfig = Object.freeze({
@@ -46,12 +43,6 @@ export const appConfig = Object.freeze({
   ),
   authRateLimitWindowMs: readPositiveInteger(process.env.AUTH_RATE_LIMIT_WINDOW_MS, 60 * 1000),
   authRateLimitMax: readPositiveInteger(process.env.AUTH_RATE_LIMIT_MAX, 20),
-  townWorldGenerationTimeoutMs: readBoundedPositiveInteger(
-    process.env.TOWN_WORLD_GENERATION_TIMEOUT_MS,
-    TOWN_WORLD_GENERATION_TIMEOUT_DEFAULT_MS,
-    TOWN_WORLD_GENERATION_TIMEOUT_MIN_MS,
-    TOWN_WORLD_GENERATION_TIMEOUT_MAX_MS
-  ),
   // Base64-encoded 6 MiB assets expand to roughly 8.4 MiB before JSON
   // metadata. Keep headroom so the documented asset ceiling is reachable.
   jsonBodyLimitBytes: readPositiveInteger(
@@ -125,12 +116,6 @@ export function withAppConfigDefaults(overrides = {}) {
 export function readPositiveInteger(value, fallback) {
   const parsed = Number(value);
   return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : fallback;
-}
-
-export function readBoundedPositiveInteger(value, fallback, min, max) {
-  const boundedFallback = Math.min(max, Math.max(min, readPositiveInteger(fallback, min)));
-  const parsed = readPositiveInteger(value, boundedFallback);
-  return Math.min(max, Math.max(min, parsed));
 }
 
 function readClientOrigins(value) {

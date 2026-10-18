@@ -3,9 +3,10 @@ import test from 'node:test';
 import { createAppDatabase } from '../db/runtime.js';
 import { initializeDatabase } from '../db/schema.js';
 import { createCharacter } from '../modules/characters.js';
-import { createEntry, createWorldBook, matchWorldBookEntries, resetMessageCounter } from '../modules/worldBooks.js';
-import { createSave, loadSave } from '../modules/saves.js';
+import { createEntry, createWorldBook } from '../services/worldBooks/worldBookService.js';
+import { matchWorldBookEntries } from '../services/worldBooks/worldBookRuntime.js';
 import { snapshotConversationWorldBookState } from '../services/worldBooks/worldBookStateService.js';
+import { createSave, loadSave } from '../modules/saves.js';
 import { insertUser } from './routeTestUtils.js';
 
 function fixture(t, entryOptions = {}) {
@@ -33,8 +34,12 @@ test('sticky state and counters are isolated by conversation and previews stay r
     assert.equal(match('session-a', 'unrelated', { persistState: false }).length, 1);
   }
   assert.deepEqual(snapshotConversationWorldBookState(database, 'session-a'), before);
-  assert.equal(database.prepare('SELECT COUNT(*) AS count FROM world_book_entry_state').get().count, 0);
-  resetMessageCounter();
+  // session-b ran its own matches, so it has its own row — but the entry never
+  // activated there, and the previews on session-a wrote nothing.
+  assert.equal(
+    database.prepare('SELECT was_active FROM conversation_world_book_state WHERE conversation_id = ?').get('session-b').was_active,
+    0
+  );
   assert.equal(match('session-a', 'unrelated').length, 1);
   assert.equal(snapshotConversationWorldBookState(database, 'session-a').messageCount, 2);
   assert.equal(match('session-a', 'unrelated').length, 1);
@@ -72,13 +77,33 @@ test('saving and loading restores the lore clock and activation window atomicall
   assert.deepEqual(snapshotConversationWorldBookState(database, 'session-a'), { messageCount: 0, entries: [] });
 });
 
-test('scoped-state migration preserves legacy rows without copying them into unrelated sessions', (t) => {
-  const { database, character, entry, match } = fixture(t, { sticky: 3 });
-  matchWorldBookEntries(database, character.id, 'lantern');
-  const before = database.prepare('SELECT * FROM world_book_entry_state WHERE entry_id = ?').get(entry.id);
-  database.exec("DROP TABLE conversation_world_book_state; DROP TABLE conversation_world_book_clock; DELETE FROM schema_migrations WHERE version = '0013';");
+test('trigger state is conversation-scoped with no global fallback', (t) => {
+  const { database, character, match } = fixture(t, { sticky: 3 });
+  const globalTableCount = () => database
+    .prepare("SELECT COUNT(*) AS count FROM sqlite_master WHERE type = 'table' AND name = 'world_book_entry_state'")
+    .get().count;
+
+  // A match with nowhere to record its activation window is a programming error,
+  // not a supported mode: the process-global table it used to fall back to is gone.
+  assert.throws(
+    () => matchWorldBookEntries(database, character.id, 'lantern'),
+    /requires options\.conversationId/
+  );
+  assert.throws(
+    () => snapshotConversationWorldBookState(database, ''),
+    /requires a conversationId/
+  );
+  assert.equal(globalTableCount(), 0);
+
+  assert.equal(match('session-a', 'lantern').length, 1);
+  assert.equal(
+    database.prepare('SELECT COUNT(*) AS count FROM conversation_world_book_state').get().count,
+    1
+  );
+
+  // Re-running schema setup is idempotent and must not resurrect the global table.
   initializeDatabase(database);
-  assert.deepEqual(database.prepare('SELECT * FROM world_book_entry_state WHERE entry_id = ?').get(entry.id), before);
-  assert.equal(match('session-a', 'unrelated').length, 0);
+  assert.equal(globalTableCount(), 0);
+  assert.equal(match('session-a', 'unrelated').length, 1);
   assert.deepEqual(database.prepare('PRAGMA foreign_key_check').all(), []);
 });

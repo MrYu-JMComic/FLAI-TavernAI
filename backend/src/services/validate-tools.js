@@ -15,10 +15,7 @@ const toolFiles = [
   'assistantPlanTools.js',
   'characterAssistant.js',
   'sceneOrganizer.js',
-  'worldBookAssistant.js',
-  'townCognitionAssistant.js',
-  'townTurnAssistant.js',
-  'townWorldAssistant.js'
+  'worldBookAssistant.js'
 ];
 
 console.log('🔍 开始检查工具定义兼容性...\n');

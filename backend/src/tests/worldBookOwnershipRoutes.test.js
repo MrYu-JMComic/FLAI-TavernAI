@@ -8,11 +8,11 @@ const {
   createEntry,
   createWorldBook,
   getWorldBook,
-  linkWorldBookToCharacter,
+  linkCharacter,
   listCharacterWorldBooks,
-  listWorldBooks,
-  matchWorldBookEntries
-} = await import('../modules/worldBooks.js');
+  listWorldBooks
+} = await import('../services/worldBooks/worldBookService.js');
+const { matchWorldBookEntries } = await import('../services/worldBooks/worldBookRuntime.js');
 const { createWorldBooksRouter } = await import('../routes/worldBooks.js');
 const { insertUser, withServer } = await import('./routeTestUtils.js');
 
@@ -79,10 +79,10 @@ test('world book character binding helpers reject foreign characters', () => {
     }),
     /Character does not exist/
   );
-  assert.equal(linkWorldBookToCharacter(database, ownerBook.id, otherCharacter.id, 0, ownerId), false);
+  assert.equal(linkCharacter(database, ownerId, ownerBook.id, otherCharacter.id, 0), false);
 });
 
-test('world book matching ignores foreign legacy direct character bindings', () => {
+test('world book matching ignores foreign junction links', () => {
   const database = createAppDatabase(':memory:');
   const ownerId = 'world-book-match-owner';
   const otherId = 'world-book-match-other';
@@ -91,31 +91,35 @@ test('world book matching ignores foreign legacy direct character bindings', () 
   const ownerCharacter = createCharacter(database, ownerId, {
     name: 'Owner Match Character'
   });
-  const timestamp = new Date().toISOString();
-  database
-    .prepare(
-      `INSERT INTO world_books (
-        id, user_id, name, description, character_id, scan_depth, lorebook_context_percent, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
-    )
-    .run(
-      'foreign-direct-world-book',
-      otherId,
-      'Foreign Direct Book',
-      '',
-      ownerCharacter.id,
-      1,
-      25,
-      timestamp,
-      timestamp
-    );
-  createEntry(database, otherId, 'foreign-direct-world-book', {
+  const foreignBook = createWorldBook(database, otherId, {
+    name: 'Foreign Book'
+  });
+  createEntry(database, otherId, foreignBook.id, {
     name: 'Foreign Entry',
     triggerKeys: 'foreign-trigger',
     content: 'foreign content'
   });
+  // Attach another user's book to this character straight in the junction table,
+  // bypassing the service's ownership check.
+  database
+    .prepare(
+      `INSERT INTO character_world_books (character_id, world_book_id, order_index, created_at)
+       VALUES (?, ?, ?, ?)`
+    )
+    .run(ownerCharacter.id, foreignBook.id, 0, new Date().toISOString());
+  const conversationId = 'world-book-match-conversation';
+  const timestamp = new Date().toISOString();
+  database
+    .prepare(
+      `INSERT INTO conversations (id, user_id, character_id, title, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?)`
+    )
+    .run(conversationId, ownerId, ownerCharacter.id, 'Match', timestamp, timestamp);
 
-  assert.deepEqual(matchWorldBookEntries(database, ownerCharacter.id, ['foreign-trigger']), []);
+  assert.deepEqual(
+    matchWorldBookEntries(database, ownerCharacter.id, ['foreign-trigger'], { conversationId }),
+    []
+  );
 });
 
 test('world book reads ignore foreign legacy junction links', () => {

@@ -9,10 +9,11 @@ const { applyRegexRules, testRegexRule } = await import('../modules/characters.j
 const charactersSource = fs.readFileSync(new URL('../modules/characters.js', import.meta.url), 'utf8');
 const userRegexSources = [
   '../modules/characters.js',
-  '../modules/worldBooks.js',
+  '../domain/worldBooks/entryRules.js',
   '../services/characterAssistant.js',
   '../services/exportEnvelopes.js',
-  '../services/worldBookMatchPreview.js'
+  '../services/worldBooks/worldBookMatcher.js',
+  '../services/worldBooks/worldBookMatchPreview.js'
 ].map((path) => fs.readFileSync(new URL(path, import.meta.url), 'utf8'));
 
 // ── testRegexRule: contain mode ──

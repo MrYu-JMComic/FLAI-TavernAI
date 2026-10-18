@@ -53,7 +53,6 @@ test('accessory skill payloads build active flags with direct own-key loops', ()
   assert.deepEqual(Object.keys(payload.skills), [
     'worldDirector',
     'gameHud',
-    'encounterMode',
     'rewardMode',
     'statusBarAgent',
     'economyAgent',
@@ -64,7 +63,6 @@ test('accessory skill payloads build active flags with direct own-key loops', ()
   ]);
   assert.equal(payload.active.worldDirector, false);
   assert.equal(payload.active.gameHud, false);
-  assert.equal(payload.active.encounterMode, false);
   assert.equal(payload.active.rewardMode, false);
   assert.equal(payload.active.statusBarAgent, true);
   assert.equal(payload.active.economyAgent, true);
@@ -149,6 +147,54 @@ test('provider-backed accessory agents receive current-turn observation windows'
     assert.equal(economySchema.properties.amount.minimum, 0.0001);
   } finally {
     globalThis.fetch = originalFetch;
+  }
+});
+
+test('status-bar gateway schema accepts numeric and text values while rejecting invalid tool arguments', async () => {
+  const env = setupConversation({ statusBarAgent: skill(true) });
+  const statusBar = upsertStatusBar(env.db, env.userId, env.conversation.id, {
+    name: 'State',
+    variables: [{ name: 'HP', value: 100 }, { name: 'Mood', value: 'anxious' }],
+    template: ''
+  });
+  const originalFetch = globalThis.fetch;
+  const requests = [];
+  globalThis.fetch = async (_url, request) => {
+    const body = JSON.parse(request.body);
+    requests.push(body);
+    const schema = body.tools.find(tool => tool.function?.name === 'update_status_bar')
+      .function.parameters.properties.variables.items.properties.value;
+    // Reproduce the Antigravity bridge rejecting the original nested anyOf.
+    if (schema.anyOf) {
+      return Response.json({ error: { message: 'tools.0.custom.input_schema: JSON schema is invalid' } }, { status: 400 });
+    }
+    const variables = requests.length === 1
+      ? [{ name: 'HP', value: true }, { name: 'Mood', value: 'x'.repeat(201) }]
+      : [{ name: 'HP', value: '75' }, { name: 'Mood', value: 'calm' }, { name: 'XP', value: 12 }];
+    return jsonResponse({ choices: [{ message: { role: 'assistant', content: null, tool_calls: [{
+      id: `status-${requests.length}`, type: 'function',
+      function: { name: 'update_status_bar', arguments: JSON.stringify({ variables }) }
+    }] } }] });
+  };
+  try {
+    const results = await runAccessoryAgents({
+      db: env.db, userId: env.userId, conversation: env.conversation, character: env.character,
+      assistantMessage: { content: 'The character recovers and relaxes.' },
+      settings: { ...providerSettings(), providerType: 'custom', model: 'claude-opus-4-6-thinking' },
+      statusBar, strictErrors: true
+    });
+    assert.equal(results[0].ok, true);
+    assert.equal(requests.length, 2);
+    const validation = JSON.parse(requests[1].messages.find(message => message.role === 'tool').content);
+    assert.equal(validation.error, 'TOOL_ARGUMENTS_INVALID');
+    assert.ok(validation.issues.some(issue => issue.path.startsWith('variables.0.value')));
+    assert.ok(validation.issues.some(issue => issue.path.startsWith('variables.1.value')));
+    assert.deepEqual(getStatusBar(env.db, env.userId, env.conversation.id).variables.map(({ name, value }) => ({ name, value })), [
+      { name: 'HP', value: 75 }, { name: 'Mood', value: 'calm' }, { name: 'XP', value: 12 }
+    ]);
+  } finally {
+    globalThis.fetch = originalFetch;
+    env.db.close();
   }
 });
 

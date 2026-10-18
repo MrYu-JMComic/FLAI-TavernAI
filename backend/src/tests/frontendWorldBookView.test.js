@@ -1,11 +1,14 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { countMatches, readVueBlocks } from './frontendSfcTestUtils.js';
+import { countMatches, readRepoText, readVueBlocks } from './frontendSfcTestUtils.js';
 
 const {
   script: worldBookViewScript,
   template: worldBookViewTemplate
 } = readVueBlocks('frontend/src/views/WorldBookView.vue');
+
+const worldBookAiScript = readRepoText('frontend/src/composables/worldbook/useWorldBookAi.js');
+const { script: worldBookAiPanelScript, template: worldBookAiPanelTemplate } = readVueBlocks('frontend/src/components/worldbook/WorldBookAiPanel.vue');
 
 function assertSavingGuard(scriptSetup, functionName) {
   assert.match(
@@ -39,7 +42,7 @@ test('WorldBookView preserves unchanged book and entry references during refresh
   );
   assert.match(
     worldBookViewScript,
-    /const nextBook = await fetchWorldBook\(id\);[\s\S]*setCurrentBookIfChanged\(nextBook\);/
+    /const \[nextBook, nextBooks\] = await Promise\.all\(\[fetchWorldBook\(id\), fetchWorldBooks\(\)\]\);[\s\S]*setBooksIfChanged\(nextBooks\);[\s\S]*setCurrentBookIfChanged\(nextBook\);/
   );
   assert.match(
     worldBookViewScript,
@@ -68,91 +71,19 @@ test('WorldBookView preserves unchanged book and entry references during refresh
   assert.doesNotMatch(worldBookViewScript, /let hasBook = false/);
 });
 
-test('WorldBookView preserves unchanged AI draft and process panel references', () => {
-  assert.match(worldBookViewScript, /import \{ countOwnObjectKeys \} from '\.\.\/utils\/objectKeys';/);
-  assert.match(
-    worldBookViewScript,
-    /function toolResultLabel\(result = \{\}\) \{[\s\S]*result\?\.applied\?\.entries && Array\.isArray\(result\.applied\.entries\)[\s\S]*result\?\.applied && typeof result\.applied === 'object'[\s\S]*countOwnObjectKeys\(result\.applied\)[\s\S]*\}/
-  );
-  assert.doesNotMatch(worldBookViewScript, /function countOwnObjectKeys\(value\)/);
-  assert.doesNotMatch(worldBookViewScript, /Object\.keys\(result\.applied\)\.length/);
-  assert.match(
-    worldBookViewScript,
-    /function setAiDraftIfChanged\(nextDraft\) {\s*return setAiPlainRefIfChanged\(aiDraft, nextDraft \|\| null\);\s*}/
-  );
-  assert.match(
-    worldBookViewScript,
-    /function setAiToolCallsIfChanged\(nextToolCalls\) {\s*return setAiPlainListIfChanged\(aiToolCalls, nextToolCalls\);\s*}/
-  );
-  assert.match(
-    worldBookViewScript,
-    /function setAiProcessIfChanged\(nextProcess\) {\s*return setAiPlainListIfChanged\(aiProcess, nextProcess\);\s*}/
-  );
-  assert.match(
-    worldBookViewScript,
-    /function setAiPlainRefIfChanged\(valueRef, nextValue\) {[\s\S]*samePlainValue\(valueRef\.value, nextValue\)[\s\S]*valueRef\.value = nextValue;[\s\S]*return true;[\s\S]*}/
-  );
-  assert.match(
-    worldBookViewScript,
-    /import \{ samePlainValue \} from '\.\.\/utils\/plainValues';/
-  );
-  assert.doesNotMatch(
-    worldBookViewScript,
-    /function samePlainValue\(/
-  );
-  assert.doesNotMatch(worldBookViewScript, /(?:currentBooks|currentEntries|current|currentKeys)\.every\(/);
-  assert.doesNotMatch(worldBookViewScript, /Object\.keys\(current\)/);
-  assert.match(
-    worldBookViewScript,
-    /function updateAiProcessStep\(round = 1, updateStep\) {[\s\S]*const currentProcess = Array\.isArray\(aiProcess\.value\) \? aiProcess\.value : \[\];[\s\S]*let stepIndex = -1;[\s\S]*for \(let index = 0; index < currentProcess\.length; index \+= 1\) {[\s\S]*currentProcess\[index\]\?\.round === round[\s\S]*break;[\s\S]*const nextProcess = \[\];[\s\S]*for \(let index = 0; index < currentProcess\.length; index \+= 1\) {[\s\S]*nextProcess\.push\(index === stepIndex \? nextStep : currentProcess\[index\]\);[\s\S]*if \(stepIndex < 0\) {[\s\S]*nextProcess\.push\(nextStep\);[\s\S]*setAiProcessIfChanged\(nextProcess\);[\s\S]*}/
-  );
-  assert.match(
-    worldBookViewScript,
-    /function appendAiToolCall\(log\) {[\s\S]*const currentToolCalls = Array\.isArray\(aiToolCalls\.value\) \? aiToolCalls\.value : \[\];[\s\S]*const nextToolCalls = \[\];[\s\S]*for \(const toolCall of currentToolCalls\) {[\s\S]*nextToolCalls\.push\(toolCall\);[\s\S]*nextToolCalls\.push\(log\);[\s\S]*setAiToolCallsIfChanged\(nextToolCalls\);[\s\S]*}/
-  );
-  assert.match(
-    worldBookViewScript,
-    /import \{ appendAiToolList, cloneAiToolList \} from '\.\.\/utils\/aiToolLists';/
-  );
-  assert.doesNotMatch(worldBookViewScript, /function cloneAiToolList\(/);
-  assert.doesNotMatch(worldBookViewScript, /function appendAiToolList\(/);
-  assert.doesNotMatch(worldBookViewScript, /currentProcess\.findIndex\(/);
-  assert.doesNotMatch(worldBookViewScript, /currentProcess\.map\(\(item, index\) => \(index === stepIndex \? nextStep : item\)\)/);
-  assert.doesNotMatch(worldBookViewScript, /\[\.\.\.currentProcess, nextStep\]/);
-  assert.doesNotMatch(worldBookViewScript, /setAiToolCallsIfChanged\(\[\.\.\.currentToolCalls, log\]\);/);
-  assert.doesNotMatch(worldBookViewScript, /Array\.isArray\(step\.tools\) \? \[\.\.\.step\.tools\] : \[\]/);
-  assert.doesNotMatch(worldBookViewScript, /\[\.\.\.\(Array\.isArray\(target\.tools\) \? target\.tools : \[\]\), log\]/);
-  assert.doesNotMatch(worldBookViewScript, /Array\.isArray\(currentStep\.tools\) \? \[\.\.\.currentStep\.tools\] : \[\]/);
-  assert.match(
-    worldBookViewScript,
-    /async function completeWorldBookWithAi\(\) {[\s\S]*setAiToolCallsIfChanged\(\[\]\);[\s\S]*setAiProcessIfChanged\(\[\{ round: 1, reasoning: '[^']+', content: '', tools: \[\] \}\]\);/
-  );
-  assert.match(
-    worldBookViewScript,
-    /setAiDraftIfChanged\(result\.worldBook\);[\s\S]*setAiToolCallsIfChanged\(result\.toolCalls\);[\s\S]*setAiProcessIfChanged\(result\.process\);/
-  );
-  assert.match(
-    worldBookViewScript,
-    /if \(!aiDraftEntryCount\.value\) {\s*setAiDraftIfChanged\(null\);/
-  );
-  assert.match(
-    worldBookViewScript,
-    /setAiProcessIfChanged\(\[\{ round: 1, reasoning: err\.message, content: '', tools: \[\] \}\]\);/
-  );
-  assert.match(
-    worldBookViewScript,
-    /notify\.success\(`[^`]*\$\{aiDraftEntryCount\.value\}[^`]*`\);\s*setAiDraftIfChanged\(null\);/
-  );
-  assert.match(
-    worldBookViewScript,
-    /function aiStreamHandlers\(mutationToken, routeKey\) {[\s\S]*step: \(step = \{\}\) => {[\s\S]*updateAiProcessStep\(step\.round \|\| 1, \(target\) => \({[\s\S]*content: target\.content \|\| step\.content \|\| ''[\s\S]*reasoning: target\.reasoning === '等待模型响应\.\.\.'[\s\S]*tools: target\.tools\?\.length \? target\.tools : cloneAiToolList\(step\.tools\)[\s\S]*tool: \(call = \{\}\) => {[\s\S]*updateAiProcessStep\(call\.round \|\| 1, \(target\) => \({[\s\S]*tools: appendAiToolList\(target\.tools, log\)[\s\S]*appendAiToolCall\(log\);/
-  );
-  assert.doesNotMatch(worldBookViewScript, /aiDraft\.value\s*=(?!=)/);
-  assert.doesNotMatch(worldBookViewScript, /aiToolCalls\.value\s*=(?!=)/);
-  assert.doesNotMatch(worldBookViewScript, /aiProcess\.value\s*=(?!=)/);
-  assert.doesNotMatch(worldBookViewScript, /(?:aiToolCalls|aiProcess)\.value\.(?:push|splice|unshift|shift|pop)\(/);
-  assert.doesNotMatch(worldBookViewScript, /target\.tools\.push\(/);
-  assert.doesNotMatch(worldBookViewScript, /function ensureAiProcessStep/);
+test('WorldBookView delegates the assistant and exposes selection, creation and transaction results', () => {
+  assert.match(worldBookViewScript, /useWorldBookAi\(/);
+  assert.equal(countMatches(worldBookViewTemplate, /<WorldBookAiPanel /g), 2);
+  assert.match(worldBookViewScript, /selectedIds: aiSelectedBookIds\.value/);
+  assert.match(worldBookViewScript, /changes: aiChanges\.value/);
+  assert.match(worldBookViewScript, /history: aiHistory\.value/);
+  assert.match(worldBookViewScript, /'new-book': prepareNewWorldBook/);
+  assert.match(worldBookViewScript, /apply: applyWorldBookAiResults/);
+  assert.match(worldBookAiPanelTemplate, /<WorldBookTargetPicker /);
+  assert.match(worldBookAiPanelTemplate, /<WorldBookChanges /);
+  assert.match(worldBookAiPanelScript, /'new-book'/);
+  assert.match(worldBookAiPanelScript, /'apply'/);
+  assert.doesNotMatch(worldBookViewScript, /createBookFromAiDraft|rollbackCreatedWorldBook/);
 });
 
 test('WorldBookView aggregates current entry stats in one pass', () => {
@@ -181,7 +112,7 @@ test('WorldBookView aggregates book list stats in one pass', () => {
   assert.doesNotMatch(worldBookViewScript, /const booksWithEntriesCount = computed\(\(\) => books\.value\.filter/);
 });
 
-test('WorldBookView scans position options directly for labels and AI entries', () => {
+test('WorldBookView scans position options directly for manual entry labels', () => {
   assert.match(
     worldBookViewScript,
     /function positionLabel\(value\) \{\s*return getPositionOptionByValue\(value\)\?\.label \|\| value;\s*\}/
@@ -190,12 +121,6 @@ test('WorldBookView scans position options directly for labels and AI entries', 
     worldBookViewScript,
     /function getPositionOptionByValue\(value\) \{\s*for \(const option of positionOptions\) \{\s*if \(option\.value === value\) \{\s*return option;\s*\}\s*\}\s*return null;\s*\}/
   );
-  assert.match(
-    worldBookViewScript,
-    /import \{ normalizeWorldBookEntryForCreate \} from '\.\.\/utils\/worldBookDraft\.js';/
-  );
-  assert.match(worldBookViewScript, /createWorldBookEntry\(createdBook\.id, normalizeWorldBookEntryForCreate\(entry\)\)/);
-  assert.doesNotMatch(worldBookViewScript, /function normalizeAiEntryForCreate/);
   assert.doesNotMatch(worldBookViewScript, /positionOptions\.find/);
   assert.doesNotMatch(worldBookViewScript, /positionOptions\.some/);
 });
@@ -212,8 +137,9 @@ test('WorldBookView locks world book mutations while saving is active', () => {
     'removeEntry',
     'toggleEntry',
     'moveEntry',
-    'completeWorldBookWithAi',
-    'createBookFromAiDraft'
+    'runWorldBookAi',
+    'runWorldBookPlan',
+    'replanWorldBook'
   ].forEach((functionName) => assertSavingGuard(worldBookViewScript, functionName));
 
   assert.match(
@@ -237,8 +163,9 @@ test('WorldBookView locks world book mutations while saving is active', () => {
   assert.ok(countMatches(worldBookViewTemplate, /:aria-busy="saving"/g) >= 10);
   assert.equal(countMatches(worldBookViewTemplate, /:disabled="saving \|\| index === 0"/g), 1);
   assert.equal(countMatches(worldBookViewTemplate, /:disabled="saving \|\| index === currentBook\.entries\.length - 1"/g), 1);
-  assert.match(worldBookViewTemplate, /:disabled="aiLoading \|\| saving"/);
-  assert.match(worldBookViewTemplate, /:disabled="!aiDraft \|\| !aiDraftEntryCount \|\| aiLoading \|\| saving"/);
+  assert.match(worldBookViewScript, /saving: saving\.value \|\| aiSaving\.value/);
+  assert.match(worldBookAiPanelScript, /props\.loading \|\| props\.saving/);
+  assert.match(worldBookAiScript, /if \(aiLoading\.value \|\| aiSaving\.value \|\| !selectedChanges\?\.length\) return;/);
 });
 
 test('WorldBookView invalidates mutation tokens before mutation-triggered navigation', () => {
@@ -253,10 +180,6 @@ test('WorldBookView invalidates mutation tokens before mutation-triggered naviga
   assert.match(
     worldBookViewScript,
     /if \(isDetailView\.value\) \{\s*navigateFromWorldBookMutation\('worldBooks'\);\s*\} else \{/
-  );
-  assert.match(
-    worldBookViewScript,
-    /setAiDraftIfChanged\(null\);\s*navigateFromWorldBookMutation\('worldBookDetail', \{ id: createdBook\.id \}\);/
   );
   assert.equal(countMatches(worldBookViewScript, /emit\('navigate'/g), 1);
 });

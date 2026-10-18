@@ -1,7 +1,6 @@
 import fs from 'node:fs';
-import path from 'node:path';
 import { appConfig } from '../config.js';
-import { avatarUploadDir, backendRoot, dataDir } from '../db/runtime.js';
+import { avatarUploadDir, dataDir } from '../db/runtime.js';
 
 const REQUIRED_TABLES = "('users','characters','conversations','messages')";
 
@@ -48,8 +47,7 @@ export function buildRuntimeHealth(database, options = {}) {
   const checks = {
     database: checkDatabase(database),
     storage: checkStorage(),
-    config: checkConfig(),
-    bundle: checkRuntimeBundle()
+    config: checkConfig()
   };
 
   return {
@@ -62,8 +60,7 @@ export function buildRuntimeHealth(database, options = {}) {
     runtime: {
       node: process.versions.node,
       platform: process.platform,
-      arch: process.arch,
-      packaged: checks.bundle.present === true
+      arch: process.arch
     },
     checks
   };
@@ -142,38 +139,6 @@ function checkConfig() {
   };
 }
 
-function checkRuntimeBundle() {
-  const markerPath = path.join(backendRoot, '.flai-runtime-source.json');
-  if (!fs.existsSync(markerPath)) {
-    return {
-      ok: true,
-      present: false
-    };
-  }
-
-  try {
-    const marker = parseRuntimeMarkerText(fs.readFileSync(markerPath, 'utf8'));
-    return {
-      ok: true,
-      present: true,
-      builtAt: normalizeMarkerField(marker?.builtAt),
-      gitHead: normalizeMarkerField(marker?.gitHead),
-      source: normalizeMarkerField(marker?.source)
-    };
-  } catch (error) {
-    return {
-      ok: false,
-      present: true,
-      status: 'invalid_marker',
-      error: normalizeHealthError(error)
-    };
-  }
-}
-
-export function parseRuntimeMarkerText(text) {
-  return JSON.parse(String(text || '').replace(/^\uFEFF/, ''));
-}
-
 function areRequiredChecksHealthy(checks) {
   for (const check of Object.values(checks)) {
     if (check?.ok !== true) {
@@ -198,10 +163,6 @@ function readFirstRowValue(row) {
     return row[key];
   }
   return '';
-}
-
-function normalizeMarkerField(value) {
-  return String(value || '').trim().slice(0, 120);
 }
 
 function normalizeHealthError(error) {

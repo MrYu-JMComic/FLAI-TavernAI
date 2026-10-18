@@ -1,6 +1,6 @@
-/* Shared styling for the memory agent and NPC agent settings dialogs. */
+/* Shared styling for agent settings dialogs. */
 
-:is(.cast-agent-backdrop, .memory-agent-backdrop) {
+.memory-agent-backdrop {
   position: fixed;
   inset: 0;
   z-index: var(--z-modal);
@@ -11,7 +11,7 @@
   backdrop-filter: blur(3px);
 }
 
-:is(.cast-agent-dialog, .memory-agent-dialog) {
+.memory-agent-dialog {
   display: flex;
   flex-direction: column;
   width: min(640px, 100%);
@@ -25,8 +25,8 @@
   text-align: left;
 }
 
-:is(.cast-agent-dialog, .memory-agent-dialog) > header,
-:is(.cast-agent-dialog, .memory-agent-dialog) > footer {
+.memory-agent-dialog > header,
+.memory-agent-dialog > footer {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -35,47 +35,43 @@
   flex: 0 0 auto;
 }
 
-:is(.cast-agent-dialog, .memory-agent-dialog) > header {
+.memory-agent-dialog > header {
   align-items: flex-start;
   border-bottom: 1px solid var(--line);
 }
 
-:is(.cast-agent-dialog, .memory-agent-dialog) > footer {
+.memory-agent-dialog > footer {
   justify-content: flex-end;
   border-top: 1px solid var(--line);
   background: color-mix(in srgb, var(--surface-strong) 55%, transparent);
 }
 
-:is(.cast-agent-dialog, .memory-agent-dialog) > section {
+.memory-agent-dialog > .agent-dialog-body > section {
   padding: 16px 20px 4px;
 }
 
-:is(.cast-agent-dialog, .memory-agent-dialog) > section:last-of-type {
+.memory-agent-dialog > .agent-dialog-body > section:last-of-type {
   padding-bottom: 16px;
 }
 
-:is(.cast-agent-dialog, .memory-agent-dialog) > section + section {
+.memory-agent-dialog > .agent-dialog-body > section + section {
   border-top: 1px dashed var(--line);
 }
 
 /* Sections scroll together while the header and footer stay fixed. */
-:is(.cast-agent-dialog, .memory-agent-dialog) > header + section,
-:is(.cast-agent-dialog, .memory-agent-dialog) > section {
-  overflow: visible;
-}
-
-:is(.cast-agent-dialog, .memory-agent-dialog) > .agent-dialog-body {
+.memory-agent-dialog > .agent-dialog-body {
+  min-height: 0;
   overflow: auto;
 }
 
-:is(.cast-agent-dialog, .memory-agent-dialog) h3 {
+.memory-agent-dialog h3 {
   margin: 0;
   font-size: 1.05rem;
   font-weight: 800;
   letter-spacing: 0.01em;
 }
 
-:is(.cast-agent-dialog, .memory-agent-dialog) h4 {
+.memory-agent-dialog h4 {
   margin: 0 0 10px;
   font-size: 0.78rem;
   font-weight: 700;
@@ -84,19 +80,19 @@
   color: var(--muted);
 }
 
-:is(.cast-agent-dialog, .memory-agent-dialog) > header p,
-:is(.cast-agent-hint, .memory-agent-hint) {
+.memory-agent-dialog > header p,
+.memory-agent-hint {
   margin: 4px 0 0;
   font-size: 0.8rem;
   line-height: 1.55;
   color: var(--muted);
 }
 
-:is(.cast-agent-hint, .memory-agent-hint) {
+.memory-agent-hint {
   margin: -4px 0 10px;
 }
 
-:is(.cast-agent-field, .memory-agent-field) {
+.memory-agent-field {
   display: grid;
   gap: 6px;
   margin-bottom: 12px;
@@ -104,35 +100,35 @@
   font-weight: 600;
 }
 
-:is(.cast-agent-field, .memory-agent-field) > span {
+.memory-agent-field > span {
   color: var(--muted);
   font-weight: 600;
 }
 
-:is(.cast-agent-field, .memory-agent-field) select,
-:is(.cast-agent-field, .memory-agent-field) input[type='text'] {
+.memory-agent-field select,
+.memory-agent-field input:is([type='text'], [type='number']) {
   height: 40px;
   font-weight: 500;
 }
 
-:is(.cast-agent-model-row, .memory-agent-model-row) {
+.memory-agent-model-row {
   display: flex;
   gap: 8px;
   align-items: center;
 }
 
-:is(.cast-agent-model-row, .memory-agent-model-row) select {
+.memory-agent-model-row select {
   flex: 1 1 auto;
 }
 
-:is(.cast-agent-modes, .memory-agent-modes) {
+.memory-agent-modes {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
   gap: 10px;
   margin-bottom: 14px;
 }
 
-:is(.cast-agent-mode, .memory-agent-mode, .cast-agent-operation, .memory-agent-tool) {
+:is(.memory-agent-mode, .memory-agent-tool) {
   display: flex;
   gap: 10px;
   align-items: flex-start;
@@ -147,18 +143,18 @@
   transition: border-color 0.15s ease, background-color 0.15s ease;
 }
 
-:is(.cast-agent-mode, .memory-agent-mode, .cast-agent-operation, .memory-agent-tool):hover {
+:is(.memory-agent-mode, .memory-agent-tool):hover {
   border-color: color-mix(in srgb, var(--primary) 55%, var(--line));
 }
 
-:is(.cast-agent-mode, .memory-agent-mode).active {
+.memory-agent-mode.active {
   border-color: var(--primary);
   background: var(--primary-soft);
 }
 
 /* Global form rules size every input like a text field; native toggles need their own box. */
-:is(.cast-agent-dialog, .memory-agent-dialog) input[type='radio'],
-:is(.cast-agent-dialog, .memory-agent-dialog) input[type='checkbox'] {
+.memory-agent-dialog input[type='radio'],
+.memory-agent-dialog input[type='checkbox'] {
   flex: 0 0 auto;
   width: 18px;
   height: 18px;
@@ -173,19 +169,19 @@
   cursor: pointer;
 }
 
-:is(.cast-agent-dialog, .memory-agent-dialog) input[type='checkbox']:disabled,
-:is(.cast-agent-dialog, .memory-agent-dialog) input[type='radio']:disabled {
+.memory-agent-dialog input[type='checkbox']:disabled,
+.memory-agent-dialog input[type='radio']:disabled {
   cursor: default;
 }
 
-:is(.cast-agent-mode, .memory-agent-mode, .cast-agent-operation, .memory-agent-tool) > span {
+:is(.memory-agent-mode, .memory-agent-tool) > span {
   display: grid;
   flex: 1 1 auto;
   gap: 3px;
   min-width: 0;
 }
 
-:is(.cast-agent-mode, .memory-agent-mode, .cast-agent-operation, .memory-agent-tool) strong {
+:is(.memory-agent-mode, .memory-agent-tool) strong {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -195,14 +191,14 @@
   line-height: 1.35;
 }
 
-:is(.cast-agent-mode, .memory-agent-mode, .cast-agent-operation, .memory-agent-tool) small {
+:is(.memory-agent-mode, .memory-agent-tool) small {
   font-size: 0.75rem;
   line-height: 1.5;
   color: var(--muted);
   overflow-wrap: anywhere;
 }
 
-:is(.cast-agent-operation, .memory-agent-tool) em {
+.memory-agent-tool em {
   padding: 1px 7px;
   border-radius: var(--radius-pill);
   border: 1px solid var(--line);
@@ -214,17 +210,12 @@
   background: color-mix(in srgb, var(--surface-strong) 60%, transparent);
 }
 
-.cast-agent-operation em {
-  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
-  letter-spacing: 0;
-}
-
 .memory-agent-tool.required {
   opacity: 0.75;
   cursor: default;
 }
 
-:is(.cast-agent-operations, .memory-agent-tools) {
+.memory-agent-tools {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
   gap: 8px;
@@ -233,13 +224,13 @@
   list-style: none;
 }
 
-:is(.cast-agent-error, .memory-agent-error) {
+.memory-agent-error {
   color: var(--danger);
   font-size: 0.76rem;
   font-weight: 500;
 }
 
-:is(.cast-agent-icon-button, .memory-agent-icon-button) {
+.memory-agent-icon-button {
   display: inline-flex;
   flex: 0 0 auto;
   align-items: center;
@@ -254,12 +245,12 @@
   cursor: pointer;
 }
 
-:is(.cast-agent-icon-button, .memory-agent-icon-button):hover:not(:disabled) {
+.memory-agent-icon-button:hover:not(:disabled) {
   border-color: var(--primary);
   color: var(--primary);
 }
 
-:is(.cast-agent-dialog, .memory-agent-dialog) > footer button {
+.memory-agent-dialog > footer button {
   min-height: 36px;
   padding: 0 18px;
   border: 1px solid var(--line);
@@ -272,38 +263,48 @@
   cursor: pointer;
 }
 
-:is(.cast-agent-dialog, .memory-agent-dialog) > footer button.primary {
+.memory-agent-dialog > footer button.primary {
   border-color: var(--primary);
   background: var(--primary);
-  color: #fff8ec;
+  color: var(--surface);
 }
 
-:is(.cast-agent-dialog, .memory-agent-dialog) > footer button:disabled,
-:is(.cast-agent-icon-button, .memory-agent-icon-button):disabled {
+.memory-agent-dialog > footer button:disabled,
+.memory-agent-icon-button:disabled {
   opacity: 0.55;
   cursor: default;
 }
 
 @media (max-width: 680px) {
-  :is(.cast-agent-backdrop, .memory-agent-backdrop) {
+  .memory-agent-backdrop {
     padding: 0;
     align-items: end;
   }
 
-  :is(.cast-agent-dialog, .memory-agent-dialog) {
+  .memory-agent-dialog {
     width: 100%;
     max-height: 100vh;
     border-radius: var(--radius-lg) var(--radius-lg) 0 0;
   }
 
-  :is(.cast-agent-dialog, .memory-agent-dialog) > header,
-  :is(.cast-agent-dialog, .memory-agent-dialog) > footer,
-  :is(.cast-agent-dialog, .memory-agent-dialog) > section {
+  .memory-agent-dialog > header,
+  .memory-agent-dialog > footer,
+  .memory-agent-dialog > .agent-dialog-body > section {
     padding-left: 14px;
     padding-right: 14px;
   }
 
-  :is(.cast-agent-dialog, .memory-agent-dialog) > footer button {
+  .memory-agent-dialog > footer button {
+    min-height: 44px;
+  }
+
+  .memory-agent-icon-button {
+    min-width: 44px;
+    min-height: 44px;
+  }
+
+  .memory-agent-field input:is([type='text'], [type='number']),
+  .memory-agent-field select {
     min-height: 44px;
   }
 }

@@ -132,41 +132,29 @@ test('package scripts keep encoding checks wired into backend tests and frontend
 test('release version is declared once and shared by every package', async () => {
   const backendPackage = readJson('backend/package.json');
   const frontendPackage = readJson('frontend/package.json');
-  const windowsPackage = readJson('packaging/windows/package.json');
   const { appConfig } = await import('../config.js');
 
   assert.match(backendPackage.version, /^\d+\.\d+\.\d+$/);
   assert.equal(frontendPackage.version, backendPackage.version);
-  assert.equal(windowsPackage.version, backendPackage.version);
   assert.equal(appConfig.version, backendPackage.version);
   assert.match(readText('CHANGELOG.md'), new RegExp(`^## \\[${backendPackage.version.replaceAll('.', '\\.')}\\]`, 'm'));
 });
 
-test('packages and CI pin the Node 24 runtime floor', () => {
+test('packages pin the Node 24 runtime floor', () => {
   const backendPackage = readJson('backend/package.json');
   const frontendPackage = readJson('frontend/package.json');
 
   assert.equal(backendPackage.engines?.node, '>=24');
   assert.equal(frontendPackage.engines?.node, '>=24');
   assert.equal(readText('.nvmrc').trim(), '24');
-  assert.match(readText('.github/workflows/ci.yml'), /node-version:\s*24\.x/);
 });
 
-test('CI workflow audits production dependencies for both packages', () => {
-  const workflow = readText('.github/workflows/ci.yml');
-  const auditSteps = workflow.match(/npm audit --omit=dev --audit-level=moderate\s*\r?\n\s*working-directory:\s*(backend|frontend)/g) ?? [];
-
-  assert.deepEqual(
-    auditSteps.map((step) => step.trim().split(/\s+/).at(-1)).sort(),
-    ['backend', 'frontend']
-  );
-});
-
-test('frontend unit tests run through Vitest in the gate and in CI', () => {
+// The hosted GitHub Actions workflow was removed; the review gate is now the
+// only place that runs these stages, and it is asserted below.
+test('frontend unit tests run through Vitest in the gate', () => {
   const frontendPackage = readJson('frontend/package.json');
   const vitestConfig = readText('frontend/vitest.config.js');
   const reviewGate = readText('scripts/review-gate.ps1');
-  const workflow = readText('.github/workflows/ci.yml');
 
   assert.equal(frontendPackage.scripts['test:unit'], 'vitest run');
   assert.ok(frontendPackage.devDependencies.vitest);
@@ -174,9 +162,6 @@ test('frontend unit tests run through Vitest in the gate and in CI', () => {
   assert.match(vitestConfig, /environment:\s*'jsdom'/);
   assert.match(vitestConfig, /include:\s*\['src\/\*\*\/__tests__\/\*\*\/\*\.\{test,spec\}\.js'\]/);
   assert.match(reviewGate, /Invoke-LoggedNativeCommand\s+-File\s+"npm"\s+-WorkingDirectory\s+"frontend"\s+-Arguments\s+@\("run",\s*"test:unit"\)/);
-  assert.match(workflow, /run: npm run test:unit\s*\r?\n\s*working-directory: frontend/);
-  assert.match(workflow, /run: npm run test:e2e -- --shard=\$\{\{ matrix\.shard \}\}\/2/);
-  assert.match(workflow, /name: playwright-artifacts-shard-\$\{\{ matrix\.shard \}\}/);
 });
 
 test('review gate numbers every stage against the same total', () => {
@@ -194,7 +179,7 @@ test('frontend keeps Playwright E2E smoke entry wired', () => {
   const e2eHelpers = readText('frontend/e2e/helpers.js');
   const smokeSpec = readText('frontend/e2e/local-first-smoke.spec.js');
   const importWorldBookSpec = readText('frontend/e2e/auth-import-worldbook.spec.js');
-  const settingsNpcSpec = readText('frontend/e2e/settings-npc.spec.js');
+  const settingsProviderSpec = readText('frontend/e2e/settings-provider.spec.js');
 
   assert.equal(frontendPackage.scripts['test:e2e'], 'playwright test');
   assert.ok(frontendPackage.devDependencies['@playwright/test']);
@@ -212,9 +197,8 @@ test('frontend keeps Playwright E2E smoke entry wired', () => {
   assert.match(importWorldBookSpec, /直接导入/);
   assert.match(importWorldBookSpec, /测试触发/);
   assert.match(importWorldBookSpec, /\/api\/world-books/);
-  assert.match(settingsNpcSpec, /AI 供应商设置/);
-  assert.match(settingsNpcSpec, /NPC 管理/);
-  assert.match(settingsNpcSpec, /\/api\/providers\/capabilities/);
+  assert.match(settingsProviderSpec, /AI 供应商设置/);
+  assert.match(settingsProviderSpec, /\/api\/providers\/capabilities/);
 });
 
 test('review gate keeps required validation stages wired', () => {
@@ -293,58 +277,6 @@ test('encoding checker keeps reports in scope and reports scan coverage', () => 
     /readFileSync\(filePath\);\s*\r?\n\s*const text = buffer\.toString\('utf8'\)/,
     /text\.split\(\s*\/\\r\?\\n\/\s*\)/,
     /\[\s*\.\.\.\s*line\s*\]\.some/
-  ]);
-});
-
-test('Windows packaging runs the review gate before staging artifacts', () => {
-  const packageScript = readText('scripts/package-windows.ps1');
-
-  assertTextMatches(packageScript, [
-    /\[switch\]\$SkipReviewGate/,
-    /function\s+Get-PowerShellCommand/,
-    /function\s+Invoke-PrePackageReviewGate/,
-    /Skipped pre-package review gate because -SkipReviewGate was supplied\./,
-    /Running pre-package review gate\.\.\./,
-    /Join-Path\s+\$repoRoot\s+'scripts\\review-gate\.ps1'/,
-    /Invoke-CheckedCommand\s+-FilePath\s+\$powerShell\s+-Arguments\s+@\([\s\S]*'-ExecutionPolicy'[\s\S]*'Bypass'[\s\S]*'-File'/,
-    /\$utf8NoBom\s*=\s*\[System\.Text\.UTF8Encoding\]::new\(\$false\)/,
-    /\[System\.IO\.File\]::WriteAllText\(\$markerPath, \$marker, \$utf8NoBom\)/,
-    /Invoke-PrePackageReviewGate\s*\r?\n\s*Reset-Directory\s+-Path\s+\$stageRoot/
-  ]);
-});
-
-test('Windows package smoke validates staged runtime health', () => {
-  const smokeScript = readText('scripts/smoke-windows-package.ps1');
-
-  assertTextMatches(smokeScript, [
-    /\[switch\]\$SkipNpmInstall/,
-    /\[switch\]\$SkipStage/,
-    /\[switch\]\$SkipReviewGate/,
-    /Join-Path\s+\$repoRoot\s+'dist\\windows-app'/,
-    /Join-Path\s+\$repoRoot\s+'\.runtime-check\\windows-package-smoke'/,
-    /Invoke-CheckedCommand\s+-FilePath\s+\(Get-PowerShellCommand\)\s+-Arguments\s+\$arguments\s+-WorkingDirectory\s+\$repoRoot/,
-    /Join-Path\s+\$repoRoot\s+'scripts\\package-windows\.ps1'/,
-    /'-NoPackage'/,
-    /\$arguments\s+\+=\s+'-SkipNpmInstall'/,
-    /function\s+Assert-StagedRuntime/,
-    /Staged backend runtime marker is missing\./,
-    /Staged frontend index is missing\./,
-    /Staged Node runtime is missing\./,
-    /function\s+New-SmokeRuntime/,
-    /Copy-DirectoryContents\s+-Source\s+\$backendStage\s+-Destination\s+\$runtimeBackend/,
-    /Copy-DirectoryContents\s+-Source\s+\$sharedStage\s+-Destination\s+\$runtimeShared/,
-    /function\s+Start-SmokeBackend/,
-    /Set-TemporaryEnvironment[\s\S]*'FLAI_DB_PATH'/,
-    /Start-Process[\s\S]*-WindowStyle Hidden[\s\S]*-PassThru/,
-    /function\s+Wait-ForRuntimeHealth/,
-    /\/api\/health/,
-    /\$health\.runtime\.packaged\s+-eq\s+\$true/,
-    /\$health\.checks\.database\.ok\s+-eq\s+\$true/,
-    /\$health\.checks\.storage\.ok\s+-eq\s+\$true/,
-    /\$health\.checks\.bundle\.present\s+-eq\s+\$true/,
-    /function\s+Stop-SmokeBackend/,
-    /Stop-Process\s+-Id\s+\$Process\.Id\s+-Force/,
-    /Windows package smoke passed:/
   ]);
 });
 

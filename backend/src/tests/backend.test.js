@@ -94,12 +94,38 @@ const {
   createEntry,
   updateEntry,
   deleteEntry,
+  linkCharacter
+} = await import('../services/worldBooks/worldBookService.js');
+const {
   matchWorldBookEntries,
   buildWorldBookContext,
-  linkWorldBookToCharacter,
-  injectAtDepthEntries,
-  resetMessageCounter
-} = await import('../modules/worldBooks.js');
+  injectAtDepthEntries
+} = await import('../services/worldBooks/worldBookRuntime.js');
+
+// ── World book fixture conversation ──
+// Trigger state (sticky / cooldown / delay) is stored per conversation, so a match
+// needs one. The tests below assert trigger rules rather than conversation scoping,
+// so each character gets a single fixture conversation on first use; a test that
+// does care about scoping passes its own conversationId, which takes precedence.
+function fixtureConversationId(characterId) {
+  return `wb-fixture-${characterId}`;
+}
+
+function matchInFixtureConversation(database, characterId, texts, options = null) {
+  const conversationId = fixtureConversationId(characterId);
+  database.prepare(
+    `INSERT OR IGNORE INTO conversations (id, user_id, character_id, title, created_at, updated_at)
+     SELECT ?, user_id, id, 'World book fixture', created_at, created_at
+     FROM characters WHERE id = ?`
+  ).run(conversationId, characterId);
+  return matchWorldBookEntries(database, characterId, texts, { conversationId, ...(options || {}) });
+}
+
+function readWorldBookEntryState(database, characterId, entryId) {
+  return database
+    .prepare('SELECT * FROM conversation_world_book_state WHERE conversation_id = ? AND entry_id = ?')
+    .get(fixtureConversationId(characterId), entryId);
+}
 const {
   createTag,
   listTags,
@@ -1321,13 +1347,16 @@ test('character assistant completes drafts through multiple tool rounds', async 
   globalThis.fetch = async (_url, request = {}) => {
     calls += 1;
     const body = JSON.parse(request.body);
-    assert.equal(body.tools.length, 14);
+    assert.equal(body.tools.length, 19);
     assert.ok(body.tools.some((tool) => tool.function?.name === 'update_character_agents'));
     assert.ok(body.tools.some((tool) => tool.function?.name === 'create_character_world_book'));
     // The world book draft is edited with the standalone assistant's own tools.
     assert.ok(body.tools.some((tool) => tool.function?.name === 'upsert_world_book_entry'));
     assert.ok(body.tools.some((tool) => tool.function?.name === 'remove_world_book_entry'));
     assert.ok(body.tools.some((tool) => tool.function?.name === 'preview_world_book_entries'));
+    assert.ok(body.tools.some((tool) => tool.function?.name === 'search_world_books'));
+    assert.ok(body.tools.some((tool) => tool.function?.name === 'select_world_book'));
+    assert.ok(body.tools.some((tool) => tool.function?.name === 'read_world_book'));
     assert.ok(body.tools.some((tool) => tool.function?.name === 'finish_character_draft'));
     const statusTool = body.tools.find((tool) => tool.function?.name === 'update_character_status_bar');
     const statusBlueprintSchema = statusTool.function.parameters.properties.statusBarBlueprint;
@@ -2775,7 +2804,6 @@ test('conversation appearance settings persist empty values and custom code', ()
     customJsRiskAccepted: true,
     showWorldBookMatches: true,
     highlightDialogue: true,
-    castTracking: { enabled: false }
   });
 
   assert.deepEqual(getConversationAppearance(database, 'owner-1', conversationId), saved);
@@ -2830,7 +2858,6 @@ test('conversation appearance treats null input as defaults', () => {
     statusBarPrompt: '',
     showWorldBookMatches: true,
     highlightDialogue: true,
-    castTracking: { enabled: false }
   });
 });
 
@@ -5603,7 +5630,7 @@ test('world book entry numeric fields normalize legacy row values on read and ma
   const originalRandom = Math.random;
   Math.random = () => 0.99;
   try {
-    const matches = matchWorldBookEntries(database, character.id, 'legacy-number-trigger');
+    const matches = matchInFixtureConversation(database, character.id, 'legacy-number-trigger');
 
     assert.equal(legacyEntry.depth, 10);
     assert.equal(legacyEntry.selectiveLogic, 0);
@@ -5689,11 +5716,12 @@ test('world book lists preserve deterministic tie order', () => {
   );
   const character = createCharacter(database, userId, { name: 'WorldBookOrder', visibility: 'private' });
   database.prepare(
-    'INSERT INTO world_books (id, user_id, name, description, character_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)'
-  ).run('world-book-first', userId, 'First Book', '', character.id, timestamp, timestamp);
+    'INSERT INTO world_books (id, user_id, name, description, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)'
+  ).run('world-book-first', userId, 'First Book', '', timestamp, timestamp);
   database.prepare(
-    'INSERT INTO world_books (id, user_id, name, description, character_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)'
-  ).run('world-book-second', userId, 'Second Book', '', null, timestamp, timestamp);
+    'INSERT INTO world_books (id, user_id, name, description, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)'
+  ).run('world-book-second', userId, 'Second Book', '', timestamp, timestamp);
+  linkCharacter(database, userId, 'world-book-first', character.id);
   database.prepare(
     'INSERT INTO world_book_entries (id, world_book_id, name, trigger_keys, content, enabled, order_index, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
   ).run('world-entry-first', 'world-book-first', 'First Entry', 'alpha', 'first content', 1, 0, timestamp);
@@ -5710,7 +5738,7 @@ test('world book lists preserve deterministic tie order', () => {
     ['world-entry-first', 'world-entry-second']
   );
   assert.deepEqual(
-    matchWorldBookEntries(database, character.id, ['alpha']).map((entry) => entry.id),
+    matchInFixtureConversation(database, character.id, ['alpha']).map((entry) => entry.id),
     ['world-entry-first', 'world-entry-second']
   );
 });
@@ -5748,17 +5776,17 @@ test('world book trigger matching finds entries by keywords', () => {
     enabled: false
   });
 
-  const matches = matchWorldBookEntries(database, character.id, '我想学习魔法');
+  const matches = matchInFixtureConversation(database, character.id, '我想学习魔法');
   assert.equal(matches.length, 1);
   assert.equal(matches[0].name, '魔法');
 
-  const multiMatches = matchWorldBookEntries(database, character.id, '魔法城市里有王国');
+  const multiMatches = matchInFixtureConversation(database, character.id, '魔法城市里有王国');
   assert.equal(multiMatches.length, 2);
 
-  const noMatches = matchWorldBookEntries(database, character.id, '今天天气不错');
+  const noMatches = matchInFixtureConversation(database, character.id, '今天天气不错');
   assert.equal(noMatches.length, 0);
 
-  const nullOptionsMatches = matchWorldBookEntries(database, character.id, '魔法', null);
+  const nullOptionsMatches = matchInFixtureConversation(database, character.id, '魔法', null);
   assert.equal(nullOptionsMatches.length, 1);
   assert.equal(nullOptionsMatches[0].name, '魔法');
 
@@ -5776,7 +5804,7 @@ test('world book trigger matching ignores non-string scan text items', () => {
   );
   const character = createCharacter(database, 'user-1', { name: 'Scan Text Types', visibility: 'private' });
   const book = createWorldBook(database, 'user-1', { name: 'Scan Text Types Book' });
-  linkWorldBookToCharacter(database, book.id, character.id);
+  linkCharacter(database, 'user-1', book.id, character.id);
   createEntry(database, 'user-1', book.id, {
     name: 'Object text',
     triggerKeys: '[object Object]',
@@ -5790,8 +5818,8 @@ test('world book trigger matching ignores non-string scan text items', () => {
     enabled: true
   });
 
-  const objectMatches = matchWorldBookEntries(database, character.id, [{ maybe: 'text' }]);
-  const symbolMatches = matchWorldBookEntries(database, character.id, [Symbol('symbol-trigger')]);
+  const objectMatches = matchInFixtureConversation(database, character.id, [{ maybe: 'text' }]);
+  const symbolMatches = matchInFixtureConversation(database, character.id, [Symbol('symbol-trigger')]);
   let stringMatches;
   const originalFilter = Array.prototype.filter;
   const stringScanTexts = ['ignored', 'symbol-trigger'];
@@ -5803,7 +5831,7 @@ test('world book trigger matching ignores non-string scan text items', () => {
       }
       return originalFilter.call(this, callback, ...args);
     };
-    stringMatches = matchWorldBookEntries(database, character.id, stringScanTexts);
+    stringMatches = matchInFixtureConversation(database, character.id, stringScanTexts);
   } finally {
     Array.prototype.filter = originalFilter;
   }
@@ -5820,7 +5848,7 @@ test('world book key matching scans primary and secondary keys without split all
   );
   const character = createCharacter(database, 'user-1', { name: 'Key Scan Loop', visibility: 'private' });
   const book = createWorldBook(database, 'user-1', { name: 'Key Scan Loop Book' });
-  linkWorldBookToCharacter(database, book.id, character.id);
+  linkCharacter(database, 'user-1', book.id, character.id);
   createEntry(database, 'user-1', book.id, {
     name: 'Loop scanned keys',
     triggerKeys: 'alpha-trigger, beta-trigger',
@@ -5843,8 +5871,8 @@ test('world book key matching scans primary and secondary keys without split all
       return originalSplit.call(this, separator, ...args);
     };
 
-    matches = matchWorldBookEntries(database, character.id, 'beta-trigger with focus-key');
-    noSecondary = matchWorldBookEntries(database, character.id, 'beta-trigger without secondary');
+    matches = matchInFixtureConversation(database, character.id, 'beta-trigger with focus-key');
+    noSecondary = matchInFixtureConversation(database, character.id, 'beta-trigger without secondary');
   } finally {
     String.prototype.split = originalSplit;
   }
@@ -5872,10 +5900,10 @@ test('world book scanDepth override does not scan all history for invalid values
   });
 
   const history = ['ancient-key appeared earlier', 'latest message has no trigger'];
-  assert.equal(matchWorldBookEntries(database, character.id, history, { scanDepth: 'not-a-number' }).length, 0);
-  assert.equal(matchWorldBookEntries(database, character.id, history, { scanDepth: '0' }).length, 0);
+  assert.equal(matchInFixtureConversation(database, character.id, history, { scanDepth: 'not-a-number' }).length, 0);
+  assert.equal(matchInFixtureConversation(database, character.id, history, { scanDepth: '0' }).length, 0);
 
-  const expanded = matchWorldBookEntries(database, character.id, history, { scanDepth: '2' });
+  const expanded = matchInFixtureConversation(database, character.id, history, { scanDepth: '2' });
   assert.equal(expanded.length, 1);
   assert.equal(expanded[0].name, 'Old trigger');
 });
@@ -6012,8 +6040,8 @@ test('world book character links respect ownership', () => {
   const otherCharacter = createCharacter(database, 'other', { name: 'Other Character' });
   const ownerBook = createWorldBook(database, 'owner', { name: 'Owner World Book' });
 
-  assert.equal(linkWorldBookToCharacter(database, ownerBook.id, ownerCharacter.id, 0, 'owner'), true);
-  assert.equal(linkWorldBookToCharacter(database, ownerBook.id, otherCharacter.id, 0, 'other'), false);
+  assert.equal(linkCharacter(database, 'owner', ownerBook.id, ownerCharacter.id, 0), true);
+  assert.equal(linkCharacter(database, 'other', ownerBook.id, otherCharacter.id, 0), false);
   assert.deepEqual(listCharacterWorldBooks(database, otherCharacter.id), []);
 });
 
@@ -6089,7 +6117,7 @@ test('world book regex key auto-detection in string mode', () => {
 
   const book = createWorldBook(database, 'user-1', { name: '正则测试书' });
   const character = createCharacter(database, 'user-1', { name: '正则测试角色' });
-  linkWorldBookToCharacter(database, book.id, character.id);
+  linkCharacter(database, 'user-1', book.id, character.id);
 
   // Entry with /pattern/flags key, regex_mode = false
   createEntry(database, 'user-1', book.id, {
@@ -6101,7 +6129,7 @@ test('world book regex key auto-detection in string mode', () => {
   });
 
   // Should match because key is auto-detected as regex
-  const matches = matchWorldBookEntries(database, character.id, 'I saw a Dragon flying overhead');
+  const matches = matchInFixtureConversation(database, character.id, 'I saw a Dragon flying overhead');
   assert.ok(matches.length > 0, 'should match Dragon via auto-detected regex key');
   assert.equal(matches[0].content, '龙族知识');
 });
@@ -6114,7 +6142,7 @@ test('world book invalid regex key falls back to literal match', () => {
 
   const book = createWorldBook(database, 'user-1', { name: '无效正则测试书' });
   const character = createCharacter(database, 'user-1', { name: '无效正则角色' });
-  linkWorldBookToCharacter(database, book.id, character.id);
+  linkCharacter(database, 'user-1', book.id, character.id);
 
   // Entry with invalid regex key, regex_mode = false
   createEntry(database, 'user-1', book.id, {
@@ -6125,11 +6153,11 @@ test('world book invalid regex key falls back to literal match', () => {
   });
 
   // Should NOT throw 500 / exception; falls back to literal match which won't match
-  const matches = matchWorldBookEntries(database, character.id, 'some text here');
+  const matches = matchInFixtureConversation(database, character.id, 'some text here');
   assert.ok(matches.length === 0, 'invalid regex should not match and should not throw');
 
   // But literal match should work if text contains the key literally
-  const literalMatches = matchWorldBookEntries(database, character.id, 'test /[/invalid/ more');
+  const literalMatches = matchInFixtureConversation(database, character.id, 'test /[/invalid/ more');
   assert.ok(literalMatches.length > 0, 'literal fallback should match the key string');
 });
 
@@ -6141,7 +6169,7 @@ test('world book selective AND_ANY activates when secondary key matches', () => 
 
   const book = createWorldBook(database, 'user-1', { name: '选择性过滤书' });
   const character = createCharacter(database, 'user-1', { name: '选择性角色' });
-  linkWorldBookToCharacter(database, book.id, character.id);
+  linkCharacter(database, 'user-1', book.id, character.id);
 
   // selective=true, selectiveLogic=0 (AND_ANY), keysSecondary=魔法,战斗
   createEntry(database, 'user-1', book.id, {
@@ -6155,12 +6183,12 @@ test('world book selective AND_ANY activates when secondary key matches', () => 
   });
 
   // Primary key matches AND secondary key "魔法" present -> activated
-  const matches = matchWorldBookEntries(database, character.id, '我想开始一次冒险，学习魔法');
+  const matches = matchInFixtureConversation(database, character.id, '我想开始一次冒险，学习魔法');
   assert.equal(matches.length, 1);
   assert.equal(matches[0].content, '魔法与战斗的冒险内容');
 
   // Primary key matches but no secondary key present -> NOT activated
-  const noSecondary = matchWorldBookEntries(database, character.id, '我想开始一次冒险');
+  const noSecondary = matchInFixtureConversation(database, character.id, '我想开始一次冒险');
   assert.equal(noSecondary.length, 0);
 });
 
@@ -6172,7 +6200,7 @@ test('world book selective NOT_ANY blocks when secondary key matches', () => {
 
   const book = createWorldBook(database, 'user-1', { name: 'NOT_ANY测试书' });
   const character = createCharacter(database, 'user-1', { name: 'NOT_ANY角色' });
-  linkWorldBookToCharacter(database, book.id, character.id);
+  linkCharacter(database, 'user-1', book.id, character.id);
 
   // selective=true, selectiveLogic=1 (NOT_ANY), keysSecondary=战斗
   createEntry(database, 'user-1', book.id, {
@@ -6186,11 +6214,11 @@ test('world book selective NOT_ANY blocks when secondary key matches', () => {
   });
 
   // Primary key matches AND secondary key "战斗" present -> BLOCKED
-  const blocked = matchWorldBookEntries(database, character.id, '我想开始一次冒险，参与战斗');
+  const blocked = matchInFixtureConversation(database, character.id, '我想开始一次冒险，参与战斗');
   assert.equal(blocked.length, 0);
 
   // Primary key matches and no secondary key present -> activated
-  const activated = matchWorldBookEntries(database, character.id, '我想开始一次冒险');
+  const activated = matchInFixtureConversation(database, character.id, '我想开始一次冒险');
   assert.equal(activated.length, 1);
   assert.equal(activated[0].content, '和平冒险内容');
 });
@@ -6203,7 +6231,7 @@ test('world book selective NOT_ALL blocks when all secondary keys match', () => 
 
   const book = createWorldBook(database, 'user-1', { name: 'NOT_ALL测试书' });
   const character = createCharacter(database, 'user-1', { name: 'NOT_ALL角色' });
-  linkWorldBookToCharacter(database, book.id, character.id);
+  linkCharacter(database, 'user-1', book.id, character.id);
 
   // selective=true, selectiveLogic=2 (NOT_ALL), keysSecondary=火焰,冰霜
   createEntry(database, 'user-1', book.id, {
@@ -6217,16 +6245,16 @@ test('world book selective NOT_ALL blocks when all secondary keys match', () => 
   });
 
   // Primary key matches AND ALL secondary keys present -> BLOCKED
-  const allMatch = matchWorldBookEntries(database, character.id, '我使用魔法，释放火焰和冰霜');
+  const allMatch = matchInFixtureConversation(database, character.id, '我使用魔法，释放火焰和冰霜');
   assert.equal(allMatch.length, 0);
 
   // Primary key matches but only one secondary key present -> activated
-  const partialMatch = matchWorldBookEntries(database, character.id, '我使用魔法，释放火焰');
+  const partialMatch = matchInFixtureConversation(database, character.id, '我使用魔法，释放火焰');
   assert.equal(partialMatch.length, 1);
   assert.equal(partialMatch[0].content, '元素魔法内容');
 
   // Primary key matches, no secondary keys present -> activated
-  const noSecondary = matchWorldBookEntries(database, character.id, '我使用魔法');
+  const noSecondary = matchInFixtureConversation(database, character.id, '我使用魔法');
   assert.equal(noSecondary.length, 1);
 });
 
@@ -6810,7 +6838,7 @@ test('character envelope export includes character regex rules tags and world bo
     name: '世界观',
     description: '测试世界书'
   });
-  assert.equal(linkWorldBookToCharacter(database, book.id, character.id, 2, userId), true);
+  assert.equal(linkCharacter(database, userId, book.id, character.id, 2), true);
   createEntry(database, userId, book.id, {
     name: '魔法',
     triggerKeys: '魔法',
@@ -7498,7 +7526,6 @@ test('conversation settings invalid lorebook rolls back appearance inside transa
         customJsRiskAccepted: false,
         showWorldBookMatches: true,
         highlightDialogue: true,
-        castTracking: { enabled: false }
       });
 
       database.prepare('UPDATE conversations SET title = ? WHERE id = ?').run('Outer Transaction Still Open', conversationId);
@@ -7588,7 +7615,6 @@ test('conversation settings save succeeds inside an existing transaction', async
         customJsRiskAccepted: false,
         showWorldBookMatches: true,
         highlightDialogue: true,
-        castTracking: { enabled: false }
       });
       assert.equal(
         database.prepare('SELECT chat_lorebook_id FROM conversations WHERE id = ?').get(conversationId).chat_lorebook_id,
@@ -7609,7 +7635,6 @@ test('conversation settings save succeeds inside an existing transaction', async
       customJsRiskAccepted: false,
       showWorldBookMatches: true,
       highlightDialogue: true,
-      castTracking: { enabled: false }
     });
     assert.equal(
       database.prepare('SELECT chat_lorebook_id FROM conversations WHERE id = ?').get(conversationId).chat_lorebook_id,
@@ -9207,7 +9232,7 @@ test('world book probability=0 never activates entry', () => {
   );
   const character = createCharacter(database, 'user-1', { name: '概率角色', visibility: 'private' });
   const book = createWorldBook(database, 'user-1', { name: '概率测试书' });
-  linkWorldBookToCharacter(database, book.id, character.id);
+  linkCharacter(database, 'user-1', book.id, character.id);
 
   createEntry(database, 'user-1', book.id, {
     name: '零概率条目',
@@ -9222,7 +9247,7 @@ test('world book probability=0 never activates entry', () => {
   Math.random = () => 0.01;
   let matches;
   try {
-    matches = matchWorldBookEntries(database, character.id, '触发关键词');
+    matches = matchInFixtureConversation(database, character.id, '触发关键词');
   } finally {
     Math.random = origRandom;
   }
@@ -9237,7 +9262,7 @@ test('world book probability=100 always activates entry', () => {
   );
   const character = createCharacter(database, 'user-1', { name: '满概率角色', visibility: 'private' });
   const book = createWorldBook(database, 'user-1', { name: '满概率测试书' });
-  linkWorldBookToCharacter(database, book.id, character.id);
+  linkCharacter(database, 'user-1', book.id, character.id);
 
   createEntry(database, 'user-1', book.id, {
     name: '满概率条目',
@@ -9252,7 +9277,7 @@ test('world book probability=100 always activates entry', () => {
   Math.random = () => 0.99;
   let matches;
   try {
-    matches = matchWorldBookEntries(database, character.id, '触发关键词');
+    matches = matchInFixtureConversation(database, character.id, '触发关键词');
   } finally {
     Math.random = origRandom;
   }
@@ -9268,7 +9293,7 @@ test('world book blank probability keeps default activation chance', () => {
   );
   const character = createCharacter(database, 'user-1', { name: 'Blank Probability', visibility: 'private' });
   const book = createWorldBook(database, 'user-1', { name: 'Blank Probability Book' });
-  linkWorldBookToCharacter(database, book.id, character.id);
+  linkCharacter(database, 'user-1', book.id, character.id);
 
   const entry = createEntry(database, 'user-1', book.id, {
     name: 'Blank Probability Entry',
@@ -9282,7 +9307,7 @@ test('world book blank probability keeps default activation chance', () => {
   const origRandom = Math.random;
   Math.random = () => 0.99;
   try {
-    const matches = matchWorldBookEntries(database, character.id, 'blank-probability-trigger');
+    const matches = matchInFixtureConversation(database, character.id, 'blank-probability-trigger');
 
     assert.equal(entry.probability, 100);
     assert.equal(matches.length, 1);
@@ -9299,7 +9324,7 @@ test('world book probability=50 activates conditionally based on Math.random', (
   );
   const character = createCharacter(database, 'user-1', { name: '半概率角色', visibility: 'private' });
   const book = createWorldBook(database, 'user-1', { name: '半概率测试书' });
-  linkWorldBookToCharacter(database, book.id, character.id);
+  linkCharacter(database, 'user-1', book.id, character.id);
 
   createEntry(database, 'user-1', book.id, {
     name: '半概率条目',
@@ -9315,13 +9340,13 @@ test('world book probability=50 activates conditionally based on Math.random', (
   try {
     // random < 0.5 -> activates
     Math.random = () => 0.3;
-    const hit = matchWorldBookEntries(database, character.id, '触发关键词');
+    const hit = matchInFixtureConversation(database, character.id, '触发关键词');
     assert.equal(hit.length, 1);
     assert.equal(hit[0].content, '概率出现');
 
     // random > 0.5 -> does not activate
     Math.random = () => 0.8;
-    const miss = matchWorldBookEntries(database, character.id, '触发关键词');
+    const miss = matchInFixtureConversation(database, character.id, '触发关键词');
     assert.equal(miss.length, 0);
   } finally {
     Math.random = origRandom;
@@ -9335,7 +9360,7 @@ test('world book group inclusion keeps only one entry per group', () => {
   );
   const character = createCharacter(database, 'user-1', { name: '分组角色', visibility: 'private' });
   const book = createWorldBook(database, 'user-1', { name: '分组测试书' });
-  linkWorldBookToCharacter(database, book.id, character.id);
+  linkCharacter(database, 'user-1', book.id, character.id);
 
   createEntry(database, 'user-1', book.id, {
     name: '条目A',
@@ -9383,7 +9408,7 @@ test('world book group inclusion keeps only one entry per group', () => {
       return originalReduce.call(this, callback, ...args);
     };
 
-    const matches = matchWorldBookEntries(database, character.id, '无关键词');
+    const matches = matchInFixtureConversation(database, character.id, '无关键词');
     assert.equal(matches.length, 1, 'group inclusion should keep exactly 1 of 3 entries');
     assert.ok(['内容A', '内容B', '内容C'].includes(matches[0].content));
   } finally {
@@ -9399,7 +9424,7 @@ test('world book recursive activation preserves group inclusion', () => {
   );
   const character = createCharacter(database, 'user-1', { name: 'Recursive Group', visibility: 'private' });
   const book = createWorldBook(database, 'user-1', { name: 'Recursive Group Book' });
-  linkWorldBookToCharacter(database, book.id, character.id);
+  linkCharacter(database, 'user-1', book.id, character.id);
 
   createEntry(database, 'user-1', book.id, {
     name: 'Recursive source',
@@ -9428,7 +9453,7 @@ test('world book recursive activation preserves group inclusion', () => {
       }
       return originalFilter.call(this, callback, ...args);
     };
-    const matches = matchWorldBookEntries(database, character.id, 'initial prompt');
+    const matches = matchInFixtureConversation(database, character.id, 'initial prompt');
 
     assert.equal(matches.length, 1);
     assert.equal(matches[0].name, 'Recursive source');
@@ -9476,7 +9501,7 @@ test('world book at_depth entry role field controls injected message role', () =
     alwaysActive: true
   });
 
-  const matches = matchWorldBookEntries(database, character.id, '触发');
+  const matches = matchInFixtureConversation(database, character.id, '触发');
   assert.equal(matches.length, 3);
 
   // Verify role field is preserved in matched entries
@@ -9563,14 +9588,13 @@ test('saves preview uses last assistant message', () => {
 // ── World Book Sticky / Cooldown / Delay ──
 
 test('world book sticky=3 keeps entry active for 3 messages after activation', () => {
-  resetMessageCounter();
   const database = createAppDatabase(':memory:');
   database.prepare('INSERT INTO users (id, username, password_hash, created_at) VALUES (?, ?, ?, ?)').run(
     'user-1', 'tester', 'hash', new Date().toISOString()
   );
   const character = createCharacter(database, 'user-1', { name: 'Sticky角色', visibility: 'private' });
   const book = createWorldBook(database, 'user-1', { name: 'Sticky测试书' });
-  linkWorldBookToCharacter(database, book.id, character.id);
+  linkCharacter(database, 'user-1', book.id, character.id);
 
   createEntry(database, 'user-1', book.id, {
     name: '粘性条目',
@@ -9581,34 +9605,33 @@ test('world book sticky=3 keeps entry active for 3 messages after activation', (
   });
 
   // Message 1: key matches, entry activates with sticky=3
-  const m1 = matchWorldBookEntries(database, character.id, '触发关键词', { messageCount: 1 });
+  const m1 = matchInFixtureConversation(database, character.id, '触发关键词', { messageCount: 1 });
   assert.equal(m1.length, 1);
   assert.equal(m1[0].content, '粘性内容');
 
   // Message 2: key does NOT match, but sticky_remaining should keep it active
-  const m2 = matchWorldBookEntries(database, character.id, '无关文本', { messageCount: 2 });
+  const m2 = matchInFixtureConversation(database, character.id, '无关文本', { messageCount: 2 });
   assert.equal(m2.length, 1);
   assert.equal(m2[0].content, '粘性内容');
 
   // Message 3: still sticky (sticky_remaining was 3, decremented: 2->1)
-  const m3 = matchWorldBookEntries(database, character.id, '无关文本', { messageCount: 3 });
+  const m3 = matchInFixtureConversation(database, character.id, '无关文本', { messageCount: 3 });
   assert.equal(m3.length, 1);
   assert.equal(m3[0].content, '粘性内容');
 
   // Message 4: sticky expired (sticky_remaining reached 0 after 3 decrements)
-  const m4 = matchWorldBookEntries(database, character.id, '无关文本', { messageCount: 4 });
+  const m4 = matchInFixtureConversation(database, character.id, '无关文本', { messageCount: 4 });
   assert.equal(m4.length, 0);
 });
 
 test('world book cooldown prevents re-activation for N messages', () => {
-  resetMessageCounter();
   const database = createAppDatabase(':memory:');
   database.prepare('INSERT INTO users (id, username, password_hash, created_at) VALUES (?, ?, ?, ?)').run(
     'user-1', 'tester', 'hash', new Date().toISOString()
   );
   const character = createCharacter(database, 'user-1', { name: 'Cooldown角色', visibility: 'private' });
   const book = createWorldBook(database, 'user-1', { name: 'Cooldown测试书' });
-  linkWorldBookToCharacter(database, book.id, character.id);
+  linkCharacter(database, 'user-1', book.id, character.id);
 
   createEntry(database, 'user-1', book.id, {
     name: '冷却条目',
@@ -9619,36 +9642,35 @@ test('world book cooldown prevents re-activation for N messages', () => {
   });
 
   // Message 1: key matches, activates
-  const m1 = matchWorldBookEntries(database, character.id, '触发关键词', { messageCount: 1 });
+  const m1 = matchInFixtureConversation(database, character.id, '触发关键词', { messageCount: 1 });
   assert.equal(m1.length, 1);
 
   // Message 2: key absent, entry deactivates (cooldown starts from msg2)
-  const m2 = matchWorldBookEntries(database, character.id, '无关文本', { messageCount: 2 });
+  const m2 = matchInFixtureConversation(database, character.id, '无关文本', { messageCount: 2 });
   assert.equal(m2.length, 0);
 
   // Message 3: key matches but cooldown active (1 msg since deactivation at msg2)
-  const m3 = matchWorldBookEntries(database, character.id, '触发关键词', { messageCount: 3 });
+  const m3 = matchInFixtureConversation(database, character.id, '触发关键词', { messageCount: 3 });
   assert.equal(m3.length, 0);
 
   // Message 4: still in cooldown (2 msgs since deactivation)
-  const m4 = matchWorldBookEntries(database, character.id, '触发关键词', { messageCount: 4 });
+  const m4 = matchInFixtureConversation(database, character.id, '触发关键词', { messageCount: 4 });
   assert.equal(m4.length, 0);
 
   // Message 5: cooldown expired (3 msgs since deactivation at msg2, 5-2=3 >= cooldown=3)
-  const m5 = matchWorldBookEntries(database, character.id, '触发关键词', { messageCount: 5 });
+  const m5 = matchInFixtureConversation(database, character.id, '触发关键词', { messageCount: 5 });
   assert.equal(m5.length, 1);
   assert.equal(m5[0].content, '冷却内容');
 });
 
 test('world book delay prevents activation until N messages after first seen', () => {
-  resetMessageCounter();
   const database = createAppDatabase(':memory:');
   database.prepare('INSERT INTO users (id, username, password_hash, created_at) VALUES (?, ?, ?, ?)').run(
     'user-1', 'tester', 'hash', new Date().toISOString()
   );
   const character = createCharacter(database, 'user-1', { name: 'Delay角色', visibility: 'private' });
   const book = createWorldBook(database, 'user-1', { name: 'Delay测试书' });
-  linkWorldBookToCharacter(database, book.id, character.id);
+  linkCharacter(database, 'user-1', book.id, character.id);
 
   createEntry(database, 'user-1', book.id, {
     name: '延迟条目',
@@ -9659,32 +9681,31 @@ test('world book delay prevents activation until N messages after first seen', (
   });
 
   // Message 1: first seen, but delay=3 so should NOT activate
-  const m1 = matchWorldBookEntries(database, character.id, '触发关键词', { messageCount: 1 });
+  const m1 = matchInFixtureConversation(database, character.id, '触发关键词', { messageCount: 1 });
   assert.equal(m1.length, 0);
 
   // Message 2: still delayed (1 msg since first seen)
-  const m2 = matchWorldBookEntries(database, character.id, '触发关键词', { messageCount: 2 });
+  const m2 = matchInFixtureConversation(database, character.id, '触发关键词', { messageCount: 2 });
   assert.equal(m2.length, 0);
 
   // Message 3: still delayed (2 msgs since first seen)
-  const m3 = matchWorldBookEntries(database, character.id, '触发关键词', { messageCount: 3 });
+  const m3 = matchInFixtureConversation(database, character.id, '触发关键词', { messageCount: 3 });
   assert.equal(m3.length, 0);
 
   // Message 4: delay expired (3 msgs since first seen at msg 1, 4-1=3 >= delay=3)
-  const m4 = matchWorldBookEntries(database, character.id, '触发关键词', { messageCount: 4 });
+  const m4 = matchInFixtureConversation(database, character.id, '触发关键词', { messageCount: 4 });
   assert.equal(m4.length, 1);
   assert.equal(m4[0].content, '延迟内容');
 });
 
 test('world book sticky and cooldown work together', () => {
-  resetMessageCounter();
   const database = createAppDatabase(':memory:');
   database.prepare('INSERT INTO users (id, username, password_hash, created_at) VALUES (?, ?, ?, ?)').run(
     'user-1', 'tester', 'hash', new Date().toISOString()
   );
   const character = createCharacter(database, 'user-1', { name: '组合角色', visibility: 'private' });
   const book = createWorldBook(database, 'user-1', { name: '组合测试书' });
-  linkWorldBookToCharacter(database, book.id, character.id);
+  linkCharacter(database, 'user-1', book.id, character.id);
 
   createEntry(database, 'user-1', book.id, {
     name: '组合条目',
@@ -9696,36 +9717,35 @@ test('world book sticky and cooldown work together', () => {
   });
 
   // msg1: key matches, activates, sticky=2 -> remaining=2, decremented to 1
-  const m1 = matchWorldBookEntries(database, character.id, '触发关键词', { messageCount: 1 });
+  const m1 = matchInFixtureConversation(database, character.id, '触发关键词', { messageCount: 1 });
   assert.equal(m1.length, 1);
 
   // msg2: key absent, but sticky_remaining=1 -> still active, decremented to 0
-  const m2 = matchWorldBookEntries(database, character.id, '无关', { messageCount: 2 });
+  const m2 = matchInFixtureConversation(database, character.id, '无关', { messageCount: 2 });
   assert.equal(m2.length, 1);
 
   // msg3: key absent, sticky expired (remaining=0), deactivates. Cooldown starts from msg3.
-  const m3 = matchWorldBookEntries(database, character.id, '无关', { messageCount: 3 });
+  const m3 = matchInFixtureConversation(database, character.id, '无关', { messageCount: 3 });
   assert.equal(m3.length, 0);
 
   // msg4: key matches, but cooldown active (1 msg since deactivation at msg3)
-  const m4 = matchWorldBookEntries(database, character.id, '触发关键词', { messageCount: 4 });
+  const m4 = matchInFixtureConversation(database, character.id, '触发关键词', { messageCount: 4 });
   assert.equal(m4.length, 0);
 
   // msg5: cooldown expired (2 msgs since deactivation at msg3, 5-3=2 >= cooldown=2)
-  const m5 = matchWorldBookEntries(database, character.id, '触发关键词', { messageCount: 5 });
+  const m5 = matchInFixtureConversation(database, character.id, '触发关键词', { messageCount: 5 });
   assert.equal(m5.length, 1);
   assert.equal(m5[0].content, '组合内容');
 });
 
 test('world book matcher normalizes unsafe message count state', () => {
-  resetMessageCounter();
   const database = createAppDatabase(':memory:');
   database.prepare('INSERT INTO users (id, username, password_hash, created_at) VALUES (?, ?, ?, ?)').run(
     'user-1', 'tester', 'hash', new Date().toISOString()
   );
   const character = createCharacter(database, 'user-1', { name: 'Message Count Character', visibility: 'private' });
   const book = createWorldBook(database, 'user-1', { name: 'Message Count Book' });
-  linkWorldBookToCharacter(database, book.id, character.id);
+  linkCharacter(database, 'user-1', book.id, character.id);
 
   const entry = createEntry(database, 'user-1', book.id, {
     name: 'Message Count Entry',
@@ -9735,10 +9755,10 @@ test('world book matcher normalizes unsafe message count state', () => {
     sticky: 2
   });
 
-  const first = matchWorldBookEntries(database, character.id, 'unsafe-message-count-trigger', {
+  const first = matchInFixtureConversation(database, character.id, 'unsafe-message-count-trigger', {
     messageCount: 'Infinity'
   });
-  let state = database.prepare('SELECT * FROM world_book_entry_state WHERE entry_id = ?').get(entry.id);
+  let state = readWorldBookEntryState(database, character.id, entry.id);
 
   assert.equal(first.length, 1);
   assert.equal(state.last_activated_message, 1);
@@ -9750,28 +9770,27 @@ test('world book matcher normalizes unsafe message count state', () => {
     content: 'unsafe finite count content',
     enabled: true
   });
-  const unsafeFiniteMatches = matchWorldBookEntries(database, character.id, 'unsafe-finite-message-count-trigger', {
+  const unsafeFiniteMatches = matchInFixtureConversation(database, character.id, 'unsafe-finite-message-count-trigger', {
     messageCount: '9007199254740993'
   });
-  const unsafeFiniteState = database
-    .prepare('SELECT * FROM world_book_entry_state WHERE entry_id = ?')
-    .get(unsafeFiniteEntry.id);
+  const unsafeFiniteState = readWorldBookEntryState(database, character.id, unsafeFiniteEntry.id);
 
   assert.ok(unsafeFiniteMatches.some((match) => match.name === 'Unsafe Finite Count Entry'));
   assert.equal(unsafeFiniteState.last_activated_message, 2);
 
+  // Garbage persisted by an older build must be normalized on the next read.
   database
     .prepare(
-      `UPDATE world_book_entry_state
+      `UPDATE conversation_world_book_state
        SET last_activated_message = ?, last_deactivated_message = ?, first_seen_message = ?, sticky_remaining = ?, was_active = ?
-       WHERE entry_id = ?`
+       WHERE conversation_id = ? AND entry_id = ?`
     )
-    .run('Infinity', 'not-a-number', '   ', 'Infinity', 1, entry.id);
+    .run('Infinity', 'not-a-number', '   ', 'Infinity', 1, fixtureConversationId(character.id), entry.id);
 
-  const legacyStateMatches = matchWorldBookEntries(database, character.id, 'no trigger here', {
+  const legacyStateMatches = matchInFixtureConversation(database, character.id, 'no trigger here', {
     messageCount: 3
   });
-  state = database.prepare('SELECT * FROM world_book_entry_state WHERE entry_id = ?').get(entry.id);
+  state = readWorldBookEntryState(database, character.id, entry.id);
 
   assert.deepEqual(legacyStateMatches.map((match) => match.name), []);
   assert.equal(state.last_deactivated_message, 3);
@@ -9835,7 +9854,7 @@ test('world book token budget truncates entries exceeding budget', () => {
   );
   const character = createCharacter(database, 'user-1', { name: 'Budget角色', visibility: 'private' });
   const book = createWorldBook(database, 'user-1', { name: 'Budget测试书' });
-  linkWorldBookToCharacter(database, book.id, character.id);
+  linkCharacter(database, 'user-1', book.id, character.id);
 
   // Create entries with known content lengths
   // Entry A: 200 chars -> 50 tokens (order 0)
@@ -9865,7 +9884,7 @@ test('world book token budget truncates entries exceeding budget', () => {
   });
 
   // With budget of 100 tokens (contextSize=1000, percent=10), should truncate
-  const matches = matchWorldBookEntries(database, character.id, '触发', {
+  const matches = matchInFixtureConversation(database, character.id, '触发', {
     contextSize: 1000,
     lorebookContextPercent: 10
   });
@@ -9877,23 +9896,23 @@ test('world book token budget truncates entries exceeding budget', () => {
   assert.equal(matches[1].name, '条目B');
 
   // Without budget, all entries should be returned
-  const allMatches = matchWorldBookEntries(database, character.id, '触发');
+  const allMatches = matchInFixtureConversation(database, character.id, '触发');
   assert.equal(allMatches.length, 3);
 
-  const booleanContextMatches = matchWorldBookEntries(database, character.id, 'ignored prompt', {
+  const booleanContextMatches = matchInFixtureConversation(database, character.id, 'ignored prompt', {
     contextSize: true,
     lorebookContextPercent: 10
   });
   assert.equal(booleanContextMatches.length, 3);
 
-  const infiniteContextMatches = matchWorldBookEntries(database, character.id, 'ignored prompt', {
+  const infiniteContextMatches = matchInFixtureConversation(database, character.id, 'ignored prompt', {
     contextSize: 'Infinity',
     lorebookContextPercent: 10
   });
   assert.equal(infiniteContextMatches.length, 3);
 
   // Invalid override falls back to 25%, so 200 * 25% = 50 tokens.
-  const fallbackMatches = matchWorldBookEntries(database, character.id, '触发', {
+  const fallbackMatches = matchInFixtureConversation(database, character.id, '触发', {
     contextSize: 200,
     lorebookContextPercent: 'not-a-number'
   });
@@ -9907,7 +9926,7 @@ test('world book token budget does not activate sticky state for truncated entri
   );
   const character = createCharacter(database, 'user-1', { name: 'Budget Sticky', visibility: 'private' });
   const book = createWorldBook(database, 'user-1', { name: 'Budget Sticky Book' });
-  linkWorldBookToCharacter(database, book.id, character.id);
+  linkCharacter(database, 'user-1', book.id, character.id);
 
   createEntry(database, 'user-1', book.id, {
     name: 'Budget kept entry',
@@ -9923,11 +9942,11 @@ test('world book token budget does not activate sticky state for truncated entri
     sticky: 2
   });
 
-  const budgetedMatches = matchWorldBookEntries(database, character.id, 'budget-sticky-trigger', {
+  const budgetedMatches = matchInFixtureConversation(database, character.id, 'budget-sticky-trigger', {
     contextSize: 8,
     lorebookContextPercent: 100
   });
-  const stickyMatches = matchWorldBookEntries(database, character.id, 'no trigger here');
+  const stickyMatches = matchInFixtureConversation(database, character.id, 'no trigger here');
 
   assert.deepEqual(budgetedMatches.map((match) => match.name), ['Budget kept entry']);
   assert.deepEqual(stickyMatches.map((match) => match.name), []);
@@ -9990,15 +10009,15 @@ test('chat lorebook entries activate only in the bound conversation', () => {
     'INSERT INTO conversations (id, user_id, character_id, title, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)'
   ).run(otherConvId, 'user-1', character.id, '普通对话', now, now);
 
-  const boundMatches = matchWorldBookEntries(database, character.id, '这里提到了秘密', { conversationId: boundConvId });
+  const boundMatches = matchInFixtureConversation(database, character.id, '这里提到了秘密', { conversationId: boundConvId });
   assert.equal(boundMatches.length, 1);
   assert.equal(boundMatches[0].name, '秘密事件');
   assert.equal(boundMatches[0].content, '这段内容只在绑定对话中出现');
 
-  const otherMatches = matchWorldBookEntries(database, character.id, '这里提到了秘密', { conversationId: otherConvId });
+  const otherMatches = matchInFixtureConversation(database, character.id, '这里提到了秘密', { conversationId: otherConvId });
   assert.equal(otherMatches.length, 0);
 
-  const noConvMatches = matchWorldBookEntries(database, character.id, '这里提到了秘密');
+  const noConvMatches = matchInFixtureConversation(database, character.id, '这里提到了秘密');
   assert.equal(noConvMatches.length, 0);
 });
 
@@ -10036,7 +10055,7 @@ test('chat lorebook coexists with character world books', () => {
     'INSERT INTO conversations (id, user_id, character_id, title, chat_lorebook_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)'
   ).run(convId, 'user-1', character.id, '测试对话', chatBook.id, now, now);
 
-  const matches = matchWorldBookEntries(database, character.id, '这个世界有新的剧情', { conversationId: convId });
+  const matches = matchInFixtureConversation(database, character.id, '这个世界有新的剧情', { conversationId: convId });
   assert.equal(matches.length, 2);
   const names = matches.map((m) => m.name).sort();
   assert.deepEqual(names, ['世界观', '对话剧情']);
@@ -10896,7 +10915,7 @@ test('world book alwaysActive entry matches without any trigger keys', () => {
   );
   const character = createCharacter(database, 'user-1', { name: 'AlwaysActive角色', visibility: 'private' });
   const book = createWorldBook(database, 'user-1', { name: 'AlwaysActive测试书' });
-  linkWorldBookToCharacter(database, book.id, character.id);
+  linkCharacter(database, 'user-1', book.id, character.id);
 
   createEntry(database, 'user-1', book.id, {
     name: '永久条目',
@@ -10906,7 +10925,7 @@ test('world book alwaysActive entry matches without any trigger keys', () => {
     alwaysActive: true
   });
 
-  const matches = matchWorldBookEntries(database, character.id, '');
+  const matches = matchInFixtureConversation(database, character.id, '');
   assert.equal(matches.length, 1);
   assert.equal(matches[0].name, '永久条目');
   assert.equal(matches[0].content, '永久激活的内容');
@@ -10919,7 +10938,7 @@ test('world book regexMode entry matches by regex pattern', () => {
   );
   const character = createCharacter(database, 'user-1', { name: 'RegexMode角色', visibility: 'private' });
   const book = createWorldBook(database, 'user-1', { name: 'RegexMode测试书' });
-  linkWorldBookToCharacter(database, book.id, character.id);
+  linkCharacter(database, 'user-1', book.id, character.id);
 
   createEntry(database, 'user-1', book.id, {
     name: '数字匹配',
@@ -10929,11 +10948,11 @@ test('world book regexMode entry matches by regex pattern', () => {
     regexMode: true
   });
 
-  const matches = matchWorldBookEntries(database, character.id, '我有42个苹果');
+  const matches = matchInFixtureConversation(database, character.id, '我有42个苹果');
   assert.equal(matches.length, 1);
   assert.equal(matches[0].content, '检测到数字');
 
-  const noMatches = matchWorldBookEntries(database, character.id, '我没有苹果');
+  const noMatches = matchInFixtureConversation(database, character.id, '我没有苹果');
   assert.equal(noMatches.length, 0);
 });
 
@@ -10944,7 +10963,7 @@ test('world book regexMode rejects potentially catastrophic patterns', () => {
   );
   const character = createCharacter(database, 'user-1', { name: 'SafeRegex角色', visibility: 'private' });
   const book = createWorldBook(database, 'user-1', { name: 'SafeRegex测试书' });
-  linkWorldBookToCharacter(database, book.id, character.id);
+  linkCharacter(database, 'user-1', book.id, character.id);
 
   createEntry(database, 'user-1', book.id, {
     name: '危险模式',
@@ -10954,7 +10973,7 @@ test('world book regexMode rejects potentially catastrophic patterns', () => {
     regexMode: true
   });
 
-  assert.deepEqual(matchWorldBookEntries(database, character.id, 'aaaa!'), []);
+  assert.deepEqual(matchInFixtureConversation(database, character.id, 'aaaa!'), []);
 });
 
 test('world book selective NOT logic filters out when secondary key present', () => {
@@ -10964,7 +10983,7 @@ test('world book selective NOT logic filters out when secondary key present', ()
   );
   const character = createCharacter(database, 'user-1', { name: 'SelectiveNot角色', visibility: 'private' });
   const book = createWorldBook(database, 'user-1', { name: 'SelectiveNot测试书' });
-  linkWorldBookToCharacter(database, book.id, character.id);
+  linkCharacter(database, 'user-1', book.id, character.id);
 
   createEntry(database, 'user-1', book.id, {
     name: '和平场景',
@@ -10976,10 +10995,10 @@ test('world book selective NOT logic filters out when secondary key present', ()
     keysSecondary: '战斗'
   });
 
-  const matches = matchWorldBookEntries(database, character.id, '一个美丽的场景');
+  const matches = matchInFixtureConversation(database, character.id, '一个美丽的场景');
   assert.equal(matches.length, 1);
   assert.equal(matches[0].content, '和平的场景描述');
 
-  const blocked = matchWorldBookEntries(database, character.id, '一个激烈的战斗场景');
+  const blocked = matchInFixtureConversation(database, character.id, '一个激烈的战斗场景');
   assert.equal(blocked.length, 0);
 });

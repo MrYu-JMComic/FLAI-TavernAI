@@ -3,9 +3,9 @@ import test from 'node:test';
 
 const { appConfig } = await import('../config.js');
 const { createAppDatabase } = await import('../db.js');
-const { buildRuntimeHealth, parseRuntimeMarkerText } = await import('../services/runtimeHealth.js');
+const { buildRuntimeHealth } = await import('../services/runtimeHealth.js');
 
-test('runtime health reports package-safe backend readiness', () => {
+test('runtime health reports backend readiness', () => {
   const database = createAppDatabase(':memory:');
   try {
     const health = buildRuntimeHealth(database, {
@@ -16,7 +16,11 @@ test('runtime health reports package-safe backend readiness', () => {
     assert.equal(health.service, appConfig.serviceName);
     assert.equal(health.version, appConfig.version);
     assert.equal(health.timestamp, '2026-07-02T00:00:00.000Z');
-    assert.equal(health.runtime.packaged, false);
+    assert.deepEqual(health.runtime, {
+      node: process.versions.node,
+      platform: process.platform,
+      arch: process.arch
+    });
     assert.equal(health.checks.database.ok, true);
     assert.equal(health.checks.database.quickCheck, 'ok');
     assert.equal(health.checks.database.schemaReady, true);
@@ -45,11 +49,4 @@ test('runtime health fails closed when the database handle is unavailable', () =
   assert.equal(health.checks.database.ok, false);
   assert.equal(health.checks.database.status, 'unavailable');
   assert.equal(health.checks.database.error, 'Error');
-});
-
-test('runtime health parses Windows PowerShell UTF-8 BOM runtime markers', () => {
-  const marker = parseRuntimeMarkerText('\uFEFF{"builtAt":"2026-07-02T00:00:00.000Z","gitHead":"abc123","source":"scripts/package-windows.ps1"}');
-  assert.equal(marker.builtAt, '2026-07-02T00:00:00.000Z');
-  assert.equal(marker.gitHead, 'abc123');
-  assert.equal(marker.source, 'scripts/package-windows.ps1');
 });

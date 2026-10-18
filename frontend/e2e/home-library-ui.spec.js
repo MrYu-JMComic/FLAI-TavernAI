@@ -52,6 +52,15 @@ async function openLibrary(page, { characterTags = tags } = {}) {
   return requests;
 }
 
+test('library has no town entry and retired links return to the library', async ({ page }) => {
+  await openLibrary(page);
+  await expect(page.getByRole('button', { name: 'AI 虚拟小镇' })).toHaveCount(0);
+  await page.goto('/#/town');
+  await expect(page).toHaveURL(/\/#\/$/);
+  await expect(page.locator('.home-character-card').first()).toBeVisible();
+  await expect(page.locator('.topbar')).toBeVisible();
+});
+
 test('library shows a complete first row on desktop and keeps the toolbar pinned', async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   await openLibrary(page);
@@ -226,6 +235,5 @@ for (const theme of ['light', 'dark']) {
       const violations = result.violations.filter(({ impact }) => impact === 'serious' || impact === 'critical');
       expect(violations, JSON.stringify(violations, null, 2)).toEqual([]);
     }
-    await expect.poll(() => page.locator('.home-town-entry img').evaluate((image) => image.complete && image.naturalWidth > 0)).toBe(true);
   });
 }

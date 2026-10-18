@@ -1,11 +1,13 @@
 <script setup>
 import { computed } from 'vue';
-import { Play, RefreshCw, Save, Square, Trash2, WandSparkles } from '@lucide/vue';
+import { ClipboardList, Play, RefreshCw, Save, Square, Trash2, WandSparkles } from '@lucide/vue';
 
 const props = defineProps({
   disabled: { type: Boolean, default: false },
   hasCheckpoint: { type: Boolean, default: false },
   loading: { type: Boolean, default: false },
+  planMode: { type: Boolean, default: false },
+  planPhase: { type: String, default: 'idle' },
   status: { type: String, default: 'idle' }
 });
 
@@ -14,6 +16,16 @@ const emit = defineEmits(['complete', 'discard', 'resume', 'retry', 'save', 'sto
 const canResume = computed(() => props.hasCheckpoint && ['paused', 'failed'].includes(props.status));
 const shouldRetry = computed(() => props.status === 'failed' && !props.hasCheckpoint);
 const showSecondary = computed(() => props.hasCheckpoint && !props.loading);
+// With plan mode on, the primary button starts a planning run; approving and
+// running the plan happens in the plan review card instead.
+const planFirst = computed(() => props.planMode && props.planPhase !== 'review' && !canResume.value && !shouldRetry.value);
+
+const primaryLabel = computed(() => {
+  if (canResume.value) return '继续完成';
+  if (shouldRetry.value) return '重试任务';
+  if (planFirst.value) return '生成计划';
+  return props.status === 'completed' ? '再次完善' : '开始完善';
+});
 </script>
 
 <template>
@@ -27,8 +39,9 @@ const showSecondary = computed(() => props.hasCheckpoint && !props.loading);
     >
       <Play v-if="canResume" :size="17" />
       <RefreshCw v-else-if="shouldRetry" :size="17" />
+      <ClipboardList v-else-if="planFirst" :size="17" />
       <WandSparkles v-else :size="17" />
-      <span>{{ canResume ? '继续完成' : shouldRetry ? '重试任务' : status === 'completed' ? '再次完善' : '开始完善' }}</span>
+      <span>{{ primaryLabel }}</span>
     </button>
     <button v-else class="primary-button ai-draft-button" type="button" @click="emit('stop')">
       <Square :size="16" />

@@ -68,10 +68,9 @@ test('WorldBookView mounts the match lab in the detail workspace', () => {
 });
 
 test('WorldBookView exports and imports world books through unified envelopes', () => {
-  assert.match(
-    worldBookViewScript,
-    /import \{[\s\S]*Download,[\s\S]*Upload,[\s\S]*\} from '@lucide\/vue';/
-  );
+  const iconImports = worldBookViewScript.match(/import \{([^}]+)\} from '@lucide\/vue';/)?.[1] || '';
+  assert.ok(iconImports.split(',').map((name) => name.trim()).includes('Download'));
+  assert.ok(iconImports.split(',').map((name) => name.trim()).includes('Upload'));
   assert.match(worldBookViewScript, /import \{ exportEnvelope, importEnvelope \} from '\.\.\/api\/envelopes\.js';/);
   assert.match(worldBookViewScript, /import \{ downloadJsonFile, todayStamp \} from '\.\.\/utils\/downloadJson\.js';/);
   assert.match(

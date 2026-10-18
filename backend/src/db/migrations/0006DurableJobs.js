@@ -45,22 +45,10 @@ export function migrateDurableJobs(database) {
       CREATE INDEX IF NOT EXISTS idx_job_events_job_cursor
         ON job_events(job_id, id);
     `);
-    ensureTownIdempotencyColumn(database);
-    database.exec(`
-      CREATE UNIQUE INDEX IF NOT EXISTS idx_town_worlds_user_idempotency
-        ON town_worlds(user_id, idempotency_key) WHERE idempotency_key <> '';
-    `);
     database.exec('RELEASE SAVEPOINT migration_0006_durable_jobs');
   } catch (error) {
     database.exec('ROLLBACK TO SAVEPOINT migration_0006_durable_jobs');
     database.exec('RELEASE SAVEPOINT migration_0006_durable_jobs');
     throw error;
-  }
-}
-
-function ensureTownIdempotencyColumn(database) {
-  const columns = database.prepare('PRAGMA table_info(town_worlds)').all();
-  if (!columns.some((column) => column.name === 'idempotency_key')) {
-    database.exec("ALTER TABLE town_worlds ADD COLUMN idempotency_key TEXT NOT NULL DEFAULT ''");
   }
 }

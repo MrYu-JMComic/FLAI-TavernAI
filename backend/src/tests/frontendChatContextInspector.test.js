@@ -47,9 +47,14 @@ test('ChatContextInspector uses shared preview data and delegates focused contex
 
 test('ChatContextInspector exposes prompt diagnostics and compact context views', () => {
   assert.match(inspectorTemplate, /Prompt Pipeline V2/);
-  assert.match(inspectorScript, /label: '估算 Token'/);
-  assert.match(inspectorScript, /value: formatNumber\(budget\.estimatedTokens\)/);
-  assert.match(inspectorScript, /label: '预算上限'/);
+  // The inspector reports dialogue and system-built context separately, because
+  // the input allocation bounds the conversation only while the model context
+  // window bounds everything.
+  assert.match(inspectorScript, /label: '对话 Token', value: formatNumber\(budget\.conversationTokens\)/);
+  assert.match(inspectorScript, /label: '系统上下文 Token（独立）', value: formatNumber\(budget\.systemTokens\)/);
+  assert.match(inspectorScript, /label: '总输入 Token', value: formatNumber\(budget\.estimatedTokens\)/);
+  assert.match(inspectorScript, /label: '输入上下文 Token 上限', value: formatNumber\(budget\.tokenBudget\?\.inputTokenLimit\)/);
+  assert.match(inspectorScript, /label: '裁剪项', value: formatNumber\(budget\.truncation\?\.length \|\| 0\)/);
   assert.match(inspectorScript, /const providerSummaryRows = computed/);
   assert.match(inspectorScript, /diagnostics\.providerDiagnosticId/);
   assert.match(inspectorScript, /const providerCapabilityRows = computed/);
@@ -93,7 +98,7 @@ test('ChatContextInspector exposes prompt diagnostics and compact context views'
 test('split context tools scope requests, protect stale state, and keep budget writes numeric-only', () => {
   assert.match(memoryReviewScript, /import \{ apiRequest \} from '\.\.\/\.\.\/api\/core\.js'/);
   assert.match(memoryReviewScript, /function isCurrentMutation\(conversationId, token\)/);
-  assert.match(memoryReviewTemplate, /<CastConfirmDialog/);
+  assert.match(memoryReviewTemplate, /<ConfirmDialog/);
 
   assert.match(budgetScript, /const BUDGET_CONFIG_FIELDS = \['inputTokenLimit', 'reservedOutputTokens', 'imageTokensPerImage', 'contextWindowTokens'\]/);
   assert.match(budgetScript, /for \(const key of BUDGET_CONFIG_FIELDS\)/);

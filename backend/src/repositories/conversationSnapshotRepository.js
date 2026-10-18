@@ -10,23 +10,18 @@ const CONVERSATION_FIELDS = [
   'user_advanced_settings', 'chat_lorebook_id', 'context_budget_json'
 ];
 const TABLES = [
-  ['scene_nodes'], ['scene_routes'], ['cast_members'], ['cast_member_aliases'],
-  ['cast_memories'], ['cast_behaviors'], ['cast_personality_anchors'], ['cast_emotion_states'],
-  ['cast_emotion_history'], ['cast_appearances'], ['cast_activities'], ['cast_turn_queue'],
-  ['conversation_turns'], ['scene_items'], ['cast_change_batches'], ['conversation_audit_events'],
-  ['cast_ooc_validations'], ['conversation_memories'],
+  ['scene_nodes'], ['scene_routes'], ['scene_objects'], ['conversation_memories'],
   ['conversation_memory_review_operations'], ['conversation_memory_review_members', 'conversation_memory_review_operations', 'operation_id'],
   ['status_bars'], ['economy_accounts'],
   ['economy_transactions', 'economy_accounts', 'account_id'], ['quests'],
   ['quest_objectives', 'quests', 'quest_id'], ['skill_checks'], ['world_clocks'], ['world_advances'],
-  ['player_travel_states'], ['discovered_scene_nodes'], ['encounters'],
-  ['encounter_participants', 'encounters', 'encounter_id'], ['encounter_actions', 'encounters', 'encounter_id'],
+  ['player_travel_states'], ['discovered_scene_nodes'],
   ['reward_grants'], ['world_events'], ['conversation_world_book_clock'], ['conversation_world_book_state']
 ];
 export const SNAPSHOT_STATE_TABLES = Object.freeze(TABLES.map(([table]) => table));
 const OPTIONAL_V2_STATE_TABLES = new Set([
   'conversation_memory_review_operations',
-  'conversation_memory_review_members'
+  'conversation_memory_review_members',
 ]);
 
 export function readSnapshotConversation(database, userId, conversationId) {
@@ -77,7 +72,7 @@ export function restoreConversationSnapshot(database, userId, conversationId, sn
   const restoredTables = options.preserveWorldBookState
     ? TABLES.filter(([table]) => !table.startsWith('conversation_world_book_')) : TABLES;
   if (options.remapIds) {
-    for (const rows of [restoredSnapshot.messages || [], restoredSnapshot.swipes || [], ...Object.values(restoredSnapshot.state)]) {
+    for (const rows of [restoredSnapshot.messages || [], restoredSnapshot.swipes || [], ...SNAPSHOT_STATE_TABLES.map(table => restoredSnapshot.state[table])]) {
       for (const row of rows) if (row.id) idMap.set(row.id, newId());
     }
   }
@@ -165,7 +160,7 @@ export function findConversationCheckpoint(database, userId, conversationId, thr
     if ((row.anchor_message_id && index < 0) || index > targetIndex || (options.before && index === targetIndex) || index <= bestIndex) continue;
     if (options.exact && index !== targetIndex) continue;
     if (conversationHistoryHash(allMessages.slice(0, index + 1)) !== row.history_hash) continue;
-    best = { ...row, index, snapshot };
+    best = { ...row, index, snapshot: normalizeSnapshotForRestore(snapshot) };
     bestIndex = index;
   }
   return best;
@@ -195,7 +190,13 @@ function normalizeSnapshotForRestore(snapshot) {
     if (state === snapshot.state) state = { ...snapshot.state };
     state[table] = [];
   }
-  return state === snapshot.state ? snapshot : { ...snapshot, state };
+  if (!Object.hasOwn(state, 'scene_objects')) {
+    const columns = ['id', 'conversation_id', 'node_id', 'item_code', 'name', 'description', 'state_json', 'position_json', 'movable', 'quantity', 'icon_key', 'revision', 'created_at', 'updated_at'];
+    state = { ...state, scene_objects: (state.scene_items || [])
+      .filter(item => item.node_id && (!item.owner_kind || item.owner_kind === 'world'))
+      .map(item => Object.fromEntries(columns.filter(key => Object.hasOwn(item, key)).map(key => [key, item[key]]))) };
+  }
+  return {...snapshot,state};
 }
 
 function insertRows(database, table, rows, idMap, userId, sourceId, targetId) {
@@ -249,9 +250,10 @@ function toSnapshotMessage(row) {
 
 function remapStructuredIds(value, idMap, isId = false) {
   if (typeof value === 'string') return isId ? idMap.get(value) || value : value;
-  if (Array.isArray(value)) return value.map((item) => remapStructuredIds(item, idMap, isId));
+  if (Array.isArray(value)) return value.map(item => remapStructuredIds(item, idMap, isId));
   if (!value || typeof value !== 'object') return value;
-  return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, remapStructuredIds(item, idMap, /(?:^id$|Ids?$|_ids?$)/.test(key))]));
+  return Object.fromEntries(Object.entries(value).map(([key, item]) => [key,
+    remapStructuredIds(item, idMap, /(?:^id$|Ids?$|_ids?$)/.test(key))]));
 }
 
 function snapshotError(message, code, status = 400) {

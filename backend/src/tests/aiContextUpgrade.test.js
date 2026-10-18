@@ -1,10 +1,13 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { createAppDatabase } from '../db.js';
+// Import createAppDatabase from db/runtime.js, not db.js: db.js opens the real
+// backend/data/flai.sqlite as a module-load side effect and migrates it.
+import { createAppDatabase } from '../db/runtime.js';
 import { createCharacter } from '../modules/characters.js';
 import { createConversationMemory, selectConversationMemoryContext } from '../modules/conversationMemories.js';
 import { buildModPromptSections, createMod } from '../modules/mods.js';
-import { createEntry, createWorldBook, injectAtDepthEntries, matchWorldBookEntries } from '../modules/worldBooks.js';
+import { createEntry, createWorldBook } from '../services/worldBooks/worldBookService.js';
+import { injectAtDepthEntries, matchWorldBookEntries } from '../services/worldBooks/worldBookRuntime.js';
 import { applyPromptBudget, buildPromptPipeline } from '../services/promptPipeline.js';
 import { buildConversationContextPreview } from '../services/contextPreview.js';
 import { insertUser } from './routeTestUtils.js';
@@ -72,18 +75,32 @@ test('world book depth insertions share the original tail and preserve same-dept
 });
 
 test('each world book keeps its own scan depth and oversized entries do not starve later lore', (t) => {
-  const { database, user, character } = fixture(t);
+  const { database, user, character, conversation } = fixture(t);
   const shallow = createWorldBook(database, user.id, { name: 'Shallow', characterId: character.id, scanDepth: 1 });
   const deep = createWorldBook(database, user.id, { name: 'Deep', characterId: character.id, scanDepth: 2 });
   createEntry(database, user.id, shallow.id, { name: 'Old shallow', triggerKeys: 'ancient', content: 'Shallow content' });
   const expected = createEntry(database, user.id, deep.id, { name: 'Old deep', triggerKeys: 'ancient', content: 'Deep content' });
-  const matches = matchWorldBookEntries(database, character.id, ['ancient', 'current'], { persistState: false });
+  const matches = matchWorldBookEntries(database, character.id, ['ancient', 'current'], {
+    conversationId: conversation.id,
+    persistState: false
+  });
   assert.deepEqual(matches.map((entry) => entry.id), [expected.id]);
   const large = createEntry(database, user.id, shallow.id, { name: 'Large', content: 'X'.repeat(2000), alwaysActive: true, sticky: 3 });
   const small = createEntry(database, user.id, shallow.id, { name: 'Small', content: 'Useful lore.', alwaysActive: true });
-  const budgeted = matchWorldBookEntries(database, character.id, ['current'], { contextSize: 1000, lorebookContextPercent: 10 });
+  const budgeted = matchWorldBookEntries(database, character.id, ['current'], {
+    conversationId: conversation.id,
+    contextSize: 1000,
+    lorebookContextPercent: 10
+  });
   assert.deepEqual(budgeted.map((entry) => entry.id), [small.id]);
-  assert.equal(database.prepare('SELECT was_active FROM world_book_entry_state WHERE entry_id = ?').get(large.id).was_active, 0);
+  // Budget-pruned entries must not be recorded as active, or their sticky window
+  // would keep firing for content that never reached the prompt.
+  assert.equal(
+    database
+      .prepare('SELECT was_active FROM conversation_world_book_state WHERE conversation_id = ? AND entry_id = ?')
+      .get(conversation.id, large.id).was_active,
+    0
+  );
 });
 
 test('memory selection recalls older relevant evidence within a bounded whole-entry budget', (t) => {

@@ -1,4 +1,5 @@
-import { readdirSync } from 'node:fs';
+import { mkdtempSync, readdirSync, rmSync } from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
@@ -24,11 +25,32 @@ if (coverage) {
 }
 args.push(...testFiles);
 
-const result = spawnSync(process.execPath, args, {
-  cwd: backendRoot,
-  stdio: 'inherit'
-});
-process.exitCode = result.status ?? 1;
+// `src/db.js` opens a database at module load, and `services/backup.js` resolves
+// its storage root the same way; both fall back to backend/data/flai.sqlite when
+// FLAI_DB_PATH is unset. Any test that imports either module therefore migrates
+// the real user database as an import side effect.
+//
+// Setting the variable in the child's environment beats that regardless of how a
+// test imports: the value is present before the child process starts, so
+// config.js reads it during its own module load. Doing it inside a test file
+// cannot work, because static imports are hoisted above the assignment.
+const throwawayRoot = process.env.FLAI_DB_PATH ? '' : mkdtempSync(path.join(os.tmpdir(), 'flai-test-db-'));
+const testEnvironment = throwawayRoot
+  ? { ...process.env, FLAI_DB_PATH: path.join(throwawayRoot, 'flai.sqlite') }
+  : process.env;
+
+try {
+  const result = spawnSync(process.execPath, args, {
+    cwd: backendRoot,
+    stdio: 'inherit',
+    env: testEnvironment
+  });
+  process.exitCode = result.status ?? 1;
+} finally {
+  if (throwawayRoot) {
+    rmSync(throwawayRoot, { recursive: true, force: true });
+  }
+}
 
 function isContractTest(name) {
   return name.startsWith('frontend')

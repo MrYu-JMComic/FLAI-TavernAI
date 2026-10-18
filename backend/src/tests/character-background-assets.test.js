@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { createAppDatabase } from '../db.js';
+import { createAppDatabase } from '../db/runtime.js';
 import { createCharacter, updateCharacter } from '../modules/characters.js';
 import { getAvatarAssetForViewer } from '../services/avatars.js';
 

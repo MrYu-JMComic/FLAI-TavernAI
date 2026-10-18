@@ -18,8 +18,12 @@ test('AI draft workspace stays inline and usable across desktop and mobile', asy
   await expect(panel.locator('.ai-workbench-results')).toBeVisible();
   await expect(panel.getByText('实时运行台', { exact: true })).toBeVisible();
   await expect(panel.getByText('思考强度', { exact: true })).toBeVisible();
-  // Both run switches share a single frame instead of stacking bordered cards.
-  await expect(panel.locator('.ai-option-stack > .ai-option-row')).toHaveCount(2);
+  // Current-form, streaming and Plan switches share one settings frame.
+  await expect(panel.locator('.ai-option-stack > .ai-option-row')).toHaveCount(3);
+  await expect(panel.locator('.ai-plan-card')).toContainText('Plan 模式');
+  await expect(panel.locator('.ai-plan-card input')).not.toBeChecked();
+  await expect(panel.getByRole('button', { name: '新建世界书', exact: true })).toBeVisible();
+  await expect(panel.getByText('来自角色关联（含未保存选择）', { exact: true })).toBeVisible();
   await expect(panel.locator('.ai-scope-chip')).toHaveCount(11);
   const streamingToggle = panel.locator('.ai-stream-toggle input');
   const scopeDisclosure = panel.locator('.ai-scope-disclosure');
@@ -51,6 +55,7 @@ test('AI draft workspace stays inline and usable across desktop and mobile', asy
   await expect(panel).toBeVisible();
   await expect(panel).toHaveCount(1);
   await expect(panel.getByRole('button', { name: '开始完善' })).toBeVisible();
+  await expect(panel.getByRole('button', { name: '新建世界书', exact: true })).toBeVisible();
   await expect.poll(() => panel.evaluate((element) => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(1);
   await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth)).toBeLessThanOrEqual(0);
 

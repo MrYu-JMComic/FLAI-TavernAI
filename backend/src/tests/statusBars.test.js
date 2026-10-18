@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
-import { createAppDatabase } from '../db.js';
+import { createAppDatabase } from '../db/runtime.js';
 import { applyVariableUpdates, getStatusBar, updateStatusBarVariables, upsertStatusBar } from '../modules/statusBars.js';
 
 const statusBarsSource = readFileSync(new URL('../modules/statusBars.js', import.meta.url), 'utf8').replaceAll('\r\n', '\n');

@@ -69,8 +69,8 @@ test('durable jobs deduplicate submission and persist progress events', () => {
 test('expired leases recover without creating a second business job', () => {
   const database = createJobsDatabase();
   try {
-    const submitted = submitJob(database, 'jobs-user', 'town.generate', { prompt: 'A town' }, {
-      idempotencyKey: 'town-one'
+    const submitted = submitJob(database, 'jobs-user', 'world-book.assist', { requirement: 'A world book' }, {
+      idempotencyKey: 'world-book-one'
     });
     claimNextJob(database, 'worker-crashed', { now: 1000, leaseMs: 5000 });
     assert.equal(recoverExpiredJobs(database, 6001), 1);

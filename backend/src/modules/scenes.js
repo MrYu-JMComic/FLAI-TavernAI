@@ -4,12 +4,7 @@ import { bumpVersion, versionKey } from '../utils/cacheVersion.js';
 import { parseJson } from '../utils/json.js';
 import { withSavepoint } from './savepoint.js';
 import { recordWorldEvent } from './worldEvents.js';
-import {
-  deleteWorldItem,
-  transferCastItem,
-  upsertWorldItem,
-} from '../services/cast/commands/itemCommands.js';
-import { getWorldItems } from '../services/cast/castQueryService.js';
+import { listSceneItems, saveSceneItem, removeSceneItem } from '../repositories/sceneItemRepository.js';
 
 const NODE_TYPES = new Set(['main_scene', 'map', 'building', 'room', 'area']);
 const SCENE_CONTEXT_NODE_LIMIT = 160;
@@ -25,14 +20,12 @@ export function listSceneWorkspace(database, userId, conversationId) {
     .prepare('SELECT * FROM scene_routes WHERE conversation_id = ? ORDER BY created_at')
     .all(conversationId)
     .map(toSceneRoute);
-  return { nodes, routes, items: getWorldItems(database, userId, conversationId) };
+  return { nodes, routes, items: listSceneItems(database, conversationId) };
 }
 
 export function upsertSceneItem(database, userId, conversationId, payload = {}) {
   assertConversationAccess(database, userId, conversationId);
-  const item = upsertWorldItem(database, userId, conversationId, payload, {
-    actor: payload.auditActor || payload.source || `user:${userId}`,
-  });
+  const item = saveSceneItem(database, conversationId, payload);
   bumpVersion(conversationId, 'scene');
   if (payload.skipWorldEvent !== true) {
     recordWorldEvent(database, userId, conversationId, {
@@ -254,11 +247,8 @@ export function mergeSceneNodes(database, userId, conversationId, sourceId, targ
     database
       .prepare('UPDATE scene_routes SET to_node_id = ?, updated_at = ? WHERE conversation_id = ? AND to_node_id = ?')
       .run(target.id, nowIso(), conversationId, source.id);
-    for (const item of getWorldItems(database, userId, conversationId, source.id)) {
-      transferCastItem(database, userId, conversationId, item.id, {
-        nodeId: target.id,
-        revision: item.revision,
-      }, { actor: 'scene:merge' });
+    for (const item of listSceneItems(database, conversationId, source.id)) {
+      saveSceneItem(database, conversationId, { id: item.id, nodeId: target.id, revision: item.revision });
     }
     database
       .prepare('DELETE FROM scene_routes WHERE conversation_id = ? AND from_node_id = to_node_id')
@@ -324,10 +314,7 @@ export function consolidateSceneWorkspace(database, userId, conversationId) {
 export function deleteSceneEntity(database, userId, conversationId, type, id, options = {}) {
   assertConversationAccess(database, userId, conversationId);
   if (type === 'item') {
-    deleteWorldItem(database, userId, conversationId, id, {
-      actor: options.actor || `user:${userId}`,
-      expectedRevision: options.expectedRevision,
-    });
+    if (!removeSceneItem(database, conversationId, id, options.expectedRevision)) return false;
     recordWorldEvent(database, userId, conversationId, {
       eventType: 'scene.item.deleted',
       source: options.actor || 'system',
@@ -346,7 +333,7 @@ export function deleteSceneEntity(database, userId, conversationId, type, id, op
     const child = database
       .prepare('SELECT id FROM scene_nodes WHERE conversation_id = ? AND parent_id = ? LIMIT 1')
       .get(conversationId, id);
-    if (child || getWorldItems(database, userId, conversationId, id).length) return false;
+    if (child || listSceneItems(database, conversationId, id).length) return false;
   }
 
   const before = database
@@ -473,7 +460,7 @@ function buildSceneContextUncached(database, userId, conversationId) {
      ORDER BY created_at
      LIMIT ?`
   ).all(conversationId, SCENE_CONTEXT_ROUTE_LIMIT);
-  return formatSceneContext(nodes, routes, getWorldItems(database, userId, conversationId));
+  return formatSceneContext(nodes, routes, listSceneItems(database, conversationId));
 }
 
 function formatSceneContext(nodes, routes, items) {

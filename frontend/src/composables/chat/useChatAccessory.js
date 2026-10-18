@@ -29,7 +29,6 @@ const ACCESSORY_SKILL_DEFAULTS = [
   { key: 'sceneAgent', enabled: false, modelOverride: '' },
   { key: 'worldDirector', enabled: false, modelOverride: '' },
   { key: 'gameHud', enabled: false, modelOverride: '' },
-  { key: 'encounterMode', enabled: false, modelOverride: '' },
   { key: 'rewardMode', enabled: false, modelOverride: '' },
   { key: 'statusBarAgent', enabled: 'auto', modelOverride: '' },
   // The memory agent can follow the main provider or name a saved profile, and exposes a tool library.
@@ -264,7 +263,6 @@ export function useChatAccessory({ conversation, setActiveConversationIfChanged,
   const accessorySaving = ref(false);
   const accessorySkillResults = ref([]);
   const memoryAgentTools = ref([]);
-  const castAgentOperations = ref([]);
   const economyAccounts = ref([]);
   let statusBarLoadToken = 0;
   let statusBarMutationToken = 0;
@@ -299,7 +297,6 @@ export function useChatAccessory({ conversation, setActiveConversationIfChanged,
     { key: 'sceneAgent', label: '场景构建助手', auto: false },
     { key: 'worldDirector', label: 'AI 世界导演', auto: false },
     { key: 'gameHud', label: '游戏驾驶舱 / 地图', auto: false },
-    { key: 'encounterMode', label: '遭遇与回合行动', auto: false },
     { key: 'rewardMode', label: '战利品与奖励结算', auto: false },
     { key: 'statusBarAgent', label: '状态栏 Agent', auto: true },
     { key: 'memoryAgent', label: '记忆 Agent', auto: true, configurable: true },
@@ -334,10 +331,8 @@ export function useChatAccessory({ conversation, setActiveConversationIfChanged,
     return isAccessorySkillActiveLocal('economyAgent');
   });
 
-  const showNpcFeature = computed(() => Boolean(conversation.value?.id));
   const showSceneFeature = computed(() => isAccessorySkillActiveLocal('sceneAgent'));
   const showGameHudFeature = computed(() => isAccessorySkillActiveLocal('gameHud'));
-  const showEncounterFeature = computed(() => isAccessorySkillActiveLocal('encounterMode'));
   const showRewardFeature = computed(() => isAccessorySkillActiveLocal('rewardMode'));
 
   async function loadStatusBar() {
@@ -490,7 +485,6 @@ export function useChatAccessory({ conversation, setActiveConversationIfChanged,
       }
       syncAccessorySkills(payload.skills);
       syncMemoryAgentTools(payload.memoryAgentTools);
-      syncCastAgentOperations(payload.castAgentOperations);
     } catch {
       if (!isCurrentAccessorySkillsLoad(requestToken, conversationId)) {
         return;
@@ -502,11 +496,6 @@ export function useChatAccessory({ conversation, setActiveConversationIfChanged,
   function syncMemoryAgentTools(next) {
     if (!Array.isArray(next)) return;
     memoryAgentTools.value = next;
-  }
-
-  function syncCastAgentOperations(next) {
-    if (!Array.isArray(next)) return;
-    castAgentOperations.value = next;
   }
 
   function isCurrentStatusBarLoad(requestToken, conversationId) {
@@ -593,7 +582,6 @@ export function useChatAccessory({ conversation, setActiveConversationIfChanged,
       }
       syncAccessorySkills(payload.skills);
       syncMemoryAgentTools(payload.memoryAgentTools);
-      syncCastAgentOperations(payload.castAgentOperations);
       updateActiveConversationIfChanged({
         ...conversation.value,
         settings: {
@@ -1145,7 +1133,6 @@ export function useChatAccessory({ conversation, setActiveConversationIfChanged,
     accessorySaving,
     accessorySkills,
     memoryAgentTools,
-    castAgentOperations,
     updateAccessorySkill,
     accessorySkillResults,
     economyAccounts,
@@ -1153,10 +1140,8 @@ export function useChatAccessory({ conversation, setActiveConversationIfChanged,
     hasStatusBarContent,
     hasStatusBarAutomationContext,
     showEconomyFeature,
-    showNpcFeature,
     showSceneFeature,
     showGameHudFeature,
-    showEncounterFeature,
     showRewardFeature,
     loadStatusBar,
     loadEconomyBalance,

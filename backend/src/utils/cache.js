@@ -4,7 +4,7 @@
  *
  * 提供进程内 LRU 缓存（按用途分桶）：
  * - queryCache   : 高频只读数据库查询结果（短 TTL）
- * - promptCache  : prompt 片段（NPC 上下文卡、场景上下文等），数据变更时主动失效
+ * - promptCache  : prompt 片段（场景上下文等），数据变更时主动失效
  * - sceneCache   : 场景/物品工作区（较长 TTL，场景变更时失效）
  *
  * 所有缓存都是纯进程内内存缓存，单进程部署下一致性由「变更即失效」保证。
@@ -92,7 +92,7 @@ export function invalidatePrefix(cacheName, prefix) {
 
 /**
  * 缓存包裹的同步查询函数：
- * const rows = cachedQuery(db, 'npcMemories', key, 'SELECT ...', ...params);
+ * const rows = cachedQuery(db, 'query', key, 'SELECT ...', ...params);
  */
 export function cachedQuery(database, cacheName, key, sql, ...params) {
   const cached = getCached(cacheName, key);

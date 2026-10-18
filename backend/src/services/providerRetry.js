@@ -17,6 +17,12 @@ export async function retryProviderCall(operation, options = {}) {
       if (signal?.aborted || attempt >= delays.length || !isTransientProviderError(error)) {
         throw error;
       }
+      try {
+        options.budget?.consume?.('provider');
+      } catch (budgetError) {
+        budgetError.cause = error;
+        throw budgetError;
+      }
       options.onRetry?.(error, attempt + 1);
       await wait(delays[attempt], signal);
       attempt += 1;

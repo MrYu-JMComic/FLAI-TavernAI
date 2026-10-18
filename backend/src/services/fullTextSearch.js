@@ -1,4 +1,5 @@
 import { measureSync } from './performanceMetrics.js';
+import { searchWorldBookEntryRows } from '../repositories/worldBookRepository.js';
 
 const SEARCH_TYPES = new Set(['message', 'memory', 'world-book']);
 
@@ -129,14 +130,7 @@ function searchMemories(database, userId, matchQuery, limit, options) {
 }
 
 function searchWorldBooks(database, userId, matchQuery, limit) {
-  return database.prepare(
-    `SELECT source.entity_id, source.world_book_id, source.name, source.content,
-            entries.created_at, bm25(fts_world_book_entries, 0, 0, 0, 2.0, 1.5, 1.0) AS text_rank
-     FROM fts_world_book_entries source
-     JOIN world_book_entries entries ON entries.id = source.entity_id
-     WHERE fts_world_book_entries MATCH ? AND source.user_id = ? AND entries.enabled = 1
-     ORDER BY text_rank ASC LIMIT ?`
-  ).all(matchQuery, userId, limit).map((row) => ({
+  return searchWorldBookEntryRows(database, matchQuery, userId, limit).map((row) => ({
     id: row.entity_id,
     type: 'world-book',
     worldBookId: row.world_book_id,

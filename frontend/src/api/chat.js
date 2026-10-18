@@ -284,18 +284,6 @@ export function travelGameplayToNode(conversationId, destinationNodeId) {
   });
 }
 
-export function performGameplayEncounterAction(conversationId, encounterId, payload) {
-  return apiRequest(`/api/conversations/${conversationId}/gameplay/encounters/${encounterId}/actions`, { method: 'POST', body: JSON.stringify(payload) });
-}
-
-export function createGameplayEncounter(conversationId, payload) {
-  return apiRequest(`/api/conversations/${conversationId}/gameplay/encounters`, { method: 'POST', body: JSON.stringify(payload) });
-}
-
-export function endGameplayEncounter(conversationId, encounterId) {
-  return apiRequest(`/api/conversations/${conversationId}/gameplay/encounters/${encounterId}/end`, { method: 'POST', body: '{}' });
-}
-
 export function claimGameplayReward(conversationId, grantId) {
   return apiRequest(`/api/conversations/${conversationId}/gameplay/rewards/${grantId}/claim`, { method: 'POST', body: '{}' });
 }
@@ -326,10 +314,6 @@ export function updateGameplayObjective(conversationId, questId, objectiveId, pa
   return apiRequest(`/api/conversations/${conversationId}/gameplay/quests/${encodeURIComponent(questId)}/objectives/${encodeURIComponent(objectiveId)}`, { method: 'PUT', body: JSON.stringify(payload) });
 }
 
-export function fetchGameplayBackpack(conversationId) {
-  return apiRequest(`/api/conversations/${conversationId}/gameplay/backpack`);
-}
-
 export function performGameplayCheck(conversationId, payload) {
   return apiRequest(`/api/conversations/${conversationId}/gameplay/checks`, { method: 'POST', body: JSON.stringify(payload) });
 }
@@ -340,15 +324,6 @@ export function advanceGameplayTime(conversationId, minutes) {
 
 export function updateGameplayWeather(conversationId, weather) {
   return apiRequest(`/api/conversations/${conversationId}/gameplay/clock/weather`, { method: 'PUT', body: JSON.stringify({ weather, source: 'player' }) });
-}
-
-export function fetchGameplayActivities(conversationId, options = {}) {
-  const query = new URLSearchParams();
-  if (options.memberId) query.set('memberId', options.memberId);
-  if (options.memberName) query.set('memberName', options.memberName);
-  if (options.status) query.set('status', options.status);
-  const suffix = query.size ? `?${query.toString()}` : '';
-  return apiRequest(`/api/conversations/${conversationId}/gameplay/activities${suffix}`);
 }
 
 export function createSceneNode(conversationId, payload) {

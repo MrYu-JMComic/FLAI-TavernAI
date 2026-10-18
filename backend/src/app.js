@@ -7,7 +7,7 @@ import express from 'express';
 import rateLimit, { ipKeyGenerator } from 'express-rate-limit';
 import { appConfig, withAppConfigDefaults } from './config.js';
 import { AppError, appErrorFrom, publicErrorMessage } from './errors.js';
-import { getCharacterWorldBookId, getCharacterWorldBookIds } from './modules/worldBooks.js';
+import { resolveCharacterWorldBookId, resolveCharacterWorldBookIds } from './services/worldBooks/worldBookService.js';
 import { getCharacterTagsMap } from './modules/tags.js';
 import { getUserProfile, publicUser } from './modules/users.js';
 import {
@@ -20,7 +20,6 @@ import { createBranchesRouter } from './routes/branches.js';
 import { createCharactersRouter } from './routes/characters.js';
 import { createConversationsRouter, createSavesRouter } from './routes/conversations.js';
 import { getChatProviderSettingsFromContext } from './routes/helpers.js';
-import { createHMDTRouter } from './routes/hmdt.js';
 import { createJobsRouter } from './routes/jobs.js';
 import { createModsRouter } from './routes/mods.js';
 import { createPresetsRouter } from './routes/presets.js';
@@ -30,7 +29,6 @@ import { createSettingsRouter } from './routes/settings.js';
 import { createSwipesRouter } from './routes/swipes.js';
 import { createTagsRouter } from './routes/tags.js';
 import { createTalentsRouter } from './routes/talents.js';
-import { createTownsRouter } from './routes/towns.js';
 import { createUpgradeRouter } from './routes/upgrade.js';
 import { createWorldBooksRouter } from './routes/worldBooks.js';
 import { newId, nowIso, resolveSession } from './security.js';
@@ -279,7 +277,7 @@ export function createApp(context = {}) {
 
   function withWorldBookId(character) {
     if (!character) return character;
-    return { ...character, worldBookId: getCharacterWorldBookId(db, character.id) };
+    return { ...character, worldBookId: resolveCharacterWorldBookId(db, character.id) };
   }
 
   function withCharacterTags(character) {
@@ -296,7 +294,7 @@ export function createApp(context = {}) {
   function withCharacterListExtras(characters) {
     if (!Array.isArray(characters) || !characters.length) return [];
     const ids = characters.map((character) => character.id);
-    const worldBookIds = getCharacterWorldBookIds(db, ids);
+    const worldBookIds = resolveCharacterWorldBookIds(db, ids);
     const tagsByCharacter = getCharacterTagsMap(db, ids);
     return characters.map((character) => ({
       ...character,
@@ -359,7 +357,6 @@ export function createApp(context = {}) {
     providerWithSecret,
     hasUsableProvider,
     mockProviderEnabled: config.mockProviderEnabled,
-    townWorldGenerationTimeoutMs: config.townWorldGenerationTimeoutMs,
     registrationEnabled: config.registrationEnabled,
     rootAdminUsername: config.rootAdminUsername,
     rootAdminPassword: config.rootAdminPassword,
@@ -400,8 +397,6 @@ export function createApp(context = {}) {
   app.use('/api/regex-rules', createRegexRouter(routeContext));
   app.use('/api/search', createSearchRouter(routeContext));
   app.use('/api/messages', createSwipesRouter(routeContext));
-  app.use('/api/towns', createTownsRouter(routeContext));
-  app.use('/api/hmdt', createHMDTRouter(routeContext));
   app.use('/api/jobs', createJobsRouter(routeContext));
   app.use('/api/conversations', createBranchesRouter(routeContext));
   app.use('/api', createUpgradeRouter(routeContext));

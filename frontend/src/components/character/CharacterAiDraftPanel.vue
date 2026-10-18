@@ -14,7 +14,10 @@ import CharacterAiDraftActions from './CharacterAiDraftActions.vue';
 import CharacterAiDraftInputs from './CharacterAiDraftInputs.vue';
 import CharacterAiModSuggestions from './CharacterAiModSuggestions.vue';
 import CharacterAiProcessPanel from './CharacterAiProcessPanel.vue';
-import CharacterAiWorldBookDraft from './CharacterAiWorldBookDraft.vue';
+import WorldBookChanges from '../worldbook/WorldBookChanges.vue';
+import WorldBookTargetPicker from '../worldbook/WorldBookTargetPicker.vue';
+import AiPlanReview from '../AiPlanReview.vue';
+import { CHARACTER_AI_SECTION_LABELS } from '../../utils/aiSectionLabels.js';
 
 const props = defineProps({
   assistantModel: { type: String, default: '' },
@@ -25,6 +28,11 @@ const props = defineProps({
   loading: { type: Boolean, default: false },
   modelOptions: { type: Array, default: () => [] },
   options: { type: Object, required: true },
+  plan: { type: Object, default: null },
+  planExtraRequirement: { type: String, default: '' },
+  planMode: { type: Boolean, default: false },
+  planPhase: { type: String, default: 'idle' },
+  planStepStatus: { type: Function, default: () => '' },
   process: { type: Array, default: () => [] },
   reasoning: { type: String, default: '' },
   requirement: { type: String, default: '' },
@@ -39,26 +47,44 @@ const props = defineProps({
   toolCalls: { type: Array, default: () => [] },
   useCurrentDraft: { type: Boolean, default: true },
   warnings: { type: Array, default: () => [] },
-  worldBookDraft: { type: Object, default: null },
-  worldBookDraftCreating: { type: Boolean, default: false }
+  worldBooks: { type: Array, default: () => [] },
+  worldBookChanges: { type: Array, default: () => [] },
+  worldBookSelectedIds: { type: Array, default: () => [] },
+  worldBookAutomatic: { type: Boolean, default: false },
+  worldBookSourceLabel: { type: String, default: '' },
+  worldBookApplying: { type: Boolean, default: false }
 });
 
 const emit = defineEmits([
   'complete',
-  'create-world-book',
+  'apply-world-books',
+  'reload-world-book',
+  'discard-world-book',
+  'new-world-book',
+  'update:worldBookSelectedIds',
+  'update:worldBookAutomatic',
   'create-suggested-mods',
+  'discard-plan',
   'discard-session',
+  'execute-plan',
+  'replan',
   'resume',
   'retry',
   'save-checkpoint',
   'set-option',
   'stop',
+  'toggle-plan-step',
+  'update-plan-step',
   'update:assistantModel',
+  'update:planExtraRequirement',
+  'update:planMode',
   'update:requirement',
   'update:streamingEnabled',
   'update:thinkingLevel',
   'update:useCurrentDraft'
 ]);
+
+const hasPlan = computed(() => Boolean(props.plan?.steps?.length));
 
 const hasOutput = computed(() => (
   props.loading
@@ -66,13 +92,15 @@ const hasOutput = computed(() => (
   || props.process.length > 0
   || props.toolCalls.length > 0
   || props.suggestions.length > 0
-  || Boolean(props.worldBookDraft)
+  || props.worldBookChanges.length > 0
+  || hasPlan.value
   || props.warnings.length > 0
 ));
 
 const statusText = computed(() => {
   return ({
     running: '运行中',
+    review: '待审批',
     paused: '已暂停',
     failed: '需处理',
     completed: '已完成'
@@ -99,6 +127,7 @@ const headerMeta = computed(() => {
     const thinking = props.thinkingOptions.find((item) => item?.value === props.thinkingLevel);
     if (thinking?.label) parts.push(`思考 ${thinking.label}`);
   }
+  if (props.planMode) parts.push('Plan 模式');
   const keys = Object.keys(props.options || {});
   parts.push(`范围 ${keys.filter((key) => props.options[key]).length}/${keys.length}`);
   return parts.join(' · ');
@@ -142,6 +171,7 @@ const headerMeta = computed(() => {
         <CharacterAiDraftInputs
           :requirement="requirement"
           :assistant-model="assistantModel"
+          :plan-mode="planMode"
           :streaming-enabled="streamingEnabled"
           :thinking-level="thinkingLevel"
           :thinking-options="thinkingOptions"
@@ -152,15 +182,30 @@ const headerMeta = computed(() => {
           :options="options"
           @update:requirement="emit('update:requirement', $event)"
           @update:assistant-model="emit('update:assistantModel', $event)"
+          @update:plan-mode="emit('update:planMode', $event)"
           @update:streaming-enabled="emit('update:streamingEnabled', $event)"
           @update:thinking-level="emit('update:thinkingLevel', $event)"
           @update:use-current-draft="emit('update:useCurrentDraft', $event)"
           @set-option="(key, enabled) => emit('set-option', key, enabled)"
         />
+        <WorldBookTargetPicker
+          v-if="options.worldBook"
+          :books="worldBooks"
+          :selected-ids="worldBookSelectedIds"
+          :automatic="worldBookAutomatic"
+          :source-label="worldBookSourceLabel"
+          :busy="disabled"
+          @update:selected-ids="emit('update:worldBookSelectedIds', $event)"
+          @update:automatic="emit('update:worldBookAutomatic', $event)"
+          @new-book="emit('new-world-book')"
+        />
+        <p v-if="options.worldBook" class="ai-worldbook-context-note">本次用书独立于角色关联；新书可加入关联列表，保存角色后生效。</p>
         <CharacterAiDraftActions
           :disabled="disabled"
           :has-checkpoint="hasCheckpoint"
           :loading="loading"
+          :plan-mode="planMode"
+          :plan-phase="planPhase"
           :status="status"
           @complete="emit('complete')"
           @discard="emit('discard-session')"
@@ -217,8 +262,25 @@ const headerMeta = computed(() => {
           <span>开始后将实时显示模型思考与工具执行状态</span>
         </div>
 
+        <AiPlanReview
+          v-if="hasPlan"
+          :busy="loading"
+          :disabled="disabled && !loading"
+          :extra-requirement="planExtraRequirement"
+          :phase="planPhase"
+          :plan="plan"
+          :section-labels="CHARACTER_AI_SECTION_LABELS"
+          :step-status="planStepStatus"
+          @discard="emit('discard-plan')"
+          @execute="emit('execute-plan')"
+          @replan="emit('replan')"
+          @toggle-step="(id, selected) => emit('toggle-plan-step', id, selected)"
+          @update-step="(id, patch) => emit('update-plan-step', id, patch)"
+          @update:extra-requirement="emit('update:planExtraRequirement', $event)"
+        />
+
         <CharacterAiProcessPanel
-          v-else
+          v-if="hasOutput"
           :loading="loading"
           :process="process"
           :reasoning="reasoning"
@@ -227,12 +289,14 @@ const headerMeta = computed(() => {
           :tool-calls="toolCalls"
         />
 
-        <CharacterAiWorldBookDraft
-          v-if="worldBookDraft"
-          :draft="worldBookDraft"
-          :creating="worldBookDraftCreating"
-          :disabled="disabled"
-          @create="emit('create-world-book')"
+        <WorldBookChanges
+          v-if="worldBookChanges.length"
+          :changes="worldBookChanges"
+          :busy="disabled || worldBookApplying || options.worldBook === false"
+          character-context
+          @apply="emit('apply-world-books', $event)"
+          @reload="emit('reload-world-book', $event)"
+          @discard="emit('discard-world-book', $event)"
         />
 
         <CharacterAiModSuggestions

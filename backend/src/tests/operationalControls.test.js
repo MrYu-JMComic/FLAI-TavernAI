@@ -158,15 +158,15 @@ test('shared automation audit records provenance and paginates by cursor', () =>
   const database = createControlsDatabase();
   try {
     recordAutomationAudit(database, 'controls-user', {
-      domain: 'town',
+      domain: 'world-book',
       operation: 'generate',
-      subjectType: 'town',
-      subjectId: 'town-one',
+      subjectType: 'world-book',
+      subjectId: 'world-book-one',
       sourceMessageId: 'message-one',
       jobId: 'job-one',
       providerType: 'openai',
       model: 'model-one',
-      planSummary: 'Create a town',
+      planSummary: 'Create a world book',
       before: { status: 'missing' },
       after: { status: 'created' }
     });

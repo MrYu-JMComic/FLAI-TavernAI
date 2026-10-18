@@ -9,16 +9,15 @@ import {
   buildWorldBookContext,
   injectAtDepthEntries,
   matchWorldBookEntries
-} from '../modules/worldBooks.js';
+} from './worldBooks/worldBookRuntime.js';
 import { selectConversationMemoryContext } from '../modules/conversationMemories.js';
-import { buildCastContext } from './cast/castContextBuilder.js';
 import { getAccessorySkillsPayload } from './accessoryAgents.js';
 import { CONTEXT_PRIORITY_ORDER, buildContextDirectorPrompt } from './chatContextDirector.js';
 import { renderPromptVariables, resolvePromptUserName } from './promptVariables.js';
 import {
   buildWorldBookContextDiagnostics,
   findWorldBookExplanation
-} from './worldBookMatchPreview.js';
+} from './worldBooks/worldBookMatchPreview.js';
 import { parseJson } from '../utils/json.js';
 import { estimatePromptTokens, resolvePromptTokenBudget } from './promptTokenBudget.js';
 import { conversationRecallTerms } from './fullTextSearch.js';
@@ -69,10 +68,6 @@ export function buildPromptPipeline(database, options = {}) {
     query: processedUserText || history.at(-1)?.content || '',
     budgetCharacters: 12_000
   });
-  const castContext = buildCastContext(database, user.id, conversation.id, {
-    includeHidden: false,
-    budgetCharacters: 8_000
-  });
   const modEntries = buildModPromptSections(getEnabledModsForUser(database, user.id, { characterId: character.id }));
   const modSystemPrompt = modEntries.map((entry) => entry.context).join('\n\n');
   const sceneContext = accessoryState.active.sceneAgent
@@ -90,9 +85,6 @@ export function buildPromptPipeline(database, options = {}) {
     },
     memory: {
       ...memorySelection
-    },
-    cast: {
-      context: castContext
     },
     mods: {
       entries: modEntries,
@@ -447,7 +439,6 @@ function buildPipelineMessages({
     worldBookContext: sections.worldBook.context,
     worldBookEntries,
     memoryContext: sections.memory.context,
-    castContext: sections.cast.context,
     statusBarContext: sections.statusBar.context,
     modSystemPrompt: sections.mods.context,
     sceneContext: sections.scene.context,
@@ -475,7 +466,7 @@ function buildPipelineMessages({
       presetSystemPrompt
     ].join('\n'), { protected: true, sourceId: activePreset.id }));
   }
-  for (const key of ['cast', 'statusBar', 'scene', 'economy', 'talent']) {
+  for (const key of ['statusBar', 'scene', 'economy', 'talent']) {
     if (sections[key].context) {
       messages.push(contextMessage(key, sections[key].context, { priority: 40 }));
     }
@@ -844,7 +835,7 @@ function formatContextValue(value) {
 function buildPriorityExplanation(sections) {
   const activeContext = [];
   const labels = {
-    worldBook: 'world_book', memory: 'long_term_memory', cast: 'cast_state',
+    worldBook: 'world_book', memory: 'long_term_memory',
     statusBar: 'status_bar', scene: 'scene', economy: 'economy', talent: 'talent', mods: 'mods'
   };
   for (const [key, label] of Object.entries(labels)) {

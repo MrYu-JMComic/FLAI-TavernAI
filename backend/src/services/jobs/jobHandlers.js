@@ -1,10 +1,6 @@
-import { generateTownFromBlueprint } from '../../modules/townWorldGenerator.js';
 import { recordAutomaticConversationMemories } from '../conversationMemoryExtraction.js';
-import { organizeConversationCast } from '../cast/castOrganizer.js';
-import { resolveCastAgentThinking } from '../cast/castAgentSettings.js';
 import { getConversationForUser } from '../../routes/helpers.js';
 import { completeWorldBookDraft } from '../worldBookAssistant.js';
-import { generateTownWorldBlueprint } from '../townWorldAssistant.js';
 import { hasUsableProvider, providerWithSecret } from '../providers.js';
 import { recordAutomationAudit } from '../automationAudit.js';
 import { executeProviderTask } from '../providerTaskRouter.js';
@@ -22,103 +18,6 @@ export function createDefaultJobHandlers(database, options = {}) {
         ? options.providerSettings(environment.job.userId)
         : providerSettings(database, environment.job.userId, config, { allowUnavailable: true })
     }),
-    'town.generate': async ({ job, payload, signal, progress }) => {
-      progress(5, { phase: 'provider' });
-      const settings = providerSettings(database, job.userId, config);
-      progress(15, { phase: 'generating' });
-      const routed = await executeProviderTask(database, {
-        userId: job.userId,
-        jobId: job.id,
-        taskType: job.type,
-        settings,
-        routing: payload.routing,
-        signal,
-        operation: (routeSettings) => generateTownWorldBlueprint(
-          routeSettings,
-          requiredText(payload.prompt, 'prompt'),
-          { signal }
-        )
-      });
-      const generated = routed.result;
-      progress(75, { phase: 'persisting' });
-      const snapshot = generateTownFromBlueprint(database, job.userId, {
-        prompt: payload.prompt,
-        blueprint: generated.blueprint,
-        simulationStatus: payload.simulationStatus,
-        idempotencyKey: `job:${job.id}`
-      });
-      recordAutomationAudit(database, job.userId, {
-        domain: 'town',
-        operation: 'generate',
-        subjectType: 'town',
-        subjectId: snapshot?.town?.id || snapshot?.id || '',
-        jobId: job.id,
-        providerType: routed.route.providerType,
-        model: routed.route.model,
-        planSummary: requiredText(payload.prompt, 'prompt'),
-        after: snapshot
-      });
-      return {
-        snapshot,
-        providerRoute: routed.route,
-        generation: {
-          mode: 'ai',
-          provider: generated.provider,
-          providerType: generated.providerType,
-          model: generated.model,
-          usage: generated.usage
-        }
-      };
-    },
-    'cast.organize': async (environment) => {
-      const { job, payload, signal, progress } = environment;
-      return runRecoverableConversationStep(database, environment, 'cast:organize', async (guarded) => {
-      const conversationId = requiredText(payload.conversationId, 'conversationId');
-      const conversation = getConversationForUser(database, job.userId, conversationId, { includeUsage: false });
-      if (!conversation) throw jobFailure('Conversation not found.', 'CONVERSATION_NOT_FOUND');
-      const settings = providerSettings(database, job.userId, config);
-      const messages = readJobEvidence(database, job.userId, payload);
-      const routed = await executeProviderTask(database, {
-        userId: job.userId,
-        jobId: job.id,
-        taskType: job.type,
-        settings,
-        routing: payload.routing,
-        signal,
-        operation: (routeSettings) => organizeConversationCast({
-          database: guarded,
-          userId: job.userId,
-          conversationId,
-          settings: routeSettings,
-          scope: payload.scope,
-          scopeMemberId: payload.memberId,
-          requirement: payload.requirement,
-          messages,
-          signal,
-          ...resolveCastAgentThinking(routeSettings, {}, {
-            mainThinkingLevel: payload.thinkingLevel,
-            mainThinkingEnabled: payload.thinkingEnabled,
-          }),
-          quotaManaged: true,
-          idempotencyKey: `job:${job.id}`,
-          onProgress: (phase, data) => progress(castProgress(phase), { phase, ...data })
-        })
-      });
-      recordAutomationAudit(database, job.userId, {
-        domain: 'cast',
-        operation: 'organize',
-        subjectType: 'conversation',
-        subjectId: conversationId,
-        sourceMessageId: payload.sourceMessageId,
-        jobId: job.id,
-        providerType: routed.route.providerType,
-        model: routed.route.model,
-        planSummary: routed.result.summary,
-        after: routed.result
-      });
-      return { ...routed.result, providerRoute: routed.route };
-      });
-    },
     'memory.extract': async (environment) => {
       const { job, payload, progress } = environment;
       return runRecoverableConversationStep(database, environment, 'memory:extract', (guarded) => {
@@ -161,6 +60,16 @@ export function createDefaultJobHandlers(database, options = {}) {
         operation: (routeSettings) => completeWorldBookDraft(routeSettings, {
           requirement: String(payload.requirement || ''),
           current,
+          database,
+          userId: job.userId,
+          selectedBookIds: payload.selectedBookIds || (payload.worldBookId ? [payload.worldBookId] : []),
+          automatic: payload.automatic,
+          workspace: payload.workspace,
+          history: payload.history,
+          context: payload.context,
+          thinkingLevel: payload.thinkingLevel,
+          planMode: payload.planMode,
+          plan: payload.plan,
           signal
         })
       });
@@ -175,7 +84,7 @@ export function createDefaultJobHandlers(database, options = {}) {
         model: routed.route.model,
         planSummary: routed.result.summary,
         before: current,
-        after: routed.result.worldBook
+        after: routed.result.workspace
       });
       return { ...routed.result, providerRoute: routed.route };
     }
@@ -211,10 +120,6 @@ function requiredText(value, field) {
   const text = String(value || '').trim();
   if (!text) throw jobFailure(`${field} is required.`, 'JOB_PAYLOAD_INVALID');
   return text;
-}
-
-function castProgress(phase) {
-  return { context: 10, generating: 25, validating: 65, applying: 80, done: 95 }[phase] || 10;
 }
 
 function jobFailure(message, code) {

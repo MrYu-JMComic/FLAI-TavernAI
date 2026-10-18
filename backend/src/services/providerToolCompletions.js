@@ -30,9 +30,9 @@ import {
 import {
   providerFetch,
   readJsonResponse,
-  readJsonResponseValue,
-  responseErrorText
+  readJsonResponseValue
 } from './providerHttp.js';
+import { sanitizeDiagnosticText } from './diagnosticRedaction.js';
 import { cloneProviderMessages } from './providerMessages.js';
 import { streamMockCompletion } from './providerMock.js';
 import { normalizeProviderModel } from './providerModels.js';
@@ -97,26 +97,7 @@ export async function runToolCompletion(settings, messages, tools, executeTool, 
       });
       json = await readJsonResponse(response);
     } catch (error) {
-      // 增强错误信息：包含请求体和响应
-      console.error('[Tool Completion Error] Round:', round + 1);
-      console.error('[Tool Completion Error] Provider:', settings.providerType);
-      console.error('[Tool Completion Error] Model:', settings.model);
-      console.error('[Tool Completion Error] Tools count:', tools.length);
-      console.error('[Tool Completion Error] Request body:', JSON.stringify({
-        model: requestBody.model,
-        tools: requestBody.tools?.map(t => ({
-          name: t.function?.name,
-          parameters: t.function?.parameters
-        })),
-        toolChoice: requestBody.tool_choice,
-        messages: requestBody.messages.length + ' messages'
-      }, null, 2));
-
-      if (error.response) {
-        console.error('[Tool Completion Error] Response status:', error.response.status);
-        console.error('[Tool Completion Error] Response body:', error.response.body);
-      }
-
+      logToolCompletionError('[Tool Completion Error]', settings, requestBody, round, error, response);
       throw error;
     }
 
@@ -274,28 +255,13 @@ export async function streamToolCompletion(settings, messages, tools, executeToo
       });
 
       if (!response.ok) {
-        const errorText = await response.text().catch(() => '');
-        console.error('[Stream Tool Completion Error] Round:', round + 1);
-        console.error('[Stream Tool Completion Error] Provider:', settings.providerType);
-        console.error('[Stream Tool Completion Error] Model:', settings.model);
-        console.error('[Stream Tool Completion Error] Tools count:', tools.length);
-        console.error('[Stream Tool Completion Error] Request body:', JSON.stringify({
-          model: requestBody.model,
-          tools: requestBody.tools?.map(t => ({
-            name: t.function?.name,
-            parameters: t.function?.parameters
-          })),
-          toolChoice: requestBody.tool_choice,
-          messages: requestBody.messages.length + ' messages'
-        }, null, 2));
-        console.error('[Stream Tool Completion Error] Response status:', response.status);
-        console.error('[Stream Tool Completion Error] Response body:', errorText.substring(0, 2000));
-        throw new Error(await responseErrorText(response));
+        // Preserve the provider error and HTTP classification without reading
+        // the response body twice (the second read previously lost its reason).
+        await readJsonResponse(response);
       }
     } catch (error) {
-      if (!response || !response.ok) {
-        throw error;
-      }
+      logToolCompletionError('[Stream Tool Completion Error]', settings, requestBody, round, error, response);
+      throw error;
     }
 
     let roundContent = '';
@@ -470,6 +436,27 @@ export async function streamToolCompletion(settings, messages, tools, executeToo
     providerType: settings.providerType,
     model: normalizeProviderModel(settings.providerType, settings.model)
   };
+}
+
+function logToolCompletionError(prefix, settings, requestBody, round, error, response) {
+  const safeText = value => {
+    let text = String(value || '');
+    if (settings.apiKey) text = text.replaceAll(settings.apiKey, '[redacted]');
+    return sanitizeDiagnosticText(text).slice(0, 500);
+  };
+  const causes = [];
+  for (let cause = error?.cause; cause && causes.length < 4; cause = cause.cause) {
+    causes.push({ name: safeText(cause.name), code: safeText(cause.code), message: safeText(cause.message) });
+  }
+  console.error(prefix, JSON.stringify({
+    round: round + 1,
+    provider: safeText(settings.providerType), model: safeText(requestBody.model),
+    toolNames: requestBody.tools?.map(tool => tool.function?.name),
+    messageCount: requestBody.messages?.length || 0,
+    error: { name: safeText(error?.name), code: safeText(error?.code), message: safeText(error?.message),
+      status: error?.response?.status || error?.status || error?.statusCode || response?.status || 0,
+      causes },
+  }));
 }
 
 function assertToolStreamPayload(payload, eventName = '') {

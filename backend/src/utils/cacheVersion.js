@@ -11,7 +11,7 @@
 
 const versions = new Map(); // `${conversationId}:${domain}` -> number
 
-const DOMAINS = ['scene', 'npc', 'memory', 'appearance', 'turn'];
+const DOMAINS = ['scene', 'memory', 'appearance', 'turn'];
 
 export function getVersion(conversationId, domain) {
   const key = `${conversationId}:${domain}`;

@@ -193,7 +193,7 @@ export function inferProviderThinkingType(model) {
   if (value.includes('qwen')) return 'qwen';
   if (/(?:^|[/_-])glm(?:[/_.-]|$)/.test(value)) return 'glm';
   if (value.includes('kimi') || value.includes('moonshot')) return 'kimi';
-  if (value.startsWith('gpt-') || /(?:^|[/_-])(?:o1|o3|o4)(?:[/_.-]|$)/.test(value)) return 'openai';
+  if (/(?:^|[/_-])gpt-/.test(value) || /(?:^|[/_-])(?:o1|o3|o4)(?:[/_.-]|$)/.test(value)) return 'openai';
   return '';
 }
 
@@ -210,7 +210,7 @@ function resolveCustomThinkingControl(model) {
   return createThinkingControl({
     providerType: 'custom',
     model,
-    levels: ['off', 'low', 'medium', 'high', 'max'],
+    levels: [...THINKING_LEVELS],
     defaultLevel: 'high',
     strategy: 'reasoning-effort'
   });
@@ -405,7 +405,9 @@ function resolveKimiThinkingControl(model) {
 }
 
 function usesAnthropicAdaptiveThinking(model) {
-  return model.includes('claude-opus-4-7') ||
+  return model.includes('claude-opus-5-5') ||
+    model.includes('claude-sonnet-5-5') ||
+    model.includes('claude-opus-4-7') ||
     model.includes('claude-opus-4-8') ||
     model.includes('claude-sonnet-4-6') ||
     model.includes('claude-opus-4-6') ||

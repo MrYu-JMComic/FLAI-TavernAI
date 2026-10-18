@@ -142,17 +142,17 @@ test('BaseLayout exposes quota management only to root administrators', () => {
   );
 });
 
-test('BaseLayout gives chat and multi-role routes the same unobstructed conversation shell', () => {
+test('BaseLayout gives chat routes an unobstructed conversation shell', () => {
   assert.match(
     baseLayoutScript,
-    /function usesConversationLayout\(routeName\) \{\s*return routeName === 'chat' \|\| routeName === 'multiAgentChat';\s*\}/
+    /function usesConversationLayout\(routeName\) \{\s*return routeName === 'chat';\s*\}/
   );
   assert.match(
     baseLayoutTemplate,
-    /<header v-if="!isConversationRoute && !isTownRoute" class="topbar">/
+    /<header v-if="!isConversationRoute" class="topbar">/
   );
   assert.match(
     baseLayoutTemplate,
-    /<nav v-if="!isConversationRoute && !isTownRoute" class="mobile-bottom-nav"/
+    /<nav v-if="!isConversationRoute" class="mobile-bottom-nav"/
   );
 });

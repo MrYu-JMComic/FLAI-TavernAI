@@ -21,11 +21,6 @@ export function normalizeConversationAppearance(input = {}) {
   const statusBarPrompt = normalizeMultilineText(input.statusBarPrompt ?? input.status_bar_prompt ?? '');
   const showWorldBookMatches = normalizeBoolean(input.showWorldBookMatches ?? input.show_world_book_matches, true);
   const highlightDialogue = normalizeBoolean(input.highlightDialogue ?? input.highlight_dialogue, true);
-  const castTrackingSource = input.castTracking ?? input.cast_tracking ?? {};
-  const normalizedCastTracking = normalizeAdvancedSettings({ castTracking: castTrackingSource }).castTracking;
-  const castTracking = hasConfiguredCastTracking(normalizedCastTracking)
-    ? normalizedCastTracking
-    : { enabled: normalizedCastTracking.enabled };
 
   return {
     desktopBackgroundUrl,
@@ -38,8 +33,7 @@ export function normalizeConversationAppearance(input = {}) {
     customJsRiskAccepted,
     statusBarPrompt,
     showWorldBookMatches,
-    highlightDialogue,
-    castTracking
+    highlightDialogue
   };
 }
 
@@ -77,17 +71,6 @@ export function saveConversationAppearance(database, userId, conversationId, pay
     highlightDialogue: payload?.highlightDialogue ?? payload?.highlight_dialogue
       ?? existingAdvancedSettings?.highlightDialogue ?? existingAdvancedSettings?.highlight_dialogue
   });
-  const existingCastTracking = normalizeAdvancedSettings(existingAdvancedSettings).castTracking;
-  const requestedCastTracking = payload?.castTracking ?? payload?.cast_tracking;
-  const mergedCastTracking = requestedCastTracking && typeof requestedCastTracking === 'object'
-    ? { ...existingCastTracking, ...requestedCastTracking }
-    : existingCastTracking;
-  const normalizedCastTracking = normalizeAdvancedSettings({ castTracking: mergedCastTracking }).castTracking;
-  // Keep the legacy one-field response for old/simple callers, while preserving
-  // the complete NPC Agent configuration whenever either side uses it.
-  appearance.castTracking = hasConfiguredCastTracking(normalizedCastTracking)
-    ? normalizedCastTracking
-    : { enabled: normalizedCastTracking.enabled };
   appearance.desktopBackgroundUrl = saveBackgroundImageInput(database, {
     userId,
     ownerType: conversationBackgroundOwnerTypes.desktop,
@@ -147,17 +130,6 @@ function normalizeMultilineText(value) {
   return text.trim() ? text : '';
 }
 
-function hasConfiguredCastTracking(value) {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
-  return Boolean(
-    String(value.providerProfileId || '').trim()
-    || String(value.modelOverride || '').trim()
-    || String(value.thinkingLevel || '').trim()
-    || Object.keys(value.autoSyncOperations || {}).length
-    || Object.keys(value.organizeOperations || {}).length
-  );
-}
-
 function toLegacyAppearance(appearance) {
   return {
     desktopBackgroundUrl: appearance.desktopBackgroundUrl,
@@ -169,7 +141,6 @@ function toLegacyAppearance(appearance) {
     customJsEnabled: appearance.customJsEnabled,
     customJsRiskAccepted: appearance.customJsRiskAccepted,
     showWorldBookMatches: appearance.showWorldBookMatches,
-    highlightDialogue: appearance.highlightDialogue,
-    castTracking: appearance.castTracking
+    highlightDialogue: appearance.highlightDialogue
   };
 }

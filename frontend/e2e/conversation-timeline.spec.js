@@ -53,17 +53,19 @@ test('chat state recovery is visible and a user can confirm or accept a historic
   expect(commands.at(-1).confirmed).toBe(true);
 });
 
-test('full conversation save and restore keeps cast memory and item ownership in the browser workflow', async ({ page }) => {
+
+test('chat omits removed management tools and restores independent scene items', async ({ page }) => {
   await registerUser(page);
-  await createCharacterAndOpenChat(page, `Snapshot ${uniqueSuffix()}`);
-  const conversationId = /chat\/([^/?#]+)/.exec(page.url())?.[1] || /conversations\/([^/?#]+)/.exec(page.url())?.[1];
-  const base = `/api/conversations/${conversationId}`;
-  const member = await apiRequest(page, `${base}/cast`, { method: 'POST', body: { canonicalName: 'Snapshot Mira' } });
-  await apiRequest(page, `${base}/cast/${member.id}/memories`, { method: 'POST', body: { content: 'Mira knows the old gate.' } });
-  const save = await apiRequest(page, `${base}/saves`, { method: 'POST', body: { name: 'Before departure' } });
-  await apiRequest(page, `${base}/cast/${member.id}`, { method: 'PATCH', body: { currentLocationLabel: 'Future location', revision: member.revision } });
-  const result = await apiRequest(page, `/api/saves/${save.id}/load`, { method: 'POST', body: { conversationId } });
-  expect(result.snapshotVersion).toBe(2);
-  const memories = await apiRequest(page, `${base}/cast/${member.id}/memories`);
-  expect(memories.items.some((memory) => memory.content === 'Mira knows the old gate.')).toBe(true);
+  await createCharacterAndOpenChat(page, 'Scene snapshot ' + uniqueSuffix());
+  const conversationId = /chat\/([^/?#]+)/.exec(page.url())?.[1];
+  const base = '/api/conversations/' + conversationId;
+  await expect(page.getByRole('button', { name: 'NPC 管理', exact: true })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: '多角色模式', exact: true })).toHaveCount(0);
+  const node = await apiRequest(page, base + '/scenes/nodes', { method: 'POST', body: { name: 'Snapshot harbor', nodeType: 'main_scene' } });
+  const item = await apiRequest(page, base + '/scenes/items', { method: 'POST', body: { nodeId: node.id, name: 'Snapshot key', itemCode: 'SNAPSHOT-KEY' } });
+  const save = await apiRequest(page, base + '/saves', { method: 'POST', body: { name: 'Before change' } });
+  await apiRequest(page, base + '/scenes/items/' + item.id, { method: 'PUT', body: { quantity: 2, revision: item.revision } });
+  await apiRequest(page, '/api/saves/' + save.id + '/load', { method: 'POST', body: { conversationId } });
+  const restored = await apiRequest(page, base + '/scenes');
+  expect(restored.items.find(entry => entry.id === item.id).quantity).toBe(1);
 });

@@ -28,6 +28,40 @@ const md = new MarkdownIt({
   }
 });
 
+const CJK_CHARACTER = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/u;
+
+function codePointBefore(source, position) {
+  if (position === 0) return 0x20;
+  const pair = position > 1 ? source.codePointAt(position - 2) : 0;
+  return pair > 0xffff ? pair : source.charCodeAt(position - 1);
+}
+
+// Dialogue places formatting against punctuation and CJK text without spaces.
+// Share these boundaries across emphasis and strikethrough, keeping native
+// pairing, nesting, escapes and code rules. Underscores still cannot split
+// Latin words or identifiers. Scope the scanner to this renderer's state.
+md.inline.State = class extends md.inline.State {
+  scanDelims(start, canSplitWord) {
+    const scanned = super.scanDelims(start, canSplitWord);
+    const marker = this.src.charCodeAt(start);
+    if (marker !== 0x2a && marker !== 0x5f && marker !== 0x7e) return scanned;
+
+    const end = start + scanned.length;
+    // Read whole Unicode code points, including emoji and astral punctuation.
+    const previous = codePointBefore(this.src, start);
+    const next = end < this.posMax ? this.src.codePointAt(end) : 0x20;
+    const { isPunctCharCode, isWhiteSpace } = this.md.utils;
+    if (marker === 0x5f) {
+      if (!isWhiteSpace(next) && CJK_CHARACTER.test(String.fromCodePoint(previous))) scanned.can_open = true;
+      if (!isWhiteSpace(previous) && CJK_CHARACTER.test(String.fromCodePoint(next))) scanned.can_close = true;
+    } else {
+      if (!isWhiteSpace(next) && isPunctCharCode(next)) scanned.can_open = true;
+      if (!isWhiteSpace(previous) && isPunctCharCode(previous)) scanned.can_close = true;
+    }
+    return scanned;
+  }
+};
+
 // Register KaTeX plugin for $...$ and $$...$$ delimiters.
 // The package is CommonJS, so the callable plugin may sit on `.default`.
 const katexPlugin = typeof markdownItKatex === 'function'

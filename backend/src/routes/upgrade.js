@@ -16,7 +16,7 @@ import {
   updateConversationMemory
 } from '../modules/conversationMemories.js';
 import { getConversationBranchTree } from '../modules/branches.js';
-import { getWorldBook } from '../modules/worldBooks.js';
+import { getWorldBook } from '../services/worldBooks/worldBookService.js';
 import { buildConversationContextPreview } from '../services/contextPreview.js';
 import { getDefaultPreset } from '../modules/presets.js';
 import { getChatProviderSettingsFromContext } from './helpers.js';
@@ -27,7 +27,7 @@ import { buildExportEnvelope, importExportEnvelope } from '../services/exportEnv
 import { buildProjectSnapshot } from '../services/projectSnapshot.js';
 import { describeProviderCapabilities, listProviderCapabilities, probeProviderHealth } from '../services/providerCapabilities.js';
 import { providerWithSecret } from '../services/providers.js';
-import { buildWorldBookMatchPreview } from '../services/worldBookMatchPreview.js';
+import { buildWorldBookMatchPreview } from '../services/worldBooks/worldBookMatchPreview.js';
 import { createAssetSchema, validate } from '../validations/schemas.js';
 import { applyProviderNetworkPolicy } from '../services/providerNetworkPolicy.js';
 import { sendRouteError } from './errorResponse.js';

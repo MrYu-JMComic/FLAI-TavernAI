@@ -7,7 +7,7 @@ import test from 'node:test';
 const { createAppDatabase } = await import('../db.js');
 const { createCharacter } = await import('../modules/characters.js');
 const { createConversationMemory } = await import('../modules/conversationMemories.js');
-const { createEntry, createWorldBook } = await import('../modules/worldBooks.js');
+const { createEntry, createWorldBook } = await import('../services/worldBooks/worldBookService.js');
 const { createConversationsRouter } = await import('../routes/conversations.js');
 const { writeSse } = await import('../routes/helpers.js');
 const { normalizeChatAttachments, validateChatAttachmentsForUpload } = await import('../services/chatAttachments.js');

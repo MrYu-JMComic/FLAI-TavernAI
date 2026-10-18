@@ -103,10 +103,6 @@ export function buildOpenApiDocument(config = appConfig) {
       '/providers/health': {
         post: operation('Probe provider health', true, 'ProviderHealth')
       },
-      '/towns': {
-        get: operation('List simulation towns', true, 'TownList'),
-        post: operation('Create a simulation town', true, 'Town')
-      },
       '/jobs': {
         get: operation('List durable jobs', true, 'JobList'),
         post: operation('Submit an idempotent durable job', true, 'Job')
@@ -188,8 +184,6 @@ export function buildOpenApiDocument(config = appConfig) {
         ContextPreview: { type: 'object' },
         WorldBook: { type: 'object' },
         WorldBookList: { type: 'array', items: { $ref: '#/components/schemas/WorldBook' } },
-        Town: { type: 'object' },
-        TownList: { type: 'array', items: { $ref: '#/components/schemas/Town' } },
         TalentPool: { type: 'object' },
         TalentPoolList: { type: 'array', items: { $ref: '#/components/schemas/TalentPool' } },
         ProviderModelList: objectSchema({ models: { type: 'array', items: { type: 'object' } } }),

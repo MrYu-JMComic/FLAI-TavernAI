@@ -4,7 +4,6 @@ import { pathToFileURL } from 'node:url';
 import { createApp } from './app.js';
 import { appConfig, withAppConfigDefaults } from './config.js';
 import { performDatabaseMaintenance } from './db/runtime.js';
-import { startTownSimulationEngine } from './modules/townEngine.js';
 import { cleanupExpiredSessions } from './security.js';
 import { migrateLegacyAvatarUploads } from './services/avatars.js';
 import { createBackup, listBackups, preflightBackupRestore, scheduleDailyBackup } from './services/backup.js';
@@ -60,11 +59,6 @@ export async function startServer(context = {}) {
       preflight: (filename) => preflightBackupRestore({ ...backupOptions, filename })
     }
   });
-  const stopTownEngine = startTownSimulationEngine(database, {
-    onError: (error) => applicationLogger.error('town_engine_error', {
-      message: sanitizeDiagnosticText(error?.message || error)
-    })
-  });
   recoverInterruptedGenerations(database);
   recoverInterruptedPromptTraces(database);
   const pruned = sweepConversationDerivedStorage(database);
@@ -109,7 +103,6 @@ export async function startServer(context = {}) {
       applicationLogger.info('server_shutdown_started', { signal });
       clearInterval(sessionCleanupTimer);
       clearInterval(maintenanceTimer);
-      stopTownEngine?.();
       return stopJobWorker?.();
     }).then(() => {
       stopDailyBackup?.();

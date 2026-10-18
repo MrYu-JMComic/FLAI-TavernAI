@@ -2,11 +2,30 @@ $ErrorActionPreference = 'Stop'
 
 $repoRoot = Split-Path $PSScriptRoot -Parent
 $killPids = [System.Collections.Generic.HashSet[int]]::new()
+$repoRootPattern = [regex]::Escape($repoRoot)
+
+function Find-AvailablePort {
+  param(
+    [int]$StartPort,
+    [int]$MaxAttempts = 20
+  )
+
+  for ($offset = 0; $offset -lt $MaxAttempts; $offset++) {
+    $candidate = $StartPort + $offset
+    $listener = Get-NetTCPConnection -LocalPort $candidate -State Listen -ErrorAction SilentlyContinue |
+      Select-Object -First 1
+    if (-not $listener) {
+      return $candidate
+    }
+  }
+
+  throw "No available TCP port found in range $StartPort-$($StartPort + $MaxAttempts - 1)."
+}
 
 Get-CimInstance Win32_Process -Filter "Name='node.exe'" |
   Where-Object {
     $cl = $_.CommandLine
-    ($cl -match 'D:\\Cat\\FLAI-TavernAI') -and
+    ($cl -match $repoRootPattern) -and
     ($cl -match 'vite[/\\]bin[/\\]vite\.js' -or $cl -match 'src[/\\]server\.js')
   } |
   ForEach-Object { [void]$killPids.Add($_.ProcessId) }
@@ -39,6 +58,9 @@ if (-not (Test-Path "$repoRoot\frontend\node_modules")) {
   exit 1
 }
 
+$backendPort = Find-AvailablePort -StartPort 3001
+$frontendPort = Find-AvailablePort -StartPort 5173
+
 $localIps = Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue |
   Where-Object {
     $_.IPAddress -ne '127.0.0.1' -and
@@ -47,20 +69,27 @@ $localIps = Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue |
   } |
   Select-Object -ExpandProperty IPAddress
 
-$clientOrigins = @('http://127.0.0.1:5173', 'http://localhost:5173')
+$clientOrigins = @("http://127.0.0.1:$frontendPort", "http://localhost:$frontendPort")
 foreach ($ip in $localIps) {
-  $clientOrigins += "http://${ip}:5173"
+  $clientOrigins += "http://${ip}:$frontendPort"
 }
 $clientOriginValue = $clientOrigins -join ','
 
-Start-Process -FilePath 'cmd.exe' -ArgumentList '/k', "title FLAI Backend :3001 && set PORT=3001 && set CLIENT_ORIGIN=$clientOriginValue && set ALLOW_PRIVATE_PROVIDER_NETWORK_DEV=true && npm.cmd run dev" -WorkingDirectory "$repoRoot\backend"
+if ($backendPort -ne 3001) {
+  Write-Host "Port 3001 is already in use; using backend port $backendPort." -ForegroundColor Yellow
+}
+if ($frontendPort -ne 5173) {
+  Write-Host "Port 5173 is already in use; using frontend port $frontendPort." -ForegroundColor Yellow
+}
+
+Start-Process -FilePath 'cmd.exe' -ArgumentList '/k', "title FLAI Backend :$backendPort && set PORT=$backendPort && set CLIENT_ORIGIN=$clientOriginValue && set ALLOW_PRIVATE_PROVIDER_NETWORK_DEV=true && npm.cmd run dev" -WorkingDirectory "$repoRoot\backend"
 
 $backendReady = $false
 for ($i = 0; $i -lt 40; $i++) {
   Start-Sleep -Milliseconds 500
   try {
-    $health = Invoke-RestMethod -Uri 'http://127.0.0.1:3001/api/health' -TimeoutSec 1
-    if ($health.ok) {
+    $health = Invoke-RestMethod -Uri "http://127.0.0.1:$backendPort/api/health/ready" -TimeoutSec 1
+    if ($health.ok -eq $true) {
       $backendReady = $true
       break
     }
@@ -70,16 +99,35 @@ for ($i = 0; $i -lt 40; $i++) {
 }
 
 if (-not $backendReady) {
-  Write-Host 'ERROR: backend did not become ready on http://127.0.0.1:3001/api/health within 20 seconds.' -ForegroundColor Red
-  Write-Host 'Check the visible "FLAI Backend :3001" window for the backend error log.' -ForegroundColor Yellow
+  Write-Host "WARNING: backend did not become ready on http://127.0.0.1:$backendPort/api/health/ready within 20 seconds." -ForegroundColor Yellow
+  Write-Host ('Check the visible "FLAI Backend :' + $backendPort + '" window for the backend error log.') -ForegroundColor Yellow
+}
+
+Start-Process -FilePath 'cmd.exe' -ArgumentList '/k', "title FLAI Frontend :$frontendPort LAN && set VITE_API_PROXY_TARGET=http://127.0.0.1:$backendPort && npm.cmd run dev -- --host 0.0.0.0 --port $frontendPort" -WorkingDirectory "$repoRoot\frontend"
+
+$frontendReady = $false
+for ($i = 0; $i -lt 20; $i++) {
+  Start-Sleep -Milliseconds 500
+  try {
+    $frontendResponse = Invoke-WebRequest -UseBasicParsing -Uri "http://127.0.0.1:$frontendPort/" -TimeoutSec 1
+    if ($frontendResponse.StatusCode -ge 200 -and $frontendResponse.StatusCode -lt 500) {
+      $frontendReady = $true
+      break
+    }
+  } catch {
+    # Keep waiting; the frontend window is visible if startup fails.
+  }
+}
+
+if (-not $frontendReady) {
+  Write-Host "ERROR: frontend did not become ready on http://127.0.0.1:$frontendPort within 10 seconds." -ForegroundColor Red
+  Write-Host ('Check the visible "FLAI Frontend :' + $frontendPort + ' LAN" window for the frontend error log.') -ForegroundColor Yellow
   exit 1
 }
 
-Start-Process -FilePath 'cmd.exe' -ArgumentList '/k', 'title FLAI Frontend :5173 LAN && npm.cmd run dev -- --host 0.0.0.0 --port 5173' -WorkingDirectory "$repoRoot\frontend"
-
 Write-Host ''
-Write-Host 'Frontend : http://127.0.0.1:5173/#/'
-Write-Host 'Backend  : http://127.0.0.1:3001/api/health'
+Write-Host "Frontend : http://127.0.0.1:$frontendPort/#/"
+Write-Host "Backend  : http://127.0.0.1:$backendPort/api/health/ready"
 foreach ($ip in $localIps) {
-  Write-Host "LAN      : http://${ip}:5173/#/"
+  Write-Host "LAN      : http://${ip}:$frontendPort/#/"
 }

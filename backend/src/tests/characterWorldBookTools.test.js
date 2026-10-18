@@ -73,9 +73,7 @@ test('character assistant builds a world book draft with create, upsert, preview
       toolCall('c1', 'create_character_world_book', {
         name: '雾港航路',
         entries: [
-          { name: '雾港', triggerKeys: '雾港,港口城邦', content: '雾港由领航公会治理。' },
-          // Schema-valid but unusable: a non-permanent entry needs trigger keys.
-          { name: '缺触发词', triggerKeys: '', content: '没有触发词的条目。' }
+          { name: '雾港', triggerKeys: '雾港,港口城邦', content: '雾港由领航公会治理。' }
         ]
       }),
       toolCall('c2', 'upsert_world_book_entry', {
@@ -93,14 +91,11 @@ test('character assistant builds a world book draft with create, upsert, preview
 
     const created = resultByTool(result, 'create_character_world_book');
     assert.equal(created.ok, true);
-    assert.equal(created.entryCount, 1);
-    // Unusable entries are reported instead of silently disappearing.
-    assert.equal(created.droppedEntries, 1);
-    assert.match(created.message, /triggerKeys/);
+    assert.equal(created.count, 1);
 
     const upserted = resultByTool(result, 'upsert_world_book_entry');
     assert.equal(upserted.ok, true);
-    assert.equal(upserted.entryCount, 2);
+    assert.equal(upserted.count, 2);
 
     const preview = resultByTool(result, 'preview_world_book_entries');
     assert.equal(preview.ok, true);
@@ -108,8 +103,8 @@ test('character assistant builds a world book draft with create, upsert, preview
 
     assert.equal(resultByTool(result, 'remove_world_book_entry').error, 'ENTRY_NOT_FOUND');
 
-    const draft = result.character.worldBookDraft;
-    assert.equal(draft.name, '雾港航路');
+    const draft = result.character.worldBookChanges[0];
+    assert.equal(draft.profile.name, '雾港航路');
     assert.deepEqual(draft.entries.map((entry) => entry.name), ['雾港', '领航公会']);
     assert.equal(draft.entries[1].group, '港口');
     assert.ok(draft.entries.every((entry) => entry.id));
@@ -118,7 +113,7 @@ test('character assistant builds a world book draft with create, upsert, preview
   }
 });
 
-test('character world book patches require an existing draft and clear an emptied one', async () => {
+test('character world book patches require a target and retain a book whose last entry is explicitly removed', async () => {
   const originalFetch = globalThis.fetch;
   try {
     globalThis.fetch = respondWithCalls([
@@ -140,11 +135,11 @@ test('character world book patches require an existing draft and clear an emptie
 
     const rejected = resultByTool(result, 'upsert_world_book_entry');
     assert.equal(rejected.ok, false);
-    assert.equal(rejected.error, 'WORLD_BOOK_DRAFT_MISSING');
+    assert.equal(rejected.error, 'WORLD_BOOK_TARGET_REQUIRED');
 
     // The removal used a placeholder id, so re-run with the real one to prove
-    // that emptying the draft clears it instead of leaving an unsavable shell.
-    const createdEntryId = result.character.worldBookDraft.entries[0].id;
+    // that a deliberate removal preserves the book profile with zero entries.
+    const createdEntryId = result.character.worldBookChanges[0].entries[0].id;
     globalThis.fetch = respondWithCalls([
       toolCall('r1', 'create_character_world_book', {
         name: '临时设定',
@@ -160,8 +155,10 @@ test('character world book patches require an existing draft and clear an emptie
 
     const removed = resultByTool(result, 'remove_world_book_entry');
     assert.equal(removed.ok, true);
-    assert.equal(removed.entryCount, 0);
-    assert.equal(result.character.worldBookDraft, null);
+    assert.equal(removed.count, 0);
+    assert.equal(result.character.worldBookChanges.length, 1);
+    assert.equal(result.character.worldBookChanges[0].profile.name, '临时设定');
+    assert.deepEqual(result.character.worldBookChanges[0].entries, []);
   } finally {
     globalThis.fetch = originalFetch;
   }

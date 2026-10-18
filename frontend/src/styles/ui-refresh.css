@@ -180,12 +180,6 @@
   gap: clamp(18px, 2vw, 28px);
 }
 
-@media (min-width: 981px) {
-  .workspace-layout-shell .worldbook-ai-panel {
-    top: calc(-1 * var(--workspace-page-padding-top));
-  }
-}
-
 .book-card,
 .entry-card,
 .preset-card {
@@ -1218,6 +1212,14 @@
 
   .preset-workbench.editor-open .preset-library {
     display: none;
+  }
+}
+
+/* On short viewports the composer occupies a grid row. Keep native scroll
+   alignment centered inside the remaining message area, including image frames. */
+@media (min-width: 621px) and (max-height: 480px) {
+  .deep-message-scroll {
+    scroll-padding-block: 8px;
   }
 }
 

@@ -10,9 +10,15 @@ import {
   createEntry,
   createWorldBook,
   getWorldBook,
-  linkWorldBookToCharacter,
+  linkCharacter,
   listWorldBooks
-} from '../modules/worldBooks.js';
+} from './worldBooks/worldBookService.js';
+import {
+  listOwnedCharacterWorldBookLinks,
+  listOwnedWorldBookCharacterLinks,
+  listOwnedWorldBookRowsByIds,
+  readOwnedWorldBookByName
+} from '../repositories/worldBookRepository.js';
 import { newId } from '../security.js';
 import { normalizeBoolean } from '../utils/boolean.js';
 import { normalizeFiniteNumber } from '../utils/number.js';
@@ -309,8 +315,7 @@ function findImportConflict(database, userId, kind, item = {}) {
     row = database.prepare('SELECT id, name FROM characters WHERE user_id = ? AND name = ? COLLATE NOCASE')
       .get(userId, name);
   } else if (name && kind === 'world_books') {
-    row = database.prepare('SELECT id, name FROM world_books WHERE user_id = ? AND name = ? COLLATE NOCASE')
-      .get(userId, name);
+    row = readOwnedWorldBookByName(database, userId, name);
   } else if (name && kind === 'presets') {
     row = database.prepare('SELECT id, name FROM presets WHERE user_id = ? AND name = ? COLLATE NOCASE')
       .get(userId, name);
@@ -468,16 +473,7 @@ function listWorldBookEnvelopeItems(database, userId) {
 }
 
 function listWorldBookLinkedCharacterEnvelopeReferences(database, userId, worldBookId) {
-  return database
-    .prepare(
-      `SELECT characters.id, characters.name, character_world_books.order_index,
-              character_world_books.created_at
-       FROM character_world_books
-       JOIN characters ON characters.id = character_world_books.character_id
-       WHERE character_world_books.world_book_id = ? AND characters.user_id = ?
-       ORDER BY character_world_books.order_index ASC, character_world_books.created_at ASC, character_world_books.rowid ASC`
-    )
-    .all(worldBookId, userId)
+  return listOwnedWorldBookCharacterLinks(database, userId, worldBookId)
     .map((row) => ({
       characterId: row.id,
       name: row.name || '',
@@ -487,16 +483,7 @@ function listWorldBookLinkedCharacterEnvelopeReferences(database, userId, worldB
 }
 
 function listCharacterWorldBookEnvelopeReferences(database, userId, characterId) {
-  return database
-    .prepare(
-      `SELECT world_books.id, world_books.name, character_world_books.order_index,
-              character_world_books.created_at
-       FROM character_world_books
-       JOIN world_books ON world_books.id = character_world_books.world_book_id
-       WHERE character_world_books.character_id = ? AND world_books.user_id = ?
-       ORDER BY character_world_books.order_index ASC, character_world_books.created_at ASC, character_world_books.rowid ASC`
-    )
-    .all(characterId, userId)
+  return listOwnedCharacterWorldBookLinks(database, userId, characterId)
     .map((row) => ({
       id: row.id,
       name: row.name || '',
@@ -584,12 +571,12 @@ function importWorldBookItem(database, userId, item = {}) {
   for (const linked of linkedCharacters) {
     const linkedId = resolveOwnedCharacterId(database, userId, linked?.characterId || linked?.id || linked);
     if (linkedId) {
-      linkWorldBookToCharacter(
+      linkCharacter(
         database,
+        userId,
         book.id,
         linkedId,
-        normalizeFiniteNumber(linked?.orderIndex ?? linked?.linkOrder, 0),
-        userId
+        normalizeFiniteNumber(linked?.orderIndex ?? linked?.linkOrder, 0)
       );
     }
   }
@@ -923,15 +910,7 @@ function listWorldBookDependencySummaries(database, userId, ids) {
   if (!source.length) {
     return [];
   }
-  const placeholders = source.map(() => '?').join(', ');
-  return database
-    .prepare(
-      `SELECT id, name, description, created_at, updated_at
-       FROM world_books
-       WHERE user_id = ? AND id IN (${placeholders})
-       ORDER BY created_at ASC, rowid ASC`
-    )
-    .all(userId, ...source)
+  return listOwnedWorldBookRowsByIds(database, userId, source)
     .map((row) => ({
       id: row.id,
       name: row.name,

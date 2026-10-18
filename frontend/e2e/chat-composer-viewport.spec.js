@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { registerUser, uniqueSuffix } from './helpers.js';
+import { apiRequest, registerUser, uniqueSuffix } from './helpers.js';
 
 test('mobile chat composer stays inside the viewport', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
@@ -80,4 +80,98 @@ test('mobile chat composer stays inside the viewport', async ({ page }) => {
   }
   expect(expandedMessageScrollerBox.y + expandedMessageScrollerBox.height).toBeLessThanOrEqual(expandedComposerBox.y + 1);
   expect(expandedSidebarBox.y + expandedSidebarBox.height).toBeLessThanOrEqual(901);
+});
+
+test('focused multiline composer settles when shrinking the whole chat viewport', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await registerUser(page);
+  const character = await apiRequest(page, '/api/characters', {
+    method: 'POST', body: { name: `Resize ${uniqueSuffix()}`, firstMessage: 'A quiet conversation.' }
+  });
+  const conversation = await apiRequest(page, '/api/conversations', {
+    method: 'POST', body: { characterId: character.id }
+  });
+  const errors = [];
+  page.on('pageerror', (error) => errors.push(error.message));
+  await page.goto(`/#/chat/${conversation.id}`);
+  const textarea = page.getByRole('textbox', { name: '聊天消息输入' });
+  const draft = Array.from({ length: 8 }, (_, index) => (
+    `${index + 1}. ${'A long draft keeps wrapping while the viewport shrinks. '.repeat(3)}`
+  )).join('\n');
+  await textarea.fill(draft);
+  await textarea.focus();
+
+  for (const viewport of [
+    { width: 760, height: 600 },
+    { width: 620, height: 500 },
+    { width: 390, height: 420 },
+    { width: 320, height: 300 },
+    { width: 844, height: 390 }
+  ]) {
+    await page.setViewportSize(viewport);
+    const frames = await page.evaluate(async () => {
+      const frames = [];
+      const rect = (selector) => {
+        const box = document.querySelector(selector).getBoundingClientRect();
+        return [box.x, box.y, box.width, box.height];
+      };
+      for (let index = 0; index < 36; index++) {
+        await new Promise((resolve) => requestAnimationFrame(resolve));
+        const textarea = document.querySelector('.deep-composer textarea');
+        const scroller = document.querySelector('.deep-message-scroll');
+        frames.push({
+          shell: rect('.deep-chat-shell'), composer: rect('.deep-composer-wrap'),
+          textarea: rect('.deep-composer textarea'), scroller: rect('.deep-message-scroll'),
+          textareaScrollTop: textarea.scrollTop, messageScrollTop: scroller.scrollTop,
+          pageScrollTop: window.scrollY, focused: document.activeElement === textarea
+        });
+      }
+      return frames.slice(-12);
+    });
+    const stable = frames.at(-1);
+    expect(new Set(frames.map((frame) => JSON.stringify(frame))).size, `stable frames at ${viewport.width}`).toBe(1);
+    expect(stable.focused).toBe(true);
+    expect(stable.pageScrollTop).toBe(0);
+    expect(stable.composer[0]).toBeGreaterThanOrEqual(0);
+    expect(stable.composer[0] + stable.composer[2]).toBeLessThanOrEqual(viewport.width + 1);
+    expect(stable.composer[1] + stable.composer[3]).toBeLessThanOrEqual(viewport.height + 1);
+    expect(stable.textarea[1]).toBeGreaterThanOrEqual(0);
+    expect(stable.scroller[3]).toBeGreaterThan(0);
+    await expect(textarea).toHaveValue(draft);
+  }
+
+  // Keyboard panning emits visualViewport scroll/resize repeatedly. With the
+  // content and width unchanged, those events should preserve the draft's
+  // internal scrolling and avoid collapsing the focused textarea to measure it.
+  await page.setViewportSize({ width: 390, height: 500 });
+  await page.evaluate(async () => {
+    for (let index = 0; index < 8; index++) await new Promise((resolve) => requestAnimationFrame(resolve));
+  });
+  const viewportEvents = await textarea.evaluate(async (element) => {
+    element.scrollTop = 120;
+    element.setSelectionRange(12, 12);
+    const scrollTop = element.scrollTop;
+    const height = element.offsetHeight;
+    const mutations = [];
+    const observer = new MutationObserver((records) => mutations.push(...records));
+    observer.observe(element, { attributes: true, attributeFilter: ['style'] });
+    for (let index = 0; index < 8; index++) {
+      window.visualViewport.dispatchEvent(new Event('scroll'));
+      window.visualViewport.dispatchEvent(new Event('resize'));
+      await new Promise((resolve) => requestAnimationFrame(resolve));
+    }
+    await new Promise((resolve) => requestAnimationFrame(resolve));
+    observer.disconnect();
+    return {
+      mutations: mutations.length, scrollTop, currentScrollTop: element.scrollTop,
+      height, currentHeight: element.offsetHeight, selectionStart: element.selectionStart
+    };
+  });
+  expect(viewportEvents.mutations).toBe(0);
+  expect(viewportEvents.currentScrollTop).toBe(viewportEvents.scrollTop);
+  expect(viewportEvents.currentHeight).toBe(viewportEvents.height);
+  expect(viewportEvents.selectionStart).toBe(12);
+  await expect(textarea).toBeFocused();
+  await expect(textarea).toHaveValue(draft);
+  expect(errors).toEqual([]);
 });

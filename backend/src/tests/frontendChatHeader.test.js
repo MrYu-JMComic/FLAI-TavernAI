@@ -19,36 +19,13 @@ test('ChatHeader locks conversation panel actions until the conversation is read
   );
   assert.match(
     chatConversationSource,
-    /async function openNpcPanel\(\)\s*{\s*const panelConversationId = conversation\.value\?\.id \|\| '';\s*if \(!isCurrentPanelConversation\(panelConversationId\)\) {\s*return;\s*}/
-  );
-  assert.match(
-    chatConversationSource,
-    /function isCurrentPanelConversation\(conversationId\) \{[\s\S]*&& conversationReady\.value[\s\S]*&& route\.params\.id === conversationId;/
-  );
-  assert.match(
-    chatConversationSource,
     /function openEconomyPanel\(\)\s*{\s*if \(!conversationReady\.value\) {\s*return;\s*}/
   );
   assert.match(chatHeaderTemplate, /<span>上下文检查器<\/span>/);
   assert.match(chatHeaderTemplate, /runMoreAction\('open-context', \$event\)/);
   assert.match(chatHeaderTemplate, /aria-label="角色状态"[\s\S]*:disabled="!conversationReady"/);
-  assert.equal((chatHeaderTemplate.match(/:disabled="!conversationReady"/g) || []).length, 8);
+  assert.equal((chatHeaderTemplate.match(/:disabled="!conversationReady"/g) || []).length, 6);
   assert.equal((chatHeaderTemplate.match(/:aria-busy="!conversationReady"/g) || []).length, 0);
-});
-
-test('ChatHeader keeps NPC management reachable from the compact mobile tools menu', () => {
-  assert.match(
-    chatHeaderTemplate,
-    /class="chat-header-overflow-tool"[\s\S]*runMoreAction\('open-npc', \$event\)[\s\S]*<span>NPC 管理<\/span>/
-  );
-  assert.match(
-    stylesSource,
-    /\.chat-header-more-menu \.chat-header-overflow-tool\s*\{\s*display:\s*none;\s*\}/
-  );
-  assert.match(
-    stylesSource,
-    /@media \(max-width: 900px\) \{[\s\S]*\.chat-header-more-menu \.chat-header-overflow-tool\s*\{\s*display:\s*flex;\s*\}/
-  );
 });
 
 test('Chat mobile conversation history uses a full-height side drawer', () => {

@@ -2,8 +2,13 @@ import { appConfig } from '../config.js';
 import { listStatusBarTemplates } from '../modules/statusBarTemplates.js';
 import { parseJson } from '../utils/json.js';
 import { listProviderCapabilities } from './providerCapabilities.js';
-import { buildUserCastSnapshot } from './cast/castSnapshot.js';
 import { getSelectedProviderProfileRow } from '../repositories/providerProfileRepository.js';
+import {
+  listOwnedWorldBookRowsAscending,
+  listWorldBookCharacterLinks,
+  listWorldBookEntryRows
+} from '../repositories/worldBookRepository.js';
+import { toWorldBook, toWorldBookEntry } from '../domain/worldBooks/normalization.js';
 
 const snapshotVersion = 2;
 
@@ -29,11 +34,6 @@ export function buildProjectSnapshot(database, userId) {
       statusBars: listStatusBars(database, userId),
       statusBarTemplates: listStatusBarTemplates(database, userId),
       conversations,
-      cast: buildUserCastSnapshot(
-        database,
-        userId,
-        conversations.map((conversation) => conversation.id)
-      ),
       conversationMemories: listConversationMemories(database, userId),
       economyAccounts: listEconomyAccounts(database, userId),
       saves: listSaveSummaries(database, userId)
@@ -123,74 +123,33 @@ function listCharacterTalents(database, userId) {
 }
 
 function listWorldBooks(database, userId) {
-  const books = database
-    .prepare(
-      `SELECT id, name, description, character_id, scan_depth,
-              lorebook_context_percent, created_at, updated_at
-       FROM world_books
-       WHERE user_id = ?
-       ORDER BY updated_at ASC, rowid ASC`
-    )
-    .all(userId);
   const result = [];
-  const entries = database.prepare(
-    `SELECT *
-     FROM world_book_entries
-     WHERE world_book_id = ?
-     ORDER BY order_index ASC, rowid ASC`
-  );
-  const links = database.prepare(
-    `SELECT character_id, order_index, created_at
-     FROM character_world_books
-     WHERE world_book_id = ?
-     ORDER BY order_index ASC, created_at ASC`
-  );
-  for (const book of books) {
+  for (const book of listOwnedWorldBookRowsAscending(database, userId)) {
+    const projected = toWorldBook(book);
     result.push({
-      id: book.id,
-      name: book.name,
-      description: book.description || '',
-      characterId: book.character_id || null,
-      scanDepth: Number(book.scan_depth || 1),
-      lorebookContextPercent: Number(book.lorebook_context_percent || 25),
-      linkedCharacters: links.all(book.id).map((row) => ({
+      id: projected.id,
+      name: projected.name,
+      description: projected.description,
+      characterId: projected.characterId,
+      scanDepth: projected.scanDepth,
+      lorebookContextPercent: projected.lorebookContextPercent,
+      linkedCharacters: listWorldBookCharacterLinks(database, book.id).map((row) => ({
         characterId: row.character_id,
         orderIndex: Number(row.order_index || 0),
         createdAt: row.created_at
       })),
-      entries: entries.all(book.id).map(toWorldBookEntry),
-      createdAt: book.created_at,
-      updatedAt: book.updated_at
+      entries: listWorldBookEntryRows(database, book.id).map(toSnapshotWorldBookEntry),
+      createdAt: projected.createdAt,
+      updatedAt: projected.updatedAt
     });
   }
   return result;
 }
 
-function toWorldBookEntry(row) {
-  return {
-    id: row.id,
-    name: row.name || '',
-    triggerKeys: row.trigger_keys || '',
-    content: row.content || '',
-    position: row.position || 'before_char',
-    enabled: Boolean(row.enabled),
-    orderIndex: Number(row.order_index || 0),
-    regexMode: Boolean(row.regex_mode),
-    alwaysActive: Boolean(row.always_active),
-    depth: Number(row.depth || 0),
-    selective: Boolean(row.selective),
-    selectiveLogic: Number(row.selective_logic || 0),
-    keysSecondary: row.keys_secondary || '',
-    probability: Number(row.probability || 100),
-    useProbability: Boolean(row.use_probability),
-    group: row.inclusion_group || '',
-    groupWeight: Number(row.group_weight || 0),
-    role: Number(row.role || 0),
-    sticky: row.sticky ?? null,
-    cooldown: row.cooldown ?? null,
-    delay: row.delay ?? null,
-    createdAt: row.created_at
-  };
+/** The shared entry projection minus `worldBookId`, which the parent already carries. */
+function toSnapshotWorldBookEntry(row) {
+  const { worldBookId, ...entry } = toWorldBookEntry(row);
+  return entry;
 }
 
 function listPresets(database, userId) {

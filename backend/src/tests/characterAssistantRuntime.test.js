@@ -1,6 +1,11 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
+import { DatabaseSync } from 'node:sqlite';
+import { initializeDatabase } from '../db/schema.js';
+import { createEntry, createWorldBook, getWorldBook } from '../services/worldBooks/worldBookService.js';
+import { insertUser } from './routeTestUtils.js';
+import { createCharacter } from '../modules/characters.js';
 
 const { completeCharacterDraft, streamCharacterDraft } = await import('../services/characterAssistant.js');
 const characterAssistantSource = readFileSync(new URL('../services/characterAssistant.js', import.meta.url), 'utf8');
@@ -376,7 +381,9 @@ test('character assistant has no fixed response deadline', async () => {
     });
 
     assert.equal(result.summary, '长响应已完成。');
-    assert.match(characterAssistantSource, /maxRounds: 24,\s*timeoutMs: 0,/);
+    // The read-only planning phase gets a shorter round budget than execution,
+    // but neither phase carries a wall-clock deadline.
+    assert.match(characterAssistantSource, /maxRounds: planPhase \? 6 : 24,\s*timeoutMs: 0,/);
     assert.doesNotMatch(characterRouteSource, /AI 角色助手请求超时|setTimeout\([^)]*controller\.abort/);
   } finally {
     globalThis.fetch = originalFetch;
@@ -583,9 +590,9 @@ test('fine-grained character tools preserve unrelated agent settings and apply e
     assert.equal(result.character.authorAdvancedSettings.accessorySkills.memoryAgent.enabled, true);
     assert.equal(result.character.authorAdvancedSettings.accessorySkills.sceneAgent.enabled, true);
     assert.match(result.character.authorAdvancedSettings.customCss, /#27ae60/);
-    assert.equal(result.character.worldBookDraft.name, '雾港航路');
-    assert.equal(result.character.worldBookDraft.entries[0].group, '港口');
-    assert.equal(result.character.worldBookDraft.entries[0].role, 0);
+    assert.equal(result.character.worldBookChanges[0].profile.name, '雾港航路');
+    assert.equal(result.character.worldBookChanges[0].entries[0].group, '港口');
+    assert.equal(result.character.worldBookChanges[0].entries[0].role, 0);
     assert.equal(result.character.modSuggestions.length, 1);
     assert.equal(round, 8);
     assert.equal(result.toolCalls[0].policy.domain, 'character-draft');
@@ -604,10 +611,7 @@ test('character plan phase withholds write tools and returns a plan without a ch
       requestBody = JSON.parse(request.body);
       return jsonResponse(toolMessage([
         toolCall('plan-1', 'submit_character_plan', {
-          steps: [
-            { section: 'persona', intent: '重写说话方式', detail: '保留口癖' },
-            { section: 'regexRules', intent: '越界步骤应被丢弃' }
-          ],
+          steps: [{ section: 'persona', intent: '重写说话方式', detail: '保留口癖' }],
           risks: ['会覆盖现有人设']
         })
       ]));
@@ -623,12 +627,52 @@ test('character plan phase withholds write tools and returns a plan without a ch
 
     const toolNames = requestBody.tools.map((tool) => tool.function.name);
     assert.deepEqual(toolNames.sort(), ['report_character_progress', 'submit_character_plan']);
+    // The step enum is narrowed to the enabled sections, so the model is never
+    // even offered a section the user excluded.
+    const planTool = requestBody.tools.find((tool) => tool.function.name === 'submit_character_plan');
+    assert.deepEqual(planTool.function.parameters.properties.steps.items.properties.section.enum, ['persona']);
     assert.equal(result.phase, 'plan');
     assert.equal(Object.hasOwn(result, 'character'), false);
     assert.deepEqual(result.plan.steps.map((step) => step.section), ['persona']);
     assert.deepEqual(result.plan.risks, ['会覆盖现有人设']);
     assert.ok(events.some(({ event, data }) => event === 'plan' && data.steps.length === 1));
     assert.equal(events.some(({ event }) => event === 'checkpoint'), false);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('character plan phase refuses a step outside the approved scope', async () => {
+  const originalFetch = globalThis.fetch;
+  const events = [];
+  try {
+    globalThis.fetch = async () => jsonResponse(toolMessage([
+      toolCall('plan-1', 'submit_character_plan', {
+        steps: [
+          { section: 'persona', intent: '重写说话方式' },
+          { section: 'regexRules', intent: '越界步骤' }
+        ]
+      })
+    ]));
+
+    // A step outside the enum fails tool-argument validation, so the whole
+    // submission is rejected rather than quietly narrowed. The run then has no
+    // plan to return and reports a format mismatch instead of widening scope.
+    await assert.rejects(
+      () => streamCharacterDraft(providerSettings, {
+        requirement: '改写人设',
+        current: { name: '澄灯', persona: '旧人设' },
+        options: { profile: false, background: false, worldview: false, persona: true, openingMessage: false, tags: false, regexRules: false, renderPlugins: false, worldBook: false, advancedSettings: false, modSuggestions: false },
+        planMode: true,
+        emit: (event, data) => events.push({ event, data })
+      }),
+      (error) => error.code === 'CHARACTER_ASSISTANT_FORMAT_MISMATCH'
+    );
+
+    const firstToolResult = events.find(({ event }) => event === 'tool')?.data?.result;
+    assert.equal(firstToolResult.ok, false);
+    assert.equal(firstToolResult.error, 'TOOL_ARGUMENTS_INVALID');
+    assert.equal(firstToolResult.issues[0].path, 'steps.1.section');
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -672,11 +716,158 @@ test('character execution follows the approved plan ledger and refuses to finish
     assert.ok(requests[0].tools.some((tool) => tool.function.name === 'update_character_story'));
 
     assert.equal(result.toolCalls[0].result.error, 'PLAN_STEPS_REMAIN');
-    assert.equal(result.toolCalls[0].result.workflow.plan.nextStep.section, 'persona');
-    assert.equal(result.toolCalls[1].result.workflow.plan.completed, 1);
+    // The per-tool `workflow` ledger is internal coaching for the model's next
+    // round and is deliberately stripped from the returned tool calls, so the
+    // ledger's public view is planProgress.
+    assert.equal(result.toolCalls[0].result.workflow, undefined);
+    assert.deepEqual(
+      result.planProgress.steps.map((step) => [step.section, step.status]),
+      [['persona', 'completed']]
+    );
     assert.equal(result.character.persona, '新人设');
     assert.equal(result.planProgress.completed, 1);
     assert.deepEqual(result.planProgress.remaining, []);
+    assert.equal(result.planProgress.nextStep, null);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('character world book workspace updates one selected book and creates another without replacing either draft', async (t) => {
+  const database = new DatabaseSync(':memory:');
+  initializeDatabase(database);
+  t.after(() => database.close());
+  const userId = 'character-workspace-user';
+  insertUser(database, userId);
+  const first = createWorldBook(database, userId, { name: '同名书' });
+  const second = createWorldBook(database, userId, { name: '同名书' });
+  const entry = createEntry(database, userId, second.id, { name: '港口', triggerKeys: '港口', content: '旧资料', sticky: 4 });
+  const originalFetch = globalThis.fetch;
+  try {
+  const requests = [];
+  let round = 0;
+  globalThis.fetch = async (_url, request) => {
+    requests.push(JSON.parse(request.body));
+    const calls = [
+      toolCall('read-bound-book', 'read_world_book', { targetRef: `existing:${second.id}`, entryIds: [entry.id] }),
+      toolCall('update-bound-book', 'upsert_world_book_entry', { targetRef: `existing:${second.id}`, entryId: entry.id, changes: { content: '新资料' } }),
+      toolCall('create-independent-book', 'create_character_world_book', { name: '独立航海手册', entries: [{ name: '航线', triggerKeys: '航线', content: '北方航路' }] }),
+      toolCall('finish-multiple-books', 'finish_character_draft', { summary: '已更新第二本书并起草新书', reviewedSections: ['worldBook'] })
+    ];
+    return jsonResponse(toolMessage([calls[round++]]));
+  };
+  const events = [];
+  const result = await streamCharacterDraft(providerSettings, {
+    database, userId, requirement: '更新第二本同名书并另外创建航海手册',
+    worldBookContext: { selectedBookIds: [first.id, second.id] },
+    emit: (event, data) => events.push({ event, data })
+  });
+  const context = JSON.parse(requests[0].messages.at(-1).content).worldBookContext;
+  assert.deepEqual(context.selectedBookIds, [first.id, second.id]);
+  assert.equal(context.targets.length, 2);
+  assert.equal(context.targets[1].entries[0].content, undefined);
+  assert.equal(result.character.worldBookChanges.length, 2);
+  const update = result.character.worldBookChanges.find((change) => change.bookId === second.id);
+  assert.deepEqual(update.upserts[0].patch, { content: '新资料' });
+  assert.equal(update.upserts[0].entryId, entry.id);
+  assert.ok(result.character.worldBookChanges.some((change) => change.bookId === null && change.profile.name === '独立航海手册'));
+  assert.equal(result.character.worldBookWorkspace.targets.length, 3);
+  assert.equal(getWorldBook(database, userId, second.id).entries[0].content, '旧资料');
+  assert.equal(getWorldBook(database, userId, second.id).entries[0].sticky, 4);
+  const checkpoint = events.filter((event) => event.event === 'checkpoint').at(-1).data;
+  assert.deepEqual(checkpoint.character.worldBookChanges, result.character.worldBookChanges);
+
+  globalThis.fetch = async (_url, request) => {
+    const payload = JSON.parse(JSON.parse(request.body).messages.at(-1).content);
+    assert.equal(payload.worldBookContext.targets.length, 3);
+    return jsonResponse(toolMessage([toolCall('continue-world-book', 'finish_character_draft', { summary: '保留上轮修改', reviewedSections: ['worldBook'] })]));
+  };
+  const continued = await completeCharacterDraft(providerSettings, {
+    database, userId, requirement: '先保留这些修改',
+    current: result.character,
+    worldBookContext: { selectedBookIds: [first.id, second.id], workspace: result.character.worldBookWorkspace },
+    history: [{ role: 'user', content: '更新第二本同名书' }, { role: 'assistant', content: '已准备修改' }]
+  });
+  assert.deepEqual(continued.character.worldBookChanges, result.character.worldBookChanges);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('disabled character world book scope does not load stale world book context or expose tools', async (t) => {
+  const originalFetch = globalThis.fetch;
+  try {
+  globalThis.fetch = async (_url, request) => {
+    const body = JSON.parse(request.body);
+    assert.ok(!body.tools.some((tool) => /world_book/.test(tool.function.name)));
+    assert.equal(JSON.parse(body.messages.at(-1).content).worldBookContext, undefined);
+    return jsonResponse(toolMessage([toolCall('finish-scope-off', 'finish_character_draft', { summary: '仅检查角色', reviewedSections: ['profile'] })]));
+  };
+  const result = await completeCharacterDraft(providerSettings, {
+    requirement: '仅检查角色', options: { worldBook: false },
+    worldBookContext: { selectedBookIds: ['inaccessible-book'], workspace: { targets: [{ bookId: 'stale-book' }] } },
+    database: { prepare() { throw new Error('world book scope must not read database'); } }
+  });
+  assert.equal(result.character.worldBookWorkspace, undefined);
+  assert.equal(result.character.worldBookChanges, undefined);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('character ID supplies all saved world book bindings only when no editor selection is supplied', async (t) => {
+  const database = new DatabaseSync(':memory:');
+  initializeDatabase(database);
+  t.after(() => database.close());
+  const userId = 'character-default-world-books';
+  insertUser(database, userId);
+  const character = createCharacter(database, userId, { name: '多书角色' });
+  const books = ['角色书 A', '角色书 B'].map((name) => createWorldBook(database, userId, { name, characterId: character.id }));
+  const originalFetch = globalThis.fetch;
+  try {
+  let selectedIds;
+  globalThis.fetch = async (_url, request) => {
+    selectedIds = JSON.parse(JSON.parse(request.body).messages.at(-1).content).worldBookContext.selectedBookIds;
+    return jsonResponse(toolMessage([toolCall('finish-default-bindings', 'finish_character_draft', { summary: '已检查关联世界书', reviewedSections: ['worldBook'] })]));
+  };
+  await completeCharacterDraft(providerSettings, { database, userId, characterId: character.id, requirement: '检查世界书' });
+  assert.deepEqual(new Set(selectedIds), new Set(books.map((book) => book.id)));
+  await completeCharacterDraft(providerSettings, { database, userId, characterId: character.id, requirement: '只创建新书', worldBookContext: { selectedBookIds: [] } });
+  assert.deepEqual(selectedIds, []);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('a character plan can finish a world book review without manufacturing edits', async (t) => {
+  const database = new DatabaseSync(':memory:');
+  initializeDatabase(database);
+  t.after(() => database.close());
+  const userId = 'character-read-only-plan';
+  insertUser(database, userId);
+  const book = createWorldBook(database, userId, { name: '待审查手册' });
+  createEntry(database, userId, book.id, { name: '航线', triggerKeys: '航线', content: '北方航路' });
+  const originalFetch = globalThis.fetch;
+  try {
+    let round = 0;
+    globalThis.fetch = async () => {
+      const calls = [
+        toolCall('inspect-only', 'read_world_book', { includeContent: true }),
+        toolCall('finish-inspection', 'finish_character_draft', { summary: '现有航线设定一致，无需修改', reviewedSections: ['worldBook'] })
+      ];
+      return jsonResponse(toolMessage([calls[round++]]));
+    };
+    const result = await completeCharacterDraft(providerSettings, {
+      database, userId,
+      requirement: '检查航线设定，有问题再修改',
+      plan: { steps: [{ section: 'worldBook', intent: '核对世界书航线设定' }] },
+      worldBookContext: { selectedBookIds: [book.id] }
+    });
+    assert.equal(result.summary, '现有航线设定一致，无需修改');
+    assert.equal(result.toolCalls.length, 2);
+    assert.equal(result.toolCalls.every((call) => call.result.ok), true);
+    assert.deepEqual(result.character.worldBookChanges, []);
+    assert.equal(getWorldBook(database, userId, book.id).entries[0].content, '北方航路');
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -694,7 +885,7 @@ test('character assistant without plan mode sends no plan tool or ledger', async
     };
     const result = await completeCharacterDraft(providerSettings, { requirement: '检查', current: { name: '澄灯' } });
     assert.equal(requestBody.tools.some((tool) => tool.function.name === 'submit_character_plan'), false);
-    assert.equal(Object.hasOwn(result.toolCalls[0].result.workflow, 'plan'), false);
+    assert.equal(Object.hasOwn(result.toolCalls[0].result, 'workflow'), false);
     assert.equal(result.planProgress, null);
     assert.equal(result.phase, undefined);
   } finally {

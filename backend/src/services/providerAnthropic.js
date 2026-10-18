@@ -22,13 +22,14 @@ import {
   providerStreamErrorMessage
 } from './providerStreamErrors.js';
 import { executeProviderTool } from './providerToolResults.js';
-import {
-  normalizeThinkingLevel,
-  resolveSupportedThinkingLevel,
-  resolveThinkingControl
-} from '../../../shared/providerThinking.js';
+import { applyAnthropicThinkingSwitch } from './providerAnthropicThinking.js';
 
-const REQUIRED_MAX_TOKENS_FALLBACK = 128_000;
+// Anthropic requires max_tokens on every request, so both branches below must
+// produce a number. The two cases want opposite defaults: unlimited output asks
+// for as much as the API will give, while a missing or invalid value falls back
+// to a conservative cap rather than silently requesting a huge completion.
+const UNLIMITED_OUTPUT_MAX_TOKENS = 128_000;
+const INVALID_MAX_TOKENS_FALLBACK = 4_096;
 
 export async function generateAnthropicMessage(settings, messages, options = {}) {
   const requestBody = buildAnthropicBody(settings, messages, false, options);
@@ -146,12 +147,15 @@ export function buildAnthropicBody(settings, messages, stream, options = {}) {
 function buildAnthropicRequestBody(settings, system, messages, stream, options = {}) {
   options = options ?? {};
   const extraBody = sanitizeAnthropicExtraBody(settings.extraBody, options);
-  const maxTokens = firstPositiveProviderNumber(
-    options.unlimitedOutput
-      ? [extraBody.max_tokens, extraBody.maxTokens]
-      : [options.maxTokens, extraBody.max_tokens, extraBody.maxTokens],
-    REQUIRED_MAX_TOKENS_FALLBACK
-  );
+  const maxTokens = options.unlimitedOutput
+    ? firstPositiveProviderNumber(
+      [extraBody.max_tokens, extraBody.maxTokens],
+      UNLIMITED_OUTPUT_MAX_TOKENS
+    )
+    : firstPositiveProviderNumber(
+      [options.maxTokens, extraBody.max_tokens, extraBody.maxTokens],
+      INVALID_MAX_TOKENS_FALLBACK
+    );
   const body = {
     ...extraBody,
     model: normalizeProviderModel(settings.providerType, settings.model),
@@ -332,132 +336,6 @@ export async function streamAnthropicToolCompletion(settings, messages, tools, e
   await streamEmit.wait();
 
   return result;
-}
-
-function applyAnthropicThinkingSwitch(body, settings = {}, options = {}) {
-  if (!settings.supportsReasoning) {
-    return;
-  }
-  if (hasExplicitThinkingLevel(options)) {
-    applyAnthropicThinkingLevel(body, options);
-    return;
-  }
-  if (options.thinkingEnabled === false) {
-    delete body.thinking;
-    return;
-  }
-
-  if (body.thinking && typeof body.thinking === 'object') {
-    return;
-  }
-
-  if (usesAnthropicAdaptiveThinking(body.model)) {
-    body.thinking = {
-      type: 'adaptive',
-      display: 'summarized'
-    };
-    body.output_config = {
-      ...(body.output_config || {}),
-      effort: body.output_config?.effort || 'high'
-    };
-    return;
-  }
-
-  const budgetTokens = Math.max(1024, Math.min(8192, Number(body.max_tokens) - 1024 || 2048));
-  body.thinking = {
-    type: 'enabled',
-    budget_tokens: budgetTokens,
-    display: 'summarized'
-  };
-  if (Number(body.max_tokens) <= budgetTokens) {
-    body.max_tokens = budgetTokens + 1024;
-  }
-}
-
-function applyAnthropicThinkingLevel(body, options = {}) {
-  const control = resolveThinkingControl('anthropic', body.model, true);
-  const fallback = options.thinkingEnabled === false ? 'off' : control.defaultLevel;
-  const level = resolveSupportedThinkingLevel(
-    normalizeThinkingLevel(options.thinkingLevel, fallback),
-    control,
-    fallback
-  );
-  if (level === 'off') {
-    delete body.thinking;
-    if (body.output_config && typeof body.output_config === 'object') {
-      const outputConfig = { ...body.output_config };
-      delete outputConfig.effort;
-      if (Object.keys(outputConfig).length) {
-        body.output_config = outputConfig;
-      } else {
-        delete body.output_config;
-      }
-    }
-    return;
-  }
-
-  if (control.strategy === 'anthropic-adaptive') {
-    const existingThinking = body.thinking && typeof body.thinking === 'object' ? body.thinking : {};
-    body.thinking = {
-      ...existingThinking,
-      type: 'adaptive',
-      display: existingThinking.display || 'summarized'
-    };
-    delete body.thinking.budget_tokens;
-    body.output_config = {
-      ...(body.output_config && typeof body.output_config === 'object' ? body.output_config : {}),
-      effort: mapAnthropicAdaptiveEffort(level)
-    };
-    return;
-  }
-
-  const budgetTokens = resolveAnthropicThinkingBudget(level);
-  const existingThinking = body.thinking && typeof body.thinking === 'object' ? body.thinking : {};
-  body.thinking = {
-    ...existingThinking,
-    type: 'enabled',
-    budget_tokens: budgetTokens,
-    display: existingThinking.display || 'summarized'
-  };
-  if (Number(body.max_tokens) <= budgetTokens) {
-    body.max_tokens = budgetTokens + 1024;
-  }
-}
-
-function hasExplicitThinkingLevel(options = {}) {
-  return options.thinkingLevel !== undefined && options.thinkingLevel !== null && String(options.thinkingLevel).trim() !== '';
-}
-
-function mapAnthropicAdaptiveEffort(level) {
-  if (level === 'max' || level === 'xhigh') return 'max';
-  if (level === 'minimal') return 'low';
-  return level;
-}
-
-function resolveAnthropicThinkingBudget(level) {
-  switch (level) {
-    case 'minimal':
-      return 1024;
-    case 'low':
-      return 2048;
-    case 'medium':
-      return 4096;
-    case 'max':
-    case 'xhigh':
-      return 16384;
-    case 'high':
-    default:
-      return 8192;
-  }
-}
-
-function usesAnthropicAdaptiveThinking(model) {
-  const value = String(model || '').toLowerCase();
-  return value.includes('claude-opus-4-7') ||
-    value.includes('claude-opus-4-8') ||
-    value.includes('claude-sonnet-4-6') ||
-    value.includes('claude-opus-4-6') ||
-    value.includes('claude-mythos');
 }
 
 function convertMessagesForAnthropic(messages = []) {

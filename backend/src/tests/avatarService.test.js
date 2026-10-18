@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
-import { createAppDatabase } from '../db.js';
+import { createAppDatabase } from '../db/runtime.js';
 import { avatarShortUrl, saveAvatarInput } from '../services/avatars.js';
 
 const avatarServiceSource = readFileSync(new URL('../services/avatars.js', import.meta.url), 'utf8');

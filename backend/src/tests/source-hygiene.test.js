@@ -342,8 +342,28 @@ function countVueTemplateComponentUsage(sourceFile, usageText, identifier) {
   }, 0);
 }
 
+// Vue single-file components reference imported constants from template binding
+// expressions (`:prop="CONST"`, `v-if="CONST"`, `@click="CONST"`, `{{ CONST }}`).
+// Those sit inside quoted attributes, which string masking strips, so they are
+// counted from the raw text instead of the masked text.
+function countVueTemplateBindingUsage(sourceFile, identifier) {
+  if (!sourceFile.fileLabel.endsWith('.vue')) {
+    return 0;
+  }
+
+  const expressions = [
+    ...sourceFile.text.matchAll(/(?::|v-|@)[\w.:-]*\s*=\s*"([^"]*)"/g),
+    ...sourceFile.text.matchAll(/(?::|v-|@)[\w.:-]*\s*=\s*'([^']*)'/g),
+    ...sourceFile.text.matchAll(/\{\{([\s\S]*?)\}\}/g)
+  ];
+
+  return expressions.reduce((count, match) => count + countIdentifier(match[1], identifier), 0);
+}
+
 function countImportUsage(sourceFile, usageText, identifier) {
-  return countIdentifier(usageText, identifier) + countVueTemplateComponentUsage(sourceFile, usageText, identifier);
+  return countIdentifier(usageText, identifier)
+    + countVueTemplateComponentUsage(sourceFile, usageText, identifier)
+    + countVueTemplateBindingUsage(sourceFile, identifier);
 }
 
 function lineNumberAt(text, index) {
@@ -915,10 +935,15 @@ test('source hygiene ignores comments and strings when finding unused imports', 
     '<script setup>',
     "import DefaultWidget from './DefaultWidget.vue';",
     "import { FancyWidget } from './FancyWidget.vue';",
+    "import { BOUND_LABELS, INTERPOLATED_TITLE } from './labels.js';",
+    "import { UNUSED_LABELS } from './unused-labels.js';",
     '</script>',
     '<template>',
     '  <default-widget />',
-    '  <fancy-widget />',
+    '  <fancy-widget :labels="BOUND_LABELS" />',
+    '  <template #footer>',
+    '    <span>{{ INTERPOLATED_TITLE }}</span>',
+    '  </template>',
     '</template>'
   ].join('\n');
   const sourceFiles = [
@@ -931,7 +956,8 @@ test('source hygiene ignores comments and strings when finding unused imports', 
     'sample.js imports unused default binding unusedDefault',
     'sample.js imports unused named binding unused',
     'sample.js imports unused named binding TypeOnly',
-    'sample.js imports unused namespace binding unusedNamespace'
+    'sample.js imports unused namespace binding unusedNamespace',
+    'Component.vue imports unused named binding UNUSED_LABELS'
   ]);
 });
 

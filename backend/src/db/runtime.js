@@ -2,7 +2,6 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
-import { resetMessageCounter } from '../modules/worldBooks.js';
 import { initializeDatabase, resetColumnCache } from './schema.js';
 
 const sourceDir = path.dirname(fileURLToPath(import.meta.url));
@@ -29,7 +28,6 @@ export function ensureStorageDirs() {
 export function createAppDatabase(filename = path.join(dataDir, 'flai.sqlite'), options = {}) {
   ensureStorageDirs();
   resetColumnCache();
-  resetMessageCounter();
   const existedBeforeOpen = filename !== ':memory:' && fs.existsSync(filename);
   const database = new DatabaseSync(filename);
   try {

@@ -1,4 +1,5 @@
 import { normalizeProviderRequestExtraBody } from './providerExtraBody.js';
+import { applyAnthropicThinkingSwitch } from './providerAnthropicThinking.js';
 import { normalizeProviderModel } from './providerModels.js';
 import { assignFiniteProviderNumber } from './providerNumbers.js';
 import { optimizeTools } from './toolSchemaOptimizer.js';
@@ -100,10 +101,9 @@ function applyNativeChatReasoningSwitch(body, settings = {}, options = {}) {
     applyDeepSeekThinkingSwitch(body, options);
   }
 
-  // Custom/OpenAI-compatible gateways: honour the thinking toggle via the
-  // standard reasoning_effort field so the switch is not a no-op. Only applies
-  // when the user has explicitly opted in with supportsReasoning, and never
-  // overrides an effort already provided through extraBody.
+  // OpenAI-compatible gateways still need the target model's thinking fields.
+  // Explicit intensity takes precedence over extraBody; legacy toggles retain
+  // gateway overrides unless the model requires adaptive thinking.
   if (settings.providerType === 'custom') {
     applyCustomThinkingControl(body, options, settings);
   }
@@ -113,6 +113,16 @@ function applyCustomThinkingControl(body, options = {}, settings = {}) {
   const inferredProviderType = inferProviderThinkingType(body.model);
   if (inferredProviderType === 'gemini') {
     applyGeminiReasoningEffort(body, options);
+    return;
+  }
+  if (inferredProviderType === 'anthropic' && (hasExplicitThinkingLevel(options) ||
+    resolveThinkingControl('anthropic', body.model, true).strategy === 'anthropic-adaptive')) {
+    const anthropicOptions = !hasExplicitThinkingLevel(options) && options.thinkingEnabled !== false &&
+      body.reasoning_effort !== undefined && !body.output_config?.effort
+      ? { ...options, thinkingLevel: body.reasoning_effort }
+      : options;
+    applyAnthropicThinkingSwitch(body, settings, anthropicOptions);
+    delete body.reasoning_effort;
     return;
   }
   if (!hasExplicitThinkingLevel(options)) {

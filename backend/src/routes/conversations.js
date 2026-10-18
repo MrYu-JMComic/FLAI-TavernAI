@@ -11,7 +11,6 @@ import {
   upsertStatusBar
 } from '../modules/statusBars.js';
 import { renderPromptVariables } from '../services/promptVariables.js';
-import { ensureConversationProtagonist } from '../services/cast/commands/memberCommands.js';
 import { withSavepoint } from '../modules/savepoint.js';
 import {
   createConversationMessage,
@@ -26,8 +25,6 @@ import { createConversationGenerationRouter } from './conversationGeneration.js'
 import { createConversationGameplayRouter } from './conversationGameplay.js';
 import { createConversationMessagesRouter } from './conversationMessages.js';
 import { createConversationSceneRouter } from './conversationScenes.js';
-import { createConversationCastRouter } from './conversationCast.js';
-import { createConversationMultiRoleRouter } from './conversationMultiRole.js';
 import { createConversationSettingsRouter } from './conversationSettings.js';
 import { createConversationSavesRouter } from './conversationSaves.js';
 import {
@@ -94,7 +91,6 @@ export function createConversationsRouter(ctx) {
          VALUES (?, ?, ?, ?, ?, ?)`
       ).run(conversationId, request.auth.user.id, character.id, `${character.name} 的故事`, timestamp, timestamp);
 
-      ensureConversationProtagonist(db, request.auth.user.id, conversationId);
       const statusBarBlueprint = normalizeAdvancedSettings(character.authorAdvancedSettings || {}).statusBarBlueprint;
       if (hasStatusBarBlueprint(statusBarBlueprint)) {
         upsertStatusBar(db, request.auth.user.id, conversationId, {
@@ -150,8 +146,6 @@ export function createConversationsRouter(ctx) {
   router.use('/:id/gameplay', createConversationGameplayRouter(ctx));
   router.use('/:id/saves', createConversationSavesRouter(ctx));
   router.use('/:id', createConversationSceneRouter(ctx));
-  router.use('/:id', createConversationCastRouter(ctx));
-  router.use('/:id', createConversationMultiRoleRouter(ctx));
 
   // ── Internal helpers ──
 

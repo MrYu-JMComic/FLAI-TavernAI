@@ -38,9 +38,9 @@ test('world events are isolated, normalized and support incremental cursors', ()
     payload: { location: '旧酒馆' }
   });
   const second = recordWorldEvent(database, userId, conversationId, {
-    eventType: 'cast.relationship.changed',
+    eventType: 'quest.completed',
     source: 'agent',
-    title: '莉娅更加信任你',
+    title: '任务已完成',
     severity: 'success'
   });
 
@@ -61,8 +61,8 @@ test('world events are isolated, normalized and support incremental cursors', ()
     'SELECT domain, operation, subject_id FROM automation_audit_events WHERE user_id = ?'
   ).all(userId).map((row) => ({ ...row }));
   assert.deepEqual(audits, [{
-    domain: 'cast',
-    operation: 'cast.relationship.changed',
+    domain: 'task',
+    operation: 'quest.completed',
     subject_id: conversationId
   }]);
 

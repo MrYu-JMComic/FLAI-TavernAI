@@ -10,9 +10,9 @@ import {
   upsertStatusBar
 } from '../modules/statusBars.js';
 import { nowIso } from '../security.js';
+import { ownedWorldBookExists } from '../repositories/worldBookRepository.js';
 import { getAccessorySkillsPayload } from '../services/accessoryAgents.js';
 import { describeMemoryAgentTools } from '../services/conversationMemoryAgent.js';
-import { describeCastAgentOperations } from '../services/cast/castAgentSettings.js';
 import { getConversationForUser, parseJson } from './helpers.js';
 import { withSavepoint } from '../modules/savepoint.js';
 import {
@@ -69,8 +69,7 @@ export function createConversationSettingsRouter(ctx) {
       ? request.body.chatLorebookId ? String(request.body.chatLorebookId).trim() : null
       : undefined;
     if (requestedLorebookId) {
-      const book = db.prepare('SELECT id FROM world_books WHERE id = ? AND user_id = ?').get(requestedLorebookId, request.auth.user.id);
-      if (!book) {
+      if (!ownedWorldBookExists(db, request.auth.user.id, requestedLorebookId)) {
         response.status(400).json({ error: '指定的世界书不存在' });
         return;
       }
@@ -105,7 +104,6 @@ export function createConversationSettingsRouter(ctx) {
     response.json({
       ...getAccessorySkillsPayload(conversation, getStatusBar(db, request.auth.user.id, request.params.id)),
       memoryAgentTools: describeMemoryAgentTools(),
-      castAgentOperations: describeCastAgentOperations()
     });
   });
 
@@ -115,7 +113,7 @@ export function createConversationSettingsRouter(ctx) {
       response.status(404).json({ error: '对话不存在' });
       return;
     }
-    response.json({ ...payload, memoryAgentTools: describeMemoryAgentTools(), castAgentOperations: describeCastAgentOperations() });
+    response.json({ ...payload, memoryAgentTools: describeMemoryAgentTools() });
   });
 
   router.get('/status-bar', requireAuth, (request, response) => {

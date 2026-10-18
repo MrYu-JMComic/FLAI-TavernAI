@@ -8,10 +8,9 @@ const { createCharacter } = await import('../modules/characters.js');
 const {
   createEntry,
   createWorldBook,
-  linkWorldBookToCharacter,
-  matchWorldBookEntries,
-  resetMessageCounter
-} = await import('../modules/worldBooks.js');
+  linkCharacter
+} = await import('../services/worldBooks/worldBookService.js');
+const { matchWorldBookEntries } = await import('../services/worldBooks/worldBookRuntime.js');
 const { createSwipesRouter } = await import('../routes/swipes.js');
 const { insertUser, withServer } = await import('./routeTestUtils.js');
 
@@ -23,75 +22,85 @@ const providerAnthropicSource = readFileSync(new URL('../services/providerAnthro
 const providerOpenAiResponsesSource = readFileSync(new URL('../services/providerOpenAiResponses.js', import.meta.url), 'utf8');
 const providerSseSource = readFileSync(new URL('../services/providerSse.js', import.meta.url), 'utf8');
 const accessoryAgentsSource = readFileSync(new URL('../services/accessoryAgents.js', import.meta.url), 'utf8');
-const worldBooksSource = readFileSync(new URL('../modules/worldBooks.js', import.meta.url), 'utf8');
+const worldBooksSource = readFileSync(new URL('../services/worldBooks/worldBookRuntime.js', import.meta.url), 'utf8');
+const worldBookRepositorySource = readFileSync(new URL('../repositories/worldBookRepository.js', import.meta.url), 'utf8');
 const promptPipelineSource = readFileSync(new URL('../services/promptPipeline.js', import.meta.url), 'utf8');
 const contextPreviewSource = readFileSync(new URL('../services/contextPreview.js', import.meta.url), 'utf8');
 
 // ── World book dry-run matching ──
 
 function createStickyWorldBookFixture(databaseLabel) {
-  resetMessageCounter();
   const database = createAppDatabase(':memory:');
-  insertUser(database, `${databaseLabel}-user`);
-  const character = createCharacter(database, `${databaseLabel}-user`, { name: `${databaseLabel}角色` });
-  const book = createWorldBook(database, `${databaseLabel}-user`, { name: `${databaseLabel}书` });
-  linkWorldBookToCharacter(database, book.id, character.id);
-  createEntry(database, `${databaseLabel}-user`, book.id, {
+  const userId = `${databaseLabel}-user`;
+  insertUser(database, userId);
+  const character = createCharacter(database, userId, { name: `${databaseLabel}角色` });
+  const book = createWorldBook(database, userId, { name: `${databaseLabel}书` });
+  linkCharacter(database, userId, book.id, character.id);
+  createEntry(database, userId, book.id, {
     name: '粘性条目',
     triggerKeys: '触发',
     content: '粘性内容',
     enabled: true,
     sticky: 2
   });
-  return { database, character };
+  // World book trigger state is conversation-scoped, so matching needs a conversation.
+  const conversationId = `${databaseLabel}-conversation`;
+  const timestamp = new Date().toISOString();
+  database.prepare(
+    'INSERT INTO conversations (id, user_id, character_id, title, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)'
+  ).run(conversationId, userId, character.id, `${databaseLabel}对话`, timestamp, timestamp);
+  const match = (texts, options = {}) => matchWorldBookEntries(database, character.id, texts, { conversationId, ...options });
+  const entryState = () => database
+    .prepare('SELECT * FROM conversation_world_book_state WHERE conversation_id = ?')
+    .get(conversationId);
+  const stateCount = () => database
+    .prepare('SELECT COUNT(*) AS count FROM conversation_world_book_state WHERE conversation_id = ?')
+    .get(conversationId).count;
+  return { database, character, conversationId, match, entryState, stateCount };
 }
 
 test('world book dry-run matching leaves entry state untouched', () => {
-  const { database, character } = createStickyWorldBookFixture('dry-run');
+  const { match, stateCount } = createStickyWorldBookFixture('dry-run');
 
-  const dryMatches = matchWorldBookEntries(database, character.id, '触发关键词', { persistState: false });
+  const dryMatches = match('触发关键词', { persistState: false });
   assert.equal(dryMatches.length, 1);
   assert.equal(dryMatches[0].content, '粘性内容');
 
   // Dry-run must not create or mutate persisted state rows.
-  const stateCount = database.prepare('SELECT COUNT(*) AS count FROM world_book_entry_state').get();
-  assert.equal(stateCount.count, 0);
+  assert.equal(stateCount(), 0);
 
   // Repeat dry-runs are idempotent.
-  const dryAgain = matchWorldBookEntries(database, character.id, '触发关键词', { persistState: false });
-  assert.equal(dryAgain.length, 1);
-  assert.equal(database.prepare('SELECT COUNT(*) AS count FROM world_book_entry_state').get().count, 0);
+  assert.equal(match('触发关键词', { persistState: false }).length, 1);
+  assert.equal(stateCount(), 0);
 });
 
 test('world book dry-run does not consume sticky windows or advance the counter', () => {
-  const { database, character } = createStickyWorldBookFixture('sticky-preview');
+  const { match, entryState } = createStickyWorldBookFixture('sticky-preview');
 
   // Real message 1: activates the entry with sticky=2.
-  const m1 = matchWorldBookEntries(database, character.id, '触发关键词', { messageCount: 1 });
-  assert.equal(m1.length, 1);
+  assert.equal(match('触发关键词', { messageCount: 1 }).length, 1);
 
   // Previews between messages must not decrement sticky_remaining.
   for (let index = 0; index < 3; index += 1) {
-    const preview = matchWorldBookEntries(database, character.id, '无关文本', { persistState: false });
-    assert.equal(preview.length, 1, 'sticky entry stays visible in preview');
+    assert.equal(match('无关文本', { persistState: false }).length, 1, 'sticky entry stays visible in preview');
   }
-  const stateAfterPreviews = database
-    .prepare('SELECT sticky_remaining FROM world_book_entry_state')
-    .get();
-  assert.equal(stateAfterPreviews.sticky_remaining, 1);
+  assert.equal(entryState().sticky_remaining, 1);
 
   // Message 2 consumes the remaining sticky window; later messages stay inactive.
-  assert.equal(matchWorldBookEntries(database, character.id, '无关文本', { messageCount: 2 }).length, 1);
-  assert.equal(matchWorldBookEntries(database, character.id, '无关文本', { messageCount: 3 }).length, 0);
-  assert.equal(matchWorldBookEntries(database, character.id, '无关文本', { messageCount: 4 }).length, 0);
+  assert.equal(match('无关文本', { messageCount: 2 }).length, 1);
+  assert.equal(match('无关文本', { messageCount: 3 }).length, 0);
+  assert.equal(match('无关文本', { messageCount: 4 }).length, 0);
 });
 
 test('prompt pipeline persists world book state while context preview stays dry', () => {
   assert.match(promptPipelineSource, /persistState: source\.persistWorldBookState !== false/);
   assert.match(promptPipelineSource, /contextSize: Math\.ceil\(contextBudgetCharacters \/ TOKEN_CHAR_DIVISOR\)/);
   assert.match(contextPreviewSource, /persistWorldBookState: false/);
+  // One savepoint per match, not one per entry: the runtime batches the whole
+  // state write and the repository owns the per-entry statements.
   assert.match(worldBooksSource, /withSavepoint\(database, 'sp_world_book_entry_state', \(\) => \{/);
-  assert.doesNotMatch(worldBooksSource, /for \(const entry of entries\) \{[^]{0,400}INSERT OR IGNORE INTO world_book_entry_state/);
+  assert.doesNotMatch(worldBooksSource, /INSERT OR IGNORE INTO conversation_world_book_state/);
+  assert.match(worldBookRepositorySource, /export function writeConversationEntryStates/);
 });
 
 // ── Streaming data-loss fixes ──

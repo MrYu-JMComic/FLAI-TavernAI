@@ -29,21 +29,21 @@ const AGENT_TIMEOUT_MS = 90_000;
 // loop needs them to terminate.
 export const MEMORY_AGENT_TOOLS = Object.freeze([
   { name: 'search_memories', label: '检索已有记忆', effect: 'read', enabledByDefault: true, limit: 6,
-    description: '按关键词、类型查找当前会话已有的长期记忆，用于避免重复和定位要修正的记忆。' },
+    description: '按可选关键词、类型查找当前会话记忆；默认排除归档，limit 为 1～20（默认 8）。返回完整内容、当前 revision 和匹配总数，用于去重和定位。' },
   { name: 'search_history', label: '检索历史消息', effect: 'read', enabledByDefault: true, limit: 4,
-    description: '在本会话更早的消息里查找与本轮相关的原文片段，用于确认事件是否早已发生。' },
+    description: '用非空 query 检索本会话除本轮外的已保存消息，返回最多 400 字的片段；limit 为 1～10（默认 5）。仅供核对已有事件，结果不能替代 observation 作为本轮写入证据。' },
   { name: 'record_memory', label: '记录新记忆', effect: 'write', enabledByDefault: true, limit: 12,
-    description: '记录本轮明确发生或明确表达的新事实、事件、关系、地点、偏好、计划或假设。' },
+    description: '记录本轮的新事实、事件、关系、地点、稳定偏好、计划或假设；content 为非空文本，最多 600 字。sourceMessageId 必须来自 observation；quote 可省略，原文引用置信度上限 1，概述 0.6，无引文 0.5。计划和假设保留对应类型，重复内容应跳过。' },
   { name: 'update_memory', label: '修正已有记忆', effect: 'write', enabledByDefault: true, limit: 8,
-    description: '当本轮证据表明某条已有记忆的内容需要更新或补充时修改它（置顶记忆除外）。' },
+    description: '用 memoryId 和当前 revision 更新未置顶、未归档记忆；省略字段保留原值。改正文须提供 observation 的 sourceMessageId；引文和置信度规则同 record_memory。仅修正标签、对象或置信度可沿用已有证据；无实际变化返回原记录。' },
   { name: 'merge_memories', label: '合并重复记忆', effect: 'write', enabledByDefault: true, limit: 4,
-    description: '把描述同一件事的多条记忆合并为一条，来源记忆会被归档并可撤销。' },
+    description: '把同一事实的记忆合并到目标，提供目标及 1～8 条唯一来源的当前 revision；来源不能包含目标。目标和来源都须未置顶、未归档。content 省略时保留目标正文；提供时保留已有事实。来源归档并可撤销。' },
   { name: 'invalidate_memory', label: '标记记忆失效', effect: 'write', enabledByDefault: false, limit: 6,
-    description: '当本轮明确否定了某条旧记忆时把它标记为失效（仍保留在历史中）。' },
+    description: '用当前 revision 把本轮明确否定的未置顶、未归档旧记忆标记失效，保留历史。提供非空 reason 和 observation 中的 sourceMessageId，quote 可省略；不确定时保留。' },
   { name: 'pin_memory', label: '置顶或取消置顶', effect: 'write', enabledByDefault: false, limit: 4,
-    description: '把长期有效的核心设定置顶，使其总是进入上下文。' },
+    description: '仅显式启用时，用当前 revision 置顶或取消置顶未归档记忆；pinned 省略为 true。置顶优先进入上下文，仍受总预算限制；不能借此改正文或恢复归档记忆。' },
   { name: 'finish_memory_review', label: '结束本轮整理', effect: 'read', enabledByDefault: true, required: true, limit: 1,
-    description: '本轮没有更多需要处理的记忆时调用，给出一句话总结。' }
+    description: '处理完毕后必须调用以结束本轮；summary 可省略，最多 300 字。' }
 ]);
 
 export function createDefaultMemoryAgentTools() {
@@ -95,21 +95,25 @@ export async function runConversationMemoryAgent(options = {}) {
   const combinedSignal = signal ? AbortSignal.any([signal, controller.signal]) : controller.signal;
   const timer = setTimeout(() => controller.abort(Object.assign(new Error('memory agent timed out'), { code: 'AGENT_TIMEOUT', retryable: true })), AGENT_TIMEOUT_MS);
   try {
-    const completion = await retryProviderCall(() => runTools(
-      resolved.settings,
-      buildMemoryAgentMessages(session),
-      session.toolDefinitions,
-      session.execute,
-      {
-        maxRounds: MAX_ROUNDS,
-        thinkingEnabled: false,
-        temperature: 0,
-        signal: combinedSignal,
-        database,
-        userId,
-        onNoToolCall: memoryNoToolNudge
-      }
-    ), { signal: combinedSignal, retryDelaysMs: options.retryDelaysMs });
+    const completion = await retryProviderCall(() => {
+      session.refreshSnapshot();
+      return runTools(
+        resolved.settings,
+        buildMemoryAgentMessages(session),
+        session.toolDefinitions,
+        session.execute,
+        {
+          maxRounds: MAX_ROUNDS,
+          thinkingEnabled: false,
+          temperature: 0,
+          signal: combinedSignal,
+          database,
+          userId,
+          onNoToolCall: memoryNoToolNudge
+        }
+      );
+    }, { signal: combinedSignal, retryDelaysMs: options.retryDelaysMs });
+    if (!session.finished) throw Object.assign(new Error('记忆代理未调用 finish_memory_review，整理未完成'), { code: 'MEMORY_AGENT_INCOMPLETE' });
     return {
       mode: 'agent',
       providerSource: resolved.source,
@@ -137,6 +141,12 @@ export async function runConversationMemoryAgent(options = {}) {
       code: String(error?.code || ''),
       providerSource: resolved.source,
       memories: session.created.length ? session.created : rules(),
+      updated: session.updated,
+      merged: session.merged,
+      invalidated: session.invalidated,
+      pinned: session.pinned,
+      rejected: session.rejected,
+      finished: session.finished,
       toolCalls: session.calls
     };
   } finally {
@@ -177,6 +187,9 @@ function createMemoryAgentSession({ database, userId, conversationId, userMessag
     finished: false,
     summary: ''
   };
+  session.refreshSnapshot = () => {
+    session.existingMemories = buildExistingMemorySummary(database, userId, conversationId, existing, observation);
+  };
 
   const budget = (name) => {
     const tool = MEMORY_AGENT_TOOLS.find((entry) => entry.name === name);
@@ -205,17 +218,17 @@ function createMemoryAgentSession({ database, userId, conversationId, userMessag
         if (memoryType && memory.memoryType !== memoryType) continue;
         const text = `${memory.subject} ${memory.content}`.toLowerCase();
         if (query && !hits.has(memory.id) && !text.includes(query.toLowerCase())) continue;
-        items.push(summarizeMemory(memory));
-        if (items.length >= limit) break;
+        items.push(summarizeMemory(memory, true));
       }
-      return { ok: true, memories: items, total: items.length };
+      return { ok: true, memories: items.slice(0, limit), total: items.length };
     },
     search_history(args) {
       const query = String(args?.query || '').trim().slice(0, 200);
       if (!query) return { ok: false, error: 'query 不能为空' };
       const limit = clampInteger(args?.limit, 1, 10, 5);
-      const results = searchUserContent(database, userId, query, { conversationId, types: ['message'], limit }).results
+      const results = searchUserContent(database, userId, query, { conversationId, types: ['message'], limit: limit + observationById.size }).results
         .filter((result) => !observationById.has(result.id))
+        .slice(0, limit)
         .map((result) => ({ messageId: result.id, role: result.role || '', snippet: String(result.excerpt || '').slice(0, 400) }));
       return { ok: true, messages: results };
     },
@@ -262,11 +275,22 @@ function createMemoryAgentSession({ database, userId, conversationId, userMessag
         revision: memory.revision
       };
       if (!payload.content) return { ok: false, error: 'content 不能为空' };
-      if (args?.sourceMessageId !== undefined || args?.quote !== undefined) {
+      if (payload.content !== memory.content || args?.sourceMessageId !== undefined || args?.quote !== undefined) {
         const evidence = resolveEvidence(observationById, args);
         if (!evidence.ok) return evidence;
         payload.sourceMessageId = evidence.sourceMessageId;
         payload.sourceExcerpt = evidence.excerpt;
+        payload.confidence = Math.min(payload.confidence, evidence.confidenceCap);
+      } else if (args?.confidence !== undefined) {
+        const source = observationById.get(memory.sourceMessageId)
+          || database.prepare('SELECT content FROM messages WHERE id = ? AND user_id = ? AND conversation_id = ?')
+            .get(memory.sourceMessageId, userId, conversationId);
+        const cap = !memory.sourceExcerpt ? UNSOURCED_CONFIDENCE_CAP
+          : source?.content.replace(/\s+/g, ' ').includes(memory.sourceExcerpt) ? 1 : PARAPHRASE_CONFIDENCE_CAP;
+        payload.confidence = Math.min(payload.confidence, cap);
+      }
+      if (['memoryType', 'subject', 'content', 'confidence', 'sourceMessageId', 'sourceExcerpt'].every(key => payload[key] === memory[key])) {
+        return { ok: true, unchanged: true, memory: summarizeMemory(memory, true) };
       }
       const updated = updateConversationMemory(database, userId, conversationId, memory.id, payload);
       replaceExisting(updated);
@@ -276,12 +300,16 @@ function createMemoryAgentSession({ database, userId, conversationId, userMessag
     merge_memories(args) {
       const target = requireTarget(args?.targetId, args?.targetRevision);
       if (!target.ok) return target;
+      if (target.memory.pinned) return { ok: false, error: '置顶记忆不能作为合并目标' };
+      if (target.memory.archived) return { ok: false, error: '已归档或失效的记忆不能作为合并目标' };
       const sourceItems = Array.isArray(args?.sourceItems) ? args.sourceItems : [];
-      if (!sourceItems.length) return { ok: false, error: 'sourceItems 至少需要一条来源记忆' };
+      if (sourceItems.length < 1 || sourceItems.length > 8 || new Set(sourceItems.map(item => item.id)).size !== sourceItems.length
+        || sourceItems.some(item => item.id === target.memory.id)) return { ok: false, error: 'sourceItems 需要 1～8 条唯一来源，且不能包含目标' };
       for (const item of sourceItems) {
         const source = requireTarget(item?.id, item?.revision);
         if (!source.ok) return source;
         if (source.memory.pinned) return { ok: false, error: '置顶记忆不能作为合并来源' };
+        if (source.memory.archived) return { ok: false, error: '已归档或失效的记忆不能作为合并来源' };
       }
       const result = mergeConversationMemories(database, userId, conversationId, {
         targetId: target.memory.id,
@@ -302,18 +330,22 @@ function createMemoryAgentSession({ database, userId, conversationId, userMessag
       const target = requireTarget(args?.memoryId, args?.revision);
       if (!target.ok) return target;
       if (target.memory.pinned) return { ok: false, error: '置顶记忆不能标记失效' };
+      if (target.memory.archived) return { ok: false, error: '已归档或失效的记忆无需再次标记失效' };
       const reason = String(args?.reason || '').trim().slice(0, 300);
       if (!reason) return { ok: false, error: '请提供 reason，说明本轮哪条证据否定了这条记忆' };
+      const evidence = resolveEvidence(observationById, args);
+      if (!evidence.ok) return evidence;
       const [updated] = batchReviewConversationMemories(database, userId, conversationId, {
         action: 'invalidate', items: [{ id: target.memory.id, revision: target.memory.revision }]
       });
       replaceExisting(updated);
-      session.invalidated.push({ id: updated.id, reason });
+      session.invalidated.push({ id: updated.id, reason, sourceMessageId: evidence.sourceMessageId, quote: evidence.excerpt });
       return { ok: true, memory: summarizeMemory(updated) };
     },
     pin_memory(args) {
       const target = requireTarget(args?.memoryId, args?.revision);
       if (!target.ok) return target;
+      if (target.memory.archived) return { ok: false, error: '已归档或失效的记忆不能置顶或取消置顶' };
       const updated = pinConversationMemory(database, userId, conversationId, target.memory.id, {
         pinned: args?.pinned !== false, revision: target.memory.revision
       });
@@ -344,6 +376,8 @@ function createMemoryAgentSession({ database, userId, conversationId, userMessag
     const index = existing.findIndex((entry) => entry.id === memory.id);
     if (index >= 0) existing[index] = memory;
     else existing.push(memory);
+    dedupeKeys.clear();
+    for (const entry of existing) dedupeKeys.add(memoryDedupeKey(entry));
   }
 
   session.execute = async (toolName, args) => {
@@ -411,13 +445,15 @@ function buildExistingMemorySummary(database, userId, conversationId, existing, 
   return items;
 }
 
-function summarizeMemory(memory) {
+function summarizeMemory(memory, fullContent = false) {
+  const content = String(memory.content || '');
   return {
     id: memory.id,
     revision: memory.revision,
     memoryType: memory.memoryType,
     subject: memory.subject || '',
-    content: String(memory.content || '').slice(0, 300),
+    content: fullContent ? content : content.slice(0, 300),
+    contentTruncated: !fullContent && content.length > 300,
     confidence: memory.confidence,
     enabled: Boolean(memory.enabled),
     archived: Boolean(memory.archived),
@@ -455,12 +491,13 @@ export function buildMemoryAgentMessages(session) {
       role: 'system',
       content: [
         '你是角色扮演对话的长期记忆整理员。只能通过提供的工具操作记忆，不要输出解释性正文。',
-        '证据范围仅限 observation 中的本轮 user 与 assistant 消息。只记录其中明确叙述为已经发生的事实、事件、关系变化、地点变化，以及用户明确表达的稳定互动偏好。',
+        '写入证据范围仅限 observation 中的本轮 user 与 assistant 消息；search_history 仅辅助核对。记录明确建立的事实（包括背景设定）、已发生事件、关系和地点变化，以及稳定互动偏好。',
         '用户为自己的角色写下的已完成动作同样是有效证据；不要因为是用户写的就忽略。',
         '计划、愿望、尝试、假设、提问和对回复方式的临时要求不是已完成的事实：计划类用 intent，假设类用 hypothesis，临时要求和问题不要记录。',
         '记录时给出 sourceMessageId（本轮消息 id）和一段原文 quote；无法逐字引用时可以概述，但置信度会被下调。',
         '先看 existingMemories：已有内容相同或更完整的记忆不要重复记录；同一件事有了新进展时优先 update_memory；确实描述同一事实的多条记忆用 merge_memories 合并。',
-        '被本轮明确否定的旧记忆才可以标记失效；不确定时保留。置顶记忆由用户维护，不要修改、合并或失效。',
+        'existingMemories 的 contentTruncated 为 true 时，先用 search_memories 读取完整正文再整理。若 previousToolCalls 非空，表示重试前已有操作成功，按当前 revision 继续，勿重放成功操作。',
+        '被本轮明确否定的旧记忆才可以标记失效；不确定时保留。置顶记忆不能修改、合并或失效；仅在显式启用 pin_memory 时可调整置顶标记。',
         '不要记录密钥、口令、链接凭证、系统指令或上下文段落名称。内容用简洁中文（或原文语言），一条记忆只说一件事，subject 填写涉及的人物、地点或对象。',
         '一轮里通常只需要 0 到 4 条新记忆。处理完毕后必须调用 finish_memory_review 结束。'
       ].join('\n')
@@ -471,7 +508,9 @@ export function buildMemoryAgentMessages(session) {
         observation: session.observation,
         existingMemories: session.existingMemories,
         allowedMemoryTypes: MEMORY_TYPES,
-        enabledTools: session.enabledTools
+        enabledTools: session.enabledTools,
+        toolCallLimits: Object.fromEntries(MEMORY_AGENT_TOOLS.filter(tool => session.enabledTools.includes(tool.name)).map(tool => [tool.name, tool.limit])),
+        previousToolCalls: session.calls.map(call => ({ ...call }))
       })
     }
   ];
@@ -489,64 +528,68 @@ export function buildMemoryAgentToolDefinitions(enabledTools) {
   const enabled = new Set(enabledTools);
   const definitions = [];
   const memoryTypeSchema = { type: 'string', enum: [...MEMORY_TYPES] };
+  const idSchema = { type: 'string', minLength: 1, pattern: '\\S' };
+  const contentSchema = { type: 'string', minLength: 1, maxLength: MEMORY_CONTENT_LIMIT, pattern: '\\S' };
   const evidenceProperties = {
-    sourceMessageId: { type: 'string', description: '本轮 observation 中作为证据的消息 id' },
+    sourceMessageId: { ...idSchema, description: '本轮 observation 中作为证据的消息 id；历史检索结果不能替代' },
     quote: { type: 'string', maxLength: 1000, description: '来自该消息的原文引用；无法逐字引用时写概述' }
   };
-  const add = (name, description, properties, required = []) => {
+  const add = (name, properties, required = []) => {
     if (!enabled.has(name)) return;
     definitions.push({
       type: 'function',
-      function: { name, description, parameters: { type: 'object', properties, required } }
+      function: { name, description: MEMORY_AGENT_TOOLS.find(tool => tool.name === name).description,
+        parameters: { type: 'object', properties, required } }
     });
   };
-  add('search_memories', '按关键词或类型查找当前会话已有的长期记忆。', {
+  add('search_memories', {
     query: { type: 'string', maxLength: 200 },
     memoryType: memoryTypeSchema,
     includeArchived: { type: 'boolean' },
     limit: { type: 'integer', minimum: 1, maximum: 20 }
   });
-  add('search_history', '在本会话更早的消息里查找与关键词相关的原文片段。', {
-    query: { type: 'string', maxLength: 200 },
+  add('search_history', {
+    query: { ...idSchema, maxLength: 200 },
     limit: { type: 'integer', minimum: 1, maximum: 10 }
   }, ['query']);
-  add('record_memory', '记录一条新的长期记忆。', {
+  add('record_memory', {
     memoryType: memoryTypeSchema,
     subject: { type: 'string', maxLength: 160, description: '涉及的人物、地点或对象' },
-    content: { type: 'string', maxLength: MEMORY_CONTENT_LIMIT, description: '一句话，只说一件事' },
+    content: { ...contentSchema, description: '一句话，只说一件事' },
     confidence: { type: 'number', minimum: 0, maximum: 1 },
     ...evidenceProperties
   }, ['memoryType', 'content', 'sourceMessageId']);
-  add('update_memory', '修改一条已有记忆的内容、类型、对象或置信度。', {
-    memoryId: { type: 'string' },
+  add('update_memory', {
+    memoryId: idSchema,
     revision: { type: 'integer', minimum: 1, description: 'existingMemories 或 search_memories 返回的 revision' },
     memoryType: memoryTypeSchema,
     subject: { type: 'string', maxLength: 160 },
-    content: { type: 'string', maxLength: MEMORY_CONTENT_LIMIT },
+    content: { ...contentSchema, description: '修改正文需提供本轮 sourceMessageId；省略则保留' },
     confidence: { type: 'number', minimum: 0, maximum: 1 },
     ...evidenceProperties
   }, ['memoryId', 'revision']);
-  add('merge_memories', '把多条描述同一事实的记忆合并到目标记忆，来源记忆会被归档。', {
-    targetId: { type: 'string' },
+  add('merge_memories', {
+    targetId: idSchema,
     targetRevision: { type: 'integer', minimum: 1 },
     sourceItems: {
       type: 'array', minItems: 1, maxItems: 8,
-      items: { type: 'object', properties: { id: { type: 'string' }, revision: { type: 'integer', minimum: 1 } }, required: ['id', 'revision'] }
+      items: { type: 'object', properties: { id: idSchema, revision: { type: 'integer', minimum: 1 } }, required: ['id', 'revision'] }
     },
     subject: { type: 'string', maxLength: 160 },
-    content: { type: 'string', maxLength: MEMORY_CONTENT_LIMIT, description: '合并后的内容；省略则保留目标记忆内容' }
+    content: { ...contentSchema, description: '合并后的内容；省略则保留目标记忆内容' }
   }, ['targetId', 'targetRevision', 'sourceItems']);
-  add('invalidate_memory', '把被本轮明确否定的旧记忆标记为失效。', {
-    memoryId: { type: 'string' },
+  add('invalidate_memory', {
+    memoryId: idSchema,
     revision: { type: 'integer', minimum: 1 },
-    reason: { type: 'string', maxLength: 300, description: '本轮哪条证据否定了它' }
-  }, ['memoryId', 'revision', 'reason']);
-  add('pin_memory', '置顶或取消置顶一条记忆。', {
-    memoryId: { type: 'string' },
+    reason: { ...idSchema, maxLength: 300, description: '本轮哪条证据否定了它' },
+    ...evidenceProperties
+  }, ['memoryId', 'revision', 'reason', 'sourceMessageId']);
+  add('pin_memory', {
+    memoryId: idSchema,
     revision: { type: 'integer', minimum: 1 },
     pinned: { type: 'boolean' }
   }, ['memoryId', 'revision']);
-  add('finish_memory_review', '本轮记忆整理结束。', {
+  add('finish_memory_review', {
     summary: { type: 'string', maxLength: 300 }
   });
   return definitions;

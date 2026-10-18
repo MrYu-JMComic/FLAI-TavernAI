@@ -1,10 +1,12 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import fs from 'node:fs';
 import {
   normalizeAiWorldBookDraft,
   normalizeWorldBookEntryForCreate
 } from '../../../frontend/src/utils/worldBookDraft.js';
+import { rebaseWorldBookWorkspace, worldBookApplyRequest } from '../../../frontend/src/utils/worldBookWorkspace.js';
+import { applyWorldBookChanges } from '../../../frontend/src/api/worldBooks.js';
+import { __resetApiCsrfTokenForTests } from '../../../frontend/src/api/core.js';
 
 test('AI world book create payload uses the save API field types', () => {
   const entry = normalizeWorldBookEntryForCreate({
@@ -48,12 +50,79 @@ test('AI world book preview keeps only drafts that can be created', () => {
   assert.deepEqual(draft.entries.map((entry) => entry.name), ['雾港', '常驻规则']);
 });
 
-test('standalone and character AI creation paths share one frontend entry normalizer', () => {
-  const standaloneSource = fs.readFileSync(new URL('../../../frontend/src/views/WorldBookView.vue', import.meta.url), 'utf8');
-  const characterSource = fs.readFileSync(new URL('../../../frontend/src/composables/character/useCharacterAiGeneration.js', import.meta.url), 'utf8');
+test('world book transaction payload keeps sparse edits and separates independent creations', () => {
+  const changes = worldBookApplyRequest([
+    {
+      ref: 'existing:book-a', bookId: 'book-a', baseRevision: 'original-version', name: 'UI preview title',
+      before: { entries: Array.from({ length: 80 }, (_, index) => ({ id: `entry-${index}`, content: 'Untouched' })) },
+      profile: { description: 'Edited description' },
+      upserts: [{ entryId: 'entry-65', before: { content: 'Old content', enabled: false }, patch: { content: 'New content' } }],
+      removals: [{ entryId: 'entry-12', before: { content: 'Removed content' } }]
+    },
+    { ref: 'new:separate', profile: { name: '航海手册' }, entries: [{ name: '潮汐', triggerKeys: '潮汐', content: '潮汐设定' }] }
+  ]);
+  assert.deepEqual(changes[0], {
+    ref: 'existing:book-a', bookId: 'book-a', baseRevision: 'original-version',
+    profile: { description: 'Edited description' },
+    upserts: [{ entryId: 'entry-65', patch: { content: 'New content' } }], removals: ['entry-12']
+  });
+  assert.equal(Object.hasOwn(changes[0], 'entries'), false);
+  assert.equal(Object.hasOwn(changes[0].upserts[0].patch, 'enabled'), false);
+  assert.deepEqual(changes[1], {
+    ref: 'new:separate', bookId: null, profile: { name: '航海手册' },
+    entries: [{ name: '潮汐', triggerKeys: '潮汐', content: '潮汐设定' }]
+  });
+});
 
-  assert.match(standaloneSource, /normalizeWorldBookEntryForCreate\(entry\)/);
-  assert.match(characterSource, /normalizeWorldBookEntryForCreate\(draft\.entries\[index\], index\)/);
-  assert.match(characterSource, /await rollbackCreatedWorldBook\(createdBook\)/);
-  assert.match(characterSource, /onWorldBookCreated\?\.\(/);
+test('applying selected world books retains unchecked drafts and rebases newly created books', () => {
+  const unchecked = { ref: 'existing:book-b', bookId: 'book-b', baseRevision: 'b-version', upserts: [{ entryId: 'b-entry', patch: { content: 'Pending' } }] };
+  const workspace = {
+    activeRef: 'new:guide', targets: [
+      { ref: 'new:guide', bookId: null, profile: { name: 'Guide' }, entries: [{ name: 'Pending entry' }] }, unchecked
+    ]
+  };
+  const next = rebaseWorldBookWorkspace(workspace, [{
+    ref: 'new:guide', book: {
+      id: 'created-guide', name: 'Guide', description: '', scanDepth: 4, lorebookContextPercent: 25,
+      revision: 'saved-version', entries: [{ id: 'saved-entry' }], linkedCharacters: []
+    }
+  }]);
+  assert.equal(next.activeRef, 'existing:created-guide');
+  assert.equal(next.targets[0].bookId, 'created-guide');
+  assert.equal(next.targets[0].baseRevision, 'saved-version');
+  assert.deepEqual(next.targets[0].upserts, []);
+  assert.deepEqual(next.targets[0].removals, []);
+  assert.equal(next.targets[1], unchecked);
+  assert.equal(workspace.targets[0].ref, 'new:guide');
+});
+
+test('world book API submits mixed edits as one transaction and retains the retry id', async () => {
+  const originalFetch = globalThis.fetch;
+  const requests = [];
+  const payload = { requestId: 'one-stable-attempt', changes: worldBookApplyRequest([
+    { ref: 'existing:old-book', bookId: 'old-book', baseRevision: 'version', profile: { name: 'Updated book' } },
+    { ref: 'new:guide', profile: { name: 'Guide' }, entries: [] }
+  ]) };
+  __resetApiCsrfTokenForTests();
+  globalThis.fetch = async (url, request = {}) => {
+    requests.push({ url: String(url), request });
+    return new Response(JSON.stringify(String(url) === '/api/csrf-token' ? { csrfToken: 'world-book-csrf' } : { books: [] }), {
+      status: 200, headers: { 'Content-Type': 'application/json' }
+    });
+  };
+  try {
+    await applyWorldBookChanges(payload);
+    await applyWorldBookChanges(payload);
+    const transactions = requests.filter((item) => item.url !== '/api/csrf-token');
+    assert.equal(transactions.length, 2);
+    for (const { url, request } of transactions) {
+      assert.equal(url, '/api/world-books/apply-changes');
+      assert.equal(request.method, 'POST');
+      assert.equal(request.headers['X-CSRF-Token'], 'world-book-csrf');
+      assert.deepEqual(JSON.parse(request.body), payload);
+    }
+  } finally {
+    globalThis.fetch = originalFetch;
+    __resetApiCsrfTokenForTests();
+  }
 });

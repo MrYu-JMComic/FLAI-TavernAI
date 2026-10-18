@@ -58,11 +58,11 @@ test('a throwing injected text counter falls back to the heuristic with a warnin
 
 test('unknown models use defaults and never invent a context window', () => {
   const budget = resolvePromptTokenBudget({ model: 'unknown-model', providerType: 'custom' });
-  assert.equal(budget.inputTokenLimit, 8192);
-  assert.equal(budget.reservedOutputTokens, 2048);
+  assert.equal(budget.inputTokenLimit, 16384);
+  assert.equal(budget.reservedOutputTokens, 4096);
   assert.equal(budget.imageTokensPerImage, 1024);
   assert.equal(budget.contextWindowTokens, null);
-  assert.equal(budget.effectiveInputLimit, 8192);
+  assert.equal(budget.effectiveInputLimit, 16384);
 });
 
 test('a scoped configured window constrains input only when model and provider match', () => {
@@ -96,7 +96,7 @@ test('context window scope may be stored with settings', () => {
     maxTokens: 2000,
   });
   assert.equal(budget.contextWindowTokens, 12000);
-  assert.equal(budget.effectiveInputLimit, 8192);
+  assert.equal(budget.effectiveInputLimit, 10000);
 });
 
 test('oversized reservations report overflow instead of silently truncating input', () => {
@@ -118,16 +118,16 @@ test('boolean, blank, nonfinite, negative, and oversized token values are reject
     imageTokensPerImage: false,
     forModel: 'unused',
   });
-  assert.equal(budget.inputTokenLimit, 8192);
-  assert.equal(budget.reservedOutputTokens, 2048);
+  assert.equal(budget.inputTokenLimit, 16384);
+  assert.equal(budget.reservedOutputTokens, 4096);
   assert.equal(budget.contextWindowTokens, null);
   assert.match(budget.warning, /invalid input token allocation/);
   assert.match(budget.warning, /invalid reply reservation/);
   assert.match(budget.warning, /invalid context window/);
   assert.match(budget.warning, /invalid image token estimate/);
 
-  assert.equal(resolvePromptTokenBudget({}, { inputTokenLimit: -1 }).inputTokenLimit, 8192);
-  assert.equal(resolvePromptTokenBudget({}, { inputTokenLimit: 10_000_001 }).inputTokenLimit, 8192);
+  assert.equal(resolvePromptTokenBudget({}, { inputTokenLimit: -1 }).inputTokenLimit, 16384);
+  assert.equal(resolvePromptTokenBudget({}, { inputTokenLimit: 10_000_001 }).inputTokenLimit, 16384);
 });
 
 test('zero image cost and zero reply reservation are invalid and use documented defaults', () => {
@@ -142,7 +142,7 @@ test('zero image cost and zero reply reservation are invalid and use documented 
     reservedOutputTokens: 0,
     imageTokensPerImage: 0,
   });
-  assert.equal(budget.reservedOutputTokens, 2048);
+  assert.equal(budget.reservedOutputTokens, 4096);
   assert.equal(budget.imageTokensPerImage, 1024);
   assert.match(budget.warning, /invalid reply reservation/);
   assert.match(budget.warning, /invalid image token estimate/);

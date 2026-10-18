@@ -105,14 +105,6 @@ test('database initialization creates expected high-value composite indexes', ()
       idx_scene_nodes_parent: ['conversation_id', 'parent_id'],
       idx_scene_routes_conversation_created: ['conversation_id', 'created_at'],
       idx_scene_routes_endpoints: ['conversation_id', 'from_node_id', 'to_node_id', 'bidirectional'],
-      idx_cast_members_one_protagonist: ['conversation_id'],
-      idx_cast_members_roster: ['conversation_id', 'visibility', 'member_type', 'canonical_name'],
-      idx_cast_memories_member_created: ['conversation_id', 'member_id', 'created_at'],
-      idx_cast_behaviors_member_priority: ['conversation_id', 'member_id', 'enabled', 'priority', 'created_at'],
-      idx_scene_items_cast: ['conversation_id', 'owner_member_id', 'equipped', 'clothing_slot', 'name'],
-      idx_cast_audit_member_created: ['conversation_id', 'member_id', 'created_at', 'id'],
-      idx_cast_ooc_member_created: ['conversation_id', 'member_id', 'created_at'],
-      idx_encounter_participants_member: ['member_id', 'encounter_id'],
       idx_economy_transactions_account_created: ['account_id', 'created_at'],
       idx_character_images_character_order: ['character_id', 'order_index', 'created_at'],
       idx_character_talents_character_rolled: ['character_id', 'rolled_at']
@@ -121,65 +113,6 @@ test('database initialization creates expected high-value composite indexes', ()
     for (const [indexName, columns] of Object.entries(expected)) {
       assert.deepEqual(indexColumns(database, indexName), columns, indexName);
     }
-  } finally {
-    database.close();
-  }
-});
-
-test('database initialization creates only the new cast domain schema', () => {
-  const database = createAppDatabase(':memory:');
-  try {
-    const expectedTables = [
-      'cast_members',
-      'cast_member_aliases',
-      'cast_memories',
-      'cast_behaviors',
-      'cast_appearances',
-      'cast_personality_anchors',
-      'cast_emotion_states',
-      'cast_emotion_history',
-      'cast_activities',
-      'cast_turn_queue',
-      'cast_change_batches',
-      'conversation_turns',
-      'conversation_audit_events',
-      'cast_ooc_validations',
-      'scene_items',
-    ];
-    for (const tableName of expectedTables) {
-      assert.ok(tableColumns(database, tableName).length > 0, tableName);
-    }
-    for (const legacyTable of [
-      'npc_registry',
-      'npc_memories',
-      'npc_behaviors',
-      'npc_activities',
-      'npc_profile_audit',
-      'npc_item_audit',
-      'scene_item_audit',
-      'hmdt_personality_anchors',
-      'hmdt_emotion_vectors',
-      'hmdt_emotion_history',
-      'hmdt_ooc_validations',
-    ]) {
-      assert.deepEqual(tableColumns(database, legacyTable), [], legacyTable);
-    }
-    assert.deepEqual(
-      tableColumns(database, 'cast_members').slice(0, 6),
-      ['id', 'conversation_id', 'member_type', 'canonical_name', 'name_key', 'source']
-    );
-    assert.ok(tableColumns(database, 'scene_items').includes('owner_member_id'));
-    assert.equal(tableColumns(database, 'scene_items').includes('owner_name'), false);
-    assert.ok(tableColumns(database, 'encounter_participants').includes('member_id'));
-    assert.equal(
-      database.prepare("SELECT value FROM _schema_meta WHERE key = 'cast_domain_v1'").get().value,
-      '1'
-    );
-    assert.equal(
-      database.prepare("SELECT value FROM _schema_meta WHERE key = 'cast_domain_v2'").get().value,
-      '1'
-    );
-    assert.deepEqual(database.prepare('PRAGMA foreign_key_check').all(), []);
   } finally {
     database.close();
   }
@@ -277,23 +210,6 @@ test('database query planner uses high-value indexes for representative reads', 
        WHERE conversation_id = ?
        ORDER BY created_at`,
       'conversation-plan'
-    );
-    assertPlanUsesIndex(
-      database,
-      'idx_cast_members_roster',
-      `SELECT id FROM cast_members
-       WHERE conversation_id = ? AND visibility = 'visible'
-       ORDER BY member_type, canonical_name`,
-      'conversation-plan'
-    );
-    assertPlanUsesIndex(
-      database,
-      'idx_cast_memories_member_created',
-      `SELECT id FROM cast_memories
-       WHERE conversation_id = ? AND member_id = ?
-       ORDER BY created_at DESC`,
-      'conversation-plan',
-      'member-plan'
     );
     assertPlanUsesIndex(
       database,

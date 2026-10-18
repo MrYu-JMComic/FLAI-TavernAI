@@ -1,7 +1,7 @@
 # Changelog
 
 本文件记录面向用户与部署者的可见变更。格式参考 Keep a Changelog；版本号遵循语义化版本，
-`backend`、`frontend`、`packaging/windows` 三处 `package.json` 版本保持一致。
+`backend`、`frontend` 两处 `package.json` 版本保持一致。
 
 ## [Unreleased]
 
@@ -18,12 +18,13 @@
 - 对话：最后一条模型回复可“重新生成”，原回复保留为候选；候选翻页到末尾时同样触发真实重新生成（此前只是把当前内容复制为候选）。新增 `POST /api/conversations/:id/messages/:messageId/regenerate`（JSON 与 SSE）。
 - 对话：编辑用户消息后重跑改为一次 `POST /api/conversations/:id/messages/truncate` 删除整段尾部，只产生一份恢复点和一次同步任务取消。
 - 记忆 Agent：每轮回复后的长期记忆整理改为模型驱动（附属技能 `memoryAgent`，自动/开启/关闭），工具库包含检索记忆、检索历史、记录、修正、合并、失效、置顶与结束，可按会话勾选；供应商不可用或调用失败时回退规则提取。
-- 附属技能与 NPC 管理 Agent 支持“跟随主聊天设置”或指定已保存的供应商配置与模型（`providerProfileId` / `modelOverride`），聊天高阶设置与 NPC 管理面板均提供弹窗设置。
-- NPC 管理 Agent：自动同步与 AI 整理可执行的 `CastChangePlanV1` 操作可按会话开关，未勾选的操作在写入前被拒绝。
+- 附属技能支持“跟随主聊天设置”或指定已保存的供应商配置与模型（`providerProfileId` / `modelOverride`），聊天高阶设置提供弹窗设置。
 - 正则规则新增 `display` 作用域（仅显示时替换）；此前后端的显示分支无法启用。
 
 ### Changed
 
+- 2026-10-18：将 24 份 Markdown 收敛为 9 份，合并重复的阶段报告、工具说明和计划；[README](README.md) 提供统一导航，[维护记录与后续计划](docs/maintenance.md) 集中保存未完成事项和历史验证。
+- 2026-10-18：场景物品使用独立存储，聊天、世界书、会话记忆、经济、任务和时间线继续保留；历史数据库数据不做破坏性清理。
 - AI 助手的模型 / 思考强度 / 流式 / Plan 开关偏好抽成共享的 `frontend/src/composables/useAssistantRuntimePreferences.js`，角色与世界书两侧不再各写一份 localStorage 读写；助手模型仍是两侧共用的同一项偏好，其余开关按工作台分开存储。
 - `completeWorldBookDraft` 与 `streamWorldBookDraft` 此前是两份几乎逐行相同的实现，现在合并为一个内部运行器，两个导出签名不变（后台任务队列的调用不受影响）。
 - `WorldBookView.vue` 的 AI 助手面板拆成 `components/worldbook/WorldBookAiPanel.vue` 与 `composables/worldbook/useWorldBookAi.js`，视图只保留列表、条目编辑、导入导出与草稿落库；计划审批卡片 `components/AiPlanReview.vue` 由两个助手共用。
@@ -36,17 +37,21 @@
 - 依赖主版本升级：`jsdom` 30、`katex` 0.18、`markdown-it` 15、`@lucide/vue` 1.39、`vue-router` 5，以及 `zod`、`vue`、`highlight.js`、Playwright 等小版本；
   `@vscode/markdown-it-katex` 通过 npm override 复用根目录 KaTeX，前端包体减少一份重复的 KaTeX 拷贝。
 - markdown-it 渲染管线（实例、KaTeX 插件、`\( \)`/`\[ \]`/color box 规则、fence 渲染）从 `MarkdownContent.vue` 抽出为 `frontend/src/utils/markdownRenderer.js`。
-- Windows 打包依赖从 `latest` 固定为 `electron` 44.1.1 与 `electron-builder` 26.15.3，并提交 `packaging/windows/package-lock.json`；CI 新增 `windows-latest` job 执行打包 staging 与 smoke。
 - 前端引入 Vitest 4（jsdom 环境）与 `@vue/test-utils`，`npm run test:unit` 进入 review gate（第 7 步，共 9 步）与 CI；CI 的 E2E 拆为独立 job 并按 2 分片执行。
-- 新增 `.github/dependabot.yml`：每周检查 backend、frontend、packaging/windows 的 npm 依赖，小版本合并为一组，主版本单独 PR。
+- 新增 `.github/dependabot.yml`：每周检查 backend、frontend 的 npm 依赖，小版本合并为一组，主版本单独 PR。
 - CI 与 review gate 对 `backend` 也执行生产依赖审计（此前只审计 `frontend`）。
 - 两个包声明 `engines.node >= 24`，仓库新增 `.nvmrc`。
-- 后端运行时版本号改为读取 `backend/package.json`，三处 `package.json` 版本由测试保证一致。
-- 新增 `docs/UPGRADE_PLAN_2026-09.md` 升级计划。
+- 后端运行时版本号改为读取 `backend/package.json`，两处 `package.json` 版本由测试保证一致。
+
+### Removed
+
+- 2026-10-18：移除 AI 虚拟小镇的页面、素材、API、模拟引擎、AI 工具、后台生成任务和新库建表逻辑；已有数据库中的历史小镇记录与迁移账本保留。
+- 2026-10-18：移除旧 NPC 管理、自动同步与整理、多角色队列、人格/情绪接口及其背包、日程和遭遇战集成。
+- 2026-10-18：移除 Windows EXE 打包入口、桌面包装代码、专用依赖和打包标记检查，项目通过前后端网页服务运行。
 
 ### Fixed
 
-- 人物同步 / AI 整理 / 记忆 Agent：网关偶发返回 `auth_unavailable: no auth available`（HTTP 503）或 429/5xx 时，此前会直接以 `CAST_PLAN_FAILED` 失败且不重试。现在 HTTP 层把这类响应归类为可重试的网关暂时不可用（`PROVIDER_AUTH_UNAVAILABLE`，附中文说明），模型调用带退避重试，后台任务也会按最大次数重试。
+- Provider 与记忆 Agent：网关偶发返回 `auth_unavailable: no auth available`（HTTP 503）或 429/5xx 时，HTTP 层将其归类为可重试的网关暂时不可用（`PROVIDER_AUTH_UNAVAILABLE`，附中文说明），模型调用带退避重试，后台任务也会按最大次数重试。
 - Provider URL 策略：`fetchProviderRequest` 对已归一化的策略二次归一化时会把默认 DNS 解析器误判为调用方自定义解析器，
   导致 `.test`/`.example`/`.invalid` 保留测试域名的例外失效；无本地 DNS 代理的环境下 Provider 契约测试会因 `ENOTFOUND` 失败。
 

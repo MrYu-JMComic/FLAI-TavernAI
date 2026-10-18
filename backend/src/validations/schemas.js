@@ -45,7 +45,6 @@ const accessorySkillConfigSchema = z.object({
 const accessorySkillsSchema = z.object({
   worldDirector: accessorySkillConfigSchema.optional(),
   gameHud: accessorySkillConfigSchema.optional(),
-  encounterMode: accessorySkillConfigSchema.optional(),
   rewardMode: accessorySkillConfigSchema.optional(),
   sceneAgent: accessorySkillConfigSchema.optional(),
   statusBarAgent: accessorySkillConfigSchema.optional(),
@@ -54,15 +53,6 @@ const accessorySkillsSchema = z.object({
   cgScene: accessorySkillConfigSchema.optional(),
   memoryAgent: accessorySkillConfigSchema.optional()
 }).partial().optional().default({});
-
-const castTrackingSchema = z.object({
-  enabled: booleanLikeSchema.optional().default(false),
-  providerProfileId: z.string().max(160).trim().optional().default(''),
-  modelOverride: z.string().max(100).trim().optional().default(''),
-  thinkingLevel: z.union([thinkingLevelSchema, z.literal('')]).optional(),
-  autoSyncOperations: z.record(z.string().max(40), z.boolean()).optional().default({}),
-  organizeOperations: z.record(z.string().max(40), z.boolean()).optional().default({})
-}).strict().optional().default({ enabled: false });
 
 const statusBarBlueprintVariableSchema = z.object({
   name: z.string().max(40).trim().optional().default(''),
@@ -92,7 +82,6 @@ const advancedSettingsSchema = z.object({
   statusBarPrompt: z.string().max(50000).trim().optional().default(''),
   showWorldBookMatches: booleanLikeSchema.optional().default(true),
   highlightDialogue: booleanLikeSchema.optional(),
-  castTracking: castTrackingSchema,
   statusBarBlueprint: statusBarBlueprintSchema,
   accessorySkills: accessorySkillsSchema
 }).partial().optional().default({});
@@ -252,6 +241,43 @@ export const createWorldBookEntrySchema = z.object({
 
 export const updateWorldBookEntrySchema = createWorldBookEntrySchema.partial();
 
+// Zod partial() retains nested defaults. Assistant patches must only contain
+// fields the caller actually supplied, or a content edit would reset triggers.
+function worldBookPatchSchema(schema) {
+  return z.object(Object.fromEntries(Object.entries(schema.shape).map(([key, field]) => {
+    while (field instanceof z.ZodOptional || field instanceof z.ZodDefault) field = field.unwrap();
+    return [key, field.optional()];
+  })));
+}
+
+const worldBookChangeProfileSchema = worldBookPatchSchema(createWorldBookSchema.omit({ characterId: true }));
+const worldBookChangeEntrySchema = worldBookPatchSchema(createWorldBookEntrySchema);
+const worldBookChangeIdSchema = z.string().trim().min(1).max(WORLD_BOOK_ENTRY_LIMITS.id);
+
+export const applyWorldBookChangesSchema = z.object({
+  requestId: worldBookChangeIdSchema,
+  changes: z.array(z.object({
+    ref: z.string().trim().min(1).max(240),
+    bookId: worldBookChangeIdSchema.nullable().optional(),
+    baseRevision: z.string().max(160).nullable().optional(),
+    profile: worldBookChangeProfileSchema.optional().default({}),
+    entries: z.array(createWorldBookEntrySchema).optional().default([]),
+    upserts: z.array(z.object({
+      entryId: worldBookChangeIdSchema.optional(),
+      localId: worldBookChangeIdSchema.optional(),
+      patch: worldBookChangeEntrySchema
+    })).optional().default([]),
+    removals: z.array(worldBookChangeIdSchema).optional().default([])
+  }).superRefine((change, context) => {
+    if (change.bookId && !change.baseRevision) {
+      context.addIssue({ code: 'custom', path: ['baseRevision'], message: '更新世界书需要提供读取时的版本' });
+    }
+    if (!change.bookId && !change.profile.name) {
+      context.addIssue({ code: 'custom', path: ['profile', 'name'], message: '新建世界书需要名称' });
+    }
+  })).min(1)
+});
+
 // ── 预设相关 ──
 
 export const createPresetSchema = z.object({
@@ -343,7 +369,6 @@ export const saveConversationSettingsSchema = z.object({
   statusBarPrompt: z.string().max(50000).trim().optional().default(''),
   showWorldBookMatches: booleanLikeSchema.optional().default(true),
   highlightDialogue: booleanLikeSchema.optional(),
-  castTracking: castTrackingSchema,
   chatLorebookId: z.string().max(200).trim().nullable().optional(),
   accessorySkills: accessorySkillsSchema
 });
@@ -451,163 +476,10 @@ export const sceneItemSchema = z.object({
   state: z.record(z.any()).optional().default({}),
   position: z.record(z.any()).optional().default({}),
   movable: z.boolean().optional().default(true),
-  itemKind: z.string().max(80).trim().optional().default('item'),
   quantity: z.number().int().min(0).max(1_000_000).optional().default(1),
-  clothingSlot: z.string().max(80).trim().optional().default(''),
-  coverage: z.array(z.string().max(120).trim()).max(32).optional().default([]),
   iconKey: z.string().max(120).trim().optional().default(''),
   revision: z.number().int().min(1).max(2_147_483_647).optional(),
 });
-
-const castIdSchema = z.string().trim().min(1).max(160);
-const castRevisionSchema = z.number().int().min(1).max(2_147_483_647);
-const castUnitNumberSchema = z.number().finite().min(0).max(1);
-
-export const castMemberCreateSchema = z.object({
-  canonicalName: z.string().trim().min(1).max(120),
-  aliases: z.array(z.string().trim().min(1).max(120)).max(24).optional(),
-  status: z.string().max(80).optional(),
-  customStatus: z.string().max(500).optional(),
-  relationship: z.string().max(1000).optional(),
-  currentLocationLabel: z.string().max(500).optional(),
-  currentSceneNodeId: castIdSchema.nullable().optional(),
-  memorySealed: z.boolean().optional(),
-  visibility: z.enum(['visible', 'hidden']).optional(),
-}).strict();
-
-export const castMemberUpdateSchema = castMemberCreateSchema.partial().extend({
-  confidence: castUnitNumberSchema.optional(),
-  revision: castRevisionSchema,
-}).strict().refine(
-  (value) => Object.keys(value).some((key) => key !== 'revision'),
-  { message: '人物更新必须包含至少一个变更字段' }
-);
-
-export const castMemoryCreateSchema = z.object({
-  memoryType: z.string().max(80).optional(),
-  content: z.string().trim().min(1).max(20_000),
-  layer: z.string().max(80).optional(),
-  importance: castUnitNumberSchema.optional(),
-  emotionalIntensity: castUnitNumberSchema.optional(),
-  decayRate: castUnitNumberSchema.optional(),
-  lastReinforcedAt: z.string().max(80).nullable().optional(),
-  reinforcementCount: z.number().int().min(0).max(1_000_000).optional(),
-  forgottenAt: z.string().max(80).nullable().optional(),
-  linkedMemoryIds: z.array(castIdSchema).max(32).optional(),
-  sharedMemberIds: z.array(castIdSchema).max(32).optional(),
-}).strict();
-
-export const castMemoryUpdateSchema = castMemoryCreateSchema.partial().extend({
-  revision: castRevisionSchema,
-}).strict().refine(
-  (value) => Object.keys(value).some((key) => key !== 'revision'),
-  { message: '记忆更新必须包含至少一个变更字段' }
-);
-
-export const castBehaviorCreateSchema = z.object({
-  behaviorType: z.string().max(80).optional(),
-  triggerCondition: z.string().max(2_000).optional(),
-  action: z.string().trim().min(1).max(4_000),
-  priority: z.number().int().min(-1_000).max(1_000).optional(),
-  enabled: z.boolean().optional(),
-}).strict();
-
-export const castBehaviorUpdateSchema = castBehaviorCreateSchema.partial().extend({
-  revision: castRevisionSchema,
-}).strict().refine(
-  (value) => Object.keys(value).some((key) => key !== 'revision'),
-  { message: '行为更新必须包含至少一个变更字段' }
-);
-
-export const castItemCreateSchema = z.object({
-  itemCode: z.string().max(120).optional(),
-  name: z.string().trim().min(1).max(500),
-  description: z.string().max(8_000).optional(),
-  state: z.record(z.string(), z.unknown()).optional(),
-  position: z.record(z.string(), z.unknown()).optional(),
-  movable: z.boolean().optional(),
-  itemKind: z.string().max(80).optional(),
-  quantity: z.number().int().min(0).max(1_000_000).optional(),
-  clothingSlot: z.string().max(80).optional(),
-  equipped: z.boolean().optional(),
-  coverage: z.array(z.string().max(120)).max(32).optional(),
-  iconKey: z.string().max(120).optional(),
-}).strict();
-
-export const castItemUpdateSchema = castItemCreateSchema.partial().extend({
-  revision: castRevisionSchema,
-}).strict().refine(
-  (value) => Object.keys(value).some((key) => key !== 'revision'),
-  { message: '物品更新必须包含至少一个变更字段' }
-);
-
-export const castItemTransferSchema = z.object({
-  memberId: castIdSchema.optional(),
-  nodeId: castIdSchema.optional(),
-  revision: castRevisionSchema,
-}).strict().refine((value) => Boolean(value.memberId) !== Boolean(value.nodeId), {
-  message: 'memberId 与 nodeId 必须且只能提供一个',
-});
-
-export const castAppearanceUpdateSchema = z.object({
-  summary: z.string().max(8_000).optional(),
-  outfit: z.string().max(4_000).optional(),
-  injuries: z.array(z.unknown()).max(64).optional(),
-  transformations: z.array(z.unknown()).max(64).optional(),
-  details: z.record(z.string(), z.unknown()).optional(),
-  revision: castRevisionSchema.optional(),
-}).strict().refine(
-  (value) => Object.keys(value).some((key) => key !== 'revision'),
-  { message: '外貌更新必须包含至少一个变更字段' }
-);
-
-export const castRevisionBodySchema = z.object({
-  revision: castRevisionSchema,
-}).strict();
-
-export const castCleanupSchema = z.object({}).strict();
-
-export const castOrganizerSchema = z.object({
-  scope: z.enum(['member', 'conversation']).default('member'),
-  memberId: castIdSchema.optional(),
-  requirement: z.string().max(2_000).optional().default(''),
-  thinkingEnabled: booleanLikeSchema.optional(),
-  thinkingLevel: thinkingLevelSchema.optional(),
-}).strict().refine(
-  (value) => value.scope === 'conversation' ? !value.memberId : Boolean(value.memberId),
-  { message: '单人物整理必须提供 memberId，全对话整理不能提供 memberId' }
-);
-
-const castQueryIntegerSchema = (minimum, maximum) => z.string()
-  .regex(/^\d+$/, '必须为非负整数')
-  .transform(Number)
-  .pipe(z.number().int().min(minimum).max(maximum));
-
-const castQueryBooleanSchema = z.enum(['true', 'false']).transform((value) => value === 'true');
-
-export const castRosterQuerySchema = z.object({
-  includeHidden: castQueryBooleanSchema.optional(),
-}).strict();
-
-export const castMemoryListQuerySchema = z.object({
-  limit: castQueryIntegerSchema(1, 200).optional(),
-  offset: castQueryIntegerSchema(0, 100_000).optional(),
-  includeForgotten: castQueryBooleanSchema.optional(),
-}).strict();
-
-export const castItemListQuerySchema = z.object({
-  limit: castQueryIntegerSchema(1, 300).optional(),
-  offset: castQueryIntegerSchema(0, 100_000).optional(),
-}).strict();
-
-export const castAuditListQuerySchema = z.object({
-  limit: castQueryIntegerSchema(1, 100).optional(),
-  beforeCreatedAt: z.string().datetime({ offset: true }).max(80).optional(),
-  beforeId: castIdSchema.optional(),
-}).strict().refine(
-  (value) => Boolean(value.beforeCreatedAt) === Boolean(value.beforeId),
-  { message: '审计游标必须同时提供 beforeCreatedAt 与 beforeId' }
-);
 
 // ── 存档相关 ──
 
@@ -618,87 +490,6 @@ export const createSaveSchema = z.object({
 export const renameSaveSchema = z.object({
   name: z.string().max(100).trim(),
   conversationId: z.string().trim().min(1)
-});
-
-// ── AI 虚拟小镇 ──
-
-export const createTownSchema = z.object({
-  name: z.string().min(1, '小镇名称不能为空').max(120).trim(),
-  description: z.string().max(2000).trim().optional().default(''),
-  creationPrompt: z.string().max(20000).trim().optional().default(''),
-  mapConfig: z.record(z.string(), z.any()).optional().default({}),
-  simulationStatus: z.enum(['paused', 'running']).optional().default('paused'),
-  currentDay: z.number().int().min(1).max(1000000).optional().default(1),
-  minuteOfDay: z.number().int().min(0).max(1439).optional().default(480),
-  settings: z.record(z.string(), z.any()).optional().default({})
-});
-
-export const generateTownSchema = z.object({
-  prompt: z.string().min(1, '请输入你的世界构想').max(20000).trim(),
-  simulationStatus: z.enum(['paused', 'running']).optional().default('paused')
-});
-
-export const updateTownClockSchema = z.object({
-  currentDay: z.number().int().min(1).max(1000000).optional(),
-  minuteOfDay: z.number().int().min(0).max(1439).optional(),
-  simulationStatus: z.enum(['paused', 'running']).optional(),
-  realSecondsPerTick: z.number().int().min(1).max(60).optional()
-}).refine((value) => Object.keys(value).length > 0, '至少提供一个时钟字段');
-
-export const advanceTownSchema = z.object({
-  steps: z.number().int().min(1).max(12).optional().default(1)
-});
-
-export const createTownResidentSchema = z.object({
-  name: z.string().min(1, '居民姓名不能为空').max(120).trim(),
-  role: z.string().max(160).trim().optional().default(''),
-  profile: z.record(z.string(), z.any()).optional().default({}),
-  state: z.record(z.string(), z.any()).optional().default({}),
-  currentLocation: z.string().max(200).trim().optional().default(''),
-  reflectionThreshold: z.number().min(1).max(100).optional().default(15)
-});
-
-export const createTownEventSchema = z.object({
-  residentId: z.string().max(160).trim().optional().default(''),
-  eventType: z.string().max(80).trim().optional().default('world.changed'),
-  source: z.string().max(40).trim().optional().default('simulation'),
-  title: z.string().max(200).trim().optional().default(''),
-  detail: z.string().max(4000).trim().optional().default(''),
-  payload: z.record(z.string(), z.any()).optional().default({}),
-  occurredTick: z.number().int().min(0).optional()
-});
-
-export const createTownMemorySchema = z.object({
-  memoryType: z.enum(['observation', 'event', 'relationship', 'plan', 'reflection']).optional().default('observation'),
-  content: z.string().min(1, '记忆内容不能为空').max(8000).trim(),
-  importance: z.number().min(1).max(10).optional().default(5),
-  keywords: z.array(z.string().max(80).trim()).max(80).optional().default([]),
-  sourceEventId: z.string().max(160).trim().optional().default(''),
-  sourceKind: z.string().max(40).trim().optional().default('simulation'),
-  occurredTick: z.number().int().min(0).optional()
-});
-
-export const createTownReflectionSchema = z.object({
-  content: z.string().min(1, '反思内容不能为空').max(8000).trim(),
-  memoryIds: z.array(z.string().min(1).max(160).trim()).max(100).optional().default([]),
-  importance: z.number().min(1).max(10).optional().default(5),
-  keywords: z.array(z.string().max(80).trim()).max(80).optional().default([])
-});
-
-const townScheduleItemSchema = z.object({
-  startMinute: z.number().int().min(0).max(1439),
-  endMinute: z.number().int().min(1).max(1440),
-  activity: z.string().min(1, '日程活动不能为空').max(300).trim(),
-  location: z.string().max(200).trim().optional().default(''),
-  intention: z.string().max(1000).trim().optional().default(''),
-  status: z.enum(['planned', 'active', 'completed', 'skipped']).optional().default('planned')
-});
-
-export const saveTownScheduleSchema = z.object({
-  day: z.number().int().min(1).max(1000000).optional(),
-  goal: z.string().max(1000).trim().optional().default(''),
-  status: z.enum(['planned', 'active', 'completed', 'cancelled']).optional().default('planned'),
-  items: z.array(townScheduleItemSchema).max(96)
 });
 
 // ── 验证中间件工厂 ──
@@ -741,7 +532,6 @@ const requestQueryBoundarySchema = z.record(
   }
 });
 
-export const rebuildTownMapSchema = z.object({ architecture: z.enum(['modern', 'traditional', 'fantasy']) });
 // Keep the request boundary check iterative.  A recursive z.lazy schema can
 // itself overflow the JavaScript stack before Zod has a chance to return a
 // useful 400 response for hostile, deeply nested JSON.

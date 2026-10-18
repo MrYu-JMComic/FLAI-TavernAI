@@ -84,6 +84,8 @@ const {
   script: characterTalentPanelScript,
   template: characterTalentPanelTemplate
 } = readVueBlocks('frontend/src/components/character/CharacterTalentPanel.vue');
+const aiSectionLabelsSource = readRepoText('frontend/src/utils/aiSectionLabels.js');
+const assistantRuntimePreferencesSource = readRepoText('frontend/src/composables/useAssistantRuntimePreferences.js');
 const characterAiPreferencesSource = readRepoText('frontend/src/composables/character/useCharacterAiPreferences.js');
 const characterAiGenerationSource = readRepoText('frontend/src/composables/character/useCharacterAiGeneration.js');
 const characterCreationWizardSource = readRepoText('frontend/src/composables/character/useCharacterCreationWizard.js');
@@ -124,11 +126,11 @@ test('CharacterFormView locks AI actions behind one shared busy state', () => {
   );
   assert.match(
     characterAiGenerationSource,
-    /const characterAiActionBusy = computed\(\(\) => \([\s\S]*aiLoading\.value[\s\S]*advancedAiLoading\.value[\s\S]*Boolean\(saving\?\.value\)[\s\S]*!canEdit\?\.value[\s\S]*\)\);/
+    /const characterAiActionBusy = computed\(\(\) => \([\s\S]*aiLoading\.value[\s\S]*advancedAiLoading\.value[\s\S]*aiWorldBookCreating\.value[\s\S]*Boolean\(saving\?\.value\)[\s\S]*!canEdit\?\.value[\s\S]*\)\);/
   );
   assert.match(
     characterAiGenerationSource,
-    /async function runCharacterAi\(\{ resume = false \} = \{\}\) {\s*if \(characterAiActionBusy\.value\) return;/
+    /async function runCharacterAi\(\{ resume = false, approvedPlan = null \} = \{\}\) {\s*if \(characterAiActionBusy\.value\) return;/
   );
   assert.match(
     characterAiGenerationSource,
@@ -152,12 +154,23 @@ test('CharacterFormView locks AI actions behind one shared busy state', () => {
   );
   assert.doesNotMatch(characterFormScript, /ASSISTANT_MODEL_STORAGE_KEY/);
   assert.doesNotMatch(characterFormScript, /function loadAssistantModel/);
-  assert.match(characterAiPreferencesSource, /const ASSISTANT_MODEL_STORAGE_KEY = 'flai-assistant-model';/);
   assert.match(characterAiPreferencesSource, /const ASSISTANT_USE_CURRENT_STORAGE_KEY = 'flai-assistant-use-current-draft';/);
-  assert.match(characterAiPreferencesSource, /const \{ providerModelOptionsFor \} = useProviderModels\(providerRef\);/);
-  assert.match(characterAiPreferencesSource, /const assistantModelOptions = computed\(\(\) => providerModelOptionsFor\(assistantModel\.value, '使用全局模型'\)\);/);
-  assert.match(characterAiPreferencesSource, /watch\(assistantModel, \(value\) => \{[\s\S]*localStorage\.setItem\(ASSISTANT_MODEL_STORAGE_KEY, String\(value \|\| ''\)\.trim\(\)\);/);
-  assert.match(characterAiPreferencesSource, /watch\(aiUseCurrentDraft, \(value\) => \{[\s\S]*localStorage\.setItem\(ASSISTANT_USE_CURRENT_STORAGE_KEY, value \? 'true' : 'false'\);/);
+  assert.match(characterAiPreferencesSource, /const CHARACTER_ASSISTANT_STORAGE_PREFIX = 'flai-character-assistant';/);
+  assert.match(
+    characterAiPreferencesSource,
+    /useAssistantRuntimePreferences\(providerRef, \{\s*storagePrefix: CHARACTER_ASSISTANT_STORAGE_PREFIX\s*\}\)/
+  );
+  assert.match(
+    characterAiPreferencesSource,
+    /useAssistantBooleanPreference\(\s*ASSISTANT_USE_CURRENT_STORAGE_KEY,\s*true,/
+  );
+  // Model selection is deliberately one shared preference across the character
+  // and world book workbenches, so it lives in the shared runtime module rather
+  // than behind the per-workbench storage prefix.
+  assert.match(assistantRuntimePreferencesSource, /const ASSISTANT_MODEL_STORAGE_KEY = 'flai-assistant-model';/);
+  assert.match(assistantRuntimePreferencesSource, /const \{ providerModelOptionsFor \} = useProviderModels\(providerRef\);/);
+  assert.match(assistantRuntimePreferencesSource, /const assistantModelOptions = computed\(\(\) => providerModelOptionsFor\(assistantModel\.value, '使用全局模型'\)\);/);
+  assert.match(assistantRuntimePreferencesSource, /persistRef\(assistantModel, ASSISTANT_MODEL_STORAGE_KEY, \(value\) => String\(value \|\| ''\)\.trim\(\)\);/);
   assert.doesNotMatch(characterFormScript, /useCharacterAiPanelLayout/);
   assert.match(characterFormTemplate, /<CharacterAiDraftPanel[\s\S]*v-model:requirement="editor\.aiRequirement"[\s\S]*v-model:assistant-model="editor\.assistantModel"[\s\S]*v-model:use-current-draft="editor\.aiUseCurrentDraft"[\s\S]*:disabled="editor\.characterAiActionBusy"[\s\S]*:loading="editor\.aiLoading"[\s\S]*:model-options="editor\.assistantModelOptions"[\s\S]*:options="editor\.aiOptions"[\s\S]*@complete="editor\.completeWithAi"[\s\S]*@set-option="editor\.setAiOptionValue"[\s\S]*@stop="editor\.stopCharacterAi"/);
   assert.doesNotMatch(characterFormTemplate, /aiPanel(?:Dragging|Pos|Ref|Size)|drag-start|resize-start|reset-panel/);
@@ -166,7 +179,11 @@ test('CharacterFormView locks AI actions behind one shared busy state', () => {
   assert.match(characterAiDraftPanelTemplate, /class="ai-workbench-header"[\s\S]*class="ai-workbench-status"[\s\S]*class="ai-workbench-grid" :class="\{ 'has-output': hasOutput \}"/);
   assert.match(characterAiDraftPanelTemplate, /<CharacterAiDraftInputs[\s\S]*:requirement="requirement"[\s\S]*:assistant-model="assistantModel"[\s\S]*:use-current-draft="useCurrentDraft"[\s\S]*:disabled="disabled"[\s\S]*:model-options="modelOptions"[\s\S]*:options="options"[\s\S]*@set-option="\(/);
   assert.match(characterAiDraftInputsScript, /const emit = defineEmits\(\[[\s\S]*'set-option'[\s\S]*'update:assistantModel'[\s\S]*'update:requirement'[\s\S]*'update:useCurrentDraft'[\s\S]*\]\);/);
-  assert.match(characterAiDraftInputsScript, /const AI_OPTION_LABELS = \{[\s\S]*profile: '基础资料'[\s\S]*modSuggestions: 'Mod 建议'[\s\S]*\};/);
+  // Scope labels are shared with the plan review card so a plan step and its
+  // scope checkbox always read the same.
+  assert.match(aiSectionLabelsSource, /export const CHARACTER_AI_SECTION_LABELS = Object\.freeze\(\{[\s\S]*profile: '基础资料'[\s\S]*modSuggestions: 'Mod 建议'[\s\S]*\}\);/);
+  assert.match(characterAiDraftInputsScript, /import \{ CHARACTER_AI_SECTION_LABELS, aiSectionLabel \} from '\.{1,2}\/{1,2}(?:\.\.\/)?utils\/aiSectionLabels\.js';/);
+  assert.match(characterAiDraftInputsScript, /function optionLabel\(key\) \{\s*return aiSectionLabel\(CHARACTER_AI_SECTION_LABELS, key\);\s*\}/);
   assert.match(characterAiDraftInputsScript, /const selectedOptionCount = computed\(\(\) => Object\.values\(props\.options\)\.filter\(Boolean\)\.length\);/);
   assert.match(characterAiDraftInputsScript, /function setAllOptions\(enabled\) \{[\s\S]*for \(const key of Object\.keys\(props\.options\)\)[\s\S]*emit\('set-option', key, enabled\);/);
   assert.match(characterAiDraftInputsTemplate, /:value="requirement"[\s\S]*@input="emit\('update:requirement', readInputValue\(\$event\)\)"/);
@@ -789,7 +806,7 @@ test('CharacterFormView builds status blueprint editor rows without intermediate
     /import \{[\s\S]*parseStatusTemplateToken[\s\S]*\} from '\.\.\/\.\.\/\.\.\/\.\.\/shared\/statusTemplateTokens\.js';/
   );
   const extractPartsStart = characterStatusBlueprintSource.indexOf('function extractCompositePlaceholderParts(value = \'\', label = \'\') {');
-  const extractPartsEnd = characterStatusBlueprintSource.indexOf('\nfunction isMeterTemplateProperty', extractPartsStart);
+  const extractPartsEnd = characterStatusBlueprintSource.indexOf('\nfunction isCompositeStatusPlaceholderValue', extractPartsStart);
   assert.notEqual(extractPartsStart, -1);
   assert.notEqual(extractPartsEnd, -1);
   const extractPartsSnippet = characterStatusBlueprintSource.slice(extractPartsStart, extractPartsEnd);
@@ -997,10 +1014,6 @@ test('CharacterFormView normalizes advanced effects and tag names with direct lo
     /function collectAllowedStatusEffects\(effects = \[\]\) \{\s*const currentEffects = Array\.isArray\(effects\) \? effects : \[\];\s*const allowedEffects = \[\];\s*for \(const effect of currentEffects\) \{\s*if \(STATUS_BAR_EFFECTS\.includes\(effect\)\) \{\s*allowedEffects\.push\(effect\);\s*\}\s*\}\s*return allowedEffects;\s*\}/
   );
   assert.match(
-    characterStatusBlueprintSource,
-    /function isAllowedStatusEffect\(effect\) \{\s*return effect === 'glow' \|\| effect === 'striped' \|\| effect === 'pulse';\s*\}/
-  );
-  assert.match(
     characterFormPayloadSource,
     /selectedTags: collectCharacterTagNames\(character\.characterTags\),/
   );
@@ -1070,11 +1083,13 @@ test('CharacterFormView preserves unchanged AI process panel references', () => 
   assert.doesNotMatch(characterAiGenerationSource, /\[\.\.\.\(Array\.isArray\(target\.tools\) \? target\.tools : \[\]\), log\]/);
   assert.match(
     characterAiGenerationSource,
-    /async function runCharacterAi\(\{ resume = false \} = \{\}\) \{[\s\S]*if \(!resume\) \{[\s\S]*setAiToolCallsIfChanged\(\[\]\);[\s\S]*setAiProcessIfChanged\([\s\S]*state: 'running'[\s\S]*setAiModSuggestionsIfChanged\(\[\]\);/
+    /async function runCharacterAi\(\{ resume = false, approvedPlan = null \} = \{\}\) \{[\s\S]*if \(!resume\) \{[\s\S]*setAiToolCallsIfChanged\(\[\]\);[\s\S]*setAiProcessIfChanged\([\s\S]*state: 'running'[\s\S]*setAiModSuggestionsIfChanged\(\[\]\);/
   );
+  // Tool calls and process rounds are applied before the draft is written back,
+  // and mod suggestions follow once the character has been applied.
   assert.match(
     characterAiGenerationSource,
-    /setAiModSuggestionsIfChanged\(result\.character\?\.modSuggestions\);[\s\S]*setAiToolCallsIfChanged\(mergeUniqueToolCallLists\(aiToolCalls\.value, result\.toolCalls\)\);[\s\S]*result\.streamRecovered[\s\S]*mergeProcessLists\(baseProcess, result\.process, resultRoundOffset\)/
+    /setAiToolCallsIfChanged\(mergeUniqueToolCallLists\(aiToolCalls\.value, result\.toolCalls\)\);[\s\S]*result\.streamRecovered[\s\S]*mergeProcessLists\(baseProcess, result\.process, resultRoundOffset\)[\s\S]*setAiModSuggestionsIfChanged\(result\.character\?\.modSuggestions\);/
   );
   assert.match(
     characterAiGenerationSource,
@@ -1098,7 +1113,7 @@ test('CharacterFormView preserves unchanged AI process panel references', () => 
     /function aiStreamHandlers\(\{[\s\S]*isCurrent = \(\) => !isDisposed\(\)[\s\S]*roundOffset = 0[\s\S]*step: \(step = \{\}\) => \{[\s\S]*updateAiProcessStep\(round, \(target\) => \(\{[\s\S]*tools: target\.tools\?\.length \? target\.tools : cloneAiToolList\(step\.tools\)[\s\S]*tool: \(call = \{\}\) => \{[\s\S]*tools: appendAiToolList\(target\.tools, log\)[\s\S]*appendAiToolCall\(log\);/
   );
   assert.match(characterFormTemplate, /<CharacterAiDraftPanel[\s\S]*:process="editor\.aiProcess"[\s\S]*:reasoning="editor\.aiReasoning"[\s\S]*:tool-calls="editor\.aiToolCalls"/);
-  assert.match(characterAiDraftPanelTemplate, /<CharacterAiProcessPanel[\s\S]*v-else[\s\S]*:process="process"[\s\S]*:reasoning="reasoning"[\s\S]*:tool-calls="toolCalls"/);
+  assert.match(characterAiDraftPanelTemplate, /<CharacterAiProcessPanel[\s\S]*v-if="hasOutput"[\s\S]*:process="process"[\s\S]*:reasoning="reasoning"[\s\S]*:tool-calls="toolCalls"/);
   assert.match(characterAiProcessPanelTemplate, /class="ai-process-text empty">等待模型返回本轮流程\.\.\.<\/p>/);
   assert.match(characterAiProcessPanelTemplate, /class="ai-tool-detail"[\s\S]*<strong>参数<\/strong>[\s\S]*<strong>结果<\/strong>/);
   assert.match(characterAiProcessPanelTemplate, /class="ai-tool-detail-list standalone"[\s\S]*v-for="\(call, index\) in toolCalls"[\s\S]*class="ai-tool-detail"/);
@@ -1252,9 +1267,14 @@ test('Character AI workbench keeps one status per row and no nested option cards
 });
 
 test('Character AI workbench supports thinking levels and resumable checkpoints', () => {
-  assert.match(characterAiPreferencesSource, /ASSISTANT_THINKING_STORAGE_KEY/);
-  assert.match(characterAiPreferencesSource, /resolveProviderModelCapabilities/);
-  assert.match(characterAiPreferencesSource, /assistantThinkingOptions/);
+  // The thinking level must survive a reload. Asserting the resolved key rather
+  // than a constant name keeps this pinned to the persistence contract users
+  // actually depend on: 'flai-character-assistant' + '-thinking-level'.
+  assert.match(assistantRuntimePreferencesSource, /readStoredRef\(`\$\{prefix\}-thinking-level`, defaultThinkingLevel,/);
+  assert.match(assistantRuntimePreferencesSource, /persistRef\(requestedThinkingLevel, `\$\{prefix\}-thinking-level`,/);
+  assert.match(characterAiPreferencesSource, /const CHARACTER_ASSISTANT_STORAGE_PREFIX = 'flai-character-assistant';/);
+  assert.match(assistantRuntimePreferencesSource, /resolveProviderModelCapabilities/);
+  assert.match(assistantRuntimePreferencesSource, /assistantThinkingOptions/);
   assert.match(characterFormTemplate, /v-model:thinking-level="editor\.assistantThinkingLevel"/);
   assert.match(characterFormTemplate, /:has-checkpoint="editor\.aiHasCheckpoint"/);
   assert.match(characterFormTemplate, /@resume="editor\.resumeCharacterAi"/);
@@ -1277,9 +1297,11 @@ test('Character AI workbench supports thinking levels and resumable checkpoints'
 });
 
 test('Character AI workbench exposes a persisted provider streaming switch', () => {
-  assert.match(characterAiPreferencesSource, /ASSISTANT_STREAMING_STORAGE_KEY/);
-  assert.match(characterAiPreferencesSource, /const assistantStreamingEnabled = ref\(loadAssistantStreamingEnabled\(\)\);/);
-  assert.match(characterAiPreferencesSource, /localStorage\.setItem\(ASSISTANT_STREAMING_STORAGE_KEY, value \? 'true' : 'false'\)/);
+  // Resolves to 'flai-character-assistant-streaming'. The switch is persisted,
+  // so a reload must not silently flip streaming back to its default.
+  assert.match(assistantRuntimePreferencesSource, /readStoredRef\(`\$\{prefix\}-streaming`, defaultStreaming, \(raw\) => raw === 'true'\);/);
+  assert.match(assistantRuntimePreferencesSource, /persistRef\(assistantStreamingEnabled, `\$\{prefix\}-streaming`, \(value\) => \(value \? 'true' : 'false'\)\);/);
+  assert.match(characterAiPreferencesSource, /const CHARACTER_ASSISTANT_STORAGE_PREFIX = 'flai-character-assistant';/);
   assert.match(characterFormTemplate, /v-model:streaming-enabled="editor\.assistantStreamingEnabled"/);
   assert.match(characterAiDraftPanelTemplate, /:streaming-enabled="streamingEnabled"[\s\S]*@update:streaming-enabled="emit\('update:streamingEnabled', \$event\)"/);
   assert.match(characterAiDraftInputsTemplate, /class="ai-option-row ai-stream-card"[\s\S]*class="ai-toggle ai-stream-toggle"[\s\S]*'update:streamingEnabled'/);

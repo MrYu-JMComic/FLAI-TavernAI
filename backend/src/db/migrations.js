@@ -1,7 +1,6 @@
+import { migrateIndependentSceneItems } from './migrations/0027IndependentSceneItems.js';
 import crypto from 'node:crypto';
 import { newId } from '../security.js';
-import { migrateCastDomainV1 } from './migrations/castDomainV1.js';
-import { migrateCastDomainV2 } from './migrations/castDomainV2.js';
 import { migrateDurableJobs } from './migrations/0006DurableJobs.js';
 import { migrateFullTextSearch } from './migrations/0007FullTextSearch.js';
 import { migrateOperationalControls } from './migrations/0008OperationalControls.js';
@@ -11,12 +10,13 @@ import { migrateProviderImageModel } from './migrations/0011ProviderImageModel.j
 import { migrateConversationWorldBookState } from './migrations/0013ConversationWorldBookState.js';
 import { migrateConversationTimeline } from './migrations/0014ConversationTimeline.js';
 import { migrateConversationMemoryReview } from './migrations/0015ConversationMemoryReview.js';
-import { migrateCastMemoryDecay } from './migrations/0016CastMemoryDecay.js';
 import { migratePromptTrace } from './migrations/0017PromptTrace.js';
 import { migrateConversationRetention } from './migrations/0018ConversationRetention.js';
+import { migrateWorldBookLinkConsolidation } from './migrations/0019WorldBookLinkConsolidation.js';
+import { migrateWorldBookGlobalStateRemoval } from './migrations/0020WorldBookGlobalStateRemoval.js';
 
 // The image-model migration stays at 0012: an older deployment already used 0011.
-export const latestSchemaVersion = '0018';
+export const latestSchemaVersion = '0027';
 
 export function applyStartupMigrations(database, { getCachedTableColumns }) {
   ensureSchemaMeta(database);
@@ -32,18 +32,6 @@ export function applyStartupMigrations(database, { getCachedTableColumns }) {
     name: 'scope-tags-by-user',
     checksum: 'tags-user-scope-v1',
     apply: () => migrateTagsToUserScoped(database, getCachedTableColumns)
-  });
-  runRecordedMigration(database, {
-    version: '0003',
-    name: 'cast-domain-v1',
-    checksum: 'cast-domain-v1',
-    apply: () => migrateCastDomainV1(database)
-  });
-  runRecordedMigration(database, {
-    version: '0004',
-    name: 'cast-domain-v2',
-    checksum: 'cast-domain-v2',
-    apply: () => migrateCastDomainV2(database)
   });
   runRecordedMigration(database, {
     version: '0005',
@@ -100,9 +88,12 @@ export function applyStartupMigrations(database, { getCachedTableColumns }) {
     apply: () => migrateConversationTimeline(database)
   });
   runRecordedMigration(database, { version: '0015', name: 'conversation-memory-review', checksum: 'conversation-memory-review-v1', apply: () => migrateConversationMemoryReview(database) });
-  runRecordedMigration(database, { version: '0016', name: 'cast-memory-decay-checkpoint', checksum: 'cast-memory-decay-checkpoint-v1', apply: () => migrateCastMemoryDecay(database) });
   runRecordedMigration(database, { version: '0017', name: 'prompt-trace-and-budget', checksum: 'prompt-trace-and-budget-v1', apply: () => migratePromptTrace(database) });
   runRecordedMigration(database, { version: '0018', name: 'conversation-retention', checksum: 'conversation-retention-v1', apply: () => migrateConversationRetention(database) });
+  runRecordedMigration(database, { version: '0019', name: 'world-book-link-consolidation', checksum: 'world-book-link-consolidation-v1', apply: () => migrateWorldBookLinkConsolidation(database) });
+  runRecordedMigration(database, { version: '0020', name: 'world-book-global-state-removal', checksum: 'world-book-global-state-removal-v1', apply: () => migrateWorldBookGlobalStateRemoval(database) });
+  // Retired versions remain reserved; existing ledger rows and user data are preserved.
+  runRecordedMigration(database, { version: '0027', name: 'independent-scene-items', checksum: 'independent-scene-items-v1', apply: () => migrateIndependentSceneItems(database) });
   // Keep repairing pre-ledger tag fixtures and interrupted legacy upgrades.
   migrateTagsToUserScoped(database, getCachedTableColumns);
 }

@@ -1,5 +1,4 @@
 import { isStatusTemplateMeterProperty, parseStatusTemplateToken } from '../../../shared/statusTemplateTokens.js';
-import { THINKING_LEVELS } from '../../../shared/providerThinking.js';
 import {
   normalizeStatusVariableExtras,
   normalizeStatusVariableValueForType
@@ -21,7 +20,6 @@ export function normalizeAdvancedSettings(input = {}) {
     statusBarPrompt: normalizeText(source.statusBarPrompt ?? source.status_bar_prompt ?? source.status_bar_prompt_text ?? ''),
     showWorldBookMatches: normalizeBoolean(source.showWorldBookMatches ?? source.show_world_book_matches, true),
     highlightDialogue: normalizeBoolean(source.highlightDialogue ?? source.highlight_dialogue, true),
-    castTracking: normalizeCastTracking(source.castTracking ?? source.cast_tracking),
     statusBarBlueprint: normalizeStatusBarBlueprint(source.statusBarBlueprint ?? source.status_bar_blueprint ?? {}),
     accessorySkills: normalizeAccessorySkills(source.accessorySkills ?? source.accessory_skills ?? {})
   };
@@ -56,9 +54,6 @@ export function mergeAdvancedSettings(author = {}, user = {}, options = {}) {
     highlightDialogue: hasOwnSetting(userSource, 'highlightDialogue', 'highlight_dialogue')
       ? userSettings.highlightDialogue
       : authorSettings.highlightDialogue,
-    castTracking: hasOwnSetting(userSource, 'castTracking', 'cast_tracking')
-      ? userSettings.castTracking
-      : authorSettings.castTracking,
     statusBarBlueprint: hasStatusBarBlueprint(userSettings.statusBarBlueprint)
       ? userSettings.statusBarBlueprint
       : authorSettings.statusBarBlueprint,
@@ -107,7 +102,6 @@ export function createDefaultAccessorySkills() {
   return {
     worldDirector: createSkillConfig(false),
     gameHud: createSkillConfig(false),
-    encounterMode: createSkillConfig(false),
     rewardMode: createSkillConfig(false),
     statusBarAgent: createSkillConfig('auto'),
     economyAgent: createSkillConfig(false),
@@ -212,22 +206,6 @@ function disabledAccessorySkills() {
     disabled[key] = { enabled: false, modelOverride: '' };
   }
   return disabled;
-}
-
-function normalizeCastTracking(value) {
-  const source = value && typeof value === 'object' ? value : {};
-  const thinkingLevel = normalizeOptionalThinkingLevel(source.thinkingLevel ?? source.thinking_level);
-  return {
-    enabled: normalizeBoolean(source.enabled, false),
-    // '' follows the main chat provider; otherwise one of the user's saved provider profiles.
-    providerProfileId: String(source.providerProfileId ?? source.provider_profile_id ?? '').trim().slice(0, 160),
-    modelOverride: normalizeModelOverride(source.modelOverride ?? source.model_override),
-    // Missing/empty follows the main conversation's effective thinking level.
-    ...(thinkingLevel ? { thinkingLevel } : {}),
-    // Plan operations the NPC agent may propose; a missing key means allowed.
-    autoSyncOperations: normalizeSkillTools(source.autoSyncOperations ?? source.auto_sync_operations),
-    organizeOperations: normalizeSkillTools(source.organizeOperations ?? source.organize_operations)
-  };
 }
 
 function hasOwnSetting(source, camelKey, snakeKey) {
@@ -476,11 +454,6 @@ function normalizeEnabled(value, fallback) {
 
 function normalizeModelOverride(value) {
   return String(value || '').trim().slice(0, 100);
-}
-
-function normalizeOptionalThinkingLevel(value) {
-  const level = String(value ?? '').trim().toLowerCase();
-  return THINKING_LEVELS.includes(level) ? level : '';
 }
 
 function normalizeImageUrl(value) {

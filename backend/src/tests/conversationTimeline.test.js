@@ -1,3 +1,4 @@
+import { upsertSceneItem } from '../modules/scenes.js';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createAppDatabase } from '../db/runtime.js';
@@ -8,12 +9,11 @@ import { upsertStatusBar } from '../modules/statusBars.js';
 import { createSave, getSave, listSaves, loadSave } from '../modules/saves.js';
 import { branchConversation } from '../modules/branches.js';
 import { createSwipe, setActiveSwipe } from '../modules/swipes.js';
-import { createCastMember, createCastMemory, ensureConversationProtagonist, upsertCastMemberItem } from '../services/cast/castCommandService.js';
 import { captureConversationSnapshot, restoreConversationSnapshot, SNAPSHOT_STATE_TABLES, writeConversationCheckpoint } from '../repositories/conversationSnapshotRepository.js';
 import { beginConversationGeneration, endConversationGeneration, enqueueConversationPostprocessing, invalidateConversationTimeline, requestConversationStateRebuild } from '../services/conversationTimeline.js';
 import { cancelJob, claimNextJob, completeJob, failJob, getJob, recoverExpiredJobs, retryJob, submitJob } from '../services/jobs/jobQueue.js';
 import { startJobWorker } from '../services/jobs/jobWorker.js';
-import { runConversationPostprocessing, runRecoverableConversationStep } from '../services/jobs/conversationPostprocessing.js';
+import { runRecoverableConversationStep } from '../services/jobs/conversationPostprocessing.js';
 import { createDefaultJobHandlers } from '../services/jobs/jobHandlers.js';
 import { createConversationAssistantResultService } from '../services/conversationAssistantResults.js';
 import { createConversationMessage, deleteConversationMessage, deleteConversationMessagesFrom, updateConversationMessage, updateConversationTimestamp } from '../routes/helpers.js';
@@ -32,7 +32,6 @@ function fixture(t) {
   const conversationId = 'timeline-conversation';
   database.prepare("INSERT INTO conversations (id, user_id, character_id, title, created_at, updated_at, state_status) VALUES (?, ?, ?, 'Timeline', ?, ?, 'ready')")
     .run(conversationId, userId, character.id, nowIso(), nowIso());
-  ensureConversationProtagonist(database, userId, conversationId);
   const message = (role, content, attachments = []) => createConversationMessage(database, newId, nowIso, { userId, conversationId, role, content, attachments });
   writeConversationCheckpoint(database, userId, conversationId);
   return { database, userId, character, conversationId, message };
@@ -40,9 +39,6 @@ function fixture(t) {
 
 function seedState(f) {
   const { database, userId, conversationId } = f;
-  const member = createCastMember(database, userId, conversationId, { canonicalName: 'Mira' });
-  const memory = createCastMemory(database, userId, conversationId, member.id, { content: 'Mira knows the harbor.' });
-  upsertCastMemberItem(database, userId, conversationId, member.id, { name: 'Silver key', itemCode: 'KEY-1', quantity: 1 });
   createConversationMemory(database, userId, conversationId, { content: 'The key belongs to Mira.' });
   upsertStatusBar(database, userId, conversationId, { name: 'State', variables: [{ name: 'HP', value: 80, max: 100 }] });
   const now = nowIso();
@@ -50,7 +46,7 @@ function seedState(f) {
     .run('harbor', conversationId, 'main_scene', 'Harbor', now, now);
   database.prepare('INSERT INTO scene_nodes (id, conversation_id, parent_id, node_type, name, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
     .run('warehouse', conversationId, 'harbor', 'building', 'Warehouse', now, now);
-  database.prepare('UPDATE cast_members SET current_scene_node_id = ? WHERE id = ?').run('warehouse', member.id);
+  const item = upsertSceneItem(database, userId, conversationId, { nodeId: 'warehouse', name: 'Silver key', itemCode: 'KEY-1' });
   database.prepare('INSERT INTO economy_accounts (id, user_id, conversation_id, currency_type, balance, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
     .run('gold-account', userId, conversationId, 'gold', 40, now, now);
   database.prepare('INSERT INTO economy_transactions (id, account_id, amount, type, created_at) VALUES (?, ?, ?, ?, ?)')
@@ -61,7 +57,7 @@ function seedState(f) {
     .run('objective-1', 'quest-1', 'Visit Mira', now, now);
   database.prepare('INSERT INTO world_clocks (conversation_id, current_day, minute_of_day, weather, updated_at) VALUES (?, ?, ?, ?, ?)')
     .run(conversationId, 3, 400, 'rain', now);
-  return { member, memory };
+  return { item };
 }
 
 test('versioned save restores all domain tables and image asset references, not just text', (t) => {
@@ -91,22 +87,21 @@ test('branch restores the selected checkpoint with remapped ownership and exclud
   const { database, userId, conversationId, message } = f;
   const user = message('user', 'Visit the harbor.');
   const assistant = message('assistant', 'Mira arrived.');
-  const { member } = seedState(f);
-  const sourceMemory = createCastMemory(database, userId, conversationId, member.id, { content: 'The map was handed over.', sourceMessageId: user.id });
+  const { item } = seedState(f);
+  const sourceMemory = createConversationMemory(database, userId, conversationId, { content: 'The map was handed over.', sourceMessageId: user.id });
   writeConversationCheckpoint(database, userId, conversationId);
   message('user', 'Travel away');
   message('assistant', 'Mira learned the secret.');
-  createCastMemory(database, userId, conversationId, member.id, { content: 'Future secret' });
+  createConversationMemory(database, userId, conversationId, { content: 'Future secret' });
   database.prepare('UPDATE economy_accounts SET balance = 5 WHERE conversation_id = ?').run(conversationId);
   const branch = branchConversation(database, userId, conversationId, assistant.id);
   const branched = captureConversationSnapshot(database, userId, branch.id);
   assert.equal(branched.state.economy_accounts[0].balance, 40);
-  assert.ok(!branched.state.cast_memories.some((memory) => memory.content === 'Future secret'));
-  const mira = branched.state.cast_members.find((entry) => entry.canonical_name === 'Mira');
-  assert.notEqual(mira.id, member.id);
-  assert.equal(branched.state.scene_items[0].owner_member_id, mira.id);
-  assert.ok(branched.state.scene_nodes.some((node) => node.id === mira.current_scene_node_id));
-  const remappedMemory = branched.state.cast_memories.find((entry) => entry.content === sourceMemory.content);
+  assert.ok(!branched.state.conversation_memories.some((memory) => memory.content === 'Future secret'));
+  const remappedItem = branched.state.scene_objects.find(entry => entry.item_code === item.itemCode);
+  assert.notEqual(remappedItem.id, item.id);
+  assert.ok(branched.state.scene_nodes.some(node => node.id === remappedItem.node_id));
+  const remappedMemory = branched.state.conversation_memories.find((entry) => entry.content === sourceMemory.content);
   assert.equal(remappedMemory.source_message_id, branched.messages[0].id);
   assert.deepEqual(database.prepare('PRAGMA foreign_key_check').all(), []);
 });
@@ -186,7 +181,7 @@ test('legacy history never inherits future state and legacy saves report incompl
   const branch = branchConversation(database, userId, conversationId, first.id);
   assert.equal(branch.stateStatus, 'legacy_partial');
   assert.ok(branch.warnings.length);
-  assert.equal(captureConversationSnapshot(database, userId, branch.id).state.cast_memories.length, 0);
+  assert.equal(captureConversationSnapshot(database, userId, branch.id).state.conversation_memories.length, 0);
   const save = createSave(database, userId, conversationId, { name: 'Legacy' });
   database.prepare('UPDATE saves SET snapshot = ? WHERE id = ?').run(JSON.stringify({ messages: [{ id: first.id, role: 'assistant', content: first.content }] }), save.id);
   const result = loadSave(database, userId, save.id);
@@ -202,7 +197,7 @@ test('malformed snapshot restore rolls back deletions and preserves the existing
   const save = createSave(f.database, f.userId, f.conversationId, { name: 'Corrupt' });
   const before = captureConversationSnapshot(f.database, f.userId, f.conversationId);
   const corrupt = structuredClone(before);
-  corrupt.state.cast_members[0].current_scene_node_id = 'missing-scene';
+  corrupt.state.scene_objects[0].node_id = 'missing-scene';
   f.database.prepare('UPDATE saves SET snapshot = ? WHERE id = ?').run(JSON.stringify(corrupt), save.id);
   assert.throws(() => loadSave(f.database, f.userId, save.id));
   const after = captureConversationSnapshot(f.database, f.userId, f.conversationId);
@@ -224,35 +219,6 @@ test('actual assistant persistence enqueues postprocessing atomically and blocks
   assert.throws(() => beginConversationGeneration(f.database, f.userId, f.conversationId), (error) => error.code === 'CONVERSATION_STATE_PENDING');
   invalidateConversationTimeline(f.database, f.userId, f.conversationId, 'ready');
   assert.throws(() => results.saveAssistantResult({ userId: f.userId, conversation: { id: f.conversationId }, character: f.character, rules: [], result: { content: 'Stale' }, ticket }), (error) => error.code === 'CONVERSATION_TIMELINE_CHANGED');
-});
-
-test('postprocessing keeps the originating chat thinking level for cast projection', async (t) => {
-  const f = fixture(t);
-  f.message('user', 'Find Mira');
-  const assistant = f.message('assistant', 'Mira arrived.');
-  const queued = enqueueConversationPostprocessing(f.database, f.userId, f.conversationId, assistant.id, {
-    thinkingLevel: 'xhigh',
-  });
-  assert.equal(queued.payload.thinkingLevel, 'xhigh');
-  assert.equal(queued.payload.thinkingEnabled, true);
-
-  const job = claimNextJob(f.database, 'thinking-worker');
-  let castOptions = null;
-  await runConversationPostprocessing(f.database, {
-    job,
-    payload: job.payload,
-    signal: new AbortController().signal,
-    progress: () => {},
-  }, {
-    settings: { providerType: 'mock' },
-    runAccessoryAgents: async () => [],
-    projectConversationCast: async (options) => {
-      castOptions = options;
-      return { ok: true, skipped: false, reviewRequired: false };
-    },
-  });
-  assert.equal(castOptions.mainThinkingLevel, 'xhigh');
-  assert.equal(castOptions.mainThinkingEnabled, true);
 });
 
 test('postprocessing runs through the real handler and supports durable memory extraction', async (t) => {
@@ -319,7 +285,7 @@ test('a stale provider callback cannot write after a history change or roll back
 test('jobs serialize within a conversation while independent work and retries stay available', (t) => {
   const f = fixture(t);
   const first = submitJob(f.database, f.userId, 'memory.extract', { conversationId: f.conversationId }, { idempotencyKey: 'first' });
-  submitJob(f.database, f.userId, 'cast.organize', { conversationId: f.conversationId }, { idempotencyKey: 'second' });
+  submitJob(f.database, f.userId, 'memory.extract', { conversationId: f.conversationId }, { idempotencyKey: 'second' });
   const claimed = claimNextJob(f.database, 'worker-1');
   assert.equal(claimed.id, first.id);
   assert.equal(claimNextJob(f.database, 'worker-2'), null);

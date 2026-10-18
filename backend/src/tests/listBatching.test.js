@@ -3,7 +3,7 @@ import test from 'node:test';
 
 const { createAppDatabase } = await import('../db.js');
 const { createCharacter } = await import('../modules/characters.js');
-const { createWorldBook, getCharacterWorldBookId, getCharacterWorldBookIds, linkWorldBookToCharacter } = await import('../modules/worldBooks.js');
+const { createWorldBook, resolveCharacterWorldBookId, resolveCharacterWorldBookIds, linkCharacter } = await import('../services/worldBooks/worldBookService.js');
 const { getCharacterTagsMap, setCharacterTags } = await import('../modules/tags.js');
 const { emptyUsageSummary, getConversationUsageSummaries } = await import('../routes/helpers.js');
 const { insertUser } = await import('./routeTestUtils.js');
@@ -23,7 +23,7 @@ function insertMessage(database, userId, conversationId, messageId, usage) {
   ).run(messageId, userId, conversationId, usage ? JSON.stringify(usage) : null, new Date().toISOString());
 }
 
-test('getCharacterWorldBookIds matches per-character lookups in one batch', () => {
+test('resolveCharacterWorldBookIds matches per-character lookups in one batch', () => {
   const database = createAppDatabase(':memory:');
   const userId = 'batch-worldbook-user';
   insertUser(database, userId);
@@ -33,19 +33,19 @@ test('getCharacterWorldBookIds matches per-character lookups in one batch', () =
   const bareCharacter = createCharacter(database, userId, { name: 'Bare' });
 
   const linkedBook = createWorldBook(database, userId, { name: 'Linked Book' });
-  linkWorldBookToCharacter(database, linkedBook.id, linkedCharacter.id, 0, userId);
+  linkCharacter(database, userId, linkedBook.id, linkedCharacter.id, 0);
   const directBook = createWorldBook(database, userId, { name: 'Direct Book', characterId: directCharacter.id });
 
   const ids = [linkedCharacter.id, directCharacter.id, bareCharacter.id];
-  const batch = getCharacterWorldBookIds(database, ids);
+  const batch = resolveCharacterWorldBookIds(database, ids);
 
   for (const id of ids) {
-    assert.equal(batch.get(id) || null, getCharacterWorldBookId(database, id));
+    assert.equal(batch.get(id) || null, resolveCharacterWorldBookId(database, id));
   }
   assert.equal(batch.get(linkedCharacter.id), linkedBook.id);
   assert.equal(batch.get(directCharacter.id), directBook.id);
   assert.equal(batch.has(bareCharacter.id), false);
-  assert.equal(getCharacterWorldBookIds(database, []).size, 0);
+  assert.equal(resolveCharacterWorldBookIds(database, []).size, 0);
 });
 
 test('getCharacterTagsMap groups tags by character in tag-name order', () => {

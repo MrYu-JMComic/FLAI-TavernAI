@@ -31,7 +31,7 @@ test('app global error handler logs request context and returns code plus reques
 test('server owns process lifecycle without constructing routes', () => {
   assert.match(serverSource, /const app = createApp\(\{/);
   assert.match(serverSource, /const server = await listen\(app, config\.port\)/);
-  assert.match(serverSource, /stopTownEngine\?\.\(\)/);
+  assert.match(serverSource, /return stopJobWorker\?\.\(\)/);
   // Shutdown still folds the WAL back in, now through the shared maintenance
   // helper that the periodic timer also uses.
   assert.match(serverSource, /performDatabaseMaintenance\(database\)/);

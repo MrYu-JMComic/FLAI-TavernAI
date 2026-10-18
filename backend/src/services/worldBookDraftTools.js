@@ -5,7 +5,7 @@ import {
   WORLD_BOOK_LIMITS
 } from '../domain/worldBooks/limits.js';
 import { objectOrEmpty } from './assistantUtils.js';
-import { buildWorldBookMatchPreview } from './worldBookMatchPreview.js';
+import { buildWorldBookMatchPreview } from './worldBooks/worldBookMatchPreview.js';
 
 export const WORLD_BOOK_POSITION_VALUES = Object.freeze(['at_start', 'before_char', 'after_char', 'at_depth']);
 export const WORLD_BOOK_MUTATION_TOOL_NAMES = Object.freeze([
@@ -428,7 +428,7 @@ function normalizeWorldBookEntryList(entries = [], options = {}) {
   return normalized;
 }
 
-function normalizeWorldBookEntry(value = {}, index = 0) {
+export function normalizeWorldBookEntry(value = {}, index = 0) {
   const entry = objectOrEmpty(value);
   const position = WORLD_BOOK_POSITION_VALUES.includes(entry.position) ? entry.position : 'before_char';
   return {
@@ -456,7 +456,7 @@ function normalizeWorldBookEntry(value = {}, index = 0) {
   };
 }
 
-function isUsableWorldBookEntry(entry = {}) {
+export function isUsableWorldBookEntry(entry = {}) {
   return Boolean(
     entry.name
     && entry.content

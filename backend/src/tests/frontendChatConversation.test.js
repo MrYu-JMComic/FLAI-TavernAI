@@ -294,38 +294,6 @@ test('ChatView guards branch navigation after sidebar refresh awaits', () => {
   );
 });
 
-test('chat NPC panel reopen ignores stale route changes after next tick', async () => {
-  const route = { params: { id: 'conv-1' } };
-  const chat = useChatConversation({
-    route,
-    emit() {},
-    showError() {}
-  });
-
-  chat.setActiveConversationIfChanged(createActiveConversation({ id: 'conv-1' }));
-  chat.npcPanelOpen.value = true;
-
-  const openPromise = chat.openNpcPanel();
-  assert.equal(chat.npcPanelOpen.value, false);
-
-  route.params.id = 'conv-2';
-  chat.setActiveConversationIfChanged(createActiveConversation({ id: 'conv-2' }));
-  await openPromise;
-
-  assert.equal(chat.npcPanelOpen.value, false);
-});
-
-test('chat NPC panel reopen rechecks current conversation before reopening', () => {
-  assert.match(
-    chatConversationSource,
-    /async function openNpcPanel\(\) \{\s*const panelConversationId = conversation\.value\?\.id \|\| '';\s*if \(!isCurrentPanelConversation\(panelConversationId\)\) \{\s*return;\s*\}[\s\S]*await nextTick\(\);[\s\S]*if \(!isCurrentPanelConversation\(panelConversationId\)\) \{\s*return;\s*\}[\s\S]*npcPanelOpen\.value = true;/
-  );
-  assert.match(
-    chatConversationSource,
-    /function isCurrentPanelConversation\(conversationId\) \{\s*return !conversationDisposed\s*&& conversationReady\.value\s*&& conversation\.value\?\.id === conversationId\s*&& route\.params\.id === conversationId;\s*}/
-  );
-});
-
 test('chat sidebar visible selection state is summarized without filter allocations', () => {
   assert.match(
     chatConversationSource,

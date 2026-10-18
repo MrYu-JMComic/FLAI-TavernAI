@@ -22,7 +22,7 @@ test('GameHud reads persistent world events incrementally and tracks unread chan
 
 test('GameHud is completely removed from layout when its accessory switch is off', () => {
   assert.match(chatViewTemplate, /<GameHud\s+[\s\S]*v-if="conversation\?\.id && showGameHudFeature"/);
-  assert.match(chatViewScript, /showEconomyFeature, showNpcFeature, showSceneFeature, showGameHudFeature/);
+  assert.match(chatViewScript, /showEconomyFeature, showSceneFeature, showGameHudFeature/);
   assert.match(chatAccessorySource, /\{ key: 'gameHud', label: '游戏驾驶舱 \/ 地图', auto: false \}/);
   assert.match(chatAccessorySource, /const showGameHudFeature = computed\(\(\) => isAccessorySkillActiveLocal\('gameHud'\)\)/);
 });
@@ -33,18 +33,17 @@ test('gameplay event route exposes owned incremental reads', () => {
   assert.match(routeSource, /if \(!result\) return response\.status\(404\)/);
 });
 
-test('GameHud exposes task, backpack and confirmed server-side checks', () => {
+test('GameHud exposes task and confirmed server-side checks', () => {
   assert.match(apiSource, /export function performGameplayCheck/);
   assert.match(script, /const pendingCheck = ref\(null\)/);
   assert.match(script, /await performGameplayCheck\(props\.conversationId, pendingCheck\.value\)/);
   assert.match(template, /class="game-hud-quest"/);
-  assert.match(template, /class="game-hud-backpack"/);
   assert.match(template, /确认掷骰/);
   assert.match(template, /icon-key="action\.dice"/);
   assert.match(style, /\.game-hud-check-confirm/);
 });
 
-test('GameHud advances the world clock and exposes NPC activity summaries', () => {
+test('GameHud advances the world clock', () => {
   assert.match(apiSource, /export function advanceGameplayTime/);
   assert.match(apiSource, /export function updateGameplayWeather/);
   assert.match(script, /await advanceGameplayTime\(props\.conversationId, minutes\)/);
@@ -52,7 +51,6 @@ test('GameHud advances the world clock and exposes NPC activity summaries', () =
   assert.match(template, /class="game-hud-world-controls"/);
   assert.match(template, /advanceTime\(15\)/);
   assert.match(template, /advanceTime\(60\)/);
-  assert.match(template, /npcActivities\[0\]/);
   assert.match(style, /\.game-hud-world-controls/);
 });
 
@@ -65,18 +63,8 @@ test('GameHud exposes only server-provided direct travel routes', () => {
   assert.match(template, /route\.minutes/);
 });
 
-test('encounter UI is independently gated and uses server-resolved actions', () => {
-  assert.match(chatViewScript, /showGameHudFeature, showEncounterFeature/);
-  assert.match(chatViewTemplate, /:encounter-enabled="showEncounterFeature"/);
-  assert.match(chatAccessorySource, /\{ key: 'encounterMode', label: '遭遇与回合行动', auto: false \}/);
-  assert.match(template, /v-if="encounterEnabled" class="game-hud-encounter"/);
-  assert.match(script, /performGameplayEncounterAction\(props\.conversationId, encounter\.value\.id/);
-  assert.match(template, /encounterAction\('attack'\)/);
-  assert.match(template, /encounterAction\('flee'\)/);
-});
-
 test('reward UI is independently gated and claims server grants', () => {
-  assert.match(chatViewScript, /showEncounterFeature, showRewardFeature/);
+  assert.match(chatViewScript, /showGameHudFeature, showRewardFeature/);
   assert.match(chatViewTemplate, /:reward-enabled="showRewardFeature"/);
   assert.match(chatAccessorySource, /\{ key: 'rewardMode', label: '战利品与奖励结算', auto: false \}/);
   assert.match(template, /v-if="rewardEnabled && pendingRewards\.length" class="game-hud-rewards"/);

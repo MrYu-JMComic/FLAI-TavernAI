@@ -1,20 +1,17 @@
 import { getCharacter } from '../../modules/characters.js';
 import { getStatusBar } from '../../modules/statusBars.js';
-import { matchWorldBookEntries } from '../../modules/worldBooks.js';
+import { matchWorldBookEntries } from '../worldBooks/worldBookRuntime.js';
 import { withSavepoint } from '../../modules/savepoint.js';
 import { parseJson } from '../../utils/json.js';
 import { nowIso } from '../../security.js';
 import { getConversationForUser, toMessage } from '../../routes/helpers.js';
 import { runAccessoryAgents } from '../accessoryAgents.js';
 import { runConversationMemoryAgent } from '../conversationMemoryAgent.js';
-import { projectConversationCast } from '../cast/castProjector.js';
-import { publishCastSyncStatus } from '../cast/castSyncStatus.js';
 import {
   captureConversationSnapshot, readSnapshotMessages, restoreConversationSnapshot, writeConversationCheckpoint
 } from '../../repositories/conversationSnapshotRepository.js';
 import { createConversationDatabaseFacade, withConversationMutationContext } from '../conversationMutationContext.js';
 import { getJob, getConversationProcessingSummary } from './jobQueue.js';
-import { hasUsableProvider } from '../providers.js';
 
 export function assertConversationJobCurrent(database, job, payload, signal, options = {}) {
   if (!Number.isSafeInteger(payload.timelineRevision) || payload.timelineRevision < 1) {
@@ -38,6 +35,7 @@ export function assertConversationJobCurrent(database, job, payload, signal, opt
       .get(id, job.userId, payload.conversationId);
     if (!message || message.revision !== revision) throw failure('Source message changed', 'JOB_SOURCE_STALE');
   }
+
 }
 
 export async function runRecoverableConversationStep(database, environment, stepKey, operation) {
@@ -63,7 +61,8 @@ export async function runRecoverableConversationStep(database, environment, step
     }
     database.prepare(`INSERT INTO job_steps (job_id, step_key, status, before_json, result_json, attempt, updated_at)
       VALUES (?, ?, 'running', ?, NULL, ?, ?) ON CONFLICT(job_id, step_key)
-      DO UPDATE SET status = 'running', before_json = excluded.before_json, result_json = NULL, attempt = excluded.attempt, updated_at = excluded.updated_at`)
+      DO UPDATE SET status = 'running', before_json = excluded.before_json, result_json = NULL, attempt = excluded.attempt,
+        updated_at = excluded.updated_at`)
       .run(job.id, stepKey, JSON.stringify(before), job.attempt, nowIso());
   });
   progress(25, { phase: stepKey, recovered: Boolean(stored) });
@@ -71,7 +70,7 @@ export async function runRecoverableConversationStep(database, environment, step
   try {
     const result = await withConversationMutationContext({
       assert, database, userId: job.userId, conversationId: payload.conversationId,
-      jobId: job.id, stepKey, attempt: job.attempt
+      jobId: job.id, stepKey, attempt: job.attempt,
     }, () => operation(guarded));
     assert();
     if (result?.ok === false) throw failure(result.error || result.status?.message || 'Agent step failed', result.code || 'AGENT_STEP_FAILED', result.retryable === true);
@@ -141,20 +140,7 @@ export async function runConversationPostprocessing(database, environment, optio
       emit: (event, data) => progress(50, { phase: 'accessory', event, data }),
       runStep: (key, operation) => step(`agent:${key}`, operation)
     });
-    const cast = await step('cast', (guarded) => !hasUsableProvider(options.settings) && !options.projectConversationCast
-      ? { ok: true, skipped: true, reason: 'Provider unavailable' }
-      : (options.projectConversationCast || projectConversationCast)({
-      database: guarded, userId: job.userId, conversation, character, userMessage, assistantMessage,
-      settings: options.settings, signal, idempotencyKey: `job:${job.id}:cast`, config: options.config,
-      mainThinkingLevel: payload.thinkingLevel,
-      mainThinkingEnabled: payload.thinkingEnabled,
-      publish: (conversationId, state) => {
-        try { assertConversationJobCurrent(database, job, payload, signal); } catch { return state; }
-        return publishCastSyncStatus(conversationId, state);
-      }
-    }));
     assertConversationJobCurrent(database, job, payload, signal);
-    if (cast.reviewRequired) failures.push(failure('部分人物同步条目未应用，已保留其余有效记录。', 'CAST_PLAN_PARTIAL'));
     if (failures.length) throw failures[0];
     withSavepoint(database, 'sp_finish_conversation_postprocess', () => {
       database.prepare("UPDATE messages SET postprocess_state = 'completed' WHERE id = ?").run(assistantMessage.id);
@@ -169,7 +155,6 @@ export async function runConversationPostprocessing(database, environment, optio
     });
     return { conversationId: conversation.id, assistantMessageId: assistantMessage.id, memories: memory.memories?.length || 0,
       skills: skills.map((entry) => ({ skill: entry.skill, ok: entry.ok })),
-      cast: { ok: cast.ok, skipped: Boolean(cast.skipped) },
       stateStatus: getConversationForUser(database, job.userId, conversation.id, { includeUsage: false }).stateStatus };
   } catch (error) {
     const current = database.prepare('SELECT timeline_revision FROM conversations WHERE id = ?').get(conversation.id);

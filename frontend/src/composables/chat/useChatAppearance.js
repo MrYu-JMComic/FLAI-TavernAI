@@ -116,9 +116,6 @@ export function useChatAppearance({
     if (directSettings && hasOwnAppearanceSetting(sourceSettings, 'highlightDialogue', 'highlight_dialogue')) {
       userSettings.highlightDialogue = directSettings.highlightDialogue;
     }
-    if (directSettings && hasOwnAppearanceSetting(sourceSettings, 'castTracking', 'cast_tracking')) {
-      userSettings.castTracking = directSettings.castTracking;
-    }
     const nextChatLorebookId = (sourceSettings?.chatLorebookId ?? conversation.value?.chatLorebookId ?? null) || null;
     const nextSignature = serializeAppearanceSync(authorSettings, userSettings, nextChatLorebookId);
     if (!options.force && nextSignature === lastAppearanceSyncSignature) {
@@ -167,7 +164,6 @@ export function useChatAppearance({
         statusBarPrompt: chatAppearanceForm.statusBarPrompt,
         showWorldBookMatches: chatAppearanceForm.showWorldBookMatches,
         highlightDialogue: chatAppearanceForm.highlightDialogue,
-        castTracking: chatAppearanceForm.castTracking,
         chatLorebookId: chatLorebookId.value
       });
       if (!isCurrentAppearanceSave(requestToken, conversationId)) {
@@ -202,26 +198,6 @@ export function useChatAppearance({
         appearanceSaving.value = false;
       }
     }
-  }
-
-  async function setCastTrackingEnabled(enabled) {
-    return updateCastTracking({ enabled: Boolean(enabled) }, {
-      successMessage: enabled ? '人物自动同步已开启' : '人物自动同步已关闭'
-    });
-  }
-
-  // Merge a partial NPC agent setting (switch, provider source, operation library) and persist it.
-  async function updateCastTracking(patch = {}, options = {}) {
-    const previous = { ...(chatAppearanceForm.castTracking || {}) };
-    chatAppearanceForm.castTracking = { ...previous, ...(patch && typeof patch === 'object' ? patch : {}) };
-    const saved = await saveConversationAppearanceChanges({
-      successMessage: options.successMessage || 'NPC 管理 Agent 设置已保存'
-    });
-    if (!saved) {
-      chatAppearanceForm.castTracking = previous;
-      return false;
-    }
-    return true;
   }
 
   async function applyConversationAppearance() {
@@ -617,8 +593,6 @@ export function useChatAppearance({
     resetConversationAppearance,
     setChatLorebookId,
     saveConversationAppearanceChanges,
-    setCastTrackingEnabled,
-    updateCastTracking,
     applyConversationAppearance,
     dispatchCustomScriptEvent,
     cleanupConversationAppearance,

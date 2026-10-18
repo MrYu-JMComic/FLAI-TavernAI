@@ -23,19 +23,41 @@ function countOrphanedAssistants(roles) {
 }
 
 test('budget trimming does not orphan an assistant reply', () => {
-  // The large user turn must be dropped to fit the budget. Its short assistant reply
-  // used to survive, leaving the model reading an answer with no question.
+  // The oldest user turn must be dropped to fit the budget. Its short assistant
+  // reply used to survive, leaving the model reading an answer with no question.
+  // The two most recent turns are protected, so the droppable pair sits behind
+  // them, and the budget floor is 1000 characters.
   const result = applyPromptBudget([
     { role: 'system', content: 'sys' },
     { role: 'user', content: 'X'.repeat(2000) },
     { role: 'assistant', content: 'short reply' },
+    { role: 'user', content: 'M'.repeat(400) },
+    { role: 'assistant', content: 'mid reply' },
     { role: 'user', content: 'latest' }
-  ], 300);
+  ], 1000);
 
   const roles = rolesOf(result);
   assert.equal(countOrphanedAssistants(roles), 0, `orphaned assistant in ${roles.join(' -> ')}`);
   assert.ok(result.budget.truncated);
   assert.ok(!result.messages.some((message) => String(message.content).includes('short reply')));
+});
+
+test('the two most recent turns survive a budget they cannot fit', () => {
+  // Reporting overflow beats amnesia: a bare "continue" must still arrive with
+  // the reply it continues, even when that pair alone blows the budget.
+  const result = applyPromptBudget([
+    { role: 'system', content: 'sys' },
+    { role: 'user', content: 'A'.repeat(2000) },
+    { role: 'assistant', content: 'B'.repeat(2000) },
+    { role: 'user', content: 'continue' }
+  ], 1000);
+
+  const contents = result.messages.map((message) => String(message.content));
+  assert.ok(contents.some((content) => content.includes('A'.repeat(2000))));
+  assert.ok(contents.some((content) => content.includes('B'.repeat(2000))));
+  assert.equal(result.budget.truncated, false);
+  assert.ok(result.budget.overBudget, 'unavoidable overflow must be reported');
+  assert.ok(result.budget.overflowCharacters > 0);
 });
 
 test('budget trimming keeps multi-turn history well formed', () => {
@@ -55,13 +77,17 @@ test('budget trimming keeps multi-turn history well formed', () => {
 });
 
 test('budget trimming drops consecutive assistant replies with their user turn', () => {
+  // Both halves of a split reply belong to the user turn above them, so they go
+  // together. The pair sits behind the two protected turns to stay droppable.
   const result = applyPromptBudget([
     { role: 'system', content: 'sys' },
     { role: 'user', content: 'Q'.repeat(1500) },
     { role: 'assistant', content: 'part one' },
     { role: 'assistant', content: 'part two' },
+    { role: 'user', content: 'M'.repeat(400) },
+    { role: 'assistant', content: 'mid reply' },
     { role: 'user', content: 'latest' }
-  ], 260);
+  ], 1000);
 
   const roles = rolesOf(result);
   assert.equal(countOrphanedAssistants(roles), 0, `orphaned assistant in ${roles.join(' -> ')}`);

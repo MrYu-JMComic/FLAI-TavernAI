@@ -69,7 +69,7 @@ test('app config centralizes runtime environment defaults', () => {
   assert.match(appSource, /mockProviderEnabled: config\.mockProviderEnabled/);
 });
 
-test('server exposes package-safe runtime health checks', () => {
+test('server exposes runtime health checks', () => {
   assert.match(appSource, /buildRuntimeHealth,/);
   assert.match(appSource, /buildRuntimeLiveness,/);
   assert.match(appSource, /createReadinessProbe/);
@@ -79,8 +79,4 @@ test('server exposes package-safe runtime health checks', () => {
   assert.match(runtimeHealthSource, /database: checkDatabase\(database\)/);
   assert.match(runtimeHealthSource, /storage: checkStorage\(\)/);
   assert.match(runtimeHealthSource, /config: checkConfig\(\)/);
-  assert.match(runtimeHealthSource, /bundle: checkRuntimeBundle\(\)/);
-  assert.match(runtimeHealthSource, /packaged: checks\.bundle\.present === true/);
-  assert.match(runtimeHealthSource, /parseRuntimeMarkerText\(fs\.readFileSync\(markerPath, 'utf8'\)\)/);
-  assert.match(runtimeHealthSource, /export function parseRuntimeMarkerText\(text\) \{[\s\S]*replace\(\/\^\\uFEFF\/, ''\)/);
 });

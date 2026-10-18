@@ -21,17 +21,27 @@ import { CHARACTER_CONTENT_LIMITS } from '../domain/characters/limits.js';
 import { sanitizeDiagnosticText, sanitizeDiagnosticValue } from './diagnosticRedaction.js';
 import { buildStatusScriptAiGuide, buildStatusTemplateAiGuide } from '../../../shared/statusTemplateSyntax.js';
 import { STATUS_VARIABLE_LIMIT, STATUS_VARIABLE_TYPES, STATUS_VARIABLE_UNIT_LIMIT } from '../../../shared/statusVariables.js';
+import { getCharacter } from '../modules/characters.js';
+import { listCharacterWorldBooks } from './worldBooks/worldBookService.js';
 import {
-  CHARACTER_WORLD_BOOK_PATCH_TOOL_NAMES,
-  CHARACTER_WORLD_BOOK_READ_TOOL_NAMES,
-  WORLD_BOOK_QUALITY_INSTRUCTIONS,
-  createCharacterWorldBookTools,
-  executeWorldBookDraftTool,
-  hasUsableWorldBookDraft,
-  normalizeUsableWorldBookDraft,
-  normalizeWorldBookDraft,
-  normalizeWorldBookDraftInput
+  WORLD_BOOK_QUALITY_INSTRUCTIONS
 } from './worldBookDraftTools.js';
+import {
+  buildWorldBookChanges,
+  createWorldBookWorkspace,
+  executeWorldBookWorkspaceTool,
+  serializeWorldBookWorkspace,
+  worldBookWorkspaceContext,
+  worldBookWorkspaceTools
+} from './worldBooks/worldBookAssistantWorkspace.js';
+
+const characterWorldBookTools = (options = {}) => worldBookWorkspaceTools(options).filter((tool) => tool.function.name !== 'finish_world_book_task').map((tool) => (
+  tool.function.name === 'create_world_book'
+    ? { ...tool, function: { ...tool.function, name: 'create_character_world_book' } }
+    : tool
+));
+const CHARACTER_WORLD_BOOK_TOOL_NAMES = new Set(characterWorldBookTools().map((tool) => tool.function.name));
+const CHARACTER_WORLD_BOOK_READ_TOOL_NAMES = new Set(['search_world_books', 'select_world_book', 'read_world_book', 'preview_world_book_entries']);
 
 const CHARACTER_REASONING_REDACTION = '[已隐藏内部指令片段]';
 const CHARACTER_PLAN_TOOL_NAME = 'submit_character_plan';
@@ -61,7 +71,7 @@ const CHARACTER_MUTATION_TOOLS = new Set([
   'update_character_agents',
   'update_character_presentation',
   'create_character_world_book',
-  ...CHARACTER_WORLD_BOOK_PATCH_TOOL_NAMES,
+  ...[...CHARACTER_WORLD_BOOK_TOOL_NAMES].filter((name) => !CHARACTER_WORLD_BOOK_READ_TOOL_NAMES.has(name)),
   'set_character_recommendations'
 ]);
 
@@ -204,7 +214,6 @@ const characterTools = [
             properties: {
               worldDirector: skillConfigSchema(),
               gameHud: skillConfigSchema(),
-              encounterMode: skillConfigSchema(),
               rewardMode: skillConfigSchema(),
               sceneAgent: skillConfigSchema(),
               statusBarAgent: skillConfigSchema(),
@@ -238,7 +247,7 @@ const characterTools = [
       }
     }
   },
-  ...createCharacterWorldBookTools(),
+  ...characterWorldBookTools(),
   {
     type: 'function',
     function: {
@@ -351,7 +360,7 @@ const characterQualityInstructions = [
 
 function buildCharacterAssistantMessages({
   requirement, draft, userName, enabledSections, optimizeExisting, continuation,
-  plan = null, planPhase = false
+  plan = null, planPhase = false, workspace = null, history = [], worldBookAutomatic = false
 }) {
   return [
     {
@@ -379,7 +388,10 @@ function buildCharacterAssistantMessages({
         '正则与渲染插件使用完整列表替换；继续任务时先保留 currentCharacter 中仍有效的项目，不要制造重复规则。',
         planPhase
           ? '世界书范围启用且 requirement 明确需要世界设定时，计划中应当有一步专门覆盖世界书，并在 detail 里说明要写哪几类条目；本阶段不要写任何条目内容。'
-          : '世界书范围启用且 requirement 明确需要世界设定时，先调用 create_character_world_book 生成可保存的草稿（名称 + 核心条目），再用 upsert_world_book_entry / remove_world_book_entry 逐条补充或修正，并可用 preview_world_book_entries 用示例文本自检触发条件；不要退化成一段“建议添加哪些条目”的说明。这些工具与“AI 世界书创建助手”使用同一套字段与校验，都不会直接落库，用户将在界面确认创建并关联。',
+          : '世界书范围启用时，worldBookContext 是本次用书与最新未应用修改。先读取有关条目，按用户要求更新指定世界书；没有选书可检索和自主选择。不能把找不到的更新目标悄悄改成新建。选中已有世界书也始终可以用 create_character_world_book 新建独立书，同轮任务可更新 A 并新建 B。创建追加新目标，不覆盖任何已有草稿。targetRef 标识每本书，省略时操作当前活动目标。只修改需要的字段，未读取或未输出的条目不得删除。仅查阅或讨论也可直接验收；全部变更由用户一次应用，新书关联在保存角色时生效。',
+        ...(workspace ? [worldBookAutomatic
+          ? '本次允许自主检索其他世界书并按对话选择相关目标；选中候选不是全部必须修改。'
+          : '本次优先使用所选世界书；仅在用户明确指定其他书或要求自主寻找时再检索切换。没有关联书时仍可直接新建。'] : []),
         ...WORLD_BOOK_QUALITY_INSTRUCTIONS,
         '没有必要的字段保持为空；不要为了填满表单而编造与角色玩法无关的设定。',
         '正则规则只在 requirement 明确要求自动替换、口癖清洗、禁词替换或格式规范时添加。pattern 必须是 JavaScript 可用正则，并避免过宽匹配、灾难性回溯和破坏正常中文。',
@@ -391,6 +403,7 @@ function buildCharacterAssistantMessages({
         ...buildPlanExecutionInstructions(plan)
       ].join('\n')
     },
+    ...normalizeCharacterHistory(history),
     {
       role: 'user',
       content: JSON.stringify(
@@ -398,6 +411,7 @@ function buildCharacterAssistantMessages({
           requirement: String(requirement || '').trim(),
           ...(plan?.extraRequirement ? { planExtraRequirement: plan.extraRequirement } : {}),
           currentCharacter: draft,
+          ...(workspace ? { worldBookContext: worldBookWorkspaceContext(workspace) } : {}),
           enabledSections,
           optimizeExisting,
           continuation: normalizeContinuation(continuation)
@@ -412,7 +426,7 @@ function buildCharacterAssistantMessages({
 export async function completeCharacterDraft(settings, request = {}) {
   const {
     requirement = '', current = {}, user = {}, options: rawOptions = {}, signal, database, userId,
-    thinkingLevel = 'off', continuation = {}, planMode = false, plan = null
+    thinkingLevel = 'off', continuation = {}, planMode = false, plan = null, worldBookContext = {}, history = [], characterId
   } = nullToEmptyObject(request);
   const options = rawOptions ?? {};
   const draft = normalizeDraft(current);
@@ -423,6 +437,7 @@ export async function completeCharacterDraft(settings, request = {}) {
   const tools = characterToolsFor(enabledSections, { planPhase });
   const optimizeExisting = options.optimizeExisting === true || options.optimize_existing === true;
   const runState = createCharacterRunState(continuation, enabledSections, approvedPlan);
+  initializeCharacterWorldBooks(runState, { enabledSections, database, userId, worldBookContext, current, characterId });
   const thinking = resolveAssistantThinking(settings, thinkingLevel);
 
   if (settings?.providerType === 'mock') {
@@ -437,6 +452,7 @@ export async function completeCharacterDraft(settings, request = {}) {
     settings,
     buildCharacterAssistantMessages({
       requirement, draft, userName, enabledSections, optimizeExisting, continuation,
+      workspace: runState.worldBookWorkspace, history, worldBookAutomatic: runState.worldBookAutomatic,
       plan: approvedPlan,
       planPhase
     }),
@@ -454,7 +470,8 @@ export async function completeCharacterDraft(settings, request = {}) {
 export async function streamCharacterDraft(settings, request = {}) {
   const {
     requirement = '', current = {}, user = {}, options: rawOptions = {}, signal, emit = () => {}, database, userId,
-    thinkingLevel = 'off', continuation = {}, providerStreaming = false, planMode = false, plan = null
+    thinkingLevel = 'off', continuation = {}, providerStreaming = false, planMode = false, plan = null,
+    worldBookContext = {}, history = [], characterId
   } = nullToEmptyObject(request);
   const options = rawOptions ?? {};
   const draft = normalizeDraft(current);
@@ -465,6 +482,7 @@ export async function streamCharacterDraft(settings, request = {}) {
   const tools = characterToolsFor(enabledSections, { planPhase });
   const optimizeExisting = options.optimizeExisting === true || options.optimize_existing === true;
   const runState = createCharacterRunState(continuation, enabledSections, approvedPlan);
+  initializeCharacterWorldBooks(runState, { enabledSections, database, userId, worldBookContext, current, characterId });
   const thinking = resolveAssistantThinking(settings, thinkingLevel);
   const relayEvent = createCharacterStreamRelay({ emit, draft, enabledSections, runState, planPhase });
 
@@ -487,6 +505,7 @@ export async function streamCharacterDraft(settings, request = {}) {
         enabledSections,
         optimizeExisting,
         continuation,
+        workspace: runState.worldBookWorkspace, history, worldBookAutomatic: runState.worldBookAutomatic,
         plan: approvedPlan,
         planPhase
       });
@@ -529,6 +548,7 @@ export async function streamCharacterDraft(settings, request = {}) {
             buildCharacterAssistantMessages({
               requirement,
               draft,
+              workspace: runState.worldBookWorkspace, history, worldBookAutomatic: runState.worldBookAutomatic,
               userName,
               enabledSections,
               optimizeExisting: true,
@@ -607,7 +627,9 @@ async function runMockCharacterAssistant({ draft, enabledSections, runState, emi
 function executeCharacterTool(name, args, draft, runState) {
   const toolArgs = objectOrEmpty(args);
   const isMutation = CHARACTER_MUTATION_TOOLS.has(name);
-  if (isMutation && runState.appliedToolNames.has(name)) {
+  const isWorldBookTool = CHARACTER_WORLD_BOOK_TOOL_NAMES.has(name);
+  if (isWorldBookTool && !runState.worldBookWorkspace) return disabledCharacterToolResult();
+  if (isMutation && !isWorldBookTool && runState.appliedToolNames.has(name)) {
     const previewDraft = structuredClone(draft);
     const previewResult = applyCharacterMutation(name, toolArgs, previewDraft);
     if (previewResult.ok === true && characterDraftsEqual(draft, previewDraft)) {
@@ -641,17 +663,13 @@ function executeCharacterTool(name, args, draft, runState) {
   }
 
   let result;
-  if (isMutation) {
-    result = applyCharacterMutation(name, toolArgs, draft);
-  } else if (CHARACTER_WORLD_BOOK_READ_TOOL_NAMES.includes(name)) {
-    if (!draft.worldBookDraft) {
-      return attachCharacterWorkflow({
-        ok: false,
-        error: 'WORLD_BOOK_DRAFT_MISSING',
-        message: '还没有世界书草稿，请先调用 create_character_world_book。'
-      }, runState);
+  if (isWorldBookTool) {
+    result = executeWorldBookWorkspaceTool(runState.worldBookWorkspace, name, toolArgs);
+    if (result.ok === true && (isMutation || ['read_world_book', 'preview_world_book_entries'].includes(name))) {
+      result = { ...result, sections: ['worldBook'] };
     }
-    result = executeWorldBookDraftTool(name, toolArgs, draft.worldBookDraft);
+  } else if (isMutation) {
+    result = applyCharacterMutation(name, toolArgs, draft);
   } else if (name === 'report_character_progress') {
     result = {
       ok: true,
@@ -716,6 +734,7 @@ function executeCharacterTool(name, args, draft, runState) {
     runState.pendingToolNames.delete(name);
     recordCompletedSections(runState, result.sections);
   }
+  if (result.ok === true && isWorldBookTool && !isMutation) recordCompletedSections(runState, result.sections);
   if (result.ok === true) recordCharacterAction(runState, name, result);
   return attachCharacterWorkflow(result, runState);
 }
@@ -745,58 +764,41 @@ function applyCharacterMutation(name, toolArgs, draft) {
     const sections = extensionSectionsFor(toolArgs);
     return sections.length ? { ok: true, applied, sections } : disabledCharacterToolResult();
   }
-  if (name === 'create_character_world_book') {
-    const { draft: worldBookDraft, droppedEntries } = normalizeWorldBookDraftInput(toolArgs);
-    if (!hasUsableWorldBookDraft(worldBookDraft)) {
-      return {
-        ok: false,
-        error: 'WORLD_BOOK_DRAFT_INVALID',
-        message: '世界书必须有名称和至少一个可用条目；每个非常驻条目还必须有 triggerKeys，selective 条目还必须有 keysSecondary。'
-      };
-    }
-    draft.worldBookDraft = worldBookDraft;
-    return {
-      ok: true,
-      name: worldBookDraft.name,
-      entryCount: worldBookDraft.entries.length,
-      ...(droppedEntries
-        ? {
-            droppedEntries,
-            message: `有 ${droppedEntries} 个条目缺少 name、content 或必需的 triggerKeys / keysSecondary，已被丢弃；如仍需要请用 upsert_world_book_entry 补全。`
-          }
-        : {}),
-      sections: ['worldBook']
-    };
-  }
-  if (CHARACTER_WORLD_BOOK_PATCH_TOOL_NAMES.includes(name)) {
-    return patchCharacterWorldBook(name, toolArgs, draft);
-  }
   return { ok: false, error: `未知写入工具：${name}` };
 }
 
-function patchCharacterWorldBook(name, toolArgs, draft) {
-  if (!draft.worldBookDraft) {
-    return {
-      ok: false,
-      error: 'WORLD_BOOK_DRAFT_MISSING',
-      message: '还没有世界书草稿，请先调用 create_character_world_book 写入名称与首批条目。'
-    };
+function initializeCharacterWorldBooks(runState, { enabledSections, database, userId, worldBookContext, current, characterId }) {
+  if (!enabledSections.worldBook) return;
+  const context = objectOrEmpty(worldBookContext);
+  runState.worldBookAutomatic = context.automatic === true;
+  const selectedBookIds = Array.isArray(context.selectedBookIds)
+    ? context.selectedBookIds
+    : database && characterId && getCharacter(database, userId, characterId)
+      ? listCharacterWorldBooks(database, characterId).map((book) => book.id)
+      : [];
+  runState.worldBookWorkspace = createWorldBookWorkspace({
+    database,
+    userId,
+    selectedBookIds,
+    workspace: context.workspace || current?.worldBookWorkspace
+  });
+}
+
+function characterWithWorldBooks(draft, runState) {
+  const character = normalizeDraft(draft);
+  if (runState.worldBookWorkspace) {
+    character.worldBookWorkspace = serializeWorldBookWorkspace(runState.worldBookWorkspace);
+    character.worldBookChanges = buildWorldBookChanges(runState.worldBookWorkspace);
   }
-  const working = normalizeWorldBookDraft(draft.worldBookDraft);
-  const result = executeWorldBookDraftTool(name, toolArgs, working);
-  if (result.ok !== true) {
-    return result;
-  }
-  const next = normalizeUsableWorldBookDraft(working);
-  // A draft the user cannot create is worse than no draft at all.
-  draft.worldBookDraft = hasUsableWorldBookDraft(next) ? next : null;
-  return {
-    ...result,
-    name: next.name,
-    entryCount: next.entries.length,
-    ...(draft.worldBookDraft ? {} : { message: '移除后草稿已没有可保存条目，世界书草稿已清空。' }),
-    sections: ['worldBook']
-  };
+  return character;
+}
+
+function normalizeCharacterHistory(history) {
+  return (Array.isArray(history) ? history : []).slice(-12).flatMap((message) => (
+    ['user', 'assistant'].includes(message?.role) && typeof message.content === 'string'
+      ? [{ role: message.role, content: message.content.slice(0, 12000) }]
+      : []
+  ));
 }
 
 function characterDraftsEqual(left, right) {
@@ -809,6 +811,7 @@ function characterToolsFor(enabledSections = {}, { planPhase = false } = {}) {
     for (const tool of characterTools) {
       if (CHARACTER_PLAN_PHASE_TOOL_NAMES.has(tool.function?.name)) planTools.push(tool);
     }
+    if (enabledSections.worldBook) planTools.push(...characterWorldBookTools({ planPhase: true }));
     planTools.push(createSubmitPlanTool({
       name: CHARACTER_PLAN_TOOL_NAME,
       sectionValues: enabledSectionList(enabledSections),
@@ -830,9 +833,7 @@ function characterToolsFor(enabledSections = {}, { planPhase = false } = {}) {
     allowed.add('update_character_presentation');
   }
   if (enabledSections.worldBook) {
-    allowed.add('create_character_world_book');
-    for (const name of CHARACTER_WORLD_BOOK_PATCH_TOOL_NAMES) allowed.add(name);
-    for (const name of CHARACTER_WORLD_BOOK_READ_TOOL_NAMES) allowed.add(name);
+    for (const name of CHARACTER_WORLD_BOOK_TOOL_NAMES) allowed.add(name);
   }
   if (enabledSections.modSuggestions) {
     allowed.add('set_character_recommendations');
@@ -993,7 +994,7 @@ function createCharacterStreamRelay({ emit, draft, enabledSections, runState, pl
 }
 
 function buildCharacterAssistantResult(draft, result, runState, enabledSections) {
-  const character = normalizeDraft(draft);
+  const character = characterWithWorldBooks(draft, runState);
   const process = sanitizeCharacterProcess(result.process);
   return {
     character,
@@ -1016,6 +1017,7 @@ function buildCharacterPlanResult(result, runState) {
   return {
     phase: 'plan',
     plan: runState.plan,
+    ...(runState.worldBookWorkspace ? { worldBookWorkspace: serializeWorldBookWorkspace(runState.worldBookWorkspace) } : {}),
     toolCalls: sanitizeCharacterToolCalls(result.toolCalls),
     process,
     reasoning: collectReasoning(process),
@@ -1026,7 +1028,7 @@ function buildCharacterPlanResult(result, runState) {
 
 function buildCharacterCheckpoint(draft, enabledSections, runState, lastTool = '') {
   return {
-    character: normalizeDraft(draft),
+    character: characterWithWorldBooks(draft, runState),
     completedSections: [...runState.completedSections],
     selectedSections: enabledSectionList(enabledSections),
     pendingToolNames: [...runState.pendingToolNames],
@@ -1468,9 +1470,6 @@ function normalizeDraft(value = {}) {
     regexRules: normalizeRegexRuleList(value.regexRules),
     renderPlugins: normalizeRenderPluginList(value.renderPlugins),
     authorAdvancedSettings: normalizeAdvancedSettings(value.authorAdvancedSettings || value.advancedSettings || {}),
-    worldBookDraft: hasUsableWorldBookDraft(value.worldBookDraft)
-      ? normalizeUsableWorldBookDraft(value.worldBookDraft)
-      : null,
     modSuggestions: normalizeModSuggestionList(value.modSuggestions)
   };
 }
@@ -1538,11 +1537,7 @@ function filterToolArgs(name, args = {}, enabled = {}) {
   if (['update_character_status_bar', 'update_character_agents', 'update_character_presentation'].includes(name)) {
     return enabled.advancedSettings ? toolArgs : {};
   }
-  if (
-    name === 'create_character_world_book'
-    || CHARACTER_WORLD_BOOK_PATCH_TOOL_NAMES.includes(name)
-    || CHARACTER_WORLD_BOOK_READ_TOOL_NAMES.includes(name)
-  ) {
+  if (CHARACTER_WORLD_BOOK_TOOL_NAMES.has(name)) {
     return enabled.worldBook ? toolArgs : {};
   }
   if (name === 'set_character_recommendations') {

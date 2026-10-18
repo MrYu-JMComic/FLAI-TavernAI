@@ -54,7 +54,6 @@ export function createDefaultAccessorySkills() {
     sceneAgent: createDefaultAccessorySkill(false),
     worldDirector: createDefaultAccessorySkill(false),
     gameHud: createDefaultAccessorySkill(false),
-    encounterMode: createDefaultAccessorySkill(false),
     rewardMode: createDefaultAccessorySkill(false),
     statusBarAgent: createDefaultAccessorySkill('auto'),
     economyAgent: createDefaultAccessorySkill(false),

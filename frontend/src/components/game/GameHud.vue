@@ -1,21 +1,20 @@
 <script setup>
 import { computed, ref, watch } from 'vue';
 import PixelIcon from '../PixelIcon.vue';
-import { advanceGameplayTime, claimGameplayReward, createGameplayEncounter, endGameplayEncounter, fetchGameplayDashboard, fetchGameplayEvents, performGameplayCheck, performGameplayEncounterAction, travelGameplayToNode, updateGameplayWeather } from '../../api/chat.js';
+import { advanceGameplayTime, claimGameplayReward, fetchGameplayDashboard, fetchGameplayEvents, performGameplayCheck, travelGameplayToNode, updateGameplayWeather } from '../../api/chat.js';
 
 const props = defineProps({
   conversationId: { type: String, default: '' },
   refreshKey: { type: [String, Number], default: '' },
   enabled: { type: Boolean, default: true },
-  encounterEnabled: { type: Boolean, default: false },
   rewardEnabled: { type: Boolean, default: false },
   directorResult: { type: Object, default: null }
 });
 
-const emit = defineEmits(['choose-action', 'open-scene', 'open-npc']);
+const emit = defineEmits(['choose-action', 'open-scene']);
 const loading = ref(false);
 const loadError = ref('');
-const dashboard = ref({ location: null, presentNpcs: [], counts: {}, wallet: [], time: '', weather: '', coreStatus: [], worldEvents: [], quickActions: [] });
+const dashboard = ref({ location: null, counts: {}, wallet: [], time: '', weather: '', coreStatus: [], worldEvents: [], quickActions: [] });
 const unreadEventCount = ref(0);
 const eventCursor = ref(0);
 const eventsExpanded = ref(false);
@@ -25,8 +24,6 @@ const checkResult = ref(null);
 const worldBusy = ref(false);
 const mapExpanded = ref(false);
 const travelBusy = ref(false);
-const encounterExpanded = ref(false);
-const encounterBusy = ref(false);
 const rewardsExpanded = ref(false);
 const rewardBusyId = ref('');
 let activeConversationId = '';
@@ -36,7 +33,6 @@ const location = computed(() => {
   return dashboard.value?.location || null;
 });
 
-const presentNpcs = computed(() => Array.isArray(dashboard.value?.presentNpcs) ? dashboard.value.presentNpcs : []);
 const counts = computed(() => dashboard.value?.counts || {});
 const coreStatus = computed(() => Array.isArray(dashboard.value?.coreStatus) ? dashboard.value.coreStatus : []);
 const latestEvent = computed(() => Array.isArray(dashboard.value?.worldEvents) ? dashboard.value.worldEvents[0] : null);
@@ -55,13 +51,8 @@ const locationIcon = computed(() => {
 const quickActions = computed(() => Array.isArray(dashboard.value?.quickActions) ? dashboard.value.quickActions : []);
 const checkActions = computed(() => Array.isArray(dashboard.value?.checkActions) ? dashboard.value.checkActions : []);
 const activeQuest = computed(() => dashboard.value?.activeQuest || null);
-const backpack = computed(() => dashboard.value?.backpack || { totalKinds: 0, totalQuantity: 0, items: [] });
-const npcActivities = computed(() => Array.isArray(dashboard.value?.npcActivities) ? dashboard.value.npcActivities : []);
 const travelMap = computed(() => dashboard.value?.travelMap || { currentNode: null, discoveredNodes: [], availableRoutes: [] });
 const availableRoutes = computed(() => Array.isArray(travelMap.value.availableRoutes) ? travelMap.value.availableRoutes : []);
-const encounter = computed(() => props.encounterEnabled ? dashboard.value?.encounter || null : null);
-const encounterParticipants = computed(() => Array.isArray(encounter.value?.participants) ? encounter.value.participants : []);
-const encounterTarget = computed(() => encounterParticipants.value.find(item => item.status === 'active' && item.actorType !== encounter.value?.currentActor?.actorType) || null);
 const pendingRewards = computed(() => props.rewardEnabled && Array.isArray(dashboard.value?.rewards) ? dashboard.value.rewards : []);
 const directorExecutions = computed(() => Array.isArray(props.directorResult?.result?.executions) ? props.directorResult.result.executions : []);
 const directorRejected = computed(() => directorExecutions.value.filter(item => !item.ok));
@@ -75,7 +66,7 @@ watch(
 async function loadSnapshot() {
   const conversationId = String(props.conversationId || '').trim();
   if (!conversationId || !props.enabled) {
-    dashboard.value = { location: null, presentNpcs: [], counts: {}, wallet: [], time: '', weather: '', coreStatus: [], worldEvents: [], quickActions: [] };
+    dashboard.value = { location: null, counts: {}, wallet: [], time: '', weather: '', coreStatus: [], worldEvents: [], quickActions: [] };
     eventCursor.value = 0;
     unreadEventCount.value = 0;
     activeConversationId = '';
@@ -94,7 +85,7 @@ async function loadSnapshot() {
       previousCursor > 0 ? fetchGameplayEvents(conversationId, { afterCursor: previousCursor, limit: 100 }) : Promise.resolve(null)
     ]);
     if (token !== loadToken) return;
-    dashboard.value = result || { location: null, presentNpcs: [], counts: {}, wallet: [], time: '', weather: '', coreStatus: [], worldEvents: [], quickActions: [] };
+    dashboard.value = result || { location: null, counts: {}, wallet: [], time: '', weather: '', coreStatus: [], worldEvents: [], quickActions: [] };
     const newEvents = Array.isArray(incremental?.events) ? incremental.events : [];
     if (!conversationChanged && newEvents.length) unreadEventCount.value += newEvents.length;
     eventCursor.value = Math.max(Number(result?.eventCursor || 0), Number(incremental?.latestCursor || 0), previousCursor);
@@ -181,53 +172,6 @@ async function travelTo(destinationNodeId) {
   }
 }
 
-async function startEncounter() {
-  const npc = presentNpcs.value[0];
-  if (!props.encounterEnabled || !npc || encounterBusy.value) return;
-  encounterBusy.value = true;
-  try {
-    await createGameplayEncounter(props.conversationId, { title: `遭遇：${npc.name}`, memberIds: [npc.memberId] });
-    encounterExpanded.value = true;
-    await loadSnapshot();
-  } catch (error) {
-    loadError.value = error?.message || '遭遇创建失败';
-  } finally {
-    encounterBusy.value = false;
-  }
-}
-
-async function encounterAction(actionType) {
-  const currentActor = encounter.value?.currentActor;
-  if (!currentActor || encounterBusy.value) return;
-  encounterBusy.value = true;
-  try {
-    await performGameplayEncounterAction(props.conversationId, encounter.value.id, {
-      actorId: currentActor.id,
-      targetId: encounterTarget.value?.id || '',
-      actionType,
-      skill: actionType === 'skill' ? '战术' : '攻击'
-    });
-    await loadSnapshot();
-  } catch (error) {
-    loadError.value = error?.message || '回合行动失败';
-  } finally {
-    encounterBusy.value = false;
-  }
-}
-
-async function stopEncounter() {
-  if (!encounter.value || encounterBusy.value) return;
-  encounterBusy.value = true;
-  try {
-    await endGameplayEncounter(props.conversationId, encounter.value.id);
-    await loadSnapshot();
-  } catch (error) {
-    loadError.value = error?.message || '遭遇终止失败';
-  } finally {
-    encounterBusy.value = false;
-  }
-}
-
 async function claimReward(grantId) {
   if (!grantId || rewardBusyId.value) return;
   rewardBusyId.value = grantId;
@@ -252,18 +196,9 @@ async function claimReward(grantId) {
       </span>
     </button>
 
-    <button class="game-hud-npcs" type="button" title="打开 NPC 管理" @click="emit('open-npc')">
-      <span class="game-hud-icon"><PixelIcon icon-key="building.shop" :size="22" /></span>
-      <span>
-        <small>在场人物</small>
-        <strong>{{ presentNpcs.length ? presentNpcs.map(item => item.name).join('、') : '暂无记录' }}</strong>
-      </span>
-    </button>
-
     <div class="game-hud-world" :title="loadError || '当前世界规模'">
       <span><b>{{ counts.locations || 0 }}</b> 地点</span>
       <span><b>{{ counts.items || 0 }}</b> 物品</span>
-      <span><b>{{ counts.npcs || 0 }}</b> NPC</span>
     </div>
 
     <div class="game-hud-vitals" aria-label="时间天气与核心状态">
@@ -294,18 +229,8 @@ async function claimReward(grantId) {
         <b>{{ activeQuest?.title || '暂无活动任务' }}</b>
         <small v-if="activeQuest">{{ activeQuest.objectives.filter(item => item.status === 'completed').length }}/{{ activeQuest.objectives.length }}</small>
       </span>
-      <span class="game-hud-backpack" title="玩家背包">
-        <PixelIcon icon-key="item.bag" :size="16" />
-        <b>背包 {{ backpack.totalKinds }}</b>
-        <small>{{ backpack.totalQuantity }} 件</small>
-      </span>
     </div>
     <div class="game-hud-world-controls">
-      <span class="game-hud-activity" :title="npcActivities.map(item => `${item.npcName}：${item.title}`).join('\n') || '暂无 NPC 活动'">
-        <PixelIcon icon-key="building.shop" :size="16" />
-        <b>{{ npcActivities[0] ? `${npcActivities[0].npcName} · ${npcActivities[0].title}` : '暂无 NPC 活动' }}</b>
-        <small v-if="npcActivities.length > 1">+{{ npcActivities.length - 1 }}</small>
-      </span>
       <button type="button" :disabled="worldBusy" title="推进 15 分钟" @click="advanceTime(15)">+15m</button>
       <button type="button" :disabled="worldBusy" title="推进 1 小时" @click="advanceTime(60)">+1h</button>
     </div>
@@ -323,33 +248,6 @@ async function claimReward(grantId) {
           <small>{{ route.minutes }}m</small>
         </button>
       </div>
-    </div>
-    <div v-if="encounterEnabled" class="game-hud-encounter">
-      <button v-if="!encounter" type="button" :disabled="encounterBusy || !presentNpcs.length" title="与当前 NPC 开始遭遇" @click="startEncounter">
-        <PixelIcon icon-key="action.dice" :size="16" />
-        <b>开始遭遇</b>
-        <small>{{ presentNpcs[0]?.name || '当前没有 NPC' }}</small>
-      </button>
-      <template v-else>
-        <button type="button" :aria-expanded="encounterExpanded" @click="encounterExpanded = !encounterExpanded">
-          <PixelIcon icon-key="status.heart" :size="16" />
-          <b>{{ encounter.title }}</b>
-          <small>第 {{ encounter.roundNumber }} 回合 · {{ encounter.currentActor?.actorName }}</small>
-        </button>
-        <div v-if="encounterExpanded" class="game-hud-encounter-detail" aria-label="遭遇回合行动">
-          <span v-for="participant in encounterParticipants" :key="participant.id" :class="{ 'is-current': participant.id === encounter.currentActor?.id, 'is-defeated': participant.status !== 'active' }">
-            <b>{{ participant.actorName }}</b>
-            <small>HP {{ participant.currentHp }}/{{ participant.maxHp }} · 先攻 {{ participant.initiative }}</small>
-          </span>
-          <div class="game-hud-encounter-actions">
-            <button type="button" :disabled="encounterBusy || !encounterTarget" @click="encounterAction('attack')">攻击</button>
-            <button type="button" :disabled="encounterBusy || !encounterTarget" @click="encounterAction('skill')">技能</button>
-            <button type="button" :disabled="encounterBusy" @click="encounterAction('defend')">防御</button>
-            <button type="button" :disabled="encounterBusy" @click="encounterAction('flee')">脱离</button>
-            <button type="button" :disabled="encounterBusy" @click="stopEncounter">安全终止</button>
-          </div>
-        </div>
-      </template>
     </div>
     <div v-if="rewardEnabled && pendingRewards.length" class="game-hud-rewards">
       <button type="button" :aria-expanded="rewardsExpanded" @click="rewardsExpanded = !rewardsExpanded">
@@ -400,7 +298,7 @@ async function claimReward(grantId) {
 <style scoped>
 .game-hud {
   display: grid;
-  grid-template-columns: minmax(170px, 1.15fr) minmax(160px, 1fr) auto auto auto;
+  grid-template-columns: minmax(170px, 1.15fr) auto auto auto;
   align-items: stretch;
   gap: 8px;
   padding: 8px clamp(10px, 2vw, 18px);
@@ -408,8 +306,7 @@ async function claimReward(grantId) {
   background: color-mix(in srgb, var(--surface) 91%, var(--green-soft));
 }
 
-.game-hud-location,
-.game-hud-npcs {
+.game-hud-location {
   display: flex;
   align-items: center;
   gap: 9px;
@@ -422,14 +319,12 @@ async function claimReward(grantId) {
   text-align: left;
 }
 
-.game-hud-location:hover,
-.game-hud-npcs:hover {
+.game-hud-location:hover {
   border-color: color-mix(in srgb, var(--primary) 18%, var(--line));
   background: color-mix(in srgb, var(--surface) 76%, transparent);
 }
 
-.game-hud-location > span:last-child,
-.game-hud-npcs > span:last-child {
+.game-hud-location > span:last-child {
   min-width: 0;
 }
 
@@ -525,7 +420,6 @@ async function claimReward(grantId) {
 
 .game-hud-progress,
 .game-hud-map,
-.game-hud-encounter,
 .game-hud-rewards,
 .game-hud-check-confirm,
 .game-hud-check-result {
@@ -558,22 +452,6 @@ async function claimReward(grantId) {
 .game-hud-map-routes button { padding: 4px 7px; border-radius: 7px; }
 .game-hud-map-routes button small { color: var(--muted); }
 
-.game-hud-encounter > button,
-.game-hud-encounter-detail,
-.game-hud-encounter-actions {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.game-hud-encounter > button { width: 100%; padding: 5px 8px; border-radius: 8px; }
-.game-hud-encounter > button small { margin-left: auto; }
-.game-hud-encounter-detail { flex-wrap: wrap; padding-top: 6px; }
-.game-hud-encounter-detail > span { display: grid; padding: 4px 7px; border: 1px solid var(--line); border-radius: 7px; }
-.game-hud-encounter-detail > span.is-current { border-color: var(--primary); }
-.game-hud-encounter-detail > span.is-defeated { opacity: 0.5; }
-.game-hud-encounter-actions { flex-wrap: wrap; margin-left: auto; }
-
 .game-hud-rewards > button,
 .game-hud-reward-list,
 .game-hud-reward-list button { display: flex; align-items: center; gap: 6px; }
@@ -584,8 +462,7 @@ async function claimReward(grantId) {
 .game-hud-reward-list button span { max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 .game-hud-progress { justify-content: space-between; color: var(--muted); font-size: 0.7rem; }
-.game-hud-quest,
-.game-hud-backpack { display: inline-flex; align-items: center; gap: 5px; min-width: 0; }
+.game-hud-quest { display: inline-flex; align-items: center; gap: 5px; min-width: 0; }
 .game-hud-quest b { overflow: hidden; color: var(--text); text-overflow: ellipsis; white-space: nowrap; }
 .game-hud-progress small { color: var(--muted); }
 
@@ -606,8 +483,6 @@ async function claimReward(grantId) {
   min-width: 0;
 }
 
-.game-hud-activity { display: inline-flex; align-items: center; gap: 5px; min-width: 0; margin-right: auto; color: var(--muted); font-size: 0.7rem; }
-.game-hud-activity b { overflow: hidden; color: var(--text); text-overflow: ellipsis; white-space: nowrap; }
 .game-hud-world-controls button,
 .game-hud-vitals button { display: inline-flex; align-items: center; gap: 3px; min-height: 26px; padding: 0 7px; border: 1px solid var(--line); border-radius: 7px; color: var(--muted); background: color-mix(in srgb, var(--surface) 80%, transparent); font-size: 0.68rem; }
 
@@ -650,7 +525,6 @@ async function claimReward(grantId) {
 
 @media (max-width: 980px) {
   .game-hud { grid-template-columns: minmax(0, 1fr) auto; }
-  .game-hud-npcs,
   .game-hud-world,
   .game-hud-vitals { display: none; }
 }

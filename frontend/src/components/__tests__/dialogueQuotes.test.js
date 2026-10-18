@@ -79,6 +79,25 @@ describe('dialogue quote presentation', () => {
     expect(quotes(wrapper)).toBe('\u201cFirst\nnext\u201d');
   });
 
+  it.each([
+    ['*', 'em'], ['**', 'strong'], ['***', 'em > strong'],
+    ['_', 'em'], ['__', 'strong'], ['___', 'em > strong'], ['~~', 's']
+  ])('renders punctuated %s dialogue when its streamed closing markers arrive', async (marker, selector) => {
+    const wrapper = render(`她说${marker}“任务。`, { deferUpdates: true });
+    expect(wrapper.find('strong, em, s').exists()).toBe(false);
+    expect(quotes(wrapper)).toBe('');
+
+    const text = `她说${marker}“任务。”${marker}随后点头。`;
+    await wrapper.setProps({ text });
+    expect(wrapper.find(selector).text()).toBe('“任务。”');
+    expect(quotes(wrapper)).toBe('“任务。”');
+    expect(wrapper.text()).toBe('她说“任务。”随后点头。');
+
+    await wrapper.setProps({ deferUpdates: false });
+    expect(wrapper.find(`${selector} .chat-dialogue-quote`).text()).toBe('“任务。”');
+    expect(render(text).find(`${selector} .chat-dialogue-quote`).text()).toBe('“任务。”');
+  });
+
   it('toggles without Markdown reparsing, cache contamination or lost fold state', async () => {
     const text = '# Details\n\u201cCache toggle quote\u201d';
     const wrapper = render(text, { renderPlugins: [{ pattern: '^# (.+)$', titleTemplate: '$1' }] });

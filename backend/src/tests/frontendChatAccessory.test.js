@@ -499,7 +499,7 @@ test('accessory skill sync preserves unchanged nested config references', () => 
   assert.deepEqual(accessory.accessorySkills.sceneAgent, { enabled: true, modelOverride: 'model-c' });
   assert.match(
     chatAccessorySource,
-    /const ACCESSORY_SKILL_DEFAULTS = \[[\s\S]*\{ key: 'sceneAgent', enabled: false, modelOverride: '' \},[\s\S]*\{ key: 'worldDirector', enabled: false, modelOverride: '' \},[\s\S]*\{ key: 'gameHud', enabled: false, modelOverride: '' \},[\s\S]*\{ key: 'encounterMode', enabled: false, modelOverride: '' \},[\s\S]*\{ key: 'rewardMode', enabled: false, modelOverride: '' \},[\s\S]*\{ key: 'statusBarAgent', enabled: 'auto', modelOverride: '' \},[\s\S]*\{ key: 'cgScene', enabled: false, modelOverride: '' \}[\s\S]*\];/
+    /const ACCESSORY_SKILL_DEFAULTS = \[[\s\S]*\{ key: 'sceneAgent', enabled: false, modelOverride: '' \},[\s\S]*\{ key: 'worldDirector', enabled: false, modelOverride: '' \},[\s\S]*\{ key: 'gameHud', enabled: false, modelOverride: '' \},[\s\S]*\{ key: 'rewardMode', enabled: false, modelOverride: '' \},[\s\S]*\{ key: 'statusBarAgent', enabled: 'auto', modelOverride: '' \},[\s\S]*\{ key: 'cgScene', enabled: false, modelOverride: '' \}[\s\S]*\];/
   );
   assert.match(
     chatAccessorySource,

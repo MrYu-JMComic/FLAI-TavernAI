@@ -9,12 +9,10 @@ import {
   Download,
   Plus,
   Save,
-  Sparkles,
   ToggleLeft,
   ToggleRight,
   Trash2,
-  Upload,
-  WandSparkles
+  Upload
 } from '@lucide/vue';
 import {
   createWorldBook,
@@ -23,20 +21,15 @@ import {
   deleteWorldBookEntry,
   fetchWorldBook,
   fetchWorldBooks,
-  streamWorldBookDraft,
   updateWorldBook,
   updateWorldBookEntry
 } from '../api/worldBooks.js';
 import { exportEnvelope, importEnvelope } from '../api/envelopes.js';
+import WorldBookAiPanel from '../components/worldbook/WorldBookAiPanel.vue';
 import WorldBookMatchLab from '../components/worldbook/WorldBookMatchLab.vue';
 import { useNotify } from '../composables/useNotify';
-import { useProviderModels } from '../composables/useProviderModels';
-import { recordFrontendDiagnostic } from '../diagnostics.js';
-import { appendAiToolList, cloneAiToolList } from '../utils/aiToolLists';
+import { useWorldBookAi } from '../composables/worldbook/useWorldBookAi';
 import { downloadJsonFile, todayStamp } from '../utils/downloadJson.js';
-import { countOwnObjectKeys } from '../utils/objectKeys';
-import { samePlainValue } from '../utils/plainValues';
-import { normalizeWorldBookEntryForCreate } from '../utils/worldBookDraft.js';
 
 const props = defineProps({
   route: { type: Object, required: true },
@@ -46,18 +39,8 @@ const emit = defineEmits(['navigate']);
 
 const notify = useNotify();
 const loading = ref(false);
-const saving = ref(false);
-const aiLoading = ref(false);
-const aiRequirement = ref('');
-const aiDraft = ref(null);
-const aiToolCalls = ref([]);
-const aiProcess = ref([]);
-const aiReasoning = ref('');
-const aiAbortController = ref(null);
-const ASSISTANT_MODEL_STORAGE_KEY = 'flai-assistant-model';
-const assistantModel = ref(loadAssistantModel());
-const { providerModelOptionsFor } = useProviderModels(computed(() => props.provider));
-const assistantModelOptions = computed(() => providerModelOptionsFor(assistantModel.value, '使用全局模型'));
+const manualSaving = ref(false);
+const saving = computed({ get: () => manualSaving.value || aiSaving.value, set: value => { manualSaving.value = value; } });
 const books = ref([]);
 const currentBook = ref(null);
 const error = ref(null);
@@ -70,9 +53,111 @@ const editingEntryId = ref(null);
 let worldBookLoadToken = 0;
 let worldBookMutationToken = 0;
 
+// The assistant owns its own runtime settings, plan gate and process monitor;
+// this view only supplies the current draft and persists the produced book.
+const {
+  aiContext,
+  aiWorkspace,
+  aiChanges,
+  aiHistory,
+  aiSelectedBookIds,
+  aiAutomatic,
+  aiSaving,
+  aiLoading,
+  aiPlan,
+  aiPlanExtraRequirement,
+  aiPlanPhase,
+  aiPlanStepStatus,
+  aiProcess,
+  aiReasoning,
+  aiRequirement,
+  aiStatus,
+  aiStatusMessage,
+  aiToolCalls,
+  assistantModel,
+  assistantModelOptions,
+  assistantPlanMode,
+  assistantStreamingEnabled,
+  assistantThinkingLevel,
+  assistantThinkingOptions,
+  assistantThinkingSupported,
+  cancelWorldBookAi,
+  completeWorldBookWithAi,
+  discardWorldBookPlan,
+  executeWorldBookPlan,
+  replanWorldBookAi,
+  setAiContextValue,
+  applyAiWorldBookChanges,
+  reloadAiWorldBook,
+  discardAiWorldBook,
+  setSelectedBookIds,
+  setAutomatic,
+  prepareNewWorldBook,
+  stopWorldBookAi,
+  toggleAiPlanStep,
+  updateAiPlanStep
+} = useWorldBookAi({
+  providerRef: computed(() => props.provider),
+  isCurrentRun: () => isCurrentWorldBookRouteMutation(activeAiMutationToken, activeAiRouteKey),
+  notify,
+  onApplied: handleWorldBooksApplied
+});
+let activeAiMutationToken = 0;
+let activeAiRouteKey = 'list';
+
+const aiPanelProps = computed(() => ({
+  context: aiContext.value,
+  books: books.value,
+  selectedIds: aiSelectedBookIds.value,
+  automatic: aiAutomatic.value,
+  changes: aiChanges.value,
+  history: aiHistory.value,
+  targets: aiWorkspace.value?.targets || [],
+  loading: aiLoading.value,
+  saving: saving.value || aiSaving.value,
+  assistantModel: assistantModel.value,
+  modelOptions: assistantModelOptions.value,
+  thinkingLevel: assistantThinkingLevel.value,
+  thinkingOptions: assistantThinkingOptions.value,
+  thinkingSupported: assistantThinkingSupported.value,
+  streamingEnabled: assistantStreamingEnabled.value,
+  planMode: assistantPlanMode.value,
+  plan: aiPlan.value,
+  planPhase: aiPlanPhase.value,
+  planExtraRequirement: aiPlanExtraRequirement.value,
+  planStepStatus: aiPlanStepStatus,
+  requirement: aiRequirement.value,
+  process: aiProcess.value,
+  toolCalls: aiToolCalls.value,
+  reasoning: aiReasoning.value,
+  status: aiStatus.value,
+  statusMessage: aiStatusMessage.value
+}));
+const aiPanelEvents = {
+  'update:assistantModel': value => { assistantModel.value = value; },
+  'update:thinkingLevel': value => { assistantThinkingLevel.value = value; },
+  'update:streamingEnabled': value => { assistantStreamingEnabled.value = value; },
+  'update:planMode': value => { assistantPlanMode.value = value; },
+  'update:planExtraRequirement': value => { aiPlanExtraRequirement.value = value; },
+  'update:requirement': value => { aiRequirement.value = value; },
+  'update:selectedIds': setSelectedBookIds,
+  'update:automatic': setAutomatic,
+  'new-book': prepareNewWorldBook,
+  complete: runWorldBookAi,
+  apply: applyWorldBookAiResults,
+  reload: reloadAiWorldBook,
+  discard: discardAiWorldBook,
+  stop: stopWorldBookAi,
+  'set-context': setAiContextValue,
+  'discard-plan': discardWorldBookPlan,
+  'execute-plan': runWorldBookPlan,
+  replan: replanWorldBook,
+  'toggle-plan-step': toggleAiPlanStep,
+  'update-plan-step': updateAiPlanStep
+};
+
 const isDetailView = computed(() => Boolean(props.route.params.id));
 const bookId = computed(() => props.route.params.id);
-const aiDraftEntryCount = computed(() => aiDraft.value?.entries?.length || 0);
 const bookListStats = computed(() => {
   const sourceBooks = Array.isArray(books.value) ? books.value : [];
   let totalEntries = 0;
@@ -140,23 +225,6 @@ const selectiveLogicOptions = [
   { value: 2, label: '全部副关键词命中时阻止' }
 ];
 
-function loadAssistantModel() {
-  try {
-    return localStorage.getItem(ASSISTANT_MODEL_STORAGE_KEY) || '';
-  } catch (error) {
-    recordFrontendDiagnostic('worldBook.assistantModel.load', error, { storageKey: ASSISTANT_MODEL_STORAGE_KEY });
-    return '';
-  }
-}
-
-watch(assistantModel, (value) => {
-  try {
-    localStorage.setItem(ASSISTANT_MODEL_STORAGE_KEY, String(value || '').trim());
-  } catch (error) {
-    recordFrontendDiagnostic('worldBook.assistantModel.save', error, { storageKey: ASSISTANT_MODEL_STORAGE_KEY });
-  }
-});
-
 onMounted(async () => {
   if (isDetailView.value) {
     await loadBook(bookId.value);
@@ -188,9 +256,7 @@ function resetWorldBookAsyncScope() {
 function resetWorldBookInteractionState() {
   worldBookMutationToken += 1;
   saving.value = false;
-  aiAbortController.value?.abort();
-  aiLoading.value = false;
-  aiAbortController.value = null;
+  cancelWorldBookAi();
   closeBookForm();
   closeEntryForm();
 }
@@ -219,9 +285,12 @@ async function loadBook(id) {
   loading.value = true;
   error.value = null;
   try {
-    const nextBook = await fetchWorldBook(id);
+    const [nextBook, nextBooks] = await Promise.all([fetchWorldBook(id), fetchWorldBooks()]);
     if (!isCurrentBookLoad(requestToken, id)) return;
+    setBooksIfChanged(nextBooks);
     setCurrentBookIfChanged(nextBook);
+    setSelectedBookIds([nextBook.id]);
+    setAutomatic(false);
   } catch (err) {
     if (!isCurrentBookLoad(requestToken, id)) return;
     error.value = err.message;
@@ -279,31 +348,6 @@ function setCurrentBookIfChanged(nextBook) {
     return false;
   }
   currentBook.value = nextBook;
-  return true;
-}
-
-function setAiDraftIfChanged(nextDraft) {
-  return setAiPlainRefIfChanged(aiDraft, nextDraft || null);
-}
-
-function setAiToolCallsIfChanged(nextToolCalls) {
-  return setAiPlainListIfChanged(aiToolCalls, nextToolCalls);
-}
-
-function setAiProcessIfChanged(nextProcess) {
-  return setAiPlainListIfChanged(aiProcess, nextProcess);
-}
-
-function setAiPlainListIfChanged(listRef, nextItems) {
-  const normalizedItems = Array.isArray(nextItems) ? nextItems : [];
-  return setAiPlainRefIfChanged(listRef, normalizedItems);
-}
-
-function setAiPlainRefIfChanged(valueRef, nextValue) {
-  if (samePlainValue(valueRef.value, nextValue)) {
-    return false;
-  }
-  valueRef.value = nextValue;
   return true;
 }
 
@@ -749,119 +793,49 @@ function getPositionOptionByValue(value) {
   return null;
 }
 
-function currentWorldBookDraft() {
-  return {
-    name: editingBook.name || currentBook.value?.name || '',
-    description: editingBook.description || currentBook.value?.description || '',
-    characterId: editingBook.characterId || currentBook.value?.characterId || '',
-    scanDepth: editingBook.scanDepth || currentBook.value?.scanDepth || 4,
-    lorebookContextPercent: editingBook.lorebookContextPercent || currentBook.value?.lorebookContextPercent || 25,
-    entries: currentBook.value?.entries || []
-  };
+// Every assistant run is scoped to the route it started on, so navigating away
+// mid-run discards its results instead of writing them into another book.
+function beginWorldBookAiRun() {
+  activeAiRouteKey = currentWorldBookRouteKey();
+  activeAiMutationToken = worldBookMutationToken;
 }
 
-async function completeWorldBookWithAi() {
-  if (aiLoading.value || saving.value) return;
-  const requirement = aiRequirement.value.trim();
-  if (!requirement && !currentWorldBookDraft().name && !currentWorldBookDraft().description) {
-    notify.warning('请先输入世界书主题，或保留已有世界书内容作为参考。');
-    return;
-  }
-
-  const routeKey = currentWorldBookRouteKey();
-  const mutationToken = worldBookMutationToken;
-  const abortController = new AbortController();
-  aiLoading.value = true;
-  setAiToolCallsIfChanged([]);
-  setAiProcessIfChanged([{ round: 1, reasoning: '等待模型响应...', content: '', tools: [] }]);
-  aiReasoning.value = '';
-  aiAbortController.value = abortController;
-  try {
-    const result = await streamWorldBookDraft({
-      requirement,
-      worldBook: currentWorldBookDraft(),
-      modelOverride: assistantModel.value.trim()
-    }, aiStreamHandlers(mutationToken, routeKey), abortController.signal);
-    if (!isCurrentWorldBookRouteMutation(mutationToken, routeKey)) return;
-    if (result?.aborted) {
-      notify.info('AI 世界书生成已暂停');
-      return;
-    }
-    setAiDraftIfChanged(result.worldBook);
-    setAiToolCallsIfChanged(result.toolCalls);
-    setAiProcessIfChanged(result.process);
-    aiReasoning.value = result.reasoning || '';
-    if (!aiDraftEntryCount.value) {
-      setAiDraftIfChanged(null);
-      notify.warning('AI 没有生成有效条目，请补充更具体的世界书主题后重试。');
-      return;
-    }
-    notify.success(`AI 已生成 ${aiDraftEntryCount.value} 个世界书条目`);
-  } catch (err) {
-    if (!isCurrentWorldBookRouteMutation(mutationToken, routeKey)) return;
-    if (abortController.signal.aborted || err.name === 'AbortError') {
-      notify.info('AI 世界书生成已暂停');
-      return;
-    }
-    setAiProcessIfChanged([{ round: 1, reasoning: err.message, content: '', tools: [] }]);
-    notify.error(err.message);
-  } finally {
-    if (isCurrentWorldBookRouteMutation(mutationToken, routeKey)) {
-      aiLoading.value = false;
-      if (aiAbortController.value === abortController) {
-        aiAbortController.value = null;
-      }
-    }
-  }
+function runWorldBookAi() {
+  if (saving.value) return;
+  beginWorldBookAiRun();
+  completeWorldBookWithAi();
 }
 
-function stopWorldBookAi() {
-  aiAbortController.value?.abort();
+function runWorldBookPlan() {
+  if (saving.value) return;
+  beginWorldBookAiRun();
+  executeWorldBookPlan();
 }
 
-async function createBookFromAiDraft() {
-  if (aiLoading.value || saving.value) return;
-  if (!aiDraft.value?.name) {
-    notify.warning('请先生成世界书草稿');
-    return;
-  }
-  if (!aiDraftEntryCount.value) {
-    notify.warning('AI 草稿没有可创建的条目，请重新生成。');
-    return;
-  }
+function replanWorldBook() {
+  if (saving.value) return;
+  beginWorldBookAiRun();
+  replanWorldBookAi();
+}
 
-  const routeKey = currentWorldBookRouteKey();
-  const mutationToken = worldBookMutationToken;
-  saving.value = true;
-  let createdBook = null;
-  try {
-    createdBook = await createWorldBook({
-      name: aiDraft.value.name,
-      description: aiDraft.value.description || '',
-      characterId: aiDraft.value.characterId || '',
-      scanDepth: aiDraft.value.scanDepth || 4,
-      lorebookContextPercent: aiDraft.value.lorebookContextPercent || 25
-    });
-    for (const entry of aiDraft.value.entries || []) {
-      await createWorldBookEntry(createdBook.id, normalizeWorldBookEntryForCreate(entry));
-    }
-    if (!isCurrentWorldBookRouteMutation(mutationToken, routeKey)) return;
-    notify.success(`世界书已创建，并写入 ${aiDraftEntryCount.value} 个条目`);
-    setAiDraftIfChanged(null);
-    navigateFromWorldBookMutation('worldBookDetail', { id: createdBook.id });
-  } catch (err) {
-    if (createdBook?.id) {
-      await deleteWorldBook(createdBook.id).catch((error) => {
-        recordFrontendDiagnostic('worldBook.aiDraft.rollbackDelete', error, { bookId: createdBook.id });
-      });
-    }
-    if (!isCurrentWorldBookRouteMutation(mutationToken, routeKey)) return;
-    notify.error(err.message);
-  } finally {
-    if (isCurrentWorldBookRouteMutation(mutationToken, routeKey)) {
-      saving.value = false;
-    }
+async function applyWorldBookAiResults(changes) {
+  if (saving.value) return;
+  if (showBookForm.value || showEntryForm.value) {
+    notify.warning('请先保存或关闭正在编辑的表单，再应用 AI 变更。');
+    return;
   }
+  await applyAiWorldBookChanges(changes);
+}
+
+function handleWorldBooksApplied(results) {
+  const next = [...books.value];
+  for (const { book } of results) {
+    const index = next.findIndex(item => item.id === book.id);
+    if (index >= 0) next[index] = book;
+    else next.unshift(book);
+    if (currentBook.value?.id === book.id) setCurrentBookIfChanged(book);
+  }
+  setBooksIfChanged(next);
 }
 
 function retryLoad() {
@@ -917,110 +891,6 @@ function nullableNumber(value) {
   if (value === null || value === undefined || value === '') return null;
   return Math.max(0, Math.floor(Number(value) || 0));
 }
-
-function aiStreamHandlers(mutationToken, routeKey) {
-  return {
-    step: (step = {}) => {
-      if (!isCurrentWorldBookRouteMutation(mutationToken, routeKey)) return;
-      updateAiProcessStep(step.round || 1, (target) => ({
-        ...target,
-        ...step,
-        content: target.content || step.content || '',
-        reasoning: target.reasoning === '等待模型响应...' ? step.reasoning || '' : target.reasoning || step.reasoning || '',
-        tools: target.tools?.length ? target.tools : cloneAiToolList(step.tools)
-      }));
-    },
-    reasoning: ({ round = 1, text = '' } = {}) => {
-      if (!isCurrentWorldBookRouteMutation(mutationToken, routeKey)) return;
-      updateAiProcessStep(round, (target) => ({
-        ...target,
-        reasoning: `${target.reasoning === '等待模型响应...' ? '' : target.reasoning || ''}${text}`
-      }));
-      aiReasoning.value += text;
-    },
-    content: ({ round = 1, text = '' } = {}) => {
-      if (!isCurrentWorldBookRouteMutation(mutationToken, routeKey)) return;
-      updateAiProcessStep(round, (target) => ({
-        ...target,
-        content: `${target.content || ''}${text}`
-      }));
-    },
-    nudge: ({ round = 1, text = '' } = {}) => {
-      if (!isCurrentWorldBookRouteMutation(mutationToken, routeKey)) return;
-      updateAiProcessStep(round, (target) => ({
-        ...target,
-        content: `${target.content || ''}${target.content ? '\n\n' : ''}系统提醒：${text}`
-      }));
-    },
-    tool: (call = {}) => {
-      if (!isCurrentWorldBookRouteMutation(mutationToken, routeKey)) return;
-      const log = {
-        name: call.name,
-        arguments: call.arguments,
-        result: call.result
-      };
-      updateAiProcessStep(call.round || 1, (target) => ({
-        ...target,
-        tools: appendAiToolList(target.tools, log)
-      }));
-      appendAiToolCall(log);
-    }
-  };
-}
-
-function updateAiProcessStep(round = 1, updateStep) {
-  const currentProcess = Array.isArray(aiProcess.value) ? aiProcess.value : [];
-  let stepIndex = -1;
-  for (let index = 0; index < currentProcess.length; index += 1) {
-    if (currentProcess[index]?.round === round) {
-      stepIndex = index;
-      break;
-    }
-  }
-  const currentStep = stepIndex >= 0
-    ? currentProcess[stepIndex]
-    : { round, reasoning: '', content: '', tools: [] };
-  const nextStep = updateStep({
-    ...currentStep,
-    tools: cloneAiToolList(currentStep.tools)
-  });
-  const nextProcess = [];
-  for (let index = 0; index < currentProcess.length; index += 1) {
-    nextProcess.push(index === stepIndex ? nextStep : currentProcess[index]);
-  }
-  if (stepIndex < 0) {
-    nextProcess.push(nextStep);
-  }
-  setAiProcessIfChanged(nextProcess);
-}
-
-function appendAiToolCall(log) {
-  const currentToolCalls = Array.isArray(aiToolCalls.value) ? aiToolCalls.value : [];
-  const nextToolCalls = [];
-  for (const toolCall of currentToolCalls) {
-    nextToolCalls.push(toolCall);
-  }
-  nextToolCalls.push(log);
-  setAiToolCallsIfChanged(nextToolCalls);
-}
-
-function formatAiValue(value) {
-  if (value === null || value === undefined || value === '') return '空';
-  if (typeof value === 'string') return value;
-  try {
-    return JSON.stringify(value, null, 2);
-  } catch {
-    return String(value);
-  }
-}
-
-function toolResultLabel(result = {}) {
-  if (result?.ok === false) return result.error || '失败';
-  if (typeof result?.count === 'number') return `写入 ${result.count} 项`;
-  if (result?.applied?.entries && Array.isArray(result.applied.entries)) return `写入 ${result.applied.entries.length} 个条目`;
-  if (result?.applied && typeof result.applied === 'object') return `更新 ${countOwnObjectKeys(result.applied)} 项`;
-  return result?.ok === true ? '成功' : '已返回';
-}
 </script>
 
 <template>
@@ -1072,94 +942,7 @@ function toolResultLabel(result = {}) {
       </section>
 
       <div class="worldbook-workbench">
-      <section class="form-panel worldbook-ai-panel">
-        <div class="inline-heading">
-          <div>
-            <h2>AI 世界书创建助手</h2>
-            <p>生成关键词触发、扫描深度、上下文预算、概率、分组和深度注入，适合 Tavern / SillyTavern 风格 lorebook。</p>
-          </div>
-          <Sparkles :size="20" />
-        </div>
-        <label class="field">
-          <span>世界书需求</span>
-          <textarea
-            v-model="aiRequirement"
-            rows="4"
-            placeholder="例如：现代豪门恋爱世界书，包含家族、公司、别墅、秘密关系和触发词。"
-            :disabled="aiLoading"
-          />
-        </label>
-        <label class="field">
-          <span>助手模型</span>
-          <select
-            v-model="assistantModel"
-            :disabled="aiLoading"
-          >
-            <option v-for="model in assistantModelOptions" :key="model.id || '__global'" :value="model.id">
-              {{ model.label || model.id }}
-            </option>
-          </select>
-        </label>
-        <div class="form-actions">
-          <button class="primary-button" type="button" :disabled="aiLoading || saving" :aria-busy="aiLoading || saving" @click="completeWorldBookWithAi">
-            <WandSparkles :size="18" />
-            <span>{{ aiLoading ? 'AI 正在生成...' : '生成世界书草稿' }}</span>
-          </button>
-          <button v-if="aiLoading" class="ghost-button" type="button" @click="stopWorldBookAi">
-            <span>暂停</span>
-          </button>
-          <button class="ghost-button" type="button" :disabled="!aiDraft || !aiDraftEntryCount || aiLoading || saving" :aria-busy="saving" @click="createBookFromAiDraft">
-            <Save :size="18" />
-            <span>{{ saving ? '创建中...' : '创建书和条目' }}</span>
-          </button>
-        </div>
-        <div v-if="aiProcess.length || aiToolCalls.length" class="ai-process-panel">
-          <div class="ai-tool-title">
-            <span>AI 过程 {{ aiProcess.length || 1 }} 轮 · 工具 {{ aiToolCalls.length }}</span>
-          </div>
-          <div v-if="aiReasoning" class="ai-reasoning-box">
-            <strong>思考摘要</strong>
-            <p>{{ aiReasoning }}</p>
-          </div>
-          <details v-for="(step, stepIndex) in aiProcess" :key="`wb-step-${step.round || stepIndex}`" class="ai-process-step" open>
-            <summary>
-              <span>第 {{ step.round || stepIndex + 1 }} 轮</span>
-              <small>{{ step.tools?.length || 0 }} 个工具</small>
-            </summary>
-            <p v-if="step.reasoning" class="ai-process-text">{{ step.reasoning }}</p>
-            <p v-if="step.content" class="ai-process-text">{{ step.content }}</p>
-            <div v-if="step.tools?.length" class="ai-tool-detail-list">
-              <details v-for="(call, index) in step.tools" :key="`${call.name}-${index}`" class="ai-tool-detail">
-                <summary>
-                  <span>{{ call.name }}</span>
-                  <small>{{ toolResultLabel(call.result) }}</small>
-                </summary>
-                <strong>参数</strong>
-                <pre>{{ formatAiValue(call.arguments) }}</pre>
-                <strong>结果</strong>
-                <pre>{{ formatAiValue(call.result) }}</pre>
-              </details>
-            </div>
-          </details>
-          <div v-if="!aiProcess.length && aiToolCalls.length" class="ai-tool-list">
-            <span v-for="(call, index) in aiToolCalls" :key="`${call.name}-${index}`">{{ call.name }}</span>
-          </div>
-        </div>
-        <div v-if="aiDraft" class="worldbook-ai-preview">
-          <div>
-            <strong>{{ aiDraft.name }}</strong>
-            <p>{{ aiDraft.description }}</p>
-            <small>scan {{ aiDraft.scanDepth }} | budget {{ aiDraft.lorebookContextPercent }}% | {{ aiDraftEntryCount }} entries</small>
-          </div>
-          <div class="worldbook-ai-entry-list">
-            <article v-for="(entry, index) in aiDraft.entries" :key="index" class="worldbook-ai-entry">
-              <strong>{{ entry.name }}</strong>
-              <small>{{ entry.position }} | {{ entry.triggerKeys || 'Always' }}</small>
-              <p>{{ entry.content }}</p>
-            </article>
-          </div>
-        </div>
-      </section>
+      <WorldBookAiPanel v-bind="aiPanelProps" v-on="aiPanelEvents" />
 
       <section class="worldbook-library-panel" aria-label="世界书列表">
         <div class="worldbook-panel-head">
@@ -1270,6 +1053,7 @@ function toolResultLabel(result = {}) {
       </div>
 
       <template v-else-if="currentBook">
+        <WorldBookAiPanel v-bind="aiPanelProps" v-on="aiPanelEvents" />
         <div class="book-info-panel form-panel">
           <div class="inline-heading">
             <div>
@@ -1639,7 +1423,7 @@ function toolResultLabel(result = {}) {
 
 .worldbook-workbench {
   display: grid;
-  grid-template-columns: minmax(280px, 0.9fr) minmax(0, 1.1fr);
+  grid-template-columns: minmax(0, 1fr);
   gap: 16px;
   align-items: start;
 }
@@ -1681,49 +1465,6 @@ function toolResultLabel(result = {}) {
 .worldbook-ai-panel {
   display: grid;
   gap: 14px;
-}
-
-.worldbook-ai-preview {
-  display: grid;
-  gap: 12px;
-  padding: 14px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: color-mix(in srgb, var(--surface) 86%, transparent);
-}
-
-.worldbook-ai-preview p {
-  margin: 4px 0 0;
-  color: var(--muted);
-  line-height: 1.55;
-}
-
-.worldbook-ai-preview small {
-  color: var(--muted);
-}
-
-.worldbook-ai-entry-list {
-  display: grid;
-  gap: 8px;
-  max-height: 360px;
-  overflow: auto;
-}
-
-.worldbook-ai-entry {
-  display: grid;
-  gap: 4px;
-  padding: 10px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: var(--bg);
-}
-
-.worldbook-ai-entry p {
-  display: -webkit-box;
-  margin: 0;
-  overflow: hidden;
-  -webkit-line-clamp: 3;
-  -webkit-box-orient: vertical;
 }
 
 .book-grid {
@@ -2152,8 +1893,6 @@ function toolResultLabel(result = {}) {
   background: color-mix(in srgb, var(--surface) 94%, transparent);
 }
 
-.worldbook-ai-preview,
-.worldbook-ai-entry,
 .book-info-panel,
 .entries-panel {
   border-color: color-mix(in srgb, var(--line) 72%, transparent);
@@ -2215,14 +1954,6 @@ function toolResultLabel(result = {}) {
 .modal-content {
   border: 1px solid color-mix(in srgb, var(--line) 78%, transparent);
   box-shadow: 0 24px 70px rgba(0, 0, 0, 0.28);
-}
-
-/* World book workspace refinement */
-@media (min-width: 981px) {
-  .worldbook-ai-panel {
-    position: sticky;
-    top: 18px;
-  }
 }
 
 .worldbook-library-panel .loading-state,
@@ -2312,11 +2043,6 @@ function toolResultLabel(result = {}) {
   .worldbook-stat-strip > div,
   .worldbook-detail-stats > div {
     padding: 9px 10px;
-  }
-
-  .worldbook-ai-panel .form-actions {
-    display: grid;
-    grid-template-columns: 1fr;
   }
 
   .worldbook-panel-head {

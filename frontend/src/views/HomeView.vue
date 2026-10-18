@@ -9,7 +9,6 @@ import {
   Download,
   Eye,
   Heart,
-  MapPinned,
   MessageSquareText,
   Pencil,
   Plus,
@@ -1350,12 +1349,6 @@ function formatCount(value) {
         <span>{{ providerReady ? '当前模型' : '模型状态' }}</span>
         <strong>{{ providerLabel }}</strong>
         <ChevronRight :size="16" aria-hidden="true" />
-      </button>
-      <button class="home-town-entry" type="button" @click="emit('navigate', 'town')">
-        <img src="/assets/town/bianjing-night-market.webp" alt="" width="64" height="44" />
-        <MapPinned :size="18" aria-hidden="true" />
-        <strong>AI 虚拟小镇</strong>
-        <ChevronRight :size="18" aria-hidden="true" />
       </button>
     </div>
 

@@ -926,7 +926,7 @@ function requestClose() {
                 </label>
                 <label class="chat-setting-field compact">
                   <span>分类</span>
-                  <input v-model="ch.role" type="text" placeholder="如 主角/NPC" maxlength="20" class="variable-input name" />
+                  <input v-model="ch.role" type="text" placeholder="如 主角/旁白" maxlength="20" class="variable-input name" />
                 </label>
                 <label class="chat-setting-field compact">
                   <span>状态</span>

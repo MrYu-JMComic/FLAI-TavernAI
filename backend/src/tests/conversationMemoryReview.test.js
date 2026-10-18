@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { createAppDatabase } from '../db.js';
+import { createAppDatabase } from '../db/runtime.js';
 import { migrateConversationMemoryReview } from '../db/migrations/0015ConversationMemoryReview.js';
 import { createCharacter } from '../modules/characters.js';
 import {

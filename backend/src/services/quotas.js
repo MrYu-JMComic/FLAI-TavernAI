@@ -1,6 +1,7 @@
 import { appConfig } from '../config.js';
 import { AppError } from '../errors.js';
 import { nowIso } from '../security.js';
+import { sumWorldBookStorageBytes } from '../repositories/worldBookRepository.js';
 import { unwrapConversationDatabase } from './conversationMutationContext.js';
 
 export function getUserQuota(database, userId, defaults = appConfig.quotaDefaults) {
@@ -58,11 +59,13 @@ export function updateUserQuota(database, userId, payload = {}, defaults = appCo
   return getUserQuota(database, userId, defaults);
 }
 
-export function assertAiJobQuota(database, userId) {
+export function assertAiJobQuota(database, userId, options = {}) {
   const quota = getUserQuota(database, userId);
+  const types = Array.isArray(options.types) ? options.types : [];
+  const typeFilter = types.length ? ` AND type IN (${types.map(() => '?').join(', ')})` : '';
   const active = Number(database.prepare(
-    "SELECT COUNT(*) AS count FROM jobs WHERE user_id = ? AND status IN ('queued', 'running')"
-  ).get(userId)?.count || 0);
+    `SELECT COUNT(*) AS count FROM jobs WHERE user_id = ? AND status IN ('queued', 'running')${typeFilter}`
+  ).get(userId, ...types)?.count || 0);
   if (active >= quota.maxConcurrentAiJobs) {
     throw quotaError('AI_JOB_QUOTA_EXCEEDED', 'AI task concurrency quota exceeded.');
   }
@@ -106,16 +109,6 @@ export function getStructuredStorageUsage(database, userId) {
        LENGTH(COALESCE(source_excerpt, ''))
      ), 0) AS bytes FROM conversation_memories WHERE user_id = ?`,
     `SELECT COALESCE(SUM(
-       LENGTH(COALESCE(name, '')) + LENGTH(COALESCE(description, ''))
-     ), 0) AS bytes FROM world_books WHERE user_id = ?`,
-    `SELECT COALESCE(SUM(
-       LENGTH(COALESCE(entries.name, '')) + LENGTH(COALESCE(entries.trigger_keys, '')) +
-       LENGTH(COALESCE(entries.keys_secondary, '')) + LENGTH(COALESCE(entries.content, ''))
-     ), 0) AS bytes
-       FROM world_book_entries AS entries
-       JOIN world_books AS books ON books.id = entries.world_book_id
-       WHERE books.user_id = ?`,
-    `SELECT COALESCE(SUM(
        LENGTH(COALESCE(name, '')) + LENGTH(COALESCE(system_prompt, ''))
      ), 0) AS bytes FROM presets WHERE user_id = ?`,
     `SELECT COALESCE(SUM(
@@ -136,6 +129,12 @@ export function getStructuredStorageUsage(database, userId) {
     } catch {
       // Older embedded databases may not have an optional table yet.
     }
+  }
+  try {
+    // World book tables are owned by worldBookRepository, so their sizing lives there.
+    bytes += sumWorldBookStorageBytes(database, userId);
+  } catch {
+    // Older embedded databases may not have the world book tables yet.
   }
   return Math.max(0, bytes);
 }
