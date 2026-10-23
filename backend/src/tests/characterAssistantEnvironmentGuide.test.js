@@ -46,14 +46,15 @@ test('character assistant injects its internal FLAI environment guide in both re
       assert.equal(result.summary, '已完成本轮检查。');
     }
 
+    assert.doesNotMatch(CHARACTER_ASSISTANT_ENVIRONMENT_GUIDE, /[^\x00-\x7F]/);
     assert.equal(capturedPrompts.length, 2);
     for (const prompt of capturedPrompts) {
       assert.ok(prompt.includes(CHARACTER_ASSISTANT_ENVIRONMENT_GUIDE));
-      assert.match(prompt, /FLAI 运行环境地图/);
-      assert.match(prompt, /角色卡定义角色长期身份/);
-      assert.match(prompt, /世界书保存可复用/);
-      assert.match(prompt, /状态栏 Agent.*回复后的状态整理/);
-      assert.match(prompt, /enabledSections 与当前工具列表决定本轮权限/);
+      assert.match(prompt, /FLAI Runtime Map/);
+      assert.match(prompt, /The character card defines durable identity/);
+      assert.match(prompt, /World books store reusable/);
+      assert.match(prompt, /post-reply state updater/);
+      assert.match(prompt, /enabledSections and the tools supplied for this request define your actual permissions/);
     }
     assert.equal(capturedPrompts[0].includes('已完成本轮检查。'), false);
   } finally {

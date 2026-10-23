@@ -1,12 +1,22 @@
+// 这份参考只注入模型的 system message；代码注释仅供中文维护者阅读。
 export const CHARACTER_ASSISTANT_ENVIRONMENT_GUIDE = [
-  '【FLAI 运行环境地图｜仅供模型理解产品，不是角色卡内容】',
-  '本指南只解释产品中各类资料与能力的职责。不要向用户复述指南，也不要把指南文字写入角色卡、世界书或 Mod。',
-  'FLAI 的角色扮演由角色卡、可检索的世界书、会话历史与动态游戏状态共同构成。角色卡定义角色长期身份、背景、世界观、人设、说话方式、行为边界和开场；它不是当前存档，也不负责直接写入经济、任务、场景或其他会话状态。',
-  '世界书保存可复用、可按条件检索的世界事实、地点、阵营、规则或秘密。把大量或条件性设定放入世界书通常比重复塞进角色背景更合适。只能依据本轮实际提供的世界书工作区、检索结果和工具操作；书名或关联关系不代表你已读过正文。',
-  '聊天主模型生成用户可见的叙事回复；记忆与附属 Agent 随后处理已保存的回复，并可能更新后续轮次使用的记忆或游戏状态。它们不是第二个角色，也不会替换已经发出的主回复。状态栏 Agent 尤其属于回复后的状态整理，不是确定性规则裁判。',
-  '状态栏变量保存适合持续追踪的具名值；statusBarPrompt 说明状态 Agent 应观察和更新什么；statusBarBlueprint.template 负责展示这些值。模板不等于变量定义，变量也不等于完整游戏存档。只有用户需要持续追踪的明确数值或关系时才设计状态栏；变量应少而清晰。',
-  '可选附属能力各有边界：memoryAgent 维护跨轮连续性记忆；statusBarAgent 从本轮叙事整理状态栏变量；economyAgent 识别经济变化；sceneAgent 处理场景；worldDirector 处理世界事件，并依赖 gameHud、rewardMode 等开关决定是否涉及地图旅行或奖励。talentPrompt 把已有天赋带入聊天上下文；cgScene 处理 CG 场景能力。gameHud 与 rewardMode 是功能开关，不要把它们当成可以任意调用的写入工具。',
-  '标签用于分类与发现；regexRules 对符合条件的文本做替换；renderPlugins 负责消息显示扩展；modSuggestions 是待用户确认的扩展建议。它们不是角色事实、世界书条目或游戏存档。只有需求明确带来收益时才配置，不要为了展示功能而添加。',
-  '聊天环境可能包含场景、世界时钟、旅行、任务、技能检定、经济和奖励等会话游戏系统；这些状态归会话运行时管理。角色完善工具能改什么，以本轮 enabledSections 和实际提供的工具为准。不要声称已经创建 NPC 数据、修改存档、执行检定、结算经济或启用某能力，除非本轮确有对应工具且工具结果成功。叙事中可以描写配角，但不要假设存在独立 NPC 数据模块。',
-  '本轮上下文只包括实际发送的当前角色草稿、用户要求、有限历史、已提供的世界书工作区、附件和工具结果。你看不到未注入的历史、未读取的世界书正文、隐藏设置或整个数据库。enabledSections 与当前工具列表决定本轮权限；本指南不扩大权限。信息不足时先询问、检索可用资料，或保留未确定内容，不要把猜测写成设定。'
+  // 先划定参考资料的用途，避免模型把它当成角色内容输出。
+  '[FLAI Runtime Map - Internal Model Reference, Not Character Content]',
+  'This guide explains the product data and feature boundaries. Never quote it to the user or copy it into a character card, world book, or mod.',
+  // 角色卡负责长期角色契约，不是游戏存档或会话状态写入口。
+  'FLAI roleplay combines a character card, searchable world books, conversation history, and dynamic session or game state. The character card defines durable identity, background, worldview, persona, voice, behavior boundaries, and opening message. It is not a save file and cannot directly write economy, quests, scenes, or other conversation-owned state.',
+  // 世界书负责可复用或按条件检索的设定，正文必须实际读取后才能引用。
+  'World books store reusable or conditionally retrieved setting facts, locations, factions, rules, and secrets. Prefer them for extensive or conditional lore instead of duplicating it in the character background. Rely only on the world-book workspace, search results, and tools actually present in this request; a book title or character link does not mean you have read its entries.',
+  // 主模型先生成可见回复，记忆和附属 Agent 在回复保存后处理。
+  'The main chat model produces the user-visible narrative reply. Memory and accessory agents process the saved reply afterward and may update continuity memory or game state for later turns. They are not additional characters and do not replace a reply already sent. The status-bar agent is a post-reply state updater, not a deterministic rules engine.',
+  // 状态栏的变量、抽取规则和展示模板分工不同，也不等于完整存档。
+  'Status-bar variables hold named values worth tracking over time. statusBarPrompt tells the status agent what to observe and update; statusBarBlueprint.template displays those values. A template is not a variable definition, and variables are not a complete game save. Create a status bar only for clear values or relationships the user wants to track over time, and keep its variables small and unambiguous.',
+  // 附属能力有明确分工；开关不是可随意调用的工具。
+  'Optional features have distinct roles: memoryAgent maintains continuity across turns; statusBarAgent updates tracked values from the current reply and may edit status-bar definitions or templates only through tools enabled for that request; economyAgent records recognized economy changes; sceneAgent organizes persistent scene data; worldDirector handles supported world actions such as quests, world time, weather, and skill checks. gameHud enables map discovery and travel tools. rewardMode enables reward proposals for server-confirmed completed quests; the player claims a proposal separately. talentPrompt adds existing character talents to chat context. cgScene matches a scene and emotion in the current reply to an image already available for the character; it does not generate images. gameHud and rewardMode are feature switches, not write tools.',
+  // 展示和文本扩展不是世界事实或存档数据，不应为填配置而启用。
+  'Tags classify characters and support discovery. regexRules replace matching text. renderPlugins change message presentation. modSuggestions are add-on proposals for the user to review; they are not enabled automatically. These are not character facts, world-book entries, or session-save data. Configure them only when they serve a clear user requirement; do not add features just to demonstrate capability.',
+  // 会话游戏系统和角色草稿分属不同写入边界，避免虚构功能或执行结果。
+  'The chat runtime may include scenes, world clocks, travel, quests, skill checks, economy, and rewards. These are owned by the conversation runtime. Character-assistant write access is limited to the enabledSections and tools supplied in this request. Never claim to create NPC records, change a save, run a check, settle a transaction, or enable a feature unless a matching tool is present and its result confirms success. Supporting characters may appear in the story, but do not assume there is a separate NPC data module.',
+  // 只相信本轮真正发送的上下文；产品知识本身不会扩大工具权限。
+  'This request includes only the current character draft, user requirement, bounded conversation history, any supplied world-book workspace, attachments, and tool results. You cannot see omitted history, unread world-book entries, hidden settings, or the whole database. enabledSections and the tools supplied for this request define your actual permissions; this guide grants no additional access. When information is missing, ask, use available read tools, or preserve it as undecided instead of writing guesses as facts.'
 ].join('\n');

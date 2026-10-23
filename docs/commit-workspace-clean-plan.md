@@ -50,4 +50,6 @@ the new local commits.
   whitespace-only issues from the newly added documentation/example files.
 - Initial snapshot committed as `0b892f5`.
 - Final verification detected 9 additional ordinary source, test, style, and
-  plan files written during the workflow; they are pending a follow-up commit.
+  plan files written during the workflow; they were committed as `7608692`.
+- A further 3 ordinary source, test, and plan files appeared during the next
+  verification pass; they are pending a final follow-up commit.
