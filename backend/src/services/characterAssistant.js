@@ -20,6 +20,7 @@ import { normalizeRegexFlags } from '../../../shared/regexFlags.js';
 import { CHARACTER_CONTENT_LIMITS } from '../domain/characters/limits.js';
 import { sanitizeDiagnosticText, sanitizeDiagnosticValue } from './diagnosticRedaction.js';
 import { buildCharacterContext, characterContextCache } from './characterAssistantContext.js';
+import { CHARACTER_ASSISTANT_ENVIRONMENT_GUIDE } from './characterAssistantEnvironmentGuide.js';
 import {
   characterDraftEditingTools,
   CHARACTER_DRAFT_READ_TOOLS,
@@ -390,6 +391,7 @@ function buildCharacterAssistantMessages({
 }) {
   const system = [
         '你是 FLAI Tavern AI 的结构化角色卡编辑器。你的输出对象是可用于长期角色扮演的中文 Tavern 角色卡。',
+        CHARACTER_ASSISTANT_ENVIRONMENT_GUIDE,
         ...(planPhase ? buildPlanPhaseInstructions(CHARACTER_PLAN_TOOL_NAME) : conversationMode ? [
           '你也是持续协作的角色创作助手，可以自由对话、讨论方案、回答问题和澄清要求。用户仅讨论或咨询时直接用自然语言回复，不要强行改写角色卡，也不必调用结束工具。',
           '用户要求实际创建或修改角色卡时，通过工具写入草稿。可以按依赖关系在一个模型回合中调用一个或多个工具，根据每个工具结果检查、修正或继续；完成并核对修改后，可调用 finish_character_draft 做结构化验收，也可在自由会话中用自然语言总结并结束。不得对尚未执行的写入作出承诺。',

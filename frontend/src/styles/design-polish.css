@@ -12,6 +12,10 @@
   --focus-ring: color-mix(in srgb, var(--green) 34%, transparent);
 }
 
+:root[data-theme="dark"] .home-primary-action {
+  color: #fffaf7 !important;
+}
+
 html {
   font-variant-numeric: tabular-nums;
 }
@@ -27,13 +31,29 @@ body,
   text-wrap: pretty;
 }
 
-:where(input, textarea, select):focus {
-  border-color: color-mix(in srgb, var(--green) 54%, var(--line));
-  outline: none;
+html[data-theme] body :where(input, textarea, select):focus {
+  border-color: color-mix(in srgb, var(--green) 54%, var(--line)) !important;
+  outline: none !important;
   box-shadow:
     0 0 0 1px color-mix(in srgb, var(--surface) 92%, transparent),
     0 0 0 4px color-mix(in srgb, var(--green) 22%, transparent),
-    inset 0 1px 2px color-mix(in srgb, var(--text) 5%, transparent);
+    inset 0 1px 2px color-mix(in srgb, var(--text) 5%, transparent) !important;
+}
+
+html[data-theme] body .home-search-field:focus-within,
+html[data-theme] body .home-select-field:focus-within {
+  border-color: color-mix(in srgb, var(--green) 54%, var(--line)) !important;
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--surface) 92%, transparent),
+    0 0 0 4px var(--focus-ring),
+    inset 0 1px 2px color-mix(in srgb, var(--text) 5%, transparent) !important;
+}
+
+html[data-theme] body .home-search-field input:focus,
+html[data-theme] body .home-select-field select:focus {
+  border-color: transparent !important;
+  box-shadow: none !important;
+  outline: none !important;
 }
 
 :where(.markdown-content, .deep-message-content) :where(svg, .lucide) {

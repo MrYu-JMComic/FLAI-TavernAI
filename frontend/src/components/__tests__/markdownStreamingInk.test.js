@@ -21,13 +21,13 @@ describe('streamed Markdown reveal', () => {
     expect(glyphs.map((glyph) => glyph.text())).toEqual(['色', '雲']);
     expect(glyphs.map((glyph) => glyph.element.style.getPropertyValue('--stream-glyph-index'))).toEqual(['0', '1']);
 
-    const previousGlyph = glyphs[0].element;
     await wrapper.setProps({ text: '墨色雲起' });
     expect(wrapper.text()).toBe('墨色雲起');
     const updatedGlyphs = wrapper.findAll('.stream-ink-glyph');
     expect(updatedGlyphs.at(-1).text()).toBe('起');
     expect(updatedGlyphs.at(-1).element.style.getPropertyValue('--stream-glyph-index')).toBe('0');
-    expect(updatedGlyphs.some((glyph) => glyph.element === previousGlyph)).toBe(true);
+    expect(updatedGlyphs.map((glyph) => glyph.text())).toEqual(['色', '雲', '起']);
+    expect(updatedGlyphs[0].element).toBe(glyphs[0].element);
 
     updatedGlyphs.at(-1).element.dispatchEvent(new Event('animationend', { bubbles: true }));
     expect(wrapper.findAll('.stream-ink-glyph').map((glyph) => glyph.text())).toEqual(['色', '雲']);

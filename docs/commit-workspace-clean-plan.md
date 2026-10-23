@@ -4,12 +4,13 @@
 
 Commit the existing working-tree changes on the current branch so the
 repository is left clean without publishing or changing Git history outside
-the new local commit.
+the new local commits.
 
 ## Scope
 
 - Include all current tracked modifications, deletions, and non-ignored
-  untracked files reported by Git.
+  untracked files reported by Git, including changes that arrive during the
+  commit workflow.
 - Exclude protected or generated paths if any are discovered during review.
 - Do not reset, force checkout, push, or deploy.
 
@@ -19,12 +20,14 @@ the new local commit.
       files.
 - [x] Create the task plan and review the staged file set.
 - [x] Run applicable encoding and whitespace checks.
-- [ ] Create one local commit containing the approved working-tree snapshot.
+- [x] Create the initial local commit containing the reviewed working-tree
+      snapshot.
+- [ ] Commit any changes detected during final verification.
 - [ ] Verify the commit and confirm the working tree is clean.
 
 ## Acceptance Criteria
 
-- All intended existing changes are represented in one new local commit.
+- All intended existing changes are represented in local commit(s).
 - No protected or generated paths are added accidentally.
 - `git status --short` reports no remaining changes.
 
@@ -45,4 +48,6 @@ the new local commit.
 - `node scripts/check-encoding.mjs` passed.
 - `git diff --check` and `git diff --cached --check` passed after removing
   whitespace-only issues from the newly added documentation/example files.
-- Commit and final clean-worktree verification remain pending.
+- Initial snapshot committed as `0b892f5`.
+- Final verification detected 9 additional ordinary source, test, style, and
+  plan files written during the workflow; they are pending a follow-up commit.
