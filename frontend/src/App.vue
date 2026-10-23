@@ -332,7 +332,9 @@ function pushNotification(input = {}) {
     ? input.duration
     : type === 'error'
       ? 5200
-      : 3200;
+      : type === 'success'
+        ? 2500
+        : 3200;
   if (duration > 0) {
     const timer = window.setTimeout(() => dismissNotification(id), duration);
     notificationTimers.set(id, timer);

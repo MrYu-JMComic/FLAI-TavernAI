@@ -55,7 +55,7 @@ test('BaseLayout keeps the home route scroll inside a fixed app shell', () => {
   assert.match(baseLayoutScript, /const isHomeRoute = computed\(\(\) => props\.currentRoute === 'home'\);/);
   assert.match(
     baseLayoutTemplate,
-    /:class="\{ 'chat-layout-shell': isConversationRoute, 'home-layout-shell': isHomeRoute, 'workspace-layout-shell': isWorkspaceRoute \}"/
+    /:class="\{ 'chat-layout-shell': isConversationRoute, 'home-layout-shell': isHomeRoute, 'workspace-layout-shell': isWorkspaceRoute, 'assistant-layout-shell': isAssistantRoute \}"/
   );
   assert.match(
     stylesSource,
@@ -102,11 +102,11 @@ test('BaseLayout keeps the home route scroll inside a fixed app shell', () => {
 test('BaseLayout gives workspace routes a full-width single scroll shell', () => {
   assert.match(
     baseLayoutScript,
-    /const isWorkspaceRoute = computed\(\(\) => \(\s*props\.currentRoute === 'characterNew'\s*\|\| props\.currentRoute === 'characterEdit'\s*\|\| isWorldBookRoute\.value\s*\|\| isExtensionsRoute\.value\s*\|\| isPresetsRoute\.value\s*\|\| props\.currentRoute === 'settings'\s*\|\| isAdminRoute\.value\s*\)\);/
+    /const isWorkspaceRoute = computed\(\(\) => \(\s*props\.currentRoute === 'characterNew'\s*\|\| props\.currentRoute === 'characterEdit'\s*\|\| props\.currentRoute === 'characterAssistant'\s*\|\| props\.currentRoute === 'characterAssistantNew'\s*\|\| isWorldBookRoute\.value\s*\|\| isExtensionsRoute\.value\s*\|\| isPersonalSettingsRoute\.value\s*\|\| isAdminRoute\.value\s*\)\);/
   );
   assert.match(
     baseLayoutTemplate,
-    /:class="\{ 'chat-layout-shell': isConversationRoute, 'home-layout-shell': isHomeRoute, 'workspace-layout-shell': isWorkspaceRoute \}"/
+    /:class="\{ 'chat-layout-shell': isConversationRoute, 'home-layout-shell': isHomeRoute, 'workspace-layout-shell': isWorkspaceRoute, 'assistant-layout-shell': isAssistantRoute \}"/
   );
   assert.match(
     stylesSource,
@@ -118,7 +118,7 @@ test('BaseLayout gives workspace routes a full-width single scroll shell', () =>
   );
   assert.match(
     stylesSource,
-    /\.workspace-layout-shell \.narrow-page,\s*\.workspace-layout-shell \.extensions-page,\s*\.workspace-layout-shell \.preset-page\s*\{[^}]*width:\s*100%;[^}]*max-width:\s*none;[^}]*margin:\s*0;[^}]*\}/
+    /\.workspace-layout-shell \.narrow-page,\s*\.workspace-layout-shell \.extensions-page\s*\{[^}]*width:\s*100%;[^}]*max-width:\s*none;[^}]*margin:\s*0;[^}]*\}/
   );
   assert.match(
     stylesSource,
@@ -149,10 +149,22 @@ test('BaseLayout gives chat routes an unobstructed conversation shell', () => {
   );
   assert.match(
     baseLayoutTemplate,
-    /<header v-if="!isConversationRoute" class="topbar">/
+    /<aside\s+v-if="!isConversationRoute"\s+class="app-navigation"/
   );
   assert.match(
     baseLayoutTemplate,
-    /<nav v-if="!isConversationRoute" class="mobile-bottom-nav"/
+    /<nav v-if="showMobileBottomNav" class="mobile-bottom-nav"/
   );
+});
+
+test('main navigation opens Personal Center instead of a standalone presets page', () => {
+  assert.doesNotMatch(baseLayoutScript, /isPresetsRoute|ROUTE_LABELS[\s\S]*presets:/);
+  assert.doesNotMatch(baseLayoutTemplate, /navigateAndClose\('presets'\)|<span>预设<\/span>/);
+  assert.match(baseLayoutTemplate, /title="个人中心"[\s\S]*navigateAndClose\('settings'\)[\s\S]*<UserRound[\s\S]*<span>个人<\/span>/);
+  assert.match(baseLayoutTemplate, /currentRoute === 'settings' \? 'page' : undefined/);
+  assert.match(
+    baseLayoutScript,
+    /const showMobileBottomNav = computed\(\(\) => \['home', 'characterNew', 'worldBooks', 'settings'\]\.includes\(props\.currentRoute\)\);/
+  );
+  assert.match(baseLayoutScript, /const isPersonalSettingsRoute = computed\(\(\) => \['settings', 'settingsProfile', 'settingsPresets', 'settingsProvider', 'settingsData'\]\.includes\(props\.currentRoute\)\);/);
 });

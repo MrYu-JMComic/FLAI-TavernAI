@@ -3,7 +3,7 @@ import { computed, ref } from 'vue';
 // Client-side state for the "plan first, then execute" gate. The backend owns
 // plan validation; this composable only tracks what the user approved, which
 // steps they kept, and how far execution has got.
-const PLAN_PHASES = ['idle', 'planning', 'review', 'executing', 'done'];
+const PLAN_PHASES = ['idle', 'planning', 'review', 'executing', 'paused', 'failed', 'done'];
 
 export function useAiPlanSession() {
   const plan = ref(null);
@@ -103,9 +103,8 @@ export function useAiPlanSession() {
       planPhase.value = 'idle';
       return;
     }
-    // A run interrupted mid-execution comes back as something to approve again
-    // rather than something silently still running.
-    planPhase.value = stored?.planPhase === 'done' ? 'done' : 'review';
+    // Preserve terminal outcomes without restoring a run as actively executing.
+    planPhase.value = ['done', 'paused', 'failed'].includes(stored?.planPhase) ? stored.planPhase : 'review';
   }
 
   return {

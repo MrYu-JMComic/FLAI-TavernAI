@@ -1,4 +1,6 @@
 import { migrateIndependentSceneItems } from './migrations/0027IndependentSceneItems.js';
+import { migrateCharacterAssistantSessions } from './migrations/0028CharacterAssistantSessions.js';
+import { migrateCharacterAssistantDraftVersions } from './migrations/0029CharacterAssistantDraftVersions.js';
 import crypto from 'node:crypto';
 import { newId } from '../security.js';
 import { migrateDurableJobs } from './migrations/0006DurableJobs.js';
@@ -16,7 +18,7 @@ import { migrateWorldBookLinkConsolidation } from './migrations/0019WorldBookLin
 import { migrateWorldBookGlobalStateRemoval } from './migrations/0020WorldBookGlobalStateRemoval.js';
 
 // The image-model migration stays at 0012: an older deployment already used 0011.
-export const latestSchemaVersion = '0027';
+export const latestSchemaVersion = '0029';
 
 export function applyStartupMigrations(database, { getCachedTableColumns }) {
   ensureSchemaMeta(database);
@@ -94,6 +96,8 @@ export function applyStartupMigrations(database, { getCachedTableColumns }) {
   runRecordedMigration(database, { version: '0020', name: 'world-book-global-state-removal', checksum: 'world-book-global-state-removal-v1', apply: () => migrateWorldBookGlobalStateRemoval(database) });
   // Retired versions remain reserved; existing ledger rows and user data are preserved.
   runRecordedMigration(database, { version: '0027', name: 'independent-scene-items', checksum: 'independent-scene-items-v1', apply: () => migrateIndependentSceneItems(database) });
+  runRecordedMigration(database, { version: '0028', name: 'character-assistant-sessions', checksum: 'character-assistant-sessions-v1', apply: () => migrateCharacterAssistantSessions(database) });
+  runRecordedMigration(database, { version: '0029', name: 'character-assistant-draft-versions', checksum: 'character-assistant-draft-versions-v1', apply: () => migrateCharacterAssistantDraftVersions(database) });
   // Keep repairing pre-ledger tag fixtures and interrupted legacy upgrades.
   migrateTagsToUserScoped(database, getCachedTableColumns);
 }

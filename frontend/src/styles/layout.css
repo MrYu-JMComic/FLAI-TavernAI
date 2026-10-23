@@ -52,6 +52,7 @@ body,
 #app {
   min-width: 320px;
   min-height: 100vh;
+  min-height: 100dvh;
 }
 
 #main-content:focus {
@@ -221,7 +222,6 @@ p {
 }
 
 
-section[id^="personal-section-"],
 section[id^="extension-section-"] {
   scroll-margin-top: 146px;
 }

@@ -2,6 +2,7 @@
 import { computed } from 'vue';
 import { AlertCircle, BookOpen, CheckCircle2, ChevronDown, ClipboardList, LoaderCircle, PauseCircle, Send, SlidersHorizontal } from '@lucide/vue';
 import AiPlanReview from '../AiPlanReview.vue';
+import MarkdownContent from '../MarkdownContent.vue';
 import WorldBookChanges from './WorldBookChanges.vue';
 import WorldBookTargetPicker from './WorldBookTargetPicker.vue';
 import { WORLD_BOOK_AI_SECTION_LABELS } from '../../utils/aiSectionLabels.js';
@@ -61,7 +62,11 @@ function format(value) { return typeof value === 'string' ? value : JSON.stringi
     <div class="worldbook-assistant-grid" :class="{ 'has-results': changes.length || hasPlan }">
       <section class="worldbook-conversation" aria-label="世界书助手对话">
         <div v-if="history.length" class="worldbook-messages" role="log" aria-label="本次助手对话">
-          <article v-for="(message, index) in history" :key="index" class="worldbook-message" :class="message.role"><small>{{ message.role === 'user' ? '你' : '助手' }}</small><p>{{ message.content }}</p></article>
+          <article v-for="(message, index) in history" :key="index" class="worldbook-message" :class="message.role">
+            <small>{{ message.role === 'user' ? '你' : '助手' }}</small>
+            <p v-if="message.role === 'user'">{{ message.content }}</p>
+            <MarkdownContent v-else :text="message.content" />
+          </article>
         </div>
         <p v-else class="worldbook-assistant-empty">选择已有书后描述要调整的内容，或让助手按对话查找。例如：“补充雾港的夜间规则，另外创建一本远航手册。”</p>
         <p v-if="statusMessage && (loading || status === 'failed' || status === 'paused' || !history.length)" class="worldbook-ai-status" aria-live="polite">{{ statusMessage }}</p>
@@ -109,10 +114,11 @@ function format(value) { return typeof value === 'string' ? value : JSON.stringi
 .worldbook-conversation, .worldbook-assistant-results { min-width: 0; display: flex; flex-direction: column; gap: 13px; }
 .worldbook-assistant-results { padding-left: 18px; border-left: 1px solid var(--line); }
 .worldbook-messages { display: grid; gap: 12px; max-height: 380px; overflow-y: auto; }
-.worldbook-message { padding: 10px 12px; border-radius: 10px; background: var(--surface-strong); white-space: pre-wrap; overflow-wrap: anywhere; font-size: .84rem; }
+.worldbook-message { padding: 10px 12px; border-radius: 10px; background: var(--surface-strong); overflow-wrap: anywhere; font-size: .84rem; }
 .worldbook-message.assistant { background: transparent; padding-left: 0; }
 .worldbook-message small { color: var(--muted); font-size: .72rem; }
-.worldbook-message p { margin: 4px 0 0; }
+.worldbook-message > p { margin: 4px 0 0; white-space: pre-wrap; }
+.worldbook-message > .markdown-content { margin-top: 4px; white-space: normal; }
 .worldbook-assistant-empty, .worldbook-discovered { margin: 0; font-size: .81rem; line-height: 1.75; color: var(--muted); }
 .worldbook-send-row { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
 .worldbook-send-row small { color: var(--muted); font-size: .74rem; }

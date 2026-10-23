@@ -9,5 +9,9 @@ import './styles/workspace-home.css';
 import './styles/ui-refresh.css';
 import './styles/character-editor.css';
 import './styles/character-editor-mobile.css';
+import './styles/design-polish.css';
+import { installDarkFontWeightAdaptation } from './utils/darkFontWeight.js';
+
+installDarkFontWeightAdaptation();
 
 createApp(App).use(router).mount('#app');

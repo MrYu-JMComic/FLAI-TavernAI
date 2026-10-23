@@ -142,14 +142,16 @@
   margin-bottom: 0;
 }
 
-.markdown-paragraph {
+.markdown-paragraph,
+.markdown-content p {
   max-width: 100%;
   margin: 0 0 0.72em;
   overflow-wrap: anywhere;
-  white-space: pre-wrap;
+  white-space: normal;
 }
 
-.markdown-heading {
+.markdown-heading,
+.markdown-content :is(h1, h2, h3, h4) {
   margin: 0.2em 0 0.55em;
   color: var(--text);
   line-height: 1.35;
@@ -168,21 +170,24 @@
   font-size: 1rem;
 }
 
-.markdown-list {
+.markdown-list,
+.markdown-content :is(ul, ol) {
   margin: 0.2em 0 0.72em;
   padding-left: 1.25em;
 }
 
-.markdown-list li + li {
+.markdown-list li + li,
+.markdown-content :is(ul, ol) li + li {
   margin-top: 0.2em;
 }
 
-.markdown-quote {
+.markdown-quote,
+.markdown-content blockquote {
   margin: 0.3em 0 0.8em;
   padding: 0.1em 0 0.1em 0.85em;
   border-left: 3px solid color-mix(in srgb, var(--primary) 28%, var(--line));
   color: var(--muted);
-  white-space: pre-wrap;
+  white-space: normal;
 }
 
 .markdown-code {
@@ -1168,6 +1173,13 @@ article.ai-process-step {
   color: var(--text);
 }
 
+.ai-step-activity {
+  display: grid;
+  gap: 7px;
+  min-width: 0;
+  max-width: 100%;
+}
+
 .ai-process-text.empty {
   color: var(--muted);
   font-style: italic;
@@ -1287,4 +1299,178 @@ article.ai-process-step {
 :root[data-theme="dark"] .ai-process-step:not(:has(.ai-step-state-icon))::after {
   border-color: color-mix(in srgb, var(--surface) 88%, #020617);
   background: color-mix(in srgb, var(--muted) 52%, var(--line));
+}
+
+/* The assistant trace follows the same message/tool timeline as a coding
+   agent: prose is a message, adjacent operations form one batch, and raw
+   arguments/results stay behind an explicit disclosure. */
+.ai-workflow {
+  gap: 0;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--line) 82%, transparent);
+  border-radius: 10px;
+  background: var(--surface);
+}
+.ai-workflow-header {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+  min-height: 40px;
+  padding: 7px 11px;
+  color: var(--text);
+  border-bottom: 1px solid color-mix(in srgb, var(--line) 72%, transparent);
+}
+.ai-workflow-header .ai-tool-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 0;
+  color: var(--text);
+  background: transparent;
+}
+.ai-workflow-header .ai-tool-title svg { color: var(--primary); }
+.ai-workflow-header > small { flex: 0 0 auto; color: var(--muted); font-size: .71rem; white-space: nowrap; }
+.ai-workflow-timeline {
+  display: grid;
+  gap: 0;
+  min-width: 0;
+  /* The conversation transcript owns vertical scrolling. Keeping a second
+     scroll container here traps the mobile composer below a clipped trace. */
+  overflow: visible;
+  padding: 7px 10px 8px;
+}
+.ai-workflow-assistant-message {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 8px;
+  align-items: start;
+  min-width: 0;
+  padding: 9px 4px;
+  color: var(--text);
+  font-size: .84rem;
+  line-height: 1.7;
+}
+.ai-workflow-assistant-message > svg { margin-top: 4px; color: var(--primary); }
+.ai-workflow-assistant-message :is(p, ul, ol, pre, blockquote) { margin-top: 0; }
+.ai-workflow-assistant-message :last-child { margin-bottom: 0; }
+.ai-workflow-tool-batch,
+.ai-workflow-tool-item {
+  min-width: 0;
+  overflow: hidden;
+  border: 0;
+  border-top: 1px solid color-mix(in srgb, var(--line) 55%, transparent);
+  border-radius: 0;
+  background: transparent;
+}
+.ai-workflow-tool-batch > summary,
+.ai-workflow-tool-item > summary {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  min-height: 34px;
+  padding: 6px 4px;
+  color: var(--text);
+  cursor: pointer;
+  font-size: .79rem;
+  font-weight: 700;
+  list-style: none;
+}
+.ai-workflow-tool-batch > summary::-webkit-details-marker,
+.ai-workflow-tool-item > summary::-webkit-details-marker { display: none; }
+.ai-workflow-tool-batch > summary > span,
+.ai-workflow-tool-item > summary > span { min-width: 0; overflow-wrap: anywhere; }
+.ai-workflow-tool-batch > summary > small,
+.ai-workflow-tool-item > summary > small {
+  flex: 0 0 auto;
+  margin-left: auto;
+  border-radius: 999px;
+  padding: 2px 7px;
+  color: var(--muted);
+  background: color-mix(in srgb, var(--surface-strong) 64%, transparent);
+  font-size: .68rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+.ai-workflow-tool-batch > summary > small.failed,
+.ai-workflow-tool-item > summary > small.failed { color: var(--danger); background: var(--danger-soft); }
+.ai-workflow-tool-batch > summary > svg:last-child,
+.ai-workflow-tool-item > summary > svg:last-child { flex: 0 0 auto; color: var(--muted); transition: transform 160ms ease; }
+.ai-workflow-tool-batch[open] > summary > svg:last-child,
+.ai-workflow-tool-item[open] > summary > svg:last-child { transform: rotate(180deg); }
+.ai-workflow-tool-list { display: grid; gap: 0; margin-left: 21px; padding-bottom: 4px; }
+.ai-workflow-tool-list .ai-workflow-tool-item { border-top-color: color-mix(in srgb, var(--line) 42%, transparent); }
+.ai-workflow-tool-list .ai-workflow-tool-item > summary { min-height: 31px; font-size: .75rem; font-weight: 650; }
+.ai-workflow-tool-item > strong { display: block; padding: 7px 8px 0; color: var(--muted); font-size: .7rem; }
+.ai-workflow-tool-item .ai-tool-technical-name { padding: 7px 8px 0; }
+.ai-workflow-tool-item pre {
+  box-sizing: border-box;
+  max-width: calc(100% - 16px);
+  max-height: 220px;
+  margin: 5px 8px 8px;
+  overflow: auto;
+  border: 1px solid color-mix(in srgb, var(--line) 70%, transparent);
+  border-radius: 6px;
+  padding: 8px;
+  background: var(--bg);
+  color: var(--text);
+  font-size: .72rem;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+.ai-workflow-thinking {
+  min-width: 0;
+  margin-top: 4px;
+  border-top: 1px solid color-mix(in srgb, var(--line) 55%, transparent);
+  padding: 8px 4px 0;
+}
+.ai-workflow-thinking > summary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: .72rem;
+  font-weight: 700;
+  list-style: none;
+}
+.ai-workflow-thinking > summary::-webkit-details-marker { display: none; }
+.ai-workflow-thinking > summary svg:last-child { margin-left: auto; transition: transform 160ms ease; }
+.ai-workflow-thinking[open] > summary svg:last-child { transform: rotate(180deg); }
+.ai-workflow-thinking > p {
+  max-height: 220px;
+  margin: 7px 0 0;
+  overflow: auto;
+  color: var(--muted);
+  font-size: .74rem;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.ai-workflow-current {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 9px 4px 5px;
+  color: var(--muted);
+  font-size: .76rem;
+  line-height: 1.5;
+}
+.ai-workflow-current svg { flex: 0 0 auto; color: var(--primary); }
+.ai-workflow-current[role="status"] svg { animation: ai-workbench-spin .9s linear infinite; }
+.ai-workflow-current.failed { color: var(--danger); }
+.ai-workflow-current.failed svg,
+.ai-workflow-current.completed svg { animation: none; }
+.ai-workflow-current.completed { color: var(--green); }
+:root[data-theme="dark"] .ai-workflow { border-color: rgba(148, 163, 184, .28); background: color-mix(in srgb, var(--surface) 88%, #020617); }
+@media (max-width: 760px) {
+  .ai-workflow-header { padding-inline: 9px; }
+  .ai-workflow-header > small { font-size: .66rem; }
+  .ai-workflow-timeline { padding-inline: 8px; }
+  .ai-workflow-assistant-message { font-size: .8rem; }
+  .ai-workflow-tool-batch > summary, .ai-workflow-tool-item > summary { font-size: .74rem; }
+  .ai-workflow-tool-list { margin-left: 17px; }
 }

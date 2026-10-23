@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-import { latestSchemaVersion } from '../db/migrations.js';
+import { latestSchemaVersion, listAppliedMigrations } from '../db/migrations.js';
 import test from 'node:test';
 
 process.env.FLAI_DB_PATH = ':memory:';
@@ -85,7 +85,7 @@ test('startup backup captures the database before migration and records integrit
     } finally {
       backup.close();
     }
-    assert.equal(database.prepare('SELECT COUNT(*) AS count FROM schema_migrations').get().count, 17);
+    assert.equal(listAppliedMigrations(database).at(-1)?.version, latestSchemaVersion);
   } finally {
     database.close();
     rmSync(temporaryRoot, { recursive: true, force: true });

@@ -1,4 +1,4 @@
-import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, shallowRef, watch } from 'vue';
 import { onBeforeRouteLeave } from 'vue-router';
 import {
   createCharacter,
@@ -10,7 +10,9 @@ import {
   updateCharacter
 } from '../../api/characters.js';
 import { exportEnvelope } from '../../api/envelopes.js';
+import { createAssistantSession, fetchAssistantSession, fetchAssistantSessions, resetCharacterAssistantDraftFromSavedCharacter, updateAssistantSession } from '../../api/characterAssistant.js';
 import { useNotify } from '../useNotify';
+import { useProviderModels } from '../useProviderModels';
 import { useCharacterAiGeneration } from './useCharacterAiGeneration';
 import { useCharacterAiPreferences } from './useCharacterAiPreferences';
 import { useCharacterCreationWizard } from './useCharacterCreationWizard';
@@ -36,6 +38,7 @@ import {
 } from './useCharacterStatusBlueprint';
 import { useCharacterWorldBookDialog } from './useCharacterWorldBookDialog';
 import { downloadJsonFile, todayStamp } from '../../utils/downloadJson.js';
+import { recordFrontendDiagnostic } from '../../diagnostics.js';
 
 export const CHARACTER_EDITOR_KEY = Symbol('characterEditor');
 
@@ -48,6 +51,7 @@ export const CHARACTER_SECTION_GROUPS = [
 export const ACCESSORY_SKILL_ITEMS = [
   { key: 'sceneAgent', label: '场景构建助手', auto: false },
   { key: 'statusBarAgent', label: '状态栏 Agent', auto: true },
+  { key: 'memoryAgent', label: '记忆 Agent', auto: true },
   { key: 'economyAgent', label: '经济识别', auto: false },
   { key: 'talentPrompt', label: '天赋提示', auto: false },
   { key: 'cgScene', label: 'CG 场景', auto: false }
@@ -61,7 +65,8 @@ export const ACCESSORY_SKILL_ITEMS = [
 export function useCharacterEditor({ props, emit }) {
   const notify = useNotify();
 
-  const isEditing = computed(() => props.route.name === 'characterEdit');
+  const isEditing = computed(() => ['characterEdit', 'characterAssistant'].includes(props.route.name));
+  const isAssistantPage = computed(() => ['characterAssistant', 'characterAssistantNew'].includes(props.route.name));
   const editingCharacterId = computed(() => props.route.params.id || '');
   const loading = ref(false);
   const loadError = ref('');
@@ -72,6 +77,9 @@ export function useCharacterEditor({ props, emit }) {
   const nameError = ref('');
   const previewInput = ref('');
   const form = reactive(emptyCharacter());
+  const savedCharacter = shallowRef(null);
+  const savedAvatarUrl = ref('');
+  const savedWorldBookIds = ref([]);
   const canEdit = computed(() => !isEditing.value || form.canEdit !== false);
 
   let characterFormDisposed = false;
@@ -79,6 +87,10 @@ export function useCharacterEditor({ props, emit }) {
   let formSubmitToken = 0;
   let characterDeleteToken = 0;
   let characterExportToken = 0;
+  let assistantHandoffPending = false;
+  let createdAssistantCharacterId = '';
+  let manualDraftSession = null;
+  let manualDraftScope = 0;
 
   const aiOptions = reactive({
     profile: true,
@@ -98,13 +110,21 @@ export function useCharacterEditor({ props, emit }) {
     aiUseCurrentDraft,
     assistantModel,
     assistantModelOptions,
+    assistantProviderProfileId,
+    assistantProviderProfiles,
+    assistantProviderSettings,
+    assistantModelsLoading,
+    assistantModelsError,
+    loadAssistantProviderProfiles,
+    refreshAssistantModels,
+    selectAssistantProviderProfile,
     assistantPlanMode,
     assistantStreamingEnabled,
     assistantThinkingLevel,
     assistantThinkingOptions,
-    assistantThinkingSupported,
-    providerModelOptionsFor
-  } = useCharacterAiPreferences(computed(() => props.provider));
+    assistantThinkingSupported
+  } = useCharacterAiPreferences(computed(() => props.provider), computed(() => props.user));
+  const { providerModelOptionsFor } = useProviderModels(computed(() => props.provider));
 
   const {
     addWorldBookOption,
@@ -132,14 +152,21 @@ export function useCharacterEditor({ props, emit }) {
   });
 
   const {
+    aiSessionId,
+    aiConversationHistory,
+    aiContext,
+    selectAiSession: restoreAssistantRuntime,
+    exportAiSessionState: exportAssistantRuntimeState,
     aiLoading,
     aiCheckpoint,
     aiCheckpointUpdatedAt,
     aiHasCheckpoint,
     aiLastError,
     aiRequirement,
+    aiAttachments,
     aiStatus,
     aiStatusMessage,
+    aiFinalContent,
     aiToolCalls,
     aiWarnings,
     aiProcess,
@@ -163,6 +190,8 @@ export function useCharacterEditor({ props, emit }) {
     completeWithAi,
     createSuggestedMods,
     applyAiWorldBookChanges,
+    commitAiWorldBookChanges,
+    setAiWorldBookAddToCharacter,
     reloadAiWorldBook,
     discardAiWorldBookChange,
     setAiWorldBookSelectedIds,
@@ -187,6 +216,7 @@ export function useCharacterEditor({ props, emit }) {
     aiOptions,
     aiUseCurrentDraft,
     assistantModel,
+    assistantProviderProfileId,
     assistantPlanMode,
     assistantStreamingEnabled,
     assistantThinkingLevel,
@@ -194,8 +224,10 @@ export function useCharacterEditor({ props, emit }) {
     applyAdvancedSettingsDraft,
     onWorldBookCreated: handleAiWorldBookCreated,
     onWorldBookUpdated: (book) => addWorldBookOption(book),
+    persistWorldBookDraft: persistAssistantWorldBookDraft,
     getSelectedWorldBookIds: () => selectedWorldBookIds.value,
     getSessionId: () => editingCharacterId.value || 'new',
+    isConversationMode: () => isAssistantPage.value,
     isDisposed: () => characterFormDisposed,
     notify
   });
@@ -207,6 +239,26 @@ export function useCharacterEditor({ props, emit }) {
     if (!selectedWorldBookIds.value.includes(bookId)) {
       setSelectedWorldBookIdsIfChanged([...selectedWorldBookIds.value, bookId]);
     }
+  }
+
+  async function persistAssistantWorldBookDraft() {
+    if (!aiSessionId.value) return;
+    // Keep both the retry identity and any saved new-book IDs durable before
+    // proceeding to the next save step, including the editor handoff path.
+    const state = exportAiSessionState();
+    const statePatch = {};
+    // Checkpoint and plan copies of the workspace are synchronized server-side.
+    for (const key of ['worldBookWorkspace', 'worldBookChanges', 'worldBookApplyRequest']) {
+      statePatch[key] = state[key];
+    }
+    await updateAssistantSession(aiSessionId.value, {
+      character: toPayload(),
+      statePatch: {
+        ...statePatch,
+        selectedWorldBookIds: [...selectedWorldBookIds.value],
+        worldBookLinkDraft: state.worldBookLinkDraft
+      }
+    });
   }
 
   const {
@@ -396,30 +448,55 @@ export function useCharacterEditor({ props, emit }) {
   }
 
   const {
+    canDiscardCharacterDraft,
     characterDraftStatus,
     characterDraftStatusText,
     clearCurrentCharacterDraft,
-    discardCharacterDraft,
+    discardCharacterDraft: discardPersistedCharacterDraft,
     establishCharacterDraftBaseline,
     flushCharacterDraftBeforeDispose,
     hasUnsavedChanges,
     initializeCharacterDraftState,
     pendingCharacterDraft,
-    restoreCharacterDraft,
+    restoreCharacterDraft: restorePersistedCharacterDraft,
+    saveCharacterDraftNow,
     scheduleCharacterDraftSave,
     startCharacterDraftInterval
   } = useCharacterFormDraft({
-    isEditing,
-    editingCharacterId,
     canEdit,
+    persistenceEnabled: () => !isAssistantPage.value,
     isDisposed: () => characterFormDisposed,
+    isBusy: () => saving.value || deleting.value || exporting.value || aiLoading.value || advancedAiLoading.value || aiWorldBookCreating.value,
     buildPayload: toPayload,
     getSelectedWorldBookIds: () => selectedWorldBookIds.value,
     normalizePayload: normalizeCharacterDraftPayload,
     normalizeWorldBookIds,
     applyPayload: applyCharacterDraftPayload,
-    setSelectedWorldBookIds: setSelectedWorldBookIdsIfChanged
+    setSelectedWorldBookIds: setSelectedWorldBookIdsIfChanged,
+    readDraft: readManualCharacterDraft,
+    writeDraft: writeManualCharacterDraft
   });
+
+  function restoreCharacterDraft() {
+    if (!restorePersistedCharacterDraft()) return false;
+    if (manualDraftSession) selectAiSession(manualDraftSession);
+    return true;
+  }
+
+  async function discardCharacterDraft() {
+    if (saving.value || loading.value || loadError.value) return false;
+    const discard = discardPersistedCharacterDraft();
+    saving.value = true;
+    try {
+      if (!await discard) return false;
+      cancelCharacterImageUploads();
+      clearAssistantEditorHandoff();
+      assistantHandoffPending = false;
+      if (!isAssistantPage.value) restoreAssistantRuntime(manualDraftSession);
+      nameError.value = '';
+      return true;
+    } finally { if (!characterFormDisposed) saving.value = false; }
+  }
 
   const {
     clearWorldBookSearch,
@@ -479,6 +556,7 @@ export function useCharacterEditor({ props, emit }) {
   );
 
   onMounted(async () => {
+    clearLegacyCharacterDraftStorage();
     window.addEventListener('beforeunload', handleCharacterBeforeUnload);
     startCharacterDraftInterval();
     const optionsLoad = loadFormOptions();
@@ -486,11 +564,13 @@ export function useCharacterEditor({ props, emit }) {
       await Promise.all([optionsLoad, loadEditingCharacter()]);
       return;
     }
-    initializeCharacterDraftState();
-    await optionsLoad;
+    await Promise.all([optionsLoad, loadNewCharacterDraft()]);
   });
 
   onBeforeUnmount(() => {
+    // Vite replaces this component during HMR. Keep an active assistant
+    // request alive so a source update does not look like a user cancellation.
+    const preserveAssistantStream = Boolean(import.meta.hot && isAssistantPage.value && aiLoading.value);
     window.removeEventListener('beforeunload', handleCharacterBeforeUnload);
     flushCharacterDraftBeforeDispose();
     characterFormDisposed = true;
@@ -501,14 +581,20 @@ export function useCharacterEditor({ props, emit }) {
     characterExportToken += 1;
     showWorldBookDialog.value = false;
     cancelCharacterImageUploads();
-    cancelCharacterAiGeneration();
+    if (!preserveAssistantStream) cancelCharacterAiGeneration();
   });
 
-  onBeforeRouteLeave(() => {
+  onBeforeRouteLeave(async () => {
+    if (assistantHandoffPending) return true;
     if (!hasUnsavedChanges.value || characterFormDisposed) {
       return true;
     }
-    return window.confirm('角色还有未保存的更改，确定离开吗？');
+    if (!window.confirm('角色还有未保存的更改，确定离开吗？')) return false;
+    if (!isAssistantPage.value && !await saveCharacterDraftNow()) {
+      notify.error('服务器草稿保存失败，已保留当前输入，请重试后离开');
+      return false;
+    }
+    return true;
   });
 
   function hasText(value) {
@@ -533,12 +619,18 @@ export function useCharacterEditor({ props, emit }) {
   }
 
   async function loadEditingCharacter() {
-    if (characterFormDisposed || !isEditing.value) {
+    if (characterFormDisposed) {
+      return;
+    }
+    if (!isEditing.value) {
+      await loadNewCharacterDraft();
       return;
     }
 
     const characterId = editingCharacterId.value;
     const loadToken = ++editingCharacterLoadToken;
+    manualDraftScope += 1;
+    manualDraftSession = null;
     loading.value = true;
     loadError.value = '';
     try {
@@ -547,9 +639,14 @@ export function useCharacterEditor({ props, emit }) {
         fetchCharacterWorldBooks(characterId)
       ]);
       if (!isCurrentEditingCharacterLoad(loadToken, characterId)) return;
+      acceptSyncedCharacter(character);
       Object.assign(form, normalizeForForm(character));
+      savedAvatarUrl.value = form.avatarUrl;
       setSelectedWorldBookIdsFromBooksIfChanged(linkedBooks);
-      initializeCharacterDraftState();
+      savedWorldBookIds.value = normalizeWorldBookIds((linkedBooks || []).map((book) => book?.id));
+      await initializeCharacterDraftState();
+      if (!isCurrentEditingCharacterLoad(loadToken, characterId)) return;
+      await restoreAssistantEditorHandoff();
     } catch (err) {
       if (!isCurrentEditingCharacterLoad(loadToken, characterId)) return;
       const message = err?.message || '加载角色失败';
@@ -562,40 +659,135 @@ export function useCharacterEditor({ props, emit }) {
     }
   }
 
+  async function loadNewCharacterDraft() {
+    if (characterFormDisposed || isEditing.value) return;
+    const loadToken = ++editingCharacterLoadToken;
+    manualDraftScope += 1;
+    manualDraftSession = null;
+    loading.value = true;
+    loadError.value = '';
+    try {
+      await initializeCharacterDraftState();
+      if (isCurrentEditingCharacterLoad(loadToken, '')) await restoreAssistantEditorHandoff();
+    } catch (error) {
+      if (isCurrentEditingCharacterLoad(loadToken, '')) {
+        loadError.value = error?.message || '读取服务器草稿失败，请重新加载';
+        notify.error(loadError.value);
+      }
+    } finally {
+      if (isCurrentEditingCharacterLoad(loadToken, '')) loading.value = false;
+    }
+  }
+
   function isCurrentEditingCharacterLoad(loadToken, characterId) {
     return !characterFormDisposed
       && loadToken === editingCharacterLoadToken
       && characterId === editingCharacterId.value;
   }
 
+  function acceptSyncedCharacter(character) {
+    if (characterFormDisposed || !character || typeof character !== 'object') return false;
+    if (isEditing.value && String(character.id || '') !== editingCharacterId.value) return false;
+    // The persisted card must never share objects with an assistant draft.
+    savedCharacter.value = JSON.parse(JSON.stringify(character));
+    return true;
+  }
+
+  function replaceAssistantDraftFromSavedCharacter(character, session) {
+    if (characterFormDisposed || !isAssistantPage.value || !isEditing.value || !canEdit.value || loading.value
+      || characterFooterActionBusy.value || aiLoading.value || advancedAiLoading.value || aiWorldBookCreating.value) return false;
+    const characterId = editingCharacterId.value;
+    if (!character || typeof character !== 'object' || Array.isArray(character) || character.canEdit === false
+      || String(character.id || '') !== characterId
+      || !session?.id || String(session.id) !== aiSessionId.value || String(session.characterId || '') !== characterId
+      || !Array.isArray(session.state?.selectedWorldBookIds)) return false;
+    const authoritativeCharacter = JSON.parse(JSON.stringify(character));
+    const restoredSession = JSON.parse(JSON.stringify(session));
+    const worldBookIds = normalizeWorldBookIds(restoredSession.state.selectedWorldBookIds);
+    cancelCharacterImageUploads();
+    Object.assign(form, normalizeForForm(authoritativeCharacter));
+    savedAvatarUrl.value = form.avatarUrl;
+    savedWorldBookIds.value = worldBookIds;
+    setSelectedWorldBookIdsIfChanged(worldBookIds);
+    restoreAssistantRuntime(restoredSession);
+    advancedAiRequirement.value = '';
+    acceptSyncedCharacter(authoritativeCharacter);
+    nameError.value = '';
+    establishCharacterDraftBaseline();
+    clearCurrentCharacterDraft();
+    return true;
+  }
+
   async function submit() {
-    if (characterFormDisposed || characterFooterActionBusy.value || !canEdit.value) {
+    if (characterFormDisposed || characterFooterActionBusy.value || !canEdit.value
+      || loading.value || loadError.value
+      || ((isAssistantPage.value || aiSessionId.value) && (aiLoading.value || advancedAiLoading.value || aiWorldBookCreating.value))) {
       return;
     }
     if (!validateCharacterName({ focus: true })) {
       return;
     }
-
+    if (!isAssistantPage.value && pendingCharacterDraft.value) {
+      notify.warning('请先恢复或丢弃服务器草稿，再保存角色');
+      return;
+    }
     const submitToken = ++formSubmitToken;
     const editing = isEditing.value;
     const characterId = editingCharacterId.value;
-    const worldBookIds = [...selectedWorldBookIds.value];
     saving.value = true;
     try {
+      if (!isAssistantPage.value && !await saveCharacterDraftNow()) {
+        notify.error('服务器草稿保存失败，当前输入仍保留，请重试');
+        return;
+      }
+      if ((isAssistantPage.value || aiSessionId.value) && aiWorldBookChanges.value.length && !await commitAiWorldBookChanges()) return;
+      if (!isCurrentFormSubmit(submitToken, { editing, characterId })) return;
+      // New books receive their saved IDs during the explicit commit above.
+      const worldBookIds = [...selectedWorldBookIds.value];
       const payload = toPayload();
-      const saved = editing
-        ? await updateCharacter(characterId, payload)
-        : await createCharacter(payload);
+      const saved = editing || createdAssistantCharacterId
+        ? await updateCharacter(characterId || createdAssistantCharacterId, payload)
+        : await createCharacter({ ...payload, ...(aiSessionId.value ? { assistantSessionId: aiSessionId.value } : {}) });
+      if (!isCurrentFormSubmit(submitToken, { editing, characterId })) return;
+      acceptSyncedCharacter(saved);
+      const canonicalAvatarUrl = String(saved.avatarUrl ?? payload.avatarUrl ?? '');
+      savedAvatarUrl.value = canonicalAvatarUrl;
+      if (form.avatarUrl === payload.avatarUrl) form.avatarUrl = canonicalAvatarUrl;
+      if (!editing && aiSessionId.value) createdAssistantCharacterId = saved.id;
+      if (aiSessionId.value) {
+        try {
+          const updatedSession = await updateAssistantSession(aiSessionId.value, {
+            characterId: saved.id,
+            title: `${form.name || '角色'} · 完善角色`,
+            character: { ...payload, avatarUrl: canonicalAvatarUrl },
+            statePatch: {
+              avatarDraft: null,
+              selectedWorldBookIds: worldBookIds,
+              worldBookLinkDraft: currentWorldBookLinkDraft()
+            }
+          });
+          if (!isAssistantPage.value) manualDraftSession = updatedSession;
+          rememberAssistantSession(saved.id, aiSessionId.value);
+        } catch (error) {
+          notify.warning(`角色已保存，但助手会话绑定失败：${error.message}。请在当前页面重试保存。`);
+          // Stay in the current editor after a partial save so its session is recoverable.
+          if (!editing) rememberAssistantSession('new', aiSessionId.value);
+          return;
+        }
+      }
       await syncCharacterWorldBooks(saved.id, { editing, selectedIds: worldBookIds });
       if (!isCurrentFormSubmit(submitToken, { editing, characterId })) return;
-      if (!editing) {
+      savedWorldBookIds.value = normalizeWorldBookIds(worldBookIds);
+      if (!editing && !isAssistantPage.value) {
         cancelCharacterAiGeneration();
-        discardAiSession();
       }
       establishCharacterDraftBaseline();
       clearCurrentCharacterDraft();
+      clearAssistantEditorHandoff();
       notify.success(editing ? '角色已保存' : '角色已创建');
-      if (editing) {
+      if (isAssistantPage.value) {
+        navigateFromCharacterSubmit('characterAssistant', { id: saved.id });
+      } else if (editing) {
         emit('navigate', 'characterEdit', { id: saved.id });
       } else {
         navigateFromCharacterSubmit('characterEdit', { id: saved.id });
@@ -652,6 +844,8 @@ export function useCharacterEditor({ props, emit }) {
   }
 
   function navigateFromCharacterSubmit(page, params) {
+    // Navigation may keep this editor mounted, so finish before retiring its token.
+    saving.value = false;
     formSubmitToken += 1;
     emit('navigate', page, params);
   }
@@ -725,6 +919,8 @@ export function useCharacterEditor({ props, emit }) {
         customJs: form.authorAdvancedSettings.customJs,
         customJsEnabled: form.authorAdvancedSettings.customJsEnabled,
         customJsRiskAccepted: form.authorAdvancedSettings.customJsRiskAccepted,
+        showWorldBookMatches: form.authorAdvancedSettings.showWorldBookMatches,
+        highlightDialogue: form.authorAdvancedSettings.highlightDialogue,
         statusBarPrompt: form.authorAdvancedSettings.statusBarPrompt,
         statusBarBlueprint: normalizeStatusBarBlueprintForPayload(form.authorAdvancedSettings.statusBarBlueprint),
         accessorySkills: normalizeAccessorySkillsForPayload(form.authorAdvancedSettings.accessorySkills)
@@ -862,7 +1058,303 @@ export function useCharacterEditor({ props, emit }) {
     emit('navigate', 'home');
   }
 
+  function rememberAssistantSession(characterId, sessionId) {
+    try {
+      sessionStorage.setItem(`flai-character-assistant-active:${props.user?.id || 'anonymous'}:${characterId || 'new'}`, sessionId);
+    } catch {
+      // Server sessions remain available when browser storage is disabled.
+    }
+  }
+
+  function assistantEditorHandoffKey() {
+    return `flai-character-editor-handoff:${props.user?.id || 'anonymous'}:${editingCharacterId.value || 'new'}`;
+  }
+
+  function readAssistantHandoffId() {
+    try {
+      const raw = sessionStorage.getItem(assistantEditorHandoffKey()) || '';
+      if (!raw.startsWith('{')) return raw;
+      return String(JSON.parse(raw)?.sessionId || '');
+    } catch { return ''; }
+  }
+
+  function clearLegacyCharacterDraftStorage() {
+    try {
+      for (const key of Object.keys(localStorage)) {
+        if (key.startsWith('flai-character-form-draft:') || key.startsWith('flai-character-ai-session:')) localStorage.removeItem(key);
+      }
+    } catch (error) { recordFrontendDiagnostic('characterDraft.legacy.clear', error); }
+  }
+
+  function matchesManualDraftSession(session, characterId = editingCharacterId.value) {
+    return Boolean(session?.id && String(session.characterId || '') === characterId
+      && session.character && typeof session.character === 'object' && !Array.isArray(session.character));
+  }
+
+  async function readManualCharacterDraft() {
+    const scope = manualDraftScope;
+    const characterId = editingCharacterId.value;
+    const handoffId = readAssistantHandoffId();
+    let session = null;
+    if (handoffId) {
+      try {
+        session = await fetchAssistantSession(handoffId);
+      } catch (error) {
+        if (error?.status !== 404) throw error;
+        recordFrontendDiagnostic('characterDraft.handoff.stale', error);
+        session = null;
+      }
+      if (session && !matchesManualDraftSession(session, characterId)) {
+        throw new Error('服务器草稿与当前角色不匹配，请重新加载');
+      }
+      if (!session) clearAssistantEditorHandoff();
+    }
+    if (!session) {
+      let activeId = '';
+      try {
+        activeId = sessionStorage.getItem(`flai-character-assistant-active:${props.user?.id || 'anonymous'}:${characterId || 'new'}`) || '';
+      } catch (error) {
+        recordFrontendDiagnostic('characterDraft.activeSession.read', error);
+      }
+      const sessions = await fetchAssistantSessions({ characterId });
+      session = sessions.find((item) => item.id === activeId) || sessions[0] || null;
+    }
+    if (!session) return null;
+    if (characterFormDisposed || scope !== manualDraftScope || characterId !== editingCharacterId.value) return null;
+    if (!matchesManualDraftSession(session, characterId)) throw new Error('服务器草稿与当前角色不匹配，请重新加载');
+    if (session.state?.status === 'running') throw new Error('助手正在处理此会话，请完成后重新加载');
+    manualDraftSession = JSON.parse(JSON.stringify(session));
+    rememberAssistantSession(characterId, session.id);
+    return {
+      payload: normalizeCharacterDraftPayload(session.character),
+      selectedWorldBookIds: getAssistantWorldBookSelection(session.state) || [...selectedWorldBookIds.value],
+      updatedAt: session.updatedAt || ''
+    };
+  }
+
+  async function writeManualCharacterDraft(snapshot, { reset = false } = {}) {
+    const scope = manualDraftScope;
+    const characterId = editingCharacterId.value || createdAssistantCharacterId;
+    const current = manualDraftSession || (aiSessionId.value ? await fetchAssistantSession(aiSessionId.value) : null);
+    if (current && !matchesManualDraftSession(current, characterId)) throw new Error('服务器草稿与当前角色不匹配，请重新加载');
+    let session;
+    if (reset && current && characterId) {
+      const result = await resetCharacterAssistantDraftFromSavedCharacter(current.id);
+      if (!matchesManualDraftSession(result?.session, characterId) || result.character?.id !== characterId) {
+        throw new Error('服务器草稿与当前角色不匹配，请重新加载');
+      }
+      session = result.session;
+      if (!characterFormDisposed && scope === manualDraftScope && characterId === (editingCharacterId.value || createdAssistantCharacterId)) {
+        acceptSyncedCharacter(result.character);
+        savedAvatarUrl.value = String(result.character.avatarUrl || '');
+        savedWorldBookIds.value = normalizeWorldBookIds(session.state?.selectedWorldBookIds);
+      }
+      snapshot = { payload: normalizeCharacterDraftPayload(session.character), selectedWorldBookIds: session.state.selectedWorldBookIds };
+    } else {
+      const state = reset
+        ? Object.fromEntries(Object.entries(current?.state || {}).filter(([key]) => ['version', 'options', 'providerProfileId', 'modelOverride'].includes(key)))
+        : aiSessionId.value && aiSessionId.value === current?.id ? exportAiSessionState() : current?.state || {};
+      const nextState = { ...state, avatarDraft: reset ? null : currentAvatarDraft(), worldBookLinkDraft: reset ? null : currentWorldBookLinkDraft(), selectedWorldBookIds: snapshot.selectedWorldBookIds };
+      const statePatch = Object.fromEntries(Object.entries(nextState).filter(([key, value]) => JSON.stringify(value) !== JSON.stringify(current?.state?.[key])));
+      const payload = {
+        character: snapshot.payload,
+        ...(characterId ? { characterId } : {}),
+        ...(reset || !current ? { state: nextState } : { statePatch })
+      };
+      session = current ? await updateAssistantSession(current.id, payload) : await createAssistantSession({ title: '角色编辑草稿', ...payload });
+    }
+    if (!matchesManualDraftSession(session, characterId)) throw new Error('保存服务器草稿失败，请重试');
+    if (scope === manualDraftScope && characterId === (editingCharacterId.value || createdAssistantCharacterId)) {
+      manualDraftSession = JSON.parse(JSON.stringify(session));
+      rememberAssistantSession(characterId, session.id);
+      if (!aiSessionId.value) aiSessionId.value = String(session.id);
+    }
+    return { updatedAt: session.updatedAt, ...(reset ? { snapshot } : {}) };
+  }
+
+  function prepareAssistantEditorHandoff() {
+    try { sessionStorage.setItem(assistantEditorHandoffKey(), aiSessionId.value); } catch (error) {
+      recordFrontendDiagnostic('characterAssistant.handoff.save', error);
+    }
+    assistantHandoffPending = true;
+  }
+
+  function clearAssistantEditorHandoff() {
+    try { sessionStorage.removeItem(assistantEditorHandoffKey()); } catch (error) {
+      recordFrontendDiagnostic('characterAssistant.handoff.clear', error);
+    }
+  }
+
+  async function restoreAssistantEditorHandoff() {
+    if (isAssistantPage.value) return;
+    if (!manualDraftSession) return;
+    if (readAssistantHandoffId() === manualDraftSession.id) {
+      restoreCharacterDraft();
+      selectAiSession(manualDraftSession);
+      clearAssistantEditorHandoff();
+    } else if (!pendingCharacterDraft.value) selectAiSession(manualDraftSession);
+    else if (!isEditing.value && !manualDraftSession.characterId) restoreCharacterDraft();
+  }
+
+  function selectAiSession(session, { restoreVersion = false } = {}) {
+    restoreAssistantRuntime(session);
+    const selectedIds = getAssistantWorldBookSelection(session?.state, { restoreVersion });
+    if (selectedIds) {
+      setSelectedWorldBookIdsIfChanged(selectedIds);
+    }
+    const pending = pendingCharacterDraft.value;
+    if (pending
+      && JSON.stringify(normalizeCharacterDraftPayload(pending.payload)) === JSON.stringify(normalizeCharacterDraftPayload(toPayload()))
+      && JSON.stringify(normalizeWorldBookIds(pending.selectedWorldBookIds).sort()) === JSON.stringify([...selectedWorldBookIds.value].sort())) {
+      pendingCharacterDraft.value = null;
+      scheduleCharacterDraftSave();
+    }
+  }
+
+  function currentAvatarDraft() {
+    const avatarUrl = String(form.avatarUrl || '');
+    return avatarUrl === savedAvatarUrl.value
+      ? null
+      : { version: 1, baselineUrl: savedAvatarUrl.value };
+  }
+
+  function exportAiSessionState() {
+    return {
+      ...exportAssistantRuntimeState(),
+      avatarDraft: currentAvatarDraft(),
+      worldBookLinkDraft: currentWorldBookLinkDraft()
+    };
+  }
+
+  function currentWorldBookLinkDraft() {
+    return sameWorldBookIdSet(selectedWorldBookIds.value, savedWorldBookIds.value)
+      ? null
+      : { version: 1, baselineIds: normalizeWorldBookIds(savedWorldBookIds.value) };
+  }
+
+  function getAssistantWorldBookSelection(state, { restoreVersion = false } = {}) {
+    if (!Array.isArray(state?.selectedWorldBookIds)) return null;
+    const sessionIds = normalizeWorldBookIds(state.selectedWorldBookIds);
+    if (restoreVersion || !isEditing.value) return sessionIds;
+
+    const currentDraft = currentWorldBookLinkDraft();
+    if (currentDraft) return normalizeWorldBookIds(selectedWorldBookIds.value);
+
+    const marker = state.worldBookLinkDraft;
+    if (marker?.version === 1 && Array.isArray(marker.baselineIds)) {
+      return rebaseWorldBookSelection(savedWorldBookIds.value, marker.baselineIds, sessionIds);
+    }
+    // Old snapshots cannot express removal of links saved since that session.
+    // Retain pending additions while protecting the current saved links.
+    return mergeWorldBookIds(savedWorldBookIds.value, sessionIds);
+  }
+
+  function sameWorldBookIdSet(first, second) {
+    const firstIds = new Set(normalizeWorldBookIds(first));
+    const secondIds = new Set(normalizeWorldBookIds(second));
+    if (firstIds.size !== secondIds.size) return false;
+    for (const id of firstIds) {
+      if (!secondIds.has(id)) return false;
+    }
+    return true;
+  }
+
+  function mergeWorldBookIds(first, second) {
+    return [...new Set([...normalizeWorldBookIds(first), ...normalizeWorldBookIds(second)])];
+  }
+
+  function rebaseWorldBookSelection(currentIds, baselineIds, selectedIds) {
+    const baseline = new Set(normalizeWorldBookIds(baselineIds));
+    const selected = new Set(normalizeWorldBookIds(selectedIds));
+    const rebased = normalizeWorldBookIds(currentIds).filter((id) => !baseline.has(id) || selected.has(id));
+    for (const id of selected) {
+      if (!baseline.has(id) && !rebased.includes(id)) rebased.push(id);
+    }
+    return rebased;
+  }
+
+  function applyAssistantCharacter(character, { avatarDraft, restoreVersion = false } = {}) {
+    if (!canEdit.value || !character || typeof character !== 'object') return;
+    // Conversation snapshots may predate a manual avatar change or store an old
+    // empty value. Only an explicit draft against the saved avatar may replace it.
+    let avatarUrl = form.avatarUrl;
+    if (restoreVersion || !isEditing.value) {
+      avatarUrl = character.avatarUrl ?? avatarUrl;
+    } else if (!currentAvatarDraft()
+      && avatarDraft?.version === 1
+      && avatarDraft.baselineUrl === savedAvatarUrl.value
+      && typeof character.avatarUrl === 'string') {
+      avatarUrl = character.avatarUrl;
+    }
+    applyCharacterDraftPayload({ ...character, avatarUrl });
+  }
+
+  async function openAssistant() {
+    if (characterAiActionBusy.value || loading.value || loadError.value || !canEdit.value || assistantHandoffPending) return;
+    assistantHandoffPending = true;
+    saving.value = true;
+    try {
+      clearLegacyCharacterDraftStorage();
+      if (!pendingCharacterDraft.value && !await saveCharacterDraftNow()) throw new Error('服务器草稿保存失败，当前输入仍保留，请重试');
+      const existing = isEditing.value ? await fetchAssistantSessions({ characterId: editingCharacterId.value }) : [];
+      const sessions = Array.isArray(existing) ? existing : existing.sessions || [];
+      let activeId = '';
+      try {
+        activeId = sessionStorage.getItem(`flai-character-assistant-active:${props.user?.id || 'anonymous'}:${editingCharacterId.value}`) || '';
+      } catch (error) {
+        recordFrontendDiagnostic('characterAssistant.active.read', error);
+      }
+      const target = sessions.find((session) => session.id === activeId) || sessions[0];
+      const targetId = target?.id || (!isEditing.value ? aiSessionId.value : '');
+      const current = targetId ? await fetchAssistantSession(targetId) : null;
+      const preserveSessionDraft = Boolean(current) && !hasUnsavedChanges.value;
+      const selectedIds = preserveSessionDraft
+        ? (getAssistantWorldBookSelection(current.state) || normalizeWorldBookIds(selectedWorldBookIds.value))
+        : normalizeWorldBookIds(selectedWorldBookIds.value);
+      const statePatch = {
+        avatarDraft: currentAvatarDraft(),
+        selectedWorldBookIds: selectedIds,
+        worldBookLinkDraft: sameWorldBookIdSet(selectedIds, savedWorldBookIds.value)
+          ? null
+          : { version: 1, baselineIds: normalizeWorldBookIds(savedWorldBookIds.value) }
+      };
+      const payload = {
+        ...(editingCharacterId.value ? { characterId: editingCharacterId.value } : {}),
+        title: current?.title || (form.name ? `${form.name} · 完善角色` : '新角色创作'),
+        // The server already owns the generated draft and execution history.
+        // Reopening a session must not upload another copy of that large JSON.
+        ...(preserveSessionDraft
+          ? { characterPatch: { avatarUrl: form.avatarUrl } }
+          : { character: toPayload() }),
+        ...(current
+          ? { statePatch }
+          : { state: { ...exportAiSessionState(), ...statePatch } })
+      };
+      const session = current
+        ? await updateAssistantSession(current.id, payload)
+        : await createAssistantSession(payload);
+      rememberAssistantSession(editingCharacterId.value, session.id);
+      clearAssistantEditorHandoff();
+      emit('navigate', isEditing.value ? 'characterAssistant' : 'characterAssistantNew', isEditing.value ? { id: editingCharacterId.value } : {});
+    } catch (error) {
+      assistantHandoffPending = false;
+      notify.error(error.message || '无法打开 AI 完善助手');
+    } finally { if (!characterFormDisposed) saving.value = false; }
+  }
+
   return {
+    isAssistantPage,
+    aiSessionId,
+    aiConversationHistory,
+    aiContext,
+    selectAiSession,
+    exportAiSessionState,
+    applyAssistantCharacter,
+    acceptSyncedCharacter,
+    replaceAssistantDraftFromSavedCharacter,
+    openAssistant,
+    toPayload,
+    prepareAssistantEditorHandoff,
     // identity & lifecycle
     accessorySkillItems: ACCESSORY_SKILL_ITEMS,
     canEdit,
@@ -876,6 +1368,7 @@ export function useCharacterEditor({ props, emit }) {
     loading,
     permissionText,
     saving,
+    savedCharacter,
     // sections
     activeSection,
     activeSectionDefinition,
@@ -904,6 +1397,7 @@ export function useCharacterEditor({ props, emit }) {
     completedCount,
     completionItems,
     // draft
+    canDiscardCharacterDraft,
     characterDraftStatus,
     characterDraftStatusText,
     discardCharacterDraft,
@@ -963,13 +1457,23 @@ export function useCharacterEditor({ props, emit }) {
     aiProcess,
     aiReasoning,
     aiRequirement,
+    aiAttachments,
     aiStatus,
     aiStatusMessage,
+    aiFinalContent,
     aiToolCalls,
     aiWarnings,
     aiUseCurrentDraft,
     assistantModel,
     assistantModelOptions,
+    assistantProviderProfileId,
+    assistantProviderProfiles,
+    assistantProviderSettings,
+    assistantModelsLoading,
+    assistantModelsError,
+    loadAssistantProviderProfiles,
+    refreshAssistantModels,
+    selectAssistantProviderProfile,
     assistantPlanMode,
     assistantStreamingEnabled,
     assistantThinkingLevel,
@@ -980,6 +1484,7 @@ export function useCharacterEditor({ props, emit }) {
     completeWithAi,
     createSuggestedMods,
     applyAiWorldBookChanges,
+    setAiWorldBookAddToCharacter,
     reloadAiWorldBook,
     discardAiWorldBookChange,
     setAiWorldBookSelectedIds,

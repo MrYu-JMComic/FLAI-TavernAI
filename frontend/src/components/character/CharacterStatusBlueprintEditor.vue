@@ -1,5 +1,8 @@
 <script setup>
-import { BookOpen, ChevronDown, Eye, Plus, RotateCcw, Sparkles, Trash2, TriangleAlert } from '@lucide/vue';
+import { computed, reactive, ref } from 'vue';
+import { BookOpen, ChevronDown, Eye, Plus, RotateCcw, Sparkles, Trash2 } from '@lucide/vue';
+import StatusBarCodeEditor from '../StatusBarCodeEditor.vue';
+import { createStatusBarRuntimeExample, parseStatusBarRuntime, serializeStatusBarRuntime } from '../../../../shared/statusBarRuntime.js';
 import { STATUS_TEMPLATE_REFERENCE } from '../../utils/statusTemplateReference.js';
 import { STATUS_VARIABLE_TYPES, STATUS_VARIABLE_TYPE_LABELS } from '../../../../shared/statusVariables.js';
 
@@ -9,10 +12,9 @@ void STATUS_TEMPLATE_REFERENCE;
 void STATUS_VARIABLE_TYPES;
 void STATUS_VARIABLE_TYPE_LABELS;
 
-defineProps({
+const props = defineProps({
   blueprint: { type: Object, required: true },
   canEdit: { type: Boolean, default: true },
-  issues: { type: Array, default: () => [] },
   rows: { type: Array, default: () => [] },
   stats: { type: Object, required: true }
 });
@@ -28,14 +30,34 @@ const emit = defineEmits([
   'set-variable-mode',
   'sync-template'
 ]);
+
+const templateDrafts = reactive({ builtin: '', custom: '', runtime: '' });
+const emptyTemplateMode = ref('builtin');
+const templateMode = computed(() => {
+  const template = String(props.blueprint.template || '').trim();
+  if (!template) return emptyTemplateMode.value;
+  if (parseStatusBarRuntime(template)) return 'runtime';
+  return template && !template.startsWith('{') ? 'custom' : 'builtin';
+});
+
+function setTemplateMode(event) {
+  if (!props.canEdit) return;
+  const mode = event?.target?.value;
+  if (!['builtin', 'custom', 'runtime'].includes(mode) || mode === templateMode.value) return;
+  templateDrafts[templateMode.value] = props.blueprint.template;
+  emptyTemplateMode.value = mode;
+  props.blueprint.template = mode === 'runtime'
+    ? templateDrafts.runtime || serializeStatusBarRuntime(createStatusBarRuntimeExample())
+    : mode === 'custom' ? templateDrafts.custom : templateDrafts.builtin;
+}
 </script>
 
 <template>
   <div class="status-blueprint-panel">
     <header class="status-blueprint-head">
       <div class="status-blueprint-head-text">
-        <h3>初始状态栏</h3>
-        <p>创建新会话时自动写入；模板里的占位符会自动同步成变量。</p>
+        <h3>自定义状态栏</h3>
+        <p>设置新会话的初始变量，并单独调整展示模板或 HTML、CSS、JavaScript。</p>
       </div>
       <div class="status-blueprint-head-actions">
         <button class="ghost-button" type="button" @click="emit('preview')">
@@ -64,7 +86,7 @@ const emit = defineEmits([
          only action, so the old chip toolbar is gone. -->
     <section class="status-blueprint-block" aria-label="初始状态变量">
       <div class="status-blueprint-block-head">
-        <strong>变量</strong>
+        <strong>初始变量</strong>
         <span class="status-blueprint-stats" aria-live="polite">
           {{ stats.variables }} 个
           <template v-if="stats.variables"> · {{ stats.text }} 文本 · {{ stats.meter }} 数值</template>
@@ -222,12 +244,12 @@ const emit = defineEmits([
 
     <section class="status-blueprint-block status-blueprint-template-field" aria-label="自定义状态栏模板">
       <div class="status-blueprint-block-head">
-        <strong>自定义模板</strong>
+        <strong>展示模板</strong>
         <span class="status-blueprint-stats">
           <template v-if="stats.hasTemplate">{{ stats.lines }} 行 · {{ stats.placeholders }} 占位符 · {{ stats.actions }} 按钮</template>
           <template v-else>留空使用内置样式</template>
         </span>
-        <template v-if="canEdit">
+        <template v-if="canEdit && templateMode !== 'runtime'">
           <button class="chat-setting-inline-button" type="button" title="套用示例模板" @click="emit('sample-template')">
             <Sparkles :size="14" />
             <span>示例</span>
@@ -244,7 +266,23 @@ const emit = defineEmits([
           </button>
         </template>
       </div>
+      <label class="field compact">
+        <span>模板模式</span>
+        <select :value="templateMode" :disabled="!canEdit" aria-label="状态栏模板模式" @change="setTemplateMode">
+          <option value="builtin">内置样式</option>
+          <option value="custom">展示模板</option>
+          <option value="runtime">HTML / CSS / JavaScript / Vue</option>
+        </select>
+      </label>
+      <StatusBarCodeEditor
+        v-if="templateMode === 'runtime'"
+        v-model="blueprint.template"
+        :variables="blueprint.variables"
+        :name="blueprint.name"
+        :disabled="!canEdit"
+      />
       <textarea
+        v-if="templateMode === 'custom'"
         v-model="blueprint.template"
         rows="8"
         placeholder="<div class=&quot;sb-row&quot;><span class=&quot;sb-label&quot;>体力</span><span class=&quot;sb-val&quot;>{{体力}} / {{体力.max}}</span></div>&#10;{{#if 体力 < 30}}<p class=&quot;sb-note sb-bad&quot;>还需休息 {{= 30 - 体力}} 点</p>{{/if}}&#10;<button data-sb-action=&quot;quick-reply&quot; data-sb-text=&quot;查看状态&quot;>查看</button>"
@@ -252,13 +290,8 @@ const emit = defineEmits([
         spellcheck="false"
         aria-label="完全自定义状态栏模板"
       />
-      <div v-if="issues.length" class="status-bar-template-alert" role="alert">
-        <span><TriangleAlert :size="14" /> 模板需要调整</span>
-        <ul>
-          <li v-for="issue in issues" :key="issue">{{ issue }}</li>
-        </ul>
-      </div>
-      <details class="status-blueprint-reference">
+      <small v-if="templateMode === 'custom'">支持 HTML、CSS 和 &lt;script&gt;。脚本可使用 api、values、context；变量同步不会重新执行脚本。</small>
+      <details v-if="templateMode === 'custom'" class="status-blueprint-reference">
         <summary>
           <BookOpen :size="15" />
           <span>语法速查：占位符、变量类型、过滤器、条件循环、表达式、按钮动作、样式类</span>

@@ -2,6 +2,7 @@ import {
   createDefaultStatusBarBlueprint,
   normalizeStatusBarBlueprintForPayload
 } from './useCharacterStatusBlueprint';
+import { THINKING_LEVELS } from '../../../../shared/providerThinking.js';
 
 export function emptyCharacter() {
   return {
@@ -27,6 +28,8 @@ export function emptyCharacter() {
       customJs: '',
       customJsEnabled: false,
       customJsRiskAccepted: false,
+      showWorldBookMatches: true,
+      highlightDialogue: true,
       statusBarPrompt: '',
       statusBarBlueprint: createDefaultStatusBarBlueprint(),
       accessorySkills: createDefaultAccessorySkills()
@@ -73,6 +76,7 @@ export function normalizeAccessorySkillsForPayload(input = {}) {
       enabled: normalizeSkillEnabled(source.enabled, defaults[key].enabled),
       modelOverride: String(source.modelOverride || source.model_override || '').trim().slice(0, 100),
       providerProfileId: String(source.providerProfileId || source.provider_profile_id || '').trim().slice(0, 160),
+      thinkingLevel: normalizeAccessoryThinkingLevel(source.thinkingLevel || source.thinking_level),
       tools: normalizeAccessorySkillTools(source.tools)
     };
   }
@@ -105,6 +109,7 @@ export function hasNonDefaultAccessorySkills(skills = {}) {
       normalizeSkillEnabled(current.enabled, fallback.enabled) !== fallback.enabled ||
       String(current.modelOverride || current.model_override || '').trim() ||
       String(current.providerProfileId || current.provider_profile_id || '').trim() ||
+      normalizeAccessoryThinkingLevel(current.thinkingLevel || current.thinking_level) ||
       hasAccessorySkillToolOverrides(current.tools)
     ) {
       return true;
@@ -125,8 +130,14 @@ function createDefaultAccessorySkill(enabled) {
     enabled,
     modelOverride: '',
     providerProfileId: '',
+    thinkingLevel: '',
     tools: {}
   };
+}
+
+function normalizeAccessoryThinkingLevel(value) {
+  const level = String(value || '').trim().toLowerCase();
+  return THINKING_LEVELS.includes(level) ? level : '';
 }
 
 function normalizeAccessorySkillTools(value) {

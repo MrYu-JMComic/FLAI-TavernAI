@@ -26,32 +26,31 @@ function visibilityText(value) {
 </script>
 
 <template>
-  <section id="personal-section-profile" class="form-panel profile-panel">
-    <div class="inline-heading">
-      <div>
-        <h2>个人资料</h2>
+  <section id="settings-profile-panel" class="form-panel profile-panel">
+    <div class="profile-overview">
+      <div class="large-avatar profile-avatar">
+        <img v-if="profile.avatarUrl" :src="profile.avatarUrl" :alt="profile.accountName || '用户头像'" />
+        <span v-else>{{ (profile.displayName || profile.accountName || 'U').slice(0, 1) }}</span>
       </div>
+      <div class="profile-identity">
+        <strong>{{ profile.displayName || profile.accountName }}</strong>
+        <span>@{{ profile.accountName }}</span>
+        <small>FLAI Tavern AI</small>
+      </div>
+      <label class="file-button profile-avatar-upload" :class="{ disabled: avatarSaving }">
+        <Upload :size="18" />
+        <span>{{ avatarSaving ? '保存中...' : '上传头像' }}</span>
+        <input
+          type="file"
+          accept="image/png,image/jpeg,image/webp"
+          :disabled="avatarSaving"
+          @change="emit('avatar-change', $event)"
+        />
+      </label>
     </div>
 
-    <div class="profile-layout">
-      <div class="avatar-editor compact-avatar-editor">
-        <div class="large-avatar">
-          <img v-if="profile.avatarUrl" :src="profile.avatarUrl" :alt="profile.accountName || '用户头像'" />
-          <span v-else>{{ (profile.displayName || profile.accountName || 'U').slice(0, 1) }}</span>
-        </div>
-        <label class="file-button" :class="{ disabled: avatarSaving }">
-          <Upload :size="18" />
-          <span>{{ avatarSaving ? '保存中...' : '上传头像' }}</span>
-          <input
-            type="file"
-            accept="image/png,image/jpeg,image/webp"
-            :disabled="avatarSaving"
-            @change="emit('avatar-change', $event)"
-          />
-        </label>
-      </div>
-
-      <form class="profile-form" :aria-busy="profileSaving" @submit.prevent="emit('submit')">
+    <form class="profile-form" :aria-busy="profileSaving" @submit.prevent="emit('submit')">
+      <div class="profile-fields">
         <label class="field">
           <span>账户名</span>
           <strong class="readonly-value">{{ profile.accountName }}</strong>
@@ -66,6 +65,8 @@ function visibilityText(value) {
             @input="emit('update-display-name', readInputValue($event).trim())"
           />
         </label>
+      </div>
+      <div class="profile-form-footer">
         <div class="profile-meta-row">
           <span class="permission-chip strong">
             <ShieldCheck :size="16" />
@@ -73,14 +74,12 @@ function visibilityText(value) {
           </span>
           <small>支持真管理员、管理员组、用户组、游客组。</small>
         </div>
-        <div class="form-actions">
-          <button class="primary-button" type="submit" :disabled="profileSaving">
-            <Save :size="18" />
-            <span>{{ profileSaving ? '保存中...' : '保存个人资料' }}</span>
-          </button>
-        </div>
-      </form>
-    </div>
+        <button class="primary-button" type="submit" :disabled="profileSaving">
+          <Save :size="18" />
+          <span>{{ profileSaving ? '保存中...' : '保存个人资料' }}</span>
+        </button>
+      </div>
+    </form>
 
     <div class="profile-stats-grid">
       <div class="profile-stat-card">

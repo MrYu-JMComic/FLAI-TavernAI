@@ -171,7 +171,7 @@ function providerModelCacheKey(settings = {}) {
   if (!baseUrl) {
     return '';
   }
-  return [
+  const key = [
     String(settings.providerType || '').trim().toLowerCase(),
     String(settings.gatewayName || '').trim().toLowerCase(),
     baseUrl,
@@ -179,6 +179,8 @@ function providerModelCacheKey(settings = {}) {
     String(Boolean(settings.supportsReasoning)),
     stableStringifyExtraBody(settings.extraBody)
   ].join('|');
+  const scope = String(settings.modelCacheScope || '').trim();
+  return scope ? `${encodeURIComponent(scope)}|${key}` : key;
 }
 
 function normalizeBaseUrl(value = '') {

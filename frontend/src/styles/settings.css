@@ -1307,95 +1307,126 @@ fieldset.accessory-skills-grid:disabled {
 
 .tag-add-row {
   display: flex;
+  min-width: 0;
   gap: 8px;
   align-items: center;
 }
 
 .tag-add-row input {
   flex: 1;
+  min-width: 0;
+}
+
+.tag-add-row .ghost-button {
+  flex-shrink: 0;
 }
 
 .tag-toolbar-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(132px, 164px);
-  gap: 10px;
-  align-items: end;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 16px;
+  align-items: center;
 }
 
 .tag-load-limit-field {
-  display: grid;
-  gap: 6px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
   color: var(--muted);
-  font-size: 0.82rem;
-  font-weight: 800;
+  font-size: 0.78rem;
+  white-space: nowrap;
 }
 
 .tag-load-limit-field input {
+  width: 80px;
   height: 44px;
   text-align: center;
 }
 
 .tag-load-summary {
-  margin: 8px 0 0;
+  margin: 0;
   color: var(--muted);
-  font-size: 0.82rem;
-  font-weight: 700;
+  font-size: 0.78rem;
 }
 
 .tag-manage-cloud {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
-  align-items: center;
-  margin-top: 10px;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 220px), 1fr));
+  gap: 8px;
 }
 
 .tag-manage-bubble {
-  display: inline-flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
   align-items: center;
-  max-width: 100%;
-  min-height: 42px;
+  min-width: 0;
+  min-height: 46px;
   gap: 8px;
-  padding: 5px 6px 5px 10px;
-  border: 1px solid color-mix(in srgb, var(--green) 20%, var(--line));
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--surface-strong) 76%, transparent);
-  box-shadow: 0 8px 18px rgba(44, 57, 48, 0.08);
+  padding: 5px 6px 5px 12px;
+  border: 1px solid color-mix(in srgb, var(--line) 72%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--surface-strong) 42%, var(--surface));
 }
 
 .tag-manage-bubble .tag-badge {
-  max-width: min(220px, 52vw);
+  display: block;
+  min-width: 0;
   overflow: hidden;
-  flex-shrink: 1;
+  padding: 0;
+  color: var(--text);
+  background: transparent;
+  font-size: 0.84rem;
+  font-weight: 650;
   text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tag-manage-bubble .tag-badge::before {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  margin-right: 8px;
+  border-radius: 50%;
+  background: var(--tag-color, var(--green));
+  content: '';
+  vertical-align: 1px;
 }
 
 .tag-manage-bubble .icon-button {
-  --touch-min: 34px;
-  flex: 0 0 auto;
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--surface) 82%, transparent);
+  --touch-min: 32px;
+  width: 32px;
+  height: 32px;
+  border-color: transparent;
+  border-radius: 6px;
+  color: var(--muted);
+  background: transparent;
+}
+
+.tag-manage-bubble .icon-button:hover:not(:disabled) {
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 10%, transparent);
 }
 
 .tag-usage {
   color: var(--muted);
-  font-size: 0.78rem;
-  font-weight: 800;
+  font-size: 0.74rem;
   white-space: nowrap;
 }
 
 @media (max-width: 620px) {
   .tag-toolbar-row {
     grid-template-columns: 1fr;
+    gap: 10px;
   }
 
-  .tag-add-row {
-    align-items: stretch;
-    flex-direction: column;
+  .tag-load-limit-field {
+    justify-content: space-between;
   }
 
-  .tag-add-row .ghost-button {
-    width: 100%;
+  .tag-manage-bubble .icon-button {
+    --touch-min: 40px;
+    width: 40px;
+    height: 40px;
   }
 
   .settings-data-export-actions {
@@ -1408,41 +1439,19 @@ fieldset.accessory-skills-grid:disabled {
   }
 }
 
-@media (max-width: 620px) {
-  /* -- Tag bubbles: cap width for 2-per-row mobile packing -- */
-  .tag-manage-bubble {
-    max-width: 155px;
-  }
-
-  .tag-manage-bubble .tag-badge {
-    max-width: min(90px, 38vw);
-  }
-}
-
 @media (max-width: 768px) {
-  /* -- Tag bubbles: allow shrinking for denser tablet packing -- */
-  .tag-manage-bubble {
-    flex-shrink: 1;
-    min-width: 0;
+  .profile-overview {
+    grid-template-columns: 60px minmax(0, 1fr) auto;
+    gap: 10px;
   }
 
-  .tag-manage-bubble .tag-badge {
-    max-width: min(140px, 42vw);
+  .profile-avatar {
+    width: 60px;
+    height: 60px;
   }
 
-  /* -- Profile layout: single column -- */
-  .profile-layout {
-    grid-template-columns: 1fr;
-    gap: 14px;
-  }
-
-  .profile-layout .avatar-editor {
-    align-items: center;
-  }
-
-  /* -- Profile stats: 2-column grid -- */
   .profile-stats-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 
   /* -- Mod card: responsive actions -- */
@@ -1481,12 +1490,38 @@ fieldset.accessory-skills-grid:disabled {
     flex-wrap: wrap;
   }
 
-  /* Dead rule removed: .tag-manage-item doesn't exist, and forcing
-     .tag-usage to flex-basis: 100% made all bubbles uniform width. */
+}
+
+@media (max-width: 620px) {
+  .profile-fields {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 
 @media (max-width: 480px) {
-  /* -- Preset editor fields -- */
+  .profile-overview {
+    grid-template-columns: 56px minmax(0, 1fr);
+  }
+
+  .profile-avatar {
+    width: 56px;
+    height: 56px;
+  }
+
+  .profile-avatar-upload {
+    grid-column: 2;
+    justify-self: start;
+  }
+
+  .profile-form-footer {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .profile-form-footer > .primary-button {
+    align-self: flex-end;
+  }
+
   .preset-editor textarea {
     font-size: 16px; /* prevent iOS zoom */
   }
@@ -1520,7 +1555,7 @@ fieldset.accessory-skills-grid:disabled {
     font-size: 13px;
   }
 
-  /* -- Profile stats: single column on very small -- */
+  /* -- Profile stats: one column on very small screens -- */
   .profile-stats-grid {
     grid-template-columns: 1fr;
   }
@@ -1535,4 +1570,209 @@ fieldset.accessory-skills-grid:disabled {
 
 .settings-section-title h3 {
   letter-spacing: 0;
+}
+
+.settings-detail-back {
+  display: flex;
+  min-width: 0;
+  justify-content: flex-start;
+  margin-bottom: -8px;
+}
+
+.settings-back-button {
+  flex: 0 0 auto;
+  min-height: 36px;
+  padding-inline: 8px;
+  border-color: transparent;
+  color: var(--muted);
+  background: transparent;
+}
+
+.settings-back-button:hover:not(:disabled) {
+  color: var(--text);
+  background: color-mix(in srgb, var(--surface-strong) 65%, transparent);
+}
+
+.personal-center-overview {
+  display: grid;
+  gap: 20px;
+  min-width: 0;
+}
+
+.personal-center-summary {
+  gap: 0;
+  border-radius: 8px;
+}
+
+.personal-center-identity {
+  display: grid;
+  grid-template-columns: 64px minmax(0, 1fr);
+  gap: 14px;
+  align-items: center;
+  min-width: 0;
+  padding: 2px 0 18px;
+}
+
+.personal-center-avatar {
+  width: 64px;
+  height: 64px;
+  overflow: hidden;
+  border-radius: 50%;
+}
+
+.personal-center-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.personal-center-name {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  gap: 4px 9px;
+  align-items: baseline;
+}
+
+.personal-center-name > strong {
+  max-width: 100%;
+  overflow: hidden;
+  color: var(--text);
+  font-size: 1.12rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.personal-center-name > span:not(.permission-chip) {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 0.82rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.personal-center-permission {
+  min-height: 24px;
+  padding: 2px 8px;
+  font-size: 0.72rem;
+}
+
+.personal-center-statistics {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  border-top: 1px solid color-mix(in srgb, var(--line) 78%, transparent);
+  padding-top: 15px;
+}
+
+.personal-center-stat {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+  justify-items: center;
+  padding: 2px 8px;
+  text-align: center;
+}
+
+.personal-center-stat + .personal-center-stat {
+  border-left: 1px solid color-mix(in srgb, var(--line) 78%, transparent);
+}
+
+.personal-center-stat > span {
+  max-width: 100%;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 0.76rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.personal-center-stat > strong {
+  max-width: 100%;
+  overflow: hidden;
+  color: var(--text);
+  font-size: 1.12rem;
+  font-variant-numeric: tabular-nums;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.personal-center-destinations {
+  display: grid;
+  min-width: 0;
+  border-top: 1px solid color-mix(in srgb, var(--line) 78%, transparent);
+}
+
+.personal-center-destination {
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr) 20px;
+  gap: 12px;
+  align-items: center;
+  min-width: 0;
+  min-height: 62px;
+  padding: 8px 10px;
+  border: 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--line) 70%, transparent);
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.personal-center-destination:hover {
+  color: var(--primary-strong);
+  background: color-mix(in srgb, var(--surface-strong) 65%, transparent);
+}
+
+.personal-center-destination > svg:first-child {
+  color: var(--primary);
+}
+
+.personal-center-destination > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-weight: 700;
+}
+
+.personal-center-destination > svg:last-child {
+  justify-self: end;
+  color: var(--muted);
+}
+
+@media (max-width: 480px) {
+  .personal-center-overview {
+    gap: 16px;
+  }
+
+  .personal-center-summary {
+    padding: 15px;
+  }
+
+  .personal-center-identity {
+    grid-template-columns: 56px minmax(0, 1fr);
+    gap: 11px;
+  }
+
+  .personal-center-avatar {
+    width: 56px;
+    height: 56px;
+  }
+
+  .personal-center-name > strong {
+    font-size: 1rem;
+  }
+
+  .personal-center-stat {
+    padding-inline: 4px;
+  }
+
+  .personal-center-stat > strong {
+    font-size: 1rem;
+  }
+
+  .personal-center-destination {
+    min-height: 58px;
+    padding-inline: 6px;
+  }
 }

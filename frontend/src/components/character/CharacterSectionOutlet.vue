@@ -2,7 +2,7 @@
 import { inject } from 'vue';
 import CharacterImagePanel from '../CharacterImagePanel.vue';
 import CharacterAccessorySkillsPanel from './CharacterAccessorySkillsPanel.vue';
-import CharacterAiDraftPanel from './CharacterAiDraftPanel.vue';
+import { Sparkles } from '@lucide/vue';
 import CharacterAuthorSettingsPanel from './CharacterAuthorSettingsPanel.vue';
 import CharacterBasicInfoPanel from './CharacterBasicInfoPanel.vue';
 import CharacterCustomCodePanel from './CharacterCustomCodePanel.vue';
@@ -59,62 +59,13 @@ const editor = inject(CHARACTER_EDITOR_KEY);
     @update-field="editor.updateCharacterFormField"
   />
 
-  <CharacterAiDraftPanel
-    v-else-if="sectionId === 'ai'"
-    id="section-ai"
-    v-model:requirement="editor.aiRequirement"
-    v-model:assistant-model="editor.assistantModel"
-    v-model:plan-extra-requirement="editor.aiPlanExtraRequirement"
-    v-model:plan-mode="editor.assistantPlanMode"
-    v-model:streaming-enabled="editor.assistantStreamingEnabled"
-    v-model:thinking-level="editor.assistantThinkingLevel"
-    v-model:use-current-draft="editor.aiUseCurrentDraft"
-    :checkpoint-updated-at="editor.aiCheckpointUpdatedAt"
-    :disabled="editor.characterAiActionBusy"
-    :has-checkpoint="editor.aiHasCheckpoint"
-    :last-error="editor.aiLastError"
-    :loading="editor.aiLoading"
-    :model-options="editor.assistantModelOptions"
-    :options="editor.aiOptions"
-    :plan="editor.aiPlan"
-    :plan-phase="editor.aiPlanPhase"
-    :plan-step-status="editor.aiPlanStepStatus"
-    :process="editor.aiProcess"
-    :reasoning="editor.aiReasoning"
-    :suggested-mods-creating="editor.suggestedModsCreating"
-    :suggestions="editor.aiModSuggestions"
-    :status="editor.aiStatus"
-    :status-message="editor.aiStatusMessage"
-    :thinking-options="editor.assistantThinkingOptions"
-    :thinking-supported="editor.assistantThinkingSupported"
-    :tool-calls="editor.aiToolCalls"
-    :warnings="editor.aiWarnings"
-    :world-books="editor.worldBooks"
-    :world-book-changes="editor.aiWorldBookChanges"
-    :world-book-selected-ids="editor.aiWorldBookSelectedIds"
-    :world-book-automatic="editor.aiWorldBookAutomatic"
-    :world-book-source-label="editor.aiWorldBookSourceLabel"
-    :world-book-applying="editor.aiWorldBookCreating"
-    @complete="editor.completeWithAi"
-    @apply-world-books="editor.applyAiWorldBookChanges"
-    @reload-world-book="editor.reloadAiWorldBook"
-    @discard-world-book="editor.discardAiWorldBookChange"
-    @new-world-book="editor.requestAiNewWorldBook"
-    @update:world-book-selected-ids="editor.setAiWorldBookSelectedIds"
-    @update:world-book-automatic="editor.setAiWorldBookAutomatic"
-    @create-suggested-mods="editor.createSuggestedMods"
-    @discard-plan="editor.discardCharacterPlan"
-    @discard-session="editor.discardAiSession"
-    @execute-plan="editor.executeApprovedPlan"
-    @replan="editor.replanCharacterAi"
-    @resume="editor.resumeCharacterAi"
-    @retry="editor.retryCharacterAi"
-    @save-checkpoint="editor.saveAiCheckpoint"
-    @set-option="editor.setAiOptionValue"
-    @stop="editor.stopCharacterAi"
-    @toggle-plan-step="editor.toggleAiPlanStep"
-    @update-plan-step="editor.updateAiPlanStep"
-  />
+  <section v-else-if="sectionId === 'ai'" id="section-ai" class="form-panel">
+    <h2>AI 完善助手</h2>
+    <p class="muted-text">在独立页面与助手持续对话，讨论设定、执行修改并维护角色卡。会话会随角色保存。</p>
+    <button class="primary-button" type="button" :disabled="editor.characterAiActionBusy" @click="editor.openAssistant">
+      <Sparkles :size="18" /><span>打开 AI 完善助手</span>
+    </button>
+  </section>
 
   <section v-else-if="sectionId === 'images'" id="section-images" class="form-panel character-image-section">
     <CharacterImagePanel :character-id="editor.editingCharacterId" :disabled="!editor.canEdit" />

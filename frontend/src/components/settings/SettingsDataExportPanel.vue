@@ -11,7 +11,7 @@ const emit = defineEmits(['export-diagnostics', 'export-snapshot']);
 </script>
 
 <template>
-  <section id="personal-section-data" class="form-panel settings-data-export-panel">
+  <section id="settings-data-panel" class="form-panel settings-data-export-panel">
     <div class="inline-heading">
       <div>
         <h2>数据导出</h2>

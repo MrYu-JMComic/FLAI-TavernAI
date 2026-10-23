@@ -1,6 +1,8 @@
 <script setup>
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue';
 import { ChevronDown } from '@lucide/vue';
+import StatusBarRuntime from './StatusBarRuntime.vue';
+import { hasStatusBarTemplateRuntime, mapStatusBarTemplateMarkup, parseStatusBarRuntime } from '../../../shared/statusBarRuntime.js';
 import { renderStatusTemplate } from '../../../shared/statusTemplateRenderer.js';
 import {
   adjustStatusVariableValue,
@@ -41,6 +43,8 @@ const STATUS_LABELS = {
 const UPDATE_STATUS_META = {
   updating: { key: 'updating', label: '正在同步' },
   updated: { key: 'updated', label: '本轮已同步' },
+  checked: { key: 'checked', label: '本轮无变化' },
+  failed: { key: 'failed', label: '后台未完成' },
   'not-updated': { key: 'not-updated', label: '等待新回复' }
 };
 
@@ -77,7 +81,7 @@ const props = defineProps({
   }
 });
 
-const emit = defineEmits(['collapse', 'quick-reply', 'send', 'update-variables', 'open-settings', 'script-action']);
+const emit = defineEmits(['collapse', 'quick-reply', 'send', 'update-variables', 'open-settings', 'script-action', 'escape']);
 const collapsed = ref(false);
 const effectiveCollapsed = computed(() => !props.embedded && collapsed.value);
 const templateScopeId = ref(`flai-sb-${Math.random().toString(36).slice(2, 10)}`);
@@ -147,7 +151,7 @@ const templateContext = computed(() => ({
 
 const customTemplate = computed(() => {
   const raw = String(props.statusBar?.template || '').trim();
-  if (!raw || raw[0] === '{') {
+  if (!raw || raw[0] === '{' || hasStatusBarTemplateRuntime(raw)) {
     return { html: '', css: '' };
   }
   const extracted = extractTemplateStyleBlocks(interpolateTemplate(markBoundTemplateValues(raw)));
@@ -164,6 +168,11 @@ const customTemplate = computed(() => {
 const customTemplateHtml = computed(() => customTemplate.value.html);
 const customTemplateCss = computed(() => customTemplate.value.css);
 const hasCustomTemplate = computed(() => Boolean(customTemplateHtml.value));
+const scriptedTemplate = computed(() => hasStatusBarTemplateRuntime(props.statusBar?.template));
+const scriptedTemplateHtml = computed(() => scriptedTemplate.value
+  ? mapStatusBarTemplateMarkup(props.statusBar.template, (html) => interpolateTemplate(markBoundTemplateValues(html)), { markNodes: true })
+  : null);
+const runtimeTemplate = computed(() => parseStatusBarRuntime(props.statusBar?.template) || scriptedTemplate.value);
 
 const wrapperClasses = computed(() => {
   const classes = ['status-bar-container'];
@@ -176,6 +185,7 @@ const wrapperClasses = computed(() => {
   }
   if (hasImmersiveContent.value) classes.push('sb-immersive');
   if (hasCustomTemplate.value) classes.push('sb-custom-mode');
+  if (runtimeTemplate.value) classes.push('sb-custom-mode');
   if (effectiveCollapsed.value) classes.push('sb-collapsed');
   return classes;
 });
@@ -188,6 +198,8 @@ const collapseStorageKey = computed(() => {
 const statusBarTitle = computed(() => props.statusBar?.name || '状态栏');
 
 const statusBarMeta = computed(() => {
+  if (scriptedTemplate.value) return '自定义模板';
+  if (runtimeTemplate.value) return runtimeTemplate.value.framework === 'vue' ? 'Vue 状态栏' : 'HTML 状态栏';
   if (hasImmersiveContent.value) {
     return `${cfg.value.characters.length} 个角色`;
   }
@@ -206,7 +218,7 @@ const collapsedSummary = computed(() => {
     : statusBarTitle.value;
 });
 
-const statusBarVisible = computed(() => hasCustomTemplate.value || hasContent.value || hasImmersiveContent.value);
+const statusBarVisible = computed(() => runtimeTemplate.value || hasCustomTemplate.value || hasContent.value || hasImmersiveContent.value);
 const updateStatusMeta = computed(() => UPDATE_STATUS_META[props.updateStatus] || UPDATE_STATUS_META['not-updated']);
 
 watch(collapseStorageKey, (key) => {
@@ -364,6 +376,12 @@ function onQuickReply(text) {
   if (text) emit('quick-reply', text);
 }
 
+function onRuntimeTemplateReady(root) {
+  customTemplateRef.value = root;
+  applyTemplateRowVariables(root);
+  applyTemplateUiState();
+}
+
 function onCustomTemplateClick(event) {
   const target = event?.target?.closest?.('[data-sb-action]');
   if (!target || !event?.currentTarget?.contains?.(target)) {
@@ -371,6 +389,9 @@ function onCustomTemplateClick(event) {
   }
   const action = String(target.getAttribute('data-sb-action') || '').trim().toLowerCase();
   const text = readActionText(target);
+  // Targeted collapses belong to the template's own section controls. They
+  // must never bubble into the whole status bar's collapse action.
+  if (['collapse', 'toggle-collapse'].includes(action) && target.getAttribute('data-sb-target')) return;
   if (['quick-reply', 'reply', 'option'].includes(action)) {
     onQuickReply(text);
     return;
@@ -935,8 +956,21 @@ function templateLabelText(value) {
         </button>
       </div>
 
+      <StatusBarRuntime
+        v-if="runtimeTemplate"
+        :status-bar="statusBar"
+        :context="context"
+        :template-html="scriptedTemplateHtml"
+        @quick-reply="emit('quick-reply', $event)"
+        @send="emit('send', $event)"
+        @update-variables="emit('update-variables', $event)"
+        @open-settings="emit('open-settings')"
+        @escape="emit('escape')"
+        @template-ready="onRuntimeTemplateReady"
+        @template-click="onCustomTemplateClick"
+      />
       <div
-        v-if="hasCustomTemplate"
+        v-else-if="hasCustomTemplate"
         ref="customTemplateRef"
         class="status-bar-custom"
         @click="onCustomTemplateClick"
@@ -1204,6 +1238,12 @@ function templateLabelText(value) {
   border-color: color-mix(in srgb, #16a34a 30%, transparent);
   color: #17803a;
   background: color-mix(in srgb, #22c55e 12%, transparent);
+}
+
+.flai-statusbar-update-badge.is-failed {
+  border-color: color-mix(in srgb, var(--danger) 34%, transparent);
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 10%, transparent);
 }
 
 .flai-statusbar-update-dot {

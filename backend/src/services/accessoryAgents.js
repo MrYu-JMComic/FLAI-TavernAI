@@ -1,12 +1,17 @@
 import { normalizeAccessorySkills, isAccessorySkillActive, normalizeAdvancedSettings } from '../modules/advancedSettings.js';
 import { processTransactionIntents, createConversationTransaction } from '../modules/economy.js';
 import { STATUS_BAR_VARIABLE_LIMIT, extractVariablesFromText, updateStatusBarVariables, upsertStatusBar } from '../modules/statusBars.js';
+import { withSavepoint } from '../modules/savepoint.js';
 import { detectSceneAndEmotion, findBestMatch, listCharacterImages } from '../modules/characterImages.js';
 import { listSceneWorkspace } from '../modules/scenes.js';
 import { completeSceneOrganization } from './sceneOrganizer.js';
 import { hasUsableProvider, runToolCompletion } from './providers.js';
-import { resolveAccessorySkillSettings } from './accessorySkillProvider.js';
+import { accessorySkillThinkingOptions, resolveAccessorySkillSettings } from './accessorySkillProvider.js';
+import { isStatusBarAgentToolEnabled } from '../../../shared/statusBarAgentTools.js';
+import { statusBarEditingTools, executeStatusBarEdit } from './statusBarAgentTools.js';
+import { parseStatusBarRuntime, stripStatusBarTemplateCode } from '../../../shared/statusBarRuntime.js';
 import { isStatusTemplateMeterProperty, parseStatusTemplateToken } from '../../../shared/statusTemplateTokens.js';
+import { STATUS_TEMPLATE_PERCENT_GUIDE } from '../../../shared/statusTemplateSyntax.js';
 import { createQuest, listQuests, updateQuestObjective } from '../modules/quests.js';
 import { advanceWorldTime, getWorldClock, setWorldWeather } from '../modules/dynamicWorld.js';
 import { performSkillCheck } from '../modules/skillChecks.js';
@@ -141,30 +146,47 @@ async function runStatusBarAgent({ db, userId, conversation, assistantMessage, o
   const statusBarPrompt = advancedSettings.statusBarPrompt;
   const statusBarBlueprint = advancedSettings.statusBarBlueprint;
   const currentStatusBar = statusBar || createStatusBarFromBlueprint(statusBarBlueprint);
-  if (!currentStatusBar.variables.length && !statusBarPrompt) {
+  if (!currentStatusBar.variables.length && !currentStatusBar.template && !statusBarPrompt) {
     return { statusBar: null, updates: [] };
   }
   let updates = [];
   let skippedUpdate = false;
-  if (hasUsableProvider(settings)) {
+  let editedStatusBar = null;
+  let attemptedEdit = false;
+  let compatibilityUpdate = false;
+  const agentSettings = withModelOverride(settings, skill, db, userId);
+  if (hasUsableProvider(agentSettings)) {
     const toolResult = await runToolCompletion(
-      withModelOverride(settings, skill, db, userId),
+      agentSettings,
       buildStatusBarMessages(currentStatusBar, observationWindow, statusBarPrompt),
-      [statusBarTool(), statusBarSkipTool()],
+      [statusBarTool(), statusBarSkipTool(), ...statusBarEditingTools(skill)].filter(tool => isStatusBarAgentToolEnabled(skill, tool.function.name)),
       async (toolName, args) => {
+        if (!isStatusBarAgentToolEnabled(skill, toolName)) return { ok: false, error: 'TOOL_DISABLED', recoverable: true };
         if (toolName === 'skip_status_bar_update') {
           skippedUpdate = true;
           return { ok: true, skipped: true, stop: true };
         }
         if (toolName === 'update_status_bar') {
+          attemptedEdit = true;
+          compatibilityUpdate = true;
           updates = normalizeStatusUpdates(args);
           return { ok: true, updates, stop: true };
         }
-        return { ok: false, error: `Unsupported tool: ${toolName}` };
+        const result = executeStatusBarEdit(editedStatusBar || currentStatusBar, toolName, args, skill);
+        if (toolName !== 'read_status_bar') attemptedEdit = true;
+        if (result.ok && result.changed) {
+          const saved = withSavepoint(db, 'sp_status_bar_agent_edit', () => upsertStatusBar(
+            db, userId, conversation.id, { ...result.statusBar, source: 'status-bar-agent' }
+          ));
+          if (!saved) return { ok: false, error: 'STATUS_BAR_SAVE_FAILED', recoverable: true, message: '未能保存状态栏，请读取当前状态后重试。' };
+          editedStatusBar = saved;
+          return { ...result, statusBar: saved };
+        }
+        return result;
       },
       {
-        maxRounds: 2,
-        thinkingEnabled: false,
+        maxRounds: 6,
+        ...accessorySkillThinkingOptions(agentSettings, skill),
         signal,
         database: db,
         userId,
@@ -176,15 +198,21 @@ async function runStatusBarAgent({ db, userId, conversation, assistantMessage, o
       return null;
     });
 
+    if (editedStatusBar) {
+      // A final compatibility value update may follow a precise code edit.
+      if (compatibilityUpdate && updates.length) editedStatusBar = updateStatusBarVariables(db, userId, conversation.id, updates, { allowCreate: true });
+      return { statusBar: editedStatusBar, changed: true, updates: collectFinalStatusVariableUpdates(currentStatusBar.variables, editedStatusBar.variables) };
+    }
     if (skippedUpdate) {
       return { statusBar, updates: [], skipped: true };
     }
 
-    if (!updates.length && toolResult?.content) {
+    if (!attemptedEdit && isStatusBarAgentToolEnabled(skill, 'update_status_bar') && !updates.length && toolResult?.content) {
       updates = extractVariablesFromText(toolResult.content, currentStatusBar.variables);
     }
   }
 
+  if ((attemptedEdit && !updates.length) || !isStatusBarAgentToolEnabled(skill, 'update_status_bar')) return { statusBar, updates: [] };
   if (!updates.length) {
     updates = extractVariablesFromText(assistantMessage.content, currentStatusBar.variables);
   }
@@ -216,10 +244,11 @@ function createStatusBarFromBlueprint(blueprint = {}) {
 
 async function runEconomyAgent({ db, userId, conversation, assistantMessage, observationWindow, settings, skill, signal, strictErrors }) {
   const transactions = [];
+  const agentSettings = withModelOverride(settings, skill, db, userId);
 
-  if (hasUsableProvider(settings)) {
+  if (hasUsableProvider(agentSettings)) {
     await runToolCompletion(
-      withModelOverride(settings, skill, db, userId),
+      agentSettings,
       buildEconomyMessages(observationWindow),
       [economyTool()],
       async (toolName, args) => {
@@ -267,7 +296,8 @@ async function runSceneAgent({ db, userId, conversation, character, assistantMes
 
 async function runWorldDirectorAgent({ db, userId, conversation, character, observationWindow, settings, skill, travelEnabled, rewardEnabled, signal, strictErrors }) {
   const executions = [];
-  if (!hasUsableProvider(settings)) return { executions, skipped: true, reason: 'provider unavailable' };
+  const agentSettings = withModelOverride(settings, skill, db, userId);
+  if (!hasUsableProvider(agentSettings)) return { executions, skipped: true, reason: 'provider unavailable' };
   const context = {
     character: { name: character?.name || '' },
     clock: getWorldClock(db, userId, conversation.id),
@@ -277,7 +307,7 @@ async function runWorldDirectorAgent({ db, userId, conversation, character, obse
     pendingRewards: rewardEnabled ? listRewardGrants(db, userId, conversation.id, { status: 'pending' }) : []
   };
   await runToolCompletion(
-    withModelOverride(settings, skill, db, userId),
+    agentSettings,
     buildWorldDirectorMessages(observationWindow, context),
     worldDirectorTools({ travelEnabled, rewardEnabled }),
     async (toolName, args) => executeWorldDirectorProposal({ db, userId, conversationId: conversation.id, character, toolName, args, executions, travelEnabled, rewardEnabled }),
@@ -398,16 +428,19 @@ function buildStatusBarMessages(statusBar, observationWindow, statusBarPrompt = 
     {
       role: 'system',
       content: [
-        '你是角色扮演对话的结构化状态栏更新器。只能通过 update_status_bar 或 skip_status_bar_update 返回结果，不要输出解释性正文。',
+        '你是角色扮演对话的状态栏 Agent。使用提供的工具读取并精确修改状态栏，不要输出解释性正文。',
         '证据范围仅限 observationWindow：user 是本轮用户输入，assistant 是已经生成的剧情结果。状态变化通常必须由 assistant 明确确认；用户的计划、命令、尝试或假设本身不代表已经发生。',
-        'statusBarPrompt 只定义要跟踪的字段和判断规则，不是本轮变化证据。variables 是更新前状态；templateHints 只描述展示结构。',
-        '只有当前轮明确产生新状态时才调用 update_status_bar；未变化、无法确认、仅重复旧状态或只有历史回顾时调用 skip_status_bar_update。两种工具每轮只调用一种。',
+        'statusBarPrompt 只定义要跟踪的字段、判断规则和编辑要求，不是本轮状态变化证据。variables 是更新前状态；templateHints 只描述展示结构；statusBar 包含完整源码。',
+        '普通变量值变化可用 update_status_bar 完成本轮；未变化、无法确认、仅重复旧状态或只有历史回顾时调用 skip_status_bar_update。两种工具每轮只调用一种。精确编辑工具支持连续调用，完成后调用 skip_status_bar_update。',
         '不得把世界设定、旧历史、计划、示例、假设、否定内容、占位符或模板文字写成当前值。',
         '数值量表使用 number；姓名、服装、装备、携带物、地点、心情、事件摘要等文本字段使用简短 string。文本值只包含最终字段值，不带标签、解释、分隔符或模板标记。',
         'variables[].type 标明格式：meter 是数值条，新值必须落在 min~max 内；number 是没有上限的计数，不要提交 max；list 是用“、”分隔的多个条目，变化时提交完整的新列表；text 是简短文本。unit 只用于展示，不要写进 value。',
         '复合行例如“Location = {{Region}} > {{Place}}”只是展示包装。根据 templateHints.compositeRows 分别更新 Region、Place；绝不能把 Location 包装标签作为子变量值。',
         '若本轮只确认复合行的一部分，只更新对应子变量，保留其余值。',
-        '只提交真正变化的变量。不得重排、重命名、删除或重复提交未变化变量。只有 statusBarPrompt 明确要求某个新变量名时才允许创建该变量。',
+        '只提交真正变化的变量。除作者规则或本轮明确编辑要求外，不要重排、重命名、删除变量或改写展示代码。只有规则明确要求新字段时才创建变量。',
+        '按名称编辑时优先用 upsert_status_bar_variable；只传需要修改的字段，未指定字段自动保留。精确替换失败时先 read_status_bar，再使用当前源码重试，不能伪造成功。',
+        'runtime 模板是 JSON {renderer:"runtime",framework:"html"|"vue",html,css,javascript}。代码分区用 update_status_bar_code 或 replace_status_bar_template 修改；Vue 插值与脚本表达式不是变量名。',
+        STATUS_TEMPLATE_PERCENT_GUIDE,
         statusBarPrompt ? `作者/会话字段规则（仅定义跟踪方式）：\n${statusBarPrompt}` : ''
       ].join('\n')
     },
@@ -415,6 +448,8 @@ function buildStatusBarMessages(statusBar, observationWindow, statusBarPrompt = 
       role: 'user',
       content: JSON.stringify({
         variables: statusBar.variables,
+        statusBar,
+        runtime: parseStatusBarRuntime(statusBar.template || ''),
         templateHints: buildStatusBarTemplateHints(statusBar.template || ''),
         observationWindow,
         reply: observationWindow.assistant
@@ -423,7 +458,8 @@ function buildStatusBarMessages(statusBar, observationWindow, statusBarPrompt = 
   ];
 }
 
-function statusBarNoToolNudge() {
+function statusBarNoToolNudge({ round = 1 } = {}) {
+  if (round > 1) return '';
   return [
     '你尚未调用状态栏工具。不要输出解释、分析、Markdown 或 JSON 正文。',
     '若 observationWindow 明确确认了任一变量的新值，立即调用 update_status_bar，且只提交发生变化的变量。',
@@ -432,7 +468,7 @@ function statusBarNoToolNudge() {
 }
 
 function buildStatusBarTemplateHints(template = '') {
-  const raw = String(template || '').trim();
+  const raw = stripStatusBarTemplateCode(template).trim();
   if (!raw || raw[0] === '{') {
     return { compositeRows: [], placeholders: [] };
   }
@@ -758,4 +794,9 @@ function withTimeout(promise, ms, message) {
     timer = setTimeout(() => reject(new Error(message)), ms);
   });
   return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+}
+
+function collectFinalStatusVariableUpdates(previous = [], current = []) {
+  const before = new Map(previous.map(variable => [statusVariableKey(variable.name), variable]));
+  return current.filter(variable => JSON.stringify(before.get(statusVariableKey(variable.name))) !== JSON.stringify(variable));
 }

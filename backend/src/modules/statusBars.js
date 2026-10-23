@@ -2,6 +2,11 @@ import { newId, nowIso } from '../security.js';
 import { parseJson } from '../utils/json.js';
 import { isStatusTemplateMeterProperty, parseStatusTemplateToken } from '../../../shared/statusTemplateTokens.js';
 import {
+  STATUS_BAR_RUNTIME_LIMIT,
+  parseStatusBarRuntime,
+  stripStatusBarTemplateCode
+} from '../../../shared/statusBarRuntime.js';
+import {
   STATUS_VARIABLE_LIMIT,
   normalizeStatusVariableExtras,
   normalizeStatusVariableValueForType
@@ -391,13 +396,24 @@ function normalizeColor(color) {
 
 function normalizeTemplate(template) {
   const value = String(template || '').trim();
+  if (value.length > STATUS_BAR_RUNTIME_LIMIT && parseStatusBarRuntime(value)) {
+    const message = `状态栏代码配置不能超过 ${STATUS_BAR_RUNTIME_LIMIT} 字符`;
+    throw Object.assign(new Error(message), {
+      status: 400, code: 'STATUS_BAR_TEMPLATE_TOO_LARGE', publicMessage: message
+    });
+  }
   return value.length > 50000 ? value.slice(0, 50000) : value;
 }
 
 function inferTemplateVariables(template, variables = []) {
   const inferred = [...variables];
+  // Vue expressions and JavaScript blocks belong to the runtime. They are not
+  // references in the legacy display-template language.
+  if (parseStatusBarRuntime(template)) {
+    return inferred;
+  }
   const seen = collectVariableKeys(inferred);
-  const raw = String(template || '');
+  const raw = stripStatusBarTemplateCode(template);
   if (!raw) {
     return inferred;
   }

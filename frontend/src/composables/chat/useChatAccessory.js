@@ -7,7 +7,6 @@ import {
   saveConversationAccessorySkills,
   saveStatusBar
 } from '../../api/chat.js';
-import { collectStatusBarTemplateRawIssues } from '../../utils/statusBarTemplateValidation.js';
 import {
   STATUS_BAR_CHARACTER_STATUSES as VALID_CHAR_STATUSES,
   STATUS_BAR_DENSITIES as VALID_DENSITIES,
@@ -17,20 +16,21 @@ import {
   STATUS_BAR_VARIANTS as VALID_VARIANTS
 } from '../../utils/statusBarOptions.js';
 import { isStatusTemplateMeterProperty, parseStatusTemplateToken } from '../../../../shared/statusTemplateTokens.js';
+import { createStatusBarRuntimeExample, parseStatusBarRuntime, serializeStatusBarRuntime } from '../../../../shared/statusBarRuntime.js';
+import { THINKING_LEVELS } from '../../../../shared/providerThinking.js';
 import {
   STATUS_VARIABLE_LIMIT as STATUS_BAR_VARIABLE_LIMIT,
   normalizeStatusVariableExtras,
   normalizeStatusVariableKey as sharedStatusVariableKey,
   normalizeStatusVariableValueForType
 } from '../../../../shared/statusVariables.js';
-const STATUS_BAR_TEMPLATE_ISSUE_LIMIT = 5;
 const ACCESSORY_SKILL_RESULT_LIMIT = 8;
 const ACCESSORY_SKILL_DEFAULTS = [
   { key: 'sceneAgent', enabled: false, modelOverride: '' },
   { key: 'worldDirector', enabled: false, modelOverride: '' },
   { key: 'gameHud', enabled: false, modelOverride: '' },
   { key: 'rewardMode', enabled: false, modelOverride: '' },
-  { key: 'statusBarAgent', enabled: 'auto', modelOverride: '' },
+  { key: 'statusBarAgent', enabled: 'auto', modelOverride: '', providerProfileId: '', thinkingLevel: '', tools: {} },
   // The memory agent can follow the main provider or name a saved profile, and exposes a tool library.
   { key: 'memoryAgent', enabled: 'auto', modelOverride: '', providerProfileId: '', tools: {} },
   { key: 'economyAgent', enabled: false, modelOverride: '' },
@@ -42,6 +42,10 @@ function extraSkillFields(defaultSkill, source = {}) {
   const extras = {};
   if (Object.prototype.hasOwnProperty.call(defaultSkill, 'providerProfileId')) {
     extras.providerProfileId = String(source.providerProfileId || source.provider_profile_id || '').trim();
+  }
+  if (Object.prototype.hasOwnProperty.call(defaultSkill, 'thinkingLevel')) {
+    const level = String(source.thinkingLevel || source.thinking_level || '').trim().toLowerCase();
+    extras.thinkingLevel = THINKING_LEVELS.includes(level) ? level : '';
   }
   if (Object.prototype.hasOwnProperty.call(defaultSkill, 'tools')) {
     const tools = {};
@@ -226,39 +230,14 @@ function prependAccessorySkillResult(result, currentResults = []) {
   return nextResults;
 }
 
-function validateStatusBarCustomTemplate(template) {
-  return collectStatusBarTemplateIssues(collectStatusBarTemplateRawIssues(template));
-}
-
-function collectStatusBarTemplateIssues(issues) {
-  const collected = [];
-  const sourceIssues = Array.isArray(issues) ? issues : [];
-  for (let index = 0; index < sourceIssues.length && collected.length < STATUS_BAR_TEMPLATE_ISSUE_LIMIT; index += 1) {
-    const issue = sourceIssues[index];
-    if (!issue || hasStatusBarTemplateIssue(collected, issue)) {
-      continue;
-    }
-    collected.push(issue);
-  }
-  return collected;
-}
-
-function hasStatusBarTemplateIssue(issues, issue) {
-  for (let index = 0; index < issues.length; index += 1) {
-    if (issues[index] === issue) {
-      return true;
-    }
-  }
-  return false;
-}
-
-export { parseTemplateConfig, validateStatusBarCustomTemplate };
+export { parseTemplateConfig };
 
 export function useChatAccessory({ conversation, setActiveConversationIfChanged, showActionNotice, showError }) {
   const statusBar = ref(null);
   const statusBarEditorOpen = ref(false);
   const statusBarSaving = ref(false);
   const statusBarTemplateMode = ref('builtin');
+  const statusBarTemplateDrafts = { builtin: '', custom: '', runtime: '' };
   const accessorySettingsOpen = ref(false);
   const accessorySaving = ref(false);
   const accessorySkillResults = ref([]);
@@ -288,17 +267,12 @@ export function useChatAccessory({ conversation, setActiveConversationIfChanged,
   });
   const accessorySkills = reactive(createDefaultAccessorySkills());
 
-  const statusBarTemplateIssues = computed(() => {
-    if (statusBarTemplateMode.value !== 'custom') return [];
-    return validateStatusBarCustomTemplate(statusBarForm.template);
-  });
-
   const accessorySkillItems = [
     { key: 'sceneAgent', label: '场景构建助手', auto: false },
     { key: 'worldDirector', label: 'AI 世界导演', auto: false },
     { key: 'gameHud', label: '游戏驾驶舱 / 地图', auto: false },
     { key: 'rewardMode', label: '战利品与奖励结算', auto: false },
-    { key: 'statusBarAgent', label: '状态栏 Agent', auto: true },
+    { key: 'statusBarAgent', label: '状态栏 Agent', auto: true, configurable: true },
     { key: 'memoryAgent', label: '记忆 Agent', auto: true, configurable: true },
     { key: 'economyAgent', label: '经济识别', auto: false },
     { key: 'talentPrompt', label: '天赋提示', auto: false },
@@ -313,6 +287,7 @@ export function useChatAccessory({ conversation, setActiveConversationIfChanged,
     if (!statusBar.value) return false;
     if (hasStatusBarVariables.value) return true;
     const template = String(statusBar.value.template || '').trim();
+    if (parseStatusBarRuntime(template)) return true;
     if (template && template[0] !== '{') return true;
     const parsed = parseTemplateConfig(template);
     return parsed.displayMode === 'immersive' && Array.isArray(parsed.characters) && parsed.characters.length > 0;
@@ -543,6 +518,7 @@ export function useChatAccessory({ conversation, setActiveConversationIfChanged,
     return current?.enabled === next?.enabled
       && current?.modelOverride === next?.modelOverride
       && (current?.providerProfileId || '') === (next?.providerProfileId || '')
+      && (current?.thinkingLevel || '') === (next?.thinkingLevel || '')
       && sameSkillTools(current?.tools, next?.tools);
   }
 
@@ -598,11 +574,13 @@ export function useChatAccessory({ conversation, setActiveConversationIfChanged,
         return;
       }
       showActionNotice('附属技能已保存');
+      return true;
     } catch (err) {
       if (!isCurrentAccessorySave(requestToken, conversationId)) {
         return;
       }
       showError(err.message);
+      return false;
     } finally {
       if (isCurrentAccessorySave(requestToken, conversationId)) {
         accessorySaving.value = false;
@@ -645,7 +623,13 @@ export function useChatAccessory({ conversation, setActiveConversationIfChanged,
     statusBarForm.name = data.name || '状态栏';
     statusBarForm.variables = cloneTemplateVariables(data.variables);
     statusBarForm.template = data.template || '';
-    statusBarTemplateMode.value = isCustomTemplate(statusBarForm.template) ? 'custom' : 'builtin';
+    statusBarTemplateMode.value = parseStatusBarRuntime(statusBarForm.template)
+      ? 'runtime'
+      : isCustomTemplate(statusBarForm.template) ? 'custom' : 'builtin';
+    statusBarTemplateDrafts.builtin = '';
+    statusBarTemplateDrafts.custom = '';
+    statusBarTemplateDrafts.runtime = '';
+    statusBarTemplateDrafts[statusBarTemplateMode.value] = statusBarForm.template;
     syncTemplateCfgFromForm();
   }
 
@@ -673,9 +657,6 @@ export function useChatAccessory({ conversation, setActiveConversationIfChanged,
     if (accessoryDisposed || !conversationId || statusBarSaving.value) return;
     if (statusBarTemplateMode.value === 'builtin') {
       syncTemplateCfgToForm();
-    } else if (statusBarTemplateIssues.value.length) {
-      showError(statusBarTemplateIssues.value.join('\n'));
-      return;
     }
     const requestToken = ++statusBarMutationToken;
     statusBarSaving.value = true;
@@ -1010,20 +991,24 @@ export function useChatAccessory({ conversation, setActiveConversationIfChanged,
 
   function setStatusBarTemplateMode(mode) {
     if (isStatusBarEditorLocked()) return;
-    const nextMode = mode === 'custom' ? 'custom' : 'builtin';
+    const nextMode = mode === 'runtime' ? 'runtime' : mode === 'custom' ? 'custom' : 'builtin';
     if (statusBarTemplateMode.value === nextMode) {
       return;
     }
+    if (statusBarTemplateMode.value === 'builtin') syncTemplateCfgToForm();
+    statusBarTemplateDrafts[statusBarTemplateMode.value] = statusBarForm.template;
     statusBarTemplateMode.value = nextMode;
-    if (nextMode === 'custom') {
-      if (!isCustomTemplate(statusBarForm.template)) {
-        statusBarForm.template = '';
-      }
-      resetTemplateCfg();
+    if (nextMode === 'runtime') {
+      statusBarForm.template = statusBarTemplateDrafts.runtime || serializeStatusBarRuntime(createStatusBarRuntimeExample());
       return;
     }
-    syncTemplateCfgToForm();
+    if (nextMode === 'custom') {
+      statusBarForm.template = statusBarTemplateDrafts.custom;
+      return;
+    }
+    statusBarForm.template = statusBarTemplateDrafts.builtin;
     syncTemplateCfgFromForm();
+    syncTemplateCfgToForm();
   }
 
   function isCustomTemplate(raw) {
@@ -1127,7 +1112,6 @@ export function useChatAccessory({ conversation, setActiveConversationIfChanged,
     statusBarSaving,
     statusBarTemplateMode,
     statusBarTemplateConfig,
-    statusBarTemplateIssues,
     statusBarTemplateCfg,
     accessorySettingsOpen,
     accessorySaving,

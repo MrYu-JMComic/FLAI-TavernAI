@@ -30,7 +30,7 @@ const presets = {
   deepseek: {
     gatewayName: 'DeepSeek',
     baseUrl: 'https://api.deepseek.com',
-    model: 'deepseek-v4-flash',
+    model: 'deepseek-flash',
     imageModel: '',
     supportsReasoning: true,
     extraBody: '{}'
@@ -119,7 +119,7 @@ export function useSettingsProvider({ isPersonalPage, notify, emitProviderSaved,
     providerType: 'deepseek',
     gatewayName: 'DeepSeek',
     baseUrl: 'https://api.deepseek.com',
-    model: 'deepseek-v4-flash',
+    model: 'deepseek-flash',
     imageModel: '',
     apiKey: '',
     apiKeySet: false,

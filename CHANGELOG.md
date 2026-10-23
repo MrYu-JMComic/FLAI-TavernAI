@@ -51,6 +51,8 @@
 
 ### Fixed
 
+- 2026-10-18：修复规则记忆将计划、假设和引用偏好作为有效连续性信息的问题；规则候选需确认后启用，双方已完成动作及来源证据保留。对齐上下文预算、历史排序和输出预留的测试契约，补齐预算拒绝后完整重试的浏览器验证。
+- 2026-10-18：更新 compression、DOMPurify、ip-address、proxy-addr、source-map-js、undici 和前端开发依赖 brace-expansion；前后端完整依赖审计均无已知漏洞。
 - Provider 与记忆 Agent：网关偶发返回 `auth_unavailable: no auth available`（HTTP 503）或 429/5xx 时，HTTP 层将其归类为可重试的网关暂时不可用（`PROVIDER_AUTH_UNAVAILABLE`，附中文说明），模型调用带退避重试，后台任务也会按最大次数重试。
 - Provider URL 策略：`fetchProviderRequest` 对已归一化的策略二次归一化时会把默认 DNS 解析器误判为调用方自定义解析器，
   导致 `.test`/`.example`/`.invalid` 保留测试域名的例外失效；无本地 DNS 代理的环境下 Provider 契约测试会因 `ENOTFOUND` 失败。

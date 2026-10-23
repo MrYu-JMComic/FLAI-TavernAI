@@ -26,13 +26,13 @@ test('real context quality workflow preserves rejected drafts and reviews traces
   await expect(page.locator('.deep-chat-main')).toBeVisible();
   let inspector = await openInspector(page);
   await inspector.getByRole('tab', { name: '预算' }).click();
-  const budget = inspector.getByRole('region', { name: '上下文预算设置' });
+  const budget = inspector.getByRole('region', { name: '输入上下文预算设置' });
   await expect(budget).toHaveAttribute('aria-busy', 'false');
-  await budget.getByLabel('输入 Token 上限').fill('32');
-  await budget.getByLabel('预留输出 Token').fill('128');
+  await budget.getByLabel('输入上下文 Token 上限').fill('32');
+  await budget.getByLabel('输入窗口预留 Token').fill('128');
   await budget.getByRole('button', { name: '保存' }).click();
   await expect(budget).toHaveAttribute('aria-busy', 'false');
-  await expect(budget.getByLabel('输入 Token 上限')).toHaveValue('32');
+  await expect(budget.getByLabel('输入上下文 Token 上限')).toHaveValue('32');
   await inspector.getByRole('button', { name: '关闭上下文检查器' }).click();
 
   const beforeRejectedMessages = await apiRequest(page, `/api/conversations/${conversation.id}/messages`);
@@ -40,22 +40,34 @@ test('real context quality workflow preserves rejected drafts and reviews traces
   const rejectedDraft = `预算拒绝后必须完整保留的草稿 ${'月影港'.repeat(260)}`;
   const composer = page.getByLabel('聊天消息输入');
   await composer.fill(rejectedDraft);
+  const rejectedResponse = page.waitForResponse((response) =>
+    response.url().endsWith(`/api/conversations/${conversation.id}/messages`) && response.request().method() === 'POST');
   await page.getByRole('button', { name: '发送消息' }).click();
-  await expect(composer).toHaveValue(rejectedDraft);
-  await expect(page.getByText(/上下文.*预算|输入预算/).last()).toBeVisible();
+  const rejection = await rejectedResponse;
+  expect(rejection.status()).toBe(400);
+  expect(await rejection.json()).toMatchObject({ code: 'CONTEXT_BUDGET_EXCEEDED', accepted: false });
+  await expect(composer).toHaveValue('');
+  const recovery = page.locator('.chat-recovery-panel');
+  await expect(recovery).toContainText('对话 Token 上限');
+  await expect(recovery.getByRole('button', { name: '重试发送' })).toBeVisible();
   const afterRejectedMessages = await apiRequest(page, `/api/conversations/${conversation.id}/messages`);
   expect(afterRejectedMessages.messages).toHaveLength(beforeRejectedCount);
 
   inspector = await openInspector(page);
   await inspector.getByRole('tab', { name: '预算' }).click();
-  await expect(inspector.getByRole('region', { name: '上下文预算设置' })).toHaveAttribute('aria-busy', 'false');
-  await inspector.getByRole('region', { name: '上下文预算设置' }).getByLabel('输入 Token 上限').fill('8000');
-  await inspector.getByRole('region', { name: '上下文预算设置' }).getByRole('button', { name: '保存' }).click();
-  await expect(inspector.getByRole('region', { name: '上下文预算设置' })).toHaveAttribute('aria-busy', 'false');
+  await expect(inspector.getByRole('region', { name: '输入上下文预算设置' })).toHaveAttribute('aria-busy', 'false');
+  await inspector.getByRole('region', { name: '输入上下文预算设置' }).getByLabel('输入上下文 Token 上限').fill('8000');
+  await inspector.getByRole('region', { name: '输入上下文预算设置' }).getByRole('button', { name: '保存' }).click();
+  await expect(inspector.getByRole('region', { name: '输入上下文预算设置' })).toHaveAttribute('aria-busy', 'false');
   await inspector.getByRole('button', { name: '关闭上下文检查器' }).click();
-  await composer.fill(`real mock trace ${suffix}`);
-  await page.getByRole('button', { name: '发送消息' }).click();
+  await recovery.getByRole('button', { name: '重试发送' }).click();
   await expect(page.getByText(/本地 Mock 回复/).last()).toBeVisible({ timeout: 30_000 });
+  await expect.poll(async () => {
+    const result = await apiRequest(page, `/api/conversations/${conversation.id}/context/traces`);
+    return result.traces.some((trace) => trace.status === 'completed');
+  }, { timeout: 30_000 }).toBe(true);
+  const retriedMessages = await apiRequest(page, `/api/conversations/${conversation.id}/messages`);
+  expect(retriedMessages.messages.filter((message) => message.role === 'user').at(-1)?.content).toBe(rejectedDraft);
 
   inspector = await openInspector(page);
   await inspector.getByRole('tab', { name: '实际请求' }).click();
@@ -89,7 +101,7 @@ test('real context quality workflow preserves rejected drafts and reviews traces
 
   await page.setViewportSize({ width: 390, height: 844 });
   await inspector.getByRole('tab', { name: '预算' }).click();
-  await expect(inspector.getByRole('region', { name: '上下文预算设置' })).toBeVisible();
+  await expect(inspector.getByRole('region', { name: '输入上下文预算设置' })).toBeVisible();
   await inspector.getByRole('tab', { name: '实际请求' }).click();
   await expect(history).toBeVisible();
   await inspector.getByRole('tab', { name: '记忆' }).click();
@@ -109,7 +121,7 @@ test('real context quality workflow preserves rejected drafts and reviews traces
 
   await page.setViewportSize({ width: 375, height: 812 });
   await expect(inspector.getByRole('tab')).toHaveCount(4);
-  await expect(inspector.getByRole('region', { name: '上下文预算设置' })).toBeVisible();
+  await expect(inspector.getByRole('region', { name: '输入上下文预算设置' })).toBeVisible();
   await assertNoHorizontalOverflow(page, inspector);
   await page.emulateMedia({ colorScheme: 'dark', reducedMotion: 'reduce' });
   await page.evaluate(() => document.documentElement.setAttribute('data-theme', 'dark'));

@@ -66,6 +66,16 @@ test('the desktop studio renders the full form and protects unsaved navigation',
   await page.getByRole('button', { name: /完整表单/ }).click();
   await expect(page.getByLabel('角色背景内容')).toBeVisible();
   await expect(page.locator('#section-basic')).toBeVisible();
+  for (const width of [901, 1180, 1280]) {
+    await page.setViewportSize({ width, height: 900 });
+    const expandNavigation = page.getByRole('button', { name: '展开主导航', exact: true });
+    if (await expandNavigation.isVisible()) await expandNavigation.click();
+    await expect.poll(() => page.locator('.page-shell').evaluate((element) => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(1);
+    await expect.poll(() => page.locator('.character-studio-full-section').evaluateAll((sections) => {
+      const bounds = sections.map((section) => section.getBoundingClientRect());
+      return bounds.every((box, index) => box.width > 250 && (!index || box.top >= bounds[index - 1].bottom));
+    })).toBe(true);
+  }
   await page.locator('#character-name').fill('未保存的工作台角色');
   await expect(page.locator('.character-save-state')).toContainText('有未保存更改');
 
@@ -109,7 +119,8 @@ test('the phone shell drills from the section hub into a single section and save
   // button on phones, and this test is about the editor, not that entry point.
   await page.setViewportSize({ width: 375, height: 812 });
   await page.goto('/#/characters/new');
-  await expect(page.getByRole('heading', { name: /创建新的 AI 角色/ })).toBeVisible();
+  await expect(page.locator('.character-editor-header h1')).toHaveText('创建新的 AI 角色');
+  await expect(page.locator('.character-editor-header h1')).toHaveClass(/visually-hidden/);
 
   // The mobile shell is its own component, not the desktop studio restyled.
   await expect(page.locator('.character-mobile-hub')).toBeVisible();
@@ -177,6 +188,7 @@ test('public characters open read-only for non-owners on both shells', async ({ 
   await expect(page.locator('.character-studio-actions').getByRole('button', { name: '返回角色列表' })).toBeVisible();
   await expect(page.getByRole('button', { name: '保存角色' })).toHaveCount(0);
   await expect(page.getByRole('button', { name: '删除角色' })).toHaveCount(0);
+  await page.getByLabel('更多角色操作', { exact: true }).click();
   await expect(page.getByRole('button', { name: '导出角色' })).toBeVisible();
 
   await page.setViewportSize({ width: 375, height: 812 });
@@ -187,5 +199,6 @@ test('public characters open read-only for non-owners on both shells', async ({ 
 
 async function openCharacterCreator(page) {
   await page.getByRole('button', { name: /创建角色/ }).first().click();
-  await expect(page.getByRole('heading', { name: /创建新的 AI 角色/ })).toBeVisible();
+  await expect(page.locator('.character-editor-header h1')).toHaveText('创建新的 AI 角色');
+  await expect(page.locator('.character-editor-header h1')).toHaveClass(/visually-hidden/);
 }

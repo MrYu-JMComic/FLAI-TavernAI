@@ -1,13 +1,14 @@
 <script setup>
 import { computed, ref, watch } from 'vue';
 import { RefreshCw, X } from '@lucide/vue';
+import { MEMORY_AGENT_TOOLS } from '../../../../shared/memoryAgentTools.js';
 import { fetchProviderModels, listProviderProfiles } from '../../api/providers.js';
 import { buildModelSelectOptions } from '../../services/modelCatalog.js';
 
 const props = defineProps({
   open: { type: Boolean, default: false },
   skill: { type: Object, default: () => ({}) },
-  tools: { type: Array, default: () => [] },
+  tools: { type: Array, default: () => MEMORY_AGENT_TOOLS },
   mainProvider: { type: Object, default: null },
   mainModelOptions: { type: Array, default: () => [] },
   saving: { type: Boolean, default: false }

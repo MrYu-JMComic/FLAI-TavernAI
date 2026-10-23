@@ -47,6 +47,10 @@ test('router module keeps the legacy hash URL shape with named routes', () => {
   assert.match(routerSource, /path: '\/login',\s*name: 'login'/);
   assert.match(routerSource, /path: '\/register',\s*name: 'register'/);
   assert.match(routerSource, /path: '\/settings',\s*name: 'settings'/);
+  assert.match(routerSource, /path: '\/settings\/profile',\s*name: 'settingsProfile'/);
+  assert.match(routerSource, /path: '\/settings\/presets',\s*name: 'settingsPresets'/);
+  assert.match(routerSource, /path: '\/settings\/provider',\s*name: 'settingsProvider'/);
+  assert.match(routerSource, /path: '\/settings\/data',\s*name: 'settingsData'/);
   assert.match(routerSource, /path: '\/admin',\s*name: 'admin'/);
   assert.match(routerSource, /path: '\/extensions',\s*name: 'extensions'/);
   assert.match(routerSource, /path: '\/characters\/new',\s*name: 'characterNew'/);
@@ -54,6 +58,6 @@ test('router module keeps the legacy hash URL shape with named routes', () => {
   assert.match(routerSource, /path: '\/chat\/:id',\s*name: 'chat'/);
   assert.match(routerSource, /path: '\/world-books',\s*name: 'worldBooks'/);
   assert.match(routerSource, /path: '\/world-books\/:id',\s*name: 'worldBookDetail'/);
-  assert.match(routerSource, /path: '\/presets',\s*name: 'presets'/);
+  assert.match(routerSource, /path: '\/presets',\s*name: 'presets',\s*redirect: \{ name: 'settingsPresets' \}/);
   assert.match(routerSource, /path: '\/:pathMatch\(\.\*\)\*',\s*redirect: \{ name: 'home' \}/);
 });

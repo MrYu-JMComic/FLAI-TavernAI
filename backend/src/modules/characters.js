@@ -370,6 +370,11 @@ export function replaceRegexRules(database, userId, characterId, rules = []) {
   });
 }
 
+export function deleteRegexRule(database, userId, ruleId) {
+  const result = database.prepare('DELETE FROM regex_rules WHERE id = ? AND user_id = ?').run(ruleId, userId);
+  return result.changes > 0;
+}
+
 export function toggleRegexRule(database, userId, ruleId) {
   const row = database.prepare('SELECT * FROM regex_rules WHERE id = ? AND user_id = ?').get(ruleId, userId);
   if (!row) return null;

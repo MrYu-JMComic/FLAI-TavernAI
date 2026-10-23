@@ -40,7 +40,7 @@ test('character assistant treats null current tags as empty', async () => {
         providerType: 'deepseek',
         gatewayName: 'DeepSeek',
         baseUrl: 'https://api.deepseek.com',
-        model: 'deepseek-v4-flash',
+        model: 'deepseek-flash',
         apiKey: 'sk-test',
         extraBody: {}
       },
@@ -96,7 +96,7 @@ test('character assistant preserves generated content within character field lim
         providerType: 'deepseek',
         gatewayName: 'DeepSeek',
         baseUrl: 'https://api.deepseek.com',
-        model: 'deepseek-v4-flash',
+        model: 'deepseek-flash',
         apiKey: 'sk-test',
         extraBody: {}
       },
@@ -108,7 +108,7 @@ test('character assistant preserves generated content within character field lim
     assert.equal(result.character.worldview, worldview);
     assert.equal(result.character.persona, persona);
     assert.equal(result.character.openingMessage, openingMessage);
-    assert.equal(result.toolCalls[0].result.applied.openingMessage, openingMessage);
+    assert.deepEqual(result.toolCalls[0].result.applied.openingMessage, { characters: openingMessage.length });
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -130,7 +130,7 @@ test('character assistant normalizes generation options with direct defaults loo
         providerType: 'deepseek',
         gatewayName: 'DeepSeek',
         baseUrl: 'https://api.deepseek.com',
-        model: 'deepseek-v4-flash',
+        model: 'deepseek-flash',
         apiKey: 'sk-test',
         extraBody: {}
       },
@@ -196,7 +196,7 @@ test('character assistant prompts include shared quality guidance', async () => 
         providerType: 'deepseek',
         gatewayName: 'DeepSeek',
         baseUrl: 'https://api.deepseek.com',
-        model: 'deepseek-v4-flash',
+        model: 'deepseek-flash',
         apiKey: 'sk-test',
         extraBody: {}
       },
@@ -208,7 +208,7 @@ test('character assistant prompts include shared quality guidance', async () => 
         providerType: 'deepseek',
         gatewayName: 'DeepSeek',
         baseUrl: 'https://api.deepseek.com',
-        model: 'deepseek-v4-flash',
+        model: 'deepseek-flash',
         apiKey: 'sk-test',
         extraBody: {}
       },

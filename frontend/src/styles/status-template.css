@@ -100,14 +100,17 @@
 }
 
 :where(.status-bar-custom) :where(.sb-label) {
-  flex: 0 0 auto;
+  flex: 0 1 auto;
+  min-width: 0;
   color: var(--sb-muted);
   font-size: 0.76rem;
   font-weight: 700;
-  white-space: nowrap;
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 :where(.status-bar-custom) :where(.sb-val) {
+  flex: 0 0 auto;
   min-width: 0;
   color: var(--sb-text);
   font-size: 0.84rem;

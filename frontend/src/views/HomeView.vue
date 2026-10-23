@@ -1322,7 +1322,7 @@ function formatCount(value) {
   <section class="page-stack home-workbench" @dragover.prevent @drop.prevent="handleImportDrop">
     <header class="home-library-header">
       <div class="home-library-heading">
-        <h1>角色库</h1>
+        <h1 class="visually-hidden">角色库</h1>
         <dl class="home-library-stats" aria-label="角色库概览">
           <div v-for="item in homeStats" :key="item.label">
             <dt>{{ item.label }}</dt>

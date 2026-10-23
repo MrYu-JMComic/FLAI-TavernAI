@@ -123,7 +123,7 @@ test('ChatSettingsDrawer freezes status bar editor fields while saving status ba
   assert.match(chatSettingsDrawerTemplate, /<\/fieldset>\s*<div class="status-bar-editor-footer">/);
   assert.match(
     chatSettingsDrawerTemplate,
-    /<button class="chat-settings-save" type="button" :disabled="statusBarSaving \|\| statusBarTemplateIssues\.length > 0" :aria-busy="statusBarSaving" @click="emit\('save-status-bar'\)">/
+    /<button class="chat-settings-save" type="button" :disabled="statusBarSaving" :aria-busy="statusBarSaving" @click="emit\('save-status-bar'\)">/
   );
   assert.match(
     chatSettingsDrawerTemplate,

@@ -1,6 +1,6 @@
 <script setup>
-import { computed, ref } from 'vue';
-import { Bot, Brain, ChevronDown, ImagePlus, Send, Sparkles, Square, X } from '@lucide/vue';
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
+import { ChevronDown, Globe, ImagePlus, Send, SlidersHorizontal, Sparkles, Square, X } from '@lucide/vue';
 
 const props = defineProps({
   input: { type: String, default: '' },
@@ -12,6 +12,8 @@ const props = defineProps({
   thinkingLevel: { type: String, default: 'off' },
   thinkingOptions: { type: Array, default: () => [] },
   canToggleThinking: { type: Boolean, default: false },
+  webSearchEnabled: { type: Boolean, default: false },
+  canToggleWebSearch: { type: Boolean, default: false },
   canUseStream: { type: Boolean, default: true },
   canAddAttachments: { type: Boolean, default: true },
   chatViewportIsPhone: { type: Boolean, default: false },
@@ -22,10 +24,7 @@ const props = defineProps({
   presetList: { type: Array, default: () => [] },
   selectedPresetId: { type: String, default: '' },
   currentModel: { type: String, default: '' },
-  modelOptions: { type: Array, default: () => [] },
-  modelSaving: { type: Boolean, default: false },
-  modelCapabilities: { type: Object, default: null },
-  currentModelSupportsReasoning: { type: Boolean, default: false }
+  modelSaving: { type: Boolean, default: false }
 });
 
 const emit = defineEmits([
@@ -34,9 +33,9 @@ const emit = defineEmits([
   'stop',
   'toggle-stream',
   'toggle-thinking',
+  'toggle-web-search',
   'update:thinking-level',
   'open-model-switcher',
-  'quick-model-change',
   'add-attachments',
   'remove-attachment',
   'clear-attachments',
@@ -47,53 +46,55 @@ const emit = defineEmits([
 
 const wrapRef = ref(null);
 const textareaRef = ref(null);
+const modelSwitchButtonRef = ref(null);
 const attachmentInputRef = ref(null);
-const quickModelOptions = computed(() => buildQuickModelOptions(props.modelOptions, props.currentModel));
+const responseModeMenuRef = ref(null);
+const responseModeTriggerRef = ref(null);
+const responseModeMenuOpen = ref(false);
 const modelSwitchLocked = computed(() => props.sending || props.modelSaving);
-const normalizedModelCapabilities = computed(() => props.modelCapabilities && typeof props.modelCapabilities === 'object'
-  ? props.modelCapabilities
-  : {}
-);
-const currentModelReasoning = computed(() => Boolean(
-  normalizedModelCapabilities.value.thinking?.supported ??
-    normalizedModelCapabilities.value.reasoning ??
-    props.currentModelSupportsReasoning
-));
 const currentThinkingLabel = computed(() => (
   props.thinkingOptions.find((option) => option?.value === props.thinkingLevel)?.label || props.thinkingLevel || '关闭'
 ));
-const currentThinkingShortLabel = computed(() => ({
-  off: '关',
-  minimal: '微',
-  low: '低',
-  medium: '中',
-  high: '高',
-  xhigh: '极',
-  max: '满'
-})[props.thinkingLevel] || '思');
-const modelCapabilityChips = computed(() => {
-  const capabilities = normalizedModelCapabilities.value;
-  const chips = [];
-  if (currentModelReasoning.value) {
-    chips.push({ key: 'reasoning', label: '推理' });
+
+function toggleResponseModeMenu() {
+  responseModeMenuOpen.value = !responseModeMenuOpen.value;
+}
+
+function closeResponseModeMenu() {
+  responseModeMenuOpen.value = false;
+}
+
+function onResponseModeFocusout(event) {
+  if (!event.currentTarget?.contains(event.relatedTarget)) {
+    closeResponseModeMenu();
   }
-  if (capabilities.vision) {
-    chips.push({ key: 'vision', label: '视觉' });
+}
+
+// Keep the compact settings popover easy to dismiss with pointer and keyboard input.
+function onResponseModePointerDown(event) {
+  if (responseModeMenuOpen.value && !responseModeMenuRef.value?.contains(event.target)) {
+    closeResponseModeMenu();
   }
-  if (capabilities.imageGeneration) {
-    chips.push({ key: 'imageGeneration', label: '绘图' });
+}
+
+function onResponseModeKeydown(event) {
+  if (event.key !== 'Escape' || !responseModeMenuOpen.value) {
+    return;
   }
-  if (capabilities.streaming) {
-    chips.push({ key: 'streaming', label: '流式' });
-  }
-  return chips;
+  closeResponseModeMenu();
+  responseModeTriggerRef.value?.focus({ preventScroll: true });
+}
+
+onMounted(() => {
+  document.addEventListener('pointerdown', onResponseModePointerDown);
+  document.addEventListener('keydown', onResponseModeKeydown);
 });
-const canQuickSwitchModel = computed(() => {
-  if (!quickModelOptions.value.length) {
-    return false;
-  }
-  return !props.currentModel || quickModelOptions.value.length > 1;
+
+onBeforeUnmount(() => {
+  document.removeEventListener('pointerdown', onResponseModePointerDown);
+  document.removeEventListener('keydown', onResponseModeKeydown);
 });
+
 function readEventTargetValue(event) {
   const target = event?.target;
   return target && target.value !== undefined ? target.value : undefined;
@@ -128,16 +129,13 @@ function onThinkingLevelChange(event) {
   emit('update:thinking-level', value);
 }
 
-function onQuickModelChange(event) {
-  const value = readEventTargetValue(event);
-  if (value === undefined) {
+function focusModelControl() {
+  const modelSwitchButton = modelSwitchButtonRef.value;
+  if (modelSwitchButton && !modelSwitchButton.disabled) {
+    modelSwitchButton.focus({ preventScroll: true });
     return;
   }
-  const nextModel = String(value || '').trim();
-  if (!nextModel || nextModel === props.currentModel) {
-    return;
-  }
-  emit('quick-model-change', nextModel);
+  textareaRef.value?.focus({ preventScroll: true });
 }
 
 function openAttachmentPicker() {
@@ -173,40 +171,7 @@ function attachmentPreviewUrl(attachment = {}) {
   return attachment.dataUrl || attachment.url || '';
 }
 
-function buildQuickModelOptions(sourceModels, currentModel) {
-  const byId = new Map();
-  const current = String(currentModel || '').trim();
-  if (current) {
-    byId.set(current, {
-      id: current,
-      label: current,
-      current: true
-    });
-  }
-  const models = Array.isArray(sourceModels) ? sourceModels : [];
-  for (const item of models) {
-    const id = String(item?.id || item?.name || item?.model || item || '').trim();
-    if (!id) {
-      continue;
-    }
-    byId.set(id, {
-      id,
-      label: String(item?.label || item?.displayName || item?.name || id).trim() || id,
-      current: id === current
-    });
-  }
-  return collectQuickModelOptions(byId);
-}
-
-function collectQuickModelOptions(byId) {
-  const options = [];
-  for (const option of byId.values()) {
-    options.push(option);
-  }
-  return options;
-}
-
-defineExpose({ wrapRef, textareaRef });
+defineExpose({ wrapRef, textareaRef, modelSwitchButtonRef, focusModelControl });
 </script>
 
 <template>
@@ -258,18 +223,6 @@ defineExpose({ wrapRef, textareaRef });
           :disabled="!canAddAttachments"
           @change="onAttachmentChange"
         />
-        <button
-          class="mode-pill attachment-pill"
-          type="button"
-          title="添加图片"
-          aria-label="添加图片"
-          :disabled="sending || attachmentBusy || !canAddAttachments"
-          :aria-busy="attachmentBusy"
-          @click="openAttachmentPicker"
-        >
-          <ImagePlus :size="16" />
-          <span>图片</span>
-        </button>
         <select
           v-if="presetList.length"
           :value="selectedPresetId"
@@ -284,46 +237,18 @@ defineExpose({ wrapRef, textareaRef });
             {{ p.name }}{{ p.isDefault ? ' 默认' : '' }}
           </option>
         </select>
-        <label v-if="quickModelOptions.length" class="model-quick-select" :class="{ 'is-saving': modelSaving }">
-          <Bot :size="16" />
-          <select
-            :value="currentModel"
-            aria-label="快速切换聊天模型"
-            title="快速切换聊天模型"
-            :disabled="modelSwitchLocked || !canQuickSwitchModel"
-            :aria-busy="modelSaving"
-            @change="onQuickModelChange"
-          >
-            <option v-if="!currentModel" value="" disabled>选择模型</option>
-            <option v-for="model in quickModelOptions" :key="model.id" :value="model.id">
-              {{ model.label || model.id }}{{ model.current ? ' 当前' : '' }}
-            </option>
-          </select>
-          <span v-for="chip in modelCapabilityChips" :key="chip.key" class="model-ability-chip">{{ chip.label }}</span>
-        </label>
         <button
-          v-if="!quickModelOptions.length"
+          ref="modelSwitchButtonRef"
           class="mode-pill model-switch-pill"
           type="button"
+          aria-label="快速切换聊天模型"
           :title="currentModel ? `搜索或刷新模型：${currentModel}` : '搜索或刷新模型'"
-          :disabled="sending"
-          :aria-busy="sending"
+          :disabled="modelSwitchLocked"
+          :aria-busy="modelSaving"
           @click="emit('open-model-switcher')"
         >
-          <Bot :size="16" />
-          <span>{{ currentModel || '切换模型' }}</span>
-        </button>
-        <button
-          class="mode-pill stream-pill"
-          :class="{ active: canUseStream && useStream }"
-          type="button"
-          :aria-pressed="String(canUseStream && useStream)"
-          :disabled="sending || !canUseStream"
-          :aria-busy="sending"
-          @click="emit('toggle-stream')"
-        >
-          <Sparkles :size="16" />
-          <span>流式输出</span>
+          <span class="model-switch-name">{{ currentModel || '切换模型' }}</span>
+          <ChevronDown :size="14" aria-hidden="true" />
         </button>
         <label
           v-if="thinkingOptions.length"
@@ -331,12 +256,10 @@ defineExpose({ wrapRef, textareaRef });
           :class="{ active: canToggleThinking && thinkingEnabled, disabled: sending || !canToggleThinking }"
           :title="`思考强度：${currentThinkingLabel}`"
         >
-          <Brain class="thinking-level-brain" :size="17" aria-hidden="true" />
           <span class="thinking-level-copy" aria-hidden="true">
             <span class="thinking-level-name">思考</span>
             <strong class="thinking-level-value">{{ currentThinkingLabel }}</strong>
           </span>
-          <span class="thinking-level-mobile-value" aria-hidden="true">{{ currentThinkingShortLabel }}</span>
           <select
             class="thinking-level-select"
             :value="thinkingLevel"
@@ -362,9 +285,78 @@ defineExpose({ wrapRef, textareaRef });
           title="Model thinking mode"
           @click="emit('toggle-thinking')"
         >
-          <Brain :size="16" />
-          <span>{{ canToggleThinking && thinkingEnabled ? '深度思考' : '普通回复' }}</span>
+          <span class="thinking-level-name">思考</span>
+          <strong class="thinking-level-value">{{ canToggleThinking && thinkingEnabled ? '开启' : '关闭' }}</strong>
         </button>
+        <button
+          class="mode-pill attachment-pill"
+          type="button"
+          title="添加图片"
+          aria-label="添加图片"
+          :disabled="sending || attachmentBusy || !canAddAttachments"
+          :aria-busy="attachmentBusy"
+          @click="openAttachmentPicker"
+        >
+          <ImagePlus :size="16" />
+        </button>
+        <div ref="responseModeMenuRef" class="response-mode-menu" @focusout="onResponseModeFocusout">
+          <button
+            ref="responseModeTriggerRef"
+            class="mode-pill response-mode-trigger"
+            :class="{ active: (canToggleWebSearch && webSearchEnabled) || (canUseStream && !useStream) }"
+            type="button"
+            aria-label="响应模式设置"
+            title="流式输出与 DeepSeek 联网搜索"
+            aria-haspopup="dialog"
+            :aria-expanded="String(responseModeMenuOpen)"
+            aria-controls="composer-response-mode-panel"
+            :disabled="sending"
+            @click="toggleResponseModeMenu"
+          >
+            <SlidersHorizontal :size="16" />
+          </button>
+          <div
+            v-if="responseModeMenuOpen"
+            id="composer-response-mode-panel"
+            class="response-mode-panel"
+            role="dialog"
+            aria-label="响应模式"
+            @click.stop
+          >
+            <strong class="response-mode-heading">响应模式</strong>
+            <div class="response-mode-options">
+              <button
+                class="mode-pill response-mode-option"
+                :class="{ active: canUseStream && useStream }"
+                type="button"
+                aria-label="流式输出"
+                :aria-pressed="String(canUseStream && useStream)"
+                :disabled="sending || !canUseStream"
+                :aria-busy="sending"
+                @click="emit('toggle-stream')"
+              >
+                <Sparkles :size="16" />
+                <span>流式输出</span>
+              </button>
+              <button
+                v-if="canToggleWebSearch"
+                class="mode-pill response-mode-option"
+                :class="{ active: webSearchEnabled }"
+                type="button"
+                aria-label="DeepSeek 联网搜索"
+                title="DeepSeek Search/Fetch 每千次成功调用各 ¥5，2026-11-01 起计费（北京时间）"
+                :aria-pressed="String(webSearchEnabled)"
+                :disabled="sending"
+                :aria-busy="sending"
+                @click="emit('toggle-web-search')"
+              >
+                <Globe :size="16" />
+                <span>联网搜索</span>
+              </button>
+            </div>
+            <p v-if="canToggleWebSearch" class="response-mode-cost-hint">Search/Fetch 各 ¥5/千次成功调用，2026-11-01 起（北京时间）</p>
+          </div>
+        </div>
         <span v-if="usage" class="token-chip">tokens {{ usage.total_tokens || usage.totalTokens || '-' }}</span>
         <button v-if="sending" class="round-send stop" type="button" aria-label="停止生成" title="停止生成" @click="emit('stop')">
           <Square :size="18" />

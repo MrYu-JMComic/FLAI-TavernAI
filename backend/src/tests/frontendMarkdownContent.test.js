@@ -58,11 +58,11 @@ test('MarkdownContent builds plugin cache keys without plugin shape arrays', () 
 test('MarkdownContent renders fold segments without split or segment map allocations', () => {
   assert.match(
     markdownContentScript,
-    /const LF_CHAR_CODE = 10;[\s\S]*const CR_CHAR_CODE = 13;[\s\S]*const FOLD_CARET = '\\u203a';[\s\S]*const DEFAULT_FOLD_TITLE = '\\u6298\\u53e0\\u5185\\u5bb9';/
+    /const LF_CHAR_CODE = 10;[\s\S]*const FOLD_CARET = '\\u203a';[\s\S]*const DEFAULT_FOLD_TITLE = '\\u6298\\u53e0\\u5185\\u5bb9';/
   );
   assert.match(
     markdownContentScript,
-    /function renderWithPlugins\(text, renderPlugins = \[\]\) \{[\s\S]*let html = '';[\s\S]*let normalText = '';[\s\S]*let hasNormalText = false;[\s\S]*html \+= renderFoldSegment\(fold\);[\s\S]*forEachMarkdownLine\(String\(text \|\| ''\), \(line\) => \{[\s\S]*fold = \{ title: match\.title, bodyText: '', hasBodyText: false \};[\s\S]*return html;[\s\S]*}/
+    /function renderWithPlugins\(text, renderPlugins = \[\]\) \{[\s\S]*const normalizedText = normalizeModelNewlines\(text\);[\s\S]*if \(!plugins\.length\) \{[\s\S]*return md\.render\(normalizedText\);[\s\S]*let html = '';[\s\S]*let normalText = '';[\s\S]*let hasNormalText = false;[\s\S]*html \+= renderFoldSegment\(fold\);[\s\S]*forEachMarkdownLine\(normalizedText, \(line\) => \{[\s\S]*fold = \{ title: match\.title, bodyText: '', hasBodyText: false \};[\s\S]*return html;[\s\S]*}/
   );
   assert.match(
     markdownContentScript,
@@ -70,7 +70,7 @@ test('MarkdownContent renders fold segments without split or segment map allocat
   );
   assert.match(
     markdownContentScript,
-    /function forEachMarkdownLine\(text, visit\) \{[\s\S]*for \(let index = 0; index < text\.length; index \+= 1\) \{[\s\S]*if \(text\.charCodeAt\(index\) !== LF_CHAR_CODE\) \{[\s\S]*continue;[\s\S]*const endIndex = index > startIndex && text\.charCodeAt\(index - 1\) === CR_CHAR_CODE[\s\S]*visit\(text\.slice\(startIndex, endIndex\)\);[\s\S]*visit\(text\.slice\(startIndex\)\);[\s\S]*}/
+    /function forEachMarkdownLine\(text, visit\) \{[\s\S]*for \(let index = 0; index < text\.length; index \+= 1\) \{[\s\S]*if \(text\.charCodeAt\(index\) !== LF_CHAR_CODE\) \{[\s\S]*continue;[\s\S]*visit\(text\.slice\(startIndex, index\)\);[\s\S]*startIndex = index \+ 1;[\s\S]*\}[\s\S]*visit\(text\.slice\(startIndex\)\);[\s\S]*}/
   );
   assert.match(
     markdownContentScript,

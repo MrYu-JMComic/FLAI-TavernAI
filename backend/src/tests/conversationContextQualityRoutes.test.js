@@ -20,7 +20,7 @@ test('context budget routes validate positive integers, bind provider scope, cle
   await withServer(fixture.app, async (baseUrl) => {
     let response = await requestJson(baseUrl, fixture.conversationId, '/context/budget');
     assert.equal(response.status, 200);
-    assert.equal(response.body.resolved.inputTokenLimit, 8192);
+    assert.equal(response.body.resolved.inputTokenLimit, 16384);
     assert.equal(response.body.provider.providerType, 'openai');
     assert.equal(response.body.provider.model, 'scope-model');
 
@@ -207,7 +207,9 @@ test('chat-completions, responses, and Anthropic request bodies are recorded exa
           });
           assert.equal(generated.status, 200);
           const outputLimitKey = protocol.name === 'responses' ? 'max_output_tokens' : 'max_tokens';
-          assert.equal(sentBody[outputLimitKey], 333);
+          // A reservation budgets the prompt without imposing an output cap.
+          // Anthropic requires max_tokens even in unlimited output mode.
+          assert.equal(sentBody[outputLimitKey], protocol.name === 'anthropic' ? 128000 : undefined);
 
           const listed = await requestJson(baseUrl, fixture.conversationId, '/context/traces');
           assert.equal(listed.status, 200);
@@ -219,6 +221,7 @@ test('chat-completions, responses, and Anthropic request bodies are recorded exa
             `/context/traces/${listed.body.traces[0].id}`
           );
           assert.equal(detail.status, 200);
+          assert.equal(detail.body.budget.tokenBudget.reservedOutputTokens, 333);
           assert.equal(detail.body.requests[0].endpoint, protocol.endpoint);
           assert.deepEqual(detail.body.requests[0].body, sentBody);
           assert.equal(detail.body.assistantMessageId, generated.body.assistantMessage.id);
@@ -358,7 +361,7 @@ test('Responses and Anthropic SSE requests preserve exact wire bodies in complet
           assert.equal(response.status, 200);
           assert.match(await response.text(), new RegExp(protocol.replyText));
           assert.equal(sentBody.stream, true);
-          assert.equal(sentBody[protocol.outputKey], 444);
+          assert.equal(sentBody[protocol.outputKey], protocol.name === 'anthropic-stream' ? 128000 : undefined);
 
           const listed = await requestJson(baseUrl, fixture.conversationId, '/context/traces');
           assert.equal(listed.body.traces.length, 1);
@@ -369,6 +372,7 @@ test('Responses and Anthropic SSE requests preserve exact wire bodies in complet
             `/context/traces/${listed.body.traces[0].id}`
           );
           assert.equal(detail.body.requests[0].endpoint, protocol.endpoint);
+          assert.equal(detail.body.budget.tokenBudget.reservedOutputTokens, 444);
           assert.deepEqual(detail.body.requests[0].body, sentBody);
           assert.equal(detail.body.requests[0].status, 'response_received');
           assert.ok(detail.body.assistantMessageId);

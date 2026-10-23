@@ -11,6 +11,7 @@ import {
 import { resolveProviderModelCapabilities } from '../../../shared/providerCapabilities.js';
 import { buildAnthropicBody } from '../services/providerAnthropic.js';
 import { buildOpenAiReasoning } from '../services/providerOpenAiResponses.js';
+import { normalizeProviderModel } from '../services/providerModels.js';
 import { buildProviderBody } from '../services/providerRequestBody.js';
 import { sendMessageSchema } from '../validations/schemas.js';
 
@@ -44,7 +45,7 @@ test('thinking controls expose only model-supported levels', () => {
 
   const capabilities = resolveProviderModelCapabilities({
     providerType: 'deepseek',
-    model: 'deepseek-v4-flash',
+    model: 'deepseek-flash',
     supportsReasoning: true
   });
   assert.deepEqual(capabilities.thinkingLevels, ['off', 'low', 'high', 'max']);
@@ -60,10 +61,24 @@ test('thinking controls expose only model-supported levels', () => {
   assert.equal(customGemini.thinking.canDisable, false);
 });
 
+test('DeepSeek Flash accepts image inputs while Pro remains text-only', () => {
+  const pro = resolveProviderModelCapabilities({ providerType: 'deepseek', model: 'deepseek-v4-pro' });
+  const flashIds = ['deepseek-flash', 'deepseek-chat', 'deepseek-reasoner', 'deepseek-v4-flash'];
+
+  for (const model of flashIds) {
+    const capabilities = resolveProviderModelCapabilities({ providerType: 'deepseek', model });
+    assert.equal(capabilities.model, 'deepseek-flash');
+    assert.equal(capabilities.vision, true);
+    assert.equal(normalizeProviderModel('deepseek', model), 'deepseek-flash');
+    assert.equal(buildChatBody('deepseek', model, 'off').model, 'deepseek-flash');
+  }
+  assert.equal(pro.vision, false);
+});
+
 test('DeepSeek maps canonical intensity to official thinking fields', () => {
-  const off = buildChatBody('deepseek', 'deepseek-v4-flash', 'off');
-  const medium = buildChatBody('deepseek', 'deepseek-v4-flash', 'medium');
-  const max = buildChatBody('deepseek', 'deepseek-v4-flash', 'max');
+  const off = buildChatBody('deepseek', 'deepseek-flash', 'off');
+  const medium = buildChatBody('deepseek', 'deepseek-flash', 'medium');
+  const max = buildChatBody('deepseek', 'deepseek-flash', 'max');
 
   assert.deepEqual(off.thinking, { type: 'disabled' });
   assert.equal(off.reasoning_effort, undefined);
@@ -99,7 +114,7 @@ test('custom gateways infer known model families for explicit intensity', () => 
   const deepseek = buildProviderBody(
     {
       providerType: 'custom',
-      model: 'deepseek-v4-flash',
+      model: 'deepseek-flash',
       supportsReasoning: true,
       extraBody: {}
     },

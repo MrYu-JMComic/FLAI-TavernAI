@@ -5,9 +5,10 @@ import { BookOpen, Check, ChevronDown } from '@lucide/vue';
 const props = defineProps({
   changes: { type: Array, default: () => [] },
   busy: { type: Boolean, default: false },
-  characterContext: { type: Boolean, default: false }
+  characterContext: { type: Boolean, default: false },
+  deferSave: { type: Boolean, default: false }
 });
-const emit = defineEmits(['apply', 'reload', 'discard']);
+const emit = defineEmits(['apply', 'reload', 'discard', 'update-add-to-character']);
 const excluded = ref([]);
 const unlinked = ref([]);
 watch(() => props.changes.map(change => change.ref).join('|'), () => {
@@ -37,7 +38,7 @@ function apply() {
     <header class="worldbook-changes-heading"><strong><BookOpen :size="16" />待应用变更</strong><small>{{ changes.length }} 本世界书</small></header>
     <article v-for="change in changes" :key="change.ref" class="worldbook-change">
       <div class="worldbook-change-head">
-        <label><input type="checkbox" :checked="!excluded.includes(change.ref)" :disabled="busy" @change="toggle('excluded', change.ref, $event.target.checked)"><strong>{{ label(change) }}</strong></label>
+        <label><input v-if="!deferSave" type="checkbox" :checked="!excluded.includes(change.ref)" :disabled="busy" @change="toggle('excluded', change.ref, $event.target.checked)"><strong>{{ label(change) }}</strong></label>
         <span class="worldbook-change-type">{{ change.bookId ? '更新原书' : '新建世界书' }}</span>
       </div>
       <p class="worldbook-change-counts">
@@ -64,10 +65,11 @@ function apply() {
         <button type="button" class="ghost-button worldbook-discard" :disabled="busy" @click="emit('discard', change)">放弃此项</button>
       </details>
       <p v-if="change.linkedCharacterCount > 1" class="worldbook-shared-note">同时供 {{ change.linkedCharacterCount }} 个角色使用</p>
-      <label v-if="characterContext && !change.bookId" class="worldbook-add-link"><input type="checkbox" :checked="!unlinked.includes(change.ref)" :disabled="busy" @change="toggle('unlinked', change.ref, $event.target.checked)">加入当前角色的关联列表</label>
+      <label v-if="characterContext && !change.bookId" class="worldbook-add-link"><input type="checkbox" :checked="deferSave ? change.addToCharacter !== false : !unlinked.includes(change.ref)" :disabled="busy" @change="deferSave ? emit('update-add-to-character', change, $event.target.checked) : toggle('unlinked', change.ref, $event.target.checked)">加入当前角色的关联列表</label>
     </article>
-    <button class="primary-button worldbook-apply" type="button" :disabled="busy || !selected.length" :aria-busy="busy" @click="apply"><Check :size="17" />{{ busy ? '正在应用...' : `应用 ${selected.length} 项变更` }}</button>
-    <p v-if="characterContext" class="worldbook-shared-note">新书加入关联列表后，保存角色完成关联。</p>
+    <button v-if="!deferSave" class="primary-button worldbook-apply" type="button" :disabled="busy || !selected.length" :aria-busy="busy" @click="apply"><Check :size="17" />{{ busy ? '正在应用...' : `应用 ${selected.length} 项变更` }}</button>
+    <p v-if="deferSave" class="worldbook-shared-note">世界书修改保留在草稿，点击保存角色后生效。不需要的修改可选择“放弃此项”。</p>
+    <p v-else-if="characterContext" class="worldbook-shared-note">新书加入关联列表后，保存角色完成关联。</p>
   </section>
 </template>
 

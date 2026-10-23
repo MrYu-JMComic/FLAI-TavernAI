@@ -1,18 +1,23 @@
 <script setup>
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
-import { ArrowUp, BookOpen, ChevronDown, Home, KeyRound, LogOut, Menu, Moon, Plus, Puzzle, ShieldCheck, SlidersHorizontal, Sun, UserRound, X } from '@lucide/vue';
+import { ArrowUp, BookOpen, ChevronDown, Home, KeyRound, LogOut, Menu, Moon, PanelLeftClose, PanelLeftOpen, Plus, Puzzle, ShieldCheck, Sun, UserRound, X } from '@lucide/vue';
 import { useViewport } from '../composables/useViewport';
 
 const ROUTE_LABELS = {
   home: '角色库',
   characterNew: '创建角色',
   characterEdit: '编辑角色',
+  characterAssistant: 'AI 完善助手',
+  characterAssistantNew: 'AI 创作助手',
   chat: '角色对话',
   worldBooks: '世界书',
   worldBookDetail: '世界书详情',
-  presets: '预设管理',
   extensions: '扩展管理',
   settings: '个人中心',
+  settingsProfile: '个人资料',
+  settingsPresets: '对话预设',
+  settingsProvider: '模型网关',
+  settingsData: '数据导出',
   admin: '额度管理'
 };
 
@@ -38,19 +43,22 @@ const props = defineProps({
 const emit = defineEmits(['navigate', 'logout', 'toggle-theme']);
 
 const isConversationRoute = computed(() => usesConversationLayout(props.currentRoute));
+const isAssistantRoute = computed(() => ['characterAssistant', 'characterAssistantNew'].includes(props.currentRoute));
 const isHomeRoute = computed(() => props.currentRoute === 'home');
 const isWorldBookRoute = computed(() => props.currentRoute === 'worldBooks' || props.currentRoute === 'worldBookDetail');
 const isExtensionsRoute = computed(() => props.currentRoute === 'extensions');
-const isPresetsRoute = computed(() => props.currentRoute === 'presets');
 const isAdminRoute = computed(() => props.currentRoute === 'admin');
-const isAccountRoute = computed(() => props.currentRoute === 'settings' || isAdminRoute.value);
+const isPersonalSettingsRoute = computed(() => ['settings', 'settingsProfile', 'settingsPresets', 'settingsProvider', 'settingsData'].includes(props.currentRoute));
+const isAccountRoute = computed(() => isPersonalSettingsRoute.value || isAdminRoute.value);
+const showMobileBottomNav = computed(() => ['home', 'characterNew', 'worldBooks', 'settings'].includes(props.currentRoute));
 const isWorkspaceRoute = computed(() => (
   props.currentRoute === 'characterNew'
   || props.currentRoute === 'characterEdit'
+  || props.currentRoute === 'characterAssistant'
+  || props.currentRoute === 'characterAssistantNew'
   || isWorldBookRoute.value
   || isExtensionsRoute.value
-  || isPresetsRoute.value
-  || props.currentRoute === 'settings'
+  || isPersonalSettingsRoute.value
   || isAdminRoute.value
 ));
 const userMenuOpen = ref(false);
@@ -61,6 +69,12 @@ const pageScrollTop = ref(0);
 const pageScrollProgress = ref(0);
 const pageScrollPositions = new Map();
 const { isPhone: isMobileNavViewport } = useViewport({ breakpoint: '(max-width: 620px)' });
+const { isPhone: isCompactNavViewport } = useViewport({ breakpoint: '(max-width: 900px)' });
+const { isPhone: prefersCompactSidebar } = useViewport({ breakpoint: '(max-width: 1180px)' });
+const desktopNavCollapsed = ref(prefersCompactSidebar.value);
+const navigationWidthStyle = computed(() => ({
+  '--navigation-width': desktopNavCollapsed.value ? '72px' : '224px'
+}));
 const currentPageLabel = computed(() => ROUTE_LABELS[props.currentRoute] || '工作台');
 const showScrollTop = computed(() => !isConversationRoute.value && pageScrollTop.value > 520);
 const scrollProgressStyle = computed(() => ({
@@ -87,6 +101,10 @@ watch(isMobileNavViewport, (isMobile) => {
   if (!isMobile) {
     mobileNavOpen.value = false;
   }
+});
+
+watch(prefersCompactSidebar, (isCompact) => {
+  desktopNavCollapsed.value = isCompact;
 });
 
 onMounted(() => {
@@ -163,6 +181,11 @@ function toggleMobileNav() {
   }
 }
 
+function toggleDesktopNav() {
+  desktopNavCollapsed.value = !desktopNavCollapsed.value;
+  userMenuOpen.value = false;
+}
+
 function navigateAndClose(name) {
   mobileNavOpen.value = false;
   emit('navigate', name);
@@ -232,19 +255,39 @@ function usesConversationLayout(routeName) {
 <template>
   <div
     class="layout-shell"
-    :class="{ 'chat-layout-shell': isConversationRoute, 'home-layout-shell': isHomeRoute, 'workspace-layout-shell': isWorkspaceRoute }"
+    :class="{ 'chat-layout-shell': isConversationRoute, 'home-layout-shell': isHomeRoute, 'workspace-layout-shell': isWorkspaceRoute, 'assistant-layout-shell': isAssistantRoute }"
+    :style="navigationWidthStyle"
   >
     <a href="#main-content" class="skip-link" @click.prevent="pageShellRef?.focus()">跳转到主要内容</a>
 
-    <header v-if="!isConversationRoute" class="topbar">
+    <aside
+      v-if="!isConversationRoute"
+      class="app-navigation"
+      :class="{ topbar: isCompactNavViewport, 'is-collapsed': desktopNavCollapsed }"
+      aria-label="工作区导航"
+    >
       <span class="page-scroll-progress" :style="scrollProgressStyle" aria-hidden="true"></span>
 
-      <button class="brand-button" type="button" aria-label="FLAI Tavern AI 首页" @click="navigateAndClose('home')">
-        <span class="brand-mark" aria-hidden="true">F</span>
-        <span>
-          <strong>FLAI Tavern AI</strong>
-        </span>
-      </button>
+      <div class="navigation-heading">
+        <button class="brand-button" type="button" aria-label="FLAI Tavern AI 首页" title="FLAI Tavern AI 首页" @click="navigateAndClose('home')">
+          <span class="brand-mark" aria-hidden="true">F</span>
+          <span>
+            <strong>FLAI Tavern AI</strong>
+          </span>
+        </button>
+        <button
+          class="icon-button desktop-nav-toggle"
+          type="button"
+          :aria-label="desktopNavCollapsed ? '展开主导航' : '收起主导航'"
+          :title="desktopNavCollapsed ? '展开主导航' : '收起主导航'"
+          :aria-expanded="String(!desktopNavCollapsed)"
+          aria-controls="main-navigation"
+          @click="toggleDesktopNav"
+        >
+          <PanelLeftOpen v-if="desktopNavCollapsed" :size="18" aria-hidden="true" />
+          <PanelLeftClose v-else :size="18" aria-hidden="true" />
+        </button>
+      </div>
 
       <button
         class="icon-button mobile-nav-toggle"
@@ -264,13 +307,14 @@ function usesConversationLayout(routeName) {
         :class="{ 'mobile-open': mobileNavOpen }"
         aria-label="主导航"
       >
-        <button :class="{ active: currentRoute === 'home' }" type="button" :aria-current="currentRoute === 'home' ? 'page' : undefined" @click="navigateAndClose('home')">
+        <button :class="{ active: currentRoute === 'home' }" type="button" title="首页" :aria-current="currentRoute === 'home' ? 'page' : undefined" @click="navigateAndClose('home')">
           <Home :size="18" aria-hidden="true" />
           <span>首页</span>
         </button>
         <button
           :class="{ active: currentRoute === 'characterNew' }"
           type="button"
+          title="创建"
           :aria-current="currentRoute === 'characterNew' ? 'page' : undefined"
           @click="navigateAndClose('characterNew')"
         >
@@ -280,6 +324,7 @@ function usesConversationLayout(routeName) {
         <button
           :class="{ active: isWorldBookRoute }"
           type="button"
+          title="世界书"
           :aria-current="isWorldBookRoute ? 'page' : undefined"
           @click="navigateAndClose('worldBooks')"
         >
@@ -287,17 +332,19 @@ function usesConversationLayout(routeName) {
           <span>世界书</span>
         </button>
         <button
-          :class="{ active: isPresetsRoute }"
+          :class="{ active: isPersonalSettingsRoute }"
           type="button"
-          :aria-current="isPresetsRoute ? 'page' : undefined"
-          @click="navigateAndClose('presets')"
+          title="个人中心"
+          :aria-current="isPersonalSettingsRoute ? 'page' : undefined"
+          @click="navigateAndClose('settings')"
         >
-          <SlidersHorizontal :size="18" aria-hidden="true" />
-          <span>预设</span>
+          <UserRound :size="18" aria-hidden="true" />
+          <span>个人</span>
         </button>
         <button
           :class="{ active: isExtensionsRoute }"
           type="button"
+          title="扩展"
           :aria-current="isExtensionsRoute ? 'page' : undefined"
           @click="navigateAndClose('extensions')"
         >
@@ -325,6 +372,7 @@ function usesConversationLayout(routeName) {
             aria-haspopup="menu"
             :aria-expanded="String(userMenuOpen)"
             aria-label="用户菜单"
+            :title="user?.displayName || user?.accountName || user?.username || '用户菜单'"
             @click.stop="toggleUserMenu"
           >
             <span v-if="user?.avatarUrl" class="user-chip-avatar">
@@ -354,7 +402,7 @@ function usesConversationLayout(routeName) {
           </div>
         </div>
       </div>
-    </header>
+    </aside>
 
     <main id="main-content" ref="pageShellRef" class="page-shell" tabindex="-1" @scroll.passive="handlePageScroll">
       <slot />
@@ -374,7 +422,7 @@ function usesConversationLayout(routeName) {
       </button>
     </Transition>
 
-    <nav v-if="!isConversationRoute" class="mobile-bottom-nav" aria-label="移动端主导航">
+    <nav v-if="showMobileBottomNav" class="mobile-bottom-nav" aria-label="移动端主导航">
       <button :class="{ active: currentRoute === 'home' }" type="button" :aria-current="currentRoute === 'home' ? 'page' : undefined" @click="navigateAndClose('home')">
         <Home :size="20" aria-hidden="true" />
         <span>首页</span>
@@ -387,9 +435,9 @@ function usesConversationLayout(routeName) {
         <BookOpen :size="20" aria-hidden="true" />
         <span>世界书</span>
       </button>
-      <button :class="{ active: isPresetsRoute }" type="button" :aria-current="isPresetsRoute ? 'page' : undefined" @click="navigateAndClose('presets')">
-        <SlidersHorizontal :size="20" aria-hidden="true" />
-        <span>预设</span>
+      <button :class="{ active: currentRoute === 'settings' }" type="button" title="个人中心" :aria-current="currentRoute === 'settings' ? 'page' : undefined" @click="navigateAndClose('settings')">
+        <UserRound :size="20" aria-hidden="true" />
+        <span>个人</span>
       </button>
     </nav>
   </div>

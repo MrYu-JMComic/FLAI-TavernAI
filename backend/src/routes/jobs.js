@@ -3,6 +3,7 @@ import { z } from 'zod';
 import {
   cancelJob,
   getJob,
+  getStatusBarAgentJobStatus,
   PUBLIC_JOB_TYPES,
   listJobEvents,
   listJobs,
@@ -55,7 +56,12 @@ export function createJobsRouter(ctx) {
       response.status(404).json({ error: '任务不存在' });
       return;
     }
-    response.json(job);
+    response.json({
+      ...job,
+      ...(job.type === 'conversation.postprocess'
+        ? { statusBarAgentStatus: getStatusBarAgentJobStatus(db, job) }
+        : {})
+    });
   });
 
   router.delete('/:jobId', requireAuth, (request, response) => {

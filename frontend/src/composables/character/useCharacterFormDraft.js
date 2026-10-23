@@ -1,22 +1,20 @@
 import { computed, ref } from 'vue';
-import { recordFrontendDiagnostic } from '../../diagnostics.js';
-
-const CHARACTER_FORM_DRAFT_STORAGE_PREFIX = 'flai-character-form-draft';
 const CHARACTER_FORM_DRAFT_AUTOSAVE_MS = 30000;
 const CHARACTER_FORM_DRAFT_DEBOUNCE_MS = 1200;
-const CHARACTER_FORM_DRAFT_MAX_CHARS = 200000;
 
 export function useCharacterFormDraft({
-  isEditing,
-  editingCharacterId,
   canEdit,
+  persistenceEnabled = () => true,
   isDisposed = () => false,
+  isBusy = () => false,
   buildPayload = () => ({}),
   getSelectedWorldBookIds = () => [],
   normalizePayload = (payload) => payload || {},
   normalizeWorldBookIds = (ids) => (Array.isArray(ids) ? ids : []),
   applyPayload = () => {},
-  setSelectedWorldBookIds = () => {}
+  setSelectedWorldBookIds = () => {},
+  readDraft = async () => null,
+  writeDraft = async () => ({})
 } = {}) {
   const pendingCharacterDraft = ref(null);
   const characterDraftStatus = ref('idle');
@@ -26,34 +24,47 @@ export function useCharacterFormDraft({
   let characterDraftSaveTimer = null;
   let characterDraftInterval = null;
   let characterDraftHydrating = false;
+  let lastPersistedSnapshot = '';
+  let saveQueue = Promise.resolve();
+  let draftEpoch = 0;
+  let draftReady = false;
+  let draftResetting = false;
+
+  const canDiscardCharacterDraft = computed(() => (
+    Boolean(pendingCharacterDraft.value || hasUnsavedChanges.value || characterDraftSavedAt.value)
+    && Boolean(canEdit?.value)
+    && !isDisposed()
+    && Boolean(characterDraftBaselineSerialized)
+  ));
 
   const characterDraftStatusText = computed(() => {
     if (pendingCharacterDraft.value) {
-      return '发现未提交的本地草稿';
+      return '发现未提交的服务器草稿';
     }
     if (characterDraftStatus.value === 'saving') {
-      return '草稿保存中...';
+      return '正在保存服务器草稿...';
     }
     if (characterDraftStatus.value === 'saved') {
       return characterDraftSavedAt.value
-        ? `草稿已自动保存 ${formatCharacterDraftTime(characterDraftSavedAt.value)}`
-        : '草稿已自动保存';
+        ? `服务器草稿已保存 ${formatCharacterDraftTime(characterDraftSavedAt.value)}`
+        : '服务器草稿已保存';
     }
     if (characterDraftStatus.value === 'restored') {
-      return '草稿已恢复，保存角色后会清理本地草稿';
-    }
-    if (characterDraftStatus.value === 'too-large') {
-      return '草稿内容过大，已暂停自动保存';
+      return '服务器草稿已恢复，保存角色后正式生效';
     }
     if (characterDraftStatus.value === 'error') {
-      return '草稿暂时无法保存';
+      return '服务器草稿保存失败，当前输入仍保留，请重试';
     }
     return '';
   });
 
-  function initializeCharacterDraftState() {
+  async function initializeCharacterDraftState() {
+    const epoch = ++draftEpoch;
     establishCharacterDraftBaseline();
-    loadPendingCharacterDraft();
+    draftReady = false;
+    lastPersistedSnapshot = characterDraftBaselineSerialized;
+    await loadPendingCharacterDraft(epoch);
+    if (!isDisposed() && epoch === draftEpoch) draftReady = true;
   }
 
   function establishCharacterDraftBaseline() {
@@ -61,6 +72,7 @@ export function useCharacterFormDraft({
     characterDraftStatus.value = 'idle';
     characterDraftSavedAt.value = '';
     hasUnsavedChanges.value = false;
+    draftReady = true;
   }
 
   function refreshCharacterDraftDirtyState() {
@@ -81,32 +93,23 @@ export function useCharacterFormDraft({
   }
 
   function serializeCharacterDraftSnapshot(snapshot = buildCharacterDraftSnapshot()) {
-    return JSON.stringify({
+    return stableSerialize({
       payload: normalizePayload(snapshot.payload),
       selectedWorldBookIds: normalizeWorldBookIds(snapshot.selectedWorldBookIds)
     });
   }
 
-  function getCharacterDraftStorageKey() {
-    if (isEditing?.value) {
-      const characterId = String(editingCharacterId?.value || '').trim();
-      return characterId ? `${CHARACTER_FORM_DRAFT_STORAGE_PREFIX}:edit:${characterId}` : '';
-    }
-    return `${CHARACTER_FORM_DRAFT_STORAGE_PREFIX}:new`;
-  }
-
-  function loadPendingCharacterDraft() {
+  async function loadPendingCharacterDraft(epoch) {
     pendingCharacterDraft.value = null;
-    if (!canEdit?.value) {
-      return;
-    }
-    const draft = readCharacterDraftFromStorage();
+    if (!canEdit?.value || !persistenceEnabled()) return;
+    const draft = await readDraft();
+    if (isDisposed() || epoch !== draftEpoch) return;
     if (!draft) {
       return;
     }
     const serialized = serializeCharacterDraftSnapshot(draft);
+    lastPersistedSnapshot = serialized;
     if (!serialized || serialized === characterDraftBaselineSerialized) {
-      removeCharacterDraftFromStorage();
       return;
     }
     pendingCharacterDraft.value = draft;
@@ -114,51 +117,10 @@ export function useCharacterFormDraft({
     characterDraftStatus.value = 'idle';
   }
 
-  function readCharacterDraftFromStorage() {
-    const key = getCharacterDraftStorageKey();
-    if (!key) {
-      return null;
-    }
-    try {
-      const raw = localStorage.getItem(key);
-      if (!raw) {
-        return null;
-      }
-      const parsed = JSON.parse(raw);
-      return normalizeCharacterDraftRecord(parsed);
-    } catch {
-      removeCharacterDraftFromStorage();
-      return null;
-    }
-  }
-
-  function normalizeCharacterDraftRecord(input = {}) {
-    if (!input || typeof input !== 'object' || Array.isArray(input)) {
-      return null;
-    }
-    const payload = normalizePayload(input.payload || input.character || {});
-    return {
-      payload,
-      selectedWorldBookIds: normalizeWorldBookIds(input.selectedWorldBookIds || input.worldBookIds),
-      updatedAt: String(input.updatedAt || '')
-    };
-  }
-
-  function removeCharacterDraftFromStorage() {
-    const key = getCharacterDraftStorageKey();
-    if (!key) {
-      return;
-    }
-    try {
-      localStorage.removeItem(key);
-    } catch (error) {
-      recordFrontendDiagnostic('characterForm.draft.remove', error, { key });
-    }
-  }
-
   function clearCurrentCharacterDraft() {
     clearCharacterDraftSaveTimer();
-    removeCharacterDraftFromStorage();
+    draftEpoch += 1;
+    lastPersistedSnapshot = serializeCharacterDraftSnapshot();
     pendingCharacterDraft.value = null;
     characterDraftStatus.value = 'idle';
     characterDraftSavedAt.value = '';
@@ -167,8 +129,8 @@ export function useCharacterFormDraft({
 
   function restoreCharacterDraft() {
     const draft = pendingCharacterDraft.value;
-    if (!draft || !canEdit?.value) {
-      return;
+    if (!draft || isDisposed() || isBusy() || !canEdit?.value) {
+      return false;
     }
     characterDraftHydrating = true;
     try {
@@ -182,19 +144,48 @@ export function useCharacterFormDraft({
     characterDraftSavedAt.value = draft.updatedAt || '';
     refreshCharacterDraftDirtyState();
     scheduleCharacterDraftSave();
+    return true;
   }
 
-  function discardCharacterDraft() {
+  async function discardCharacterDraft() {
+    if (isBusy() || draftResetting || !canDiscardCharacterDraft.value) return false;
+    draftResetting = true;
+    const baseline = JSON.parse(characterDraftBaselineSerialized);
+    clearCharacterDraftSaveTimer();
+    const epoch = ++draftEpoch;
+    await saveQueue;
+    let resetSnapshot = baseline;
+    try {
+      const saved = persistenceEnabled() ? await writeDraft(baseline, { reset: true }) : null;
+      resetSnapshot = saved?.snapshot || baseline;
+    } catch {
+      draftResetting = false;
+      characterDraftStatus.value = 'error';
+      return false;
+    }
+    if (isDisposed() || epoch !== draftEpoch) {
+      draftResetting = false;
+      return false;
+    }
+    characterDraftHydrating = true;
+    try {
+      applyPayload(resetSnapshot.payload);
+      setSelectedWorldBookIds(resetSnapshot.selectedWorldBookIds);
+    } finally {
+      characterDraftHydrating = false;
+    }
+    establishCharacterDraftBaseline();
     clearCurrentCharacterDraft();
-    scheduleCharacterDraftSave();
+    draftResetting = false;
+    return true;
   }
 
   function scheduleCharacterDraftSave() {
-    refreshCharacterDraftDirtyState();
-    if (!canPersistCharacterDraft()) {
+    const serialized = refreshCharacterDraftDirtyState();
+    clearCharacterDraftSaveTimer();
+    if (!canPersistCharacterDraft() || serialized === lastPersistedSnapshot) {
       return;
     }
-    clearCharacterDraftSaveTimer();
     characterDraftSaveTimer = setTimeout(() => {
       characterDraftSaveTimer = null;
       saveCharacterDraftNow();
@@ -204,47 +195,43 @@ export function useCharacterFormDraft({
   function saveCharacterDraftNow() {
     clearCharacterDraftSaveTimer();
     if (!canPersistCharacterDraft()) {
-      return false;
+      return saveQueue.then(() => !persistenceEnabled() || (draftReady && !draftResetting && !pendingCharacterDraft.value));
     }
     const snapshot = buildCharacterDraftSnapshot();
     const serialized = refreshCharacterDraftDirtyState();
-    if (!serialized || serialized === characterDraftBaselineSerialized) {
-      removeCharacterDraftFromStorage();
-      characterDraftStatus.value = 'idle';
-      characterDraftSavedAt.value = '';
-      return false;
+    if (!pendingCharacterDraft.value
+      && serialized === characterDraftBaselineSerialized
+      && serialized === lastPersistedSnapshot) {
+      return saveQueue.then(() => true);
     }
-    const updatedAt = new Date().toISOString();
-    const raw = JSON.stringify({
-      version: 1,
-      mode: isEditing?.value ? 'edit' : 'new',
-      characterId: isEditing?.value ? editingCharacterId?.value : '',
-      updatedAt,
-      ...snapshot
+    const epoch = draftEpoch;
+    saveQueue = saveQueue.catch(() => {}).then(async () => {
+      if (epoch !== draftEpoch || serialized === lastPersistedSnapshot) return true;
+      characterDraftStatus.value = 'saving';
+      try {
+        const saved = await writeDraft(snapshot);
+        if (isDisposed() || epoch !== draftEpoch) return true;
+        lastPersistedSnapshot = serialized;
+        characterDraftSavedAt.value = saved?.updatedAt || new Date().toISOString();
+        characterDraftStatus.value = 'saved';
+        return true;
+      } catch {
+        if (!isDisposed() && epoch === draftEpoch) characterDraftStatus.value = 'error';
+        return false;
+      }
     });
-    if (raw.length > CHARACTER_FORM_DRAFT_MAX_CHARS) {
-      characterDraftStatus.value = 'too-large';
-      return false;
-    }
-    characterDraftStatus.value = 'saving';
-    try {
-      localStorage.setItem(getCharacterDraftStorageKey(), raw);
-      characterDraftSavedAt.value = updatedAt;
-      characterDraftStatus.value = 'saved';
-      return true;
-    } catch {
-      characterDraftStatus.value = 'error';
-      return false;
-    }
+    return saveQueue;
   }
 
   function canPersistCharacterDraft() {
     return !isDisposed()
       && !characterDraftHydrating
+      && !draftResetting
       && Boolean(canEdit?.value)
       && !pendingCharacterDraft.value
+      && draftReady
       && Boolean(characterDraftBaselineSerialized)
-      && Boolean(getCharacterDraftStorageKey());
+      && persistenceEnabled();
   }
 
   function startCharacterDraftInterval() {
@@ -269,12 +256,14 @@ export function useCharacterFormDraft({
   }
 
   function flushCharacterDraftBeforeDispose() {
-    saveCharacterDraftNow();
+    const saved = saveCharacterDraftNow();
     clearCharacterDraftSaveTimer();
     stopCharacterDraftInterval();
+    return saved;
   }
 
   return {
+    canDiscardCharacterDraft,
     characterDraftSavedAt,
     characterDraftStatus,
     characterDraftStatusText,
@@ -286,6 +275,7 @@ export function useCharacterFormDraft({
     initializeCharacterDraftState,
     pendingCharacterDraft,
     restoreCharacterDraft,
+    saveCharacterDraftNow,
     scheduleCharacterDraftSave,
     startCharacterDraftInterval
   };
@@ -297,4 +287,13 @@ function formatCharacterDraftTime(value) {
     return '';
   }
   return date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
+}
+
+function stableSerialize(value) {
+  if (value === undefined) return 'null';
+  if (Array.isArray(value)) return `[${value.map(stableSerialize).join(',')}]`;
+  if (value && typeof value === 'object') {
+    return `{${Object.keys(value).filter(key => value[key] !== undefined).sort().map(key => `${JSON.stringify(key)}:${stableSerialize(value[key])}`).join(',')}}`;
+  }
+  return JSON.stringify(value);
 }

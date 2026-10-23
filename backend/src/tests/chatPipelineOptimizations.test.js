@@ -11,6 +11,7 @@ const {
   linkCharacter
 } = await import('../services/worldBooks/worldBookService.js');
 const { matchWorldBookEntries } = await import('../services/worldBooks/worldBookRuntime.js');
+const { buildPromptPipeline } = await import('../services/promptPipeline.js');
 const { createSwipesRouter } = await import('../routes/swipes.js');
 const { insertUser, withServer } = await import('./routeTestUtils.js');
 
@@ -56,7 +57,7 @@ function createStickyWorldBookFixture(databaseLabel) {
   const stateCount = () => database
     .prepare('SELECT COUNT(*) AS count FROM conversation_world_book_state WHERE conversation_id = ?')
     .get(conversationId).count;
-  return { database, character, conversationId, match, entryState, stateCount };
+  return { database, userId, character, conversationId, match, entryState, stateCount };
 }
 
 test('world book dry-run matching leaves entry state untouched', () => {
@@ -92,9 +93,19 @@ test('world book dry-run does not consume sticky windows or advance the counter'
   assert.equal(match('无关文本', { messageCount: 4 }).length, 0);
 });
 
-test('prompt pipeline persists world book state while context preview stays dry', () => {
+test('prompt pipeline keeps lore outside the dialogue allocation and persists its state while previews stay dry', (t) => {
+  const { database, userId, character, conversationId, entryState } = createStickyWorldBookFixture('pipeline-budget');
+  t.after(() => database.close());
+  const pipeline = buildPromptPipeline(database, {
+    user: { id: userId, username: userId }, character,
+    conversation: { id: conversationId }, content: '触发关键词',
+    contextBudgetCharacters: 1000, tokenBudget: { inputTokenLimit: 1 }
+  });
+  assert.equal(pipeline.budget.overTokenBudget, true);
+  assert.equal(pipeline.worldBookMatches.length, 1);
+  assert.ok(pipeline.sections.worldBook.budget.keptCharacters > 0);
+  assert.equal(entryState().was_active, 1);
   assert.match(promptPipelineSource, /persistState: source\.persistWorldBookState !== false/);
-  assert.match(promptPipelineSource, /contextSize: Math\.ceil\(contextBudgetCharacters \/ TOKEN_CHAR_DIVISOR\)/);
   assert.match(contextPreviewSource, /persistWorldBookState: false/);
   // One savepoint per match, not one per entry: the runtime batches the whole
   // state write and the repository owns the per-entry statements.
@@ -139,7 +150,7 @@ test('parseSse always releases the upstream reader', () => {
 
 test('generation route locks per conversation and skips usage aggregation', () => {
   assert.match(generationRouteSource, /getConversationForUser\(db, userId, conversationId, \{ includeUsage: false \}\)/);
-  assert.match(generationRouteSource, /beginConversationGeneration\(db, userId, conversationId\)/);
+  assert.match(generationRouteSource, /beginConversationGeneration\(db, userId, conversationId, \{ backgroundSafe: true \}\)/);
   assert.match(generationRouteSource, /if \(!ticket\) \{\s*return;\s*\}/);
   assert.match(generationRouteSource, /finally \{\s*finishFailedTrace\(ticket\);\s*endConversationGeneration\(db, ticket\);\s*\}/);
   assert.doesNotMatch(generationRouteSource, /queueMicrotask|startAccessoryAgentsInBackground/);
@@ -155,7 +166,12 @@ test('non-stream completions carry an abort signal with a timeout ceiling', () =
   assert.match(providersSource, /const signal = buildNonStreamSignal\(options\);/);
   assert.match(providersSource, /AbortSignal\.any\(\[options\.signal, timeoutSignal\]\)/);
   assert.match(providersSource, /export const NON_STREAM_COMPLETION_TIMEOUT_MS = 300_000;/);
-  assert.match(providerAnthropicSource, /buildAnthropicBody\(settings, messages, false, options\);[^]{0,200}signal: options\.signal/);
+  const anthropicNonStream = providerAnthropicSource.slice(
+    providerAnthropicSource.indexOf('export async function generateAnthropicMessage('),
+    providerAnthropicSource.indexOf('export async function streamAnthropicMessage(')
+  );
+  assert.match(anthropicNonStream, /buildAnthropicBody\(settings, messages, false, options\);/);
+  assert.match(anthropicNonStream, /signal: options\.signal/);
   assert.match(providerOpenAiResponsesSource, /stream: false\s*\}\),\s*signal: options\.signal/);
   assert.match(providerHttpSource, /if \(error\?\.name === 'TimeoutError'\) \{/);
 });
@@ -167,7 +183,7 @@ test('accessory agents abort their provider calls at the deadline', () => {
   assert.match(accessoryAgentsSource, /controller\.abort\(Object\.assign\(new Error\(`\$\{skill\} timed out`\)/);
   assert.match(accessoryAgentsSource, /await withTimeout\(handler\(signal\), timeoutMs \+ agentAbortGraceMs/);
   assert.match(accessoryAgentsSource, /onNoToolCall: statusBarNoToolNudge/);
-  assert.match(accessoryAgentsSource, /maxRounds:\s*2,[\s\S]{0,80}thinkingEnabled:\s*false,[\s\S]{0,80}signal/);
+  assert.match(accessoryAgentsSource, /maxRounds:\s*6,\s*\.\.\.accessorySkillThinkingOptions\(agentSettings, skill\),\s*signal,/);
 });
 
 // ── Swipe input validation ──

@@ -112,7 +112,7 @@ WorldBookAiPanel.vue / CharacterAiDraftPanel.vue
 | L-012 / D | 一些 helper 只有少量文本引用，尚不能证明无生产调用 | 检查静态 import、动态事件、工具、prompt、表访问和测试后才可判断删除 |
 | L-015 / C，运行时已收口 | 0020 清理旧全局 world-book 状态；只用真实 conversation 状态，作者预览只读 | 保留历史迁移，禁止 `legacyCounters` 或无会话 fallback 回归；architecture/session/database 测试 |
 | L-016 / B | `world-book.assist` 已共用工作区，旧 `worldBookId` 映射默认选书 ID | 支持的旧任务 payload 迁移后去掉旧参数适配；后台生成不自动写书；jobs/workspace 测试 |
-| L-018 / B | `PresetView` 与 Settings presets 两个编辑入口/状态 | 明确产品正式入口，完成路由、状态与 E2E 后收口 |
+| L-018 / A，已收口 | 预设管理统一进入个人中心；`/presets` 保留为兼容跳转 | `SettingsPresetPanel` 与 settings composable 是唯一编辑入口；保留兼容路由和功能测试 |
 | L-019 / D | bootstrap/assets、单个 preset 读取和部分 talent mutation wrapper 缺生产 UI 调用方，仍被测试/barrel 引用 | 先决定接入功能或删除 wrapper，再更新测试和导出；测试引用不等于生产引用 |
 | L-020 / B | `api/chat.js` 同时承接消息、记忆、存档、场景、经济和 gameplay | 按领域迁移组件与测试 import、同步后端路由后去掉兼容转发，避免重复实现 |
 

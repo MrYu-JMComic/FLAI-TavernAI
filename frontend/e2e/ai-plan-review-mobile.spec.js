@@ -54,6 +54,16 @@ for (const viewport of viewports) {
           planProgress: { steps: payload.plan.steps.map((step) => ({ ...step, status: 'completed' })) }
         }
         : { phase: 'plan', plan, process: [], toolCalls: [], reasoning: '' };
+      const current = await apiRequest(page, `/api/character-assistant/sessions/${payload.assistantSessionId}`);
+      await apiRequest(page, `/api/character-assistant/sessions/${payload.assistantSessionId}`, {
+        method: 'PATCH',
+        body: {
+          character: result.character || payload.character,
+          state: { ...current.state, ...result, plan: payload.plan?.approved ? null : plan,
+            planPhase: payload.plan?.approved ? 'done' : 'review',
+            status: payload.plan?.approved ? 'completed' : 'review' }
+        }
+      });
       await route.fulfill({
         status: 200,
         contentType: 'text/event-stream; charset=utf-8',
@@ -65,17 +75,15 @@ for (const viewport of viewports) {
     });
 
     await page.setViewportSize(viewport);
-    await page.goto(`/#/characters/${character.id}/edit`);
-    const directory = viewport.width <= 760 ? '.character-mobile-section-item' : '.character-studio-nav-item';
-    await page.locator(`${directory}[data-section-id="ai"]`).click();
-    const panel = page.locator('.ai-draft-panel');
-    await panel.getByLabel('\u5b8c\u5584\u8981\u6c42').fill('\u7cbe\u7b80\u72b6\u6001\u680f\u53d8\u91cf\u5e76\u4fdd\u7559\u6838\u5fc3\u4fe1\u606f');
-    await panel.locator('.ai-plan-card').click();
-    await expect(panel.locator('.ai-plan-card input')).toBeChecked();
-    await panel.getByRole('button', { name: '\u751f\u6210\u8ba1\u5212', exact: true }).click();
+    await page.goto(`/#/characters/${character.id}/assistant`);
+    const panel = page.locator('.character-assistant-page');
+    await panel.getByRole('textbox', { name: '给角色助手发送消息' }).fill('\u7cbe\u7b80\u72b6\u6001\u680f\u53d8\u91cf\u5e76\u4fdd\u7559\u6838\u5fc3\u4fe1\u606f');
+    await panel.locator('.assistant-plan-toggle').click();
+    await expect(panel.locator('.assistant-plan-toggle')).toHaveAttribute('aria-pressed', 'true');
+    await panel.getByRole('button', { name: '发送消息', exact: true }).click();
 
     const card = panel.locator('.ai-plan-review');
-    await expect(panel.locator('.ai-workbench-status')).toContainText('\u5f85\u5ba1\u6279');
+    await expect(card.locator('.ai-plan-title')).toContainText('\u8ba1\u5212\u5f85\u5ba1\u6279');
     await expect(card.locator('.ai-plan-risks li')).toHaveCount(3);
     await expect(card.locator('.ai-plan-step')).toHaveCount(2);
     await expect(card.locator('.ai-plan-step-section').first()).toHaveText('\u9ad8\u9636\u8bbe\u7f6e');
@@ -103,10 +111,11 @@ for (const viewport of viewports) {
 
     await card.getByRole('button', { name: '\u91cd\u65b0\u89c4\u5212', exact: true }).click();
     await expect.poll(() => requests.length).toBe(2);
-    await expect(panel.locator('.ai-workbench-status')).toContainText('\u5f85\u5ba1\u6279');
+    await expect(card.locator('.ai-plan-title')).toContainText('\u8ba1\u5212\u5f85\u5ba1\u6279');
     await card.getByRole('button', { name: '\u653e\u5f03', exact: true }).click();
     await expect(card).toHaveCount(0);
-    await panel.getByRole('button', { name: '\u751f\u6210\u8ba1\u5212', exact: true }).click();
+    await panel.getByRole('textbox', { name: '给角色助手发送消息' }).fill('精简状态栏变量并保留核心信息');
+    await panel.getByRole('button', { name: '发送消息', exact: true }).click();
     await expect.poll(() => requests.length).toBe(3);
     await expect(card.locator('.ai-plan-step')).toHaveCount(2);
 
@@ -128,7 +137,7 @@ for (const viewport of viewports) {
       extraRequirement
     });
     expect(requests[3].plan.steps).toHaveLength(1);
-    await expect(panel.locator('.ai-workbench-status')).toContainText('\u5df2\u5b8c\u6210');
+    await expect(panel.getByRole('textbox', { name: '给角色助手发送消息' })).toHaveValue('');
     await expect(card).toHaveCount(0);
   });
 }

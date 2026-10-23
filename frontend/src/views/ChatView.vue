@@ -11,7 +11,7 @@ import ChatStatusSummary from '../components/chat/ChatStatusSummary.vue';
 import ChatProcessingStatus from '../components/chat/ChatProcessingStatus.vue';
 import GameHud from '../components/game/GameHud.vue';
 import { fetchConversationMessages } from '../api/chat.js';
-import { saveProviderSettings } from '../api/providers.js';
+import { listProviderProfiles, saveProviderSettings, selectProviderProfile } from '../api/providers.js';
 import { useNotify } from '../composables/useNotify';
 import { useChatConversation } from '../composables/chat/useChatConversation';
 import { useChatDraft } from '../composables/chat/useChatDraft.js';
@@ -23,7 +23,7 @@ import { useChatSubmit } from '../composables/chat/useChatSubmit';
 import { useChatWorkspaceUi } from '../composables/chat/useChatWorkspaceUi';
 import { useProviderModels } from '../composables/useProviderModels';
 import { isPhoneViewport } from '../composables/useViewport';
-import { refreshProviderModels } from '../services/modelCatalog';
+import { readCachedProviderModels, refreshProviderModels } from '../services/modelCatalog';
 import { callEventMethod } from '../utils/eventMethods';
 import { copyTextToClipboard } from '../utils/clipboard.js';
 
@@ -34,6 +34,7 @@ const ChatSettingsDrawer = defineAsyncComponent(() => import('../components/chat
 const ChatContextInspector = defineAsyncComponent(() => import('../components/chat/ChatContextInspector.vue'));
 const ChatModelSwitcher = defineAsyncComponent(() => import('../components/chat/ChatModelSwitcher.vue'));
 const MemoryAgentSettingsDialog = defineAsyncComponent(() => import('../components/chat/MemoryAgentSettingsDialog.vue'));
+const StatusBarAgentSettingsDialog = defineAsyncComponent(() => import('../components/chat/StatusBarAgentSettingsDialog.vue'));
 
 const props = defineProps({
   route: { type: Object, required: true },
@@ -53,6 +54,14 @@ const composerTextarea = ref(null);
 const modelSwitcherOpen = ref(false);
 const modelSwitcherRefreshing = ref(false);
 const modelSwitcherSaving = ref(false);
+const modelSwitcherProviderSwitching = ref(false);
+const modelSwitcherError = ref('');
+const modelSwitcherProfilesError = ref('');
+const modelSwitcherProfilesLoading = ref(false);
+const modelSwitcherProviderProfiles = ref([]);
+const modelSwitcherSelectedProviderId = ref('');
+const modelSwitcherProvider = ref(null);
+const modelSwitcherModels = ref([]);
 const worldBookMatchDialogOpen = ref(false);
 const contextInspectorOpen = ref(false);
 const statusBarUpdateStatus = ref('not-updated');
@@ -61,15 +70,20 @@ const statusBarCollapseRequest = ref(0);
 let conversationLoadToken = 0;
 let modelRefreshToken = 0;
 let modelSaveToken = 0;
+let modelProviderSelectionToken = 0;
+let modelProviderProfilesToken = 0;
 let chatViewDisposed = false;
 let accessoryRefreshSnapshot = {
   conversationId: '',
-  statusBar: ''
+  assistantMessageId: '',
+  jobId: ''
 };
 
 const ACCESSORY_UPDATING = 'updating';
 const ACCESSORY_UPDATED = 'updated';
 const ACCESSORY_NOT_UPDATED = 'not-updated';
+const ACCESSORY_CHECKED = 'checked';
+const ACCESSORY_FAILED = 'failed';
 
 function showError(message) {
   const needsFix = /API Key|SK|密钥|供应商|网关|模型/.test(message);
@@ -120,7 +134,7 @@ const {
 
 const {
   statusBar, statusBarForm, statusBarEditorOpen, statusBarSaving,
-  statusBarTemplateMode, statusBarTemplateConfig, statusBarTemplateIssues, statusBarTemplateCfg,
+  statusBarTemplateMode, statusBarTemplateConfig, statusBarTemplateCfg,
   accessorySettingsOpen, accessorySaving, accessorySkills, accessorySkillResults,
   accessorySkillItems, memoryAgentTools, updateAccessorySkill,
   hasStatusBarContent, showEconomyFeature, showSceneFeature, showGameHudFeature, showRewardFeature,
@@ -237,15 +251,15 @@ function prepareExpandedStatusBarForSubmit() {
 const { providerModels, syncProviderModels } = useProviderModels(computed(() => props.provider));
 
 const {
-  input, chatAttachments, attachmentBusy, useStream, thinkingEnabled, imageGenerationEnabled,
+  input, chatAttachments, attachmentBusy, useStream, thinkingEnabled, webSearchEnabled, imageGenerationEnabled,
   imageModel, imageModelOptions, imageModelHint,
   thinkingLevel, thinkingOptions,
   sending, requestPending, usage, lastFailure, latestWorldBookMatches,
-  canSend, canContinueGeneration, canToggleThinking, canToggleImageGeneration, canUseStream, canAddAttachments, chatProviderCapabilities,
+  canSend, canContinueGeneration, canToggleThinking, canToggleWebSearch, canToggleImageGeneration, canUseStream, canAddAttachments, chatProviderCapabilities,
   canGenerateImages,
   submitDraft, submit, continueGeneration, canRegenerateMessage, regenerateMessage, stop, retryLastFailure, dismissLastFailure,
   addChatAttachmentFiles, removeChatAttachment, clearChatAttachments,
-  setSelectedPresetId, toggleUseStream, toggleThinking, toggleImageGeneration, setThinkingLevel, setImageModel,
+  setSelectedPresetId, toggleUseStream, toggleThinking, toggleWebSearch, toggleImageGeneration, setThinkingLevel, setImageModel,
   cleanup: cleanupSubmit
 } = useChatSubmit({
   route: props.route, messages, provider: computed(() => props.provider),
@@ -439,16 +453,25 @@ function openModelSwitcher() {
     return;
   }
   syncProviderModels();
+  modelSwitcherProvider.value = { ...(props.provider || {}) };
+  modelSwitcherModels.value = providerModels.value;
+  modelSwitcherSelectedProviderId.value = String(props.provider?.id || '');
+  modelSwitcherError.value = '';
+  modelSwitcherProfilesError.value = '';
   modelSwitcherOpen.value = true;
+  void loadModelSwitcherProviderProfiles();
 }
 
 function closeModelSwitcher() {
-  if (modelSwitcherSaving.value) return;
+  if (modelSwitcherSaving.value || modelSwitcherProviderSwitching.value) return;
   modelSwitcherOpen.value = false;
 }
 
-function providerPayloadWithModel(model) {
-  const provider = props.provider || {};
+function restoreModelSwitcherFocus() {
+  nextTick(() => composerWrap.value?.focusModelControl?.());
+}
+
+function providerPayloadWithModel(model, provider = modelSwitcherProvider.value || props.provider || {}) {
   return {
     providerType: provider.providerType || 'custom',
     gatewayName: provider.gatewayName || '',
@@ -459,22 +482,121 @@ function providerPayloadWithModel(model) {
   };
 }
 
+async function loadModelSwitcherProviderProfiles() {
+  const requestToken = ++modelProviderProfilesToken;
+  modelSwitcherProfilesLoading.value = true;
+  modelSwitcherProfilesError.value = '';
+  try {
+    const bundle = await listProviderProfiles();
+    if (chatViewDisposed || requestToken !== modelProviderProfilesToken) return;
+    const profiles = Array.isArray(bundle?.providers) ? bundle.providers : [];
+    modelSwitcherProviderProfiles.value = profiles;
+    const selectedId = String(
+      bundle?.selectedProviderId
+      || profiles.find((profile) => profile?.selected)?.id
+      || props.provider?.id
+      || ''
+    );
+    modelSwitcherSelectedProviderId.value = selectedId;
+    const selected = profiles.find((profile) => profile?.id === selectedId);
+    if (selected) {
+      modelSwitcherProvider.value = { ...selected };
+      const cached = readCachedProviderModels(selected);
+      modelSwitcherModels.value = cached.length
+        ? cached
+        : providerRefreshKey(selected) === providerRefreshKey(props.provider || {})
+          ? providerModels.value
+          : [];
+    }
+  } catch (err) {
+    if (!chatViewDisposed && requestToken === modelProviderProfilesToken) {
+      modelSwitcherProfilesError.value = err.message || '无法加载网关列表';
+    }
+  } finally {
+    if (!chatViewDisposed && requestToken === modelProviderProfilesToken) {
+      modelSwitcherProfilesLoading.value = false;
+    }
+  }
+}
+
+async function selectChatProvider(providerId) {
+  const nextProviderId = String(providerId || '').trim();
+  if (
+    !nextProviderId
+    || nextProviderId === modelSwitcherSelectedProviderId.value
+    || modelSwitcherProviderSwitching.value
+    || modelSwitcherSaving.value
+  ) return;
+
+  const requestToken = ++modelProviderSelectionToken;
+  ++modelRefreshToken;
+  ++modelSaveToken;
+  modelSwitcherRefreshing.value = false;
+  modelSwitcherSaving.value = false;
+  modelSwitcherProviderSwitching.value = true;
+  modelSwitcherError.value = '';
+  try {
+    const bundle = await selectProviderProfile(nextProviderId);
+    if (chatViewDisposed || requestToken !== modelProviderSelectionToken) return;
+    const profiles = Array.isArray(bundle?.providers) ? bundle.providers : modelSwitcherProviderProfiles.value;
+    modelSwitcherProviderProfiles.value = profiles;
+    const selectedId = String(bundle?.selectedProviderId || nextProviderId);
+    const selected = profiles.find((profile) => profile?.id === selectedId)
+      || modelSwitcherProviderProfiles.value.find((profile) => profile?.id === nextProviderId);
+    if (!selected) throw new Error('已切换网关，但无法读取所选网关配置。');
+
+    modelSwitcherSelectedProviderId.value = selectedId;
+    modelSwitcherProvider.value = { ...selected };
+    modelSwitcherModels.value = readCachedProviderModels(selected);
+    modelSwitcherRefreshing.value = true;
+    emit('provider-saved');
+
+    try {
+      const models = await refreshProviderModels(selected, { forceRefresh: false });
+      if (chatViewDisposed || requestToken !== modelProviderSelectionToken) return;
+      modelSwitcherModels.value = models;
+    } catch (err) {
+      if (!chatViewDisposed && requestToken === modelProviderSelectionToken) {
+        modelSwitcherError.value = err.message || '无法加载所选网关模型';
+      }
+    } finally {
+      if (!chatViewDisposed && requestToken === modelProviderSelectionToken) {
+        modelSwitcherRefreshing.value = false;
+      }
+    }
+    if (!chatViewDisposed && requestToken === modelProviderSelectionToken) {
+      notify.success(`已切换当前网关：${selected.gatewayName || selected.name || selected.providerType}`);
+    }
+  } catch (err) {
+    if (!chatViewDisposed && requestToken === modelProviderSelectionToken) {
+      modelSwitcherError.value = err.message || '切换网关失败';
+    }
+  } finally {
+    if (!chatViewDisposed && requestToken === modelProviderSelectionToken) {
+      modelSwitcherProviderSwitching.value = false;
+    }
+  }
+}
+
 async function refreshQuickModels() {
-  if (modelSwitcherRefreshing.value || modelSwitcherSaving.value) {
+  if (modelSwitcherRefreshing.value || modelSwitcherSaving.value || modelSwitcherProviderSwitching.value) {
     return;
   }
   const requestToken = ++modelRefreshToken;
-  const providerSnapshot = { ...(props.provider || {}) };
+  const providerSnapshot = { ...(modelSwitcherProvider.value || props.provider || {}) };
   const refreshKey = providerRefreshKey(providerSnapshot);
   if (!providerSnapshot.baseUrl) {
     modelSwitcherRefreshing.value = false;
+    modelSwitcherError.value = '请先配置网关地址后再刷新模型。';
     showError('请先配置网关地址后再刷新模型。');
     return;
   }
+  modelSwitcherError.value = '';
   modelSwitcherRefreshing.value = true;
   try {
     const models = await refreshProviderModels(providerSnapshot, { forceRefresh: true });
     if (!isCurrentModelRefresh(requestToken, refreshKey)) return;
+    modelSwitcherModels.value = models;
     syncProviderModels();
     if (models.length) {
       notify.success(`已刷新 ${models.length} 个模型。`);
@@ -483,6 +605,7 @@ async function refreshQuickModels() {
     }
   } catch (err) {
     if (!isCurrentModelRefresh(requestToken, refreshKey)) return;
+    modelSwitcherError.value = err.message || '刷新模型失败';
     showError(err.message);
   } finally {
     if (isCurrentModelRefresh(requestToken, refreshKey)) {
@@ -494,17 +617,18 @@ async function refreshQuickModels() {
 function isCurrentModelRefresh(requestToken, refreshKey) {
   return !chatViewDisposed
     && requestToken === modelRefreshToken
-    && refreshKey === providerRefreshKey(props.provider || {});
+    && refreshKey === providerRefreshKey(modelSwitcherProvider.value || props.provider || {});
 }
 
 function isCurrentModelSave(requestToken, saveKey) {
   return !chatViewDisposed
     && requestToken === modelSaveToken
-    && saveKey === providerRefreshKey(props.provider || {});
+    && saveKey === providerRefreshKey(modelSwitcherProvider.value || props.provider || {});
 }
 
 function providerRefreshKey(provider = {}) {
   return [
+    provider.id || '',
     provider.providerType || '',
     provider.gatewayName || '',
     provider.baseUrl || '',
@@ -518,24 +642,29 @@ async function saveQuickModel(model) {
   if (modelSwitcherSaving.value) {
     return;
   }
+  if (modelSwitcherProviderSwitching.value) {
+    return;
+  }
   const nextModel = String(model || '').trim();
   if (!nextModel) return;
-  if (!props.provider?.baseUrl) {
+  const activeProvider = modelSwitcherProvider.value || props.provider || {};
+  if (!activeProvider.baseUrl) {
     showError('请先配置网关地址后再切换模型。');
     return;
   }
-  if (nextModel === props.provider?.model) {
+  if (nextModel === activeProvider.model) {
     modelSwitcherOpen.value = false;
     return;
   }
   const requestToken = ++modelSaveToken;
-  const saveKey = providerRefreshKey(props.provider || {});
+  const saveKey = providerRefreshKey(activeProvider);
   modelSwitcherSaving.value = true;
   try {
-    const saved = await saveProviderSettings(providerPayloadWithModel(nextModel));
+    const saved = await saveProviderSettings(providerPayloadWithModel(nextModel, activeProvider));
     if (!isCurrentModelSave(requestToken, saveKey)) {
       return;
     }
+    modelSwitcherProvider.value = { ...activeProvider, model: saved.model || nextModel };
     notify.success(`已切换模型：${saved.model || nextModel}`);
     modelSwitcherOpen.value = false;
     emit('provider-saved');
@@ -668,16 +797,19 @@ function appendCopyFallbackToComposer(text) {
   return true;
 }
 
-function beginAccessoryRefreshStatus() {
+// Track the shared postprocess job; only the status label depends on this Agent.
+function beginAccessoryRefreshStatus({ conversationId: targetConversationId = '', assistantMessageId = '', jobId = '' } = {}) {
   const conversationId = conversation.value?.id || '';
+  if (targetConversationId && targetConversationId !== conversationId) return false;
   accessoryRefreshSnapshot = {
     conversationId,
-    statusBar: serializeStatusBarSnapshot(statusBar.value)
+    assistantMessageId,
+    jobId
   };
   statusBarUpdateStatus.value = isAccessorySkillActiveLocal('statusBarAgent')
     ? ACCESSORY_UPDATING
     : ACCESSORY_NOT_UPDATED;
-  return hasPendingAccessoryRefresh();
+  return true;
 }
 
 function handleAccessorySkillResult(data = {}) {
@@ -687,9 +819,9 @@ function handleAccessorySkillResult(data = {}) {
   }
   const result = data.result || {};
   if (data.skill === 'statusBarAgent') {
-    const hasUpdates = Array.isArray(result.updates)
+    const hasUpdates = result.changed === true || (Array.isArray(result.updates)
       ? result.updates.length > 0
-      : Boolean(result.statusBar);
+      : Boolean(result.statusBar));
     statusBarUpdateStatus.value = data.ok && hasUpdates
       ? ACCESSORY_UPDATED
       : ACCESSORY_NOT_UPDATED;
@@ -721,17 +853,17 @@ function refreshStatusBarUpdateStatus(payload = {}) {
   if (!accessoryRefreshSnapshot.conversationId || accessoryRefreshSnapshot.conversationId !== conversation.value?.id) {
     return;
   }
-  const statusBarResult = Array.isArray(payload.results) ? payload.results[0] : null;
-  if (statusBarResult?.status === 'fulfilled') {
-    const nextFingerprint = serializeStatusBarSnapshot(statusBarResult.value);
-    if (nextFingerprint !== accessoryRefreshSnapshot.statusBar) {
-      accessoryRefreshSnapshot.statusBar = nextFingerprint;
-      statusBarUpdateStatus.value = ACCESSORY_UPDATED;
-      return;
-    }
-  }
-  if (payload.isFinal) {
+  if (!payload.isFinal || payload.jobId !== accessoryRefreshSnapshot.jobId
+    || payload.assistantMessageId !== accessoryRefreshSnapshot.assistantMessageId) return;
+  const agentStatus = payload.job?.statusBarAgentStatus;
+  if (agentStatus === 'updated') {
+    statusBarUpdateStatus.value = ACCESSORY_UPDATED;
+  } else if (agentStatus === 'checked') {
+    statusBarUpdateStatus.value = ACCESSORY_CHECKED;
+  } else if (agentStatus === 'not-run' && payload.job?.status === 'succeeded') {
     statusBarUpdateStatus.value = ACCESSORY_NOT_UPDATED;
+  } else {
+    statusBarUpdateStatus.value = ACCESSORY_FAILED;
   }
 }
 
@@ -747,34 +879,9 @@ function resetAccessoryUpdateStatus() {
   statusBarUpdateStatus.value = ACCESSORY_NOT_UPDATED;
   accessoryRefreshSnapshot = {
     conversationId: conversation.value?.id || '',
-    statusBar: serializeStatusBarSnapshot(statusBar.value)
+    assistantMessageId: '',
+    jobId: ''
   };
-}
-
-function serializeStatusBarSnapshot(value = null) {
-  if (!value) {
-    return '';
-  }
-  let snapshot = '';
-  snapshot = appendSnapshotField(snapshot, value.id || '');
-  snapshot = appendSnapshotField(snapshot, value.name || '');
-  snapshot = appendSnapshotField(snapshot, value.template || '');
-  snapshot = appendSnapshotField(snapshot, value.updatedAt || '');
-  const sourceVariables = Array.isArray(value.variables) ? value.variables : [];
-  snapshot = appendSnapshotField(snapshot, sourceVariables.length);
-  for (let index = 0; index < sourceVariables.length; index += 1) {
-    const item = sourceVariables[index];
-    snapshot = appendSnapshotField(snapshot, item?.name || '');
-    snapshot = appendSnapshotField(snapshot, item?.value ?? '');
-    snapshot = appendSnapshotField(snapshot, item?.max ?? '');
-    snapshot = appendSnapshotField(snapshot, item?.color || '');
-  }
-  return snapshot;
-}
-
-function appendSnapshotField(snapshot, value) {
-  const text = String(value ?? '');
-  return `${snapshot}${text.length}:${text};`;
 }
 
 async function createBranchFromMessage(message) {
@@ -818,8 +925,13 @@ async function regenerateLatestMessage(message) {
 }
 
 const memoryAgentDialogOpen = ref(false);
+const statusBarAgentDialogOpen = ref(false);
 
 function openSkillSettings(key) {
+  if (key === 'statusBarAgent') {
+    statusBarAgentDialogOpen.value = true;
+    return;
+  }
   if (key === 'memoryAgent') {
     memoryAgentDialogOpen.value = true;
   }
@@ -837,7 +949,23 @@ async function saveMemoryAgentSettings(payload) {
   memoryAgentDialogOpen.value = false;
 }
 
+function closeStatusBarAgentDialog() {
+  if (accessorySaving.value) return;
+  statusBarAgentDialogOpen.value = false;
+}
+
+async function saveStatusBarAgentSettings(payload) {
+  if (accessorySaving.value) return;
+  updateAccessorySkill('statusBarAgent', payload);
+  const saved = await saveAccessorySkillChanges();
+  if (saved) statusBarAgentDialogOpen.value = false;
+}
+
 function handleGlobalKeydown(event) {
+  if (event.key === 'Escape' && statusBarAgentDialogOpen.value) {
+    closeStatusBarAgentDialog();
+    return;
+  }
   if (event.key === 'Escape' && memoryAgentDialogOpen.value) {
     closeMemoryAgentDialog();
     return;
@@ -1212,6 +1340,25 @@ watch(() => providerRefreshKey(props.provider || {}), (providerKey, previousProv
   if (chatViewDisposed || !previousProviderKey || providerKey === previousProviderKey) {
     return;
   }
+  const previousSwitcherKey = providerRefreshKey(modelSwitcherProvider.value || {});
+  if (modelSwitcherOpen.value && modelSwitcherSelectedProviderId.value && props.provider?.id === modelSwitcherSelectedProviderId.value) {
+    modelSwitcherProvider.value = { ...(props.provider || {}) };
+    const cached = readCachedProviderModels(props.provider || {});
+    if (cached.length) modelSwitcherModels.value = cached;
+  } else if (modelSwitcherOpen.value && props.provider?.id && props.provider.id !== modelSwitcherSelectedProviderId.value) {
+    modelSwitcherProvider.value = { ...props.provider };
+    modelSwitcherSelectedProviderId.value = String(props.provider.id);
+    modelSwitcherModels.value = readCachedProviderModels(props.provider || {});
+  }
+  if (providerKey === providerRefreshKey(modelSwitcherProvider.value || {})) {
+    if (previousSwitcherKey !== providerKey) {
+      modelRefreshToken += 1;
+      modelSaveToken += 1;
+      modelSwitcherRefreshing.value = false;
+      modelSwitcherSaving.value = false;
+    }
+    return;
+  }
   modelRefreshToken += 1;
   modelSaveToken += 1;
   modelSwitcherRefreshing.value = false;
@@ -1311,7 +1458,6 @@ watch([showWorldBookMatchSummary, worldBookMatchSummary], ([shouldShow, matches]
       :status-bar-saving="statusBarSaving"
       :status-bar-form="statusBarForm"
       :status-bar-template-mode="statusBarTemplateMode"
-      :status-bar-template-issues="statusBarTemplateIssues"
       :status-bar-template-cfg="statusBarTemplateCfg"
         @close="closeWorkspaceTool('appearance')"
         @toggle-image-generation="toggleImageGeneration"
@@ -1337,6 +1483,16 @@ watch([showWorldBookMatchSummary, worldBookMatchSummary], ([shouldShow, matches]
       @remove-character-variable="removeCharacterVariable"
       @add-quick-reply="addQuickReply"
       @remove-quick-reply="removeQuickReply"
+    />
+
+    <StatusBarAgentSettingsDialog
+      :open="statusBarAgentDialogOpen"
+      :skill="accessorySkills.statusBarAgent"
+      :main-provider="props.provider"
+      :main-model-options="providerModels"
+      :saving="accessorySaving"
+      @close="closeStatusBarAgentDialog"
+      @save="saveStatusBarAgentSettings"
     />
 
     <MemoryAgentSettingsDialog
@@ -1482,6 +1638,7 @@ watch([showWorldBookMatchSummary, worldBookMatchSummary], ([shouldShow, matches]
           <div v-if="hasStatusBarVisible && message === latestAssistantMessage" class="status-bar-wrapper chat-status-summary-wrapper">
             <ChatStatusSummary
               v-model:expanded="statusSummaryExpanded"
+              :character-avatar-url="activeCharacter()?.avatarUrl || ''"
               :status-bar="statusBar"
               :template-config="statusBarTemplateConfig"
               :update-status="statusBarUpdateStatus"
@@ -1558,9 +1715,10 @@ watch([showWorldBookMatchSummary, worldBookMatchSummary], ([shouldShow, matches]
         :thinking-level="thinkingLevel"
         :thinking-options="thinkingOptions"
         :can-toggle-thinking="canToggleThinking"
+        :web-search-enabled="webSearchEnabled"
+        :can-toggle-web-search="canToggleWebSearch"
         :can-use-stream="canUseStream"
         :can-add-attachments="canAddAttachments"
-        :model-capabilities="chatProviderCapabilities"
         :chat-viewport-is-phone="chatViewportIsPhone"
         :show-scroll-bottom-button="showScrollBottomButton"
         :usage="usage"
@@ -1569,17 +1727,15 @@ watch([showWorldBookMatchSummary, worldBookMatchSummary], ([shouldShow, matches]
         :preset-list="presetList"
         :selected-preset-id="selectedPresetId"
         :current-model="provider?.model || ''"
-        :model-options="providerModels"
         :model-saving="modelSwitcherSaving"
-        :current-model-supports-reasoning="Boolean(chatProviderCapabilities?.reasoning)"
         @update:input="(val) => input = val"
         @submit="handleComposerEnterFromComposer"
         @stop="stop"
         @toggle-stream="toggleUseStream"
         @toggle-thinking="toggleThinking"
+        @toggle-web-search="toggleWebSearch"
         @update:thinking-level="setThinkingLevel"
         @open-model-switcher="openModelSwitcher"
-        @quick-model-change="saveQuickModel"
         @add-attachments="addChatAttachmentFiles"
         @remove-attachment="removeChatAttachment"
         @clear-attachments="clearChatAttachments"
@@ -1625,12 +1781,22 @@ watch([showWorldBookMatchSummary, worldBookMatchSummary], ([shouldShow, matches]
       </div>
       <ChatModelSwitcher
         :open="modelSwitcherOpen"
-        :provider="provider"
-        :models="providerModels"
+        :provider="modelSwitcherProvider"
+        :models="modelSwitcherModels"
+        :provider-profiles="modelSwitcherProviderProfiles"
+        :selected-provider-id="modelSwitcherSelectedProviderId"
+        :profiles-loading="modelSwitcherProfilesLoading"
+        :profiles-error="modelSwitcherProfilesError"
+        :switching-provider="modelSwitcherProviderSwitching"
+        :touch-device="chatViewportIsPhone"
         :refreshing="modelSwitcherRefreshing"
         :saving="modelSwitcherSaving"
+        :error="modelSwitcherError"
         @close="closeModelSwitcher"
         @refresh="refreshQuickModels"
+        @refresh-providers="loadModelSwitcherProviderProfiles"
+        @restore-focus="restoreModelSwitcherFocus"
+        @select-provider="selectChatProvider"
         @save="saveQuickModel"
       />
       <ChatContextInspector

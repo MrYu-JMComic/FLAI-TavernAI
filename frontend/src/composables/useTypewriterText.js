@@ -63,7 +63,7 @@ export function useTypewriterText(source, streaming, onProgress = null) {
 
     const pending = splitGraphemes(targetText.value.slice(displayedText.value.length));
     const divisor = streaming.value ? 10 : 3;
-    const limit = streaming.value ? 48 : 160;
+    const limit = streaming.value ? 6 : 160;
     const count = Math.min(limit, Math.max(1, Math.ceil(pending.length / divisor)));
     displayedText.value += pending.slice(0, count).join('');
     if (typeof onProgress === 'function') {

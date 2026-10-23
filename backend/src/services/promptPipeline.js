@@ -21,6 +21,7 @@ import {
 import { parseJson } from '../utils/json.js';
 import { estimatePromptTokens, resolvePromptTokenBudget } from './promptTokenBudget.js';
 import { conversationRecallTerms } from './fullTextSearch.js';
+import { buildChatMessageContent as buildUserMessageContent } from './chatAttachments.js';
 
 // History is limited by tokens, never by an arbitrary message count.
 export const PROMPT_PIPELINE_DEFAULT_CONTEXT_BUDGET_CHARS = Number.MAX_SAFE_INTEGER;
@@ -688,28 +689,6 @@ function createUserMessage({ content, attachments, participantName, source }) {
     ...(participantName ? { name: participantName } : {}),
     ...(source?.id ? { _promptSource: { id: source.id, revision: Number(source.revision || 0) } } : {})
   };
-}
-
-function buildUserMessageContent(content, attachments = []) {
-  const text = String(content || '').trim();
-  const normalizedAttachments = normalizePipelineImageAttachments(attachments);
-  if (!normalizedAttachments.length) {
-    return text;
-  }
-
-  const parts = [];
-  if (text) {
-    parts.push({ type: 'text', text });
-  }
-  for (const attachment of normalizedAttachments) {
-    parts.push({
-      type: 'image_url',
-      image_url: {
-        url: attachment.dataUrl || attachment.url
-      }
-    });
-  }
-  return parts;
 }
 
 function resolvePipelineAttachments(attachments = [], resolver) {

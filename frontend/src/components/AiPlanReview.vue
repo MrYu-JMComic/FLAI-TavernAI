@@ -26,6 +26,11 @@ const steps = computed(() => (Array.isArray(props.plan?.steps) ? props.plan.step
 const selectedCount = computed(() => steps.value.filter((step) => step.selected !== false).length);
 const executing = computed(() => props.phase === 'executing');
 const locked = computed(() => props.disabled || props.busy || executing.value);
+const title = computed(() => ({
+  executing: '按计划执行中',
+  failed: '计划执行失败',
+  paused: '计划已暂停'
+})[props.phase] || '计划待审批');
 
 function readInputValue(event) {
   const target = event?.target;
@@ -42,7 +47,7 @@ function readInputChecked(event) {
     <header class="ai-plan-head">
       <span class="ai-plan-icon" aria-hidden="true"><ClipboardList :size="16" /></span>
       <div class="ai-plan-title">
-        <strong>{{ executing ? '按计划执行中' : '计划待审批' }}</strong>
+        <strong>{{ title }}</strong>
         <small>{{ selectedCount }} / {{ steps.length }} 步将被执行</small>
       </div>
     </header>
@@ -121,7 +126,7 @@ function readInputChecked(event) {
         @click="emit('execute')"
       >
         <Play :size="16" />
-        <span>{{ executing ? '执行中...' : '按计划执行' }}</span>
+        <span>{{ executing ? '执行中...' : phase === 'failed' ? '重试计划' : '按计划执行' }}</span>
       </button>
       <button class="ghost-button" type="button" :disabled="locked" @click="emit('replan')">
         <RefreshCw :size="15" />

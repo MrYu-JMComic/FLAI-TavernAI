@@ -50,12 +50,12 @@ export function isSafeAttachmentUrl(value) {
   }
 }
 
-export function prepareChatAttachmentsForStorage(database, userId, conversationId, attachments = []) {
+export function prepareChatAttachmentsForStorage(database, userId, conversationId, attachments = [], options = {}) {
   const candidates = normalizeChatAttachments(attachments);
   const storedAttachments = [];
   const modelAttachments = [];
   for (const attachment of candidates) {
-    const prepared = prepareChatAttachmentForStorage(database, userId, conversationId, attachment);
+    const prepared = prepareChatAttachmentForStorage(database, userId, conversationId, attachment, options);
     if (!prepared) {
       continue;
     }
@@ -68,14 +68,26 @@ export function prepareChatAttachmentsForStorage(database, userId, conversationI
   return { storedAttachments, modelAttachments };
 }
 
-export function prepareUserChatAttachmentsForStorage(database, userId, conversationId, attachments = []) {
+export function prepareUserChatAttachmentsForStorage(database, userId, conversationId, attachments = [], options = {}) {
   validateChatAttachmentsForUpload(attachments);
   const candidates = normalizeChatAttachments(attachments);
-  const prepared = prepareChatAttachmentsForStorage(database, userId, conversationId, candidates);
+  const prepared = prepareChatAttachmentsForStorage(database, userId, conversationId, candidates, options);
   if (prepared.storedAttachments.length !== candidates.length) {
     throw new Error('聊天图片附件无效或不可访问');
   }
   return prepared;
+}
+
+// Provider adapters share the OpenAI-style multimodal message representation.
+// Callers validate/resolve attachment input before building model content.
+export function buildChatMessageContent(content, attachments = []) {
+  const text = String(content || '').trim();
+  const images = (Array.isArray(attachments) ? attachments : []).filter(attachment => attachment?.dataUrl || attachment?.url);
+  if (!images.length) return text;
+  return [
+    ...(text ? [{ type: 'text', text }] : []),
+    ...images.map(attachment => ({ type: 'image_url', image_url: { url: attachment.dataUrl || attachment.url } }))
+  ];
 }
 
 export function validateChatAttachmentsForUpload(attachments = []) {
@@ -151,7 +163,7 @@ function validateChatImageAttachmentForUpload(attachment = {}) {
   }
 }
 
-function prepareChatAttachmentForStorage(database, userId, conversationId, attachment = {}) {
+function prepareChatAttachmentForStorage(database, userId, conversationId, attachment = {}, options = {}) {
   if (attachment.dataUrl) {
     const parsed = parseChatImageDataUrl(attachment.dataUrl);
     if (!parsed) {
@@ -159,13 +171,13 @@ function prepareChatAttachmentForStorage(database, userId, conversationId, attac
     }
     const asset = createAsset(database, userId, {
       dataUrl: attachment.dataUrl,
-      ownerType: 'conversation',
+      ownerType: options.ownerType || 'conversation',
       ownerId: conversationId,
       kind: assetKinds.chatImage,
       name: attachment.name,
       alt: attachment.alt,
       metadata: {
-        source: 'chat-message'
+        source: options.source || 'chat-message'
       }
     });
     const stored = chatAttachmentFromAsset(asset, attachment);

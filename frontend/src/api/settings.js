@@ -11,6 +11,10 @@ export function toggleRegexRule(ruleId) {
   return apiRequest(`/api/regex-rules/${ruleId}/toggle`, { method: 'PUT' });
 }
 
+export function deleteRegexRule(ruleId) {
+  return apiRequest(`/api/regex-rules/${encodeURIComponent(ruleId)}`, { method: 'DELETE' });
+}
+
 export function reorderRegexRules(orderedIds, group = '') {
   const body = { orderedIds };
   if (group) body.group = group;

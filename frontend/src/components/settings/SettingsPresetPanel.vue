@@ -63,7 +63,7 @@ function formatMaxTokens(value) {
 </script>
 
 <template>
-  <section id="extension-section-presets" class="form-panel preset-management-panel form-section-group">
+  <section id="settings-presets-panel" class="form-panel preset-management-panel form-section-group">
     <div class="inline-heading">
       <div>
         <h2>对话预设</h2>

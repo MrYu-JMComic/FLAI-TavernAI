@@ -1,6 +1,6 @@
 <script setup>
 import { computed, onBeforeUnmount, ref, watch } from 'vue';
-import { Archive, Check, ChevronDown, GitMerge, Pencil, Pin, PinOff, Plus, RefreshCw, RotateCcw, Trash2, X } from '@lucide/vue';
+import { Archive, Brain, Check, ChevronDown, GitMerge, Pencil, Pin, PinOff, Plus, RefreshCw, RotateCcw, Trash2, X } from '@lucide/vue';
 import { apiRequest } from '../../api/core.js';
 import { useNotify } from '../../composables/useNotify';
 import ConfirmDialog from '../ConfirmDialog.vue';
@@ -30,6 +30,7 @@ let disposed = false;
 const selectedMemories = computed(() => memories.value.filter((memory) => selected.value.has(memory.id)));
 const visibleMemories = computed(() => memories.value.filter((memory) => includeArchived.value || !memory.archived));
 const canMerge = computed(() => selectedMemories.value.filter((memory) => !memory.archived).length >= 2);
+const memoryTypeLabels = { event: '事件', relationship: '关系', location: '地点', preference: '偏好', fact: '事实', summary: '叙述', intent: '计划', hypothesis: '可能性' };
 
 async function load() {
   const conversationId = props.conversationId;
@@ -179,11 +180,14 @@ onBeforeUnmount(() => { disposed = true; loadToken += 1; mutationToken += 1; });
 <template>
   <section v-if="open" class="memory-review" aria-label="对话记忆审阅">
     <header class="review-header">
-      <div><h3>对话记忆</h3><span>{{ memories.length }} 条</span></div>
+      <div class="review-heading">
+        <div class="review-title"><h3>对话记忆</h3><span class="memory-count">{{ visibleMemories.length }} 条</span></div>
+        <p>审阅与整理对话中保留的记忆</p>
+      </div>
       <div class="header-actions">
-        <label><input v-model="includeArchived" type="checkbox">显示归档</label>
+        <label class="archive-toggle"><input v-model="includeArchived" type="checkbox">显示归档</label>
         <button class="icon-button" type="button" title="刷新" aria-label="刷新记忆" :disabled="loading || busy" @click="load"><RefreshCw :size="17" /></button>
-        <button type="button" :disabled="busy" @click="openCreate"><Plus :size="17" />新增</button>
+        <button class="primary" type="button" :disabled="busy" @click="openCreate"><Plus :size="17" />新增</button>
       </div>
     </header>
 
@@ -194,6 +198,7 @@ onBeforeUnmount(() => { disposed = true; loadToken += 1; mutationToken += 1; });
       <button type="button" :disabled="busy" @click="batch('disable')"><X :size="16" />禁用</button>
       <button type="button" :disabled="busy" @click="batch('invalidate')"><Archive :size="16" />失效</button>
       <button type="button" :disabled="busy || !canMerge" @click="beginMerge()"><GitMerge :size="16" />合并</button>
+      <button class="icon-button" type="button" title="取消选择" aria-label="取消选择记忆" @click="selected = new Set()"><X :size="16" /></button>
     </div>
 
     <details v-if="conflicts.length" class="conflicts">
@@ -205,25 +210,38 @@ onBeforeUnmount(() => { disposed = true; loadToken += 1; mutationToken += 1; });
     </details>
 
     <div v-if="loading" class="empty" role="status">加载中...</div>
-    <div v-else-if="!visibleMemories.length" class="empty">暂无记忆</div>
+    <div v-else-if="!visibleMemories.length" class="empty"><Brain :size="28" /><strong>暂无记忆</strong><span>新增一条记忆，保留对话中的重要信息</span></div>
     <ul v-else class="memory-list">
-      <li v-for="memory in visibleMemories" :key="memory.id" :class="{ archived: memory.archived }">
-        <input type="checkbox" :checked="selected.has(memory.id)" :aria-label="`选择记忆：${memory.subject || memory.content}`" @change="toggle(memory)">
-        <div class="memory-copy">
-          <div class="memory-meta"><span>{{ memory.memoryType }}</span><span>{{ memory.enabled ? '已启用' : memory.pending ? '待确认' : '已禁用' }}</span><span v-if="memory.archived">已归档</span><span v-if="memory.pinned">已置顶</span></div>
-          <strong v-if="memory.subject">{{ memory.subject }}</strong><p>{{ memory.content }}</p>
-          <small v-if="memory.sourceExcerpt">来源：{{ memory.sourceExcerpt }}</small>
+      <li v-for="memory in visibleMemories" :key="memory.id" :class="{ archived: memory.archived, selected: selected.has(memory.id), pinned: memory.pinned }">
+        <div class="memory-card-head">
+          <input type="checkbox" :checked="selected.has(memory.id)" :aria-label="`选择记忆：${memory.subject || memory.content}`" @change="toggle(memory)">
+          <div class="memory-meta">
+            <span class="memory-type">{{ memoryTypeLabels[memory.memoryType] || memory.memoryType }}</span>
+            <span class="memory-status" :class="memory.enabled ? 'enabled' : memory.pending ? 'pending' : 'disabled'">{{ memory.enabled ? '已启用' : memory.pending ? '待确认' : '已禁用' }}</span>
+            <span v-if="memory.archived">已归档</span>
+            <span v-if="memory.pinned" class="pinned-label"><Pin :size="12" />已置顶</span>
+          </div>
         </div>
+        <div class="memory-copy">
+          <h4 v-if="memory.subject">{{ memory.subject }}</h4>
+          <p>{{ memory.content }}</p>
+        </div>
+        <details v-if="memory.sourceExcerpt" class="memory-source">
+          <summary><ChevronDown :size="14" />查看来源</summary>
+          <p>{{ memory.sourceExcerpt }}</p>
+        </details>
         <div class="row-actions">
-          <button class="icon-button" type="button" :title="memory.pinned ? '取消置顶' : '置顶'" :aria-label="memory.pinned ? '取消置顶记忆' : '置顶记忆'" :disabled="busy" @click="togglePin(memory)">
+          <button class="icon-button" :class="{ 'is-pinned': memory.pinned }" type="button" :title="memory.pinned ? '取消置顶' : '置顶'" :aria-label="memory.pinned ? '取消置顶记忆' : '置顶记忆'" :aria-pressed="Boolean(memory.pinned)" :disabled="busy" @click="togglePin(memory)">
             <PinOff v-if="memory.pinned" :size="16" />
             <Pin v-else :size="16" />
           </button>
-          <button class="icon-button" type="button" title="编辑" aria-label="编辑记忆" :disabled="busy" @click="openEdit(memory)"><Pencil :size="16" /></button>
+          <button type="button" title="编辑" aria-label="编辑记忆" :disabled="busy" @click="openEdit(memory)"><Pencil :size="16" />编辑</button>
           <button v-if="!memory.enabled && !memory.archived" type="button" :disabled="busy" @click="singleAction(memory, 'confirm')">确认</button>
           <button v-if="memory.enabled && !memory.archived" type="button" :disabled="busy" @click="singleAction(memory, 'disable')">禁用</button>
-          <button v-if="!memory.archived" class="icon-button" type="button" title="归档" aria-label="归档记忆" :disabled="busy" @click="singleAction(memory, 'rollback')"><Archive :size="16" /></button>
-          <button class="icon-button danger" type="button" title="删除" aria-label="删除记忆" :disabled="busy" @click="singleAction(memory, 'delete')"><Trash2 :size="16" /></button>
+          <div class="row-secondary-actions">
+            <button v-if="!memory.archived" class="icon-button" type="button" title="归档" aria-label="归档记忆" :disabled="busy" @click="singleAction(memory, 'rollback')"><Archive :size="16" /></button>
+            <button class="icon-button danger" type="button" title="删除" aria-label="删除记忆" :disabled="busy" @click="singleAction(memory, 'delete')"><Trash2 :size="16" /></button>
+          </div>
         </div>
       </li>
     </ul>
@@ -233,7 +251,7 @@ onBeforeUnmount(() => { disposed = true; loadToken += 1; mutationToken += 1; });
     <div v-if="editor" class="dialog-backdrop" role="presentation" @click.self="editor = null">
       <form class="dialog" aria-label="记忆编辑" @submit.prevent="saveEditor">
         <header><h4>{{ editor.id ? '编辑记忆' : '新增记忆' }}</h4><button class="icon-button" type="button" aria-label="关闭" @click="editor = null"><X :size="18" /></button></header>
-        <label>类型<select v-model="editor.memoryType"><option value="event">事件</option><option value="relationship">关系</option><option value="location">地点</option><option value="preference">偏好</option><option value="fact">事实</option><option value="summary">叙述</option><option value="intent">计划</option><option value="hypothesis">可能性</option></select></label>
+        <label>类型<select v-model="editor.memoryType"><option v-for="(label, type) in memoryTypeLabels" :key="type" :value="type">{{ label }}</option></select></label>
         <label>主体<input v-model="editor.subject" maxlength="160"></label>
         <label>内容<textarea v-model="editor.content" rows="5" maxlength="5000" required></textarea></label>
         <label>置信度<input v-model.number="editor.confidence" type="number" min="0" max="1" step="0.05"></label>
@@ -266,29 +284,80 @@ onBeforeUnmount(() => { disposed = true; loadToken += 1; mutationToken += 1; });
 </template>
 
 <style scoped>
-.memory-review { display: grid; gap: 12px; color: var(--text); }
-.review-header, .review-header > div, .header-actions, .batch-bar, .memory-meta, .row-actions, .dialog header, .dialog footer, .conflict-row { display: flex; align-items: center; gap: 8px; }
-.review-header { justify-content: space-between; flex-wrap: wrap; }
-.header-actions label { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
-.memory-review input[type='checkbox'] { width: 18px; height: 18px; min-height: 18px; padding: 0; flex: 0 0 18px; }
-h3, h4, p { margin: 0; } h3 { font-size: 16px; } h4 { font-size: 15px; }
-.review-header span, small, .memory-meta { color: var(--muted); font-size: 12px; }
-button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 36px; padding: 6px 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); color: inherit; cursor: pointer; font: inherit; }
-button:hover:not(:disabled) { background: var(--surface-hover); } button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
-button:disabled { cursor: default; opacity: .5; } .icon-button { width: 36px; padding: 6px; } .danger { color: var(--danger); } .primary { color: white; border-color: var(--primary); background: var(--primary); }
-.batch-bar { flex-wrap: wrap; padding: 8px; border: 1px solid var(--line); background: var(--surface-strong); }
-.batch-bar span { margin-right: auto; font-size: 13px; }
-.conflicts { border: 1px solid var(--line); padding: 8px; } summary { display: flex; align-items: center; gap: 6px; cursor: pointer; }
-.conflict-row { justify-content: space-between; padding-top: 8px; font-size: 13px; }
-.memory-list { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
-.memory-list li { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: start; gap: 10px; padding: 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); }
-.memory-list li.archived { opacity: .66; } .memory-list input[type='checkbox'] { width: 18px; height: 18px; }
-.memory-copy { display: grid; min-width: 0; gap: 4px; } .memory-copy p, .memory-copy small { overflow-wrap: anywhere; } .memory-meta { flex-wrap: wrap; }
-.row-actions { flex-wrap: wrap; justify-content: flex-end; } .empty { padding: 24px; text-align: center; color: var(--muted); } .error { padding: 8px; color: var(--danger); background: var(--danger-soft); }
+.memory-review { display: grid; gap: 16px; min-width: 0; color: var(--text); }
+.review-header, .review-title, .header-actions, .batch-bar, .memory-card-head, .memory-meta, .row-actions, .row-secondary-actions, .dialog header, .dialog footer, .conflict-row { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.review-header { flex-wrap: wrap; justify-content: space-between; gap: 14px; }
+.review-heading { display: grid; gap: 6px; }
+h3, h4, p { margin: 0; }
+h3 { font-size: 16px; font-weight: 750; }
+h4 { font-size: 15px; line-height: 1.5; }
+.review-heading p { color: var(--muted); font-size: 12px; line-height: 1.5; }
+.memory-count { padding: 3px 8px; border-radius: 6px; color: var(--muted); background: var(--surface-strong); font-size: 11px; font-weight: 650; }
+.header-actions { flex-wrap: wrap; }
+.archive-toggle { display: inline-flex; align-items: center; gap: 7px; min-height: 40px; margin-right: 4px; color: var(--muted); font-size: 12px; white-space: nowrap; cursor: pointer; }
+.memory-review input[type='checkbox'] { width: 16px; height: 16px; min-height: 16px; padding: 0; flex: 0 0 16px; accent-color: var(--primary); cursor: pointer; }
+button { display: inline-flex; flex: 0 0 auto; align-items: center; justify-content: center; gap: 6px; min-height: 40px; padding: 7px 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: inherit; cursor: pointer; font: inherit; font-size: 12px; font-weight: 650; transition: background .15s, border-color .15s, color .15s; }
+button:hover:not(:disabled) { border-color: color-mix(in srgb, var(--primary) 35%, var(--line)); background: var(--surface-hover); }
+button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-visible, summary:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 3px; }
+button:disabled { cursor: default; opacity: .5; }
+.icon-button { width: 40px; padding: 7px; }
+.danger { color: var(--danger); }
+.danger:hover:not(:disabled) { background: var(--danger-soft); border-color: var(--danger); }
+.primary { color: var(--surface); border-color: var(--primary); background: var(--primary); }
+.primary:hover:not(:disabled) { color: var(--surface); border-color: var(--primary-strong); background: var(--primary-strong); }
+.batch-bar { flex-wrap: wrap; gap: 6px; padding: 10px; border: 1px solid color-mix(in srgb, var(--primary) 30%, var(--line)); border-radius: 10px; background: var(--primary-soft); }
+.batch-bar > span { flex: 1 0 100%; padding: 2px; color: var(--primary); font-size: 12px; font-weight: 700; }
+.conflicts { min-width: 0; padding: 12px 14px; border: 1px solid color-mix(in srgb, var(--warning) 25%, var(--line)); border-radius: 10px; background: color-mix(in srgb, var(--warning-soft) 40%, var(--surface)); }
+summary { display: flex; align-items: center; gap: 6px; min-height: 24px; cursor: pointer; list-style: none; font-size: 12px; }
+summary::-webkit-details-marker { display: none; }
+summary svg { flex-shrink: 0; transition: transform .15s; }
+details[open] > summary svg { transform: rotate(180deg); }
+.conflicts > summary { color: var(--warning); font-weight: 650; }
+.conflict-row { flex-wrap: wrap; justify-content: space-between; gap: 8px; padding-top: 12px; font-size: 12px; }
+.conflict-row > span { flex: 1 1 170px; overflow-wrap: anywhere; }
+.memory-list { display: grid; gap: 12px; margin: 0; padding: 0; list-style: none; }
+.memory-list li { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; min-width: 0; padding: 16px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); box-shadow: var(--shadow-xs); transition: border-color .15s, background .15s; }
+.memory-list li.selected { border-color: var(--primary); background: color-mix(in srgb, var(--primary-soft) 25%, var(--surface)); }
+.memory-list li.archived { border-style: dashed; }
+.memory-card-head { align-items: center; gap: 10px; }
+.memory-meta { flex: 1; flex-wrap: wrap; gap: 6px 10px; color: var(--muted); font-size: 11px; line-height: 1.5; }
+.memory-type { padding: 3px 8px; border-radius: 5px; color: var(--primary); background: var(--primary-soft); font-weight: 650; }
+.memory-status { display: inline-flex; align-items: center; gap: 5px; }
+.memory-status::before { width: 5px; height: 5px; border-radius: 50%; background: currentColor; content: ''; }
+.memory-status.enabled { color: var(--success); }
+.memory-status.pending { color: var(--warning); }
+.pinned-label { display: inline-flex; align-items: center; gap: 4px; margin-left: auto; color: var(--primary); }
+.memory-copy { display: grid; min-width: 0; gap: 7px; }
+.memory-copy h4, .memory-copy p { overflow-wrap: anywhere; }
+.memory-copy p { color: color-mix(in srgb, var(--text) 90%, var(--muted)); font-size: 13px; line-height: 1.85; white-space: pre-wrap; }
+.memory-source { min-width: 0; padding: 7px 10px; border-radius: 7px; color: var(--muted); background: color-mix(in srgb, var(--surface-strong) 65%, transparent); }
+.memory-source p { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--line); font-size: 12px; line-height: 1.75; white-space: pre-wrap; overflow-wrap: anywhere; }
+.row-actions { flex-wrap: wrap; gap: 6px; padding-top: 10px; border-top: 1px solid color-mix(in srgb, var(--line) 65%, transparent); }
+.row-actions > button, .row-secondary-actions button { color: var(--muted); border-color: transparent; background: transparent; }
+.row-actions .is-pinned { color: var(--primary); background: var(--primary-soft); }
+.row-secondary-actions { margin-left: auto; gap: 4px; }
+.row-secondary-actions .danger { color: var(--danger); }
+.empty { display: grid; justify-items: center; gap: 10px; padding: 48px 20px; border: 1px dashed var(--line); border-radius: 12px; text-align: center; color: var(--muted); font-size: 12px; }
+.empty svg { margin-bottom: 4px; color: var(--primary); }
+.empty strong { color: var(--text); font-size: 14px; }
+.error { padding: 10px 12px; border-radius: 8px; color: var(--danger); background: var(--danger-soft); font-size: 13px; overflow-wrap: anywhere; }
 .undo { justify-self: start; }
 .dialog-backdrop { position: fixed; z-index: var(--z-modal); inset: 0; display: grid; place-items: center; padding: 16px; background: rgba(0, 0, 0, .52); }
-.dialog { display: grid; width: min(520px, 100%); max-height: calc(100vh - 32px); overflow: auto; gap: 12px; padding: 16px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface-raised); box-shadow: var(--shadow-lg); }
-.dialog header { justify-content: space-between; } .dialog footer { justify-content: flex-end; } .dialog label { display: grid; gap: 5px; font-size: 13px; } .dialog .check { display: flex; align-items: center; }
-input, textarea, select { min-width: 0; padding: 8px; border: 1px solid var(--line); border-radius: 5px; background: var(--surface); color: inherit; font: inherit; } textarea { resize: vertical; }
-@media (max-width: 680px) { button { min-height: 44px; } .icon-button { width: 44px; } .memory-list li { grid-template-columns: auto minmax(0, 1fr); } .row-actions { grid-column: 1 / -1; justify-content: flex-start; } .header-actions { width: 100%; flex-wrap: wrap; } }
+.dialog { display: grid; width: min(520px, 100%); max-height: calc(100dvh - 32px); overflow: auto; gap: 14px; padding: 20px; border: 1px solid var(--line); border-radius: 16px; background: var(--surface-raised); box-shadow: var(--shadow-lg); }
+.dialog header { justify-content: space-between; }
+.dialog footer { justify-content: flex-end; padding-top: 8px; border-top: 1px solid var(--line); }
+.dialog label { display: grid; gap: 7px; color: var(--muted); font-size: 12px; }
+.dialog .check { display: flex; align-items: center; }
+input, textarea, select { min-width: 0; min-height: 40px; padding: 9px 11px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--text); font: inherit; font-size: 13px; }
+textarea { resize: vertical; line-height: 1.7; }
+@media (max-width: 640px) {
+  button, .archive-toggle { min-height: 44px; }
+  .icon-button { width: 44px; }
+  .header-actions { width: 100%; }
+  .archive-toggle { margin-right: auto; }
+  .memory-list li { padding: 14px; }
+  .row-actions { gap: 4px; }
+  .row-secondary-actions { gap: 0; }
+  .memory-source summary { min-height: 32px; }
+}
 </style>

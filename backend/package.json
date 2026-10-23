@@ -18,10 +18,10 @@
     "evaluate:context": "node scripts/evaluate-context-quality.mjs"
   },
   "dependencies": {
-    "compression": "^1.8.1",
+    "compression": "^1.8.2",
     "cookie-parser": "^1.4.7",
     "cors": "2.8.6",
-    "dompurify": "^3.4.14",
+    "dompurify": "^3.4.17",
     "dotenv": "17.4.2",
     "express": "5.2.1",
     "express-rate-limit": "^8.7.0",

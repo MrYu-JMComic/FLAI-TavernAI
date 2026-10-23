@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import {
+  deleteRegexRule,
   getRegexRulesByGroup,
   testRegexRule,
   toggleRegexRule,
@@ -47,6 +48,14 @@ export function createRegexRouter(ctx) {
       return;
     }
     response.json(rule);
+  });
+
+  router.delete('/:id', requireAuth, (request, response) => {
+    if (!deleteRegexRule(db, request.auth.user.id, request.params.id)) {
+      response.status(404).json({ error: '规则不存在' });
+      return;
+    }
+    response.json({ ok: true });
   });
 
   router.put('/order', requireAuth, (request, response) => {

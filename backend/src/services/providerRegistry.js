@@ -14,7 +14,7 @@ export const providerPresets = {
     providerType: 'deepseek',
     gatewayName: 'DeepSeek',
     baseUrl: 'https://api.deepseek.com',
-    model: 'deepseek-v4-flash',
+    model: 'deepseek-flash',
     supportsReasoning: true,
     extraBody: {}
   },

@@ -218,7 +218,11 @@ function parseTemplate(text) {
         stack.pop();
       }
     } else if (parsed.kind !== 'unknown') {
-      frame.children.push({ type: 'value', parsed });
+      const percentSuffix = text[cursor] === '%' && (
+        parsed.rawProperty.toLowerCase() === 'percent' || parsed.loopField.toLowerCase() === 'percent'
+        || parsed.filters.some((filter) => filter.name === 'percent')
+      );
+      frame.children.push({ type: 'value', parsed, percentSuffix });
     }
     // Unknown control words render as nothing.
   }
@@ -238,7 +242,13 @@ function renderNodes(nodes, context) {
     if (node.type === 'text') {
       output += node.value;
     } else if (node.type === 'value') {
-      output += context.escape(renderValue(node.parsed, context));
+      let value = renderValue(node.parsed, context);
+      // Legacy AI templates append '%' to .percent, which already includes it.
+      // Coalesce only this token boundary; literal text and other units stay intact.
+      if (node.percentSuffix && /^-?\d+(?:\.\d+)?%$/.test(value)) {
+        value = value.slice(0, -1);
+      }
+      output += context.escape(value);
     } else if (node.type === 'each') {
       output += renderEach(node, context);
     } else if (node.type === 'if') {

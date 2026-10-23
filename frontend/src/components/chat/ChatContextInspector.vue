@@ -7,6 +7,7 @@ import {
   FileText,
   Image,
   ListTree,
+  PanelsTopLeft,
   RefreshCw,
   Scissors,
   X
@@ -37,10 +38,10 @@ const preview = ref(null);
 const branchTree = ref(null);
 const activeView = ref('preview');
 const tabs = [
-  { id: 'preview', label: '预览' },
-  { id: 'memory', label: '记忆' },
-  { id: 'history', label: '实际请求' },
-  { id: 'budget', label: '预算' }
+  { id: 'preview', label: '预览', icon: PanelsTopLeft },
+  { id: 'memory', label: '记忆', icon: Brain },
+  { id: 'history', label: '实际请求', icon: FileText },
+  { id: 'budget', label: '预算', icon: Database }
 ];
 const memoryRefreshKey = ref(0);
 let inspectorLoadToken = 0;
@@ -603,12 +604,14 @@ function worldBookRoleLabel(role) {
       aria-labelledby="chat-context-inspector-title"
     >
       <header class="chat-context-inspector-head">
-        <div>
-          <span class="chat-context-inspector-kicker">
-            <Brain :size="15" />
-            上下文检查器
-          </span>
-          <h2 id="chat-context-inspector-title">Prompt Pipeline V2</h2>
+        <div class="chat-context-inspector-brand">
+          <span class="chat-context-inspector-mark"><Brain :size="22" /></span>
+          <div>
+            <span class="chat-context-inspector-kicker">
+              上下文检查器
+            </span>
+            <h2 id="chat-context-inspector-title">Prompt Pipeline V2</h2>
+          </div>
         </div>
         <div class="chat-context-inspector-actions">
           <button
@@ -635,7 +638,7 @@ function worldBookRoleLabel(role) {
       </header>
 
       <nav class="chat-context-tabs" role="tablist" aria-label="上下文检查视图">
-        <button v-for="(tab, index) in tabs" :id="`context-tab-${tab.id}`" :key="tab.id" type="button" role="tab" :aria-selected="activeView === tab.id" :aria-controls="`context-panel-${tab.id}`" :tabindex="activeView === tab.id ? 0 : -1" :class="{ active: activeView === tab.id }" @click="activeView = tab.id" @keydown="handleTabKeydown($event, index)">{{ tab.label }}</button>
+        <button v-for="(tab, index) in tabs" :id="`context-tab-${tab.id}`" :key="tab.id" type="button" role="tab" :aria-selected="activeView === tab.id" :aria-controls="`context-panel-${tab.id}`" :tabindex="activeView === tab.id ? 0 : -1" :class="{ active: activeView === tab.id }" @click="activeView = tab.id" @keydown="handleTabKeydown($event, index)"><component :is="tab.icon" :size="15" aria-hidden="true" /><span>{{ tab.label }}</span></button>
       </nav>
 
       <div :id="`context-panel-${activeView}`" class="chat-context-inspector-body" role="tabpanel" :aria-labelledby="`context-tab-${activeView}`" :aria-busy="loading">
@@ -819,44 +822,58 @@ function worldBookRoleLabel(role) {
 
 .chat-context-inspector {
   display: grid;
-  width: min(480px, calc(100vw - 20px));
-  height: 100%;
+  width: min(580px, calc(100vw - 32px));
+  height: 100dvh;
+  min-width: 0;
   grid-template-rows: auto auto minmax(0, 1fr);
   border-left: 1px solid color-mix(in srgb, var(--primary) 20%, var(--line));
   color: var(--text);
-  background: color-mix(in srgb, var(--surface) 96%, #ffffff 4%);
+  background: var(--bg);
   box-shadow: -18px 0 54px rgba(15, 23, 42, 0.18);
 }
 
 .chat-context-tabs {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 4px;
-  padding: 8px 12px;
-  border-bottom: 1px solid var(--line);
+  gap: 5px;
+  margin: 0 20px 16px;
+  padding: 5px;
+  border: 1px solid color-mix(in srgb, var(--line) 70%, transparent);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--surface-strong) 72%, var(--surface));
 }
 
 .chat-context-tabs button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
   min-width: 0;
-  min-height: 34px;
-  padding: 5px 6px;
+  min-height: 40px;
+  padding: 7px 6px;
   border: 1px solid transparent;
-  border-radius: 6px;
+  border-radius: 8px;
   color: var(--muted);
   background: transparent;
   cursor: pointer;
   font: inherit;
   font-size: .76rem;
   font-weight: 700;
+  white-space: nowrap;
+  transition: background .15s, color .15s, border-color .15s;
 }
+
+.chat-context-tabs button:hover:not(.active) { color: var(--text); background: var(--surface-hover); }
 
 .chat-context-tabs button.active {
   color: var(--primary);
-  border-color: color-mix(in srgb, var(--primary) 28%, var(--line));
-  background: var(--primary-soft);
+  border-color: color-mix(in srgb, var(--primary) 20%, var(--line));
+  background: var(--surface);
+  box-shadow: var(--shadow-xs);
 }
 
-.chat-context-tabs button:focus-visible {
+.chat-context-tabs button:focus-visible,
+.chat-context-inspector-icon:focus-visible {
   outline: 2px solid var(--focus-ring);
   outline-offset: 2px;
 }
@@ -871,14 +888,31 @@ function worldBookRoleLabel(role) {
 }
 
 .chat-context-inspector-head {
-  flex-wrap: wrap;
   justify-content: space-between;
   gap: 14px;
-  padding: 18px 18px 14px;
-  border-bottom: 1px solid color-mix(in srgb, var(--line) 72%, transparent);
+  padding: 24px 20px 20px;
 }
 
-.chat-context-inspector-head > div:first-child {
+.chat-context-inspector-brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.chat-context-inspector-mark {
+  display: grid;
+  flex: 0 0 44px;
+  width: 44px;
+  height: 44px;
+  place-items: center;
+  border: 1px solid color-mix(in srgb, var(--primary) 20%, transparent);
+  border-radius: 13px;
+  color: var(--primary);
+  background: var(--primary-soft);
+}
+
+.chat-context-inspector-brand > div {
   min-width: 0;
 }
 
@@ -886,30 +920,34 @@ function worldBookRoleLabel(role) {
   gap: 7px;
   color: var(--muted);
   font-size: 0.78rem;
-  font-weight: 800;
+  font-weight: 650;
 }
 
 .chat-context-inspector-head h2 {
   margin: 5px 0 0;
-  font-size: 1.08rem;
+  font-size: 1rem;
   line-height: 1.25;
   overflow-wrap: anywhere;
 }
 
 .chat-context-inspector-actions {
-  gap: 8px;
+  flex-shrink: 0;
+  gap: 6px;
 }
 
 .chat-context-inspector-icon {
   display: inline-grid;
-  width: 36px;
-  height: 36px;
+  width: 40px;
+  height: 40px;
   place-items: center;
   border: 1px solid color-mix(in srgb, var(--line) 82%, transparent);
-  border-radius: 999px;
+  border-radius: 10px;
   color: var(--muted);
   background: color-mix(in srgb, var(--surface-strong) 86%, transparent);
+  cursor: pointer;
 }
+
+.chat-context-inspector-icon:disabled { opacity: .5; cursor: default; }
 
 .chat-context-inspector-icon:hover:not(:disabled) {
   color: var(--primary);
@@ -919,11 +957,14 @@ function worldBookRoleLabel(role) {
 
 .chat-context-inspector-body {
   display: grid;
-  gap: 14px;
+  gap: 16px;
   align-content: start;
   min-height: 0;
-  padding: 16px 18px 20px;
+  min-width: 0;
+  padding: 4px 20px 24px;
   overflow: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
 }
 
 .chat-context-inspector-error,
@@ -936,22 +977,21 @@ function worldBookRoleLabel(role) {
 
 .chat-context-inspector-error {
   padding: 10px 12px;
-  border: 1px solid color-mix(in srgb, #ef4444 28%, var(--line));
+  border: 1px solid color-mix(in srgb, var(--danger) 28%, var(--line));
   border-radius: 8px;
-  color: #991b1b;
-  background: color-mix(in srgb, #fee2e2 80%, var(--surface));
+  color: var(--danger);
+  background: var(--danger-soft);
 }
 
 .chat-context-section {
   display: grid;
-  gap: 10px;
-  padding-bottom: 14px;
-  border-bottom: 1px solid color-mix(in srgb, var(--line) 60%, transparent);
-}
-
-.chat-context-section:last-child {
-  padding-bottom: 0;
-  border-bottom: 0;
+  gap: 14px;
+  min-width: 0;
+  padding: 16px;
+  border: 1px solid color-mix(in srgb, var(--line) 80%, transparent);
+  border-radius: 12px;
+  background: var(--surface);
+  box-shadow: var(--shadow-xs);
 }
 
 .chat-context-section h3 {
@@ -989,13 +1029,15 @@ function worldBookRoleLabel(role) {
 .chat-context-stat-grid dt {
   color: var(--muted);
   font-size: 0.72rem;
+  line-height: 1.5;
 }
 
 .chat-context-stat-grid dd {
   margin: 0;
   color: var(--text);
-  font-size: 0.94rem;
+  font-size: 1.05rem;
   font-weight: 850;
+  font-variant-numeric: tabular-nums;
   overflow-wrap: anywhere;
 }
 
@@ -1160,15 +1202,42 @@ function worldBookRoleLabel(role) {
 
   .chat-context-inspector {
     width: 100%;
+    border-left: 0;
   }
 
-  .chat-context-stat-grid,
+  .chat-context-inspector-head { padding: 18px 14px; gap: 8px; }
+  .chat-context-inspector-brand { gap: 10px; }
+  .chat-context-inspector-mark { flex-basis: 38px; width: 38px; height: 38px; border-radius: 11px; }
+  .chat-context-inspector-head h2 { font-size: .9rem; }
+  .chat-context-inspector-kicker { font-size: .72rem; }
+  .chat-context-inspector-icon { width: 44px; height: 44px; }
+  .chat-context-tabs { margin: 0 14px 14px; gap: 3px; padding: 4px; }
+  .chat-context-tabs button { gap: 5px; font-size: .72rem; }
+  .chat-context-inspector-body { padding: 2px 14px 20px; }
+  .chat-context-section { padding: 14px; }
+
   .chat-context-priority-list {
     grid-template-columns: 1fr;
   }
 
+  .chat-context-stat-grid {
+    gap: 6px;
+  }
+
+  .chat-context-stat-grid div {
+    padding: 8px;
+  }
+
   .chat-context-tabs button {
     min-height: var(--touch-min);
+  }
+}
+
+@media (max-width: 360px) {
+  .chat-context-inspector-mark { display: none; }
+  .chat-context-tabs button svg { display: none; }
+  .chat-context-stat-grid {
+    grid-template-columns: 1fr;
   }
 }
 </style>

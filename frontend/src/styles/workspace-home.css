@@ -25,19 +25,11 @@
   min-width: 0;
 }
 
-.home-library-heading h1 {
-  margin: 0;
-  font-size: 2rem;
-  font-weight: 750;
-  line-height: 1.3;
-  letter-spacing: 0;
-}
-
 .home-library-stats {
   display: flex;
   flex-wrap: wrap;
   gap: 8px 18px;
-  margin: 12px 0 0;
+  margin: 0;
 }
 
 .home-library-stats > div {
@@ -924,10 +916,6 @@
   .home-library-header {
     gap: 12px;
     padding-bottom: 0;
-  }
-
-  .home-library-heading h1 {
-    font-size: 1.625rem;
   }
 
   .home-header-actions {

@@ -6,7 +6,7 @@ export function fetchCharacters({ search = '', sort = 'created', tag = '' } = {}
 }
 
 export function fetchCharacter(id) {
-  return apiRequest(`/api/characters/${id}`);
+  return apiRequest(`/api/characters/${id}`, { cache: 'no-store' });
 }
 
 export function createCharacter(payload) {

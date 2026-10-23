@@ -46,6 +46,8 @@ import {
   providerStreamErrorMessage
 } from './providerStreamErrors.js';
 import { executeProviderTool } from './providerToolResults.js';
+import { resolveToolChoice } from './providerToolChoice.js';
+import { appendProcessContent, appendProcessTool } from './providerProcessActivity.js';
 import { withProviderQuota } from './quotas.js';
 
 export async function runToolCompletion(settings, messages, tools, executeTool, options = {}) {
@@ -80,7 +82,7 @@ export async function runToolCompletion(settings, messages, tools, executeTool, 
     const requestBody = buildProviderBody(settings, nextMessages, false, {
       ...options,
       tools,
-      toolChoice: options.toolChoice || 'auto',
+      toolChoice: resolveToolChoice(options.toolChoice, { round: round + 1, process, toolCalls }),
       thinkingEnabled: options.thinkingEnabled ?? false
     });
 
@@ -228,6 +230,9 @@ export async function streamToolCompletion(settings, messages, tools, executeToo
   let usage = null;
 
   for (let round = 0; round < maxRounds; round += 1) {
+    // The returned answer is the latest no-tool model turn. Earlier tool-turn
+    // prose remains in the process activity stream and is still emitted live.
+    finalContent = '';
     const step = {
       round: round + 1,
       content: '',
@@ -240,7 +245,7 @@ export async function streamToolCompletion(settings, messages, tools, executeToo
     const requestBody = buildProviderBody(settings, nextMessages, true, {
       ...options,
       tools,
-      toolChoice: options.toolChoice || 'auto',
+      toolChoice: resolveToolChoice(options.toolChoice, { round: round + 1, process, toolCalls }),
       thinkingEnabled: options.thinkingEnabled ?? false
     });
 
@@ -260,12 +265,18 @@ export async function streamToolCompletion(settings, messages, tools, executeToo
         await readJsonResponse(response);
       }
     } catch (error) {
-      logToolCompletionError('[Stream Tool Completion Error]', settings, requestBody, round, error, response);
+      // A downstream client may close the SSE response after the request body
+      // has already been sent. The route propagates that close through the
+      // same signal used by the provider request, so this is an expected
+      // cancellation rather than an upstream stream failure. Keep genuine
+      // transport/provider errors in the diagnostic log.
+      if (!signal?.aborted && error?.name !== 'AbortError') {
+        logToolCompletionError('[Stream Tool Completion Error]', settings, requestBody, round, error, response);
+      }
       throw error;
     }
 
     let roundContent = '';
-    const roundContentChunks = [];
     const pendingToolCalls = new Map();
     const consumeToolPayload = (payload, event = {}) => {
       usage = extractStreamingUsage(payload, usage);
@@ -298,7 +309,9 @@ export async function streamToolCompletion(settings, messages, tools, executeToo
       onContent(text) {
         roundContent += text;
         step.content += text;
-        roundContentChunks.push(text);
+        finalContent += text;
+        appendProcessContent(step, text);
+        streamEmit.emit('content', { round: step.round, text });
       },
       onReasoning(text) {
         finalReasoning += text;
@@ -370,10 +383,6 @@ export async function streamToolCompletion(settings, messages, tools, executeToo
         nextMessages.push({ role: 'user', content: String(nudge) });
         continue;
       }
-      for (const text of roundContentChunks) {
-        finalContent += text;
-        await streamEmit.emit('content', { round: step.round, text });
-      }
       await streamEmit.wait();
       return {
         content: finalContent,
@@ -404,6 +413,7 @@ export async function streamToolCompletion(settings, messages, tools, executeToo
       };
       toolCalls.push(log);
       step.tools.push(log);
+      appendProcessTool(step, step.tools.length - 1);
       await streamEmit.emit('tool', { round: step.round, ...log });
       nextMessages.push({
         role: 'tool',

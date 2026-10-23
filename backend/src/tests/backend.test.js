@@ -289,7 +289,7 @@ test('provider rows report undecryptable API keys without throwing', () => {
     provider_type: 'deepseek',
     gateway_name: 'DeepSeek',
     base_url: 'https://api.deepseek.com',
-    model: 'deepseek-chat',
+    model: 'deepseek-flash',
     encrypted_api_key: brokenEncryptedKey,
     api_key_hint: 'sk-...test',
     supports_reasoning: 1,
@@ -299,7 +299,7 @@ test('provider rows report undecryptable API keys without throwing', () => {
 
   const publicSettings = normalizeProviderRow(row);
   const privateSettings = providerWithSecret(row);
-  assert.equal(publicSettings.model, 'deepseek-v4-flash');
+  assert.equal(publicSettings.model, 'deepseek-flash');
   assert.equal(publicSettings.apiKeySet, false);
   assert.equal(publicSettings.apiKeyNeedsReset, true);
   assert.equal(privateSettings.apiKey, '');
@@ -811,7 +811,7 @@ test('provider settings schema accepts form-encoded extra body JSON', () => {
     providerType: 'custom',
     gatewayName: 'Local proxy',
     baseUrl: 'http://127.0.0.1:8317/v1',
-    model: 'deepseek-v4-flash',
+    model: 'deepseek-flash',
     apiKey: '',
     clearApiKey: false,
     supportsReasoning: false,
@@ -1347,7 +1347,9 @@ test('character assistant completes drafts through multiple tool rounds', async 
   globalThis.fetch = async (_url, request = {}) => {
     calls += 1;
     const body = JSON.parse(request.body);
-    assert.equal(body.tools.length, 19);
+    for (const name of ['read_character_field', 'search_character_draft', 'edit_character_text', 'patch_character_data']) {
+      assert.ok(body.tools.some((tool) => tool.function?.name === name));
+    }
     assert.ok(body.tools.some((tool) => tool.function?.name === 'update_character_agents'));
     assert.ok(body.tools.some((tool) => tool.function?.name === 'create_character_world_book'));
     // The world book draft is edited with the standalone assistant's own tools.
@@ -1471,7 +1473,7 @@ test('character assistant completes drafts through multiple tool rounds', async 
         providerType: 'deepseek',
         gatewayName: 'DeepSeek',
         baseUrl: 'https://api.deepseek.com',
-        model: 'deepseek-v4-flash',
+        model: 'deepseek-flash',
         apiKey: 'sk-test',
         extraBody: {},
         supportsReasoning: true
@@ -1502,6 +1504,10 @@ test('character assistant respects disabled generation sections', async () => {
       const body = JSON.parse(request.body);
       assert.match(body.messages[0].content, /允许修改的部分仅限/);
       assert.deepEqual(body.tools.map((tool) => tool.function?.name), [
+        'read_character_field',
+        'search_character_draft',
+        'edit_character_text',
+        'patch_character_data',
         'update_character_story',
         'report_character_progress',
         'finish_character_draft'
@@ -1568,7 +1574,7 @@ test('character assistant respects disabled generation sections', async () => {
         providerType: 'deepseek',
         gatewayName: 'DeepSeek',
         baseUrl: 'https://api.deepseek.com',
-        model: 'deepseek-v4-flash',
+        model: 'deepseek-flash',
         apiKey: 'sk-test',
         extraBody: {}
       },
@@ -1641,7 +1647,7 @@ test('character assistant rejects null tool arguments without changing the draft
         providerType: 'deepseek',
         gatewayName: 'DeepSeek',
         baseUrl: 'https://api.deepseek.com',
-        model: 'deepseek-v4-flash',
+        model: 'deepseek-flash',
         apiKey: 'sk-test',
         extraBody: {}
       },
@@ -1678,7 +1684,7 @@ test('character assistant rejects natural-language JSON fallback', async () => {
           providerType: 'deepseek',
           gatewayName: 'DeepSeek',
           baseUrl: 'https://api.deepseek.com',
-          model: 'deepseek-v4-flash',
+          model: 'deepseek-flash',
           apiKey: 'sk-test',
           extraBody: {}
         },
@@ -1715,7 +1721,7 @@ test('character assistant treats null request as defaults', async () => {
         providerType: 'deepseek',
         gatewayName: 'DeepSeek',
         baseUrl: 'https://api.deepseek.com',
-        model: 'deepseek-v4-flash',
+        model: 'deepseek-flash',
         apiKey: 'sk-test',
         extraBody: {}
       },
@@ -1800,7 +1806,7 @@ test('character assistant rejects non-object generated array entries without par
         providerType: 'deepseek',
         gatewayName: 'DeepSeek',
         baseUrl: 'https://api.deepseek.com',
-        model: 'deepseek-v4-flash',
+        model: 'deepseek-flash',
         apiKey: 'sk-test',
         extraBody: {}
       },
@@ -1878,7 +1884,7 @@ test('world book assistant normalizes AI draft fields for real entry creation', 
         providerType: 'deepseek',
         gatewayName: 'DeepSeek',
         baseUrl: 'https://api.deepseek.com',
-        model: 'deepseek-v4-flash',
+        model: 'deepseek-flash',
         apiKey: 'sk-test',
         extraBody: {}
       },
@@ -1912,7 +1918,7 @@ test('world book assistant includes quality guide in complete and stream prompts
     providerType: 'deepseek',
     gatewayName: 'DeepSeek',
     baseUrl: 'https://api.deepseek.com',
-    model: 'deepseek-v4-flash',
+    model: 'deepseek-flash',
     apiKey: 'sk-test',
     extraBody: {}
   };
@@ -2069,7 +2075,7 @@ test('world book assistant accepts repaired entries after rejecting a malformed 
         providerType: 'deepseek',
         gatewayName: 'DeepSeek',
         baseUrl: 'https://api.deepseek.com',
-        model: 'deepseek-v4-flash',
+        model: 'deepseek-flash',
         apiKey: 'sk-test',
         extraBody: {}
       },
@@ -2165,7 +2171,7 @@ test('world book assistant treats null request as defaults', async () => {
         providerType: 'deepseek',
         gatewayName: 'DeepSeek',
         baseUrl: 'https://api.deepseek.com',
-        model: 'deepseek-v4-flash',
+        model: 'deepseek-flash',
         apiKey: 'sk-test',
         extraBody: {}
       },
@@ -2224,7 +2230,7 @@ test('world book assistant accepts fenced JSON drafts without no-tool retries', 
         providerType: 'deepseek',
         gatewayName: 'DeepSeek',
         baseUrl: 'https://api.deepseek.com',
-        model: 'deepseek-v4-flash',
+        model: 'deepseek-flash',
         apiKey: 'sk-test',
         extraBody: {}
       },
@@ -2280,7 +2286,7 @@ test('world book assistant rejects null tool arguments as empty draft', async ()
           providerType: 'deepseek',
           gatewayName: 'DeepSeek',
           baseUrl: 'https://api.deepseek.com',
-          model: 'deepseek-v4-flash',
+          model: 'deepseek-flash',
           apiKey: 'sk-test',
           extraBody: {}
         },
@@ -2334,7 +2340,7 @@ test('world book assistant rejects empty AI drafts', async () => {
           providerType: 'deepseek',
           gatewayName: 'DeepSeek',
           baseUrl: 'https://api.deepseek.com',
-          model: 'deepseek-v4-flash',
+          model: 'deepseek-flash',
           apiKey: 'sk-test',
           extraBody: {}
         },
@@ -2382,7 +2388,7 @@ test('world book assistant rejects entries without usable content', async () => 
           providerType: 'deepseek',
           gatewayName: 'DeepSeek',
           baseUrl: 'https://api.deepseek.com',
-          model: 'deepseek-v4-flash',
+          model: 'deepseek-flash',
           apiKey: 'sk-test',
           extraBody: {}
         },
@@ -2485,7 +2491,7 @@ test('world book assistant continues when model promises entries without tool ca
         providerType: 'deepseek',
         gatewayName: 'DeepSeek',
         baseUrl: 'https://api.deepseek.com',
-        model: 'deepseek-v4-flash',
+        model: 'deepseek-flash',
         apiKey: 'sk-test',
         extraBody: {}
       },
@@ -2896,7 +2902,7 @@ test('OpenAI-compatible streaming parser separates reasoning and content', async
         providerType: 'deepseek',
         gatewayName: 'DeepSeek',
         baseUrl: 'https://example.test',
-        model: 'deepseek-reasoner',
+        model: 'deepseek-v4-pro',
         apiKey: 'sk-test',
         supportsReasoning: true,
         extraBody: {}
@@ -3803,8 +3809,8 @@ test('provider model list normalizes official /models responses', async () => {
       new Response(
         JSON.stringify({
           data: [
-            { id: 'deepseek-chat', owned_by: 'deepseek' },
-            { id: 'deepseek-reasoner', owned_by: 'deepseek' }
+            { id: 'deepseek-flash', owned_by: 'deepseek' },
+            { id: 'deepseek-v4-pro', owned_by: 'deepseek' }
           ]
         }),
         { headers: { 'Content-Type': 'application/json' } }
@@ -3817,7 +3823,7 @@ test('provider model list normalizes official /models responses', async () => {
 
     assert.deepEqual(
       models.map((model) => model.id),
-      ['deepseek-chat', 'deepseek-reasoner']
+      ['deepseek-flash', 'deepseek-v4-pro']
     );
   } finally {
     globalThis.fetch = originalFetch;
@@ -4289,7 +4295,7 @@ test('DeepSeek usage snapshots calculate total tokens and CNY cost', () => {
     },
     {
       providerType: 'deepseek',
-      model: 'deepseek-v4-flash'
+      model: 'deepseek-flash'
     }
   );
 
@@ -4340,7 +4346,7 @@ test('DeepSeek thinking switch maps to official V4 thinking request fields', () 
   const enabled = buildProviderBody(
     {
       providerType: 'deepseek',
-      model: 'deepseek-v4-flash',
+      model: 'deepseek-flash',
       supportsReasoning: true,
       extraBody: {}
     },
@@ -4351,7 +4357,7 @@ test('DeepSeek thinking switch maps to official V4 thinking request fields', () 
   const disabled = buildProviderBody(
     {
       providerType: 'deepseek',
-      model: 'deepseek-v4-flash',
+      model: 'deepseek-flash',
       supportsReasoning: true,
       extraBody: {}
     },
@@ -4364,8 +4370,8 @@ test('DeepSeek thinking switch maps to official V4 thinking request fields', () 
   assert.equal(enabled.reasoning_effort, 'high');
   assert.equal(enabled.temperature, undefined);
   assert.deepEqual(disabled.thinking, { type: 'disabled' });
-  assert.equal(enabled.model, 'deepseek-v4-flash');
-  assert.equal(disabled.model, 'deepseek-v4-flash');
+  assert.equal(enabled.model, 'deepseek-flash');
+  assert.equal(disabled.model, 'deepseek-flash');
   assert.equal(disabled.reasoning_effort, undefined);
   assert.equal(disabled.temperature, 0.7);
 });
@@ -4803,10 +4809,11 @@ test('Anthropic tool completion maps OpenAI tool schema to native tool_use loop'
         }
       ],
       async (_name, args) => ({ ok: true, value: args.value }),
-      { thinkingEnabled: true }
+      { thinkingEnabled: true, toolChoice: 'required' }
     );
 
     assert.equal(requests[0].tools[0].name, 'set_value');
+    assert.deepEqual(requests[0].tool_choice, { type: 'any' });
     assert.deepEqual(requests[0].tools[0].input_schema.required, ['value']);
     assert.equal(requests[1].messages.at(-1).content[0].type, 'tool_result');
     assert.equal(requests[1].messages.at(-1).content[0].tool_use_id, 'toolu_1');
@@ -5161,7 +5168,7 @@ test('buildProviderBody applies preset parameters', () => {
   const body = buildProviderBody(
     {
       providerType: 'deepseek',
-      model: 'deepseek-v4-flash',
+      model: 'deepseek-flash',
       supportsReasoning: true,
       extraBody: {}
     },
@@ -7349,7 +7356,7 @@ test('advanced settings normalize status bar blueprint', () => {
     }
   }).success, true);
 
-  const maxVariables = Array.from({ length: 60 }, (_item, index) => ({
+  const maxVariables = Array.from({ length: 120 }, (_item, index) => ({
     name: `Var${index + 1}`,
     value: index
   }));
@@ -7363,10 +7370,38 @@ test('advanced settings normalize status bar blueprint', () => {
   assert.equal(updateCharacterSchema.safeParse({
     authorAdvancedSettings: {
       statusBarBlueprint: {
-        variables: [...maxVariables, { name: 'Var61', value: 61 }]
+        variables: [...maxVariables, { name: 'Var121', value: 121 }]
       }
     }
   }).success, false);
+});
+
+test('character status blueprints save and reload all 120 variables', (t) => {
+  const database = createAppDatabase(':memory:');
+  t.after(() => database.close());
+  const userId = 'full-status-blueprint-user';
+  database.prepare('INSERT INTO users (id, username, password_hash, created_at) VALUES (?, ?, ?, ?)').run(
+    userId, 'full-status-blueprint', 'hash', new Date().toISOString()
+  );
+  const variables = Array.from({ length: 120 }, (_item, index) => ({
+    name: `Var ${index + 1}`, value: index, type: 'number'
+  }));
+  const character = createCharacter(database, userId, {
+    name: 'Full status blueprint',
+    authorAdvancedSettings: { statusBarBlueprint: { name: 'Full state', variables } }
+  });
+  const saved = getCharacter(database, userId, character.id);
+  assert.equal(saved.authorAdvancedSettings.statusBarBlueprint.variables.length, 120);
+  assert.deepEqual(saved.authorAdvancedSettings.statusBarBlueprint.variables.map(({ name, value, type }) => ({ name, value, type })), variables);
+  const edited = updateCharacter(database, userId, character.id, {
+    authorAdvancedSettings: {
+      statusBarBlueprint: { name: 'Edited full state', variables: variables.map(variable => ({ ...variable, value: variable.value + 1 })) }
+    }
+  });
+  const reloaded = getCharacter(database, userId, character.id).authorAdvancedSettings.statusBarBlueprint;
+  assert.deepEqual(reloaded, edited.authorAdvancedSettings.statusBarBlueprint);
+  assert.equal(reloaded.variables.length, 120);
+  assert.equal(reloaded.variables.at(-1).value, 120);
 });
 
 test('advanced settings helpers treat null inputs as defaults', () => {
@@ -7812,7 +7847,7 @@ test('chat message route normalizes string boolean request flags', async () => {
       providerType: 'deepseek',
       gatewayName: 'Test Gateway',
       baseUrl: 'https://provider.test',
-      model: 'deepseek-v4-flash',
+      model: 'deepseek-flash',
       apiKey: 'sk-test',
       supportsReasoning: true,
       extraBody: {}
@@ -7921,7 +7956,7 @@ test('conversation messages preserve insertion order when timestamps tie', async
   }
 });
 
-test('chat prompt history keeps latest tied-timestamp messages in insertion order', async () => {
+test('chat prompt history keeps all tied-timestamp messages in insertion order when tokens fit', async () => {
   const database = createAppDatabase(':memory:');
   const { userId, conversationId } = createTestSetup(database);
   const tiedTimestamp = '2026-01-01T00:00:00.000Z';
@@ -7991,7 +8026,7 @@ test('chat prompt history keeps latest tied-timestamp messages in insertion orde
       providerBody.messages
         .map((message) => message.content)
         .filter((content) => /^history-\d+$/.test(content)),
-      Array.from({ length: 20 }, (_, index) => `history-${String(index + 6).padStart(2, '0')}`)
+      Array.from({ length: 25 }, (_, index) => `history-${String(index + 1).padStart(2, '0')}`)
     );
     assert.equal(providerBody.messages.at(-1).content, 'new prompt');
 
@@ -8002,6 +8037,8 @@ test('chat prompt history keeps latest tied-timestamp messages in insertion orde
     assert.notEqual(end, -1);
     const snippet = routeSource.slice(start, end);
     assert.match(snippet, /const rows = db\s*\.prepare/);
+    assert.match(snippet, /ORDER BY created_at DESC, rowid DESC/);
+    assert.doesNotMatch(snippet, /LIMIT \d+/);
     assert.match(snippet, /for \(let index = rows\.length - 1; index >= 0; index -= 1\)/);
     assert.match(snippet, /if \(isDisplayableMessageRow\(row\)\) \{\s*recentMessages\.push\(row\);/);
     assert.doesNotMatch(snippet, /\.reverse\(\)/);
@@ -10080,7 +10117,7 @@ test('streamCompletion throws on HTTP 401 response', async () => {
             providerType: 'deepseek',
             gatewayName: 'DeepSeek',
             baseUrl: 'https://example.test',
-            model: 'deepseek-chat',
+            model: 'deepseek-flash',
             apiKey: 'sk-test',
             supportsReasoning: false,
             extraBody: {}
@@ -10108,7 +10145,7 @@ test('streamCompletion throws on HTTP 500 response', async () => {
             providerType: 'deepseek',
             gatewayName: 'DeepSeek',
             baseUrl: 'https://example.test',
-            model: 'deepseek-chat',
+            model: 'deepseek-flash',
             apiKey: 'sk-test',
             supportsReasoning: false,
             extraBody: {}
@@ -10137,7 +10174,7 @@ test('streamCompletion normalizes provider fetch failures', async () => {
             providerType: 'deepseek',
             gatewayName: 'DeepSeek',
             baseUrl: 'https://network-error.example',
-            model: 'deepseek-chat',
+            model: 'deepseek-flash',
             apiKey: 'sk-test',
             supportsReasoning: false,
             extraBody: {}
@@ -10168,7 +10205,7 @@ test('streamCompletion skips invalid JSON in SSE data lines without crashing', a
         providerType: 'deepseek',
         gatewayName: 'DeepSeek',
         baseUrl: 'https://example.test',
-        model: 'deepseek-chat',
+        model: 'deepseek-flash',
         apiKey: 'sk-test',
         supportsReasoning: false,
         extraBody: {}
@@ -10205,7 +10242,7 @@ test('streamCompletion waits for async emit before consuming the next SSE payloa
         providerType: 'deepseek',
         gatewayName: 'DeepSeek',
         baseUrl: 'https://example.test',
-        model: 'deepseek-chat',
+        model: 'deepseek-flash',
         apiKey: 'sk-test',
         supportsReasoning: false,
         extraBody: {}
@@ -10256,7 +10293,7 @@ test('streamCompletion parses final SSE event without trailing blank line', asyn
         providerType: 'deepseek',
         gatewayName: 'DeepSeek',
         baseUrl: 'https://example.test',
-        model: 'deepseek-chat',
+        model: 'deepseek-flash',
         apiKey: 'sk-test',
         supportsReasoning: false,
         extraBody: {}
@@ -10296,7 +10333,7 @@ test('streamCompletion scans split CRLF SSE separators without regex or split al
         providerType: 'deepseek',
         gatewayName: 'DeepSeek',
         baseUrl: 'https://example.test',
-        model: 'deepseek-chat',
+        model: 'deepseek-flash',
         apiKey: 'sk-test',
         supportsReasoning: false,
         extraBody: {}
@@ -10347,7 +10384,7 @@ test('streamCompletion returns empty content for immediately closed empty stream
         providerType: 'deepseek',
         gatewayName: 'DeepSeek',
         baseUrl: 'https://example.test',
-        model: 'deepseek-chat',
+        model: 'deepseek-flash',
         apiKey: 'sk-test',
         supportsReasoning: false,
         extraBody: {}
@@ -10379,7 +10416,7 @@ test('streamCompletion throws a friendly error when SSE body is missing', async 
             providerType: 'deepseek',
             gatewayName: 'DeepSeek',
             baseUrl: 'https://api.deepseek.com',
-            model: 'deepseek-chat',
+            model: 'deepseek-flash',
             apiKey: 'sk-test'
           },
           [{ role: 'user', content: 'hi' }],
@@ -10412,7 +10449,7 @@ test('streamCompletion throws a friendly error when SSE reader fails', async () 
             providerType: 'deepseek',
             gatewayName: 'DeepSeek',
             baseUrl: 'https://api.deepseek.com',
-            model: 'deepseek-chat',
+            model: 'deepseek-flash',
             apiKey: 'sk-test'
           },
           [{ role: 'user', content: 'hi' }],
@@ -10446,7 +10483,7 @@ test('streamCompletion handles AbortController signal', async () => {
             providerType: 'deepseek',
             gatewayName: 'DeepSeek',
             baseUrl: 'https://example.test',
-            model: 'deepseek-chat',
+            model: 'deepseek-flash',
             apiKey: 'sk-test',
             supportsReasoning: false,
             extraBody: {}
@@ -10479,7 +10516,7 @@ test('streamCompletion handles SSE data with missing choices field gracefully', 
         providerType: 'deepseek',
         gatewayName: 'DeepSeek',
         baseUrl: 'https://example.test',
-        model: 'deepseek-chat',
+        model: 'deepseek-flash',
         apiKey: 'sk-test',
         supportsReasoning: false,
         extraBody: {}
@@ -10657,7 +10694,7 @@ test('provider_settings table INSERT and ON CONFLICT UPDATE', () => {
       user_id, provider_type, gateway_name, base_url, model, encrypted_api_key,
       api_key_hint, supports_reasoning, extra_body, updated_at
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-  ).run(userId, 'deepseek', 'DeepSeek', 'https://api.deepseek.com', 'deepseek-chat', encryptedKey, 'sk-...345', 1, '{}', timestamp);
+  ).run(userId, 'deepseek', 'DeepSeek', 'https://api.deepseek.com', 'deepseek-flash', encryptedKey, 'sk-...345', 1, '{}', timestamp);
 
   const row = database.prepare('SELECT * FROM provider_settings WHERE user_id = ?').get(userId);
   assert.equal(row.provider_type, 'deepseek');
@@ -10734,7 +10771,7 @@ test('saveProviderSettings encrypts API key and updates hint', () => {
       user_id, provider_type, gateway_name, base_url, model, encrypted_api_key,
       api_key_hint, supports_reasoning, extra_body, updated_at
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-  ).run(userId, 'deepseek', 'DeepSeek', 'https://api.deepseek.com', 'deepseek-v4-flash', encryptedKey, hint, 1, '{}', timestamp);
+  ).run(userId, 'deepseek', 'DeepSeek', 'https://api.deepseek.com', 'deepseek-flash', encryptedKey, hint, 1, '{}', timestamp);
 
   const row = database.prepare('SELECT * FROM provider_settings WHERE user_id = ?').get(userId);
   assert.equal(row.api_key_hint, 'sk-...5678');
@@ -10763,7 +10800,7 @@ test('clearApiKey removes encrypted key and hint', () => {
       user_id, provider_type, gateway_name, base_url, model, encrypted_api_key,
       api_key_hint, supports_reasoning, extra_body, updated_at
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-  ).run(userId, 'deepseek', 'DeepSeek', 'https://api.deepseek.com', 'deepseek-chat', encryptedKey, 'sk-...ared', 1, '{}', timestamp);
+  ).run(userId, 'deepseek', 'DeepSeek', 'https://api.deepseek.com', 'deepseek-flash', encryptedKey, 'sk-...ared', 1, '{}', timestamp);
 
   // Simulate clearApiKey: update encrypted_api_key and api_key_hint to null
   database.prepare(

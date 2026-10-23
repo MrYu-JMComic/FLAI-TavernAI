@@ -45,6 +45,12 @@ Snapshot v2 包含会话拥有的状态、消息/候选和相关子表；角色�
 
 `POST /api/conversations/:id/messages/truncate` 一次删除整段尾部；编辑后重跑只保留一份恢复点并取消一轮旧任务。
 
+### DeepSeek 联网模式
+
+聊天响应模式中的联网开关仅对 DeepSeek Provider 显示，默认关闭，并将偏好保存在当前浏览器。开启后，模型可按需通过服务端工具调用 DeepSeek Search 与 Fetch API；每轮最多搜索两次、抓取三篇页面，查询词最多 128 个字符，搜索摘要和网页正文会在加入模型上下文前截断。Fetch 仅接受本轮 Search 返回的 HTTP/HTTPS 链接。关闭开关或使用其他 Provider 时不附加联网工具，也不会请求 Search/Fetch。
+
+DeepSeek 官方文档注明 Search 和 Fetch 分别按每千次成功调用 ¥5 计费，自北京时间 2026-11-01 00:00 起执行，且费用由 API 账号承担。详见 [DeepSeek Search API](https://api-docs.deepseek.com/zh-cn/guides/search)。
+
 0018 的 `saves.kind` 区分自动恢复与手工存档。`conversationRetention.js` 按 `CONVERSATION_RECOVERY_SAVE_LIMIT` 保留恢复点，按 `CONVERSATION_STALE_JOB_STEP_DAYS` 清理已结束/过时任务的快照和 pending checkpoint。启动和新增恢复点时清理，不能移除仍被活动或可重试任务需要的数据。切换候选不再新建恢复点，存档面板默认折叠它们。
 
 ## 提示词与上下文预算
@@ -80,7 +86,7 @@ Snapshot v2 包含会话拥有的状态、消息/候选和相关子表；角色�
 
 ## 会话记忆与工具
 
-`conversationMemoryAgent.js` 在 `memoryAgent` 为 auto/on 且模型可用时执行工具驱动审查，停用、不可用或失败时回退规则提取。用户已完成动作和双方叙事可作证据；计划、假设、请求不能偷偷升级为完成事实。自动记忆可启用，显式禁用、归档、失效、合并与手工控制仍受尊重。
+`conversationMemoryAgent.js` 在 `memoryAgent` 为 auto/on 且模型可用时执行工具驱动审查，停用、不可用或失败时回退规则提取。用户已完成动作和双方叙事可作证据；计划、假设、请求不能偷偷升级为完成事实。模型 Agent 经工具审查写入的记忆可直接启用；规则回退只创建待确认候选，用户确认后才启用。显式禁用、归档、失效、合并与手工控制仍受尊重。
 
 来源 ID 必须属于本轮观察消息，缺失来源不能借用另一说话者。逐字引文置信度上限为 1、概述 0.6、无引文 0.5。正文变化需本轮来源，元数据调整不能绕过置信度规则。主生成读取记忆作为连续性证据，不视为所有角色都知道的事实或改写状态的授权。
 

@@ -126,9 +126,127 @@ onBeforeUnmount(() => { disposed = true; token += 1; resetState(); });
 </template>
 
 <style scoped>
-.context-budget { display: grid; gap: 14px; min-width: 0; } header, header div { display: flex; align-items: center; gap: 8px; min-width: 0; } header { flex-wrap: wrap; justify-content: space-between; } header div { flex: 1 1 220px; flex-wrap: wrap; } h3, p { margin: 0; } h3 { font-size: .94rem; } header p, .notice { color: var(--muted); font-size: .76rem; overflow-wrap: anywhere; }
-form { display: grid; gap: 10px; } label { display: grid; gap: 5px; color: var(--muted); font-size: .78rem; } input { min-height: 38px; padding: 7px 9px; border: 1px solid var(--line); border-radius: 6px; color: var(--text); background: var(--surface); font: inherit; }
-button { display: inline-flex; min-height: 38px; align-items: center; justify-content: center; gap: 6px; padding: 7px 10px; border: 1px solid var(--line); border-radius: 6px; color: var(--text); background: var(--surface); cursor: pointer; } button:disabled { opacity: .5; cursor: default; } button:focus-visible, input:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; } .icon { width: 38px; padding: 6px; } .primary { color: #fff; border-color: var(--primary); background: var(--primary); }
-dl { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin: 0; } dl div { padding: 9px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface-strong); } dt { color: var(--muted); font-size: .72rem; } dd { margin: 3px 0 0; font-weight: 750; } .error { padding: 8px; color: var(--danger); background: var(--danger-soft); }
-@media (max-width: 640px) { button, input { min-height: var(--touch-min); } .icon { width: var(--touch-min); } dl { grid-template-columns: 1fr; } }
+.context-budget {
+  display: grid;
+  gap: 16px;
+  min-width: 0;
+  color: var(--text);
+}
+
+header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+}
+
+header div {
+  display: grid;
+  flex: 1;
+  gap: 5px;
+  min-width: 0;
+}
+
+h3, p { margin: 0; }
+h3 { font-size: 1.05rem; line-height: 1.4; }
+header p, .notice {
+  color: var(--muted);
+  font-size: .78rem;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
+form {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px 14px;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+}
+
+label {
+  display: grid;
+  min-width: 0;
+  gap: 7px;
+  color: var(--muted);
+  font-size: .78rem;
+  line-height: 1.5;
+}
+
+input {
+  min-width: 0;
+  min-height: 40px;
+  padding: 9px 11px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--text);
+  background: var(--surface-strong);
+  font: inherit;
+  font-variant-numeric: tabular-nums;
+}
+
+input::placeholder { color: var(--muted); opacity: .8; }
+button {
+  display: inline-flex;
+  min-height: 40px;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: 9px 13px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--text);
+  background: var(--surface);
+  cursor: pointer;
+  font: inherit;
+  font-size: .82rem;
+  font-weight: 650;
+}
+
+button:hover:not(:disabled) { background: var(--surface-hover); }
+button:disabled, input:disabled { opacity: .5; cursor: default; }
+button:focus-visible, input:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 3px;
+}
+
+.icon { flex: 0 0 auto; width: 40px; padding: 8px; }
+.primary {
+  grid-column: 1 / -1;
+  justify-self: end;
+  min-width: 104px;
+  color: var(--surface);
+  border-color: var(--primary);
+  background: var(--primary);
+}
+.primary:hover:not(:disabled) { border-color: var(--primary-strong); background: var(--primary-strong); }
+
+dl {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin: 0;
+}
+
+dl div {
+  min-width: 0;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+}
+
+dt { color: var(--muted); font-size: .75rem; line-height: 1.5; }
+dd { margin: 7px 0 0; font-size: 1.12rem; font-weight: 750; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.notice { padding: 0 2px; }
+.error { padding: 12px 14px; border: 1px solid color-mix(in srgb, var(--danger) 25%, transparent); border-radius: 10px; color: var(--danger); background: var(--danger-soft); font-size: .82rem; line-height: 1.6; }
+
+@media (max-width: 640px) {
+  button, input { min-height: var(--touch-min, 44px); }
+  .icon { width: var(--touch-min, 44px); }
+  form { grid-template-columns: minmax(0, 1fr); }
+}
 </style>

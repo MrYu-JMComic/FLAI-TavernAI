@@ -1,8 +1,9 @@
 <script setup>
-import { computed } from 'vue';
+import { computed, ref, watch } from 'vue';
 import { Activity, ChevronDown, RefreshCw } from '@lucide/vue';
 
 const props = defineProps({
+  characterAvatarUrl: { type: String, default: '' },
   statusBar: { type: Object, default: null },
   templateConfig: { type: Object, default: () => ({}) },
   updateStatus: { type: String, default: 'not-updated' },
@@ -10,8 +11,11 @@ const props = defineProps({
 });
 
 const emit = defineEmits(['update:expanded']);
+const avatarFailed = ref(false);
 
 const statusTitle = computed(() => props.statusBar?.name || '角色状态');
+const avatarUrl = computed(() => String(props.characterAvatarUrl || '').trim());
+const showCharacterAvatar = computed(() => Boolean(avatarUrl.value) && !avatarFailed.value);
 const summaryRows = computed(() => {
   const rows = [];
   const source = Array.isArray(props.statusBar?.variables) ? props.statusBar.variables : [];
@@ -33,7 +37,13 @@ const itemCount = computed(() => {
 const updateLabel = computed(() => {
   if (props.updateStatus === 'updating') return '正在同步';
   if (props.updateStatus === 'updated') return '本轮已同步';
+  if (props.updateStatus === 'checked') return '本轮无变化';
+  if (props.updateStatus === 'failed') return '后台未完成';
   return '等待新回复';
+});
+
+watch(avatarUrl, () => {
+  avatarFailed.value = false;
 });
 
 function toggleExpanded() {
@@ -60,7 +70,8 @@ function normalizeSummaryValue(value) {
       @click="toggleExpanded"
     >
       <span class="chat-status-summary-icon" aria-hidden="true">
-        <Activity :size="18" />
+        <img v-if="showCharacterAvatar" :src="avatarUrl" alt="" @error="avatarFailed = true" />
+        <Activity v-else :size="18" />
       </span>
       <span class="chat-status-summary-copy">
         <span class="chat-status-summary-title">

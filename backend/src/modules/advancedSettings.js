@@ -1,10 +1,18 @@
 import { isStatusTemplateMeterProperty, parseStatusTemplateToken } from '../../../shared/statusTemplateTokens.js';
+import { THINKING_LEVELS } from '../../../shared/providerThinking.js';
 import {
+  hasStatusBarTemplateRuntime,
+  parseStatusBarRuntime,
+  STATUS_BAR_RUNTIME_LIMIT,
+  stripStatusBarTemplateCode
+} from '../../../shared/statusBarRuntime.js';
+import {
+  STATUS_VARIABLE_LIMIT,
   normalizeStatusVariableExtras,
   normalizeStatusVariableValueForType
 } from '../../../shared/statusVariables.js';
 
-const STATUS_BLUEPRINT_VARIABLE_LIMIT = 60;
+const STATUS_BLUEPRINT_VARIABLE_LIMIT = STATUS_VARIABLE_LIMIT;
 
 export function normalizeAdvancedSettings(input = {}) {
   const source = normalizeObject(input);
@@ -81,7 +89,13 @@ function mergeAdvancedText(authorValue = '', userValue = '') {
 
 export function normalizeStatusBarBlueprint(input = {}) {
   const source = input && typeof input === 'object' ? input : {};
-  const template = normalizeText(source.template).slice(0, 50000);
+  const rawTemplate = normalizeText(source.template);
+  if (rawTemplate.length > STATUS_BAR_RUNTIME_LIMIT && parseStatusBarRuntime(rawTemplate)) {
+    throw Object.assign(new Error('状态栏代码总长度不能超过 50000 字符。'), {
+      status: 400, code: 'STATUS_BAR_TEMPLATE_TOO_LARGE', publicMessage: '状态栏代码总长度不能超过 50000 字符。'
+    });
+  }
+  const template = rawTemplate.slice(0, STATUS_BAR_RUNTIME_LIMIT);
   return {
     name: normalizeText(source.name).slice(0, 50),
     variables: normalizeStatusVariables(source.variables, template),
@@ -149,6 +163,7 @@ export function isAccessorySkillActive(skills = {}, key, context = {}) {
   if (key === 'statusBarAgent') {
     return Boolean(
       context.statusBar?.variables?.length ||
+        normalizeText(context.statusBar?.template).trim() ||
         normalizeText(context.statusBarPrompt).trim() ||
         hasStatusBarBlueprint(context.statusBarBlueprint)
     );
@@ -192,6 +207,9 @@ export function sanitizeAuthorAdvancedSettings(input = {}, options = {}) {
   normalized.customJs = '';
   normalized.customJsEnabled = false;
   normalized.customJsRiskAccepted = false;
+  if (parseStatusBarRuntime(normalized.statusBarBlueprint.template) || hasStatusBarTemplateRuntime(normalized.statusBarBlueprint.template)) {
+    normalized.statusBarBlueprint.template = '';
+  }
   normalized.accessorySkills = disabledAccessorySkills();
   return normalized;
 }
@@ -272,10 +290,11 @@ function normalizeColor(value) {
 function inferStatusVariablesFromTemplate(template, variables = []) {
   const inferred = dedupeStatusVariables(variables);
   const seen = collectStatusVariableKeys(inferred);
-  const raw = String(template || '');
-  if (!raw) {
+  if (parseStatusBarRuntime(template)) {
     return inferred;
   }
+  const raw = stripStatusBarTemplateCode(template);
+  if (!raw) return inferred;
 
   for (const item of extractTemplateRowVariables(raw)) {
     const key = normalizeStatusVariableKey(item.name);
@@ -405,6 +424,7 @@ function createSkillConfig(enabled, extras = {}) {
     enabled,
     modelOverride: '',
     providerProfileId: '',
+    thinkingLevel: '',
     tools: {},
     ...extras
   };
@@ -417,8 +437,14 @@ function normalizeSkillConfig(value, fallback = createSkillConfig(false)) {
     modelOverride: normalizeModelOverride(input.modelOverride ?? input.model_override ?? fallback.modelOverride),
     // '' follows the main chat provider; otherwise one of the user's saved provider profiles.
     providerProfileId: String(input.providerProfileId ?? input.provider_profile_id ?? fallback.providerProfileId ?? '').trim().slice(0, 160),
+    thinkingLevel: normalizeSkillThinkingLevel(input.thinkingLevel ?? input.thinking_level ?? fallback.thinkingLevel),
     tools: normalizeSkillTools(input.tools ?? fallback.tools)
   };
+}
+
+function normalizeSkillThinkingLevel(value) {
+  const level = String(value ?? '').trim().toLowerCase();
+  return THINKING_LEVELS.includes(level) ? level : '';
 }
 
 function normalizeSkillTools(value) {

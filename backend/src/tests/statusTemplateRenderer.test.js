@@ -91,6 +91,32 @@ test('status template renderer leaves CSS braces inside style blocks untouched',
   assert.equal(render('<style>.bar{width:{{体力.percent}}}</style>'), '<style>.bar{width:72%}</style>');
 });
 
+test('status template percent tokens tolerate one adjacent authored percent sign', () => {
+  assert.equal(render('<i style="width:{{体力.percent}}%"></i>'), '<i style="width:72%"></i>');
+  assert.equal(render('<style>.bar{width:{体力.percent}%}</style>'), '<style>.bar{width:72%}</style>');
+  assert.equal(render('{{体力 | percent}}%'), '72%');
+  assert.equal(render('{{体力.Percent}}% {{体力.PERCENT}}%'), '72% 72%');
+  assert.equal(render('{{#each meters}}{{@percent}}%{{/each}}'), '72%');
+  assert.equal(render('{{#if 体力}}calc({{体力.percent}}% - 2px){{/if}}'), 'calc(72% - 2px)');
+  assert.equal(render('{{体力.percent}} {{体力.percentage}}% {{体力 | percentage | suffix:"%"}}'), '72% 72% 72%');
+
+  for (const value of [0, 22, 80, 100]) {
+    const meter = variable('HP', value);
+    assert.equal(renderStatusTemplate('width:{{HP.percent}}%', {
+      resolveVariable: () => meter
+    }), `width:${value}%`);
+  }
+});
+
+test('percent compatibility preserves authored literals, ordinary values, filters and escaping', () => {
+  assert.equal(render('22%% {{姓名}}% {{体力}}%%'), '22%% 林晚% 72%%');
+  assert.equal(render('{{体力.percent | suffix:"%"}}'), '72%%');
+  assert.equal(render('{{体力.percent | prefix:"<"}}%', {
+    escape: (value) => String(value).replace(/</g, '&lt;')
+  }), '&lt;72%%');
+  assert.equal(render('{{体力.percent}} %'), '72% %');
+});
+
 test('status template renderer evaluates conditional and loop blocks', () => {
   assert.equal(render('{{#if 体力 > 50}}健康{{else}}虚弱{{/if}}'), '健康');
   assert.equal(render('{{#if 体力 < 50}}健康{{else}}虚弱{{/if}}'), '虚弱');

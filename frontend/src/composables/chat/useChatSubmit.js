@@ -8,6 +8,7 @@ import {
   streamMessage,
   streamRegenerateMessage
 } from '../../api/chat.js';
+import { fetchJob } from '../../api/jobs.js';
 import { readFileAsDataUrl } from '../../utils/fileReaders.js';
 import { samePlainValue } from '../../utils/plainValues.js';
 import { isSafeAttachmentUrl, normalizeSafeAttachmentUrl } from '../../utils/attachmentUrls.js';
@@ -79,6 +80,7 @@ export function useChatSubmit({
   const useStream = ref(readLocalBoolean('flai-chat-use-stream', true));
   const legacyThinkingEnabled = readLocalBoolean('flai-chat-thinking-enabled', false);
   const requestedThinkingLevel = ref(readLocalThinkingLevel(legacyThinkingEnabled ? 'high' : 'off'));
+  const webSearchEnabled = ref(readLocalBoolean('flai-chat-deepseek-web-search', false));
   const initialProvider = readProvider();
   const imageGenerationEnabled = ref(readLocalBoolean(
     'flai-chat-image-generation-enabled',
@@ -109,7 +111,8 @@ export function useChatSubmit({
     : applyStatusBarDirectly;
 
   const streamIdleTimeoutMs = 60000;
-  const accessoryRefreshDelays = [1200, 4000, 9000, 16000, 25000, 38000, 55000];
+  const accessoryRefreshInitialDelay = 1200;
+  const accessoryRefreshPollDelay = 1800;
 
   const chatProviderCapabilities = computed(() => resolveProviderModelCapabilities(readProvider()));
   const thinkingControl = computed(() => chatProviderCapabilities.value.thinking || {
@@ -178,6 +181,7 @@ export function useChatSubmit({
     && hasContinuableAssistantMessage(messages.value)
   ));
   const canToggleThinking = computed(() => Boolean(thinkingControl.value.supported && thinkingOptions.value.length));
+  const canToggleWebSearch = computed(() => readProvider().providerType === 'deepseek');
 
   watch(
     readProvider,
@@ -408,6 +412,12 @@ export function useChatSubmit({
     writeLocalBoolean('flai-chat-thinking-enabled', level !== 'off');
   }
 
+  function toggleWebSearch() {
+    if (sending.value || !canToggleWebSearch.value) return;
+    webSearchEnabled.value = !webSearchEnabled.value;
+    writeLocalBoolean('flai-chat-deepseek-web-search', webSearchEnabled.value);
+  }
+
   function toggleImageGeneration() {
     if (sending.value || !canToggleImageGeneration.value) {
       return;
@@ -529,7 +539,8 @@ export function useChatSubmit({
       imageGeneration: shouldGenerateImage,
       imageModel: shouldGenerateImage ? resolveSelectedImageModel() : undefined,
       thinkingEnabled: canToggleThinking.value && thinkingEnabled.value,
-      thinkingLevel: canToggleThinking.value ? thinkingLevel.value : undefined
+      thinkingLevel: canToggleThinking.value ? thinkingLevel.value : undefined,
+      webSearch: canToggleWebSearch.value && webSearchEnabled.value
     };
     if (selectedPresetId.value) {
       requestPayload.presetId = selectedPresetId.value;
@@ -651,7 +662,7 @@ export function useChatSubmit({
                 updateStatusBar(data.statusBar);
               }
               if (data.accessoryBackground) {
-                scheduleAccessoryRefresh(conversationId);
+                scheduleAccessoryRefresh(conversationId, data.assistantMessage);
               }
             },
             error(data) {
@@ -715,7 +726,7 @@ export function useChatSubmit({
           updateStatusBar(result.statusBar);
         }
         if (result.accessoryBackground) {
-          scheduleAccessoryRefresh(conversationId);
+          scheduleAccessoryRefresh(conversationId, result.assistantMessage);
         }
         if (shouldAnchorAssistantReply(anchorAssistantReply)) {
           await nextTick();
@@ -864,47 +875,83 @@ export function useChatSubmit({
     });
   }
 
-  function scheduleAccessoryRefresh(conversationId) {
+  function scheduleAccessoryRefresh(conversationId, assistantMessage = null) {
     const targetConversationId = normalizeConversationId(conversationId);
     if (submitDisposed || typeof window === 'undefined' || !targetConversationId) {
       return;
     }
     const runId = ++accessoryRefreshRun;
+    const jobId = String(assistantMessage?.postprocessJobId || '').trim();
+    const assistantMessageId = String(assistantMessage?.id || '').trim();
     clearAccessoryRefreshTimers();
     if (typeof onAccessoryRefreshStart === 'function') {
-      const shouldContinue = onAccessoryRefreshStart({ runId, conversationId: targetConversationId });
+      const shouldContinue = onAccessoryRefreshStart({
+        runId,
+        conversationId: targetConversationId,
+        assistantMessageId: String(assistantMessage?.id || ''),
+        jobId
+      });
       if (shouldContinue === false || !isCurrentAccessoryRefresh(runId, targetConversationId)) {
         return;
       }
     }
-    for (const delay of accessoryRefreshDelays) {
-      const isFinal = delay === accessoryRefreshDelays[accessoryRefreshDelays.length - 1];
-      const timer = window.setTimeout(async () => {
-        if (!isCurrentAccessoryRefresh(runId, targetConversationId)) {
-          return;
-        }
-        const results = await Promise.allSettled([
-          createRefreshTask(loadStatusBar),
-          createRefreshTask(loadEconomyBalance)
-        ]);
-        if (!isCurrentAccessoryRefresh(runId, targetConversationId)) {
-          return;
-        }
-        if (typeof onAccessoryRefresh === 'function') {
-          const shouldContinue = await onAccessoryRefresh({
-            runId,
-            conversationId: targetConversationId,
-            delay,
-            isFinal,
-            results
-          });
-          if (shouldContinue === false && isCurrentAccessoryRefresh(runId, targetConversationId)) {
-            cancelAccessoryRefresh();
-          }
-        }
-      }, delay);
-      accessoryRefreshTimers.push(timer);
+    if (!jobId) {
+      void settleAccessoryRefresh(runId, targetConversationId, assistantMessageId, jobId, null, new Error('缺少本轮后台任务 ID'));
+      return;
     }
+    queueAccessoryRefreshPoll(runId, targetConversationId, assistantMessageId, jobId, accessoryRefreshInitialDelay);
+  }
+
+  function queueAccessoryRefreshPoll(runId, conversationId, assistantMessageId, jobId, delay) {
+    const timer = window.setTimeout(async () => {
+      const timerIndex = accessoryRefreshTimers.indexOf(timer);
+      if (timerIndex >= 0) accessoryRefreshTimers.splice(timerIndex, 1);
+      if (!isCurrentAccessoryRefresh(runId, conversationId)) return;
+      let job;
+      try {
+        job = await fetchJob(jobId);
+      } catch (error) {
+        if (error?.status === 404) {
+          await settleAccessoryRefresh(runId, conversationId, assistantMessageId, jobId, null, error);
+          return;
+        }
+        queueAccessoryRefreshPoll(runId, conversationId, assistantMessageId, jobId, accessoryRefreshPollDelay);
+        return;
+      }
+      if (!isCurrentAccessoryRefresh(runId, conversationId)) return;
+      if (job?.payload?.assistantMessageId && job.payload.assistantMessageId !== assistantMessageId) {
+        await settleAccessoryRefresh(runId, conversationId, assistantMessageId, jobId, null, new Error('后台任务与回复不匹配'));
+        return;
+      }
+      if (!['succeeded', 'failed', 'cancelled'].includes(job?.status)) {
+        queueAccessoryRefreshPoll(runId, conversationId, assistantMessageId, jobId, accessoryRefreshPollDelay);
+        return;
+      }
+      await settleAccessoryRefresh(runId, conversationId, assistantMessageId, jobId, job, null);
+    }, delay);
+    accessoryRefreshTimers.push(timer);
+  }
+
+  async function settleAccessoryRefresh(runId, conversationId, assistantMessageId, jobId, job, jobError) {
+    if (!isCurrentAccessoryRefresh(runId, conversationId)) return;
+    const results = await Promise.allSettled([
+      createRefreshTask(loadStatusBar),
+      createRefreshTask(loadEconomyBalance)
+    ]);
+    if (!isCurrentAccessoryRefresh(runId, conversationId)) return;
+    if (typeof onAccessoryRefresh === 'function') {
+      await onAccessoryRefresh({
+        runId,
+        conversationId,
+        assistantMessageId,
+        jobId,
+        job,
+        jobError,
+        isFinal: true,
+        results
+      });
+    }
+    if (isCurrentAccessoryRefresh(runId, conversationId)) cancelAccessoryRefresh();
   }
 
   function isCurrentAccessoryRefresh(runId, conversationId) {
@@ -973,7 +1020,8 @@ export function useChatSubmit({
 
     const requestPayload = {
       thinkingEnabled: canToggleThinking.value && thinkingEnabled.value,
-      thinkingLevel: canToggleThinking.value ? thinkingLevel.value : undefined
+      thinkingLevel: canToggleThinking.value ? thinkingLevel.value : undefined,
+      webSearch: canToggleWebSearch.value && webSearchEnabled.value
     };
     if (selectedPresetId.value) {
       requestPayload.presetId = selectedPresetId.value;
@@ -1081,7 +1129,7 @@ export function useChatSubmit({
                 updateStatusBar(data.statusBar);
               }
               if (data.accessoryBackground) {
-                scheduleAccessoryRefresh(conversationId);
+                scheduleAccessoryRefresh(conversationId, data.assistantMessage);
               }
             },
             error(data) {
@@ -1138,7 +1186,7 @@ export function useChatSubmit({
           updateStatusBar(result.statusBar);
         }
         if (result.accessoryBackground) {
-          scheduleAccessoryRefresh(conversationId);
+          scheduleAccessoryRefresh(conversationId, result.assistantMessage);
         }
         if (shouldAnchorAssistantReply(anchorAssistantReply)) {
           await nextTick();
@@ -1272,7 +1320,8 @@ export function useChatSubmit({
     const willStreamReply = useStream.value && canUseStream.value;
     const requestPayload = {
       thinkingEnabled: canToggleThinking.value && thinkingEnabled.value,
-      thinkingLevel: canToggleThinking.value ? thinkingLevel.value : undefined
+      thinkingLevel: canToggleThinking.value ? thinkingLevel.value : undefined,
+      webSearch: canToggleWebSearch.value && webSearchEnabled.value
     };
     if (selectedPresetId.value) {
       requestPayload.presetId = selectedPresetId.value;
@@ -1365,7 +1414,7 @@ export function useChatSubmit({
                 updateStatusBar(data.statusBar);
               }
               if (data.accessoryBackground) {
-                scheduleAccessoryRefresh(conversationId);
+                scheduleAccessoryRefresh(conversationId, data.assistantMessage);
               }
             },
             error(data) {
@@ -1414,7 +1463,7 @@ export function useChatSubmit({
           updateStatusBar(result.statusBar);
         }
         if (result.accessoryBackground) {
-          scheduleAccessoryRefresh(conversationId);
+          scheduleAccessoryRefresh(conversationId, result.assistantMessage);
         }
       }
       if (isCurrentSubmit(submitId, conversationId)) {
@@ -2104,6 +2153,7 @@ export function useChatSubmit({
     thinkingEnabled,
     thinkingLevel,
     thinkingOptions,
+    webSearchEnabled,
     imageGenerationEnabled,
     imageModel,
     imageModelOptions,
@@ -2122,6 +2172,7 @@ export function useChatSubmit({
     canGenerateImages,
     chatProviderCapabilities,
     canToggleThinking,
+    canToggleWebSearch,
     canToggleImageGeneration,
     submitDraft,
     submit,
@@ -2137,6 +2188,7 @@ export function useChatSubmit({
     setSelectedPresetId,
     toggleUseStream,
     toggleThinking,
+    toggleWebSearch,
     setThinkingLevel,
     toggleImageGeneration,
     setImageModel,

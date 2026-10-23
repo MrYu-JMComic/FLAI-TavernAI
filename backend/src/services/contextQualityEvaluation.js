@@ -85,7 +85,7 @@ function evaluatePromptContext(database, fixture) {
     history,
     content: '月蚀钟楼的约定是什么？',
     persistWorldBookState: false,
-    contextBudgetCharacters: 32_000
+    tokenBudget: { inputTokenLimit: 200 }
   });
   const promptText = pipeline.messages.map((message) => String(message.content || '')).join('\n');
   const retrievedIds = pipeline.sections?.memory?.entries?.map((entry) => entry.id) || [];
@@ -96,7 +96,10 @@ function evaluatePromptContext(database, fixture) {
     invariant('hidden_secret_excluded', !promptText.includes(hiddenSecret)),
     invariant('foreign_secret_excluded', !promptText.includes(foreignSecret)),
     invariant('older_relevant_memory_recalled', retrievedIds.includes(oldMemory.id)),
-    invariant('recent_history_window_bounded', !promptText.includes('普通往事 0') && promptText.includes('普通往事 25'))
+    invariant('recent_history_window_bounded',
+      !promptText.includes('普通往事 0') && promptText.includes('普通往事 25')
+      && pipeline.budget.truncated
+      && pipeline.budget.conversationTokens <= pipeline.budget.tokenBudget.inputTokenLimit)
   ], {
     retrieval,
     goldMemoryIds: goldIds,

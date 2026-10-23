@@ -14,7 +14,7 @@ import {
 } from './settingsListState.js';
 import { downloadJsonFile, todayStamp } from '../../utils/downloadJson.js';
 
-export function useSettingsPresets({ isExtensionsPage, notify } = {}) {
+export function useSettingsPresets({ isPresetsPage, notify } = {}) {
   const presetList = ref([]);
   const presetLoading = ref(false);
   const presetLoadError = ref('');
@@ -29,7 +29,7 @@ export function useSettingsPresets({ isExtensionsPage, notify } = {}) {
   let presetMutationToken = 0;
 
   async function loadPresets() {
-    if (!isExtensionPageReady() || presetControlsBusy.value) {
+    if (!isPresetsPageReady() || presetControlsBusy.value) {
       return;
     }
     const requestToken = ++presetLoadToken;
@@ -50,7 +50,7 @@ export function useSettingsPresets({ isExtensionsPage, notify } = {}) {
   }
 
   function isCurrentPresetLoad(requestToken) {
-    return requestToken === presetLoadToken && isExtensionPageReady();
+    return requestToken === presetLoadToken && isPresetsPageReady();
   }
 
   function resetPresetMutationScope() {
@@ -85,7 +85,7 @@ export function useSettingsPresets({ isExtensionsPage, notify } = {}) {
   }
 
   function isCurrentPresetMutation(mutationToken) {
-    return mutationToken === presetMutationToken && isExtensionPageReady();
+    return mutationToken === presetMutationToken && isPresetsPageReady();
   }
 
   function getCurrentPreset(id) {
@@ -171,6 +171,10 @@ export function useSettingsPresets({ isExtensionsPage, notify } = {}) {
     const currentPreset = getCurrentPreset(id);
     if (!currentPreset) return;
     name = currentPreset.name || name;
+    if (presetList.value.length <= 1) {
+      notify?.warning?.('至少需要保留一个预设');
+      return;
+    }
     if (!window.confirm(`确定删除预设「${name}」吗？`)) return;
     const mutationToken = beginPresetMutation(presetDeleteActionId(currentPreset.id));
     try {
@@ -292,8 +296,8 @@ export function useSettingsPresets({ isExtensionsPage, notify } = {}) {
     };
   }
 
-  function isExtensionPageReady() {
-    return isExtensionsPage?.value === true;
+  function isPresetsPageReady() {
+    return isPresetsPage?.value === true;
   }
 
   return {

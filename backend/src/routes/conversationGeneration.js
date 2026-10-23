@@ -10,6 +10,8 @@ import {
 } from '../services/chatAttachments.js';
 import { createConversationAssistantResultService } from '../services/conversationAssistantResults.js';
 import { beginConversationGeneration, endConversationGeneration, enqueueConversationPostprocessing } from '../services/conversationTimeline.js';
+import { applyDeepSeekOnlineSearch } from '../services/deepSeekSearch.js';
+import { resolveProviderModelCapabilities } from '../../../shared/providerCapabilities.js';
 import {
   createChatDiagnosticId,
   hasAssistantPayload,
@@ -131,6 +133,15 @@ export function createConversationGenerationRouter(ctx) {
       return;
     }
 
+    if (userAttachmentCandidates.length && !providerSupportsVision(settings.value)) {
+      response.status(400).json({
+        error: '当前模型不支持图片识别，请切换到 DeepSeek Flash 或其他支持视觉的模型。',
+        code: 'VISION_MODEL_REQUIRED',
+        accepted: false
+      });
+      return;
+    }
+
     const presetId = String(request.body?.presetId || '').trim();
     const activePreset = presetId
       ? getPreset(db, request.auth.user.id, presetId)
@@ -157,7 +168,7 @@ export function createConversationGenerationRouter(ctx) {
       tokenBudget: { ...conversation.contextBudget, reservedOutputTokens: aiOptions.maxTokens },
       tools: settings.value.extraBody?.tools,
       deferWorldBookStateCommit: (commit) => { commitWorldBookState = commit; },
-      resolveAttachmentsForModel: (attachments) => resolveChatAttachmentsForModel(db, request.auth.user.id, attachments)
+      resolveAttachmentsForModel: (attachments) => resolveGenerationAttachments(settings.value, attachments, db, request.auth.user.id)
     });
     if (!shouldUseImageGeneration(request.body) && rejectBudgetOverflow(response, promptPipeline)) return;
     const rules = promptPipeline.rules;
@@ -241,7 +252,10 @@ export function createConversationGenerationRouter(ctx) {
       userId: request.auth.user.id, conversationId: conversation.id, ticket,
       pipeline: promptPipeline, settings: settings.value, sourceMessageId: userMessage.id, operation: 'send'
     });
-    const completionOptions = { ...aiOptions, requestTrace: ticket.requestTrace };
+    const completionOptions = {
+      ...applyDeepSeekOnlineSearch(aiOptions, modelMessages, settings.value, request.body?.webSearch === true),
+      requestTrace: ticket.requestTrace
+    };
 
     if (request.body?.stream !== false) {
       await streamAssistantResponse({
@@ -409,7 +423,7 @@ export function createConversationGenerationRouter(ctx) {
       deferWorldBookStateCommit: (commit) => { commitWorldBookState = commit; },
       appendUserMessage: false,
       continuationPrompt: CONTINUATION_PROMPT,
-      resolveAttachmentsForModel: (attachments) => resolveChatAttachmentsForModel(db, request.auth.user.id, attachments)
+      resolveAttachmentsForModel: (attachments) => resolveGenerationAttachments(settings.value, attachments, db, request.auth.user.id)
     });
     const rules = promptPipeline.rules;
     const worldBookMatches = promptPipeline.worldBookMatches;
@@ -422,7 +436,10 @@ export function createConversationGenerationRouter(ctx) {
       pipeline: promptPipeline, settings: settings.value,
       sourceMessageId: history.findLast((message) => message.role === 'assistant')?.id || '', operation: 'continue'
     });
-    const completionOptions = { ...aiOptions, requestTrace: ticket.requestTrace };
+    const completionOptions = {
+      ...applyDeepSeekOnlineSearch(aiOptions, modelMessages, settings.value, request.body?.webSearch === true),
+      requestTrace: ticket.requestTrace
+    };
 
     if (request.body?.stream !== false) {
       await streamAssistantResponse({
@@ -601,7 +618,7 @@ export function createConversationGenerationRouter(ctx) {
       tools: settings.value.extraBody?.tools,
       deferWorldBookStateCommit: (commit) => { commitWorldBookState = commit; },
       appendUserMessage: false,
-      resolveAttachmentsForModel: (attachments) => resolveChatAttachmentsForModel(db, request.auth.user.id, attachments)
+      resolveAttachmentsForModel: (attachments) => resolveGenerationAttachments(settings.value, attachments, db, request.auth.user.id)
     });
     const rules = promptPipeline.rules;
     const worldBookMatches = promptPipeline.worldBookMatches;
@@ -613,7 +630,10 @@ export function createConversationGenerationRouter(ctx) {
       userId: request.auth.user.id, conversationId: conversation.id, ticket,
       pipeline: promptPipeline, settings: settings.value, sourceMessageId: target.id, operation: 'regenerate'
     });
-    const completionOptions = { ...aiOptions, requestTrace: ticket.requestTrace };
+    const completionOptions = {
+      ...applyDeepSeekOnlineSearch(aiOptions, modelMessages, settings.value, request.body?.webSearch === true),
+      requestTrace: ticket.requestTrace
+    };
     const macroContext = {
       userName: request.auth.user.displayName || request.auth.user.username || '用户',
       charName: character.name || ''
@@ -730,4 +750,17 @@ export function createConversationGenerationRouter(ctx) {
   }
 
   return router;
+}
+
+function providerSupportsVision(settings = {}) {
+  return Boolean(resolveProviderModelCapabilities(settings).vision);
+}
+
+// Keep stored history intact while omitting image blocks from prompts sent to
+// text-only models during continue/regenerate operations.
+function resolveGenerationAttachments(settings, attachments, database, userId) {
+  if (!providerSupportsVision(settings)) {
+    return [];
+  }
+  return resolveChatAttachmentsForModel(database, userId, attachments);
 }

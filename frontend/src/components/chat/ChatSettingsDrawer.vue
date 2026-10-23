@@ -12,6 +12,7 @@ import {
 import { STATUS_BAR_LAYOUT_OPTIONS, STATUS_BAR_VARIANT_OPTIONS } from '../../utils/statusBarOptions.js';
 import { STATUS_TEMPLATE_REFERENCE } from '../../utils/statusTemplateReference.js';
 import { buildModelSelectOptions } from '../../services/modelCatalog';
+import StatusBarCodeEditor from '../StatusBarCodeEditor.vue';
 
 // Rendered from the SFC template; keep the script bindings visible to source
 // hygiene checks.
@@ -47,7 +48,6 @@ const props = defineProps({
   statusBarSaving: { type: Boolean, default: false },
   statusBarForm: { type: Object, default: () => ({}) },
   statusBarTemplateMode: { type: String, default: 'builtin' },
-  statusBarTemplateIssues: { type: Array, default: () => [] },
   statusBarTemplateCfg: { type: Object, default: () => ({ variant: 'default', density: 'default', layout: 'grid', accentColor: '', effects: [], customCss: '' }) }
 });
 
@@ -704,7 +704,7 @@ function requestClose() {
               </select>
             </label>
             <div v-if="item.configurable" class="chat-setting-field compact accessory-skill-configure">
-              <span>模型与工具</span>
+              <span>{{ item.key === 'statusBarAgent' ? '模型、思考与工具' : '模型与工具' }}</span>
               <button
                 class="accessory-skill-configure-button"
                 type="button"
@@ -776,7 +776,8 @@ function requestClose() {
                 @change="onStatusBarTemplateModeChange"
               >
                 <option value="builtin">内置样式</option>
-                <option value="custom">完全自定义</option>
+                <option value="custom">展示模板</option>
+                <option value="runtime">HTML / CSS / JavaScript / Vue</option>
               </select>
             </label>
             <template v-if="statusBarTemplateMode === 'custom'">
@@ -789,6 +790,7 @@ function requestClose() {
                   placeholder="<div class=&quot;sb-row&quot;><span class=&quot;sb-label&quot;>HP</span><span class=&quot;sb-val&quot;>{{HP}} / {{HP.max}}</span></div>"
                 />
               </label>
+              <small>支持 HTML、CSS 和 &lt;script&gt;。脚本可使用 api、values、context；变量同步不会重新执行脚本。</small>
               <details class="status-blueprint-reference">
                 <summary>
                   <BookOpen :size="15" />
@@ -808,13 +810,14 @@ function requestClose() {
                 </div>
               </details>
             </template>
-            <div v-if="statusBarTemplateIssues.length" class="status-bar-template-alert" role="alert">
-              <span>模板需要调整：</span>
-              <ul>
-                <li v-for="issue in statusBarTemplateIssues" :key="issue">{{ issue }}</li>
-              </ul>
-            </div>
-            <template v-else>
+            <StatusBarCodeEditor
+              v-if="statusBarTemplateMode === 'runtime'"
+              v-model="statusBarForm.template"
+              :variables="statusBarForm.variables"
+              :name="statusBarForm.name"
+              :disabled="statusBarSaving"
+            />
+            <template v-if="statusBarTemplateMode === 'builtin'">
             <div class="sb-template-row">
               <label class="chat-setting-field compact">
                 <span>样式风格</span>
@@ -907,7 +910,7 @@ function requestClose() {
             </template>
           </div>
 
-          <div v-if="statusBarTemplateMode !== 'custom' && statusBarTemplateCfg.displayMode === 'immersive'" class="sb-characters-editor">
+          <div v-if="statusBarTemplateMode === 'builtin' && statusBarTemplateCfg.displayMode === 'immersive'" class="sb-characters-editor">
             <div class="variables-editor-header">
               <span>角色列表</span>
               <button class="chat-setting-inline-button small" type="button" @click="emit('add-status-character')">
@@ -1050,7 +1053,7 @@ function requestClose() {
             </div>
           </div>
 
-          <div v-if="statusBarTemplateMode !== 'custom'" class="sb-quick-replies-editor">
+          <div v-if="statusBarTemplateMode === 'builtin'" class="sb-quick-replies-editor">
             <div class="variables-editor-header">
               <span>快捷回复</span>
               <button class="chat-setting-inline-button small" type="button" @click="emit('add-quick-reply')">+ 添加</button>
@@ -1200,7 +1203,7 @@ function requestClose() {
           </fieldset>
 
           <div class="status-bar-editor-footer">
-            <button class="chat-settings-save" type="button" :disabled="statusBarSaving || statusBarTemplateIssues.length > 0" :aria-busy="statusBarSaving" @click="emit('save-status-bar')">
+            <button class="chat-settings-save" type="button" :disabled="statusBarSaving" :aria-busy="statusBarSaving" @click="emit('save-status-bar')">
               <Save :size="15" />
               <span>{{ statusBarSaving ? '保存中...' : '保存状态栏' }}</span>
             </button>

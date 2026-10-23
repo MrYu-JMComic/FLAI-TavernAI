@@ -143,7 +143,7 @@ test('StatusBar custom template click handler tolerates missing event targets', 
 test('StatusBar forwards custom collapse actions to its embedded disclosure owner', () => {
   assert.match(
     statusBarScript,
-    /const emit = defineEmits\(\['collapse', 'quick-reply', 'send', 'update-variables', 'open-settings', 'script-action'\]\);/
+    /const emit = defineEmits\(\[[^\]]*'collapse'[^\]]*\]\);/
   );
   assert.match(statusBarScript, /if \(effectiveCollapsed\.value\) classes\.push\('sb-collapsed'\);/);
   assert.doesNotMatch(statusBarScript, /if \(collapsed\.value\) classes\.push\('sb-collapsed'\);/);

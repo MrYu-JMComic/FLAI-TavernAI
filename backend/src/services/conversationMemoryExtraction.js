@@ -2,6 +2,7 @@ import { createConversationMemory, listConversationMemories } from '../modules/c
 
 const AUTO_MEMORY_LIMIT = 12;
 const MEMORY_SENTENCE_LIMIT = 1_000;
+const PERSONAL_PREFERENCE_PATTERN = /^(?:我|用户|玩家|I|user|player)\s*(?:喜欢|偏好|不喜欢|讨厌|避免|prefer\b|like\b|dislike\b|hate\b|avoid\b|don't like\b|do not like\b)/i;
 
 export function recordAutomaticConversationMemories(database, userId, conversationId, options = {}) {
   const userMessage = options.userMessage || {};
@@ -44,7 +45,7 @@ export function recordAutomaticConversationMemories(database, userId, conversati
       sourceMessageId: candidate.sourceMessageId || '',
       sourceKind: 'auto',
       sourceExcerpt: candidate.sourceExcerpt,
-      enabled: true
+      enabled: false
     });
     if (memory) {
       created.push(memory);
@@ -78,7 +79,9 @@ function collectSourceMemoryCandidates(candidates, source) {
   if (!['user', 'assistant'].includes(source.role)) return;
   for (const sentence of splitSentences(source.text)) {
     if (source.role === 'user' && isConversationRequest(sentence)) continue;
-    const memoryType = classifyMemorySentence(sentence, source.role);
+    const classificationText = removeQuotedPersonalPreferences(sentence);
+    const memoryType = classifyMemorySentence(classificationText, source.role);
+    if (!memoryType || (classificationText !== sentence && memoryType === 'summary')) continue;
     candidates.push({
       memoryType,
       subject: memoryType === 'preference' ? 'user' : '',
@@ -99,15 +102,25 @@ function isConversationRequest(text) {
 }
 
 function classifyMemorySentence(text, role) {
-  if (/(?:如果|假如|假设|也许|可能|或许|\b(?:if|might|maybe|perhaps|imagine|suppose)\b)/i.test(text)) return 'hypothesis';
-  if (/(?:打算|准备|计划|将会|想要|想去|想把|想买|希望|明天|后天|下次|\b(?:will|want to|hope to|plan to|intend to|tomorrow|next time)\b)/i.test(text)) return 'intent';
-  if (role === 'user' && /^(?:我|用户|玩家|I|user|player)\s*(?:喜欢|偏好|不喜欢|讨厌|避免|prefer\b|like\b|dislike\b|hate\b|avoid\b|don't like\b|do not like\b)/i.test(text)) return 'preference';
+  // Rules propose established continuity only. The model agent can separately
+  // preserve plans and possibilities with their explicit intent/hypothesis types.
+  if (/(?:如果|假如|假设|也许|可能|或许|\b(?:if|might|maybe|perhaps|imagine|suppose)\b)/i.test(text)) return '';
+  if (/(?:打算|准备|计划|将会|想要|想去|想把|想买|希望|明天|后天|下次|\b(?:will|want to|hope to|plan to|intend to|tomorrow|next time)\b)/i.test(text)) return '';
+  if (PERSONAL_PREFERENCE_PATTERN.test(text)) return role === 'user' ? 'preference' : '';
   if (/(?:信任|喜欢|讨厌|怀疑|保护|背叛|帮助|依赖|认识|\b(?:trusts|likes|hates|suspects|protects|betrayed|helps|knows|depends on)\b)/i.test(text)) return 'relationship';
   if (/(?:抵达|来到|进入|离开|位于|住在|藏在|前往|\b(?:arrived at|entered|left|went to|is at|stays in|lives in|hidden in)\b)/i.test(text)) return 'location';
   if (/(?:发现|找到|获得|拿到|救下|击败|承诺|失去|交给|交出|交付|完成|打开|关上|点头|摇头|坐下|站起|递给|递回|放进|接过|收下|归还|取出|抱住|亲吻|离世|死了|\b(?:found|discovered|obtained|rescued|defeated|promised|lost|unlocked|handed|delivered|completed|opened|closed|nodded|sat|stood|hugged|kissed|died)\b)/i.test(text)) return 'event';
   if (/(?:是|拥有|携带|掌握|知道|\b(?:is|has|carries|knows)\b)/i.test(text)) return 'fact';
   // Retain ordinary narration verbatim instead of requiring a fixed verb list.
   return 'summary';
+}
+
+function removeQuotedPersonalPreferences(text) {
+  // Classification ignores quoted preferences; stored content and audit evidence
+  // retain the original sentence, including any established action around them.
+  return text.replace(/"([^"]*)"|“([^”]*)”|‘([^’]*)’|「([^」]*)」|『([^』]*)』/g,
+    (match, straight, curly, singleCurly, corner, doubleCorner) =>
+      [straight, curly, singleCurly, corner, doubleCorner].some((quote) => quote && PERSONAL_PREFERENCE_PATTERN.test(quote.trim())) ? '' : match);
 }
 
 function dedupeCandidates(candidates = []) {

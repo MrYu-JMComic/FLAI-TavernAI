@@ -26,9 +26,24 @@ import {
 } from '../modules/characterImages.js';
 import { normalizeAdvancedSettings, normalizeAccessorySkills } from '../modules/advancedSettings.js';
 import { completeCharacterDraft, streamCharacterDraft } from '../services/characterAssistant.js';
+import { applyProviderNetworkPolicy } from '../services/providerNetworkPolicy.js';
+import {
+  normalizeChatAttachments,
+  resolveChatAttachmentsForModel,
+  validateChatAttachmentsForUpload
+} from '../services/chatAttachments.js';
+import {
+  beginCharacterAssistantTurn,
+  checkpointCharacterAssistantTurn,
+  finishCharacterAssistantTurn,
+  getCharacterAssistantSession,
+  updateCharacterAssistantSession
+} from '../modules/characterAssistantSessions.js';
+import { withSavepoint } from '../modules/savepoint.js';
 import { rollTalent, getCharacterTalents, deleteAllCharacterTalents, deleteCharacterTalent } from '../modules/talents.js';
 import {
   characterListQuerySchema,
+  characterAssistantRequestSchema,
   createCharacterSchema,
   updateCharacterSchema,
   validate
@@ -47,6 +62,8 @@ export function createCharactersRouter({
   withWorldBookId,
   withCharacterListExtras,
   hasUsableProvider,
+  getProviderRow,
+  providerWithSecret,
   getChatProviderSettings,
   withEtag,
   withListCache,
@@ -79,13 +96,26 @@ export function createCharactersRouter({
       return;
     }
 
+    const assistantSessionId = String(request.body?.assistantSessionId || '').trim();
     const payload = prepareCharacterPayload(request.auth.user.id, sanitizeCharacterPayload(request.body));
-    const character = createCharacter(db, request.auth.user.id, payload);
-    if (worldBookId) {
-      linkCharacter(db, request.auth.user.id, worldBookId, character.id, 0);
+    try {
+      const character = withSavepoint(db, 'sp_create_assistant_character', () => {
+        const created = createCharacter(db, request.auth.user.id, payload);
+        if (worldBookId) linkCharacter(db, request.auth.user.id, worldBookId, created.id, 0);
+        setCharacterTags(db, request.auth.user.id, created.id, request.body?.tags);
+        if (assistantSessionId) {
+          const session = updateCharacterAssistantSession(db, request.auth.user.id, assistantSessionId, {
+            characterId: created.id, character: created
+          });
+          if (!session) throw Object.assign(new Error('助手会话不存在。'), { status: 404 });
+        }
+        return created;
+      });
+      response.status(201).json(withCharacterTags(withWorldBookId(character)));
+    } catch (error) {
+      if (!error.status) throw error;
+      response.status(error.status).json({ error: error.message });
     }
-    setCharacterTags(db, request.auth.user.id, character.id, request.body?.tags);
-    response.status(201).json(withCharacterTags(withWorldBookId(character)));
   });
 
   router.get('/:id', requireAuth, (request, response) => {
@@ -304,25 +334,147 @@ export function createCharactersRouter({
 
   // ── Character AI Draft ──
 
-  router.post('/complete-draft', requireAuth, asyncRoute(async (request, response) => {
-    const requirement = String(request.body?.requirement || '').trim();
-    const current = request.body?.character || {};
+  router.post('/complete-draft', requireAuth, validate(characterAssistantRequestSchema), asyncRoute(async (request, response) => {
+    let attachments;
+    try {
+      validateChatAttachmentsForUpload(request.body.attachments);
+      attachments = normalizeChatAttachments(request.body.attachments);
+      if (resolveChatAttachmentsForModel(db, request.auth.user.id, attachments).length !== attachments.length) {
+        throw new Error('参考图片无效或不可访问');
+      }
+    } catch (error) {
+      response.status(400).json({ error: error.message || '参考图片无效' });
+      return;
+    }
+    const requirement = String(request.body?.requirement || '').trim() || (attachments.length
+      ? '请参考图片中的角色特征，帮助完善角色卡。' : '');
+    const assistantSessionId = String(request.body?.assistantSessionId || '').trim();
+    let session = null;
+    if (assistantSessionId) {
+      try {
+        session = getCharacterAssistantSession(db, request.auth.user.id, assistantSessionId);
+      } catch (error) {
+        response.status(error.status || 400).json({ error: error.message });
+        return;
+      }
+      if (!session) {
+        response.status(404).json({ error: '助手会话不存在。' });
+        return;
+      }
+    }
+    const current = request.body?.character || session?.character || {};
     if (!requirement && !hasCharacterDraftSeed(current)) {
       response.status(400).json({ error: '请先输入希望 AI 完善的角色要求，或保留已有设定作为参考。' });
       return;
     }
 
-    const settings = getChatProviderSettings(request.auth.user.id);
-    if (!settings.ok) {
-      response.status(400).json({ error: settings.error });
-      return;
+    const providerProfileId = String(request.body?.providerProfileId || '').trim();
+    let effectiveSettings;
+    if (providerProfileId) {
+      const row = getProviderRow(request.auth.user.id, providerProfileId);
+      if (!row) {
+        response.status(404).json({ error: '所选 AI 网关不存在或已删除，请重新选择。', code: 'PROVIDER_PROFILE_NOT_FOUND' });
+        return;
+      }
+      const settings = withModelOverride(providerWithSecret(row), request.body?.modelOverride);
+      if (!hasUsableProvider(settings) || settings.providerType === 'mock') {
+        response.status(400).json({
+          error: settings.apiKeyError || '所选 AI 网关配置不完整，请检查网关地址、模型和 API Key。',
+          code: 'PROVIDER_PROFILE_UNUSABLE'
+        });
+        return;
+      }
+      try {
+        effectiveSettings = applyProviderNetworkPolicy(settings, config, request.auth.user);
+      } catch (error) {
+        response.status(400).json({ error: error.publicMessage || error.message, code: error.code });
+        return;
+      }
+    } else {
+      const settings = getChatProviderSettings(request.auth.user.id);
+      if (!settings.ok) {
+        response.status(400).json({ error: settings.error });
+        return;
+      }
+      effectiveSettings = withModelOverride(settings.value, request.body?.modelOverride);
     }
-    const effectiveSettings = withModelOverride(settings.value, request.body?.modelOverride);
 
     const controller = new AbortController();
-    request.on('aborted', () => controller.abort(new Error('客户端已取消角色助手请求。')));
+    const cancel = () => controller.abort(new Error('客户端已取消角色助手请求。'));
+    const onClose = () => { if (!response.writableEnded) cancel(); };
+    request.on('aborted', cancel);
+    response.on('close', onClose);
+    let turn = null;
+    let heartbeat = null;
+    const partial = { process: [], toolCalls: [] };
+    const captureEvent = (event, data = {}) => {
+      if (event === 'step') partial.process.push({ ...data });
+      if (event === 'tool') {
+        partial.toolCalls.push(data);
+        const step = partial.process.at(-1);
+        if (step) {
+          const index = Array.isArray(step.tools) ? step.tools.length : 0;
+          step.tools = [...(step.tools || []), data];
+          step.activity = [...(step.activity || []), { type: 'tool', index }];
+        }
+      }
+      if (['content', 'reasoning'].includes(event)) {
+        const step = partial.process.at(-1);
+        if (step) {
+          const text = String(data.text || '');
+          step[event] = String(step[event] || '') + text;
+          if (event === 'content' && text) {
+            const activity = Array.isArray(step.activity) ? step.activity : [];
+            const last = activity.at(-1);
+            step.activity = last?.type === 'content'
+              ? [...activity.slice(0, -1), { ...last, text: `${last.text || ''}${text}` }]
+              : [...activity, { type: 'content', text }];
+          }
+        }
+      }
+      if (event === 'context') partial.context = data;
+      if (event === 'checkpoint') {
+        partial.checkpoint = data;
+        if (data.character) partial.character = data.character;
+      }
+      if (event === 'plan') partial.plan = data;
+      if (turn && ['checkpoint', 'plan', 'context'].includes(event)) {
+        checkpointCharacterAssistantTurn(db, request.auth.user.id, turn, partial);
+      }
+      return writeSse(response, event, data);
+    };
 
     try {
+      if (session) {
+        turn = beginCharacterAssistantTurn(db, request.auth.user.id, session.id, {
+          requirement, character: current, attachments,
+          state: {
+            ...(request.body?.options ? { options: request.body.options } : {}),
+            ...(request.body?.planMode === true && !request.body?.plan ? {
+              planPhase: 'planning', planContext: { requirement, character: current, worldBookContext: request.body?.worldBookContext || {} }
+            } : {}),
+            ...(request.body?.plan ? { plan: request.body.plan, planPhase: 'executing' } : {})
+          }
+        });
+      }
+      const runtimeRequest = {
+        requirement,
+        current,
+        user: request.auth.user,
+        options: request.body?.options || {},
+        thinkingLevel: request.body?.thinkingLevel,
+        continuation: request.body?.continuation || {},
+        worldBookContext: request.body?.worldBookContext || {},
+        characterId: session ? session.characterId : request.body?.characterId,
+        history: turn ? turn.history : request.body?.history || [],
+        attachments: turn ? turn.attachments : attachments,
+        conversationMode: request.body?.conversationMode === true,
+        planMode: request.body?.planMode === true,
+        plan: request.body?.plan || null,
+        database: db,
+        userId: request.auth.user.id,
+        signal: controller.signal
+      };
       if (request.body?.stream === true) {
         response.writeHead(200, {
           'Content-Type': 'text/event-stream; charset=utf-8',
@@ -331,65 +483,44 @@ export function createCharactersRouter({
           'X-Accel-Buffering': 'no'
         });
         response.flushHeaders?.();
-        const heartbeat = setInterval(() => writeSse(response, 'ping', { at: Date.now() }), 15000);
-        try {
-          const result = await streamCharacterDraft(effectiveSettings, {
-            requirement,
-            current,
-            user: request.auth.user,
-            options: request.body?.options || {},
+        heartbeat = setInterval(() => writeSse(response, 'ping', { at: Date.now() }), 15000);
+        const result = await streamCharacterDraft(effectiveSettings, {
+            ...runtimeRequest,
             providerStreaming: request.body?.providerStreaming === true,
-            thinkingLevel: request.body?.thinkingLevel,
-            continuation: request.body?.continuation || {},
-            worldBookContext: request.body?.worldBookContext || {},
-            characterId: request.body?.characterId,
-            history: request.body?.history || [],
-            planMode: request.body?.planMode === true,
-            plan: request.body?.plan || null,
-            database: db,
-            userId: request.auth.user.id,
-            signal: controller.signal,
-            emit: (event, data) => writeSse(response, event, data)
+            emit: captureEvent
           });
-          writeSse(response, 'done', result);
-          response.end();
-        } catch (error) {
-          if (!request.aborted && !response.destroyed) {
-            const message = controller.signal.aborted
-              ? controller.signal.reason?.message || 'AI 角色助手请求已中断，请重试。'
-              : safeCharacterAssistantError(error, config);
-            writeSse(response, 'error', { error: message });
-            response.end();
-          }
-        } finally {
-          clearInterval(heartbeat);
+        if (turn) {
+          result.assistantSession = finishCharacterAssistantTurn(db, request.auth.user.id, turn, result);
+          turn = null;
         }
+        writeSse(response, 'done', result);
+        response.end();
         return;
       }
 
-      response.json(
-        await completeCharacterDraft(effectiveSettings, {
-          requirement,
-          current,
-          user: request.auth.user,
-          options: request.body?.options || {},
-          thinkingLevel: request.body?.thinkingLevel,
-          continuation: request.body?.continuation || {},
-          worldBookContext: request.body?.worldBookContext || {},
-          characterId: request.body?.characterId,
-          history: request.body?.history || [],
-          planMode: request.body?.planMode === true,
-          plan: request.body?.plan || null,
-          database: db,
-          userId: request.auth.user.id,
-          signal: controller.signal
-        })
-      );
+      const result = await completeCharacterDraft(effectiveSettings, runtimeRequest);
+      if (turn) {
+        result.assistantSession = finishCharacterAssistantTurn(db, request.auth.user.id, turn, result);
+        turn = null;
+      }
+      response.json(result);
     } catch (error) {
+      const message = controller.signal.aborted
+        ? controller.signal.reason?.message || 'AI 角色助手请求已中断，请重试。'
+        : safeCharacterAssistantError(error, config);
+      if (turn) {
+        finishCharacterAssistantTurn(db, request.auth.user.id, turn, partial, message, controller.signal.aborted);
+        turn = null;
+      }
       if (request.aborted || response.destroyed) {
         return;
       }
-      const status = controller.signal.aborted ? 504 : Number(error?.status) === 429 ? 429 : 400;
+      if (response.headersSent) {
+        writeSse(response, 'error', { error: message });
+        response.end();
+        return;
+      }
+      const status = controller.signal.aborted ? 504 : [403, 404, 409, 429].includes(Number(error?.status)) ? Number(error.status) : 400;
       const abortedMessage = controller.signal.aborted
         ? controller.signal.reason?.message || 'AI 角色助手请求已中断，请重试。'
         : '';
@@ -400,6 +531,10 @@ export function createCharactersRouter({
         fallback: abortedMessage || 'AI 角色助手失败，请稍后重试。'
       });
       response.status(status).json({ error: publicError.error, code: publicError.code });
+    } finally {
+      clearInterval(heartbeat);
+      request.off('aborted', cancel);
+      response.off('close', onClose);
     }
   }));
 

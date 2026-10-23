@@ -22,6 +22,26 @@ export const routeDefinitions = [
     component: () => import('./views/SettingsView.vue')
   },
   {
+    path: '/settings/profile',
+    name: 'settingsProfile',
+    component: () => import('./views/SettingsView.vue')
+  },
+  {
+    path: '/settings/presets',
+    name: 'settingsPresets',
+    component: () => import('./views/SettingsView.vue')
+  },
+  {
+    path: '/settings/provider',
+    name: 'settingsProvider',
+    component: () => import('./views/SettingsView.vue')
+  },
+  {
+    path: '/settings/data',
+    name: 'settingsData',
+    component: () => import('./views/SettingsView.vue')
+  },
+  {
     path: '/admin',
     name: 'admin',
     component: () => import('./views/AdminView.vue')
@@ -35,6 +55,16 @@ export const routeDefinitions = [
     path: '/characters/new',
     name: 'characterNew',
     component: () => import('./views/CharacterFormView.vue')
+  },
+  {
+    path: '/characters/new/assistant',
+    name: 'characterAssistantNew',
+    component: () => import('./views/CharacterAssistantView.vue')
+  },
+  {
+    path: '/characters/:id/assistant',
+    name: 'characterAssistant',
+    component: () => import('./views/CharacterAssistantView.vue')
   },
   {
     path: '/characters/:id/edit',
@@ -59,7 +89,7 @@ export const routeDefinitions = [
   {
     path: '/presets',
     name: 'presets',
-    component: () => import('./views/PresetView.vue')
+    redirect: { name: 'settingsPresets' }
   },
   {
     path: '/:pathMatch(.*)*',

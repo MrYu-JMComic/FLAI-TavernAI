@@ -150,7 +150,7 @@ function selectProvider(event) {
 </script>
 
 <template>
-  <form id="personal-section-provider" class="form-panel provider-settings-panel" :aria-busy="controlsBusy" @submit.prevent="emit('submit')">
+  <form id="settings-provider-panel" class="form-panel provider-settings-panel" :aria-busy="controlsBusy" @submit.prevent="emit('submit')">
     <div class="inline-heading">
       <div>
         <h2>AI 供应商设置</h2>

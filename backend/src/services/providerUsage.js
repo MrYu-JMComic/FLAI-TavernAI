@@ -2,7 +2,7 @@ import { normalizeProviderModel } from './providerModels.js';
 import { readNumber, readOptionalNumber, roundMoney } from './providerNumbers.js';
 
 const deepSeekPricingCnyPerMillion = {
-  'deepseek-v4-flash': {
+  'deepseek-flash': {
     cachedInput: 0.02,
     uncachedInput: 1,
     output: 2

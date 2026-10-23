@@ -1,183 +1,47 @@
 <script setup>
-import { computed } from 'vue';
-import { Check, ChevronDown, ClipboardList, FileText, Radio, SlidersHorizontal } from '@lucide/vue';
 import { CHARACTER_AI_SECTION_LABELS, aiSectionLabel } from '../../utils/aiSectionLabels.js';
 
-const props = defineProps({
-  assistantModel: { type: String, default: '' },
+defineProps({
   disabled: { type: Boolean, default: false },
-  modelOptions: { type: Array, default: () => [] },
   options: { type: Object, required: true },
-  planMode: { type: Boolean, default: false },
-  requirement: { type: String, default: '' },
   streamingEnabled: { type: Boolean, default: false },
   thinkingLevel: { type: String, default: 'off' },
   thinkingOptions: { type: Array, default: () => [] },
   thinkingSupported: { type: Boolean, default: false },
   useCurrentDraft: { type: Boolean, default: true }
 });
+const emit = defineEmits(['set-option', 'update:streamingEnabled', 'update:thinkingLevel', 'update:useCurrentDraft']);
 
-const emit = defineEmits([
-  'set-option',
-  'update:assistantModel',
-  'update:planMode',
-  'update:requirement',
-  'update:streamingEnabled',
-  'update:thinkingLevel',
-  'update:useCurrentDraft'
-]);
-
-function readInputValue(event) {
-  const target = event?.target;
-  return target && target.value !== undefined ? target.value : '';
-}
-
-function readInputChecked(event) {
-  const target = event?.target;
-  return Boolean(target?.checked);
-}
-
-function optionLabel(key) {
-  return aiSectionLabel(CHARACTER_AI_SECTION_LABELS, key);
-}
-
-const optionCount = computed(() => Object.keys(props.options).length);
-const selectedOptionCount = computed(() => Object.values(props.options).filter(Boolean).length);
-
-function setAllOptions(enabled) {
-  for (const key of Object.keys(props.options)) {
-    emit('set-option', key, enabled);
-  }
+function setAllOptions(options, enabled) {
+  for (const key of Object.keys(options)) emit('set-option', key, enabled);
 }
 </script>
 
 <template>
-  <div class="ai-draft-inputs">
-    <label class="field">
-      <span>完善要求</span>
-      <textarea
-        :value="requirement"
-        rows="4"
-        placeholder="例如：赛博茶馆老板娘，温柔但有边界，会把用户称作{user}；需要把用户输入里的“老板”替换成“掌柜”。"
-        :disabled="disabled"
-        @input="emit('update:requirement', readInputValue($event))"
-      />
-    </label>
-
-    <div class="ai-config-row">
-      <label class="field">
-        <span>助手模型</span>
-        <select
-          :value="assistantModel"
-          :disabled="disabled"
-          @change="emit('update:assistantModel', readInputValue($event))"
-        >
-          <option v-for="model in modelOptions" :key="model.id || '__global'" :value="model.id">
-            {{ model.label || model.id }}
-          </option>
-        </select>
-      </label>
-
-      <label class="field">
-        <span>思考强度</span>
-        <select
-          :value="thinkingLevel"
-          :disabled="disabled || !thinkingSupported"
-          @change="emit('update:thinkingLevel', readInputValue($event))"
-        >
-          <option v-if="!thinkingOptions.length" value="off">当前模型不支持</option>
-          <option v-for="option in thinkingOptions" :key="option.value" :value="option.value">
-            {{ option.label }}
-          </option>
-        </select>
-      </label>
-    </div>
-
-    <!-- One card, two rows: both switches share the same frame so the column
-         never stacks bordered box inside bordered box. -->
-    <div class="ai-option-stack">
-      <label class="ai-option-row ai-context-row" :class="{ 'is-active': useCurrentDraft }">
-        <span class="ai-option-icon" aria-hidden="true"><FileText :size="16" /></span>
-        <span class="ai-option-text">
-          <strong>结合当前已填写内容</strong>
-          <small>{{ useCurrentDraft ? '参考表单现有内容，只修改所选范围' : '按完善要求生成；仍保留本次世界书上下文' }}</small>
-        </span>
-        <span class="ai-toggle" :class="{ active: useCurrentDraft, disabled }">
-          <input
-            type="checkbox"
-            :checked="useCurrentDraft"
-            :disabled="disabled"
-            @change="emit('update:useCurrentDraft', readInputChecked($event))"
-          />
-          <span class="ai-toggle-track" aria-hidden="true"></span>
-        </span>
-      </label>
-
-      <label class="ai-option-row ai-stream-card" :class="{ 'is-active': streamingEnabled }">
-        <span class="ai-option-icon" aria-hidden="true"><Radio :size="16" /></span>
-        <span class="ai-option-text">
-          <strong>流式调用</strong>
-          <small>{{ streamingEnabled ? '实时模式：边生成边回传过程' : '稳定模式：一次性返回完整结果' }}</small>
-        </span>
-        <span class="ai-toggle ai-stream-toggle" :class="{ active: streamingEnabled, disabled }">
-          <input
-            type="checkbox"
-            :checked="streamingEnabled"
-            :disabled="disabled"
-            @change="emit('update:streamingEnabled', readInputChecked($event))"
-          />
-          <span class="ai-toggle-track" aria-hidden="true"></span>
-        </span>
-      </label>
-
-      <label class="ai-option-row ai-plan-card" :class="{ 'is-active': planMode }">
-        <span class="ai-option-icon" aria-hidden="true"><ClipboardList :size="16" /></span>
-        <span class="ai-option-text">
-          <strong>Plan 模式</strong>
-          <small>{{ planMode ? '先出计划，勾选确认后才写入表单' : '直接执行：模型边想边改表单' }}</small>
-        </span>
-        <span class="ai-toggle" :class="{ active: planMode, disabled }">
-          <input
-            type="checkbox"
-            :checked="planMode"
-            :disabled="disabled"
-            @change="emit('update:planMode', readInputChecked($event))"
-          />
-          <span class="ai-toggle-track" aria-hidden="true"></span>
-        </span>
-      </label>
-    </div>
-
-    <details class="ai-scope-disclosure">
-      <summary>
-        <span class="ai-scope-summary-title">
-          <SlidersHorizontal :size="15" aria-hidden="true" />
-          完善范围
-        </span>
-        <span class="ai-scope-summary-meta">
-          <small>{{ selectedOptionCount }} / {{ optionCount }}</small>
-          <ChevronDown :size="16" aria-hidden="true" />
-        </span>
-      </summary>
-      <div class="ai-scope-toolbar">
-        <p>仅勾选需要 AI 回填的部分，减少无关修改。</p>
-        <div class="ai-scope-actions">
-          <button class="ghost-button" type="button" :disabled="disabled" @click="setAllOptions(true)">全选</button>
-          <button class="ghost-button" type="button" :disabled="disabled" @click="setAllOptions(false)">清空</button>
-        </div>
+  <div class="assistant-settings-inputs">
+    <section class="assistant-settings-group" aria-label="对话选项">
+      <div class="assistant-settings-checks">
+        <label><input type="checkbox" :checked="useCurrentDraft" :disabled="disabled" @change="emit('update:useCurrentDraft', $event.target.checked)"><span>结合角色草稿</span></label>
+        <label><input type="checkbox" :checked="streamingEnabled" :disabled="disabled" @change="emit('update:streamingEnabled', $event.target.checked)"><span>流式响应</span></label>
       </div>
-      <div class="ai-scope-grid">
-        <label v-for="(enabled, key) in options" :key="key" class="ai-scope-chip" :class="{ 'is-on': enabled }">
-          <input
-            type="checkbox"
-            :checked="enabled"
-            :disabled="disabled"
-            @change="emit('set-option', key, readInputChecked($event))"
-          />
-          <Check :size="12" aria-hidden="true" />
-          <span>{{ optionLabel(key) }}</span>
+      <label v-if="thinkingSupported" class="assistant-settings-thinking">
+        <span>思考强度</span>
+        <select :value="thinkingLevel" :disabled="disabled" @change="emit('update:thinkingLevel', $event.target.value)">
+          <option v-for="option in thinkingOptions" :key="option.value" :value="option.value">{{ option.label }}</option>
+        </select>
+      </label>
+    </section>
+    <section class="assistant-settings-group" aria-label="允许助手修改的范围">
+      <div class="assistant-scope-heading">
+        <strong>允许助手修改的范围</strong>
+        <button class="ghost-button" type="button" :disabled="disabled" @click="setAllOptions(options, !Object.values(options).some(Boolean))">{{ Object.values(options).some(Boolean) ? '清空' : '全选' }}</button>
+      </div>
+      <div class="assistant-scope-options">
+        <label v-for="(enabled, key) in options" :key="key" :class="{ active: enabled }">
+          <input type="checkbox" :checked="enabled" :disabled="disabled" @change="emit('set-option', key, $event.target.checked)">
+          <span>{{ aiSectionLabel(CHARACTER_AI_SECTION_LABELS, key) }}</span>
         </label>
       </div>
-    </details>
+    </section>
   </div>
 </template>

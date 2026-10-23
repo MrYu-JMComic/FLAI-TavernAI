@@ -119,7 +119,7 @@ function worldBookToolResponse(calls, round) {
   } }] });
 }
 
-const thinkingSettings = { providerType: 'deepseek', gatewayName: 'DeepSeek', baseUrl: 'https://world-tools.test', model: 'deepseek-v4-flash', apiKey: 'sk-test', supportsReasoning: true, extraBody: {} };
+const thinkingSettings = { providerType: 'deepseek', gatewayName: 'DeepSeek', baseUrl: 'https://world-tools.test', model: 'deepseek-flash', apiKey: 'sk-test', supportsReasoning: true, extraBody: {} };
 const loreEntry = { name: 'Harbor', triggerKeys: 'harbor', content: 'A foggy harbor.' };
 
 test('world book assistant forwards thinking and honours stable mode on the stream route', async () => {

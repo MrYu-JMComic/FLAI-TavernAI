@@ -125,10 +125,13 @@ export function resolveProviderModelCapabilities(settings = {}, providerCapabili
   // model can invoke a dedicated image model.
   const imageGenerationModel = Boolean(capabilities.imageGeneration && isKnownImageGenerationModel(providerType, model));
   const imageGeneration = imageGenerationModel;
+  const modelVision = providerType === 'deepseek'
+    ? isDeepSeekVisionModel(model)
+    : capabilities.vision;
   return {
     ...capabilities,
     streaming: Boolean(capabilities.streaming && !imageGenerationModel),
-    vision: Boolean(capabilities.vision && !imageGenerationModel),
+    vision: Boolean(modelVision && !imageGenerationModel),
     imageGeneration,
     imageGenerationModel,
     imageGenerationAvailable: Boolean(capabilities.imageGeneration),
@@ -150,6 +153,12 @@ export function isKnownImageGenerationModel(providerType, model) {
     return true;
   }
   return type === 'custom' && isKnownImageGenerationModelForAnyProvider(normalizedModel);
+}
+
+function isDeepSeekVisionModel(model) {
+  const value = String(model || '').trim().toLowerCase();
+  // Legacy Flash identifiers are normalized before this model-specific check.
+  return value.startsWith('deepseek-flash');
 }
 
 export function normalizeProviderCapabilityType(providerType) {
@@ -178,8 +187,8 @@ function isKnownImageGenerationModelForAnyProvider(model) {
 
 function normalizeProviderModelId(providerType, model) {
   const value = String(model || '').trim();
-  if (providerType === 'deepseek' && (value === 'deepseek-chat' || value === 'deepseek-reasoner')) {
-    return 'deepseek-v4-flash';
+  if (providerType === 'deepseek' && ['deepseek-chat', 'deepseek-reasoner', 'deepseek-v4-flash'].includes(value.toLowerCase())) {
+    return 'deepseek-flash';
   }
   return value;
 }

@@ -58,7 +58,84 @@ test('library has no town entry and retired links return to the library', async 
   await page.goto('/#/town');
   await expect(page).toHaveURL(/\/#\/$/);
   await expect(page.locator('.home-character-card').first()).toBeVisible();
-  await expect(page.locator('.topbar')).toBeVisible();
+  await expect(page.locator('.app-navigation')).toBeVisible();
+  await expect(page.locator('.topbar')).toHaveCount(0);
+});
+
+test('desktop sidebar gives the workspace full height and keeps account controls accessible when collapsed', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.addInitScript(() => localStorage.setItem('flai-theme', 'light'));
+  await openLibrary(page);
+  const navigation = page.locator('.app-navigation');
+  const workspace = page.locator('.page-shell');
+  const toggle = page.getByRole('button', { name: '收起主导航', exact: true });
+  const expandedNavigation = await navigation.boundingBox();
+  const expandedWorkspace = await workspace.boundingBox();
+  expect(expandedNavigation.x + expandedNavigation.width).toBeLessThanOrEqual(expandedWorkspace.x + 1);
+  expect(expandedWorkspace.y).toBeLessThanOrEqual(10);
+  expect(expandedWorkspace.y + expandedWorkspace.height).toBeGreaterThanOrEqual(890);
+  await expect(toggle).toHaveAttribute('aria-expanded', 'true');
+  await expect(page.locator('.topbar')).toHaveCount(0);
+
+  await toggle.click();
+  const expand = page.getByRole('button', { name: '展开主导航', exact: true });
+  await expect(expand).toHaveAttribute('aria-expanded', 'false');
+  await expect.poll(async () => (await navigation.boundingBox()).width).toBeLessThan(expandedNavigation.width - 100);
+  await expect.poll(async () => (await workspace.boundingBox()).width).toBeGreaterThan(expandedWorkspace.width + 100);
+
+  const theme = page.getByRole('button', { name: '切换到夜间模式', exact: true });
+  const user = page.getByRole('button', { name: '用户菜单', exact: true });
+  for (const control of [theme, user]) {
+    await expect(control).toBeInViewport();
+    const box = await control.boundingBox();
+    expect(box.y).toBeGreaterThan(expandedNavigation.y + expandedNavigation.height * 0.75);
+  }
+  await theme.click();
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
+  await expect(page.getByRole('button', { name: '切换到日间模式', exact: true })).toBeVisible();
+
+  await user.click();
+  await expect(user).toHaveAttribute('aria-expanded', 'true');
+  const menu = page.getByRole('menu');
+  await expect(menu).toBeInViewport();
+  const menuBox = await menu.boundingBox();
+  const userBox = await user.boundingBox();
+  expect(menuBox.y + menuBox.height).toBeLessThanOrEqual(userBox.y + 1);
+  await page.getByRole('menuitem', { name: '个人中心', exact: true }).click();
+  await expect(page).toHaveURL(/\/#\/settings$/);
+  await expect(page.getByRole('navigation', { name: '个人设置分区' })).toBeVisible();
+  await expect(menu).toHaveCount(0);
+  await navigation.locator('.topnav').getByRole('button', { name: '首页', exact: true }).click();
+  await expect(page.locator('.home-character-card').first()).toBeVisible();
+  await expand.click();
+  await expect(toggle).toHaveAttribute('aria-expanded', 'true');
+  await expect.poll(async () => (await workspace.boundingBox()).width).toBeLessThan(expandedWorkspace.width + 1);
+});
+
+test('mobile navigation and its open menu fit the viewport without horizontal scrolling', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await openLibrary(page);
+  for (const width of [900, 768, 390, 320]) {
+    await page.setViewportSize({ width, height: 844 });
+    await expect(page.locator('.app-navigation')).toBeVisible();
+    await expect(page.getByRole('button', { name: '收起主导航', exact: true })).toBeHidden();
+    await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    await expect.poll(() => page.locator('.page-shell').evaluate((element) => element.scrollWidth <= element.clientWidth + 1)).toBe(true);
+    if (width <= 620) {
+      const bottomNavigation = page.locator('.mobile-bottom-nav');
+      await expect(bottomNavigation).toBeInViewport();
+      await expect(bottomNavigation.getByRole('button', { name: '首页', exact: true })).toHaveAttribute('aria-current', 'page');
+      const user = page.getByRole('button', { name: '用户菜单', exact: true });
+      await user.click();
+      await expect(user).toHaveAttribute('aria-expanded', 'true');
+      await expect(page.getByRole('menu')).toBeInViewport();
+      await expect(page.getByRole('menuitem', { name: '个人中心', exact: true })).toBeVisible();
+      await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+      await page.keyboard.press('Escape');
+      await expect(page.getByRole('menu')).toHaveCount(0);
+      await expect(user).toHaveAttribute('aria-expanded', 'false');
+    }
+  }
 });
 
 test('library shows a complete first row on desktop and keeps the toolbar pinned', async ({ page }) => {
@@ -78,24 +155,35 @@ test('library shows a complete first row on desktop and keeps the toolbar pinned
 test('wide libraries fill the page and reflow complete virtual rows on resize', async ({ page }) => {
   await page.setViewportSize({ width: 1920, height: 1080 });
   await openLibrary(page);
-  for (const { width, columns } of [
-    { width: 1920, columns: 5 },
-    { width: 2560, columns: 7 },
-    { width: 1746 },
-    { width: 1750 },
-    { width: 1400 },
-    { width: 1404 },
-    { width: 1405 },
-    { width: 1440, columns: 4 }
-  ]) {
+  for (const width of [1920, 2560, 1746, 1750, 1400, 1404, 1405, 1440]) {
     await page.setViewportSize({ width, height: 1080 });
+    const scroller = await page.locator('.page-shell').boundingBox();
+    const gutters = await page.locator('.page-shell').evaluate((element) => {
+      const style = getComputedStyle(element);
+      const paddingLeft = parseFloat(style.paddingLeft);
+      const paddingRight = parseFloat(style.paddingRight);
+      const borderLeft = parseFloat(style.borderLeftWidth);
+      return {
+        paddingLeft,
+        paddingRight,
+        left: paddingLeft + borderLeft,
+        right: paddingRight + element.getBoundingClientRect().width - element.clientWidth - borderLeft
+      };
+    });
     const workbench = await page.locator('.home-workbench').boundingBox();
-    expect(workbench.x).toBeLessThanOrEqual(32);
-    expect(width - workbench.x - workbench.width).toBeLessThanOrEqual(44);
+    expect(gutters.paddingLeft).toBeLessThanOrEqual(32);
+    expect(gutters.paddingRight).toBeLessThanOrEqual(32);
+    expect(Math.abs(workbench.x - scroller.x - gutters.left)).toBeLessThan(1);
+    expect(Math.abs(scroller.x + scroller.width - workbench.x - workbench.width - gutters.right)).toBeLessThan(1);
     const gridColumns = await page.locator('.home-character-row').first().evaluate((element) => getComputedStyle(element).gridTemplateColumns.split(' ').length);
-    if (columns) expect(gridColumns).toBe(columns);
-    await expect(page.locator('.home-character-row').first().locator('.home-character-card')).toHaveCount(gridColumns);
-    await expect(page.locator('.home-character-row').nth(1).locator('.home-character-card').first()).toContainText(`Traveler ${String(gridColumns + 1).padStart(2, '0')}`);
+    expect(gridColumns).toBeGreaterThan(1);
+    await expect.poll(async () => {
+      const rows = page.locator('.home-character-row');
+      const columns = await rows.first().evaluate((element) => getComputedStyle(element).gridTemplateColumns.split(' ').length);
+      const firstRowCount = await rows.first().locator('.home-character-card').count();
+      const secondRowName = await rows.nth(1).locator('.home-character-card').first().textContent();
+      return firstRowCount === columns && secondRowName.includes(`Traveler ${String(columns + 1).padStart(2, '0')}`);
+    }).toBe(true);
     const firstRow = await page.locator('.home-character-row').first().locator('.home-character-card').evaluateAll((cards) => cards.map((card) => card.getBoundingClientRect().top));
     expect(Math.max(...firstRow) - Math.min(...firstRow)).toBeLessThan(1);
     await expect.poll(() => page.locator('.page-shell').evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);

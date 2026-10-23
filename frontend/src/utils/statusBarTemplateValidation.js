@@ -4,6 +4,9 @@ import {
   hasDangerousStatusBarCss
 } from './statusBarTemplateSecurity.js';
 import { validateStatusTemplateSyntax } from '../../../shared/statusTemplateRenderer.js';
+import {
+  hasStatusBarTemplateScripts, parseStatusBarRuntime, stripStatusBarTemplateScripts, STATUS_BAR_RUNTIME_LIMIT
+} from '../../../shared/statusBarRuntime.js';
 
 // Structural checks shared by the chat status-bar editor and the character
 // blueprint editor. Returns raw (possibly repeated) issue strings; callers
@@ -11,14 +14,29 @@ import { validateStatusTemplateSyntax } from '../../../shared/statusTemplateRend
 export function collectStatusBarTemplateRawIssues(template) {
   const raw = String(template || '').trim();
   const issues = [];
+  if (String(template || '').length > STATUS_BAR_RUNTIME_LIMIT) {
+    issues.push('状态栏模板总长度不能超过 50,000 字符。');
+  }
+  const runtime = parseStatusBarRuntime(raw);
+  if (runtime) {
+    try {
+      new Function(`return (async () => {\n${runtime.javascript}\n})()`);
+    } catch (error) {
+      issues.push(`JavaScript 语法错误：${error.message}`);
+    }
+    return issues;
+  }
   if (!raw) {
     return ['自定义模板不能为空；如果只想显示变量，请切回“内置样式”。'];
   }
   if (raw[0] === '{') {
-    return [];
+    return issues;
   }
-  if (/<\s*script\b|<\/\s*script\s*>/i.test(raw)) {
-    issues.push('自定义模板不支持 <script> 或 JavaScript。');
+  if (hasStatusBarTemplateScripts(raw)) {
+    // Executable templates use the existing frame, never the host v-html
+    // allowlist. Browser errors are reported by that runtime, including modules.
+    issues.push(...validateStatusTemplateSyntax(stripStatusBarTemplateScripts(raw)));
+    return issues;
   }
   if (/<\s*(iframe|object|embed|link|meta|base|form|input|textarea|select|img|video|audio|svg)\b/i.test(raw)) {
     issues.push('自定义模板只能使用安全展示标签，不支持表单、外链、媒体或嵌入标签。');

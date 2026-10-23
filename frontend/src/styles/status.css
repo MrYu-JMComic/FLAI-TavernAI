@@ -405,29 +405,6 @@
   line-height: 1.5;
 }
 
-.status-bar-template-alert {
-  display: grid;
-  gap: 4px;
-  padding: 8px 10px;
-  border: 1px solid color-mix(in srgb, var(--danger) 32%, var(--line));
-  border-radius: 8px;
-  color: var(--danger);
-  background: color-mix(in srgb, var(--danger) 8%, transparent);
-  font-size: 0.78rem;
-  line-height: 1.45;
-}
-
-.status-bar-template-alert span {
-  font-weight: 800;
-}
-
-.status-bar-template-alert ul {
-  display: grid;
-  gap: 2px;
-  margin: 0;
-  padding-left: 18px;
-}
-
 /* -- Characters Editor -- */
 
 .sb-characters-editor {

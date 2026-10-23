@@ -1,5 +1,5 @@
 <script setup>
-import { Download, GripVertical, Power, RefreshCw, Regex, Upload } from '@lucide/vue';
+import { Download, GripVertical, Power, RefreshCw, Regex, Trash2, Upload } from '@lucide/vue';
 
 const props = defineProps({
   actionBusyId: { type: String, default: '' },
@@ -19,6 +19,7 @@ const emit = defineEmits([
   'group-filter-change',
   'import-file',
   'load',
+  'remove',
   'toggle',
   'update-group-filter'
 ]);
@@ -36,6 +37,10 @@ function isRegexToggleBusy(id) {
   return props.actionBusyId === regexToggleActionId(id);
 }
 
+function isRegexDeleteBusy(id) {
+  return props.actionBusyId === `regex-delete:${id}`;
+}
+
 function regexScopeLabel(scope) {
   if (scope === 'input') return '输入';
   if (scope === 'output') return '输出';
@@ -48,7 +53,7 @@ function regexScopeLabel(scope) {
     <div class="inline-heading">
       <div>
         <h2>正则规则管理</h2>
-        <p>管理所有角色的正则替换规则，支持分组、排序和启用/禁用。</p>
+        <p>管理所有角色的正则替换规则，支持分组、排序、启用/禁用和删除。</p>
       </div>
       <Regex :size="20" />
     </div>
@@ -87,7 +92,7 @@ function regexScopeLabel(scope) {
         class="regex-rule-card"
         :class="{ disabled: !rule.enabled }"
         :draggable="!controlsBusy"
-        :aria-busy="isRegexToggleBusy(rule.id) || actionBusyId === 'regex-reorder'"
+        :aria-busy="isRegexToggleBusy(rule.id) || isRegexDeleteBusy(rule.id) || actionBusyId === 'regex-reorder'"
         @dragstart="emit('drag-start', $event, rule.id)"
         @dragover="emit('drag-over', $event, rule.id)"
         @drop="emit('drop', rule.id)"
@@ -116,6 +121,17 @@ function regexScopeLabel(scope) {
           @click="emit('toggle', rule.id)"
         >
           <Power :size="16" />
+        </button>
+        <button
+          class="icon-button danger"
+          type="button"
+          title="删除"
+          :aria-label="`删除正则规则：${rule.label}`"
+          :disabled="controlsBusy"
+          :aria-busy="isRegexDeleteBusy(rule.id)"
+          @click="emit('remove', rule.id)"
+        >
+          <Trash2 :size="16" />
         </button>
       </div>
     </div>

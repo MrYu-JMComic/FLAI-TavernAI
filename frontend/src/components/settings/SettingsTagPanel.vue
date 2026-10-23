@@ -100,7 +100,7 @@ function isTagDeleteBusy(id) {
     </div>
     <div v-if="tagList.length" class="tag-manage-cloud">
       <div v-for="tag in tagList" :key="tag.id" class="tag-manage-bubble">
-        <span class="tag-badge" :style="tag.color ? { '--tag-color': tag.color } : {}">{{ tag.name }}</span>
+        <span class="tag-badge" :title="tag.name" :style="tag.color ? { '--tag-color': tag.color } : {}">{{ tag.name }}</span>
         <span class="tag-usage">{{ tag.usageCount || 0 }} 个角色</span>
         <button
           class="icon-button danger"

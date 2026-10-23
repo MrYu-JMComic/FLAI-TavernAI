@@ -120,6 +120,41 @@ test('quoted preferences and temporary requests do not become user preferences',
   assert.match(candidates[0].content, /I dislike cold tea/);
 });
 
+test('quoted character preferences stay separate from the user preference that follows', () => {
+  for (const quote of ['"I prefer coffee."', '“我喜欢咖啡。”', '「我喜欢咖啡。」']) {
+    const candidates = extractConversationMemoryCandidates({
+      userText: `Mira said ${quote} I prefer moon tea.`
+    });
+    assert.equal(candidates.length, 1, quote);
+    assert.equal(candidates[0].memoryType, 'preference');
+    assert.equal(candidates[0].sourceRole, 'user');
+    assert.match(candidates[0].content, /I prefer moon tea/);
+  }
+});
+
+test('completed actions beside quoted preferences retain the original source evidence', () => {
+  for (const role of ['user', 'assistant']) {
+    for (const content of [
+      '我把钥匙交给了她，并说：“我喜欢茶。”',
+      'I handed Mira the key and said "I prefer moon tea."'
+    ]) {
+      const candidates = extractConversationMemoryCandidates({ messages: [{ id: 'action-source', role, content }] });
+      assert.equal(candidates.length, 1, `${role}: ${content}`);
+      assert.equal(candidates[0].memoryType, 'event');
+      assert.equal(candidates[0].content, content);
+      assert.equal(candidates[0].sourceExcerpt, content);
+      assert.equal(candidates[0].sourceMessageId, 'action-source');
+      assert.equal(candidates[0].sourceRole, role);
+    }
+  }
+});
+
+test('a sentence only reporting a quoted preference does not become a summary candidate', () => {
+  for (const content of ['米拉说道：“我喜欢茶。”', 'Mira said "I prefer moon tea."']) {
+    assert.deepEqual(extractConversationMemoryCandidates({ userText: content, assistantText: content }), []);
+  }
+});
+
 test('a missing source message ID never borrows evidence from the other speaker', (t) => {
   const database = createAppDatabase(':memory:');
   t.after(() => database.close());

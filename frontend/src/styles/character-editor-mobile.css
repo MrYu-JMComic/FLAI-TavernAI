@@ -10,38 +10,71 @@
   gap: var(--space-3);
 }
 
-/* The global responsive rules stack .section-heading into a tall column. On the
-   phone editor the header should stay a single compact row. */
+/* Keep the compact editor action row easy to reach on phones. */
 .character-editor-page.is-mobile .character-editor-header {
-  display: flex;
-  align-items: center;
-  flex-direction: row;
-  justify-content: space-between;
-  gap: var(--space-2);
+  display: block;
   padding-bottom: var(--space-2);
-  text-align: left;
 }
 
-.character-editor-page.is-mobile .character-editor-header > div {
-  min-width: 0;
+.character-editor-page.is-mobile .character-editor-header-actions {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 40px;
+  gap: var(--space-2);
 }
 
-.character-editor-page.is-mobile .character-editor-header p {
-  margin: 0;
-  font-size: var(--font-xs);
+.character-editor-page.is-mobile .character-editor-header-actions .character-editor-return {
+  grid-column: -2;
+  padding: 0;
 }
 
-.character-editor-page.is-mobile .character-editor-header h1 {
-  max-width: 100%;
-  margin: 0;
-  font-size: var(--font-lg);
+.character-editor-page.is-mobile .character-editor-return span {
+  display: none;
 }
 
-.character-editor-page.is-mobile .character-editor-header .ghost-button {
-  min-width: var(--touch-min);
-  min-height: var(--touch-min);
+.character-editor-page.is-mobile :is(.character-editor-header-actions, .character-mobile-actionbar) > button {
+  height: 40px;
+  min-height: 40px;
   flex: 0 0 auto;
-  padding-inline: var(--space-2);
+  padding: 0 10px;
+  gap: 6px;
+  font-size: 13px;
+}
+
+.character-editor-page.is-mobile :is(.character-editor-header-actions, .character-draft-actions, .character-mobile-actionbar) > button > svg {
+  width: 16px;
+  height: 16px;
+  flex-basis: 16px;
+}
+
+.character-editor-page.is-mobile .character-draft-note {
+  flex-wrap: nowrap;
+  gap: var(--space-2);
+  padding: var(--space-2) 10px;
+}
+
+.character-editor-page.is-mobile .character-draft-copy {
+  flex: 0 0 auto;
+  gap: var(--space-1) var(--space-2);
+}
+
+.character-editor-page.is-mobile .character-draft-copy :is(strong, span) {
+  font-size: 13px;
+}
+
+.character-editor-page.is-mobile .character-draft-actions {
+  flex-wrap: nowrap;
+  justify-content: flex-end;
+  align-items: center;
+}
+
+.character-editor-page.is-mobile .character-draft-actions .ghost-button {
+  width: auto;
+  height: 36px;
+  min-height: 36px;
+  flex: 0 0 auto;
+  padding: 0 10px;
+  gap: 6px;
+  font-size: 13px;
 }
 
 /* Compact avatar editor: portrait beside its controls instead of stacked. */
@@ -68,11 +101,11 @@
   min-width: 0;
 }
 
-/* Room for the fixed action bar, which itself clears the app bottom nav. */
+/* Keep the final controls clear of the save bar after the page-shell reserve. */
 .character-mobile-form {
   display: grid;
   gap: var(--space-3);
-  padding-bottom: calc(132px + env(safe-area-inset-bottom, 0px));
+  padding-bottom: 40px;
 }
 
 /* ---- hub ---- */
@@ -447,12 +480,40 @@
   grid-template-columns: minmax(0, 1fr);
 }
 
-/* ---- fixed action bar, above the app bottom nav ---- */
+.character-editor-page.is-mobile .accessory-skill-row {
+  display: grid;
+  gap: var(--space-4);
+  padding-block: var(--space-3);
+}
+
+.character-editor-page.is-mobile .accessory-skill-row + .accessory-skill-row {
+  border-top: 1px solid color-mix(in srgb, var(--line) 84%, transparent);
+}
+
+.character-editor-page.is-mobile .accessory-skill-row > .field {
+  min-width: 0;
+}
+
+.character-editor-page.is-mobile .accessory-skill-configure-button {
+  min-height: 46px;
+  border-color: color-mix(in srgb, var(--primary) 32%, var(--line));
+  background: color-mix(in srgb, var(--primary-soft) 72%, var(--surface));
+}
+
+.character-editor-page.is-mobile .accessory-skill-configure-button > small {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--primary);
+  font-weight: 750;
+}
+
+/* ---- fixed action bar ---- */
 
 .character-mobile-actionbar {
   position: fixed;
   right: var(--space-2);
-  bottom: calc(70px + env(safe-area-inset-bottom, 0px));
+  bottom: calc(8px + env(safe-area-inset-bottom, 0px));
   left: var(--space-2);
   z-index: 54;
   display: flex;
@@ -467,9 +528,18 @@
   -webkit-backdrop-filter: blur(18px);
 }
 
-.character-mobile-actionbar > .ghost-button {
-  min-height: var(--touch-min);
-  flex: 0 0 auto;
+@media (max-width: 620px) {
+  .character-mobile-form {
+    padding-bottom: 0;
+  }
+
+  .character-editor-page.is-mobile:not(.is-editing) .character-mobile-form {
+    padding-bottom: 36px;
+  }
+
+  .character-editor-page.is-mobile:not(.is-editing) .character-mobile-actionbar {
+    bottom: calc(70px + env(safe-area-inset-bottom, 0px));
+  }
 }
 
 .character-mobile-save-state {
@@ -487,22 +557,12 @@
 }
 
 .character-mobile-primary {
-  min-height: 46px;
-  min-width: 128px;
+  min-width: 112px;
   margin-left: auto;
   flex: 0 0 auto;
 }
 
 @media (max-width: 420px) {
-  .character-editor-page.is-mobile .character-editor-header h1 {
-    max-width: 66vw;
-    font-size: var(--font-lg);
-  }
-
-  .character-editor-page.is-mobile .character-editor-header .ghost-button span {
-    display: none;
-  }
-
   .character-mobile-wizard-steps {
     grid-template-columns: minmax(0, 1fr);
   }

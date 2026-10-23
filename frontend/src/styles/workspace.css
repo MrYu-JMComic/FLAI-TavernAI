@@ -60,8 +60,7 @@
 }
 
 .workspace-layout-shell .narrow-page,
-.workspace-layout-shell .extensions-page,
-.workspace-layout-shell .preset-page {
+.workspace-layout-shell .extensions-page {
   width: 100%;
   max-width: none;
   margin: 0;
@@ -69,4 +68,23 @@
 
 .workspace-layout-shell .settings-section-nav {
   top: calc(-1 * var(--workspace-page-padding-top, 28px));
+}
+
+.layout-shell.workspace-layout-shell.assistant-layout-shell > .page-shell {
+  height: 100%;
+  padding: 0;
+  overflow: hidden;
+  overflow: clip;
+  scrollbar-gutter: auto;
+}
+
+@media (max-width: 760px) {
+  .layout-shell.assistant-layout-shell {
+    grid-template-rows: minmax(0, 1fr);
+  }
+
+  .assistant-layout-shell > .topbar,
+  .assistant-layout-shell > .mobile-bottom-nav {
+    display: none;
+  }
 }

@@ -898,8 +898,7 @@ function nullableNumber(value) {
     <template v-if="!isDetailView">
       <section class="worldbook-overview">
         <div class="worldbook-overview-copy">
-          <p class="worldbook-eyebrow">Lorebook Studio</p>
-          <h1>世界书</h1>
+          <h1 class="visually-hidden">世界书</h1>
           <p>管理触发词、注入位置、扫描深度和上下文预算，让角色对话能按场景自动补全世界观。</p>
         </div>
         <div class="worldbook-overview-actions">
@@ -1020,18 +1019,13 @@ function nullableNumber(value) {
     </template>
 
     <template v-else>
-      <div class="section-heading">
-        <div>
-          <p>世界书详情</p>
-          <h1>{{ currentBook?.name || '加载中...' }}</h1>
-        </div>
-        <div class="heading-actions">
-          <button class="ghost-button" @click="emit('navigate', 'worldBooks')">
-            <ArrowLeft :size="18" />
-            <span>返回列表</span>
-          </button>
-        </div>
-      </div>
+      <header class="worldbook-detail-toolbar">
+        <h1 class="visually-hidden">{{ currentBook?.name || '世界书详情' }}</h1>
+        <button class="ghost-button" type="button" @click="emit('navigate', 'worldBooks')">
+          <ArrowLeft :size="18" />
+          <span>返回列表</span>
+        </button>
+      </header>
 
       <div v-if="loading" class="loading-state">
         <div class="loading-spinner"></div>
@@ -1360,17 +1354,19 @@ function nullableNumber(value) {
   text-transform: uppercase;
 }
 
-.worldbook-overview h1 {
-  margin: 0;
-  font-size: 2.1rem;
-  line-height: 1.08;
-}
-
 .worldbook-overview-copy > p:last-child {
   max-width: 680px;
-  margin: 10px 0 0;
+  margin: 0;
   color: var(--muted);
   line-height: 1.6;
+}
+
+.worldbook-detail-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  min-width: 0;
+  min-height: 40px;
 }
 
 .worldbook-overview-actions,
@@ -2002,10 +1998,6 @@ function nullableNumber(value) {
     gap: 14px;
     padding: 16px;
     border-radius: 12px;
-  }
-
-  .worldbook-overview h1 {
-    font-size: 1.65rem;
   }
 
   .worldbook-overview-actions {

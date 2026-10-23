@@ -39,6 +39,7 @@ const accessorySkillConfigSchema = z.object({
   enabled: z.union([z.boolean(), z.literal('auto')]).optional(),
   modelOverride: z.string().max(100).trim().optional().default(''),
   providerProfileId: z.string().max(160).trim().optional().default(''),
+  thinkingLevel: z.union([thinkingLevelSchema, z.literal('')]).optional().default(''),
   tools: z.record(z.string().max(40), z.boolean()).optional().default({})
 }).passthrough();
 
@@ -134,6 +135,7 @@ export const createCharacterSchema = z.object({
   renderPlugins: z.array(z.any()).max(20).optional().default([]),
   regexRules: z.array(z.any()).max(50).optional().default([]),
   authorAdvancedSettings: advancedSettingsSchema,
+  assistantSessionId: z.string().max(100).trim().optional(),
   worldBookId: nullableOptionalString
 });
 
@@ -151,6 +153,15 @@ const chatImageAttachmentSchema = z.object({
   size: z.number().int().min(0).max(4 * 1024 * 1024).optional().default(0)
 }).passthrough();
 
+export const characterAssistantRequestSchema = z.object({
+  attachments: z.array(chatImageAttachmentSchema).max(4, '参考图片最多 4 张').optional().default([]),
+  history: z.array(z.object({
+    role: z.string().max(30),
+    content: z.string().max(32000).optional().default(''),
+    attachments: z.array(chatImageAttachmentSchema).max(4, '参考图片最多 4 张').optional().default([])
+  }).passthrough()).max(200).optional()
+}).passthrough();
+
 export const sendMessageSchema = z.object({
   content: z.string().max(32000, '消息最多 32000 字').trim().optional().default(''),
   message: z.string().max(32000).trim().optional(),
@@ -160,14 +171,16 @@ export const sendMessageSchema = z.object({
   imageModel: z.string().max(100).trim().optional(),
   presetId: z.string().optional(),
   thinkingEnabled: booleanLikeSchema.optional(),
-  thinkingLevel: thinkingLevelSchema.optional()
+  thinkingLevel: thinkingLevelSchema.optional(),
+  webSearch: booleanLikeSchema.optional()
 });
 
 export const continueMessageSchema = z.object({
   stream: booleanLikeSchema.optional(),
   presetId: z.string().optional(),
   thinkingEnabled: booleanLikeSchema.optional(),
-  thinkingLevel: thinkingLevelSchema.optional()
+  thinkingLevel: thinkingLevelSchema.optional(),
+  webSearch: booleanLikeSchema.optional()
 });
 
 export const regenerateMessageSchema = continueMessageSchema;
@@ -256,6 +269,7 @@ const worldBookChangeIdSchema = z.string().trim().min(1).max(WORLD_BOOK_ENTRY_LI
 
 export const applyWorldBookChangesSchema = z.object({
   requestId: worldBookChangeIdSchema,
+  assistantSessionId: z.string().max(100).trim().optional(),
   changes: z.array(z.object({
     ref: z.string().trim().min(1).max(240),
     bookId: worldBookChangeIdSchema.nullable().optional(),

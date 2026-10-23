@@ -21,7 +21,7 @@ test('provider settings route preserves encrypted API key when update omits key'
       providerType: 'deepseek',
       gatewayName: 'DeepSeek',
       baseUrl: 'https://api.deepseek.com',
-      model: 'deepseek-v4-flash',
+      model: 'deepseek-flash',
       apiKey,
       supportsReasoning: true,
       extraBody: { temperature: 0.2 }
@@ -64,7 +64,7 @@ test('provider settings route clears encrypted API key when requested', async ()
       providerType: 'deepseek',
       gatewayName: 'DeepSeek',
       baseUrl: 'https://api.deepseek.com',
-      model: 'deepseek-v4-flash',
+      model: 'deepseek-flash',
       apiKey,
       supportsReasoning: true,
       extraBody: {}
@@ -74,7 +74,7 @@ test('provider settings route clears encrypted API key when requested', async ()
       providerType: 'deepseek',
       gatewayName: 'DeepSeek',
       baseUrl: 'https://api.deepseek.com',
-      model: 'deepseek-v4-flash',
+      model: 'deepseek-flash',
       clearApiKey: true,
       supportsReasoning: true,
       extraBody: {}
@@ -202,7 +202,7 @@ test('provider profiles can be added selected used and deleted independently', a
         providerType: 'deepseek',
         gatewayName: 'Personal DeepSeek',
         baseUrl: 'https://api.deepseek.com',
-        model: 'deepseek-chat',
+        model: 'deepseek-flash',
         apiKey: deepSeekKey,
         supportsReasoning: true,
         extraBody: {}

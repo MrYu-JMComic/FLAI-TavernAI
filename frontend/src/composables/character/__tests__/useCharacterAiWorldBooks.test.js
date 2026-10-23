@@ -3,32 +3,39 @@ import { effectScope, nextTick, reactive, ref } from 'vue';
 import { useCharacterAiGeneration } from '../useCharacterAiGeneration.js';
 import { streamCharacterDraft } from '../../../api/characters.js';
 import { applyWorldBookChanges, fetchWorldBook } from '../../../api/worldBooks.js';
+import { normalizeWorldBookEntryForCreate } from '../../../utils/worldBookDraft.js';
+import { scanJsonBoundary } from '../../../../../backend/src/validations/schemas.js';
 
 vi.mock('../../../api/characters.js', () => ({ streamCharacterDraft: vi.fn() }));
 vi.mock('../../../api/worldBooks.js', () => ({ applyWorldBookChanges: vi.fn(), fetchWorldBook: vi.fn() }));
 vi.mock('../../../api/mods.js', () => ({ createMod: vi.fn() }));
+vi.mock('../../../../../backend/src/config.js', () => ({ JSON_BODY_LIMIT_DEFAULT_BYTES: 12 * 1024 * 1024 }));
 
 let scope;
 beforeEach(() => { localStorage.clear(); });
 afterEach(() => { scope?.stop(); vi.resetAllMocks(); vi.unstubAllGlobals(); });
 
-function fixture({ useCurrent = false, planMode = false } = {}) {
+function fixture({ useCurrent = false, planMode = false, conversationMode = false, persistWorldBookDraft } = {}) {
   scope = effectScope();
   const selected = ref(['book-a', 'book-b']);
   const session = ref('character-a');
   const options = reactive({ profile: true, worldBook: true });
+  const saving = ref(false);
   const onWorldBookCreated = vi.fn();
   const onWorldBookUpdated = vi.fn();
   const notify = { success: vi.fn(), warning: vi.fn(), error: vi.fn() };
   const api = scope.run(() => useCharacterAiGeneration({
-    canEdit: ref(true), saving: ref(false), form: reactive({ name: '当前角色' }), aiOptions: options,
+    canEdit: ref(true), saving, form: reactive({ name: '当前角色' }), aiOptions: options,
     aiUseCurrentDraft: ref(useCurrent), assistantPlanMode: ref(planMode),
     getSelectedWorldBookIds: () => selected.value, getSessionId: () => session.value,
+    isConversationMode: () => conversationMode,
     buildPayload: () => ({ name: '当前角色' }), onWorldBookCreated, onWorldBookUpdated,
+    persistWorldBookDraft,
     notify
   }));
+  if (conversationMode) api.selectAiSession({ id: 'assistant-session-a', state: {} });
   api.aiRequirement.value = '完善世界书';
-  return { api, selected, session, options, onWorldBookCreated, onWorldBookUpdated, notify };
+  return { api, selected, session, options, saving, onWorldBookCreated, onWorldBookUpdated, notify };
 }
 
 function pendingResult() {
@@ -40,6 +47,112 @@ function pendingResult() {
 }
 
 describe('character assistant world book context', () => {
+  it('keeps conversation world books in the draft until an explicit character save and preserves linking choices', async () => {
+    const { api, saving, onWorldBookCreated, onWorldBookUpdated } = fixture({ conversationMode: true });
+    streamCharacterDraft.mockResolvedValueOnce(pendingResult());
+    await api.completeWithAi();
+    expect(applyWorldBookChanges).not.toHaveBeenCalled();
+    await api.applyAiWorldBookChanges();
+    expect(applyWorldBookChanges).not.toHaveBeenCalled();
+    expect(api.aiWorldBookChanges.value).toHaveLength(2);
+
+    api.setAiWorldBookAddToCharacter(api.aiWorldBookChanges.value[1], false);
+    expect(api.exportAiSessionState().worldBookChanges[1].addToCharacter).toBe(false);
+    applyWorldBookChanges.mockResolvedValueOnce({ books: [
+      { ref: 'existing:book-b', book: { id: 'book-b', name: '旧书' } },
+      { ref: 'new:new-book', book: { id: 'created-book', name: '新书' } }
+    ] });
+    saving.value = true;
+    expect(await api.commitAiWorldBookChanges()).toBe(true);
+    expect(applyWorldBookChanges).toHaveBeenCalledOnce();
+    expect(applyWorldBookChanges.mock.calls[0][0].assistantSessionId).toBe('assistant-session-a');
+    expect(onWorldBookCreated).not.toHaveBeenCalled();
+    expect(onWorldBookUpdated).toHaveBeenCalledTimes(2);
+    expect(api.aiWorldBookChanges.value).toEqual([]);
+  });
+
+  it('keeps a failed explicit world book commit retryable with the same request identity', async () => {
+    const { api, saving } = fixture({ conversationMode: true });
+    streamCharacterDraft.mockResolvedValueOnce(pendingResult());
+    await api.completeWithAi();
+    saving.value = true;
+    applyWorldBookChanges.mockRejectedValueOnce(new Error('response lost'));
+    expect(await api.commitAiWorldBookChanges()).toBe(false);
+    const requestId = applyWorldBookChanges.mock.calls[0][0].requestId;
+    expect(api.aiWorldBookChanges.value).toHaveLength(2);
+    applyWorldBookChanges.mockResolvedValueOnce({ books: [
+      { ref: 'existing:book-b', book: { id: 'book-b' } },
+      { ref: 'new:new-book', book: { id: 'created-book' } }
+    ] });
+    expect(await api.commitAiWorldBookChanges()).toBe(true);
+    expect(applyWorldBookChanges.mock.calls[1][0].requestId).toBe(requestId);
+  });
+
+  it('preserves an explicit new-book linking choice across model checkpoints, more turns, and session restore', async () => {
+    const { api } = fixture({ conversationMode: true });
+    streamCharacterDraft.mockResolvedValueOnce(pendingResult());
+    await api.completeWithAi();
+    api.setAiWorldBookAddToCharacter(api.aiWorldBookChanges.value[1], false);
+    streamCharacterDraft.mockImplementationOnce(async (_payload, handlers) => {
+      const result = pendingResult();
+      result.character.worldBookChanges[1].entries[0].content = '继续完善的航线';
+      handlers.checkpoint({ character: result.character });
+      expect(api.aiWorldBookChanges.value[1].addToCharacter).toBe(false);
+      expect(api.aiCheckpoint.value.character.worldBookChanges[1].addToCharacter).toBe(false);
+      return result;
+    });
+    api.aiRequirement.value = '继续完善航线';
+    await api.completeWithAi();
+    expect(api.aiWorldBookChanges.value[1].addToCharacter).toBe(false);
+    expect(api.aiWorldBookChanges.value[1].entries[0].content).toBe('继续完善的航线');
+    const state = api.exportAiSessionState();
+    expect(state.worldBookChanges[1].addToCharacter).toBe(false);
+    expect(state.checkpoint.character.worldBookChanges[1].addToCharacter).toBe(false);
+    api.selectAiSession({ id: 'assistant-session-a', state });
+    expect(api.aiWorldBookChanges.value[1].addToCharacter).toBe(false);
+    streamCharacterDraft.mockResolvedValueOnce(pendingResult());
+    await api.completeWithAi();
+    expect(api.aiWorldBookChanges.value[1].addToCharacter).toBe(false);
+    expect(applyWorldBookChanges).not.toHaveBeenCalled();
+  });
+
+  it('aborts an explicit world book save when its retry identity cannot be persisted', async () => {
+    const persistWorldBookDraft = vi.fn().mockRejectedValueOnce(new Error('session unavailable'));
+    const { api, saving } = fixture({ conversationMode: true, persistWorldBookDraft });
+    streamCharacterDraft.mockResolvedValueOnce(pendingResult());
+    await api.completeWithAi();
+    saving.value = true;
+    expect(await api.commitAiWorldBookChanges()).toBe(false);
+    expect(applyWorldBookChanges).not.toHaveBeenCalled();
+    expect(api.aiWorldBookChanges.value).toHaveLength(2);
+    expect(api.exportAiSessionState().worldBookApplyRequest.requestId).toEqual(expect.any(String));
+  });
+
+  it('persists retry identity before applying and keeps successful rebasing after a later session save failure', async () => {
+    const snapshots = [];
+    let api;
+    const persistWorldBookDraft = vi.fn(async () => {
+      snapshots.push(api.exportAiSessionState());
+      if (snapshots.length === 2) throw new Error('session unavailable after commit');
+    });
+    ({ api } = fixture({ conversationMode: true, persistWorldBookDraft }));
+    streamCharacterDraft.mockResolvedValueOnce(pendingResult());
+    await api.completeWithAi();
+    applyWorldBookChanges.mockImplementationOnce(async () => {
+      expect(snapshots).toHaveLength(1);
+      expect(snapshots[0].worldBookApplyRequest.requestId).toEqual(expect.any(String));
+      return { books: [
+        { ref: 'existing:book-b', book: { id: 'book-b' } },
+        { ref: 'new:new-book', book: { id: 'created-book' } }
+      ] };
+    });
+    expect(await api.commitAiWorldBookChanges()).toBe(false);
+    expect(snapshots[1].worldBookChanges).toEqual([]);
+    expect(api.aiWorldBookChanges.value).toEqual([]);
+    expect(await api.commitAiWorldBookChanges()).toBe(true);
+    expect(applyWorldBookChanges).toHaveBeenCalledOnce();
+  });
+
   it('uses all current bindings even when form reference is off, and preserves drafts across new conversation turns', async () => {
     const { api, selected } = fixture();
     streamCharacterDraft.mockResolvedValue(pendingResult());
@@ -171,17 +284,20 @@ describe('character assistant world book context', () => {
     expect(api.aiWorldBookChanges.value).toEqual([]);
   });
 
-  it('isolates and restores world book workspaces when switching character sessions', async () => {
+  it('isolates world book workspaces and restores only the selected server session', async () => {
     const { api, session } = fixture();
     streamCharacterDraft.mockResolvedValue(pendingResult());
     await api.completeWithAi();
     api.setAiWorldBookSelectedIds(['book-b']);
+    const state = api.exportAiSessionState();
     session.value = 'character-other';
     await nextTick();
     expect(api.aiWorldBookChanges.value).toEqual([]);
     expect(api.aiRequirement.value).toBe('');
     session.value = 'character-a';
     await nextTick();
+    expect(api.aiWorldBookChanges.value).toEqual([]);
+    api.selectAiSession({ id: 'server-session-a', state });
     expect(api.aiWorldBookChanges.value).toHaveLength(2);
     expect(api.aiWorldBookSelectedIds.value).toEqual(['book-b']);
   });
@@ -220,8 +336,40 @@ describe('character assistant world book context', () => {
     await api.resumeCharacterAi();
     const resumed = streamCharacterDraft.mock.calls[2][0];
     expect(resumed.character.name).toBe('阶段角色名');
+    expect(resumed.character).not.toHaveProperty('worldBookWorkspace');
+    expect(resumed.character).not.toHaveProperty('worldBookChanges');
     expect(resumed.worldBookContext.selectedBookIds).toEqual(['book-a', 'book-b']);
     expect(resumed.worldBookContext.workspace.targets).toHaveLength(2);
+  });
+
+  it('resumes six 30-entry world books using only their dedicated request context', async () => {
+    const targets = Array.from({ length: 6 }, (_, bookIndex) => ({
+      ref: `new:book-${bookIndex}`, profile: { name: `World ${bookIndex}` },
+      entries: Array.from({ length: 30 }, (_, entryIndex) => ({
+        id: `entry-${bookIndex}-${entryIndex}`,
+        ...normalizeWorldBookEntryForCreate({ name: `Entry ${entryIndex}`, triggerKeys: 'Lore', content: 'Retained lore' }, entryIndex)
+      }))
+    }));
+    const worldBookWorkspace = { version: 1, targets };
+    const character = { name: 'Retained character', worldBookWorkspace, worldBookChanges: targets };
+    const { api } = fixture({ conversationMode: true });
+    api.selectAiSession({
+      id: 'assistant-session-a', state: {
+        requirement: 'Continue these drafts', status: 'paused',
+        checkpoint: { character }, worldBookWorkspace, worldBookChanges: targets
+      }
+    });
+    streamCharacterDraft.mockResolvedValueOnce({ character, summary: 'Continued safely' });
+
+    await api.resumeCharacterAi();
+
+    const request = streamCharacterDraft.mock.calls[0][0];
+    expect(request.character).toEqual({ name: 'Retained character' });
+    expect(request.worldBookContext.workspace.targets).toHaveLength(6);
+    expect(request.worldBookContext.workspace.targets[0].entries).toHaveLength(30);
+    expect(scanJsonBoundary({ ...request, character })).toMatch(/字段过多/);
+    expect(scanJsonBoundary(request)).toBe('');
+    expect(api.aiCheckpoint.value.character.worldBookWorkspace.targets).toHaveLength(6);
   });
 
   it('restores an interrupted approved plan with its latest workspace after reopening the character', async () => {
@@ -234,9 +382,12 @@ describe('character assistant world book context', () => {
     });
     await api.executeApprovedPlan();
     expect(api.aiStatus.value).toBe('failed');
+    const state = api.exportAiSessionState();
     scope.stop();
     const { api: restored } = fixture({ planMode: true, useCurrent: true });
-    expect(restored.aiPlanPhase.value).toBe('executing');
+    expect(restored.aiPlanPhase.value).toBe('idle');
+    restored.selectAiSession({ id: 'server-session-a', state });
+    expect(restored.aiPlanPhase.value).toBe('failed');
     streamCharacterDraft.mockResolvedValueOnce(pendingResult());
     await restored.resumeCharacterAi();
     const request = streamCharacterDraft.mock.calls[2][0];

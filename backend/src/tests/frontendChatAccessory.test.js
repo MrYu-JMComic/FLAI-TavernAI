@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { countMatches, readRepoText, readVueBlocks } from './frontendSfcTestUtils.js';
+import { createStatusBarRuntimeExample, serializeStatusBarRuntime } from '../../../shared/statusBarRuntime.js';
 
 const { useChatConversation } = await import('../../../frontend/src/composables/chat/useChatConversation.js');
-const { parseTemplateConfig, useChatAccessory, validateStatusBarCustomTemplate } = await import('../../../frontend/src/composables/chat/useChatAccessory.js');
+const { parseTemplateConfig, useChatAccessory } = await import('../../../frontend/src/composables/chat/useChatAccessory.js');
 const chatAccessorySource = readRepoText('frontend/src/composables/chat/useChatAccessory.js');
 const { script: chatViewScript } = readVueBlocks('frontend/src/views/ChatView.vue');
 
@@ -40,6 +41,48 @@ function snapshotStatusBarEditor(accessory) {
     quickReplies: accessory.statusBarTemplateCfg.quickReplies
   });
 }
+
+test('runtime status bars remain visible without variables and retain code when opening the editor', () => {
+  const accessory = createAccessory();
+  const template = serializeStatusBarRuntime(createStatusBarRuntimeExample());
+  accessory.applyStatusBarUpdate({ id: 'runtime', name: 'Code', variables: [], template });
+  assert.equal(accessory.hasStatusBarContent.value, true);
+  assert.equal(accessory.statusBarTemplateMode.value, 'runtime');
+  accessory.openStatusBarEditor();
+  assert.equal(accessory.statusBarForm.template, template);
+  assert.equal(accessory.statusBarTemplateMode.value, 'runtime');
+});
+
+test('status bar mode switches restore independent builtin, display and runtime drafts', () => {
+  const accessory = createAccessory();
+  accessory.syncStatusBarForm({ template: '{"variant":"neon","density":"compact"}', variables: [] });
+  accessory.setStatusBarTemplateMode('custom');
+  accessory.statusBarForm.template = '<section>{{HP}}</section>';
+  accessory.setStatusBarTemplateMode('runtime');
+  const runtimeTemplate = serializeStatusBarRuntime({ framework: 'vue', html: '<b>{{ values.HP }}</b>', javascript: 'return {};', css: 'b { color: red; }' });
+  accessory.statusBarForm.template = runtimeTemplate;
+  accessory.setStatusBarTemplateMode('builtin');
+  assert.deepEqual(JSON.parse(accessory.statusBarForm.template), { variant: 'neon', density: 'compact' });
+  accessory.setStatusBarTemplateMode('custom');
+  assert.equal(accessory.statusBarForm.template, '<section>{{HP}}</section>');
+  accessory.setStatusBarTemplateMode('runtime');
+  assert.equal(accessory.statusBarForm.template, runtimeTemplate);
+});
+
+test('status bar agent config preserves provider, thinking and exact tool permissions through sync', () => {
+  const accessory = createAccessory();
+  const statusBarAgent = { enabled: true, modelOverride: 'custom-model', providerProfileId: 'profile-2', thinkingLevel: 'max', tools: { update_status_bar: false, update_status_bar_code: true } };
+  accessory.syncAccessorySkills({ statusBarAgent });
+  assert.deepEqual(accessory.accessorySkills.statusBarAgent, statusBarAgent);
+  const current = accessory.accessorySkills.statusBarAgent;
+  accessory.syncAccessorySkills({ statusBarAgent: structuredClone(statusBarAgent) });
+  assert.equal(accessory.accessorySkills.statusBarAgent, current);
+  accessory.updateAccessorySkill('statusBarAgent', { thinkingLevel: 'off' });
+  assert.equal(accessory.accessorySkills.statusBarAgent.thinkingLevel, 'off');
+  assert.notEqual(accessory.accessorySkills.statusBarAgent, current);
+  accessory.syncAccessorySkills({ statusBarAgent: { thinking_level: 'INVALID' } });
+  assert.equal(accessory.accessorySkills.statusBarAgent.thinkingLevel, '');
+});
 
 test('status bar editor entry points ignore edits while status bar saving is pending', () => {
   const accessory = createAccessory();
@@ -499,7 +542,7 @@ test('accessory skill sync preserves unchanged nested config references', () => 
   assert.deepEqual(accessory.accessorySkills.sceneAgent, { enabled: true, modelOverride: 'model-c' });
   assert.match(
     chatAccessorySource,
-    /const ACCESSORY_SKILL_DEFAULTS = \[[\s\S]*\{ key: 'sceneAgent', enabled: false, modelOverride: '' \},[\s\S]*\{ key: 'worldDirector', enabled: false, modelOverride: '' \},[\s\S]*\{ key: 'gameHud', enabled: false, modelOverride: '' \},[\s\S]*\{ key: 'rewardMode', enabled: false, modelOverride: '' \},[\s\S]*\{ key: 'statusBarAgent', enabled: 'auto', modelOverride: '' \},[\s\S]*\{ key: 'cgScene', enabled: false, modelOverride: '' \}[\s\S]*\];/
+    /const ACCESSORY_SKILL_DEFAULTS = \[[\s\S]*\{ key: 'sceneAgent', enabled: false, modelOverride: '' \},[\s\S]*\{ key: 'worldDirector', enabled: false, modelOverride: '' \},[\s\S]*\{ key: 'gameHud', enabled: false, modelOverride: '' \},[\s\S]*\{ key: 'rewardMode', enabled: false, modelOverride: '' \},[\s\S]*\{ key: 'statusBarAgent', enabled: 'auto', modelOverride: '', providerProfileId: '', thinkingLevel: '', tools: \{\} \},[\s\S]*\{ key: 'cgScene', enabled: false, modelOverride: '' \}[\s\S]*\];/
   );
   assert.match(
     chatAccessorySource,
@@ -604,28 +647,36 @@ test('useChatAccessory parses and clones status bar template config with direct 
   assert.doesNotMatch(chatAccessorySource, /Object\.keys\(cfg\)\.length/);
 });
 
-test('status bar custom template issues dedupe and cap with direct loops', () => {
-  const issues = validateStatusBarCustomTemplate(
-    '<iframe></iframe><iframe></iframe><object></object><embed></embed><link><meta><base><form></form><input>{{}}'
-  );
-
-  assert.equal(issues.length, 5);
-  let iframeIssueCount = 0;
-  for (const issue of issues) {
-    if (String(issue).includes('<iframe>')) {
-      iframeIssueCount += 1;
+test('status bar custom and runtime templates save raw events, links and incomplete syntax', async () => {
+  const originalFetch = globalThis.fetch;
+  const requestBodies = [];
+  const templates = [
+    '<button onClick="this.textContent=\'clicked\'">Click</button><a href="javascript:void(0)">Link</a>{{HP',
+    '<iframe src="about:blank"></iframe><style>.x { background: url(https://example.invalid/a.png); }</style>{{#if HP > 1}}',
+    serializeStatusBarRuntime({ framework: 'vue', html: '<div @click="broken(">{{ values.HP', javascript: 'throw new Error("preview error");', css: '.x { color: }' })
+  ];
+  globalThis.fetch = async (url, options = {}) => {
+    if (String(url) === '/api/csrf-token') return jsonResponse({ csrfToken: 'raw-status-template-token' });
+    if (String(url) === '/api/conversations/conv-1/status-bar' && options.method === 'PUT') {
+      const body = JSON.parse(String(options.body));
+      requestBodies.push(body);
+      return jsonResponse({ ...body, id: 'raw-status-template', conversationId: 'conv-1' });
     }
+    return jsonResponse({ message: `Unexpected request: ${url}` }, 500);
+  };
+  try {
+    const accessory = createAccessory();
+    for (const [index, template] of templates.entries()) {
+      accessory.statusBarTemplateMode.value = index === 2 ? 'runtime' : 'custom';
+      accessory.statusBarForm.template = template;
+      await accessory.saveStatusBarChanges();
+      assert.equal(requestBodies[index]?.template, template);
+      assert.equal(accessory.statusBar.value?.template, template);
+    }
+    assert.equal(requestBodies.length, templates.length);
+  } finally {
+    globalThis.fetch = originalFetch;
   }
-  assert.equal(iframeIssueCount, 1);
-  assert.match(
-    chatAccessorySource,
-    /function collectStatusBarTemplateIssues\(issues\) \{\s*const collected = \[\];\s*const sourceIssues = Array\.isArray\(issues\) \? issues : \[\];\s*for \(let index = 0; index < sourceIssues\.length && collected\.length < STATUS_BAR_TEMPLATE_ISSUE_LIMIT; index \+= 1\) \{[\s\S]*hasStatusBarTemplateIssue\(collected, issue\)[\s\S]*collected\.push\(issue\);[\s\S]*return collected;[\s\S]*\}/
-  );
-  assert.match(
-    chatAccessorySource,
-    /function hasStatusBarTemplateIssue\(issues, issue\) \{\s*for \(let index = 0; index < issues\.length; index \+= 1\) \{[\s\S]*if \(issues\[index\] === issue\) \{[\s\S]*return true;[\s\S]*return false;[\s\S]*\}/
-  );
-  assert.doesNotMatch(chatAccessorySource, /\[\.\.\.new Set\(issues\)\]\.slice\(0, 5\)/);
 });
 
 test('status bar automation context scans settings sources directly', () => {
@@ -920,17 +971,26 @@ test('ChatView ignores stale accessory skill results before status badges update
   );
 });
 
-test('ChatView serializes accessory refresh snapshots with direct loops', () => {
+test('ChatView settles status from the exact reply postprocessing job', () => {
   assert.match(
     chatViewScript,
-    /function serializeStatusBarSnapshot\(value = null\) \{[\s\S]*let snapshot = '';[\s\S]*snapshot = appendSnapshotField\(snapshot, value\.id \|\| ''\);[\s\S]*const sourceVariables = Array\.isArray\(value\.variables\) \? value\.variables : \[\];[\s\S]*snapshot = appendSnapshotField\(snapshot, sourceVariables\.length\);[\s\S]*for \(let index = 0; index < sourceVariables\.length; index \+= 1\) \{[\s\S]*snapshot = appendSnapshotField\(snapshot, item\?\.name \|\| ''\);[\s\S]*snapshot = appendSnapshotField\(snapshot, item\?\.color \|\| ''\);[\s\S]*return snapshot;[\s\S]*\}/
+    /function beginAccessoryRefreshStatus\(\{ conversationId: targetConversationId = '', assistantMessageId = '', jobId = '' \} = \{\}\)[\s\S]*assistantMessageId,[\s\S]*jobId/
   );
   assert.match(
     chatViewScript,
-    /function appendSnapshotField\(snapshot, value\) \{\s*const text = String\(value \?\? ''\);[\s\S]*return `\$\{snapshot\}\$\{text\.length\}:\$\{text\};`;[\s\S]*\}/
+    /if \(!payload\.isFinal \|\| payload\.jobId !== accessoryRefreshSnapshot\.jobId\s*\|\| payload\.assistantMessageId !== accessoryRefreshSnapshot\.assistantMessageId\) return;/
   );
-  assert.doesNotMatch(chatViewScript, /value\.variables\.map\(/);
-  assert.doesNotMatch(chatViewScript, /return JSON\.stringify\(\{[\s\S]*variables/);
+  assert.match(chatViewScript, /const agentStatus = payload\.job\?\.statusBarAgentStatus;/);
+  assert.doesNotMatch(chatViewScript, /serializeStatusBarSnapshot|appendSnapshotField/);
+});
+
+test('ChatView keeps tracking shared postprocess jobs when the status-bar Agent is inactive', () => {
+  const beginRefresh = chatViewScript.match(/function beginAccessoryRefreshStatus\([\s\S]*?\n\}/)?.[0] || '';
+  assert.match(
+    beginRefresh,
+    /statusBarUpdateStatus\.value = isAccessorySkillActiveLocal\('statusBarAgent'\)[\s\S]*: ACCESSORY_NOT_UPDATED;\s*return true;/
+  );
+  assert.doesNotMatch(beginRefresh, /return hasPendingAccessoryRefresh\(\);/);
 });
 
 test('ChatView clears route status bar state through the stable accessory helper', () => {

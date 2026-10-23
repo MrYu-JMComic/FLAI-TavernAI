@@ -27,8 +27,12 @@ test('importing the app factory does not open SQLite, start timers, or listen', 
       APP_SECRET: 'app-factory-import-test-secret',
       FLAI_DB_PATH: databasePath
     },
-    timeout: 5000
+    // This starts a fresh Node process while the full suite loads many module
+    // graphs in parallel. Keep the exit check bounded without treating CPU
+    // contention during imports as a leaked server or interval.
+    timeout: 15000
   });
+  assert.ifError(result.error);
   assert.equal(result.status, 0, result.stderr);
   assert.equal(existsSync(databasePath), false);
 });

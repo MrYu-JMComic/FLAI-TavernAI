@@ -13,9 +13,11 @@ import 'katex/dist/katex.min.css';
 
 const renderCache = createMarkdownRenderCache();
 const LF_CHAR_CODE = 10;
-const CR_CHAR_CODE = 13;
 const FOLD_CARET = '\u203a';
 const DEFAULT_FOLD_TITLE = '\u6298\u53e0\u5185\u5bb9';
+const streamGraphemeSegmenter = typeof Intl !== 'undefined' && typeof Intl.Segmenter === 'function'
+  ? new Intl.Segmenter(undefined, { granularity: 'grapheme' })
+  : null;
 
 function getCachedRender(text, renderPlugins = [], cacheResult = true) {
   if (!text) return '';
@@ -38,9 +40,10 @@ function getCachedRender(text, renderPlugins = [], cacheResult = true) {
 }
 
 function renderWithPlugins(text, renderPlugins = []) {
+  const normalizedText = normalizeModelNewlines(text);
   const plugins = compileFoldPlugins(renderPlugins);
   if (!plugins.length) {
-    return md.render(text);
+    return md.render(normalizedText);
   }
 
   let html = '';
@@ -61,7 +64,7 @@ function renderWithPlugins(text, renderPlugins = []) {
     }
   };
 
-  forEachMarkdownLine(String(text || ''), (line) => {
+  forEachMarkdownLine(normalizedText, (line) => {
     const match = matchFoldPlugin(line, plugins);
     if (match) {
       flushNormal();
@@ -83,6 +86,103 @@ function renderWithPlugins(text, renderPlugins = []) {
   return html;
 }
 
+// Convert provider-escaped line breaks without changing inline or fenced code.
+function normalizeModelNewlines(text) {
+  const source = String(text || '').replace(/\r\n?/g, '\n');
+  let normalized = '';
+  let index = 0;
+  let lineStart = 0;
+  let fence = null;
+  let inlineCodeTicks = 0;
+
+  while (index < source.length) {
+    if (index === lineStart && inlineCodeTicks === 0) {
+      const lineEnd = source.indexOf('\n', index);
+      const end = lineEnd === -1 ? source.length : lineEnd;
+      const line = source.slice(index, end);
+      if (fence) {
+        normalized += line;
+        if (isClosingFence(line, fence)) fence = null;
+        if (lineEnd !== -1) normalized += '\n';
+        index = lineEnd === -1 ? end : lineEnd + 1;
+        lineStart = index;
+        continue;
+      }
+      const openingFence = findFence(line);
+      if (openingFence) {
+        fence = openingFence;
+        normalized += line;
+        if (lineEnd !== -1) normalized += '\n';
+        index = lineEnd === -1 ? end : lineEnd + 1;
+        lineStart = index;
+        continue;
+      }
+    }
+
+    const character = source[index];
+    if (character === '`') {
+      let tickCount = 1;
+      while (source[index + tickCount] === '`') tickCount += 1;
+      let precedingSlashes = 0;
+      for (let cursor = index - 1; cursor >= 0 && source[cursor] === '\\'; cursor -= 1) {
+        precedingSlashes += 1;
+      }
+      if (precedingSlashes % 2 === 0) {
+        if (inlineCodeTicks === 0 && hasMatchingBacktickRun(source, index + tickCount, tickCount)) inlineCodeTicks = tickCount;
+        else if (inlineCodeTicks === tickCount) inlineCodeTicks = 0;
+      }
+      normalized += source.slice(index, index + tickCount);
+      index += tickCount;
+      continue;
+    }
+
+    if (character === '\\') {
+      let slashCount = 1;
+      while (source[index + slashCount] === '\\') slashCount += 1;
+      if (inlineCodeTicks === 0 && (slashCount === 1 || slashCount === 2) && source[index + slashCount] === 'n') {
+        normalized += '\n';
+        index += slashCount + 1;
+        lineStart = index;
+        continue;
+      }
+      normalized += source.slice(index, index + slashCount);
+      index += slashCount;
+      continue;
+    }
+
+    normalized += character;
+    index += 1;
+    if (character === '\n') lineStart = index;
+  }
+
+  return normalized;
+}
+
+function hasMatchingBacktickRun(source, startIndex, tickCount) {
+  for (let index = source.indexOf('`', startIndex); index !== -1; index = source.indexOf('`', index + 1)) {
+    let runLength = 1;
+    while (source[index + runLength] === '`') runLength += 1;
+    let precedingSlashes = 0;
+    for (let cursor = index - 1; cursor >= 0 && source[cursor] === '\\'; cursor -= 1) {
+      precedingSlashes += 1;
+    }
+    if (runLength === tickCount && precedingSlashes % 2 === 0) return true;
+    index += runLength - 1;
+  }
+  return false;
+}
+
+function findFence(line) {
+  const match = line.match(/^(?: {0,3}(?:> ?){0,3} {0,3})(`{3,}|~{3,})/);
+  if (!match || (match[1][0] === '`' && line.slice(match[0].length).includes('`'))) return null;
+  return { character: match[1][0], length: match[1].length };
+}
+
+function isClosingFence(line, fence) {
+  const match = line.match(/^(?: {0,3}(?:> ?){0,3} {0,3})(`+|~+)[ \t]*$/);
+  return Boolean(match && match[1][0] === fence.character && match[1].length >= fence.length);
+}
+
 function appendLineText(currentText, line, hasText) {
   return hasText ? `${currentText}\n${line}` : line;
 }
@@ -93,10 +193,7 @@ function forEachMarkdownLine(text, visit) {
     if (text.charCodeAt(index) !== LF_CHAR_CODE) {
       continue;
     }
-    const endIndex = index > startIndex && text.charCodeAt(index - 1) === CR_CHAR_CODE
-      ? index - 1
-      : index;
-    visit(text.slice(startIndex, endIndex));
+    visit(text.slice(startIndex, index));
     startIndex = index + 1;
   }
   visit(text.slice(startIndex));
@@ -176,6 +273,83 @@ function appendPluginCacheField(cacheKey, value) {
   return `${cacheKey}${text.length}:${text};`;
 }
 
+function splitStreamGraphemes(text) {
+  if (!text) return [];
+  if (!streamGraphemeSegmenter) return Array.from(text);
+  return Array.from(streamGraphemeSegmenter.segment(text), (part) => part.segment);
+}
+
+function isStreamVisibleTextNode(node, root) {
+  return !(node.parentNode === root && !String(node.nodeValue || '').trim())
+    && !node.parentElement?.closest('.katex');
+}
+
+function collectStreamText(root) {
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  let text = '';
+  let node = walker.nextNode();
+  while (node) {
+    if (isStreamVisibleTextNode(node, root)) text += node.nodeValue || '';
+    node = walker.nextNode();
+  }
+  return text;
+}
+
+function wrapNewStreamGraphemes(root, appendedText) {
+  if (document.defaultView?.matchMedia?.('(prefers-reduced-motion: reduce)').matches) return;
+  const glyphs = splitStreamGraphemes(appendedText).filter((glyph) => /\S/u.test(glyph));
+  if (!glyphs.length) return;
+
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  const textNodes = [];
+  let node = walker.nextNode();
+  while (node) {
+    if (isStreamVisibleTextNode(node, root) && !node.parentElement?.closest('.stream-ink-glyph')) {
+      textNodes.push(node);
+    }
+    node = walker.nextNode();
+  }
+
+  let remaining = glyphs.length;
+  const plans = [];
+  // Walk from the end so only the newly visible suffix receives a wrapper.
+  for (let index = textNodes.length - 1; index >= 0 && remaining > 0; index -= 1) {
+    const textNode = textNodes[index];
+    const parts = splitStreamGraphemes(textNode.nodeValue || '');
+    let start = parts.length;
+    let count = 0;
+    while (start > 0 && count < remaining) {
+      start -= 1;
+      if (/\S/u.test(parts[start])) count += 1;
+    }
+    if (count) {
+      plans.push({ node: textNode, parts, start, count });
+      remaining -= count;
+    }
+  }
+
+  let glyphIndex = glyphs.length - remaining - plans.reduce((sum, plan) => sum + plan.count, 0);
+  for (const plan of plans.reverse()) {
+    const fragment = document.createDocumentFragment();
+    if (plan.start > 0) {
+      fragment.append(document.createTextNode(plan.parts.slice(0, plan.start).join('')));
+    }
+    for (const part of plan.parts.slice(plan.start)) {
+      if (!/\S/u.test(part)) {
+        fragment.append(document.createTextNode(part));
+        continue;
+      }
+      const span = document.createElement('span');
+      span.className = 'stream-ink-glyph';
+      span.style.setProperty('--stream-glyph-index', String(glyphIndex));
+      span.textContent = part;
+      fragment.append(span);
+      glyphIndex += 1;
+    }
+    plan.node.replaceWith(fragment);
+  }
+}
+
 function applyKatexSurfaceContrast(root) {
   if (!root || typeof getComputedStyle !== 'function') return;
 
@@ -230,20 +404,35 @@ export default defineComponent({
     let templateElement = null;
     let katexResizeObserver = null;
     let katexFitTimeout = null;
+    let mounted = false;
+    let lastSourceText = String(props.text || '');
 
     function renderMarkdownNow(text, renderPlugins) {
+      const sourceText = String(text || '');
+      const animateAppend = mounted
+        && props.deferUpdates
+        && sourceText.startsWith(lastSourceText)
+        && sourceText.length > lastSourceText.length;
+      lastSourceText = sourceText;
       pendingHtml = getCachedRender(text, renderPlugins, !props.deferUpdates);
-      reconcileRenderedHtml();
+      reconcileRenderedHtml(animateAppend);
     }
 
-    function reconcileRenderedHtml() {
+    function reconcileRenderedHtml(animateAppend = false) {
       const root = rootElement.value;
       if (!root || typeof document === 'undefined') return;
       if (appliedHtml === pendingHtml && appliedDialogueHighlight === props.highlightDialogue) return;
+      const previousStreamText = animateAppend ? collectStreamText(root) : '';
       templateElement ||= document.createElement('template');
       templateElement.innerHTML = pendingHtml;
       if (props.highlightDialogue) highlightDialogueQuotes(templateElement.content);
       reconcileDomChildren(root, templateElement.content);
+      if (animateAppend) {
+        const nextStreamText = collectStreamText(root);
+        if (nextStreamText.startsWith(previousStreamText)) {
+          wrapNewStreamGraphemes(root, nextStreamText.slice(previousStreamText.length));
+        }
+      }
       applyKatexSurfaceContrast(root);
       appliedHtml = pendingHtml;
       appliedDialogueHighlight = props.highlightDialogue;
@@ -325,6 +514,14 @@ export default defineComponent({
       katexPreviewSource.value = null;
     }
 
+    function removeCompletedStreamGlyph(event) {
+      const glyph = event.target;
+      if (!glyph?.classList?.contains('stream-ink-glyph')) return;
+      const parent = glyph.parentNode;
+      glyph.replaceWith(document.createTextNode(glyph.textContent || ''));
+      parent?.normalize();
+    }
+
     function handleKatexPreviewClick(event) {
       const wrapper = findKatexPreviewWrapper(event.target);
       if (wrapper) openKatexPreview(wrapper);
@@ -364,6 +561,8 @@ export default defineComponent({
     // The cached HTML is presentation-neutral; toggles only reconcile its DOM.
     watch(() => props.highlightDialogue, reconcileRenderedHtml, { flush: 'post' });
     onMounted(() => {
+      mounted = true;
+      rootElement.value?.addEventListener('animationend', removeCompletedStreamGlyph);
       reconcileRenderedHtml();
       fitInlineKatex();
       if (typeof ResizeObserver === 'function' && rootElement.value) {
@@ -373,6 +572,7 @@ export default defineComponent({
     });
     onBeforeUnmount(() => {
       closeKatexPreview();
+      rootElement.value?.removeEventListener('animationend', removeCompletedStreamGlyph);
       katexResizeObserver?.disconnect();
       katexResizeObserver = null;
       if (katexFitTimeout !== null) {

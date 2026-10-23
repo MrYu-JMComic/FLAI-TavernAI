@@ -436,7 +436,7 @@ test('OpenAI-compatible streaming propagates JSON error envelopes', async () => 
             providerType: 'deepseek',
             gatewayName: 'DeepSeek',
             baseUrl: 'https://api.deepseek.com/v1',
-            model: 'deepseek-chat',
+            model: 'deepseek-flash',
             apiKey: 'sk-deepseek-test',
             extraBody: {}
           },
@@ -868,10 +868,12 @@ test('streamToolCompletion accepts Gemini native JSON tool calls when gateways i
 test('streamToolCompletion keeps tool-round draft content out of the final stream', async () => {
   let requestCount = 0;
   const events = [];
+  const requests = [];
   const executions = [];
   await withMockFetch(
-    async () => {
+    async (_url, request = {}) => {
       requestCount += 1;
+      requests.push(JSON.parse(request.body));
       if (requestCount === 1) {
         return sseResponse([
           `data: ${JSON.stringify({
@@ -930,11 +932,16 @@ test('streamToolCompletion keeps tool-round draft content out of the final strea
 
       assert.equal(result.content, 'Mira is at the north gate.');
       assert.equal(result.process[0].content, 'Draft before lookup.');
+      assert.equal(requests.every((request) => request.stream === true), true);
       assert.deepEqual(executions, [{ name: 'lookup_reference', args: { npcName: 'Mira' } }]);
       assert.deepEqual(
         events.filter((event) => event.event === 'content').map((event) => event.data.text),
-        ['Mira is at the north gate.']
+        ['Draft before lookup.', 'Mira is at the north gate.']
       );
+      assert.deepEqual(result.process[0].activity, [
+        { type: 'content', text: 'Draft before lookup.' },
+        { type: 'tool', index: 0 }
+      ]);
     }
   );
 });
@@ -989,7 +996,7 @@ test('streamToolCompletion keeps retry-round draft content out of the final stre
       assert.equal(requests[1].messages.at(-1).content, 'Use the required tool before answering.');
       assert.deepEqual(
         events.filter((event) => event.event === 'content').map((event) => event.data.text),
-        ['The required update is complete.']
+        ['I can answer without the required tool.', 'The required update is complete.']
       );
       assert.deepEqual(
         events.filter((event) => event.event === 'nudge').map((event) => event.data.text),
@@ -1218,7 +1225,7 @@ test('all provider tool loops use the shared execution wrapper', () => {
   assert.equal(sources.reduce(
     (total, source) => total + (source.match(/await executeProviderTool\(/g)?.length || 0),
     0
-  ), 4);
+  ), 6);
   assert.equal(sources.some((source) => source.includes('prepareProviderToolResult(await executeTool')), false);
 });
 
@@ -1324,6 +1331,173 @@ test('Anthropic tool completion reports cyclic tool results as safe diagnostics'
       assert.equal(diagnostic.cause, 'TypeError');
       assert.deepEqual(result.toolCalls[0].result, diagnostic);
       assert.equal(result.content, 'Handled the graph failure.');
+    }
+  );
+});
+
+test('Anthropic tool streaming uses Messages SSE for each decision and result once', async () => {
+  const events = [];
+  const requests = [];
+  const event = (type, data) => `event: ${type}\ndata: ${JSON.stringify({ type, ...data })}`;
+  await withMockFetch(
+    async (_url, request = {}) => {
+      const body = JSON.parse(request.body);
+      requests.push(body);
+      if (requests.length === 1) {
+        return sseResponse([
+          event('message_start', { message: { id: 'msg-1', usage: { input_tokens: 4 } } }),
+          event('content_block_start', { index: 0, content_block: { type: 'text', text: '' } }),
+          event('content_block_delta', { index: 0, delta: { type: 'text_delta', text: '先读取资料。' } }),
+          event('content_block_start', { index: 1, content_block: { type: 'tool_use', id: 'read-once', name: 'read_value', input: {} } }),
+          event('content_block_delta', { index: 1, delta: { type: 'input_json_delta', partial_json: '{}' } }),
+          event('content_block_stop', { index: 1 }),
+          event('message_delta', { delta: { stop_reason: 'tool_use' }, usage: { output_tokens: 3 } }),
+          event('message_stop', {})
+        ]);
+      }
+      return sseResponse([
+        event('message_start', { message: { id: 'msg-2', usage: { input_tokens: 7 } } }),
+        event('content_block_start', { index: 0, content_block: { type: 'text', text: '' } }),
+        event('content_block_delta', { index: 0, delta: { type: 'text_delta', text: '已核对结果。' } }),
+        event('content_block_stop', { index: 0 }),
+        event('message_delta', { delta: { stop_reason: 'end_turn' }, usage: { output_tokens: 4 } }),
+        event('message_stop', {})
+      ]);
+    },
+    async () => {
+      const result = await streamToolCompletion(
+        {
+          providerType: 'anthropic',
+          gatewayName: 'Anthropic',
+          baseUrl: 'https://api.anthropic.com/v1',
+          model: 'claude-test',
+          apiKey: 'sk-ant-test',
+          extraBody: {}
+        },
+        [{ role: 'user', content: 'Read it.' }],
+        [{
+          type: 'function',
+          function: {
+            name: 'read_value',
+            parameters: { type: 'object', properties: {} }
+          }
+        }],
+        async () => ({ ok: true, value: 'ready' }),
+        (event, data) => events.push({ event, data }),
+        undefined,
+        { maxRounds: 2 }
+      );
+
+      assert.deepEqual(events.map((event) => event.event), [
+        'step', 'content', 'tool', 'step', 'content'
+      ]);
+      assert.deepEqual(events.filter((event) => event.event === 'content').map((event) => event.data.text), [
+        '先读取资料。',
+        '已核对结果。'
+      ]);
+      assert.equal(events.filter((event) => event.event === 'tool').length, 1);
+      assert.equal(requests.length, 2);
+      assert.equal(requests.every((request) => request.stream === true), true);
+      assert.equal(requests[1].messages.at(-1).content[0].type, 'tool_result');
+      assert.equal(requests[1].messages.at(-1).content[0].tool_use_id, 'read-once');
+      assert.equal(requests[0].tool_choice.type, 'auto');
+      assert.equal(result.process.length, 2);
+      assert.equal(result.toolCalls.length, 1);
+      assert.deepEqual(result.process[0].activity, [
+        { type: 'content', text: '先读取资料。' },
+        { type: 'tool', index: 0 }
+      ]);
+    }
+  );
+});
+
+test('OpenAI Responses tool streaming uses real SSE and resumes with the matching call id', async () => {
+  const events = [];
+  const requests = [];
+  const executions = [];
+  const event = (type, data) => `event: ${type}\ndata: ${JSON.stringify({ type, ...data })}`;
+  await withMockFetch(
+    async (_url, request = {}) => {
+      const body = JSON.parse(request.body);
+      requests.push(body);
+      if (requests.length === 1) {
+        return sseResponse([
+          event('response.created', { response: { id: 'resp_tool_round_1' } }),
+          event('response.output_text.delta', { delta: '我先查询资料。' }),
+          event('response.output_item.added', { output_index: 0, item: {
+            id: 'fc_1', type: 'function_call', call_id: 'call_1', name: 'lookup_reference', arguments: ''
+          } }),
+          event('response.function_call_arguments.delta', { item_id: 'fc_1', output_index: 0, delta: '{"npc' }),
+          event('response.function_call_arguments.delta', { item_id: 'fc_1', output_index: 0, delta: 'Name":"Mira"}' }),
+          event('response.function_call_arguments.done', { item_id: 'fc_1', output_index: 0, arguments: '{"npcName":"Mira"}' }),
+          event('response.output_item.done', { output_index: 0, item: {
+            id: 'fc_1', type: 'function_call', call_id: 'call_1', name: 'lookup_reference', arguments: '{"npcName":"Mira"}'
+          } }),
+          event('response.completed', { response: {
+            id: 'resp_tool_round_1',
+            output: [{ id: 'fc_1', type: 'function_call', call_id: 'call_1', name: 'lookup_reference', arguments: '{"npcName":"Mira"}' }],
+            usage: { total_tokens: 9 }
+          } })
+        ]);
+      }
+      return sseResponse([
+        event('response.created', { response: { id: 'resp_tool_round_2' } }),
+        event('response.output_text.delta', { delta: 'Mira 在北门。' }),
+        event('response.completed', { response: {
+          id: 'resp_tool_round_2', output: [], usage: { total_tokens: 12 }
+        } })
+      ]);
+    },
+    async () => {
+      const result = await streamToolCompletion(
+        {
+          providerType: 'openai',
+          gatewayName: 'OpenAI',
+          baseUrl: 'https://api.openai.com/v1',
+          model: 'gpt-5-test',
+          apiKey: 'sk-test',
+          supportsReasoning: true,
+          extraBody: {}
+        },
+        [{ role: 'user', content: 'Where is Mira?' }],
+        [{
+          type: 'function',
+          function: {
+            name: 'lookup_reference',
+            parameters: { type: 'object', properties: { npcName: { type: 'string' } }, required: ['npcName'] }
+          }
+        }],
+        async (name, args) => {
+          executions.push({ name, args });
+          return { ok: true, currentLocation: 'north gate' };
+        },
+        (event, data) => events.push({ event, data }),
+        undefined,
+        { maxRounds: 3 }
+      );
+
+      assert.equal(result.content, 'Mira 在北门。');
+      assert.deepEqual(executions, [{ name: 'lookup_reference', args: { npcName: 'Mira' } }]);
+      assert.deepEqual(events.map((item) => item.event), ['step', 'content', 'tool', 'step', 'content']);
+      assert.equal(events.filter((item) => item.event === 'tool').length, 1);
+      assert.equal(requests.length, 2);
+      assert.equal(requests.every((request) => request.stream === true), true);
+      assert.equal(requests[1].previous_response_id, 'resp_tool_round_1');
+      assert.deepEqual(requests[1].input, [{
+        type: 'function_call_output',
+        call_id: 'call_1',
+        output: JSON.stringify({ ok: true, currentLocation: 'north gate' })
+      }]);
+      assert.deepEqual(result.process[0].activity, [
+        { type: 'content', text: '我先查询资料。' },
+        { type: 'tool', index: 0 }
+      ]);
+      assert.deepEqual(result.process[1].activity, [
+        { type: 'content', text: 'Mira 在北门。' }
+      ]);
+      assert.equal(result.process[0].tools.length, 1);
+      assert.equal(result.toolCalls.length, 1);
+      assert.equal(result.process[1].content, 'Mira 在北门。');
     }
   );
 });

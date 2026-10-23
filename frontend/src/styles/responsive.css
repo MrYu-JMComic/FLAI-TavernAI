@@ -40,15 +40,6 @@
     grid-template-columns: 1fr;
   }
 
-  .ai-workbench-results {
-    border-top: 1px solid color-mix(in srgb, var(--line) 82%, transparent);
-    border-left: 0;
-  }
-
-  .ai-workbench-grid {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
   .home-toolbar {
     grid-template-columns: minmax(0, 1fr) minmax(150px, 210px) auto;
   }
@@ -240,7 +231,6 @@
     padding: 0 9px;
   }
 
-  .section-heading,
   .chat-header,
   .avatar-editor {
     align-items: stretch;
@@ -290,15 +280,6 @@
 
   .visibility-picker {
     grid-template-columns: 1fr;
-  }
-
-  .profile-layout,
-  .profile-stats-grid {
-    grid-template-columns: 1fr;
-  }
-
-  .profile-layout .avatar-editor {
-    align-items: center;
   }
 
   .chat-message,
@@ -521,60 +502,13 @@
   }
 
   /* -- Editor layout: tighter phone flow -- */
-  .ai-workbench-header {
-    align-items: center;
-    padding: 13px 14px;
-  }
-
-  .ai-workbench-title p {
-    display: none;
-  }
-
-  .ai-workbench-config,
-  .ai-workbench-results {
-    gap: 12px;
-    padding: 14px;
-  }
-
   .ai-config-row {
     grid-template-columns: minmax(0, 1fr);
-  }
-
-  /* Counters drop to their own line rather than squeezing into the title. */
-  .ai-monitor-heading {
-    grid-template-columns: 26px minmax(0, 1fr);
-  }
-
-  .ai-monitor-counters {
-    grid-column: 2;
-    justify-content: flex-start;
-    margin-top: 6px;
-  }
-
-  .ai-scope-toolbar {
-    align-items: stretch;
-    flex-direction: column;
-    gap: 8px;
-  }
-
-  .ai-scope-actions .ghost-button {
-    flex: 1 1 auto;
-  }
-
-  .ai-scope-grid {
-    grid-template-columns: repeat(auto-fill, minmax(94px, 1fr));
   }
 
   /* -- Form grid: single column on tablet -- */
   .two-col {
     grid-template-columns: 1fr;
-  }
-
-  /* -- Section heading: stack -- */
-  .section-heading {
-    flex-direction: column;
-    align-items: stretch;
-    gap: 12px;
   }
 
   .heading-actions {
@@ -756,17 +690,9 @@
     z-index: 10;
   }
 
-    .character-draft-note {
+  .character-draft-note {
     align-items: stretch;
     flex-direction: column;
-  }
-
-  .character-draft-actions {
-    justify-content: stretch;
-  }
-
-  .character-draft-actions .ghost-button {
-    flex: 1 1 120px;
   }
 
   .character-wizard-head {
@@ -808,7 +734,6 @@
     padding: 0 16px;
   }
 
-  section[id^="personal-section-"],
   section[id^="extension-section-"] {
     scroll-margin-top: 166px;
   }
@@ -841,7 +766,6 @@
     top: calc(78px + env(safe-area-inset-top, 0px));
   }
 
-    section[id^="personal-section-"],
   section[id^="extension-section-"] {
     scroll-margin-top: 132px;
   }
@@ -869,7 +793,6 @@
     top: calc(66px + env(safe-area-inset-top, 0px));
   }
 
-    section[id^="personal-section-"],
   section[id^="extension-section-"] {
     scroll-margin-top: 120px;
   }
@@ -950,11 +873,6 @@
   .tag-chip {
     padding: 5px 10px;
     font-size: 0.76rem;
-  }
-
-  /* -- Section heading -- */
-  .section-heading h1 {
-    font-size: 1.35rem;
   }
 
   /* -- Chat header -- */

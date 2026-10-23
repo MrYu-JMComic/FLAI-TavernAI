@@ -17,7 +17,8 @@ export async function registerUser(page, suffix = uniqueSuffix()) {
   await page.locator('#auth-password').fill(account.password);
   await page.locator('#auth-confirm-password').fill(account.password);
   await page.getByRole('button', { name: /注册并进入/ }).click();
-  await expect(page.getByRole('heading', { name: '角色库' })).toBeVisible();
+  await expect(page.locator('.home-library-heading h1')).toHaveText('角色库');
+  await expect(page.locator('.home-library-heading h1')).toHaveClass(/visually-hidden/);
 
   return account;
 }
@@ -28,7 +29,8 @@ export async function loginUser(page, account) {
   await page.locator('#auth-username').fill(account.username);
   await page.locator('#auth-password').fill(account.password);
   await page.getByRole('button', { name: /^登录$/ }).click();
-  await expect(page.getByRole('heading', { name: '角色库' })).toBeVisible();
+  await expect(page.locator('.home-library-heading h1')).toHaveText('角色库');
+  await expect(page.locator('.home-library-heading h1')).toHaveClass(/visually-hidden/);
 }
 
 export async function logoutUser(page) {

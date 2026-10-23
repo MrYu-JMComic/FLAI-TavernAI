@@ -9,10 +9,11 @@ export function fetchAssets(options = {}) {
   return apiRequest(`/api/assets${suffix}`);
 }
 
-export function createAsset(payload) {
+export function createAsset(payload, { signal } = {}) {
   return apiRequest('/api/assets', {
     method: 'POST',
-    body: JSON.stringify(payload)
+    body: JSON.stringify(payload),
+    ...(signal ? { signal } : {})
   });
 }
 

@@ -39,10 +39,10 @@ test('context inspector separates preview, actual requests, memory review, and m
   await expect(inspector.getByRole('region', { name: '对话记忆审阅' })).toBeVisible();
 
   await inspector.getByRole('tab', { name: '预算' }).click();
-  const budget = inspector.getByRole('region', { name: '上下文预算设置' });
+  const budget = inspector.getByRole('region', { name: '输入上下文预算设置' });
   await expect(budget).toHaveAttribute('aria-busy', 'false');
   await expect(budget.getByText('估算值 · 非精确计数')).toBeVisible();
-  await budget.getByLabel('预留输出 Token').fill('2500');
+  await budget.getByLabel('输入窗口预留 Token').fill('2500');
   await budget.getByRole('button', { name: '保存' }).click();
   await expect.poll(() => savedBudget?.reservedOutputTokens).toBe(2500);
 

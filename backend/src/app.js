@@ -18,6 +18,7 @@ import { createAuthRouter } from './routes/auth.js';
 import { createAdminRouter } from './routes/admin.js';
 import { createBranchesRouter } from './routes/branches.js';
 import { createCharactersRouter } from './routes/characters.js';
+import { createCharacterAssistantSessionsRouter } from './routes/characterAssistantSessions.js';
 import { createConversationsRouter, createSavesRouter } from './routes/conversations.js';
 import { getChatProviderSettingsFromContext } from './routes/helpers.js';
 import { createJobsRouter } from './routes/jobs.js';
@@ -387,6 +388,7 @@ export function createApp(context = {}) {
   app.use('/api/auth', createAuthRouter(routeContext));
   app.use('/api/admin', createAdminRouter(routeContext));
   app.use('/api/characters', createCharactersRouter(routeContext));
+  app.use('/api/character-assistant/sessions', createCharacterAssistantSessionsRouter(routeContext));
   app.use('/api/conversations', createConversationsRouter(routeContext));
   app.use('/api/saves', createSavesRouter(routeContext));
   app.use('/api/world-books', createWorldBooksRouter(routeContext));

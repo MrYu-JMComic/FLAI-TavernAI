@@ -15,13 +15,13 @@ const providerSettings = {
   providerType: 'deepseek',
   gatewayName: 'DeepSeek',
   baseUrl: 'https://provider.test',
-  model: 'deepseek-v4-flash',
+  model: 'deepseek-flash',
   apiKey: 'sk-test',
   supportsReasoning: true,
   extraBody: {}
 };
 
-test('character assistant forwards the selected thinking effort and requires a finish tool', async () => {
+test('character assistant uses automatic tool choice with thinking enabled', async () => {
   const originalFetch = globalThis.fetch;
   let requestBody = null;
   try {
@@ -43,6 +43,7 @@ test('character assistant forwards the selected thinking effort and requires a f
 
     assert.equal(requestBody.thinking.type, 'enabled');
     assert.equal(requestBody.reasoning_effort, 'low');
+    assert.equal(requestBody.tool_choice, 'auto');
     assert.equal(requestBody.tools.at(-1).function.name, 'finish_character_draft');
     assert.equal(result.summary, 'Checked the existing profile.');
     assert.equal(result.toolCalls.at(-1).name, 'finish_character_draft');
@@ -85,10 +86,10 @@ test('character assistant emits progressive checkpoints while provider tool call
 
     assert.equal(requestBody.stream, false);
     const checkpoints = events.filter((item) => item.event === 'checkpoint');
-    assert.equal(checkpoints.length, 3);
+    assert.equal(checkpoints.length, 2);
     assert.equal(checkpoints[0].data.character.name, '雾岚');
     assert.deepEqual(checkpoints[0].data.character.tags, ['旅人']);
-    assert.match(checkpoints[1].data.workflow.nextAction, /下一轮/);
+    assert.match(checkpoints[0].data.workflow.nextAction, /自主决定/);
     assert.equal(checkpoints.at(-1).data.lastTool, 'finish_character_draft');
     assert.deepEqual(checkpoints.at(-1).data.completedSections, ['profile', 'tags']);
     assert.equal(events.some((item) => item.event === 'content'), false);
@@ -131,14 +132,73 @@ test('character assistant keeps every provider tool round non-streaming', async 
     assert.equal(requestBodies.every((body) => body.stream === false), true);
     assert.equal(result.summary, '非流式工具轮次已完成验收。');
     assert.equal(result.toolCalls.at(-1).name, 'finish_character_draft');
-    assert.equal(events.filter((item) => item.event === 'checkpoint').length, 2);
+    assert.equal(result.toolCalls[0].result.reason, 'NO_CHANGES');
+    assert.equal(events.filter((item) => item.event === 'checkpoint').length, 1);
     assert.equal(events.some((item) => item.event === 'reasoning'), false);
   } finally {
     globalThis.fetch = originalFetch;
   }
 });
 
-test('character assistant enforces real multi-round writes and carries a workflow ledger forward', async () => {
+test('character assistant keeps visible model decisions around tool calls', async () => {
+  const originalFetch = globalThis.fetch;
+  const requestBodies = [];
+  const events = [];
+  try {
+    globalThis.fetch = async (_url, request = {}) => {
+      const body = JSON.parse(request.body);
+      requestBodies.push(body);
+      if (requestBodies.length === 1) {
+        return jsonResponse({
+          choices: [{
+            message: {
+              role: 'assistant',
+              content: '先检查基础资料，再写入需要的变更。',
+              tool_calls: [toolCall('visible-profile', 'update_character_profile', { name: '雾岚' })]
+            }
+          }]
+        });
+      }
+      return jsonResponse({
+        choices: [{
+          message: {
+            role: 'assistant',
+            content: '已核对工具结果，下面汇报本次任务。',
+            tool_calls: [toolCall('visible-finish', 'finish_character_draft', {
+              summary: '基础资料已修改并完成任务汇报。',
+              reviewedSections: ['profile']
+            })]
+          }
+        }]
+      });
+    };
+
+    const result = await streamCharacterDraft(providerSettings, {
+      requirement: '完善角色资料',
+      current: {},
+      emit: (event, data) => events.push({ event, data })
+    });
+
+    assert.deepEqual(requestBodies.map((body) => body.tool_choice), ['required', 'auto']);
+    assert.deepEqual(requestBodies[0].thinking, { type: 'disabled' });
+    assert.deepEqual(result.process.map((step) => step.content), [
+      '先检查基础资料，再写入需要的变更。',
+      '已核对工具结果，下面汇报本次任务。'
+    ]);
+    assert.deepEqual(events.filter((event) => event.event === 'content').map((event) => event.data.text), [
+      '先检查基础资料，再写入需要的变更。',
+      '已核对工具结果，下面汇报本次任务。'
+    ]);
+    assert.deepEqual(result.toolCalls.map((call) => call.name), [
+      'update_character_profile',
+      'finish_character_draft'
+    ]);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('character assistant executes multiple writes in one round and returns every result for the next decision', async () => {
   const originalFetch = globalThis.fetch;
   const requestBodies = [];
   const events = [];
@@ -149,31 +209,18 @@ test('character assistant enforces real multi-round writes and carries a workflo
       if (requestBodies.length === 1) {
         return jsonResponse(toolMessage([
           toolCall('multi-profile', 'update_character_profile', { name: '雾岚' }),
-          toolCall('multi-story-deferred', 'update_character_story', { background: '来自雾港。' }),
-          toolCall('multi-finish-deferred', 'finish_character_draft', {
-            summary: '尝试过早完成。',
-            reviewedSections: ['profile', 'background']
-          })
+          toolCall('multi-story', 'update_character_story', { background: '来自雾港。' })
         ]));
       }
-      if (requestBodies.length === 2) {
-        const toolResults = body.messages
-          .filter((message) => message.role === 'tool')
-          .map((message) => JSON.parse(message.content));
-        const deferred = toolResults.find((result) => result.error === 'ROUND_ACTION_LIMIT');
-        assert.deepEqual(deferred.workflow.pendingToolNames, ['update_character_story']);
-        assert.equal(deferred.workflow.recentActions[0].tool, 'update_character_profile');
-        return jsonResponse(toolMessage([
-          toolCall('multi-story', 'update_character_story', { background: '来自雾港。' }),
-          toolCall('multi-finish-again', 'finish_character_draft', {
-            summary: '仍在同轮尝试完成。',
-            reviewedSections: ['profile', 'background']
-          })
-        ]));
-      }
+      const toolResults = body.messages
+        .filter((message) => message.role === 'tool')
+        .map((message) => JSON.parse(message.content));
+      assert.equal(toolResults.length, 2);
+      assert.equal(toolResults.every((result) => result.ok === true), true);
+      assert.equal(toolResults.every((result) => result.workflow.pendingToolNames.length === 0), true);
       return jsonResponse(toolMessage([
         toolCall('multi-finish', 'finish_character_draft', {
-          summary: '分轮写入并完成验收。',
+          summary: '检查同轮写入并完成验收。',
           reviewedSections: ['profile', 'background']
         })
       ]));
@@ -198,22 +245,55 @@ test('character assistant enforces real multi-round writes and carries a workflo
       }
     });
 
-    assert.equal(requestBodies.length, 3);
-    assert.equal(result.process.length, 3);
+    assert.equal(requestBodies.length, 2);
+    assert.equal(result.process.length, 2);
     assert.equal(result.character.name, '雾岚');
     assert.equal(result.character.background, '来自雾港。');
-    assert.equal(result.summary, '分轮写入并完成验收。');
-    assert.equal(result.toolCalls.some((call) => call.result?.error === 'ROUND_ACTION_LIMIT'), true);
+    assert.equal(result.summary, '检查同轮写入并完成验收。');
+    assert.equal(result.toolCalls.every((call) => call.result?.ok === true), true);
     assert.doesNotMatch(JSON.stringify(result.toolCalls), /"workflow"\s*:/);
-    assert.equal(events.some((item) => (
-      item.event === 'checkpoint'
-      && item.data.pendingToolNames?.includes('update_character_story')
-    )), true);
+    assert.equal(events.filter((item) => item.event === 'checkpoint').length, 3);
+    assert.deepEqual(result.checkpoint.pendingToolNames, []);
     assert.deepEqual(result.checkpoint.actionHistory.map((action) => action.tool), [
       'update_character_profile',
       'update_character_story',
       'finish_character_draft'
     ]);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('character assistant accepts finish in the same response as a write', async () => {
+  const originalFetch = globalThis.fetch;
+  let requests = 0;
+  try {
+    globalThis.fetch = async () => {
+      requests += 1;
+      return jsonResponse(toolMessage([
+        toolCall('same-round-profile', 'update_character_profile', { name: '雾岚' }),
+        toolCall('same-round-finish', 'finish_character_draft', {
+          summary: '基础资料已修改并验收。',
+          reviewedSections: ['profile']
+        })
+      ]));
+    };
+
+    const result = await completeCharacterDraft(providerSettings, {
+      requirement: '创建角色资料',
+      current: {},
+      options: { background: false, worldview: false, persona: false, openingMessage: false, tags: false,
+        regexRules: false, renderPlugins: false, worldBook: false, advancedSettings: false, modSuggestions: false }
+    });
+
+    assert.equal(requests, 1);
+    assert.equal(result.character.name, '雾岚');
+    assert.equal(result.summary, '基础资料已修改并验收。');
+    assert.deepEqual(result.toolCalls.map((call) => call.name), [
+      'update_character_profile',
+      'finish_character_draft'
+    ]);
+    assert.equal(result.toolCalls.every((call) => call.result.ok), true);
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -626,7 +706,7 @@ test('character plan phase withholds write tools and returns a plan without a ch
     });
 
     const toolNames = requestBody.tools.map((tool) => tool.function.name);
-    assert.deepEqual(toolNames.sort(), ['report_character_progress', 'submit_character_plan']);
+    assert.deepEqual(toolNames.sort(), ['read_character_field', 'report_character_progress', 'search_character_draft', 'submit_character_plan']);
     // The step enum is narrowed to the enabled sections, so the model is never
     // even offered a section the user excluded.
     const planTool = requestBody.tools.find((tool) => tool.function.name === 'submit_character_plan');
@@ -698,6 +778,7 @@ test('character execution follows the approved plan ledger and refuses to finish
       requirement: '改写人设',
       current: { name: '澄灯', persona: '旧人设' },
       options: { persona: true, openingMessage: true },
+      conversationMode: true,
       planMode: true,
       plan: {
         approved: true,
@@ -728,6 +809,38 @@ test('character execution follows the approved plan ledger and refuses to finish
     assert.equal(result.planProgress.completed, 1);
     assert.deepEqual(result.planProgress.remaining, []);
     assert.equal(result.planProgress.nextStep, null);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('approved-plan execution still requires finish after a natural response', async () => {
+  const originalFetch = globalThis.fetch;
+  let requests = 0;
+  try {
+    globalThis.fetch = async () => {
+      requests += 1;
+      if (requests === 1) {
+        return jsonResponse(toolMessage([
+          toolCall('planned-write', 'update_character_story', { persona: '新人设' })
+        ]));
+      }
+      return jsonResponse({ choices: [{ message: { role: 'assistant', content: '计划步骤已经落实。' } }] });
+    };
+
+    await assert.rejects(completeCharacterDraft(providerSettings, {
+      requirement: '改写人设',
+      current: { name: '澄灯', persona: '旧人设' },
+      options: { persona: true },
+      conversationMode: true,
+      planMode: true,
+      plan: {
+        approved: true,
+        steps: [{ id: 'step-persona', section: 'persona', intent: '重写人设' }]
+      }
+    }), (error) => error.code === 'CHARACTER_ASSISTANT_FORMAT_MISMATCH');
+
+    assert.equal(requests, 3);
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -868,6 +981,37 @@ test('a character plan can finish a world book review without manufacturing edit
     assert.equal(result.toolCalls.every((call) => call.result.ok), true);
     assert.deepEqual(result.character.worldBookChanges, []);
     assert.equal(getWorldBook(database, userId, book.id).entries[0].content, '北方航路');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('character assistant preserves an HTML event template without inferring JavaScript bindings as variables', async () => {
+  const originalFetch = globalThis.fetch;
+  const requests = [];
+  const template = `<style>.panel { color: rgb(255, 105, 180); }.panel::after { content: "}}"; }</style>
+<button onclick="const {clientState} = this; this.nextElementSibling.classList.toggle('open'); const label = '{{jsLabel}}';">Toggle</button>
+<section class="panel"><output>{{HP}}</output></section>`;
+  try {
+    globalThis.fetch = async (_url, request = {}) => {
+      requests.push(JSON.parse(request.body));
+      return jsonResponse(toolMessage(requests.length === 1 ? [
+        toolCall('event-template', 'update_character_status_bar', {
+          statusBarPrompt: 'Update HP after the scene.',
+          statusBarBlueprint: { name: 'HTML events', template, variables: [{ name: 'HP', value: 23, max: 100 }] }
+        })
+      ] : [toolCall('finish-event-template', 'finish_character_draft', { summary: 'Updated.', reviewedSections: ['advancedSettings'] })]));
+    };
+    const result = await completeCharacterDraft(providerSettings, {
+      requirement: '修复状态栏的独立折叠按钮', current: { name: 'Event template' }
+    });
+    const blueprint = result.character.authorAdvancedSettings.statusBarBlueprint;
+    assert.equal(blueprint.template, template);
+    assert.deepEqual(blueprint.variables.map(variable => variable.name), ['HP']);
+    assert.equal(result.toolCalls[0].result.ok, true);
+    const instructions = requests[0].messages.filter(message => message.role === 'system').map(message => message.content).join('\n');
+    assert.match(instructions, /onclick 等事件属性或 javascript: 链接时，会自动进入隔离运行时/);
+    assert.doesNotMatch(instructions, /不支持 Vue、脚本、外部资源或事件属性/);
   } finally {
     globalThis.fetch = originalFetch;
   }

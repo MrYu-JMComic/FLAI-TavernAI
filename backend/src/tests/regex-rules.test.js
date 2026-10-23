@@ -1,11 +1,15 @@
 import assert from 'node:assert/strict';
+import express from 'express';
 import fs from 'node:fs';
 import test from 'node:test';
+import { insertUser, withServer } from './routeTestUtils.js';
 
 process.env.FLAI_DB_PATH = ':memory:';
 process.env.APP_SECRET = 'test-secret';
 
-const { applyRegexRules, testRegexRule } = await import('../modules/characters.js');
+const { createAppDatabase } = await import('../db/runtime.js');
+const { applyRegexRules, createCharacter, getCharacter, testRegexRule } = await import('../modules/characters.js');
+const { createRegexRouter } = await import('../routes/regex.js');
 const charactersSource = fs.readFileSync(new URL('../modules/characters.js', import.meta.url), 'utf8');
 const userRegexSources = [
   '../modules/characters.js',
@@ -15,6 +19,109 @@ const userRegexSources = [
   '../services/worldBooks/worldBookMatcher.js',
   '../services/worldBooks/worldBookMatchPreview.js'
 ].map((path) => fs.readFileSync(new URL(path, import.meta.url), 'utf8'));
+
+test('regex deletion persists for enabled and disabled rules without changing remaining rules', async () => {
+  const database = createAppDatabase(':memory:');
+  const userId = 'regex-delete-owner';
+  insertUser(database, userId);
+  const character = createCharacter(database, userId, {
+    name: 'Regex deletion fixture',
+    regexRules: [
+      { label: 'Keep first', pattern: 'first', groupName: 'Keep', priority: 1 },
+      { label: 'Delete enabled', pattern: 'enabled', groupName: 'Delete', enabled: true, priority: 2 },
+      { label: 'Delete disabled', pattern: 'disabled', groupName: 'Delete', enabled: false, priority: 3 },
+      { label: 'Keep last', pattern: 'last', groupName: 'Keep', priority: 4 }
+    ]
+  });
+  const remainingRules = [character.regexRules[0], character.regexRules[3]];
+  const remainingListRules = remainingRules.map((rule) => ({ ...rule, characterId: character.id }));
+  const app = createRegexRoutesApp(database, userId);
+
+  try {
+    await withServer(app, async (baseUrl) => {
+      for (const rule of [character.regexRules[1], character.regexRules[2]]) {
+        const response = await fetch(`${baseUrl}/api/regex-rules/${rule.id}`, { method: 'DELETE' });
+        assert.equal(response.status, 200);
+        assert.deepEqual(await response.json(), { ok: true });
+      }
+
+      const listResponse = await fetch(`${baseUrl}/api/regex-rules`);
+      assert.equal(listResponse.status, 200);
+      assert.deepEqual(await listResponse.json(), remainingListRules);
+      const groupResponse = await fetch(`${baseUrl}/api/regex-rules?group=Delete`);
+      assert.deepEqual(await groupResponse.json(), []);
+    });
+
+    assert.deepEqual(getCharacter(database, userId, character.id).regexRules, remainingRules);
+    await withServer(createRegexRoutesApp(database, userId), async (baseUrl) => {
+      const reloaded = await fetch(`${baseUrl}/api/regex-rules`).then((response) => response.json());
+      assert.deepEqual(reloaded, remainingListRules);
+    });
+  } finally {
+    database.close();
+  }
+});
+
+test('regex deletion cannot remove a rule owned by another user', async () => {
+  const database = createAppDatabase(':memory:');
+  const ownerId = 'regex-delete-foreign-owner';
+  const viewerId = 'regex-delete-viewer';
+  insertUser(database, ownerId);
+  insertUser(database, viewerId);
+  const character = createCharacter(database, ownerId, {
+    name: 'Public regex deletion fixture',
+    visibility: 'public',
+    regexRules: [{ label: 'Foreign rule', pattern: 'foreign' }]
+  });
+
+  try {
+    await withServer(createRegexRoutesApp(database, viewerId), async (baseUrl) => {
+      const response = await fetch(`${baseUrl}/api/regex-rules/${character.regexRules[0].id}`, { method: 'DELETE' });
+      assert.equal(response.status, 404);
+      assert.deepEqual(await response.json(), { error: '规则不存在' });
+    });
+    assert.deepEqual(getCharacter(database, ownerId, character.id).regexRules, character.regexRules);
+  } finally {
+    database.close();
+  }
+});
+
+test('regex deletion returns 404 for missing and already deleted rules', async () => {
+  const database = createAppDatabase(':memory:');
+  const userId = 'regex-delete-missing-owner';
+  insertUser(database, userId);
+  const character = createCharacter(database, userId, {
+    name: 'Missing regex deletion fixture',
+    regexRules: [{ label: 'Delete once', pattern: 'once' }]
+  });
+
+  try {
+    await withServer(createRegexRoutesApp(database, userId), async (baseUrl) => {
+      const ruleUrl = `${baseUrl}/api/regex-rules/${character.regexRules[0].id}`;
+      assert.equal((await fetch(ruleUrl, { method: 'DELETE' })).status, 200);
+      for (const url of [ruleUrl, `${baseUrl}/api/regex-rules/missing-rule`]) {
+        const response = await fetch(url, { method: 'DELETE' });
+        assert.equal(response.status, 404);
+        assert.deepEqual(await response.json(), { error: '规则不存在' });
+      }
+    });
+    assert.deepEqual(getCharacter(database, userId, character.id).regexRules, []);
+  } finally {
+    database.close();
+  }
+});
+
+function createRegexRoutesApp(database, userId) {
+  const app = express();
+  app.use('/api/regex-rules', createRegexRouter({
+    db: database,
+    requireAuth(request, response, next) {
+      request.auth = { user: { id: userId } };
+      next();
+    }
+  }));
+  return app;
+}
 
 // ── testRegexRule: contain mode ──
 

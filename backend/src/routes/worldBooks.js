@@ -15,6 +15,7 @@ import { sanitizeText } from '../services/sanitize.js';
 import { completeWorldBookDraft, streamWorldBookDraft } from '../services/worldBookAssistant.js';
 import { withModelOverride, writeSse } from './helpers.js';
 import { sendRouteError } from './errorResponse.js';
+import { prepareWorldBookChangesForSave } from '../services/worldBooks/prepareWorldBookChanges.js';
 
 const WORLD_BOOK_ASSISTANT_TIMEOUT_MS = 10 * 60 * 1000;
 
@@ -128,10 +129,8 @@ export function createWorldBooksRouter(ctx) {
 
   router.post('/apply-changes', requireAuth, validate(applyWorldBookChangesSchema), (request, response) => {
     try {
-      for (const change of request.body.changes) {
-        if (change.profile.name !== undefined) change.profile.name = sanitizeText(change.profile.name);
-      }
-      response.json(applyWorldBookChanges(db, request.auth.user.id, request.body));
+      const payload = prepareWorldBookChangesForSave(db, request.auth.user.id, request.body);
+      response.json(applyWorldBookChanges(db, request.auth.user.id, payload));
     } catch (error) {
       sendRouteError(response, error, {
         status: Number.isInteger(error?.status) ? error.status : 400,

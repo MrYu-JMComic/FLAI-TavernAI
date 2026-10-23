@@ -203,9 +203,9 @@ test('memory retries refresh revisions after a partial write instead of replayin
 
 test('memory agent skill defaults to auto and exposes a switchable tool library', () => {
   const skills = normalizeAccessorySkills({});
-  assert.deepEqual(skills.memoryAgent, { enabled: 'auto', modelOverride: '', providerProfileId: '', tools: {} });
+  assert.deepEqual(skills.memoryAgent, { enabled: 'auto', modelOverride: '', providerProfileId: '', thinkingLevel: '', tools: {} });
   const normalized = normalizeAccessorySkills({ memoryAgent: { enabled: true, providerProfileId: ' profile-1 ', tools: { record_memory: 'off', invalidate_memory: true, 'Bad Name': true } } });
-  assert.deepEqual(normalized.memoryAgent, { enabled: true, modelOverride: '', providerProfileId: 'profile-1', tools: { record_memory: false, invalidate_memory: true } });
+  assert.deepEqual(normalized.memoryAgent, { enabled: true, modelOverride: '', providerProfileId: 'profile-1', thinkingLevel: '', tools: { record_memory: false, invalidate_memory: true } });
 
   const enabled = resolveMemoryAgentTools({ tools: { record_memory: false, invalidate_memory: true, finish_memory_review: false } });
   assert.equal(enabled.includes('record_memory'), false);

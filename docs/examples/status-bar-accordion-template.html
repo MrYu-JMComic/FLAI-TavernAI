@@ -1,0 +1,239 @@
+<style>
+  .sb-accordion {
+    margin: 8px 0;
+    border-radius: 8px;
+    overflow: hidden;
+    background: rgba(255,255,255,0.05);
+    border: 1px solid rgba(222,184,135,0.3);
+  }
+  .sb-accordion-title {
+    display: flex;
+    align-items: center;
+    padding: 10px 12px;
+    background: rgba(222,184,135,0.15);
+    cursor: pointer;
+    font-weight: 600;
+    font-size: 13px;
+    user-select: none;
+    transition: background 0.2s;
+  }
+  .sb-accordion-title:hover {
+    background: rgba(222,184,135,0.25);
+  }
+  .sb-accordion-toggle {
+    display: inline-block;
+    width: 16px;
+    margin-right: 8px;
+    transition: transform 0.2s;
+    transform: rotate(0deg);
+  }
+  .sb-accordion-toggle.open {
+    transform: rotate(90deg);
+  }
+  .sb-accordion-content {
+    display: none;
+    padding: 12px;
+    animation: slideDown 0.2s ease-out;
+  }
+  .sb-accordion-content.open {
+    display: block;
+  }
+  @keyframes slideDown {
+    from {
+      opacity: 0;
+      max-height: 0;
+    }
+    to {
+      opacity: 1;
+      max-height: 500px;
+    }
+  }
+
+  /* 手机优化 */
+  @media (max-width: 600px) {
+    .sb-card { padding: 12px !important; font-size: 12px !important; }
+    .sb-title { font-size: 14px; margin-bottom: 8px; }
+    .sb-subtitle { font-size: 12px; margin: 6px 0 4px; }
+    .sb-stat { margin-bottom: 6px; }
+    .sb-stat-label { font-size: 10px; }
+    .sb-val { font-size: 10px; }
+    .sb-track { height: 4px !important; }
+    .sb-accordion-title { padding: 8px 10px; font-size: 12px; }
+    .sb-grid { grid-template-columns: 1fr !important; }
+  }
+
+  /* 平板优化 */
+  @media (min-width: 601px) and (max-width: 1024px) {
+    .sb-grid { grid-template-columns: repeat(2, 1fr) !important; }
+  }
+
+  /* 桌面优化 */
+  @media (min-width: 1025px) {
+    .sb-grid { grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)) !important; }
+  }
+</style>
+
+<section class="sb-card sb-theme-parchment" style="padding: 16px; border-radius: 12px; font-size: 14px;">
+  <h3 class="sb-title" style="margin-bottom: 12px;">{{char}}</h3>
+
+  <!-- 基础信息 -->
+  <div class="sb-accordion">
+    <div class="sb-accordion-title" data-sb-target="section-basic">
+      <span class="sb-accordion-toggle open">▸</span>
+      📋 基础信息
+    </div>
+    <div class="sb-accordion-content open" id="section-basic">
+      <div class="sb-grid" style="grid-template-columns: repeat(auto-fit, minmax(100px, 1fr)); gap: 10px;">
+        <div class="sb-stat"><span class="sb-stat-label">处女</span> <span class="sb-val">{{处女}}</span></div>
+        <div class="sb-stat"><span class="sb-stat-label">首次对象</span> <span class="sb-val">{{首次对象}}</span></div>
+        <div class="sb-stat"><span class="sb-stat-label">高潮次数</span> <span class="sb-val">{{高潮次数}}{{高潮次数.unit}}</span></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 三条心理轨道 -->
+  <div class="sb-accordion">
+    <div class="sb-accordion-title" data-sb-target="section-mind">
+      <span class="sb-accordion-toggle open">▸</span>
+      💭 心理轨道
+    </div>
+    <div class="sb-accordion-content open" id="section-mind">
+      <div class="sb-stat" style="margin-bottom: 8px;">
+        <span class="sb-stat-label">纯洁度</span>
+        <div class="sb-track" style="background: #e0e0e0; height: 6px; border-radius: 3px; overflow: hidden;"><div class="sb-fill" style="width: {{纯洁度.percentage}}%; background: {{纯洁度.color}}; height: 100%;"></div></div>
+        <span class="sb-val" style="font-size: 12px;">{{纯洁度}}/{{纯洁度.max}}</span>
+      </div>
+      <div class="sb-stat" style="margin-bottom: 12px;">
+        <span class="sb-stat-label">腐化度</span>
+        <div class="sb-track" style="background: #e0e0e0; height: 6px; border-radius: 3px; overflow: hidden;"><div class="sb-fill" style="width: {{腐化度.percentage}}%; background: {{腐化度.color}}; height: 100%;"></div></div>
+        <span class="sb-val" style="font-size: 12px;">{{腐化度}}/{{腐化度.max}}</span>
+        <span class="sb-muted" style="font-size: 10px; display: block; margin-top: 2px;">{{#if 腐化度 < 26}}初坠·羞耻{{else if 腐化度 < 61}}动摇·辩解{{else if 腐化度 < 86}}觉醒·合理化{{else}}深渊·中心{{/if}}</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- 性开发度 -->
+  <div class="sb-accordion">
+    <div class="sb-accordion-title" data-sb-target="section-sex">
+      <span class="sb-accordion-toggle open">▸</span>
+      🌸 性开发度
+    </div>
+    <div class="sb-accordion-content open" id="section-sex">
+      <div class="sb-grid" style="grid-template-columns: repeat(4, 1fr); gap: 8px;">
+        <div><span class="sb-muted" style="font-size: 11px;">嘴</span> <div class="sb-track" style="background: #e0e0e0; height: 4px; border-radius: 2px; overflow: hidden; margin: 2px 0;"><div class="sb-fill" style="width: {{嘴.percentage}}%; background: {{嘴.color}}; height: 100%;"></div></div> <span class="sb-val" style="font-size: 11px;">{{嘴}}%</span></div>
+        <div><span class="sb-muted" style="font-size: 11px;">胸</span> <div class="sb-track" style="background: #e0e0e0; height: 4px; border-radius: 2px; overflow: hidden; margin: 2px 0;"><div class="sb-fill" style="width: {{胸.percentage}}%; background: {{胸.color}}; height: 100%;"></div></div> <span class="sb-val" style="font-size: 11px;">{{胸}}%</span></div>
+        <div><span class="sb-muted" style="font-size: 11px;">穴</span> <div class="sb-track" style="background: #e0e0e0; height: 4px; border-radius: 2px; overflow: hidden; margin: 2px 0;"><div class="sb-fill" style="width: {{穴.percentage}}%; background: {{穴.color}}; height: 100%;"></div></div> <span class="sb-val" style="font-size: 11px;">{{穴}}%</span></div>
+        <div><span class="sb-muted" style="font-size: 11px;">足</span> <div class="sb-track" style="background: #e0e0e0; height: 4px; border-radius: 2px; overflow: hidden; margin: 2px 0;"><div class="sb-fill" style="width: {{足.percentage}}%; background: {{足.color}}; height: 100%;"></div></div> <span class="sb-val" style="font-size: 11px;">{{足}}%</span></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 精神与体质 -->
+  <div class="sb-accordion">
+    <div class="sb-accordion-title" data-sb-target="section-vitals">
+      <span class="sb-accordion-toggle open">▸</span>
+      ❤️ 精神与体质
+    </div>
+    <div class="sb-accordion-content open" id="section-vitals">
+      <div class="sb-grid" style="grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 8px;">
+        <div class="sb-stat" style="font-size: 12px;"><span class="sb-stat-label">理智</span> <div class="sb-track" style="background: #e0e0e0; height: 4px; border-radius: 2px; overflow: hidden; margin: 2px 0;"><div class="sb-fill" style="width: {{理智.percentage}}%; background: {{理智.color}}; height: 100%;"></div></div> <span class="sb-val" style="font-size: 11px;">{{理智}}/{{理智.max}}</span></div>
+        <div class="sb-stat" style="font-size: 12px;"><span class="sb-stat-label">脱力度</span> <div class="sb-track" style="background: #e0e0e0; height: 4px; border-radius: 2px; overflow: hidden; margin: 2px 0;"><div class="sb-fill" style="width: {{脱力度.percentage}}%; background: {{脱力度.color}}; height: 100%;"></div></div> <span class="sb-val" style="font-size: 11px;">{{脱力度}}/{{脱力度.max}}</span></div>
+        <div class="sb-stat" style="font-size: 12px;"><span class="sb-stat-label">协调度</span> <div class="sb-track" style="background: #e0e0e0; height: 4px; border-radius: 2px; overflow: hidden; margin: 2px 0;"><div class="sb-fill" style="width: {{身体协调度.percentage}}%; background: {{身体协调度.color}}; height: 100%;"></div></div> <span class="sb-val" style="font-size: 11px;">{{身体协调度}}/{{身体协调度.max}}</span></div>
+        <div class="sb-stat" style="font-size: 12px;"><span class="sb-stat-label">伤害值</span> <div class="sb-track" style="background: #e0e0e0; height: 4px; border-radius: 2px; overflow: hidden; margin: 2px 0;"><div class="sb-fill" style="width: {{伤害值.percentage}}%; background: {{伤害值.color}}; height: 100%;"></div></div> <span class="sb-val" style="font-size: 11px;">{{伤害值}}/{{伤害值.max}}</span></div>
+        <div class="sb-stat" style="font-size: 12px;"><span class="sb-stat-label">衣物</span> <div class="sb-track" style="background: #e0e0e0; height: 4px; border-radius: 2px; overflow: hidden; margin: 2px 0;"><div class="sb-fill" style="width: {{衣物完整度.percentage}}%; background: {{衣物完整度.color}}; height: 100%;"></div></div> <span class="sb-val" style="font-size: 11px;">{{衣物完整度}}/{{衣物完整度.max}}</span></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 基础属性 -->
+  <div class="sb-accordion">
+    <div class="sb-accordion-title" data-sb-target="section-attr">
+      <span class="sb-accordion-toggle open">▸</span>
+      ⚔️ 五大属性
+    </div>
+    <div class="sb-accordion-content open" id="section-attr">
+      <div class="sb-grid" style="grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap: 8px;">
+        <div class="sb-stat" style="font-size: 12px;"><span class="sb-stat-label">力量</span> <div class="sb-track" style="background: #e0e0e0; height: 4px; border-radius: 2px; overflow: hidden; margin: 2px 0;"><div class="sb-fill" style="width: {{力量.percentage}}%; background: {{力量.color}}; height: 100%;"></div></div> <span class="sb-val" style="font-size: 11px;">{{力量}}/{{力量.max}}</span></div>
+        <div class="sb-stat" style="font-size: 12px;"><span class="sb-stat-label">智力</span> <div class="sb-track" style="background: #e0e0e0; height: 4px; border-radius: 2px; overflow: hidden; margin: 2px 0;"><div class="sb-fill" style="width: {{智力.percentage}}%; background: {{智力.color}}; height: 100%;"></div></div> <span class="sb-val" style="font-size: 11px;">{{智力}}/{{智力.max}}</span></div>
+        <div class="sb-stat" style="font-size: 12px;"><span class="sb-stat-label">灵巧</span> <div class="sb-track" style="background: #e0e0e0; height: 4px; border-radius: 2px; overflow: hidden; margin: 2px 0;"><div class="sb-fill" style="width: {{灵巧.percentage}}%; background: {{灵巧.color}}; height: 100%;"></div></div> <span class="sb-val" style="font-size: 11px;">{{灵巧}}/{{灵巧.max}}</span></div>
+        <div class="sb-stat" style="font-size: 12px;"><span class="sb-stat-label">口才</span> <div class="sb-track" style="background: #e0e0e0; height: 4px; border-radius: 2px; overflow: hidden; margin: 2px 0;"><div class="sb-fill" style="width: {{口才.percentage}}%; background: {{口才.color}}; height: 100%;"></div></div> <span class="sb-val" style="font-size: 11px;">{{口才}}/{{口才.max}}</span></div>
+        <div class="sb-stat" style="font-size: 12px;"><span class="sb-stat-label">活力</span> <div class="sb-track" style="background: #e0e0e0; height: 4px; border-radius: 2px; overflow: hidden; margin: 2px 0;"><div class="sb-fill" style="width: {{活力.percentage}}%; background: {{活力.color}}; height: 100%;"></div></div> <span class="sb-val" style="font-size: 11px;">{{活力}}/{{活力.max}}</span></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 心理倾向 -->
+  <div class="sb-accordion">
+    <div class="sb-accordion-title" data-sb-target="section-tendency">
+      <span class="sb-accordion-toggle open">▸</span>
+      🎭 心理倾向
+    </div>
+    <div class="sb-accordion-content open" id="section-tendency">
+      <div class="sb-grid" style="grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap: 8px;">
+        <div class="sb-stat" style="font-size: 12px;"><span class="sb-stat-label">美貌</span> <div class="sb-track" style="background: #e0e0e0; height: 4px; border-radius: 2px; overflow: hidden; margin: 2px 0;"><div class="sb-fill" style="width: {{美貌.percentage}}%; background: {{美貌.color}}; height: 100%;"></div></div> <span class="sb-val" style="font-size: 11px;">{{美貌}}/{{美貌.max}}</span></div>
+        <div class="sb-stat" style="font-size: 12px;"><span class="sb-stat-label">秩序理智</span> <div class="sb-track" style="background: #e0e0e0; height: 4px; border-radius: 2px; overflow: hidden; margin: 2px 0;"><div class="sb-fill" style="width: {{秩序理智.percentage}}%; background: {{秩序理智.color}}; height: 100%;"></div></div> <span class="sb-val" style="font-size: 11px;">{{秩序理智}}/{{秩序理智.max}}</span></div>
+        <div class="sb-stat" style="font-size: 12px;"><span class="sb-stat-label">混沌理智</span> <div class="sb-track" style="background: #e0e0e0; height: 4px; border-radius: 2px; overflow: hidden; margin: 2px 0;"><div class="sb-fill" style="width: {{混沌理智.percentage}}%; background: {{混沌理智.color}}; height: 100%;"></div></div> <span class="sb-val" style="font-size: 11px;">{{混沌理智}}/{{混沌理智.max}}</span></div>
+        <div class="sb-stat" style="font-size: 12px;"><span class="sb-stat-label">淫乱本质</span> <div class="sb-track" style="background: #e0e0e0; height: 4px; border-radius: 2px; overflow: hidden; margin: 2px 0;"><div class="sb-fill" style="width: {{淫乱本质.percentage}}%; background: {{淫乱本质.color}}; height: 100%;"></div></div> <span class="sb-val" style="font-size: 11px;">{{淫乱本质}}/{{淫乱本质.max}}</span></div>
+        <div class="sb-stat" style="font-size: 12px;"><span class="sb-stat-label">财富感</span> <div class="sb-track" style="background: #e0e0e0; height: 4px; border-radius: 2px; overflow: hidden; margin: 2px 0;"><div class="sb-fill" style="width: {{财富感.percentage}}%; background: {{财富感.color}}; height: 100%;"></div></div> <span class="sb-val" style="font-size: 11px;">{{财富感}}/{{财富感.max}}</span></div>
+        <div class="sb-stat" style="font-size: 12px;"><span class="sb-stat-label">性经验</span> <div class="sb-track" style="background: #e0e0e0; height: 4px; border-radius: 2px; overflow: hidden; margin: 2px 0;"><div class="sb-fill" style="width: {{性经验.percentage}}%; background: {{性经验.color}}; height: 100%;"></div></div> <span class="sb-val" style="font-size: 11px;">{{性经验}}/{{性经验.max}}</span></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 货币 -->
+  <div class="sb-accordion">
+    <div class="sb-accordion-title" data-sb-target="section-money">
+      <span class="sb-accordion-toggle open">▸</span>
+      💰 货币
+    </div>
+    <div class="sb-accordion-content open" id="section-money">
+      <div class="sb-grid" style="grid-template-columns: repeat(3, 1fr); gap: 8px;">
+        <div class="sb-stat" style="font-size: 12px;"><span class="sb-stat-label">金币</span> <span class="sb-val">{{金币}}{{金币.unit}}</span></div>
+        <div class="sb-stat" style="font-size: 12px;"><span class="sb-stat-label">银币</span> <span class="sb-val">{{银币}}{{银币.unit}}</span></div>
+        <div class="sb-stat" style="font-size: 12px;"><span class="sb-stat-label">铜币</span> <span class="sb-val">{{铜币}}{{铜币.unit}}</span></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 物品与装备 -->
+  <div class="sb-accordion">
+    <div class="sb-accordion-title" data-sb-target="section-items">
+      <span class="sb-accordion-toggle">▸</span>
+      🎒 物品与装备
+    </div>
+    <div class="sb-accordion-content" id="section-items">
+      <div style="font-size: 12px; line-height: 1.6;">
+        <div class="sb-stat"><span class="sb-stat-label">幽蔷薇</span> <span class="sb-val">{{幽蔷薇}}{{幽蔷薇.unit}}</span></div>
+        <div class="sb-stat"><span class="sb-stat-label">主手</span> <span class="sb-val">{{主手}}</span></div>
+        <div class="sb-stat"><span class="sb-stat-label">副手</span> <span class="sb-val">{{副手}}</span></div>
+        <div class="sb-stat"><span class="sb-stat-label" style="font-size: 11px;">装备</span> <span class="sb-val" style="font-size: 10px;">{{身体护甲鞋子}}</span></div>
+        <div class="sb-stat"><span class="sb-stat-label" style="font-size: 11px;">贴身</span> <span class="sb-val" style="font-size: 10px;">{{内衣}}</span></div>
+        <div class="sb-stat"><span class="sb-stat-label" style="font-size: 11px;">背包</span> <span class="sb-val" style="font-size: 10px;">{{背包}}</span></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 记忆 -->
+  <div class="sb-accordion">
+    <div class="sb-accordion-title" data-sb-target="section-memory">
+      <span class="sb-accordion-toggle">▸</span>
+      📖 记忆
+    </div>
+    <div class="sb-accordion-content" id="section-memory">
+      <div class="sb-muted" style="font-size: 10px; line-height: 1.5;">{{#each 记忆条目}}{{@value}}{{#unless @last}} · {{/unless}}{{/each}}</div>
+    </div>
+  </div>
+</section>
+
+<script>
+  document.querySelectorAll('.sb-accordion-title').forEach(title => {
+    title.addEventListener('click', function(e) {
+      const target = document.getElementById(this.dataset.sbTarget);
+      if (!target) return;
+
+      const toggle = this.querySelector('.sb-accordion-toggle');
+      toggle.classList.toggle('open');
+      target.classList.toggle('open');
+    });
+  });
+</script>

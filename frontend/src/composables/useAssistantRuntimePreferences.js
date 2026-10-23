@@ -1,4 +1,4 @@
-import { computed, ref, watch } from 'vue';
+import { computed, ref, unref, watch } from 'vue';
 import { recordFrontendDiagnostic } from '../diagnostics.js';
 import { useProviderModels } from './useProviderModels';
 import { resolveProviderModelCapabilities } from '../../../shared/providerCapabilities.js';
@@ -7,9 +7,7 @@ import {
   resolveThinkingPreferenceLevel
 } from '../../../shared/providerThinking.js';
 
-// The assistant model is deliberately one shared preference: the character and
-// world book workbenches have always pointed at the same stored model, and
-// splitting it now would silently reset one of them.
+// Keep the established model preference unless a workbench supplies its own key.
 const ASSISTANT_MODEL_STORAGE_KEY = 'flai-assistant-model';
 
 const THINKING_LEVEL_LABELS = Object.freeze({
@@ -25,16 +23,17 @@ const THINKING_LEVEL_LABELS = Object.freeze({
 /**
  * Model / thinking / streaming / plan-mode preferences shared by the structured
  * AI workbenches. `storagePrefix` keeps each workbench's toggles separate while
- * the model selection stays global.
+ * the model selection stays global by default.
  */
 export function useAssistantRuntimePreferences(providerRef, {
   storagePrefix,
+  modelStorageKey = ASSISTANT_MODEL_STORAGE_KEY,
   defaultThinkingLevel = 'medium',
   defaultStreaming = false,
   defaultPlanMode = false
 } = {}) {
   const prefix = String(storagePrefix || 'flai-assistant');
-  const assistantModel = readStoredRef(ASSISTANT_MODEL_STORAGE_KEY, '', (raw) => raw || '');
+  const assistantModel = readStoredRef(modelStorageKey, '', (raw) => raw || '');
   const requestedThinkingLevel = readStoredRef(`${prefix}-thinking-level`, defaultThinkingLevel, (raw) => raw || defaultThinkingLevel);
   const assistantStreamingEnabled = readStoredRef(`${prefix}-streaming`, defaultStreaming, (raw) => raw === 'true');
   const assistantPlanMode = readStoredRef(`${prefix}-plan-mode`, defaultPlanMode, (raw) => raw === 'true');
@@ -75,7 +74,7 @@ export function useAssistantRuntimePreferences(providerRef, {
     assistantThinkingControl.value.supported && assistantThinkingOptions.value.length
   ));
 
-  persistRef(assistantModel, ASSISTANT_MODEL_STORAGE_KEY, (value) => String(value || '').trim());
+  persistRef(assistantModel, modelStorageKey, (value) => String(value || '').trim());
   persistRef(requestedThinkingLevel, `${prefix}-thinking-level`, (value) => String(value || 'off'));
   persistRef(assistantStreamingEnabled, `${prefix}-streaming`, (value) => (value ? 'true' : 'false'));
   persistRef(assistantPlanMode, `${prefix}-plan-mode`, (value) => (value ? 'true' : 'false'));
@@ -99,18 +98,22 @@ export function useAssistantBooleanPreference(storageKey, defaultValue, diagnost
 }
 
 function readStoredRef(storageKey, fallback, parse, diagnosticKey = '') {
-  try {
-    return ref(parse(localStorage.getItem(storageKey)));
-  } catch (error) {
-    recordFrontendDiagnostic(`${diagnosticKey || 'assistantPreferences'}.load`, error, { storageKey });
-    return ref(fallback);
-  }
+  const stored = ref(fallback);
+  watch(() => unref(storageKey), (key) => {
+    try {
+      stored.value = parse(localStorage.getItem(key));
+    } catch (error) {
+      recordFrontendDiagnostic(`${diagnosticKey || 'assistantPreferences'}.load`, error, { storageKey: key });
+      stored.value = fallback;
+    }
+  }, { immediate: true, flush: 'sync' });
+  return stored;
 }
 
 function persistRef(valueRef, storageKey, serialize, diagnosticKey = '') {
   watch(valueRef, (value) => {
     try {
-      localStorage.setItem(storageKey, serialize(value));
+      localStorage.setItem(unref(storageKey), serialize(value));
     } catch (error) {
       recordFrontendDiagnostic(`${diagnosticKey || 'assistantPreferences'}.save`, error, { storageKey });
     }

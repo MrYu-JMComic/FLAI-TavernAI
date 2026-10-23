@@ -1,6 +1,6 @@
 <script setup>
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
-import { RefreshCw } from '@lucide/vue';
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
+import { ArrowLeft, RefreshCw } from '@lucide/vue';
 import { useNotify } from '../composables/useNotify';
 import { useSettingsMods } from '../composables/settings/useSettingsMods';
 import { useSettingsProfile } from '../composables/settings/useSettingsProfile';
@@ -19,6 +19,7 @@ import SettingsTagPanel from '../components/settings/SettingsTagPanel.vue';
 import SettingsModPanel from '../components/settings/SettingsModPanel.vue';
 import SettingsRegexPanel from '../components/settings/SettingsRegexPanel.vue';
 import SettingsStatusTemplatePanel from '../components/settings/SettingsStatusTemplatePanel.vue';
+import PersonalCenterOverview from '../components/settings/PersonalCenterOverview.vue';
 
 const props = defineProps({
   route: {
@@ -30,19 +31,29 @@ const props = defineProps({
     default: null
   }
 });
-const emit = defineEmits(['provider-saved', 'profile-saved']);
+const emit = defineEmits(['navigate', 'provider-saved', 'profile-saved']);
 const notify = useNotify();
+const routeName = computed(() => props.route?.name || 'settings');
 const isExtensionsPage = computed(() => props.route?.name === 'extensions');
-const isPersonalPage = computed(() => !isExtensionsPage.value);
+const isOverviewPage = computed(() => routeName.value === 'settings');
+const isProfilePage = computed(() => routeName.value === 'settingsProfile');
+const isProfileContext = computed(() => isOverviewPage.value || isProfilePage.value);
+const isProviderPage = computed(() => routeName.value === 'settingsProvider');
+const isPresetsPage = computed(() => routeName.value === 'settingsPresets');
+const isDataPage = computed(() => routeName.value === 'settingsData');
+const pageTitle = computed(() => ({
+  settings: '个人中心',
+  settingsProfile: '个人资料',
+  settingsPresets: '对话预设',
+  settingsProvider: '模型网关',
+  settingsData: '数据导出',
+  extensions: '扩展管理'
+}[routeName.value] || '个人中心'));
 const {
   activeExtensionSection,
-  activePersonalSection,
   extensionNavRef,
   extensionSections,
-  personalNavRef,
-  personalSections,
-  scrollToExtensionSection,
-  scrollToPersonalSection
+  scrollToExtensionSection
 } = useSettingsSectionNavigation();
 
 const loading = ref(false);
@@ -81,7 +92,7 @@ const {
   switchProvider,
   updateProviderFormField
 } = useSettingsProvider({
-  isPersonalPage,
+  isPersonalPage: isProviderPage,
   user: computed(() => props.user),
   notify,
   emitProviderSaved: () => emit('provider-saved')
@@ -100,7 +111,7 @@ const {
   updateProfileDisplayName
 } = useSettingsProfile({
   user: computed(() => props.user),
-  isPersonalPage,
+  isPersonalPage: isProfileContext,
   notify,
   emitProfileSaved: (user) => emit('profile-saved', user)
 });
@@ -112,7 +123,7 @@ const {
   resetDataExportScope,
   snapshotExporting
 } = useSettingsDataExports({
-  isPersonalPage,
+  isPersonalPage: isDataPage,
   notify
 });
 const {
@@ -157,7 +168,7 @@ const {
   startNewPreset,
   updatePresetFormField
 } = useSettingsPresets({
-  isExtensionsPage,
+  isPresetsPage,
   notify
 });
 const {
@@ -200,6 +211,7 @@ const {
 });
 const {
   exportRegexRules,
+  handleDeleteRegexRule,
   handleRegexGroupFilterChange,
   handleRegexImportFile,
   handleToggleRegexRule,
@@ -241,20 +253,22 @@ onMounted(loadRegexRules);
 onBeforeUnmount(resetSettingsAsyncScopes);
 
 async function loadSettings() {
-  if (!isPersonalPage.value || loading.value) {
+  if ((!isProfileContext.value && !isProviderPage.value) || loading.value) {
     return;
   }
   const requestToken = ++settingsLoadToken;
   loading.value = true;
   loadError.value = '';
   try {
-    const [providerBundle, userProfile] = await Promise.all([
-      loadProviderSettingsBundle(),
-      loadUserProfile()
-    ]);
+    const result = isProviderPage.value
+      ? await loadProviderSettingsBundle()
+      : await loadUserProfile();
     if (!isCurrentSettingsLoad(requestToken)) return;
-    applyProviderSettingsBundle(providerBundle);
-    applyProfile(userProfile);
+    if (isProviderPage.value) {
+      applyProviderSettingsBundle(result);
+    } else {
+      applyProfile(result);
+    }
   } catch (err) {
     if (!isCurrentSettingsLoad(requestToken)) return;
     const message = err?.message || '加载个人设置失败';
@@ -268,7 +282,7 @@ async function loadSettings() {
 }
 
 function isCurrentSettingsLoad(requestToken) {
-  return requestToken === settingsLoadToken && isPersonalPage.value;
+  return requestToken === settingsLoadToken && (isProfileContext.value || isProviderPage.value);
 }
 
 function resetPersonalAsyncScope() {
@@ -276,6 +290,7 @@ function resetPersonalAsyncScope() {
   resetProviderAsyncScope();
   resetProfileAsyncScope();
   resetDataExportScope();
+  resetPresetAsyncScope();
   loading.value = false;
 }
 
@@ -284,53 +299,27 @@ function resetSettingsAsyncScopes() {
   resetExtensionAsyncScopes();
 }
 
-watch(isExtensionsPage, handleExtensionsPageChange);
-
-function handleExtensionsPageChange(value) {
-  resetSettingsAsyncScopes();
-  if (!value) {
-    loadSettings();
-    return;
-  }
-  loadTags();
-  loadPresets();
-  loadMods();
-  loadModCharacterOptions();
-  loadRegexRules();
-}
-
 function resetExtensionAsyncScopes() {
   resetTagAsyncScope();
-  resetPresetAsyncScope();
   resetModAsyncScope();
   resetModCharacterLoadScope();
   resetRegexAsyncScope();
   resetStatusTemplateAsyncScope();
 }
 
+function navigateTo(page) {
+  emit('navigate', page);
+}
+
 </script>
 
 <template>
-  <section class="page-stack settings-workbench" :class="isExtensionsPage ? 'extensions-page' : 'narrow-page'">
-    <div class="section-heading">
-      <div>
-        <p>{{ isExtensionsPage ? '扩展管理' : '个人中心' }}</p>
-        <h1>{{ isExtensionsPage ? '标签、预设、Mod 与正则' : '账户、权限与 AI 资产' }}</h1>
-      </div>
-    </div>
-
-    <!-- Extension Section Navigation -->
-    <nav v-if="isPersonalPage && !loading && !loadError" ref="personalNavRef" class="form-section-nav settings-section-nav personal-section-nav" aria-label="个人设置分区">
-      <button
-        v-for="section in personalSections"
-        :key="section.id"
-        class="form-section-tab"
-        :class="{ active: activePersonalSection === section.id }"
-        :data-section-id="section.id"
-        type="button"
-        @click="scrollToPersonalSection(section.id)"
-      >
-        {{ section.label }}
+  <section class="page-stack settings-workbench" :class="[isExtensionsPage ? 'extensions-page' : 'narrow-page', { 'personal-overview-page': isOverviewPage, 'personal-detail-page': !isExtensionsPage && !isOverviewPage }]">
+    <h1 class="visually-hidden settings-page-title">{{ pageTitle }}</h1>
+    <nav v-if="!isExtensionsPage && !isOverviewPage" class="settings-detail-back" aria-label="页面导航">
+      <button class="ghost-button settings-back-button" type="button" @click="navigateTo('settings')">
+        <ArrowLeft :size="17" aria-hidden="true" />
+        <span>返回个人中心</span>
       </button>
     </nav>
 
@@ -340,6 +329,7 @@ function resetExtensionAsyncScopes() {
         :key="section.id"
         class="form-section-tab"
         :class="{ active: activeExtensionSection === section.id }"
+        :aria-current="activeExtensionSection === section.id ? 'location' : undefined"
         :data-section-id="section.id"
         type="button"
         @click="scrollToExtensionSection(section.id)"
@@ -348,12 +338,12 @@ function resetExtensionAsyncScopes() {
       </button>
     </nav>
 
-    <p v-if="isPersonalPage && !loading && !loadError && form.apiKeyNeedsReset" class="error-text">
+    <p v-if="isProviderPage && !loading && !loadError && form.apiKeyNeedsReset" class="error-text">
       已保存的 API Key 无法解密。请重新粘贴 SK 并保存设置，之后再获取模型或查询余额。
     </p>
-    <p v-if="isPersonalPage && loading" class="muted-text" aria-live="polite">正在加载设置...</p>
+    <p v-if="(isProfileContext || isProviderPage) && loading" class="muted-text" aria-live="polite">正在加载设置...</p>
 
-    <section v-if="isPersonalPage && loadError" class="form-panel empty-state error-state" role="alert">
+    <section v-if="(isProfileContext || isProviderPage) && loadError" class="form-panel empty-state error-state" role="alert">
       <h2>设置加载失败</h2>
       <p>{{ loadError }}</p>
       <button class="ghost-button" type="button" :disabled="loading" @click="loadSettings">
@@ -362,8 +352,15 @@ function resetExtensionAsyncScopes() {
       </button>
     </section>
 
+    <PersonalCenterOverview
+      v-if="isOverviewPage && !loading && !loadError"
+      :profile="profile"
+      :stats="profileStats"
+      @navigate="navigateTo"
+    />
+
     <SettingsProfilePanel
-      v-if="isPersonalPage && !loading && !loadError"
+      v-if="isProfilePage && !loading && !loadError"
       :avatar-saving="avatarSaving"
       :owned-characters="ownedCharacters"
       :profile="profile"
@@ -375,7 +372,7 @@ function resetExtensionAsyncScopes() {
     />
 
     <SettingsProviderPanel
-      v-if="isPersonalPage && !loading && !loadError"
+      v-if="isProviderPage && !loading && !loadError"
       :balance-loading="balanceLoading"
       :can-check-balance="canCheckBalance"
       :can-fetch-models="canFetchModels"
@@ -405,8 +402,31 @@ function resetExtensionAsyncScopes() {
       @update-field="updateProviderFormField"
     />
 
+    <SettingsPresetPanel
+      v-if="isPresetsPage"
+      :action-busy="presetActionBusy"
+      :action-busy-id="presetActionBusyId"
+      :controls-busy="presetControlsBusy"
+      :editing="presetEditing"
+      :form="presetForm"
+      :load-error="presetLoadError"
+      :loading="presetLoading"
+      :preset-list="presetList"
+      :show-editor="showPresetEditor"
+      @cancel-edit="cancelPresetEdit"
+      @export="exportPresets"
+      @import-file="handlePresetImportFile"
+      @load="loadPresets"
+      @make-default="makeDefaultPreset"
+      @remove="removePreset"
+      @save="savePreset"
+      @start-edit="startEditPreset"
+      @start-new="startNewPreset"
+      @update-form-field="updatePresetFormField"
+    />
+
     <SettingsDataExportPanel
-      v-if="isPersonalPage && !loading && !loadError"
+      v-if="isDataPage"
       :busy="dataExportBusy"
       :diagnostics-exporting="diagnosticsExporting"
       :snapshot-exporting="snapshotExporting"
@@ -430,29 +450,6 @@ function resetExtensionAsyncScopes() {
       @update-load-limit="updateTagLoadLimit"
       @update-load-limit-draft="updateTagLoadLimitDraft"
       @update-new-tag-name="updateNewTagName"
-    />
-
-    <SettingsPresetPanel
-      v-if="isExtensionsPage"
-      :action-busy="presetActionBusy"
-      :action-busy-id="presetActionBusyId"
-      :controls-busy="presetControlsBusy"
-      :editing="presetEditing"
-      :form="presetForm"
-      :load-error="presetLoadError"
-      :loading="presetLoading"
-      :preset-list="presetList"
-      :show-editor="showPresetEditor"
-      @cancel-edit="cancelPresetEdit"
-      @export="exportPresets"
-      @import-file="handlePresetImportFile"
-      @load="loadPresets"
-      @make-default="makeDefaultPreset"
-      @remove="removePreset"
-      @save="savePreset"
-      @start-edit="startEditPreset"
-      @start-new="startNewPreset"
-      @update-form-field="updatePresetFormField"
     />
 
     <SettingsModPanel
@@ -506,6 +503,7 @@ function resetExtensionAsyncScopes() {
       @group-filter-change="handleRegexGroupFilterChange"
       @import-file="handleRegexImportFile"
       @load="loadRegexRules"
+      @remove="handleDeleteRegexRule"
       @toggle="handleToggleRegexRule"
       @update-group-filter="updateRegexGroupFilter"
     />
@@ -518,7 +516,7 @@ function resetExtensionAsyncScopes() {
       @import-file="handleStatusBarTemplateImportFile"
     />
 
-    <section v-if="isPersonalPage && canCheckBalance && balance" class="balance-panel">
+    <section v-if="isProviderPage && canCheckBalance && balance" class="balance-panel">
       <div class="inline-heading">
         <div>
           <h2>DeepSeek 余额</h2>

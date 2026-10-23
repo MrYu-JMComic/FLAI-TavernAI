@@ -8,6 +8,8 @@ test('mobile chat composer stays inside the viewport', async ({ page }) => {
   await page.getByRole('button', { name: /创建角色/ }).first().click();
   await page.getByRole('button', { name: /完整表单/ }).click();
   await page.getByLabel('角色名').fill(`移动端角色 ${uniqueSuffix()}`);
+  const openingMessage = '欢迎开始这段移动端对话。';
+  await page.getByLabel('角色开场白内容').fill(openingMessage);
   await page.getByRole('button', { name: /保存角色/ }).click();
   await expect(page).toHaveURL(/#\/characters\/[^/]+\/edit/, { timeout: 15_000 });
 
@@ -17,6 +19,8 @@ test('mobile chat composer stays inside the viewport', async ({ page }) => {
   await characterCard.getByRole('button', { name: /对话/ }).click();
   await expect(page).toHaveURL(/#\/chat\/[^/]+/, { timeout: 15_000 });
 
+  const assistantContent = page.locator('.deep-message.assistant[data-message-id] .deep-message-content');
+  await expect(assistantContent).toContainText(openingMessage);
   const composer = page.locator('.deep-composer-wrap');
   await expect(composer).toBeVisible();
   const viewport = page.viewportSize();
@@ -32,18 +36,13 @@ test('mobile chat composer stays inside the viewport', async ({ page }) => {
   const desktopBox = await composer.boundingBox();
   const messageScroller = page.locator('.deep-message-scroll');
   const messageScrollerBox = await messageScroller.boundingBox();
-  const assistantContent = page.locator('.deep-message.assistant .deep-message-content');
-  const assistantContentCount = await assistantContent.count();
-  const assistantContentBox = assistantContentCount === 1
-    ? await assistantContent.boundingBox()
-    : null;
+  const assistantContentBox = await assistantContent.boundingBox();
   expect(desktopBox).not.toBeNull();
   expect(messageScrollerBox).not.toBeNull();
+  expect(assistantContentBox).not.toBeNull();
   expect(desktopBox.x).toBeGreaterThanOrEqual(0);
   expect(desktopBox.x + desktopBox.width).toBeLessThanOrEqual(1441);
-  if (assistantContentBox) {
-    expect(desktopBox.width).toBeGreaterThan(assistantContentBox.width + 40);
-  }
+  expect(desktopBox.width).toBeGreaterThan(assistantContentBox.width + 40);
   expect(messageScrollerBox.y + messageScrollerBox.height).toBeLessThanOrEqual(desktopBox.y + 1);
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(1441);
 
@@ -71,13 +70,13 @@ test('mobile chat composer stays inside the viewport', async ({ page }) => {
   const expandedComposerBox = await composer.boundingBox();
   const expandedMessageScrollerBox = await messageScroller.boundingBox();
   const expandedSidebarBox = await page.locator('.deep-sidebar').boundingBox();
+  const expandedAssistantContentBox = await assistantContent.boundingBox();
   expect(expandedComposerBox).not.toBeNull();
   expect(expandedMessageScrollerBox).not.toBeNull();
   expect(expandedSidebarBox).not.toBeNull();
+  expect(expandedAssistantContentBox).not.toBeNull();
   expect(expandedComposerBox.y + expandedComposerBox.height).toBeLessThanOrEqual(901);
-  if (assistantContentBox) {
-    expect(expandedComposerBox.width).toBeGreaterThan(assistantContentBox.width + 40);
-  }
+  expect(expandedComposerBox.width).toBeGreaterThan(expandedAssistantContentBox.width + 40);
   expect(expandedMessageScrollerBox.y + expandedMessageScrollerBox.height).toBeLessThanOrEqual(expandedComposerBox.y + 1);
   expect(expandedSidebarBox.y + expandedSidebarBox.height).toBeLessThanOrEqual(901);
 });
@@ -86,7 +85,7 @@ test('focused multiline composer settles when shrinking the whole chat viewport'
   await page.setViewportSize({ width: 1440, height: 900 });
   await registerUser(page);
   const character = await apiRequest(page, '/api/characters', {
-    method: 'POST', body: { name: `Resize ${uniqueSuffix()}`, firstMessage: 'A quiet conversation.' }
+    method: 'POST', body: { name: `Resize ${uniqueSuffix()}`, openingMessage: 'A quiet conversation.' }
   });
   const conversation = await apiRequest(page, '/api/conversations', {
     method: 'POST', body: { characterId: character.id }

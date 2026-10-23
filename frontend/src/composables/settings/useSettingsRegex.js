@@ -1,5 +1,6 @@
 import { computed, ref } from 'vue';
 import {
+  deleteRegexRule,
   fetchRegexRules,
   reorderRegexRules,
   toggleRegexRule
@@ -8,6 +9,7 @@ import { exportEnvelope, importEnvelope } from '../../api/envelopes.js';
 import {
   getListItemById,
   moveListItemToTargetIndexById,
+  removeListItemByIdIfPresent,
   setListIfChanged
 } from './settingsListState.js';
 import { callEventMethod } from '../../utils/eventMethods';
@@ -122,6 +124,27 @@ export function useSettingsRegex({ isExtensionsPage, notify } = {}) {
     } catch (err) {
       if (!isCurrentRegexMutation(mutationToken, groupFilter)) return;
       notify?.error?.(err.message);
+    } finally {
+      finishRegexMutation(mutationToken);
+    }
+  }
+
+  async function handleDeleteRegexRule(ruleId) {
+    if (regexControlsBusy.value) return;
+    const currentRule = getCurrentRegexRule(ruleId);
+    if (!currentRule) return;
+    if (!window.confirm(`确定删除正则规则「${currentRule.label}」吗？此操作不可撤销。`)) return;
+    const groupFilter = regexGroupFilter.value;
+    const mutationToken = beginRegexMutation(`regex-delete:${currentRule.id}`);
+    try {
+      await deleteRegexRule(currentRule.id);
+      if (!isCurrentRegexMutation(mutationToken, groupFilter)) return;
+      removeListItemByIdIfPresent(regexRules, currentRule.id);
+      setRegexGroupOptionsFromRules(regexRules.value, groupFilter);
+      notify?.success?.(`正则规则「${currentRule.label}」已删除`);
+    } catch (err) {
+      if (!isCurrentRegexMutation(mutationToken, groupFilter)) return;
+      notify?.error?.(err?.message || '正则规则删除失败');
     } finally {
       finishRegexMutation(mutationToken);
     }
@@ -262,6 +285,7 @@ export function useSettingsRegex({ isExtensionsPage, notify } = {}) {
 
   return {
     exportRegexRules,
+    handleDeleteRegexRule,
     handleRegexGroupFilterChange,
     handleRegexImportFile,
     handleToggleRegexRule,

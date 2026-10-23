@@ -21,6 +21,10 @@ const {
   template: settingsProfilePanelTemplate
 } = readVueBlocks('frontend/src/components/settings/SettingsProfilePanel.vue');
 const {
+  script: personalCenterOverviewScript,
+  template: personalCenterOverviewTemplate
+} = readVueBlocks('frontend/src/components/settings/PersonalCenterOverview.vue');
+const {
   script: settingsDataExportPanelScript,
   template: settingsDataExportPanelTemplate
 } = readVueBlocks('frontend/src/components/settings/SettingsDataExportPanel.vue');
@@ -69,7 +73,7 @@ test('SettingsView personal-page retry and balance handlers ignore disabled stat
   );
   assert.match(
     settingsViewScript,
-    /async function loadSettings\(\) {\s*if \(!isPersonalPage\.value \|\| loading\.value\) {\s*return;\s*}/
+    /async function loadSettings\(\) {\s*if \(\(!isProfileContext\.value && !isProviderPage\.value\) \|\| loading\.value\) {\s*return;\s*}/
   );
   assert.match(
     settingsProviderPanelTemplate,
@@ -141,12 +145,12 @@ test('SettingsView personal provider and profile saves expose visible busy guard
   assert.match(settingsViewScript, /import \{ useSettingsProfile \} from '\.\.\/composables\/settings\/useSettingsProfile';/);
   assert.match(
     settingsViewScript,
-    /const \{[\s\S]*applyProfile,[\s\S]*avatarSaving,[\s\S]*handleUserAvatar,[\s\S]*loadUserProfile,[\s\S]*ownedCharacters,[\s\S]*profile,[\s\S]*profileSaving,[\s\S]*profileStats,[\s\S]*resetProfileAsyncScope,[\s\S]*submitProfile,[\s\S]*updateProfileDisplayName[\s\S]*\} = useSettingsProfile\(\{[\s\S]*user: computed\(\(\) => props\.user\),[\s\S]*isPersonalPage,[\s\S]*notify,[\s\S]*emitProfileSaved: \(user\) => emit\('profile-saved', user\)[\s\S]*\}\);/
+    /const \{[\s\S]*applyProfile,[\s\S]*avatarSaving,[\s\S]*handleUserAvatar,[\s\S]*loadUserProfile,[\s\S]*ownedCharacters,[\s\S]*profile,[\s\S]*profileSaving,[\s\S]*profileStats,[\s\S]*resetProfileAsyncScope,[\s\S]*submitProfile,[\s\S]*updateProfileDisplayName[\s\S]*\} = useSettingsProfile\(\{[\s\S]*user: computed\(\(\) => props\.user\),[\s\S]*isPersonalPage: isProfileContext,[\s\S]*notify,[\s\S]*emitProfileSaved: \(user\) => emit\('profile-saved', user\)[\s\S]*\}\);/
   );
   assert.match(settingsViewScript, /import \{ useSettingsProvider \} from '\.\.\/composables\/settings\/useSettingsProvider';/);
   assert.match(
     settingsViewScript,
-    /const \{[\s\S]*loadProviderSettingsBundle,[\s\S]*resetProviderAsyncScope,[\s\S]*applyProviderSettingsBundle,[\s\S]*updateProviderFormField[\s\S]*\} = useSettingsProvider\(\{[\s\S]*isPersonalPage,[\s\S]*notify,[\s\S]*emitProviderSaved: \(\) => emit\('provider-saved'\)[\s\S]*\}\);/
+    /const \{[\s\S]*loadProviderSettingsBundle,[\s\S]*resetProviderAsyncScope,[\s\S]*applyProviderSettingsBundle,[\s\S]*updateProviderFormField[\s\S]*\} = useSettingsProvider\(\{[\s\S]*isPersonalPage: isProviderPage,[\s\S]*notify,[\s\S]*emitProviderSaved: \(\) => emit\('provider-saved'\)[\s\S]*\}\);/
   );
   assert.match(
     settingsViewTemplate,
@@ -166,7 +170,7 @@ test('SettingsView personal provider and profile saves expose visible busy guard
   );
   assert.match(
     settingsProviderPanelTemplate,
-    /<form id="personal-section-provider" class="form-panel provider-settings-panel" :aria-busy="controlsBusy" @submit\.prevent="emit\('submit'\)">/
+    /<form id="settings-provider-panel" class="form-panel provider-settings-panel" :aria-busy="controlsBusy" @submit\.prevent="emit\('submit'\)">/
   );
   assert.match(
     settingsProviderPanelTemplate,
@@ -206,54 +210,60 @@ test('SettingsView personal provider and profile saves expose visible busy guard
 test('SettingsView structures personal settings and extensions through shared section navigation', () => {
   const settingsSectionNavRule = readCssRule('.settings-section-nav');
   const workspaceSettingsNavRule = readCssRule('.workspace-layout-shell .settings-section-nav');
+  const personalCenterDestinationRule = readCssRule('.personal-center-destination');
 
   assert.match(
     settingsViewScript,
     /import \{ useSettingsSectionNavigation \} from '\.\.\/composables\/settings\/useSettingsSectionNavigation';/
   );
-  assert.match(
-    settingsSectionNavigationSource,
-    /export const personalSections = \[\s*\{ id: 'profile', label: '个人资料' \},\s*\{ id: 'provider', label: '模型网关' \},\s*\{ id: 'data', label: '数据导出' \}\s*\];/
-  );
+  assert.doesNotMatch(settingsSectionNavigationSource, /personalSections|activePersonalSection|scrollToPersonalSection/);
   assert.match(
     settingsSectionNavigationSource,
     /\{ id: 'status-templates', label: '状态栏模板', icon: 'Save' \}/
   );
-  assert.match(settingsSectionNavigationSource, /const activePersonalSection = ref\('profile'\);/);
-  assert.match(settingsSectionNavigationSource, /const personalNavRef = ref\(null\);/);
   assert.match(
     settingsViewScript,
-    /const \{[\s\S]*activeExtensionSection,[\s\S]*activePersonalSection,[\s\S]*extensionNavRef,[\s\S]*extensionSections,[\s\S]*personalNavRef,[\s\S]*personalSections,[\s\S]*scrollToExtensionSection,[\s\S]*scrollToPersonalSection[\s\S]*\} = useSettingsSectionNavigation\(\);/
+    /const \{\s*activeExtensionSection,\s*extensionNavRef,\s*extensionSections,\s*scrollToExtensionSection\s*\} = useSettingsSectionNavigation\(\);/
   );
-  assert.match(
-    settingsViewTemplate,
-    /<nav v-if="isPersonalPage && !loading && !loadError" ref="personalNavRef" class="form-section-nav settings-section-nav personal-section-nav" aria-label="个人设置分区">[\s\S]*v-for="section in personalSections"[\s\S]*:class="\{ active: activePersonalSection === section\.id \}"[\s\S]*@click="scrollToPersonalSection\(section\.id\)"/
-  );
+  assert.doesNotMatch(settingsViewTemplate, /personal-section-nav|personalNavRef|personalSections/);
+  assert.match(settingsViewScript, /import PersonalCenterOverview from '\.\.\/components\/settings\/PersonalCenterOverview\.vue';/);
+  assert.match(settingsViewTemplate, /<PersonalCenterOverview\s+v-if="isOverviewPage && !loading && !loadError"[\s\S]*:profile="profile"[\s\S]*:stats="profileStats"[\s\S]*@navigate="navigateTo"/);
+  assert.match(personalCenterOverviewScript, /\{ route: 'settingsProfile', label: '个人资料'/);
+  assert.match(personalCenterOverviewScript, /\{ route: 'settingsPresets', label: '对话预设'/);
+  assert.match(personalCenterOverviewScript, /\{ route: 'settingsProvider', label: '模型网关'/);
+  assert.match(personalCenterOverviewScript, /\{ route: 'settingsData', label: '数据导出'/);
+  assert.match(personalCenterOverviewTemplate, /class="personal-center-identity"[\s\S]*class="personal-center-statistics"[\s\S]*class="personal-center-destinations"/);
+  assert.match(personalCenterOverviewTemplate, /@click="emit\('navigate', destination\.route\)"/);
+  assert.match(personalCenterDestinationRule, /grid-template-columns:\s*22px minmax\(0, 1fr\) 20px;[\s\S]*min-height:\s*62px;/);
+  assert.match(settingsViewTemplate, /<h1 class="visually-hidden settings-page-title">\{\{ pageTitle \}\}<\/h1>[\s\S]*<nav v-if="!isExtensionsPage && !isOverviewPage" class="settings-detail-back"[\s\S]*<button class="ghost-button settings-back-button"[\s\S]*navigateTo\('settings'\)/);
   assert.match(settingsViewScript, /import SettingsProfilePanel from '\.\.\/components\/settings\/SettingsProfilePanel\.vue';/);
-  assert.match(settingsViewTemplate, /<SettingsProfilePanel[\s\S]*v-if="isPersonalPage && !loading && !loadError"/);
+  assert.match(settingsViewTemplate, /<SettingsProfilePanel[\s\S]*v-if="isProfilePage && !loading && !loadError"/);
   assert.match(settingsProfilePanelScript, /import \{ Bot, Heart, MessageSquareText, Save, ShieldCheck, Upload \} from '@lucide\/vue';/);
   assert.match(settingsProfilePanelScript, /function formatNumber\(value\) \{[\s\S]*toLocaleString\('zh-CN'\);[\s\S]*\}/);
-  assert.match(settingsProfilePanelTemplate, /id="personal-section-profile" class="form-panel profile-panel"/);
+  assert.match(settingsProfilePanelTemplate, /id="settings-profile-panel" class="form-panel profile-panel"/);
+  assert.match(settingsProfilePanelTemplate, /class="profile-overview"[\s\S]*class="profile-identity"/);
+  assert.match(settingsProfilePanelTemplate, /class="file-button profile-avatar-upload"/);
+  assert.match(settingsProfilePanelTemplate, /class="profile-fields"[\s\S]*class="profile-form-footer"/);
   assert.match(settingsProfilePanelTemplate, /<input[\s\S]*type="file"[\s\S]*accept="image\/png,image\/jpeg,image\/webp"[\s\S]*@change="emit\('avatar-change', \$event\)"/);
   assert.match(settingsProfilePanelTemplate, /<Bot :size="18" \/>[\s\S]*\{\{ formatNumber\(stats\.ownedAiCount\) \}\}/);
   assert.match(settingsProfilePanelTemplate, /v-for="character in ownedCharacters"[\s\S]*\{\{ visibilityText\(character\.visibility\) \}\} · 使用 \{\{ formatNumber\(character\.useCount\) \}\}/);
   assert.match(settingsViewScript, /import SettingsProviderPanel from '\.\.\/components\/settings\/SettingsProviderPanel\.vue';/);
   assert.match(settingsProviderPanelScript, /import \{ CircleCheck, Plus, RefreshCw, Save, ShieldCheck, Trash2, WalletCards \} from '@lucide\/vue';/);
-  assert.match(settingsProviderPanelTemplate, /id="personal-section-provider" class="form-panel provider-settings-panel"/);
+  assert.match(settingsProviderPanelTemplate, /id="settings-provider-panel" class="form-panel provider-settings-panel"/);
   assert.match(settingsViewScript, /import \{ useSettingsDataExports \} from '\.\.\/composables\/settings\/useSettingsDataExports';/);
   assert.match(settingsViewScript, /import SettingsDataExportPanel from '\.\.\/components\/settings\/SettingsDataExportPanel\.vue';/);
   assert.match(
     settingsViewScript,
-    /const \{[\s\S]*dataExportBusy,[\s\S]*diagnosticsExporting,[\s\S]*exportDiagnosticsBundle,[\s\S]*exportProjectSnapshotBundle,[\s\S]*resetDataExportScope,[\s\S]*snapshotExporting[\s\S]*\} = useSettingsDataExports\(\{[\s\S]*isPersonalPage,[\s\S]*notify[\s\S]*\}\);/
+    /const \{[\s\S]*dataExportBusy,[\s\S]*diagnosticsExporting,[\s\S]*exportDiagnosticsBundle,[\s\S]*exportProjectSnapshotBundle,[\s\S]*resetDataExportScope,[\s\S]*snapshotExporting[\s\S]*\} = useSettingsDataExports\(\{[\s\S]*isPersonalPage: isDataPage,[\s\S]*notify[\s\S]*\}\);/
   );
-  assert.match(settingsViewScript, /function resetPersonalAsyncScope\(\) \{[\s\S]*resetProviderAsyncScope\(\);[\s\S]*resetProfileAsyncScope\(\);[\s\S]*resetDataExportScope\(\);/);
+  assert.match(settingsViewScript, /function resetPersonalAsyncScope\(\) \{[\s\S]*resetProviderAsyncScope\(\);[\s\S]*resetProfileAsyncScope\(\);[\s\S]*resetDataExportScope\(\);[\s\S]*resetPresetAsyncScope\(\);/);
   assert.match(
     settingsViewTemplate,
-    /<SettingsDataExportPanel[\s\S]*v-if="isPersonalPage && !loading && !loadError"[\s\S]*:busy="dataExportBusy"[\s\S]*:diagnostics-exporting="diagnosticsExporting"[\s\S]*:snapshot-exporting="snapshotExporting"[\s\S]*@export-diagnostics="exportDiagnosticsBundle"[\s\S]*@export-snapshot="exportProjectSnapshotBundle"/
+    /<SettingsDataExportPanel[\s\S]*v-if="isDataPage"[\s\S]*:busy="dataExportBusy"[\s\S]*:diagnostics-exporting="diagnosticsExporting"[\s\S]*:snapshot-exporting="snapshotExporting"[\s\S]*@export-diagnostics="exportDiagnosticsBundle"[\s\S]*@export-snapshot="exportProjectSnapshotBundle"/
   );
   assert.match(settingsDataExportPanelScript, /import \{ Download, FileArchive, Stethoscope \} from '@lucide\/vue';/);
   assert.match(settingsDataExportPanelScript, /const emit = defineEmits\(\['export-diagnostics', 'export-snapshot'\]\);/);
-  assert.match(settingsDataExportPanelTemplate, /id="personal-section-data" class="form-panel settings-data-export-panel"/);
+  assert.match(settingsDataExportPanelTemplate, /id="settings-data-panel" class="form-panel settings-data-export-panel"/);
   assert.match(settingsDataExportPanelTemplate, /:disabled="busy"[\s\S]*:aria-busy="snapshotExporting"[\s\S]*@click="emit\('export-snapshot'\)"/);
   assert.match(settingsDataExportPanelTemplate, /:disabled="busy"[\s\S]*:aria-busy="diagnosticsExporting"[\s\S]*@click="emit\('export-diagnostics'\)"/);
   assert.match(settingsViewScript, /import SettingsTagPanel from '\.\.\/components\/settings\/SettingsTagPanel\.vue';/);
@@ -266,11 +276,13 @@ test('SettingsView structures personal settings and extensions through shared se
   assert.match(settingsViewScript, /import SettingsPresetPanel from '\.\.\/components\/settings\/SettingsPresetPanel\.vue';/);
   assert.match(settingsViewScript, /import \{ useSettingsPresets \} from '\.\.\/composables\/settings\/useSettingsPresets';/);
   assert.match(settingsPresetPanelScript, /import \{ Download, Plus, RefreshCw, Save, Sliders, Trash2, Upload \} from '@lucide\/vue';/);
-  assert.match(settingsPresetPanelTemplate, /id="extension-section-presets" class="form-panel preset-management-panel form-section-group"/);
+  assert.match(settingsPresetPanelTemplate, /id="settings-presets-panel" class="form-panel preset-management-panel form-section-group"/);
   assert.match(
     settingsViewTemplate,
-    /<SettingsPresetPanel[\s\S]*v-if="isExtensionsPage"[\s\S]*:action-busy="presetActionBusy"[\s\S]*:preset-list="presetList"[\s\S]*@save="savePreset"[\s\S]*@update-form-field="updatePresetFormField"/
+    /<SettingsPresetPanel[\s\S]*v-if="isPresetsPage"[\s\S]*:action-busy="presetActionBusy"[\s\S]*:preset-list="presetList"[\s\S]*@save="savePreset"[\s\S]*@update-form-field="updatePresetFormField"/
   );
+  assert.doesNotMatch(settingsViewTemplate, /<SettingsPresetPanel\s+v-if="isExtensionsPage"/);
+  assert.doesNotMatch(settingsSectionNavigationSource, /\{ id: 'presets', label: '对话预设', icon:/);
   assert.match(settingsViewScript, /import SettingsModPanel from '\.\.\/components\/settings\/SettingsModPanel\.vue';/);
   assert.match(settingsViewScript, /import \{ useSettingsMods \} from '\.\.\/composables\/settings\/useSettingsMods';/);
   assert.match(
@@ -296,7 +308,7 @@ test('SettingsView structures personal settings and extensions through shared se
     settingsViewScript,
     /const \{[\s\S]*exportRegexRules,[\s\S]*handleRegexGroupFilterChange,[\s\S]*handleRegexImportFile,[\s\S]*handleToggleRegexRule,[\s\S]*loadRegexRules,[\s\S]*regexRules,[\s\S]*resetRegexAsyncScope,[\s\S]*updateRegexGroupFilter[\s\S]*\} = useSettingsRegex\(\{[\s\S]*isExtensionsPage,[\s\S]*notify[\s\S]*\}\);/
   );
-  assert.match(settingsRegexPanelScript, /import \{ Download, GripVertical, Power, RefreshCw, Regex, Upload \} from '@lucide\/vue';/);
+  assert.match(settingsRegexPanelScript, /import \{ Download, GripVertical, Power, RefreshCw, Regex, Trash2, Upload \} from '@lucide\/vue';/);
   assert.match(settingsRegexPanelTemplate, /id="extension-section-regex" class="form-panel regex-rules-panel form-section-group"/);
   assert.match(
     settingsViewTemplate,
@@ -333,11 +345,11 @@ test('SettingsView structures personal settings and extensions through shared se
   );
   assert.match(
     stylesSource,
-    /\.workspace-layout-shell \.narrow-page,\s*\.workspace-layout-shell \.extensions-page,\s*\.workspace-layout-shell \.preset-page\s*\{[^}]*width:\s*100%;[^}]*max-width:\s*none;[^}]*margin:\s*0;[^}]*\}/
+    /\.workspace-layout-shell \.narrow-page,\s*\.workspace-layout-shell \.extensions-page\s*\{[^}]*width:\s*100%;[^}]*max-width:\s*none;[^}]*margin:\s*0;[^}]*\}/
   );
   assert.match(
     stylesSource,
-    /section\[id\^="personal-section-"\],[\s\S]*section\[id\^="extension-section-"\]\s*{[\s\S]*scroll-margin-top:\s*146px;[\s\S]*}/
+    /section\[id\^="extension-section-"\]\s*{[\s\S]*scroll-margin-top:\s*146px;[\s\S]*}/
   );
   assert.match(
     stylesSource,
@@ -362,7 +374,7 @@ test('SettingsView exposes provider connection probing beside model refresh', ()
   assert.match(settingsProviderComposableSource, /const currentProviderCapability = computed\(\(\) => findCurrentProviderCapability\(\)\);/);
   assert.match(
     settingsViewScript,
-    /const \[providerBundle, userProfile\] = await Promise\.all\(\[[\s\S]*loadProviderSettingsBundle\(\),[\s\S]*loadUserProfile\(\)[\s\S]*\]\);[\s\S]*applyProviderSettingsBundle\(providerBundle\);/
+    /const result = isProviderPage\.value\s*\? await loadProviderSettingsBundle\(\)\s*:\s*await loadUserProfile\(\);[\s\S]*if \(isProviderPage\.value\) \{\s*applyProviderSettingsBundle\(result\);\s*\} else \{\s*applyProfile\(result\);/
   );
   assert.match(
     settingsProviderComposableSource,
@@ -534,10 +546,7 @@ test('SettingsView direct-scans Mod select-all and extension sections', () => {
     settingsSectionNavigationSource,
     /function scrollToSettingsSection\(prefix, activeSectionRef, sections, navRef, sectionId\) \{\s*if \(!setActiveSettingsSection\(activeSectionRef, sections, sectionId\)\) \{\s*return;\s*\}[\s\S]*document\.getElementById\(`\$\{prefix\}-\$\{sectionId\}`\);[\s\S]*const top = el\.getBoundingClientRect\(\)\.top \+ getSettingsScrollTop\(navRef\) - getSettingsSectionActivationOffset\(navRef\);[\s\S]*scrollSettingsPageTo\(navRef, top\);/
   );
-  assert.match(
-    settingsSectionNavigationSource,
-    /function scrollToPersonalSection\(sectionId\) \{\s*scrollToSettingsSection\('personal-section', activePersonalSection, personalSections, personalNavRef, sectionId\);\s*\}/
-  );
+  assert.doesNotMatch(settingsSectionNavigationSource, /personal-section|scrollToPersonalSection/);
   assert.match(
     settingsSectionNavigationSource,
     /function scrollToExtensionSection\(sectionId\) \{\s*scrollToSettingsSection\('extension-section', activeExtensionSection, extensionSections, extensionNavRef, sectionId\);\s*\}/
@@ -724,7 +733,7 @@ test('SettingsView tag mutations expose one busy guard for add, delete, and load
 test('SettingsView preset mutations expose visible busy guards for edit, import, save, default, and delete actions', () => {
   assert.match(
     settingsViewScript,
-    /const \{[\s\S]*cancelPresetEdit,[\s\S]*exportPresets,[\s\S]*handlePresetImportFile,[\s\S]*loadPresets,[\s\S]*makeDefaultPreset,[\s\S]*presetActionBusy,[\s\S]*presetActionBusyId,[\s\S]*presetControlsBusy,[\s\S]*presetEditing,[\s\S]*presetForm,[\s\S]*presetList,[\s\S]*presetLoadError,[\s\S]*presetLoading,[\s\S]*removePreset,[\s\S]*resetPresetAsyncScope,[\s\S]*savePreset,[\s\S]*showPresetEditor,[\s\S]*startEditPreset,[\s\S]*startNewPreset,[\s\S]*updatePresetFormField[\s\S]*\} = useSettingsPresets\(\{[\s\S]*isExtensionsPage,[\s\S]*notify[\s\S]*\}\);/
+    /const \{[\s\S]*cancelPresetEdit,[\s\S]*exportPresets,[\s\S]*handlePresetImportFile,[\s\S]*loadPresets,[\s\S]*makeDefaultPreset,[\s\S]*presetActionBusy,[\s\S]*presetActionBusyId,[\s\S]*presetControlsBusy,[\s\S]*presetEditing,[\s\S]*presetForm,[\s\S]*presetList,[\s\S]*presetLoadError,[\s\S]*presetLoading,[\s\S]*removePreset,[\s\S]*resetPresetAsyncScope,[\s\S]*savePreset,[\s\S]*showPresetEditor,[\s\S]*startEditPreset,[\s\S]*startNewPreset,[\s\S]*updatePresetFormField[\s\S]*\} = useSettingsPresets\(\{[\s\S]*isPresetsPage,[\s\S]*notify[\s\S]*\}\);/
   );
   assert.match(settingsPresetsComposableSource, /const presetActionBusyId = ref\(''\);/);
   assert.match(settingsPresetsComposableSource, /const presetActionBusy = computed\(\(\) => Boolean\(presetActionBusyId\.value\)\);/);
@@ -743,6 +752,8 @@ test('SettingsView preset mutations expose visible busy guards for edit, import,
     settingsPresetsComposableSource,
     /async function removePreset\(id, name\) {\s*if \(presetControlsBusy\.value\) return;\s*const currentPreset = getCurrentPreset\(id\);\s*if \(!currentPreset\) return;[\s\S]*beginPresetMutation\(presetDeleteActionId\(currentPreset\.id\)\)[\s\S]*await deletePreset\(currentPreset\.id\);[\s\S]*removeListItemByIdIfPresent\(presetList, currentPreset\.id\);[\s\S]*finally {\s*finishPresetMutation\(mutationToken\);/
   );
+  assert.match(settingsPresetsComposableSource, /if \(presetList\.value\.length <= 1\) \{\s*notify\?\.warning\?\.\('至少需要保留一个预设'\);\s*return;\s*\}/);
+  assert.match(settingsPresetsComposableSource, /function isPresetsPageReady\(\) \{\s*return isPresetsPage\?\.value === true;\s*\}/);
   assert.doesNotMatch(settingsPresetsComposableSource, /presetList\.value\.filter/);
   assert.match(
     settingsPresetsComposableSource,
@@ -1014,7 +1025,7 @@ test('SettingsView mod mutations expose visible busy guards for editor, toggle, 
   assert.match(settingsModPanelTemplate, /:disabled="controlsBusy" :aria-busy="isModDeleteBusy\(mod\.id\)" @click="emit\('remove', mod\.id, mod\.name\)"/);
 });
 
-test('SettingsView regex mutations expose visible busy guards for filter, import, toggle, and reorder actions', () => {
+test('SettingsView regex mutations expose visible busy guards for filter, import, toggle, delete, and reorder actions', () => {
   assert.match(settingsRegexComposableSource, /const regexActionBusyId = ref\(''\);/);
   assert.match(settingsRegexComposableSource, /const regexActionBusy = computed\(\(\) => Boolean\(regexActionBusyId\.value\)\);/);
   assert.match(settingsRegexComposableSource, /const regexControlsBusy = computed\(\(\) => regexLoading\.value \|\| regexActionBusy\.value\);/);
@@ -1075,7 +1086,7 @@ test('SettingsView regex mutations expose visible busy guards for filter, import
   assert.match(settingsRegexPanelTemplate, /:disabled="controlsBusy \|\| !regexRules\.length" @click="emit\('export'\)"/);
   assert.match(settingsRegexPanelTemplate, /<label class="ghost-button file-import-button" :class="\{ disabled: controlsBusy \}" :aria-busy="actionBusyId === 'regex-import'">[\s\S]*<input type="file" accept="\.json" :disabled="controlsBusy" @change="emit\('import-file', \$event\)" \/>/);
   assert.match(settingsRegexPanelTemplate, /:disabled="controlsBusy" @click="emit\('load'\)"/);
-  assert.match(settingsRegexPanelTemplate, /:draggable="!controlsBusy"[\s\S]*:aria-busy="isRegexToggleBusy\(rule\.id\) \|\| actionBusyId === 'regex-reorder'"/);
+  assert.match(settingsRegexPanelTemplate, /:draggable="!controlsBusy"[\s\S]*:aria-busy="isRegexToggleBusy\(rule\.id\) \|\| isRegexDeleteBusy\(rule\.id\) \|\| actionBusyId === 'regex-reorder'"/);
   assert.match(settingsRegexPanelTemplate, /@dragstart="emit\('drag-start', \$event, rule\.id\)"/);
   assert.match(settingsRegexPanelTemplate, /@dragover="emit\('drag-over', \$event, rule\.id\)"/);
   assert.match(settingsRegexPanelTemplate, /@drop="emit\('drop', rule\.id\)"/);

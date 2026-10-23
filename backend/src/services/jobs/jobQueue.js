@@ -68,6 +68,22 @@ export function getJob(database, userId, jobId) {
   return row ? toJob(row) : null;
 }
 
+export function getStatusBarAgentJobStatus(database, job) {
+  if (job?.type !== CONVERSATION_POSTPROCESS_JOB) return null;
+  const step = database.prepare(`SELECT status, result_json FROM job_steps
+    WHERE job_id = ? AND step_key = 'agent:statusBarAgent'`).get(job.id);
+  if (!step) return ['queued', 'running'].includes(job.status) ? 'pending' : 'not-run';
+  if (step.status === 'running') return 'running';
+  if (step.status === 'failed') return 'failed';
+  if (step.status !== 'completed') return 'not-run';
+  const execution = parseJson(step.result_json, {});
+  if (execution?.ok !== true) return 'failed';
+  const result = execution.result || {};
+  return result.changed === true || (Array.isArray(result.updates) && result.updates.length > 0)
+    ? 'updated'
+    : 'checked';
+}
+
 export function listJobs(database, userId, options = {}) {
   const limit = clampInteger(options.limit, 1, 100, 30);
   const status = normalizeStatusFilter(options.status);

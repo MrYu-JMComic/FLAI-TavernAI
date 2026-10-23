@@ -1,5 +1,6 @@
 import { computed, watch } from 'vue';
 import { collectStatusTemplateReferences } from '../../../../shared/statusTemplateRenderer.js';
+import { parseStatusBarRuntime, stripStatusBarTemplateCode } from '../../../../shared/statusBarRuntime.js';
 import {
   isStatusTemplateMeterProperty,
   parseStatusTemplateToken
@@ -49,18 +50,9 @@ export function useCharacterStatusBlueprint({
   form,
   notify
 } = {}) {
-  const statusBarBlueprintPreview = computed(() => {
-    const blueprint = normalizeStatusBarBlueprintForPayload(form.authorAdvancedSettings.statusBarBlueprint || {});
-    if (!hasStatusBarBlueprintContent(blueprint)) {
-      return null;
-    }
-    return {
-      id: 'character-status-blueprint-preview',
-      name: blueprint.name || '状态栏',
-      variables: blueprint.variables,
-      template: blueprint.template
-    };
-  });
+  const statusBarBlueprintPreview = computed(() => (
+    createStatusBarBlueprintPreview(form.authorAdvancedSettings.statusBarBlueprint)
+  ));
 
   const statusBarBlueprintPreviewConfig = computed(() => (
     parseStatusBarTemplateConfig(statusBarBlueprintPreview.value?.template || '')
@@ -70,15 +62,18 @@ export function useCharacterStatusBlueprint({
     const blueprint = form.authorAdvancedSettings.statusBarBlueprint || {};
     const normalized = normalizeStatusBarBlueprintForPayload(blueprint);
     const template = normalized.template;
+    const runtime = parseStatusBarRuntime(template);
     const variableStats = countStatusBlueprintVariableStats(normalized.variables, template);
     return {
       variables: normalized.variables.length,
       inferred: variableStats.inferred,
       text: Math.max(0, normalized.variables.length - variableStats.meter),
       meter: variableStats.meter,
-      placeholders: countStatusTemplatePlaceholders(template),
-      actions: countStatusTemplateActions(template),
-      lines: template ? template.split(/\r\n|\r|\n/).length : 0,
+      placeholders: runtime ? 0 : countStatusTemplatePlaceholders(template),
+      actions: runtime ? 0 : countStatusTemplateActions(template),
+      lines: runtime
+        ? [runtime.html, runtime.css, runtime.javascript].join('\n').split(/\r\n|\r|\n/).length
+        : template ? template.split(/\r\n|\r|\n/).length : 0,
       hasTemplate: Boolean(template)
     };
   });
@@ -87,7 +82,7 @@ export function useCharacterStatusBlueprint({
     const blueprint = form.authorAdvancedSettings.statusBarBlueprint || {};
     const template = String(blueprint.template || '');
     const variables = Array.isArray(blueprint.variables) ? blueprint.variables : [];
-    const compositeRows = extractStatusTemplateCompositeRows(template);
+    const compositeRows = parseStatusBarRuntime(template) ? [] : extractStatusTemplateCompositeRows(template);
     const compositeChildKeys = new Set();
     const compositeLabelKeys = new Set();
     const rows = [];
@@ -372,6 +367,17 @@ export function createDefaultStatusBarBlueprint() {
   };
 }
 
+export function createStatusBarBlueprintPreview(input = {}) {
+  const blueprint = normalizeStatusBarBlueprintForPayload(input);
+  if (!hasStatusBarBlueprintContent(blueprint)) return null;
+  return {
+    id: 'character-status-blueprint-preview',
+    name: blueprint.name || '状态栏',
+    variables: blueprint.variables,
+    template: blueprint.template
+  };
+}
+
 export function normalizeStatusBarBlueprintForPayload(input = {}) {
   const source = input && typeof input === 'object' ? input : {};
   const template = String(source.template || '').trim();
@@ -453,10 +459,10 @@ function resolveStatusBlueprintVariableType(variable = {}, template = '') {
 function getStatusVariableTemplateUsage(template = '', name = '') {
   const target = normalizeStatusVariableKey(name);
   const usage = { meter: false, text: false };
-  if (!target) {
+  if (!target || parseStatusBarRuntime(template)) {
     return usage;
   }
-  for (const reference of collectStatusTemplateReferences(template)) {
+  for (const reference of collectStatusTemplateReferences(stripStatusBarTemplateCode(template))) {
     if (normalizeStatusVariableKey(reference.rawName) !== target) {
       continue;
     }
@@ -475,11 +481,11 @@ function isStatusMeterPlaceholderProperty(property = '') {
 }
 
 function countStatusTemplatePlaceholders(template = '') {
-  return (String(template || '').match(/\{\{\s*[^{}]+?\s*\}\}|\{\s*[\w\u4e00-\u9fa5][\w\u4e00-\u9fa5 ._-]*\}/g) || []).length;
+  return (stripStatusBarTemplateCode(template).match(/\{\{\s*[^{}]+?\s*\}\}|\{\s*[\w\u4e00-\u9fa5][\w\u4e00-\u9fa5 ._-]*\}/g) || []).length;
 }
 
 function countStatusTemplateActions(template = '') {
-  return (String(template || '').match(/\bdata-sb-action\s*=/gi) || []).length;
+  return (stripStatusBarTemplateCode(template).match(/\bdata-sb-action\s*=/gi) || []).length;
 }
 
 function collectInferredStatusVariableKeys(template = '') {
@@ -522,15 +528,17 @@ function normalizeStatusMeterMax(value, min = 0) {
 
 function inferStatusVariablesFromTemplate(template, variables = []) {
   const inferred = dedupeStatusVariables(variables, template);
+  if (parseStatusBarRuntime(template)) return inferred.slice(0, STATUS_BLUEPRINT_VARIABLE_LIMIT);
+  const markup = stripStatusBarTemplateCode(template);
   const seen = collectStatusVariableKeys(inferred);
-  for (const item of extractTemplateRowVariables(template)) {
+  for (const item of extractTemplateRowVariables(markup)) {
     const key = normalizeStatusVariableKey(item.name);
     if (!seen.has(key)) {
       inferred.push(item);
       seen.add(key);
     }
   }
-  for (const reference of collectStatusTemplateReferences(template)) {
+  for (const reference of collectStatusTemplateReferences(markup)) {
     const name = normalizeTemplateVariableName(reference.rawName);
     const key = normalizeStatusVariableKey(name);
     if (!name || seen.has(key)) {
@@ -607,7 +615,7 @@ function extractStatusTemplateCompositeRows(template) {
     seen.add(key);
   };
 
-  const rawTemplate = String(template || '');
+  const rawTemplate = stripStatusBarTemplateCode(template);
   const pairPattern = /<[^>]+\bclass\s*=\s*(['"])[^'"]*\bsb-label\b[^'"]*\1[^>]*>([\s\S]*?)<\/[^>]+>[\s\S]{0,180}?<[^>]+\bclass\s*=\s*(['"])[^'"]*\bsb-val\b[^'"]*\3[^>]*>([\s\S]*?)<\/[^>]+>/gi;
   let match;
   while ((match = pairPattern.exec(rawTemplate))) {
@@ -762,7 +770,7 @@ function normalizeHtmlText(value) {
     .trim();
 }
 
-function parseStatusBarTemplateConfig(raw) {
+export function parseStatusBarTemplateConfig(raw) {
   const trimmed = String(raw || '').trim();
   if (!trimmed || trimmed[0] !== '{') {
     return {};

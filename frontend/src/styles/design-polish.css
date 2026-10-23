@@ -1,0 +1,94 @@
+:root {
+  --line: color-mix(in srgb, var(--text) 10%, var(--surface));
+  --surface-strong: color-mix(in srgb, var(--surface) 97%, var(--text));
+  --surface-hover: color-mix(in srgb, var(--surface) 96%, var(--text));
+  --focus-ring: color-mix(in srgb, var(--green) 30%, transparent);
+}
+
+:root[data-theme="dark"] {
+  --line: color-mix(in srgb, var(--text) 12%, var(--surface));
+  --surface-strong: color-mix(in srgb, var(--surface) 97%, var(--text));
+  --surface-hover: color-mix(in srgb, var(--surface) 94%, var(--text));
+  --focus-ring: color-mix(in srgb, var(--green) 34%, transparent);
+}
+
+html {
+  font-variant-numeric: tabular-nums;
+}
+
+body,
+.markdown-content,
+.deep-message-content,
+.page-shell {
+  text-wrap: pretty;
+}
+
+:where(.markdown-content, .deep-message-content, .page-shell) :where(p, li, blockquote) {
+  text-wrap: pretty;
+}
+
+:where(input, textarea, select):focus {
+  border-color: color-mix(in srgb, var(--green) 54%, var(--line));
+  outline: none;
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--surface) 92%, transparent),
+    0 0 0 4px color-mix(in srgb, var(--green) 22%, transparent),
+    inset 0 1px 2px color-mix(in srgb, var(--text) 5%, transparent);
+}
+
+:where(.markdown-content, .deep-message-content) :where(svg, .lucide) {
+  vertical-align: -0.125em;
+}
+
+:where([draggable="true"]) {
+  transition: none !important;
+  user-select: none;
+}
+
+:where([draggable="true"]):active {
+  cursor: grabbing;
+}
+
+:where(.message-action-button[title="复制消息"], .home-reaction-button.like, .reaction-button.like):active {
+  animation: spring-feedback 360ms both;
+  transform-origin: center;
+}
+
+.stream-ink-glyph {
+  display: inline-block;
+  animation: stream-ink-focus 190ms both cubic-bezier(0.2, 0.75, 0.2, 1);
+  animation-delay: calc(var(--stream-glyph-index, 0) * 18ms);
+  transform-origin: center;
+  vertical-align: -0.04em;
+}
+
+@keyframes stream-ink-focus {
+  from {
+    opacity: 0.15;
+    filter: blur(4px);
+    transform: translateY(0.08em);
+  }
+
+  to {
+    opacity: 1;
+    filter: blur(0);
+    transform: translateY(0);
+  }
+}
+
+@keyframes spring-feedback {
+  0% { transform: scale(1); }
+  32% { transform: scale(0.88); }
+  68% { transform: scale(1.1); }
+  86% { transform: scale(0.97); }
+  100% { transform: scale(1); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .stream-ink-glyph,
+  :where(.message-action-button[title="复制消息"], .home-reaction-button.like, .reaction-button.like):active {
+    animation: none;
+    filter: none;
+    transform: none;
+  }
+}

@@ -1843,14 +1843,15 @@ test('chat submit skips accessory refresh timers when the start callback cancels
   }
 });
 
-test('chat submit cancels pending accessory refresh timers when the refresh callback is settled', async () => {
+test('chat submit follows the reply postprocessing job until it settles', async () => {
   const originalFetch = globalThis.fetch;
   const originalWindow = globalThis.window;
   const timerCallbacks = [];
   const clearedTimers = [];
-  const refreshDelays = [];
+  const refreshPayloads = [];
   let statusRefreshes = 0;
   let economyRefreshes = 0;
+  let jobStatus = 'running';
 
   globalThis.window = {
     setTimeout(callback, delay) {
@@ -1868,22 +1869,19 @@ test('chat submit cancels pending accessory refresh timers when the refresh call
   };
 
   globalThis.fetch = async (url, request = {}) => {
+    if (String(url) === '/api/jobs/postprocess-1') {
+      return jsonResponse({
+        id: 'postprocess-1',
+        status: jobStatus,
+        payload: { assistantMessageId: 'assistant-1' }
+      });
+    }
     assert.equal(String(url), '/api/conversations/conv-1/messages');
     assert.equal(JSON.parse(request.body).stream, false);
     return jsonResponse({
-      userMessage: {
-        id: 'user-1',
-        role: 'user',
-        content: 'Hello'
-      },
-      assistantMessage: {
-        id: 'assistant-1',
-        role: 'assistant',
-        content: 'Hi'
-      },
-      provider: 'test-provider',
-      usage: null,
-      accessoryBackground: true
+      userMessage: { id: 'user-1', role: 'user', content: 'Hello' },
+      assistantMessage: { id: 'assistant-1', postprocessJobId: 'postprocess-1', role: 'assistant', content: 'Hi' },
+      provider: 'test-provider', usage: null, accessoryBackground: true
     });
   };
 
@@ -1899,7 +1897,7 @@ test('chat submit cancels pending accessory refresh timers when the refresh call
         return [{ id: 'acct-1' }];
       },
       onAccessoryRefresh(payload) {
-        refreshDelays.push(payload.delay);
+        refreshPayloads.push(payload);
         return false;
       }
     });
@@ -1909,17 +1907,25 @@ test('chat submit cancels pending accessory refresh timers when the refresh call
     await submit.submit();
 
     const postSubmitEconomyRefreshes = economyRefreshes;
-    assert.equal(timerCallbacks.length, 7);
+    assert.equal(timerCallbacks.length, 1);
+    assert.equal(timerCallbacks[0].delay, 1200);
     await timerCallbacks[0].callback();
-    assert.deepEqual(refreshDelays, [1200]);
-    assert.equal(statusRefreshes, 1);
-    assert.equal(economyRefreshes, postSubmitEconomyRefreshes + 1);
-    assert.deepEqual(clearedTimers, [7, 6, 5, 4, 3, 2, 1]);
+    assert.equal(timerCallbacks.length, 2);
+    assert.equal(timerCallbacks[1].delay, 1800);
+    assert.deepEqual(refreshPayloads, []);
+    assert.equal(statusRefreshes, 0);
+    assert.equal(economyRefreshes, postSubmitEconomyRefreshes);
 
+    jobStatus = 'succeeded';
     await timerCallbacks[1].callback();
-    assert.deepEqual(refreshDelays, [1200]);
     assert.equal(statusRefreshes, 1);
     assert.equal(economyRefreshes, postSubmitEconomyRefreshes + 1);
+    assert.equal(refreshPayloads.length, 1);
+    assert.equal(refreshPayloads[0].jobId, 'postprocess-1');
+    assert.equal(refreshPayloads[0].assistantMessageId, 'assistant-1');
+    assert.equal(refreshPayloads[0].job.status, 'succeeded');
+    assert.equal(refreshPayloads[0].isFinal, true);
+    assert.deepEqual(clearedTimers, []);
   } finally {
     globalThis.fetch = originalFetch;
     if (originalWindow === undefined) {
@@ -1963,6 +1969,7 @@ test('chat submit skips delayed accessory refreshes after the active conversatio
       },
       assistantMessage: {
         id: 'assistant-1',
+        postprocessJobId: 'postprocess-1',
         role: 'assistant',
         content: 'Hi'
       },
@@ -1992,7 +1999,7 @@ test('chat submit skips delayed accessory refreshes after the active conversatio
     await submit.submit();
 
     const postSubmitEconomyRefreshes = economyRefreshes;
-    assert.equal(timerCallbacks.length, 7);
+    assert.equal(timerCallbacks.length, 1);
 
     route.params.id = 'conv-2';
     await timerCallbacks[0].callback();

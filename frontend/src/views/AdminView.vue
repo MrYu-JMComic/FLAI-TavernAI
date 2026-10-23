@@ -313,11 +313,8 @@ function formatNumber(value) {
 
 <template>
   <section class="page-stack admin-page">
-    <div class="section-heading admin-heading">
-      <div>
-        <p>系统管理</p>
-        <h1>请求额度</h1>
-      </div>
+    <div class="admin-page-toolbar">
+      <h1 class="visually-hidden">请求额度</h1>
       <button
         v-if="isRootAdmin"
         class="icon-button"
@@ -521,12 +518,15 @@ function formatNumber(value) {
   padding-bottom: 24px;
 }
 
-.admin-heading {
+.admin-page-toolbar {
+  display: flex;
   align-items: center;
-  flex-direction: row;
+  justify-content: flex-end;
+  min-width: 0;
+  min-height: 40px;
 }
 
-.admin-heading .icon-button {
+.admin-page-toolbar .icon-button {
   flex: 0 0 auto;
   border: 1px solid var(--line);
   background: var(--surface);

@@ -80,7 +80,8 @@ export function applyWorldBookChanges(database, userId, payload = {}) {
   if (!requestId || requestId.length > 160 || !Array.isArray(payload.changes) || !payload.changes.length) {
     throw new AppError(400, 'WORLD_BOOK_CHANGES_INVALID', '请提供有效的世界书变更和请求编号。');
   }
-  const payloadHash = hashWorldBookValue(payload);
+  const { changeReceiptScope, ...receiptPayload } = payload;
+  const payloadHash = hashWorldBookValue(receiptPayload);
 
   return withSavepoint(database, 'sp_world_book_apply_changes', () => {
     const receipt = readWorldBookChangeRequest(database, userId, requestId);
@@ -88,11 +89,23 @@ export function applyWorldBookChanges(database, userId, payload = {}) {
       if (receipt.payload_hash !== payloadHash) {
         throw new AppError(409, 'WORLD_BOOK_REQUEST_REUSED', '此请求已经应用，请为新的变更重新提交。');
       }
-      return { books: JSON.parse(receipt.result_json).map(({ ref, bookId }) => {
+      const books = JSON.parse(receipt.result_json).map(({ ref, bookId }) => {
         const book = getWorldBook(database, userId, bookId);
         if (!book) throw new AppError(409, 'WORLD_BOOK_APPLIED_TARGET_MISSING', '已应用的世界书已被删除，请刷新列表。');
         return { ref, book };
-      }) };
+      });
+      // Older assistant batch receipts can safely seed their per-change records.
+      if (changeReceiptScope) {
+        for (const change of payload.changes) {
+          const changeRequestId = assistantChangeRequestId(changeReceiptScope, change);
+          if (readWorldBookChangeRequest(database, userId, changeRequestId)) continue;
+          const applied = books.find(item => item.ref === change.ref);
+          insertWorldBookChangeRequest(database, userId, changeRequestId,
+            hashWorldBookValue({ requestId: changeRequestId, changes: [change] }),
+            [{ ref: change.ref, bookId: applied.book.id }]);
+        }
+      }
+      return { books };
     }
 
     const refs = new Set();
@@ -105,12 +118,21 @@ export function applyWorldBookChanges(database, userId, payload = {}) {
       }
       refs.add(ref);
       if (bookId) bookIds.add(bookId);
+      if (changeReceiptScope) {
+        return applyWorldBookChanges(database, userId, {
+          requestId: assistantChangeRequestId(changeReceiptScope, change), changes: [change]
+        }).books[0];
+      }
       return { ref, book: applyWorldBookChange(database, userId, change, bookId) };
     });
     insertWorldBookChangeRequest(database, userId, requestId, payloadHash,
       books.map(({ ref, book }) => ({ ref, bookId: book.id })));
     return { books };
   });
+}
+
+function assistantChangeRequestId(scope, change) {
+  return `character-assistant-item:${hashWorldBookValue([scope, change])}`;
 }
 
 function applyWorldBookChange(database, userId, change, bookId) {

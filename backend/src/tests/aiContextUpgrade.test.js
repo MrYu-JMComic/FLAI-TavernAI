@@ -31,13 +31,17 @@ test('budget preserves full current multimodal input and reports an impossible b
     { role: 'system', content: 'CONTRACT' },
     { role: 'user', content: 'old'.repeat(500) },
     { role: 'assistant', content: 'old reply' },
+    { role: 'user', content: 'recent question' },
+    { role: 'assistant', content: 'recent reply' },
     { role: 'user', content }
   ], 1000);
   assert.deepEqual(result.messages.at(-1).content, content);
   assert.equal(result.budget.overBudget, true);
-  assert.equal(result.budget.overflowCharacters, result.budget.characters - 1000);
+  assert.equal(result.budget.overflowCharacters, result.budget.conversationCharacters - 1000);
   assert.equal(result.budget.imageParts, 1);
-  assert.equal(result.messages.length, 2);
+  assert.equal(result.messages.length, 4);
+  assert.ok(result.messages.some((message) => message.content === 'recent reply'));
+  assert.ok(!result.messages.some((message) => message.content === 'old reply'));
 });
 
 test('budget removes optional mods before history and keeps lore from splitting an exchange', () => {
@@ -47,15 +51,22 @@ test('budget removes optional mods before history and keeps lore from splitting 
     { role: 'system', content: 'CONTRACT' }, mod,
     { role: 'user', content: 'old question' }, lore,
     { role: 'assistant', content: 'old answer' },
+    { role: 'user', content: 'recent question' },
+    { role: 'assistant', content: 'recent answer' },
     { role: 'user', content: 'latest' }
   ];
-  const result = applyPromptBudget(messages, 1000);
+  const options = {
+    providerSettings: { providerType: 'custom', model: 'budget-test' },
+    tokenBudget: { contextWindowTokens: 1000, reservedOutputTokens: 128, forModel: 'budget-test' },
+    countTextTokens: (text) => text.length
+  };
+  const result = applyPromptBudget(messages, 1000, options);
   assert.ok(result.messages.some((message) => message.content === 'old answer'));
   assert.equal(result.budget.sections.mods.keptCharacters, 0);
   assert.equal(result.budget.truncation[0].sourceId, 'mod-1');
   assert.ok(result.messages.every((message) => !Object.hasOwn(message, '_promptContext')));
   messages[2].content = 'old question'.repeat(200);
-  const trimmed = applyPromptBudget(messages, 1000);
+  const trimmed = applyPromptBudget(messages, 1000, options);
   assert.ok(!trimmed.messages.some((message) => message.content === 'old answer'));
   assert.ok(trimmed.messages.some((message) => message.content === 'LORE'));
 });
@@ -137,7 +148,12 @@ test('prompt pipeline respects lore positions and budgets each source without se
   }
   assert.ok(pipeline.sections.mods.budget.keptCharacters > 0);
   assert.ok(pipeline.messages.every((message) => !Object.hasOwn(message, '_promptContext')));
-  const minimal = buildPromptPipeline(database, { user, character, conversation, content: 'CURRENT_SENTINEL'.repeat(200), contextBudgetCharacters: 1000, persistWorldBookState: false });
+  const minimal = buildPromptPipeline(database, {
+    user, character, conversation, content: 'CURRENT_SENTINEL'.repeat(200),
+    contextBudgetCharacters: 1000, persistWorldBookState: false,
+    providerSettings: { providerType: 'custom', model: 'budget-test' },
+    tokenBudget: { contextWindowTokens: 1000, reservedOutputTokens: 1000, forModel: 'budget-test' }
+  });
   assert.ok(minimal.messages.some((message) => message.content === 'CURRENT_SENTINEL'.repeat(200)));
   assert.equal(minimal.sections.mods.budget.keptCharacters, 0);
   assert.equal(minimal.budget.overBudget, true);
@@ -161,7 +177,11 @@ test('world book state is committed only for entries retained by the final promp
   const { database, user, character, conversation } = fixture(t);
   const book = createWorldBook(database, user.id, { name: 'Budget state', characterId: character.id });
   const entry = createEntry(database, user.id, book.id, { name: 'Sticky', content: 'Small lore.', alwaysActive: true, sticky: 3 });
-  const pipeline = buildPromptPipeline(database, { user, character, conversation, content: 'Current request.', contextBudgetCharacters: 1000 });
+  const pipeline = buildPromptPipeline(database, {
+    user, character, conversation, content: 'Current request.',
+    providerSettings: { providerType: 'custom', model: 'budget-test' },
+    tokenBudget: { contextWindowTokens: 1000, reservedOutputTokens: 1000, forModel: 'budget-test' }
+  });
   assert.equal(pipeline.worldBookEntries.length, 0);
   assert.equal(pipeline.worldBookMatches.length, 0);
   assert.equal(pipeline.priority.activeContext.includes('world_book'), false);

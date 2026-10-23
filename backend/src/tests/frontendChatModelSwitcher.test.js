@@ -8,25 +8,27 @@ const { script: chatModelSwitcherScript, template: chatModelSwitcherTemplate } =
 const { script: chatViewScript } = readVueBlocks('frontend/src/views/ChatView.vue', ['script']);
 const stylesSource = readFrontendStyles();
 
-test('ChatModelSwitcher locks model selection while saving', () => {
-  assert.match(chatModelSwitcherScript, /const modelSelectionLocked = computed\(\(\) => props\.saving\)/);
+test('ChatModelSwitcher locks model selection while saving or switching gateways', () => {
+  assert.match(chatModelSwitcherScript, /const modelSelectionLocked = computed\(\(\) => props\.saving \|\| props\.switchingProvider\)/);
   assert.match(chatModelSwitcherScript, /const canRefresh = computed\(\(\) => Boolean\(props\.provider\?\.baseUrl\) && !props\.refreshing && !modelSelectionLocked\.value\)/);
   assert.match(chatModelSwitcherScript, /function chooseModel\(modelId\)\s*{\s*if \(modelSelectionLocked\.value\) return;\s*if \(!hasModelOption\(modelOptions\.value, modelId\)\) return;/);
-  assert.match(chatModelSwitcherScript, /function closeSwitcher\(\)\s*{\s*if \(props\.saving\) return;\s*emit\('close'\);/);
+  assert.match(chatModelSwitcherScript, /function closeSwitcher\(\)\s*{\s*if \(modelSelectionLocked\.value\) return;\s*emit\('close'\);/);
 
-  assert.match(chatModelSwitcherTemplate, /:aria-busy="saving \|\| refreshing"/);
-  assert.match(chatModelSwitcherTemplate, /@click\.self="closeSwitcher"/);
+  assert.match(chatModelSwitcherTemplate, /<dialog[^>]+@cancel\.prevent="closeSwitcher"[^>]+@click="\(\$event\.target === dialog\) && closeSwitcher\(\)"/);
+  assert.match(chatModelSwitcherTemplate, /class="chat-model-switcher-providers" aria-label="选择聊天网关"/);
+  assert.match(chatModelSwitcherTemplate, /v-for="profile in providerProfiles"[\s\S]*:aria-pressed="selectedProviderId === profile\.id"[\s\S]*@click="emit\('select-provider', profile\.id\)"/);
+  assert.match(chatModelSwitcherTemplate, /@click="emit\('refresh-providers'\)"/);
   assert.match(chatModelSwitcherTemplate, /:class="{ 'is-disabled': modelSelectionLocked }"/);
-  assert.match(chatModelSwitcherTemplate, /<input v-model\.trim="search" type="search" placeholder="[^"]+" aria-label="[^"]+" :disabled="modelSelectionLocked" \/>/);
+  assert.match(chatModelSwitcherTemplate, /<input ref="searchInput" v-model\.trim="search" type="search" placeholder="[^"]+" aria-label="[^"]+" :disabled="modelSelectionLocked" autocomplete="off" \/>/);
   assert.match(chatModelSwitcherTemplate, /:disabled="modelSelectionLocked"/);
-  assert.match(chatModelSwitcherTemplate, /:disabled="saving" :aria-busy="saving" @click="closeSwitcher"/);
+  assert.match(chatModelSwitcherTemplate, /:disabled="modelSelectionLocked" :aria-busy="modelSelectionLocked" @click="closeSwitcher"/);
   assert.match(chatModelSwitcherTemplate, /:aria-busy="saving && draftModel === model\.id"/);
   assert.match(chatModelSwitcherTemplate, /:aria-busy="saving"/);
   assert.match(chatModelSwitcherTemplate, /:aria-busy="refreshing"/);
   assert.doesNotMatch(chatModelSwitcherTemplate, /@click="emit\('close'\)"/);
 
   assert.match(stylesSource, /\.chat-model-search\.is-disabled/);
-  assert.match(stylesSource, /\.chat-model-option:hover:not\(:disabled\),/);
+  assert.match(stylesSource, /\.chat-model-option:hover:not\(:disabled\)\s*{/);
   assert.match(stylesSource, /\.chat-model-option:disabled/);
 });
 
@@ -57,7 +59,7 @@ test('ChatModelSwitcher collects deduped model options without values spread', (
 test('ChatModelSwitcher keeps draft model scoped to refreshed options', () => {
   assert.match(
     chatModelSwitcherScript,
-    /const canSave = computed\(\(\) => \{[\s\S]*draftModel\.value !== currentModel\.value &&[\s\S]*hasModelOption\(modelOptions\.value, draftModel\.value\) &&[\s\S]*!props\.saving;[\s\S]*\}\);/
+    /const canSave = computed\(\(\) => \{[\s\S]*draftModel\.value !== currentModel\.value &&[\s\S]*hasModelOption\(modelOptions\.value, draftModel\.value\) &&[\s\S]*!modelSelectionLocked\.value;[\s\S]*\}\);/
   );
   assert.match(
     chatModelSwitcherScript,
@@ -77,11 +79,11 @@ test('ChatModelSwitcher keeps draft model scoped to refreshed options', () => {
 test('ChatView guards model switcher refresh and save handlers while work is pending', () => {
   assert.match(
     chatViewScript,
-    /async function refreshQuickModels\(\)\s*{\s*if \(modelSwitcherRefreshing\.value \|\| modelSwitcherSaving\.value\)\s*{\s*return;\s*}/
+    /async function refreshQuickModels\(\)\s*{\s*if \(modelSwitcherRefreshing\.value \|\| modelSwitcherSaving\.value \|\| modelSwitcherProviderSwitching\.value\)\s*{\s*return;\s*}/
   );
   assert.match(
     chatViewScript,
-    /function isCurrentModelRefresh\(requestToken, refreshKey\)\s*{\s*return !chatViewDisposed[\s\S]*&& requestToken === modelRefreshToken[\s\S]*&& refreshKey === providerRefreshKey\(props\.provider \|\| \{\}\);[\s\S]*}/
+    /function isCurrentModelRefresh\(requestToken, refreshKey\)\s*{\s*return !chatViewDisposed[\s\S]*&& requestToken === modelRefreshToken[\s\S]*&& refreshKey === providerRefreshKey\(modelSwitcherProvider\.value \|\| props\.provider \|\| \{\}\);[\s\S]*}/
   );
   assert.match(
     chatViewScript,
@@ -101,6 +103,6 @@ test('Chat quick model contexts include provider auth availability', () => {
   );
   assert.match(
     chatViewScript,
-    /function providerRefreshKey\(provider = \{\}\) \{[\s\S]*provider\.baseUrl \|\| '',[\s\S]*Boolean\(provider\.apiKey \|\| provider\.apiKeySet\),[\s\S]*Boolean\(provider\.supportsReasoning\),[\s\S]*provider\.extraBody \?\? '\{\}'[\s\S]*\]\.join\('\|'\);/
+    /function providerRefreshKey\(provider = \{\}\) \{[\s\S]*provider\.id \|\| '',[\s\S]*provider\.baseUrl \|\| '',[\s\S]*Boolean\(provider\.apiKey \|\| provider\.apiKeySet\),[\s\S]*Boolean\(provider\.supportsReasoning\),[\s\S]*provider\.extraBody \?\? '\{\}'[\s\S]*\]\.join\('\|'\);/
   );
 });

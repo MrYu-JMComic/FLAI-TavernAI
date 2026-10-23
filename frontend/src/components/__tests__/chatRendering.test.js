@@ -93,4 +93,60 @@ describe('chat rendering lifecycle', () => {
     expect(wrapper.find('details').exists()).toBe(true);
     expect(wrapper.find('.katex').exists()).toBe(true);
   });
+
+  it('normalizes line endings and renders one soft break plus separate paragraphs', async () => {
+    const wrapper = render(MarkdownContent, { props: { text: '第一行\r\n第二行\r\n\r\n第二段\r第三段' } });
+    await nextTick();
+
+    const paragraphs = wrapper.findAll('p');
+    expect(paragraphs).toHaveLength(2);
+    expect(paragraphs[0].findAll('br')).toHaveLength(1);
+    expect(paragraphs[0].text().replace(/\s+/g, '')).toBe('第一行第二行');
+    expect(paragraphs[1].findAll('br')).toHaveLength(1);
+    expect(paragraphs[1].text().replace(/\s+/g, '')).toBe('第二段第三段');
+
+    await wrapper.setProps({ renderPlugins: [{ pattern: '^never-matches$' }] });
+    await nextTick();
+    expect(wrapper.findAll('.markdown-content > p')).toHaveLength(2);
+    expect(wrapper.findAll('br')).toHaveLength(2);
+  });
+
+  it('renders escaped provider newlines outside inline and fenced code', async () => {
+    const wrapper = render(MarkdownContent, {
+      props: {
+        text: [
+          '第一行\\n第二行\\\\n\\\\n第三段',
+          '',
+          '内联代码：`code\\nline`',
+          '',
+          '```text',
+          '代码\\n内容',
+          '```'
+        ].join('\n')
+      }
+    });
+    await nextTick();
+
+    const paragraphs = wrapper.findAll('.markdown-content > p');
+    expect(paragraphs).toHaveLength(3);
+    expect(paragraphs[0].findAll('br')).toHaveLength(1);
+    expect(paragraphs[0].text().replace(/\s+/g, '')).toBe('第一行第二行');
+    expect(paragraphs[1].text()).toBe('第三段');
+    expect(paragraphs[2].find('code').text()).toBe(String.raw`code\nline`);
+    expect(wrapper.find('pre code').text()).toContain(String.raw`代码\n内容`);
+  });
+
+  it('normalizes escaped newlines before render-plugin line matching', async () => {
+    const wrapper = render(MarkdownContent, {
+      props: {
+        text: String.raw`前文\n# 折叠标题\n折叠正文`,
+        renderPlugins: [{ pattern: '^# (.+)$', titleTemplate: '$1' }]
+      }
+    });
+    await nextTick();
+
+    expect(wrapper.find('.markdown-content > p').text()).toBe('前文');
+    expect(wrapper.find('.markdown-fold-summary').text()).toContain('折叠标题');
+    expect(wrapper.find('.markdown-fold-body').text()).toContain('折叠正文');
+  });
 });

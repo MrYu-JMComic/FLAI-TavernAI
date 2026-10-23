@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import { createAppDatabase } from '../db/runtime.js';
 import { applyVariableUpdates, getStatusBar, updateStatusBarVariables, upsertStatusBar } from '../modules/statusBars.js';
+import { saveStatusBarSchema } from '../validations/schemas.js';
 
 const statusBarsSource = readFileSync(new URL('../modules/statusBars.js', import.meta.url), 'utf8').replaceAll('\r\n', '\n');
 
@@ -76,7 +77,7 @@ test('status bar variables normalize with a capped direct loop', () => {
   setupConversation(database);
 
   const variables = [{ name: '', value: 'ignored' }];
-  for (let index = 0; index < 65; index += 1) {
+  for (let index = 0; index < 121; index += 1) {
     variables.push({ name: `Var ${index}`, value: String(index), color: index === 0 ? '#abc' : 'bad' });
   }
 
@@ -86,13 +87,19 @@ test('status bar variables normalize with a capped direct loop', () => {
     template: '{{ LateTemplateVar }}'
   });
 
-  assert.equal(statusBar.variables.length, 60);
+  assert.equal(statusBar.variables.length, 120);
   assert.equal(statusBar.variables[0].name, 'Var 0');
   assert.equal(statusBar.variables[0].value, 0);
   assert.equal(statusBar.variables[0].max, 100);
   assert.equal(statusBar.variables[0].color, '#abc');
-  assert.equal(statusBar.variables.at(-1).name, 'Var 59');
+  assert.equal(statusBar.variables.at(-1).name, 'Var 119');
   assert.equal(statusBar.variables.some((variable) => variable.name === 'LateTemplateVar'), false);
+  assert.deepEqual(getStatusBar(database, 'status-user-1', 'status-conversation-1').variables, statusBar.variables);
+  assert.equal(saveStatusBarSchema.safeParse(statusBar).success, true);
+  assert.equal(saveStatusBarSchema.safeParse({
+    ...statusBar,
+    variables: [...statusBar.variables, { name: 'Var 120', value: 120 }]
+  }).success, false);
 
   const normalizeHelper = statusBarsSource.match(/function normalizeVariables[\s\S]*?\n}\n\nfunction normalizeVariableValue/);
   assert.ok(normalizeHelper);

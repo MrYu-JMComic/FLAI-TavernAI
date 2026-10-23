@@ -225,17 +225,72 @@ select:focus {
   align-items: center;
 }
 
-.profile-layout {
+.profile-overview {
   display: grid;
-  grid-template-columns: 220px minmax(0, 1fr);
-  gap: 18px;
-  align-items: start;
+  grid-template-columns: 68px minmax(0, 1fr) auto;
+  gap: 14px;
+  align-items: center;
+  padding-bottom: 16px;
+  border-bottom: 1px solid color-mix(in srgb, var(--line) 78%, transparent);
+}
+
+.profile-avatar {
+  width: 68px;
+  height: 68px;
+  font-size: 1.55rem;
+}
+
+.profile-identity {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.profile-identity strong,
+.profile-identity span,
+.profile-identity small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.profile-identity strong {
+  color: var(--text);
+  font-size: 1.12rem;
+  line-height: 1.3;
+}
+
+.profile-identity span,
+.profile-identity small {
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.profile-avatar-upload {
+  min-height: 40px;
+  padding-inline: 12px;
+}
+
+.profile-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
 }
 
 .profile-form {
   display: grid;
-  gap: 14px;
+  gap: 12px;
   min-width: 0;
+  margin-top: 16px;
+}
+
+.profile-form-footer {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
 }
 
 .profile-meta-row {
@@ -270,18 +325,20 @@ select:focus {
 .profile-stats-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 10px;
+  gap: 8px;
+  margin-top: 18px;
 }
 
 .profile-stat-card {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  gap: 4px 8px;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 7px;
   align-items: center;
   min-width: 0;
+  min-height: 54px;
   border: 1px solid var(--line);
   border-radius: 8px;
-  padding: 12px;
+  padding: 10px;
   background: color-mix(in srgb, var(--surface-strong) 56%, transparent);
 }
 
@@ -291,20 +348,29 @@ select:focus {
 
 .profile-stat-card span {
   min-width: 0;
+  overflow: hidden;
   color: var(--muted);
-  font-size: 0.82rem;
-  font-weight: 800;
+  font-size: 0.76rem;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .profile-stat-card strong {
-  grid-column: 1 / -1;
-  font-size: 1.28rem;
+  min-width: 0;
+  font-size: 1.05rem;
 }
 
 .owned-ai-list,
 .owned-ai-rows {
   display: grid;
   gap: 10px;
+}
+
+.owned-ai-list {
+  margin-top: 18px;
+  border-top: 1px solid color-mix(in srgb, var(--line) 78%, transparent);
+  padding-top: 18px;
 }
 
 .owned-ai-row {

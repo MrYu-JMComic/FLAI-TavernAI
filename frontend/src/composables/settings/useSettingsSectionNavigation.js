@@ -1,28 +1,15 @@
 import { ref } from 'vue';
 
-export const personalSections = [
-  { id: 'profile', label: '个人资料' },
-  { id: 'provider', label: '模型网关' },
-  { id: 'data', label: '数据导出' }
-];
-
 export const extensionSections = [
   { id: 'tags', label: '标签管理', icon: 'Tag' },
-  { id: 'presets', label: '对话预设', icon: 'Sliders' },
   { id: 'mods', label: 'Mod 管理', icon: 'Puzzle' },
   { id: 'regex', label: '正则规则', icon: 'Regex' },
   { id: 'status-templates', label: '状态栏模板', icon: 'Save' }
 ];
 
 export function useSettingsSectionNavigation() {
-  const activePersonalSection = ref('profile');
-  const personalNavRef = ref(null);
   const activeExtensionSection = ref('tags');
   const extensionNavRef = ref(null);
-
-  function scrollToPersonalSection(sectionId) {
-    scrollToSettingsSection('personal-section', activePersonalSection, personalSections, personalNavRef, sectionId);
-  }
 
   function scrollToExtensionSection(sectionId) {
     scrollToSettingsSection('extension-section', activeExtensionSection, extensionSections, extensionNavRef, sectionId);
@@ -30,13 +17,9 @@ export function useSettingsSectionNavigation() {
 
   return {
     activeExtensionSection,
-    activePersonalSection,
     extensionNavRef,
     extensionSections,
-    personalNavRef,
-    personalSections,
-    scrollToExtensionSection,
-    scrollToPersonalSection
+    scrollToExtensionSection
   };
 }
 

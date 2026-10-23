@@ -2,6 +2,7 @@ import { appConfig } from '../config.js';
 import { getProviderProfileRow } from '../repositories/providerProfileRepository.js';
 import { hasUsableProvider, providerWithSecret } from './providers.js';
 import { applyProviderNetworkPolicy } from './providerNetworkPolicy.js';
+import { THINKING_LEVELS } from '../../../shared/providerThinking.js';
 
 /**
  * Resolve the provider settings an accessory skill should call.
@@ -15,7 +16,12 @@ export function resolveAccessorySkillSettings(database, userId, settings = {}, s
   const base = settings && typeof settings === 'object' ? settings : {};
   const profileId = String(skill?.providerProfileId || '').trim();
   const modelOverride = String(skill?.modelOverride || '').trim();
-  const withModel = (value) => (modelOverride ? { ...value, model: modelOverride } : value);
+  const thinkingLevel = THINKING_LEVELS.includes(skill?.thinkingLevel) ? skill.thinkingLevel : '';
+  const withModel = (value) => (modelOverride || thinkingLevel ? {
+    ...value,
+    ...(modelOverride ? { model: modelOverride } : {}),
+    ...(thinkingLevel ? { thinkingLevel } : {})
+  } : value);
   const followMain = (warning = '') => ({
     settings: withModel(base),
     source: 'main',
@@ -29,10 +35,10 @@ export function resolveAccessorySkillSettings(database, userId, settings = {}, s
   if (!row) {
     return followMain('profile_missing');
   }
-  if (base.id && row.id === base.id) {
+  if (base.id && row.id === base.id && hasUsableProvider(withModel(base))) {
     return { settings: withModel(base), source: 'main', profileId };
   }
-  let resolved = providerWithSecret(row);
+  let resolved = withModel(providerWithSecret(row));
   if (!hasUsableProvider(resolved) || resolved.providerType === 'mock') {
     return followMain('profile_unusable');
   }
@@ -50,4 +56,10 @@ export function describeAccessorySkillSource(skill = {}) {
   const modelOverride = String(skill?.modelOverride || '').trim();
   if (!profileId && !modelOverride) return 'main';
   return profileId ? 'profile' : 'main-model-override';
+}
+
+export function accessorySkillThinkingOptions(settings = {}, skill = {}) {
+  const requested = String(skill?.thinkingLevel || settings?.thinkingLevel || '').trim();
+  if (!THINKING_LEVELS.includes(requested)) return { thinkingEnabled: true };
+  return { thinkingEnabled: requested !== 'off', thinkingLevel: requested };
 }

@@ -98,8 +98,8 @@ test('chat generation route delegates image attachment storage to a service', ()
   assert.match(chatAttachmentsSource, /const CHAT_IMAGE_MAX_BYTES = appConfig\.upload\.chatImageMaxBytes;/);
   assert.match(chatAttachmentsSource, /const CHAT_IMAGE_MAX_PIXELS = appConfig\.upload\.imageMaxPixels;/);
   assert.match(chatAttachmentsSource, /maxPixels: CHAT_IMAGE_MAX_PIXELS,/);
-  assert.match(chatAttachmentsSource, /export function prepareChatAttachmentsForStorage\(database, userId, conversationId, attachments = \[\]\)/);
-  assert.match(chatAttachmentsSource, /export function prepareUserChatAttachmentsForStorage\(database, userId, conversationId, attachments = \[\]\)/);
+  assert.match(chatAttachmentsSource, /export function prepareChatAttachmentsForStorage\(database, userId, conversationId, attachments = \[\], options = \{\}\)/);
+  assert.match(chatAttachmentsSource, /export function prepareUserChatAttachmentsForStorage\(database, userId, conversationId, attachments = \[\], options = \{\}\)/);
   assert.match(chatAttachmentsSource, /export function validateChatAttachmentsForUpload\(attachments = \[\]\)/);
   assert.match(chatAttachmentsSource, /createAsset\(database, userId,/);
   assert.match(chatAttachmentsSource, /export function resolveChatAttachmentsForModel\(database, userId, attachments = \[\]\)/);
@@ -163,6 +163,112 @@ test('chat route rejects invalid uploaded image attachments before saving or cal
       assert.equal(providerFetchCount, 0);
       assert.equal(database.prepare('SELECT COUNT(*) AS count FROM messages WHERE conversation_id = ?').get(conversationId).count, 0);
       assert.equal(database.prepare('SELECT COUNT(*) AS count FROM assets WHERE user_id = ?').get(userId).count, 0);
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('DeepSeek Pro rejects image input before saving or calling the provider', async () => {
+  const database = createAppDatabase(':memory:');
+  const userId = 'deepseek-pro-vision-user';
+  const conversationId = 'deepseek-pro-vision-conversation';
+  insertUser(database, userId);
+  const character = createCharacter(database, userId, { name: 'DeepSeekProChar', visibility: 'private' });
+  insertConversation(database, { userId, conversationId, characterId: character.id });
+
+  const app = createConversationStreamingApp(database, userId, {
+    providerType: 'deepseek',
+    gatewayName: 'DeepSeek',
+    baseUrl: 'https://deepseek-pro-vision.test/v1',
+    model: 'deepseek-v4-pro'
+  });
+  const originalFetch = globalThis.fetch;
+  let providerFetchCount = 0;
+  globalThis.fetch = async (url, options) => {
+    if (!String(url).startsWith('http://127.0.0.1:')) {
+      providerFetchCount += 1;
+    }
+    return originalFetch(url, options);
+  };
+
+  try {
+    await withServer(app, async (baseUrl) => {
+      const response = await fetch(`${baseUrl}/api/conversations/${conversationId}/messages`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          content: '识别这张图',
+          stream: false,
+          attachments: [{ type: 'image', dataUrl: tinyPngDataUrl }]
+        })
+      });
+      const body = await response.json();
+
+      assert.equal(response.status, 400);
+      assert.equal(body.code, 'VISION_MODEL_REQUIRED');
+      assert.equal(providerFetchCount, 0);
+      assert.equal(database.prepare('SELECT COUNT(*) AS count FROM messages WHERE conversation_id = ?').get(conversationId).count, 0);
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('DeepSeek Pro omits historical images from continue and regenerate provider context', async () => {
+  const database = createAppDatabase(':memory:');
+  const userId = 'deepseek-pro-history-image-user';
+  const conversationId = 'deepseek-pro-history-image-conversation';
+  insertUser(database, userId);
+  const character = createCharacter(database, userId, { name: 'DeepSeekProHistoryChar', visibility: 'private' });
+  insertConversation(database, { userId, conversationId, characterId: character.id });
+  insertMessage(database, {
+    userId, conversationId, id: 'deepseek-pro-image-user-message', role: 'user', content: 'What is in this image?'
+  });
+  database.prepare('UPDATE messages SET attachments_json = ? WHERE id = ?')
+    .run(JSON.stringify([{ type: 'image', dataUrl: tinyPngDataUrl, mimeType: 'image/png' }]), 'deepseek-pro-image-user-message');
+  insertMessage(database, {
+    userId, conversationId, id: 'deepseek-pro-image-assistant-message', role: 'assistant', content: 'I cannot inspect it yet.'
+  });
+
+  const app = createConversationStreamingApp(database, userId, {
+    providerType: 'deepseek',
+    gatewayName: 'DeepSeek',
+    baseUrl: 'https://deepseek-pro-history.test/v1',
+    model: 'deepseek-v4-pro'
+  });
+  const originalFetch = globalThis.fetch;
+  const providerBodies = [];
+  globalThis.fetch = async (url, options) => {
+    if (!String(url).startsWith('http://127.0.0.1:')) {
+      providerBodies.push(JSON.parse(options.body));
+      return new Response(JSON.stringify({ choices: [{ message: { content: 'Please describe the image in text.' } }] }), {
+        headers: { 'Content-Type': 'application/json' }
+      });
+    }
+    return originalFetch(url, options);
+  };
+
+  try {
+    await withServer(app, async (baseUrl) => {
+      const continueResponse = await fetch(`${baseUrl}/api/conversations/${conversationId}/messages/continue`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ stream: false })
+      });
+      assert.equal(continueResponse.status, 200);
+      assert.doesNotMatch(JSON.stringify(providerBodies[0].messages), /image_url|data:image/);
+
+      const lastAssistant = database.prepare(
+        'SELECT id FROM messages WHERE conversation_id = ? AND role = ? ORDER BY rowid DESC LIMIT 1'
+      ).get(conversationId, 'assistant');
+      const regenerateResponse = await fetch(`${baseUrl}/api/conversations/${conversationId}/messages/${lastAssistant.id}/regenerate`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ stream: false })
+      });
+      assert.equal(regenerateResponse.status, 200);
+      assert.doesNotMatch(JSON.stringify(providerBodies[1].messages), /image_url|data:image/);
+
+      const storedAttachments = database.prepare('SELECT attachments_json FROM messages WHERE id = ?')
+        .get('deepseek-pro-image-user-message').attachments_json;
+      assert.match(storedAttachments, /data:image\/png/);
     });
   } finally {
     globalThis.fetch = originalFetch;
@@ -902,8 +1008,8 @@ test('chat completion records pending automatic long-term memory candidates', as
       const memories = await waitForConversationMemories(database, conversationId, 2);
       assert.ok(memories.length >= 2);
       assert.equal(memories.every((memory) => memory.source_kind === 'auto'), true);
-      // Automatic extraction enables bounded, source-linked memories (context-memory-quality-stage-4).
-      assert.equal(memories.every((memory) => memory.enabled === 1), true);
+      // Rule fallback preserves source-linked candidates for explicit confirmation.
+      assert.equal(memories.every((memory) => memory.enabled === 0), true);
       assert.equal(memories.every((memory) => memory.archived === 0), true);
       assert.equal(memories.some((memory) => memory.memory_type === 'preference'), true);
       assert.equal(memories.some((memory) => memory.memory_type === 'relationship'), true);

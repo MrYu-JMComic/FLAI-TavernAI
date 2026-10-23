@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import { parseStatusTemplateToken } from '../../../shared/statusTemplateTokens.js';
 import { normalizeStatusBarBlueprint } from '../modules/advancedSettings.js';
+import { normalizeStatusBarBlueprintForPayload } from '../../../frontend/src/composables/character/useCharacterStatusBlueprint.js';
 
 const advancedSettingsSource = readFileSync(new URL('../modules/advancedSettings.js', import.meta.url), 'utf8');
 
@@ -69,7 +70,7 @@ test('advanced settings status blueprint placeholders use the shared token parse
 
 test('advanced settings status variables normalize with a capped direct loop', () => {
   const variables = [{ name: '', value: 'ignored' }];
-  for (let index = 0; index < 65; index += 1) {
+  for (let index = 0; index < 121; index += 1) {
     variables.push({ name: `Var ${index}`, value: String(index), color: index === 0 ? '#abc' : 'bad' });
   }
 
@@ -78,12 +79,12 @@ test('advanced settings status variables normalize with a capped direct loop', (
     template: '{{ LateTemplateVar }}'
   });
 
-  assert.equal(blueprint.variables.length, 60);
+  assert.equal(blueprint.variables.length, 120);
   assert.equal(blueprint.variables[0].name, 'Var 0');
   assert.equal(blueprint.variables[0].value, 0);
   assert.equal(blueprint.variables[0].max, 100);
   assert.equal(blueprint.variables[0].color, '#abc');
-  assert.equal(blueprint.variables.at(-1).name, 'Var 59');
+  assert.equal(blueprint.variables.at(-1).name, 'Var 119');
   assert.equal(blueprint.variables.some((variable) => variable.name === 'LateTemplateVar'), false);
 
   const normalizeStart = advancedSettingsSource.indexOf('function normalizeStatusVariables(value, template = \'\') {');
@@ -97,4 +98,17 @@ test('advanced settings status variables normalize with a capped direct loop', (
   assert.match(normalizeHelper, /normalized\.push\(\{/);
   assert.doesNotMatch(normalizeHelper, /\.map\(/);
   assert.doesNotMatch(normalizeHelper, /\.filter\(/);
+});
+
+test('frontend status blueprints retain 120 variables through backend round-trips', () => {
+  const variables = Array.from({ length: 120 }, (_item, index) => ({
+    name: `Var ${index + 1}`, value: index, type: 'number'
+  }));
+  const payload = normalizeStatusBarBlueprintForPayload({ name: 'Full blueprint', variables });
+  assert.equal(payload.variables.length, 120);
+  const saved = normalizeStatusBarBlueprint(payload);
+  assert.deepEqual(normalizeStatusBarBlueprintForPayload(saved), payload);
+  assert.equal(normalizeStatusBarBlueprintForPayload({
+    variables: [...variables, { name: 'Var 121', value: 121, type: 'number' }]
+  }).variables.length, 120);
 });

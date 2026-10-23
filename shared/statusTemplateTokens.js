@@ -14,7 +14,7 @@ import {
 //   {{HP.max}} {{HP.percent}}      variable property (only when the last
 //                                  segment is a known property, so dotted
 //                                  names such as {{角色A.好感}} stay whole)
-//   {{HP | percent | suffix:"%"}}  filter pipeline (":"-separated args)
+//   {{HP | percentage | suffix:"%"}} filter pipeline (":"-separated args)
 //   {{= HP * 2 + 1}}               safe expression (statusTemplateExpression.js)
 //   {{user}} {{char}} {{date}}     built-in context values, never variables
 //   {{#if HP > 50 && 心情 == "好"}} … {{else if HP > 20}} … {{else}} … {{/if}}

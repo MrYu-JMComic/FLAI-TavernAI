@@ -8,6 +8,7 @@ import {
   claimNextJob,
   completeJob,
   getJob,
+  getStatusBarAgentJobStatus,
   listJobEvents,
   listJobs,
   recoverExpiredJobs,
@@ -97,6 +98,32 @@ test('queued job cancellation is terminal and cannot be claimed', () => {
   }
 });
 
+test('postprocessing job reports the exact status-bar Agent outcome without exposing its result', () => {
+  const database = createJobsDatabase();
+  try {
+    const submitted = submitJob(database, 'jobs-user', 'conversation.postprocess', {
+      conversationId: 'conv-1', assistantMessageId: 'assistant-1'
+    }, { idempotencyKey: 'status-bar-turn', internal: true });
+    const timestamp = new Date().toISOString();
+    const insertStep = (status, result) => database.prepare(`INSERT INTO job_steps
+      (job_id, step_key, status, before_json, result_json, attempt, updated_at)
+      VALUES (?, 'agent:statusBarAgent', ?, '{}', ?, 1, ?)`)
+      .run(submitted.id, status, result == null ? null : JSON.stringify(result), timestamp);
+
+    assert.equal(getStatusBarAgentJobStatus(database, submitted), 'pending');
+    insertStep('completed', { skill: 'statusBarAgent', ok: true, result: { changed: true, updates: [] } });
+    assert.equal(getStatusBarAgentJobStatus(database, submitted), 'updated');
+    database.prepare('DELETE FROM job_steps WHERE job_id = ?').run(submitted.id);
+    insertStep('completed', { skill: 'statusBarAgent', ok: true, result: { updates: [] } });
+    assert.equal(getStatusBarAgentJobStatus(database, submitted), 'checked');
+    database.prepare('DELETE FROM job_steps WHERE job_id = ?').run(submitted.id);
+    insertStep('failed', null);
+    assert.equal(getStatusBarAgentJobStatus(database, submitted), 'failed');
+  } finally {
+    database.close();
+  }
+});
+
 test('job worker executes registered handlers and stops cleanly', async () => {
   const database = createJobsDatabase();
   const submitted = submitJob(database, 'jobs-user', 'memory.extract', { count: 3 }, {
@@ -156,6 +183,18 @@ test('job routes enforce user ownership and idempotency headers', async () => {
       });
       const events = await eventsResponse.json();
       assert.equal(events.events[0].type, 'queued');
+
+      const postprocess = submitJob(database, 'jobs-user', 'conversation.postprocess', {
+        conversationId: 'conv-1', assistantMessageId: 'assistant-1'
+      }, { idempotencyKey: 'status-bar-route', internal: true });
+      database.prepare(`INSERT INTO job_steps
+        (job_id, step_key, status, before_json, result_json, attempt, updated_at)
+        VALUES (?, 'agent:statusBarAgent', 'completed', '{}', ?, 1, ?)`)
+        .run(postprocess.id, JSON.stringify({ ok: true, result: { changed: true, updates: [] } }), new Date().toISOString());
+      const postprocessResponse = await fetch(`${baseUrl}/api/jobs/${postprocess.id}`);
+      const postprocessBody = await postprocessResponse.json();
+      assert.equal(postprocessBody.statusBarAgentStatus, 'updated');
+      assert.equal(Object.hasOwn(postprocessBody, 'statusBar'), false);
       assert.equal(getJob(database, 'other-user', first.id), null);
     });
   } finally {

@@ -160,6 +160,9 @@ test('the documented syntax matches what the runtime implements', () => {
   );
 
   const guide = buildStatusTemplateAiGuide().join('\n');
+  assert.ok(guide.includes('width:{{体力.percent}}'));
+  assert.ok(guide.includes('width:{{体力.percentage}}%'));
+  assert.ok(guide.includes('percent 已包含百分号'));
   for (const type of STATUS_VARIABLE_TYPES) {
     assert.ok(guide.includes(type), `AI guide is missing variable type ${type}`);
   }

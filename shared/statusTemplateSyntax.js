@@ -17,9 +17,12 @@ export const STATUS_VARIABLE_TYPE_GUIDE = Object.freeze([
   { type: 'list', label: '列表', example: '{"name":"随身物品","type":"list","value":"长剑、药水、地图"}', summary: '用 、 , ; | 或换行分隔的条目，内置视图显示为标签' }
 ]);
 
+export const STATUS_TEMPLATE_PERCENT_GUIDE = 'percent 已包含百分号（如 22%），percentage 返回纯数字（如 22）；进度宽度写 width:{{体力.percent}} 或 width:{{体力.percentage}}%，不要在 percent 后再次追加 %。';
+
 export const STATUS_TEMPLATE_PLACEHOLDER_GUIDE = Object.freeze([
   { code: '{{体力}}  {体力}  {{getvar::体力}}', summary: '变量当前值；三种写法等价' },
   { code: '{{体力.max}} {{体力.min}} {{体力.percent}} {{体力.remaining}}', summary: '数值条上限、下限、百分比、剩余量' },
+  { code: 'width:{{体力.percent}} · width:{{体力.percentage}}%', summary: STATUS_TEMPLATE_PERCENT_GUIDE },
   { code: '{{体力.color}} {{体力.display}} {{金币.unit}} {{随身物品.count}}', summary: '颜色、内置显示文本（72/100）、单位、列表条目数' },
   { code: '{{林晚.好感}}  {{林晚.好感.percent}}', summary: '带点的变量名：末段不是属性名时整段都是变量名，适合多角色' },
   { code: '{{= 体力 * 2 + 10}}  {{= 体力 < 30 ? "虚弱" : "正常"}}', summary: '安全表达式：运算、比较、三元与函数，不执行任何 JavaScript' },

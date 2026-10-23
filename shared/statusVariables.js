@@ -18,7 +18,7 @@ import {
 // Without `type`, a numeric value with a max is a meter and anything else is
 // text, exactly as before these fields existed.
 
-export const STATUS_VARIABLE_LIMIT = 60;
+export const STATUS_VARIABLE_LIMIT = 120;
 export const STATUS_VARIABLE_NAME_LIMIT = 40;
 export const STATUS_VARIABLE_TEXT_LIMIT = 200;
 export const STATUS_VARIABLE_UNIT_LIMIT = 12;

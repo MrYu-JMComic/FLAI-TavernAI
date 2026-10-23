@@ -17,6 +17,8 @@ import {
   providerStreamErrorMessage
 } from './providerStreamErrors.js';
 import { executeProviderTool } from './providerToolResults.js';
+import { resolveToolChoice } from './providerToolChoice.js';
+import { appendProcessContent, appendProcessTool } from './providerProcessActivity.js';
 import {
   normalizeThinkingLevel,
   resolveSupportedThinkingLevel,
@@ -182,7 +184,7 @@ export async function runOpenAiResponseToolCompletion(settings, messages, tools,
         reasoning: buildOpenAiReasoning(settings, options),
         ...responseOutputLimit(options),
         tools: responseTools,
-        tool_choice: convertToolChoiceForOpenAiResponses(options.toolChoice),
+        tool_choice: convertToolChoiceForOpenAiResponses(resolveToolChoice(options.toolChoice, { round: round + 1, process, toolCalls })),
         ...(previousResponseId ? { previous_response_id: previousResponseId } : {}),
         stream: false
       }),
@@ -239,6 +241,7 @@ export async function runOpenAiResponseToolCompletion(settings, messages, tools,
         result
       };
       step.tools.push(log);
+      appendProcessTool(step, step.tools.length - 1);
       toolCalls.push(log);
       if (typeof options.onToolCall === 'function') {
         await options.onToolCall({ round: step.round, ...log });
@@ -274,26 +277,246 @@ export async function runOpenAiResponseToolCompletion(settings, messages, tools,
 }
 
 export async function streamOpenAiResponseToolCompletion(settings, messages, tools, executeTool, emit, signal, options = {}) {
-  const result = await runOpenAiResponseToolCompletion(settings, messages, tools, executeTool, {
-    ...options,
-    signal
-  });
   const streamEmit = createStreamEmitQueue(emit);
-  for (const step of result.process || []) {
-    await streamEmit.emit('step', step);
-    if (step.reasoning) {
-      await streamEmit.emit('reasoning', { round: step.round, text: step.reasoning });
+  const maxRounds = normalizeToolCompletionRounds(options.maxRounds);
+  const responseTools = convertToolsForOpenAiResponses(tools);
+  const process = [];
+  const toolCalls = [];
+  let input = convertMessagesForOpenAiResponses(messages);
+  let previousResponseId = '';
+  let finalContent = '';
+  let finalReasoning = '';
+  let usage = null;
+  let finalResponse = null;
+
+  for (let round = 0; round < maxRounds; round += 1) {
+    const step = { round: round + 1, content: '', reasoning: '', tools: [] };
+    process.push(step);
+    if (typeof options.onStep === 'function') {
+      await options.onStep(step);
+    } else {
+      await streamEmit.emit('step', step);
     }
-    for (const tool of step.tools || []) {
-      await streamEmit.emit('tool', { round: step.round, ...tool });
+
+    const response = await providerFetch(settings, '/responses', {
+      method: 'POST',
+      body: JSON.stringify({
+        ...responseExtraBody(settings, options),
+        model: resolveProviderModel(settings, options),
+        input,
+        reasoning: buildOpenAiReasoning(settings, options),
+        ...responseOutputLimit(options),
+        tools: responseTools,
+        tool_choice: convertToolChoiceForOpenAiResponses(resolveToolChoice(options.toolChoice, {
+          round: round + 1, process, toolCalls
+        })),
+        ...(previousResponseId ? { previous_response_id: previousResponseId } : {}),
+        stream: true
+      }),
+      signal,
+      requestTrace: options.requestTrace,
+      timeoutMs: options.timeoutMs
+    });
+    if (!response.ok) {
+      throw new Error(await responseErrorText(response));
+    }
+
+    const streamed = await streamOpenAiResponseToolRound(response, step, streamEmit, signal);
+    finalContent = step.content;
+    finalReasoning = mergeReasoning(finalReasoning, step.reasoning);
+    usage = streamed.usage || usage;
+    previousResponseId = streamed.responseId || previousResponseId;
+    finalResponse = streamed.response;
+
+    if (!streamed.calls.length) {
+      const nudge = typeof options.onNoToolCall === 'function'
+        ? options.onNoToolCall({ round: round + 1, content: step.content, process, toolCalls })
+        : '';
+      if (nudge && round + 1 < maxRounds) {
+        await streamEmit.emit('nudge', { round: step.round, text: String(nudge) });
+        input = [{ role: 'user', content: String(nudge) }];
+        continue;
+      }
+      await streamEmit.wait();
+      return buildOpenAiResponseToolResult({
+        settings, content: finalContent, reasoning: finalReasoning,
+        response: finalResponse, usage, toolCalls, process
+      });
+    }
+
+    input = [];
+    for (const call of streamed.calls) {
+      const prepared = await executeProviderTool(
+        executeTool,
+        call.name,
+        call.arguments,
+        call,
+        signal,
+        tools,
+        { database: options.database, userId: options.userId }
+      );
+      const log = {
+        name: call.name,
+        arguments: call.arguments,
+        policy: prepared.policy,
+        result: prepared.result
+      };
+      step.tools.push(log);
+      appendProcessTool(step, step.tools.length - 1);
+      toolCalls.push(log);
+      const event = { round: step.round, ...log };
+      if (typeof options.onToolCall === 'function') {
+        await options.onToolCall(event);
+      } else {
+        await streamEmit.emit('tool', event);
+      }
+      input.push({
+        type: 'function_call_output',
+        call_id: call.callId,
+        output: prepared.content
+      });
+      if (prepared.stop) {
+        await streamEmit.wait();
+        return buildOpenAiResponseToolResult({
+          settings, content: finalContent, reasoning: finalReasoning,
+          response: finalResponse, usage, toolCalls, process
+        });
+      }
     }
   }
-  if (result.content) {
-    const finalRound = result.process?.at(-1)?.round || 1;
-    await streamEmit.emit('content', { round: finalRound, text: result.content });
-  }
+
   await streamEmit.wait();
-  return result;
+  return buildOpenAiResponseToolResult({
+    settings, content: finalContent, reasoning: finalReasoning,
+    response: finalResponse, usage, toolCalls, process
+  });
+}
+
+async function streamOpenAiResponseToolRound(response, step, streamEmit, signal) {
+  if (isJsonProviderResponse(response)) {
+    const json = await readJsonResponse(response);
+    const parsedContent = splitThinkingTags(json.output_text || extractOpenAiOutputText(json));
+    const reasoning = mergeReasoning(extractOpenAiReasoning(json), parsedContent.reasoning);
+    step.content = parsedContent.content;
+    step.reasoning = reasoning;
+    appendProcessContent(step, step.content);
+    if (step.reasoning) await streamEmit.emit('reasoning', { round: step.round, text: step.reasoning });
+    if (step.content) await streamEmit.emit('content', { round: step.round, text: step.content });
+    await streamEmit.wait();
+    const calls = normalizeOpenAiResponseFunctionCalls(json.output);
+    const responseId = json.id || '';
+    return {
+      calls,
+      responseId,
+      usage: json.usage || null,
+      response: json
+    };
+  }
+  let terminalEvent = '';
+  let responseId = '';
+  let usage = null;
+  const calls = new Map();
+  const thinkingTagFilter = createThinkingTagFilter({
+    onContent(text) {
+      step.content += text;
+      appendProcessContent(step, text);
+      void streamEmit.emit('content', { round: step.round, text });
+    },
+    onReasoning(text) {
+      step.reasoning += text;
+      void streamEmit.emit('reasoning', { round: step.round, text });
+    }
+  });
+
+  for await (const event of parseSse(response.body)) {
+    if (signal?.aborted) throw signal.reason || new DOMException('The operation was aborted.', 'AbortError');
+    const json = parseJson(event.data, null);
+    if (!json) continue;
+    const type = json.type || event.event;
+    if (hasProviderStreamError(json, event.event) || type === 'response.failed') {
+      throw new Error(providerStreamErrorMessage(json, 'Responses API 流式响应失败'));
+    }
+    if (type === 'response.incomplete') {
+      const reason = json.response?.incomplete_details?.reason || json.incomplete_details?.reason;
+      throw new Error(reason ? `Responses API 流式响应未完成：${reason}` : 'Responses API 流式响应未完成');
+    }
+    responseId = json.response?.id || json.id || responseId;
+    const outputTextDelta = extractResponsesOutputTextDelta(type, json);
+    if (outputTextDelta) thinkingTagFilter.push(outputTextDelta);
+    const reasoningDelta = extractResponsesReasoningDelta(type, json);
+    if (reasoningDelta) {
+      step.reasoning += reasoningDelta;
+      await streamEmit.emit('reasoning', { round: step.round, text: reasoningDelta });
+    }
+    if (type === 'response.output_item.added' || type === 'response.output_item.done') {
+      const item = json.item;
+      if (item?.type === 'function_call') {
+        const key = item.id || item.call_id || item.item_id;
+        if (key) {
+          const existing = calls.get(key) || { id: item.id || key, callId: item.call_id || key, name: '', arguments: '' };
+          if (item.name) existing.name = item.name;
+          if (item.call_id) existing.callId = item.call_id;
+          if (item.arguments) existing.arguments = item.arguments;
+          calls.set(key, existing);
+        }
+      }
+    }
+    if (type === 'response.function_call_arguments.delta') {
+      const key = json.item_id || json.call_id || '';
+      const existing = calls.get(key) || { id: key, callId: json.call_id || key, name: '', arguments: '' };
+      existing.arguments += String(json.delta || '');
+      calls.set(key, existing);
+    }
+    if (type === 'response.function_call_arguments.done') {
+      const key = json.item_id || json.call_id || '';
+      const existing = calls.get(key) || { id: key, callId: json.call_id || key, name: '', arguments: '' };
+      existing.arguments = String(json.arguments || existing.arguments || '{}');
+      calls.set(key, existing);
+    }
+    if (type === 'response.completed') {
+      terminalEvent = type;
+      responseId = json.response?.id || responseId;
+      usage = json.response?.usage || json.usage || usage;
+      if (Array.isArray(json.response?.output)) {
+        for (const item of json.response.output) {
+          if (item?.type !== 'function_call') continue;
+          const key = item.id || item.call_id;
+          if (!key) continue;
+          const existing = calls.get(key) || { id: item.id || key, callId: item.call_id || key, name: '', arguments: '' };
+          existing.name = item.name || existing.name;
+          existing.callId = item.call_id || existing.callId;
+          existing.arguments = item.arguments || existing.arguments;
+          calls.set(key, existing);
+        }
+      }
+    }
+    await streamEmit.wait();
+  }
+  thinkingTagFilter.flush();
+  await streamEmit.wait();
+  if (!terminalEvent) throw new Error('Responses API 流式响应在 response.completed 前中断');
+  const normalizedCalls = [];
+  for (const call of calls.values()) {
+    if (!call.name) continue;
+    normalizedCalls.push({
+      ...call,
+      arguments: parseJson(call.arguments || '{}', {})
+    });
+  }
+  return {
+    calls: normalizedCalls,
+    responseId,
+    usage,
+    response: { id: responseId, output: normalizedCalls.map(call => ({
+      type: 'function_call', id: call.id, call_id: call.callId, name: call.name,
+      arguments: JSON.stringify(call.arguments)
+    })) }
+  };
+}
+
+function isJsonProviderResponse(response) {
+  const contentType = String(response?.headers?.get?.('content-type') || '').toLowerCase();
+  return contentType.includes('application/json') || contentType.includes('+json');
 }
 
 function convertMessagesForOpenAiResponses(messages = []) {

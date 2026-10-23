@@ -51,3 +51,40 @@ for (const streaming of [false, true]) {
     });
   }
 }
+
+test('streaming diagnostics stay quiet for an explicit client cancellation', async () => {
+  const originalFetch = globalThis.fetch;
+  const originalError = console.error;
+  const logs = [];
+  const controller = new AbortController();
+  const settings = {
+    providerType: 'custom', gatewayName: 'Test', baseUrl: 'https://diagnostics.test/v1',
+    model: 'claude-sonnet-5-5', apiKey: 'diagnostic-test-credential', extraBody: {}, retryBudget: 0
+  };
+  try {
+    resetProviderResilienceState();
+    console.error = (...args) => logs.push(args);
+    globalThis.fetch = async () => {
+      controller.abort(new Error('客户端已取消角色助手请求。'));
+      throw controller.signal.reason;
+    };
+
+    await assert.rejects(
+      () => streamToolCompletion(
+        settings,
+        [{ role: 'user', content: 'Private story text.' }],
+        tools,
+        () => {},
+        () => {},
+        controller.signal,
+        { maxRounds: 1 }
+      ),
+      /客户端已取消角色助手请求/
+    );
+    assert.equal(logs.length, 0);
+  } finally {
+    globalThis.fetch = originalFetch;
+    console.error = originalError;
+    resetProviderResilienceState();
+  }
+});
