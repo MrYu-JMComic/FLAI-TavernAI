@@ -52,4 +52,6 @@ the new local commits.
 - Final verification detected 9 additional ordinary source, test, style, and
   plan files written during the workflow; they were committed as `7608692`.
 - A further 3 ordinary source, test, and plan files appeared during the next
-  verification pass; they are pending a final follow-up commit.
+  verification pass; they were committed as `bb0a4d2`.
+- One related plan document was revised during the subsequent status check and
+  is pending one final follow-up commit before the gate runs.

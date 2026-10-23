@@ -1,46 +1,58 @@
-# Character Assistant Environment Prompt Plan
+# Fixed Model Prompt English Plan
 
 ## Objective
 
-Teach the AI character assistant the FLAI runtime environment and the semantic
-boundaries between character content, world books, session state, and optional
-features, without presenting this internal reference as user-facing help.
+Convert every fixed, model-facing built-in prompt in the repository to clear,
+unambiguous English, with adjacent Chinese maintainer comments. Review prompt
+semantics and keep user-facing output requirements explicit without making
+internal prompt text read like help written for the user.
 
 ## Scope
 
-- Add a concise, model-facing environment guide in backend source and inject it
-  into every character assistant request as part of the stable system prefix.
-- Clarify that the guide describes product capabilities while enabled sections,
-  current payload, and tools define the authority and scope for this turn.
-- Add a focused backend contract test and record results here.
-- Preserve all unrelated working-tree changes; no UI, database, or user-data
-  changes are in scope.
+- Audit fixed prompt text in backend services, modules, shared model-tool schemas,
+  and prompt builders. Exclude user-authored content, editable presets, role
+  cards, world-book entries, Mods, and interface-only copy.
+- Convert model-visible system/developer instructions and tool descriptions to
+  English; add adjacent Chinese comments that explain the intent and boundaries.
+- Split any prompt guide that is also rendered in the UI so the model receives
+  English while existing user-facing documentation remains Chinese.
+- Preserve output-language contracts (for example, Chinese plan text shown to
+  authors) as explicit English instructions to generate that output in Chinese.
+- Add focused contract tests for model-visible prompt language and critical
+  permission/authority boundaries.
+- Preserve all unrelated working-tree changes and user-authored data.
 
 ## Checklist
 
-- [x] Verify current prompt assembly, feature names, and runtime boundaries.
+- [x] Verify the character assistant prompt assembly, feature names, and runtime boundaries.
 - [x] Write and inject the internal environment guide.
 - [x] Test that the guide reaches the model and describes the key boundaries.
-- [x] Run targeted and required backend validation, encoding check, and diff check.
-- [x] Record validation results and remaining limitations.
+- [ ] Inventory all fixed model-visible prompts and separate them from editable or user-facing text.
+- [ ] Translate fixed model instructions and model-facing tool descriptions to English with Chinese maintainer comments.
+- [ ] Split shared UI/model guide data where needed and preserve Chinese UI copy.
+- [ ] Add language and semantic contract tests for the fixed prompts.
+- [ ] Run targeted and required backend validation, encoding check, and diff check.
+- [ ] Record validation results and remaining limitations.
 
 ## Acceptance Criteria
 
-1. The model receives a concise FLAI environment map in the system message for
-   both creation/editing and free conversation modes.
-2. The guide distinguishes character-card canon, world-book lore, dynamic
-   session state, post-reply agents, memory, and presentation/text extensions.
-3. The guide forbids assuming unavailable or disabled tools, hidden context, or
-   unsupported runtime capabilities, and does not encourage unnecessary feature
-   activation.
-4. The user-facing assistant response does not echo the internal guide.
-5. Relevant tests and repository-required validation pass, or any blocker is
+1. Every fixed model-facing built-in prompt in the audited code paths is written
+   in English; Chinese is retained only for literal domain data such as exact
+   tokens or as the explicitly required language of model-generated output.
+2. Each changed prompt block has a concise adjacent Chinese maintainer comment;
+   those comments are not interpolated into model messages.
+3. Prompt instructions reflect actual tool/runtime permissions and do not ask
+   the model to explain internal prompt mechanics to end users.
+4. User-authored prompts, editable presets, role/world-book content, Mods, and
+   interface-only copy are not rewritten as built-in prompt text.
+5. Focused tests and repository-required validation pass, or any blocker is
    documented accurately.
 
 ## Validation Commands
 
 - `node --test backend/src/tests/characterAssistantEnvironmentGuide.test.js`
 - `npm test` from `backend`
+- `npm run build` from `frontend` when shared UI/model prompt data changes affect frontend imports
 - `node scripts/check-encoding.mjs`
 - `git diff --check`
 
