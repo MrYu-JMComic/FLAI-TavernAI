@@ -25,14 +25,19 @@ export function createConversationMessagesRouter(ctx) {
   router.get('/processing', requireAuth, (request, response) => {
     const conversation = getConversationForUser(db, request.auth.user.id, request.params.id, { includeUsage: false });
     if (!conversation) return response.status(404).json({ error: '对话不存在' });
+    const job = getConversationProcessingSummary(db, request.auth.user.id, conversation.id);
     response.json({ conversationId: conversation.id, stateStatus: conversation.stateStatus, timelineRevision: conversation.timelineRevision,
-      job: getConversationProcessingSummary(db, request.auth.user.id, conversation.id) });
+      coreReady: job?.coreReady ?? !['pending', 'needs_review', 'needs_rebuild', 'stale', 'legacy_partial'].includes(conversation.stateStatus),
+      pendingCount: job?.pendingCount || 0, failedCount: job?.failedCount || 0,
+      corePendingCount: job?.corePendingCount || 0, coreFailedCount: job?.coreFailedCount || 0,
+      requiredStages: job?.requiredStages || [], stages: job?.stages || { core: [], summary: [], index: [] }, job });
   });
   router.post('/processing/rebuild', requireAuth, (request, response) => {
     const conversation = getConversationForUser(db, request.auth.user.id, request.params.id, { includeUsage: false });
     if (!conversation) return response.status(404).json({ error: '对话不存在' });
     response.json(requestConversationStateRebuild(db, request.auth.user.id, conversation.id, {
-      confirmed: request.body?.confirmed === true, acceptCurrent: request.body?.acceptCurrent === true
+      confirmed: request.body?.confirmed === true, acceptCurrent: request.body?.acceptCurrent === true,
+      expectedTurnCount: request.body?.expectedTurnCount
     }));
   });
   router.get('/processing/tools', requireAuth, (request, response) => {

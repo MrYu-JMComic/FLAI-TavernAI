@@ -8,7 +8,7 @@ export const WORLD_BOOK_ENTRY_FIELDS = Object.freeze([
   'name', 'triggerKeys', 'content', 'position', 'enabled', 'orderIndex',
   'regexMode', 'alwaysActive', 'depth', 'selective', 'selectiveLogic',
   'keysSecondary', 'probability', 'useProbability', 'group', 'groupWeight',
-  'role', 'sticky', 'cooldown', 'delay'
+  'role', 'sticky', 'cooldown', 'delay', 'knowledgeVisibility', 'audienceCastKeys'
 ]);
 
 // Use content rather than timestamps: two edits may share the same millisecond.

@@ -2,6 +2,7 @@ import { appConfig } from '../config.js';
 import { AppError } from '../errors.js';
 import { nowIso } from '../security.js';
 import { sumWorldBookStorageBytes } from '../repositories/worldBookRepository.js';
+import { sumMemoryStorageBytes } from '../repositories/memoryStorageRepository.js';
 import { unwrapConversationDatabase } from './conversationMutationContext.js';
 
 export function getUserQuota(database, userId, defaults = appConfig.quotaDefaults) {
@@ -136,6 +137,7 @@ export function getStructuredStorageUsage(database, userId) {
   } catch {
     // Older embedded databases may not have the world book tables yet.
   }
+  bytes += sumMemoryStorageBytes(database, userId);
   return Math.max(0, bytes);
 }
 

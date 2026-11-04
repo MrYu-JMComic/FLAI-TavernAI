@@ -96,7 +96,8 @@ test('ChatContextInspector exposes prompt diagnostics and compact context views'
 });
 
 test('split context tools scope requests, protect stale state, and keep budget writes numeric-only', () => {
-  assert.match(memoryReviewScript, /import \{ apiRequest \} from '\.\.\/\.\.\/api\/core\.js'/);
+  assert.match(memoryReviewScript, /from '\.\.\/\.\.\/api\/memories\.js'/);
+  assert.doesNotMatch(memoryReviewScript, /apiRequest\(|\/api\/conversations/);
   assert.match(memoryReviewScript, /function isCurrentMutation\(conversationId, token\)/);
   assert.match(memoryReviewTemplate, /<ConfirmDialog/);
 
@@ -130,6 +131,8 @@ test('ChatHeader and ChatView wire the context inspector into the chat workspace
   assert.match(chatViewScript, /function openContextInspector\(\)[\s\S]*conversationReady\.value[\s\S]*contextInspectorOpen\.value = true;/);
   assert.match(chatViewScript, /function closeContextInspector\(\)[\s\S]*contextInspectorOpen\.value = false;/);
   assert.match(chatViewScript, /event\.key === 'Escape' && contextInspectorOpen\.value/);
-  assert.match(chatViewTemplate, /@open-context="\(event\) => openWorkspaceTool\('context', event\)"/);
+  assert.match(chatViewTemplate, /@open-context="\(event\) => \{ contextInspectorInitialView = 'preview'; openWorkspaceTool\('context', event\); \}"/);
+  assert.match(chatViewTemplate, /@open-memory="contextInspectorInitialView = 'memory'; openWorkspaceTool\('context'\)"/);
+  assert.match(chatViewTemplate, /:initial-view="contextInspectorInitialView"/);
   assert.match(chatViewTemplate, /<ChatContextInspector[\s\S]*:open="contextInspectorOpen"[\s\S]*:draft-content="input"[\s\S]*:draft-attachments="chatAttachments"[\s\S]*:preset-id="selectedPresetId"[\s\S]*@close="closeWorkspaceTool\('context'\)"/);
 });

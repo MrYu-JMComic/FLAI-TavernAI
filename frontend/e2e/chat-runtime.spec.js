@@ -148,3 +148,104 @@ test('draft cache denial remains visible on a phone without blocking input', asy
   const composer = await page.locator('.deep-composer-wrap').boundingBox();
   expect(composer.y + composer.height).toBeLessThanOrEqual(813);
 });
+
+test('phone composer stays unfocused after an edited reply finishes', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await registerUser(page);
+  const { conversation } = await createChat(page);
+  await page.goto(`/#/chat/${conversation.id}`);
+
+  const composer = page.getByLabel('聊天消息输入');
+  await composer.fill('Initial phone prompt');
+  await page.getByRole('button', { name: '发送消息' }).click();
+  await expect(page.locator('.deep-message.assistant[data-message-id]').last()).toContainText(/本地 Mock 回复/, { timeout: 30_000 });
+
+  const latestUserMessage = page.locator('.deep-message.user[data-message-id]').last();
+  await latestUserMessage.locator('.message-action-button[title="编辑消息"]').click();
+  await page.getByLabel('编辑消息内容').fill('Updated phone prompt');
+  await page.getByRole('button', { name: '保存并重跑' }).click();
+  await expect(page.getByRole('button', { name: '停止生成' })).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByRole('button', { name: '停止生成' })).toBeHidden({ timeout: 30_000 });
+
+  await expect(composer).not.toBeFocused();
+});
+
+test('phone composer keeps the caret visible as long drafts grow and resize', async ({ page }, testInfo) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await registerUser(page);
+  const { conversation } = await createChat(page);
+  await page.goto(`/#/chat/${conversation.id}`);
+
+  const composer = page.getByLabel('聊天消息输入');
+  const draft = Array.from({ length: 14 }, (_, index) => (
+    `[时间]: 承平三年，第${index + 1}刻，皇城内廷的宫人依次回报当日安排。`
+  )).join('\n');
+  await composer.fill(draft);
+  await composer.press('Control+End');
+  await composer.type('\n[角色特写]: 光标停留在这行末尾');
+
+  const readCaretState = () => composer.evaluate((element) => ({
+    valueLength: element.value.length,
+    selectionStart: element.selectionStart,
+    scrollTop: element.scrollTop,
+    clientHeight: element.clientHeight,
+    scrollHeight: element.scrollHeight,
+    lineHeight: Number.parseFloat(getComputedStyle(element).lineHeight)
+  }));
+  await expect.poll(async () => {
+    const state = await readCaretState();
+    return state.selectionStart === state.valueLength
+      && state.scrollTop > 0
+      && state.scrollTop + state.clientHeight >= state.scrollHeight - state.lineHeight * 1.5;
+  }).toBe(true);
+  await page.screenshot({ path: testInfo.outputPath('chat-composer-caret-mobile-390.png'), animations: 'disabled' });
+
+  await page.setViewportSize({ width: 390, height: 500 });
+  await expect.poll(async () => {
+    const state = await readCaretState();
+    return state.selectionStart === state.valueLength
+      && state.scrollTop + state.clientHeight >= state.scrollHeight - state.lineHeight * 1.5;
+  }).toBe(true);
+  await page.screenshot({ path: testInfo.outputPath('chat-composer-caret-mobile-short-390.png'), animations: 'disabled' });
+});
+
+test('composer focus and text selection use warm theme colors', async ({ page }, testInfo) => {
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await registerUser(page);
+  const { conversation } = await createChat(page);
+  await page.goto(`/#/chat/${conversation.id}`);
+  const composer = page.getByLabel('聊天消息输入');
+  await composer.fill('Warm selection color');
+  await composer.focus();
+  await composer.press('Control+A');
+
+  const readColors = () => composer.evaluate((element) => ({
+    border: getComputedStyle(element).borderColor,
+    ring: getComputedStyle(element.closest('.deep-composer')).boxShadow,
+    selection: getComputedStyle(element, '::selection').backgroundColor,
+    caret: getComputedStyle(element).caretColor
+  }));
+  const lightColors = await readColors();
+  expect(lightColors.ring).toContain('4px');
+  expect(lightColors.selection).not.toBe('rgba(0, 0, 0, 0)');
+  expect(lightColors.caret).not.toBe('auto');
+  await page.screenshot({ path: testInfo.outputPath('chat-composer-focus-selection-light-1280.png'), animations: 'disabled' });
+
+  await page.getByRole('button', { name: '切换到夜间模式' }).click();
+  await composer.focus();
+  await composer.press('Control+A');
+  const darkColors = await readColors();
+  expect(darkColors.ring).toContain('4px');
+  expect(darkColors.selection).not.toBe('rgba(0, 0, 0, 0)');
+  expect(darkColors.caret).not.toBe('auto');
+  expect(darkColors.ring).not.toBe(lightColors.ring);
+  expect(darkColors.selection).not.toBe(lightColors.selection);
+  await page.screenshot({ path: testInfo.outputPath('chat-composer-focus-selection-dark-1280.png'), animations: 'disabled' });
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  const closeSidebar = page.getByRole('button', { name: '收起侧边栏' });
+  if (await closeSidebar.isVisible()) await closeSidebar.click();
+  await composer.focus();
+  await composer.press('Control+A');
+  await page.screenshot({ path: testInfo.outputPath('chat-composer-focus-selection-dark-390.png'), animations: 'disabled' });
+});

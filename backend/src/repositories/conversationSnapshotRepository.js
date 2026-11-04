@@ -3,8 +3,12 @@ import { newId, nowIso } from '../security.js';
 import { parseJson } from '../utils/json.js';
 import { withSavepoint } from '../modules/savepoint.js';
 import { sanitizeChatAttachments } from '../services/chatAttachments.js';
+import { MEMORY_TABLES, captureMemorySnapshot, restoreMemorySnapshot } from './conversationMemoryRepository.js';
+import { captureMemoryCheckpoint, restoreMemoryCheckpoint, rebuildMemoryReviewProjection } from '../services/conversationMemory/commit.js';
+import { bumpVersion } from '../utils/cacheVersion.js';
+import { auditMemoryProjectionChanges } from '../services/conversationMemory/projectionAudit.js';
 
-export const CONVERSATION_SNAPSHOT_VERSION = 2;
+export const CONVERSATION_SNAPSHOT_VERSION = 3;
 const CONVERSATION_FIELDS = [
   'title', 'desktop_background_url', 'mobile_background_url', 'custom_css', 'custom_js',
   'user_advanced_settings', 'chat_lorebook_id', 'context_budget_json'
@@ -47,6 +51,7 @@ export function captureConversationSnapshot(database, userId, conversationId, op
   for (const [table, parent, foreignKey] of TABLES) {
     state[table] = database.prepare(`SELECT * FROM ${table} WHERE ${scopeClause(parent, foreignKey)} ORDER BY rowid`).all(conversationId);
   }
+  if (options.compactMemory) for(const table of ['conversation_memories','conversation_memory_review_operations','conversation_memory_review_members']) state[table]=[];
   const messages = options.includeMessages === false ? [] : readSnapshotMessages(database, userId, conversationId);
   return {
     version: CONVERSATION_SNAPSHOT_VERSION,
@@ -59,6 +64,8 @@ export function captureConversationSnapshot(database, userId, conversationId, op
       'SELECT * FROM message_swipes WHERE user_id = ? AND message_id IN (SELECT id FROM messages WHERE conversation_id = ?) ORDER BY created_at, rowid'
     ).all(userId, conversationId),
     state,
+    ...(options.compactMemory ? { memoryCheckpoint:captureMemoryCheckpoint(database,userId,conversationId) }
+      : { memory:captureMemorySnapshot(database,userId,conversationId) }),
     savedAt: nowIso()
   };
 }
@@ -75,6 +82,9 @@ export function restoreConversationSnapshot(database, userId, conversationId, sn
     for (const rows of [restoredSnapshot.messages || [], restoredSnapshot.swipes || [], ...SNAPSHOT_STATE_TABLES.map(table => restoredSnapshot.state[table])]) {
       for (const row of rows) if (row.id) idMap.set(row.id, newId());
     }
+    for(const table of MEMORY_TABLES) for(const row of restoredSnapshot.memory?.[table]||[]) if(row.id) idMap.set(row.id,newId());
+    for(const row of restoredSnapshot.memory?.memory_events||[]) if(row.memory_id&&!idMap.has(row.memory_id)) idMap.set(row.memory_id,newId());
+    for(const row of restoredSnapshot.memory?.memory_plot_threads||[]) if(row.thread_key&&!idMap.has(row.thread_key)) idMap.set(row.thread_key,newId());
   }
   return withSavepoint(database, 'sp_restore_conversation_snapshot', () => {
     const deferred = database.prepare('PRAGMA defer_foreign_keys').get().defer_foreign_keys;
@@ -99,6 +109,17 @@ export function restoreConversationSnapshot(database, userId, conversationId, sn
       for (const [table] of restoredTables) {
         insertRows(database, table, restoredSnapshot.state[table], idMap, userId, restoredSnapshot.conversationId, conversationId);
       }
+      if(restoredSnapshot.memory) {
+        restoreMemorySnapshot(database,userId,conversationId,restoredSnapshot.memory,{idMap});
+        if (!restoredSnapshot.state.conversation_memories.length && restoredSnapshot.memory.memory_events?.length)
+          rebuildMemoryReviewProjection(database,userId,conversationId);
+      }
+      else if(restoredSnapshot.memoryCheckpoint) restoreMemoryCheckpoint(database,userId,conversationId,restoredSnapshot.memoryCheckpoint);
+      else {
+        restoreMemorySnapshot(database,userId,conversationId,{});
+        // V2 text memories are accepted review records, not fabricated structured history.
+        auditMemoryProjectionChanges(database,userId,conversationId,[],'legacy_import');
+      }
       if (options.restoreSettings !== false) {
         const fields = CONVERSATION_FIELDS.filter((key) => Object.hasOwn(restoredSnapshot.settings || {}, key)
           && (options.restoreTitle !== false || key !== 'title'));
@@ -110,6 +131,7 @@ export function restoreConversationSnapshot(database, userId, conversationId, sn
       if (database.prepare('PRAGMA foreign_key_check').all().length) {
         throw snapshotError('Snapshot contains invalid resource references', 'SNAPSHOT_REFERENCE_INVALID');
       }
+      bumpVersion(conversationId,'scene');
       return { idMap, restoredDomains: restoredTables.map(([table]) => table) };
     } finally {
       database.exec(`PRAGMA defer_foreign_keys = ${deferred ? 'ON' : 'OFF'}`);
@@ -126,7 +148,7 @@ export function clearConversationSnapshotState(database, userId, conversationId)
 export function writeConversationCheckpoint(database, userId, conversationId, options = {}) {
   const messages = readSnapshotMessages(database, userId, conversationId, options.throughMessageId || '');
   const anchor = messages.at(-1);
-  const state = captureConversationSnapshot(database, userId, conversationId, { includeMessages: false });
+  const state = captureConversationSnapshot(database, userId, conversationId, { includeMessages: false, compactMemory:true });
   if (options.preserveWorldBookState && options.id) {
     const previous = database.prepare('SELECT state_json FROM conversation_checkpoints WHERE id = ? AND conversation_id = ?').get(options.id, conversationId);
     const before = parseJson(previous?.state_json, null);
@@ -181,6 +203,7 @@ function assertSnapshot(snapshot, userId, target) {
 }
 
 function normalizeSnapshotForRestore(snapshot) {
+  if(snapshot?.version===2) snapshot={...snapshot,version:CONVERSATION_SNAPSHOT_VERSION};
   if (snapshot?.version !== CONVERSATION_SNAPSHOT_VERSION || !snapshot.state || typeof snapshot.state !== 'object') {
     return snapshot;
   }
@@ -226,6 +249,7 @@ function assertInternalReferences(database, snapshot) {
   const allRows = Object.fromEntries(SNAPSHOT_STATE_TABLES.map((table) => [table, snapshot.state[table]]));
   allRows.messages = snapshot.messages || [];
   allRows.message_swipes = snapshot.swipes || [];
+  for(const table of MEMORY_TABLES) if(Array.isArray(snapshot.memory?.[table])) allRows[table]=snapshot.memory[table];
   for (const [table, rows] of Object.entries(allRows)) {
     const foreignKeys = database.prepare(`PRAGMA foreign_key_list(${table})`).all();
     for (const key of foreignKeys) {

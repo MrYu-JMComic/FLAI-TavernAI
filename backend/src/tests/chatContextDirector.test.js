@@ -22,6 +22,7 @@ test('context director includes the approved priority order', () => {
   assert.match(prompt, /newer explicit user request overrides only the conflicting part/);
   assert.match(prompt, /later explicitly confirmed event may update an earlier stored state/);
   assert.match(prompt, /Do not treat unsupported off-screen changes as established facts/);
+  assert.doesNotMatch(prompt, /\p{Script=Han}/u);
 });
 
 test('context director only mentions active optional context sources', () => {
@@ -65,6 +66,10 @@ test('context director treats malformed optional context as absent', () => {
 
 test('main chat prompt leaves reasoning behavior to provider settings', () => {
   assert.doesNotMatch(promptPipelineSource, /内部思考|思考过程|推理内容会由系统单独处理/);
-  assert.match(promptPipelineSource, /不要替用户决定未表达的台词、想法、感受、选择或动作/);
-  assert.match(promptPipelineSource, /用户本轮更新、更具体的明确要求优先/);
+  assert.match(promptPipelineSource, /do not decide their unstated dialogue, thoughts, feelings, choices, or actions/);
+  assert.match(promptPipelineSource, /A newer and more specific explicit request from the user takes precedence/);
+  assert.match(promptPipelineSource, /natural, coherent Chinese unless the user explicitly requests another language/);
+  assert.match(promptPipelineSource, /\[World Book Context\]/);
+  assert.match(promptPipelineSource, /\[User-Configured Session Instructions\]/);
+  assert.match(promptPipelineSource, /\|\| 'Current Status'/);
 });

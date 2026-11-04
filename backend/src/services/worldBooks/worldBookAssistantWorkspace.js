@@ -12,24 +12,27 @@ import {
 import { objectOrEmpty } from '../assistantUtils.js';
 import { WORLD_BOOK_ASSISTANT_ENTRY_LIMIT } from '../../domain/worldBooks/limits.js';
 import { buildWorldBookMatchPreview } from './worldBookMatchPreview.js';
+import { applyToolTextPatch } from '../toolTextPatch.js';
+import { z } from 'zod';
 
 const PROFILE_FIELDS = WORLD_BOOK_PROFILE_FIELDS;
 const ENTRY_FIELDS = WORLD_BOOK_ENTRY_FIELDS;
-const TARGET_SCHEMA = { type: 'string', description: '工作区目标 ref；省略时使用当前活动目标。' };
+// 中文维护说明：工作区工具的 description 会直接发送给模型；保持英文，并准确说明只读、目标选择和分页行为。
+const TARGET_SCHEMA = { type: 'string', description: 'Workspace target ref. If omitted, the active target is used.' };
 const READ_TOOLS = [
-  tool('search_world_books', '检索当前用户已有世界书的名称、描述、关联角色和条目。只返回目录；找到目标后用 select_world_book/read_world_book 读取。', {
+  tool('search_world_books', 'Search the current user\'s world books by name, description, linked character, or entry content. Returns directory data only. After finding a candidate, use select_world_book and read_world_book.', {
     query: { type: 'string', maxLength: 200 },
     offset: { type: 'integer', minimum: 0 },
     limit: { type: 'integer', minimum: 1, maximum: 30 }
   }),
-  tool('select_world_book', '选择已有世界书为本次活动目标，不修改数据，也不改变角色长期关联。其他书的草稿继续保留。', {
+  tool('select_world_book', 'Select an existing world book as an active target for this task. This does not modify book data or change persistent character links. Drafts for other books are retained.', {
     bookId: { type: 'string', minLength: 1 }, targetRef: TARGET_SCHEMA
   }),
-  tool('read_world_book', '读取目标的资料和条目目录；提供 entryIds 读取指定正文，或 query 检索条目正文。目录和正文都支持分页。返回最新未应用草稿。', {
+  tool('read_world_book', 'Read the target profile and entry directory. Provide entryIds to read specific entry bodies, or query to search entry bodies. Both directory and body results support pagination. Returns the latest unapplied draft.', {
     targetRef: TARGET_SCHEMA, bookId: { type: 'string' },
     entryIds: { type: 'array', items: { type: 'string' }, maxItems: 30 },
     query: { type: 'string', maxLength: 200 },
-    includeContent: { type: 'boolean', description: '设为 true 读取一页正文；有 query 或 entryIds 时默认返回正文，设为 false 只返回目录。' },
+    includeContent: { type: 'boolean', description: 'Set true to read one page of entry bodies. Bodies are returned by default when query or entryIds is provided. Set false to return directory data only.' },
     offset: { type: 'integer', minimum: 0 }, limit: { type: 'integer', minimum: 1, maximum: 30 }
   })
 ];
@@ -40,17 +43,45 @@ function tool(name, description, properties, required = []) {
   } } };
 }
 
+const entryMutation = WORLD_BOOK_DRAFT_TOOLS.find(item => item.function.name === 'upsert_world_book_entry').function.parameters;
+const entryId = { type: 'string', minLength: 1, maxLength: 160 };
+const PRECISE_TOOLS = [
+  tool('patch_world_book_text', 'Apply 1-30 exact body-text edits to existing entries atomically. Read each entry first and copy oldText exactly. A mismatched occurrence count changes nothing. Entry IDs, metadata and unrelated passages remain intact.', {
+    targetRef: TARGET_SCHEMA,
+    edits: { type: 'array', minItems: 1, maxItems: 30, items: {
+      type: 'object', additionalProperties: false, required: ['entryId', 'oldText', 'newText'], properties: {
+        entryId, oldText: { type: 'string', minLength: 1, maxLength: 50000 },
+        newText: { type: 'string', maxLength: 50000 }, expectedOccurrences: { type: 'integer', minimum: 1, maximum: 1000 }
+      }
+    } }
+  }, ['edits']),
+  tool('batch_world_book_entries', 'Apply 1-30 sparse entry upserts/removals atomically in one target. Omitted fields and entries remain unchanged. Use an existing entryId for updates. Every operation must succeed or the entire batch is rejected.', {
+    targetRef: TARGET_SCHEMA,
+    operations: { type: 'array', minItems: 1, maxItems: 30, items: { anyOf: [
+      { type: 'object', additionalProperties: false, required: ['op', 'changes'], properties: {
+        op: { type: 'string', enum: ['upsert'] }, ...entryMutation.properties
+      } },
+      { type: 'object', additionalProperties: false, required: ['op', 'entryId'], properties: {
+        op: { type: 'string', enum: ['remove'] }, entryId
+      } }
+    ] } }
+  }, ['operations'])
+];
+const preciseValidators = new Map(PRECISE_TOOLS.map(definition =>
+  [definition.function.name, z.fromJSONSchema(definition.function.parameters)]));
+
 export function worldBookWorkspaceTools({ planPhase = false } = {}) {
   const reads = [...READ_TOOLS, withTarget(WORLD_BOOK_DRAFT_TOOLS.find((item) => item.function.name === 'preview_world_book_entries'))];
   if (planPhase) return reads;
   return [
     ...reads,
-    tool('create_world_book', '创建独立的新世界书草稿并切换为活动目标。无论是否选中了已有书都可以调用；追加结果，不覆盖或修改原书。可先建资料再分批写条目。', {
+    tool('create_world_book', 'Create a separate new world-book draft and make it the active target. This can be called whether or not another book is selected. It adds a book and never overwrites or modifies an existing one. You may create the profile first and add entries in batches.', {
       ...WORLD_BOOK_DRAFT_SCHEMA.properties,
-      localId: { type: 'string', description: '重试同一创建操作时复用该 ID；通常省略由系统生成。' }
+      localId: { type: 'string', description: 'Reuse this ID when retrying the same creation operation. Usually omit it and let the system generate one.' }
     }),
     ...WORLD_BOOK_DRAFT_TOOLS.filter((item) => item.function.name !== 'preview_world_book_entries').map(withTarget),
-    tool('finish_world_book_task', '本轮完成后提交回复并结束。可以只回答查询或提出必要的简短澄清，无需产生变更。', {
+    ...structuredClone(PRECISE_TOOLS),
+    tool('finish_world_book_task', 'Submit the user-facing reply and end this task. You may answer a read-only query or ask a necessary brief clarification without making changes.', {
       reply: { type: 'string', maxLength: 8000 }
     }, ['reply'])
   ];
@@ -60,7 +91,7 @@ function withTarget(source) {
   const copy = structuredClone(source);
   copy.function.parameters.properties.targetRef = TARGET_SCHEMA;
   if (copy.function.name === 'replace_world_book_entries') {
-    copy.function.description = '完整替换新建草稿的条目，最多 30 条。已有世界书必须按条目 ID 使用 upsert/remove，不能用未列出的条目推断删除。';
+    copy.function.description = 'Replace all entries in a new draft, up to 30 entries. For an existing world book, use upsert_world_book_entry or remove_world_book_entry by entry ID. Never infer deletion from an entry being absent from the input.';
   }
   return copy;
 }
@@ -178,6 +209,7 @@ export function buildWorldBookChanges(workspace) {
 
 export function executeWorldBookWorkspaceTool(workspace, name, args = {}) {
   const input = objectOrEmpty(args);
+  if (preciseValidators.has(name)) return executePreciseEntries(workspace, name, input);
   if (name === 'finish_world_book_task') {
     workspace._finished = true;
     workspace._reply = String(input.reply || '').trim();
@@ -207,6 +239,7 @@ export function executeWorldBookWorkspaceTool(workspace, name, args = {}) {
   if (!target) return { ok: false, error: 'WORLD_BOOK_TARGET_REQUIRED', message: '请先 select_world_book 选择已有书，或 create_world_book 创建独立新书。' };
   if (name === 'read_world_book') return readTarget(workspace, target, input);
   if (name === 'set_world_book_profile') {
+    if (!Object.keys(pick(input, PROFILE_FIELDS)).length) return { ok: false, error: 'WORLD_BOOK_PROFILE_FIELDS_REQUIRED' };
     const next = effectiveProfile(target);
     mergeWorldBookProfile(next, pick(input, PROFILE_FIELDS));
     if (!next.name && Object.hasOwn(input, 'name')) return { ok: false, error: 'WORLD_BOOK_NAME_INVALID' };
@@ -225,6 +258,42 @@ export function executeWorldBookWorkspaceTool(workspace, name, args = {}) {
     return { ok: true, targetRef: target.ref, matchCount: preview.matchCount, matches: preview.matches.slice(0, 30), explanations: preview.explanations.slice(0, 30), groups: preview.groups.slice(0, 30), truncated: preview.explanations.length > 30 };
   }
   return { ok: false, error: `Unknown world book tool: ${name}` };
+}
+
+/** Stages a cloned workspace so failed exact edits or batch operations cannot leave partial proposals. */
+function executePreciseEntries(workspace, name, input) {
+  const checked = preciseValidators.get(name).safeParse(input);
+  if (!checked.success) return { ok: false, error: 'WORLD_BOOK_ARGUMENTS_INVALID', recoverable: true };
+  const before = workspace.targets;
+  const activeRef = workspace.activeRef;
+  workspace.targets = structuredClone(before);
+  let operationIndex = 0;
+  try {
+    const operations = name === 'patch_world_book_text' ? checked.data.edits : checked.data.operations;
+    const results = operations.map((operation, index) => {
+      operationIndex = index;
+      let result;
+      if (name === 'patch_world_book_text') {
+        const target = resolveTarget(workspace, checked.data);
+        const entry = target && effectiveEntries(workspace, target).find(item => item.id === operation.entryId);
+        if (!entry) throw Object.assign(new Error('世界书条目不存在，请先读取当前条目。'), { code: 'ENTRY_NOT_FOUND' });
+        const content = applyToolTextPatch(entry.content, operation, 50000);
+        result = executeWorldBookWorkspaceTool(workspace, 'upsert_world_book_entry',
+          { targetRef: target.ref, entryId: entry.id, changes: { content } });
+      } else {
+        result = executeWorldBookWorkspaceTool(workspace,
+          operation.op === 'upsert' ? 'upsert_world_book_entry' : 'remove_world_book_entry',
+          { targetRef: checked.data.targetRef, entryId: operation.entryId, changes: operation.changes });
+      }
+      if (!result.ok) throw Object.assign(new Error(result.message || result.error), { code: result.error });
+      return result;
+    });
+    return { ok: true, results, targetRef: checked.data.targetRef || workspace.activeRef };
+  } catch (error) {
+    workspace.targets = before;
+    workspace.activeRef = activeRef;
+    return { ok: false, error: error.code || 'WORLD_BOOK_BATCH_FAILED', operationIndex, message: error.message, recoverable: true };
+  }
 }
 
 function resolveTarget(workspace, input) {

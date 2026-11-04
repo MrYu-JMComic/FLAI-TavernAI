@@ -196,11 +196,13 @@ test('WorldBookView freezes book and entry forms while saving is active', () => 
   assert.match(worldBookViewTemplate, /<button class="ghost-button" :disabled="saving" @click="closeBookForm">/);
   assert.match(worldBookViewTemplate, /<button class="primary-button" :disabled="saving" :aria-busy="saving" @click="saveBook">/);
 
-  assert.match(worldBookViewTemplate, /<div class="modal-content form-panel entry-modal" :aria-busy="saving">/);
+  assert.match(worldBookViewTemplate, /<div\b(?=[^>]*\bclass="modal-content form-panel entry-modal")(?=[^>]*:aria-busy="saving")[^>]*>/);
   assert.match(worldBookViewTemplate, /<input v-model\.trim="editingEntry\.name"[\s\S]*:disabled="saving" \/>/);
   assert.match(worldBookViewTemplate, /<input v-model="editingEntry\.triggerKeys"[\s\S]*:disabled="saving" \/>/);
   assert.match(worldBookViewTemplate, /<select v-model="editingEntry\.position" :disabled="saving">/);
   assert.match(worldBookViewTemplate, /<textarea v-model="editingEntry\.content"[\s\S]*:disabled="saving" \/>/);
+  assert.match(worldBookViewTemplate, /<select v-model="editingEntry\.knowledgeVisibility" :disabled="saving">/);
+  assert.match(worldBookViewTemplate, /<input v-model="editingEntry\.audienceCastKeysText"[^>]*:disabled="saving"/);
   assert.match(worldBookViewTemplate, /<input v-model="editingEntry\.enabled" type="checkbox" :disabled="saving" \/>/);
   assert.match(worldBookViewTemplate, /<input v-model="editingEntry\.regexMode" type="checkbox" :disabled="saving" \/>/);
   assert.match(worldBookViewTemplate, /<input v-model="editingEntry\.alwaysActive" type="checkbox" :disabled="saving" \/>/);

@@ -70,6 +70,13 @@ test('selected book supports two draft turns, creation, real atomic apply and fo
   await expect(userMessage.locator('> p')).toHaveText('补充巡逻队结伴出港的例外\n**原样输入**');
   await expect(userMessage.locator('.markdown-content')).toHaveCount(0);
   await expect(userMessage.locator('> p')).toHaveCSS('white-space', 'pre-wrap');
+  await page.getByRole('button', { name: '世界书', exact: true }).click();
+  await expect(page).toHaveURL(/#\/world-books$/);
+  await expect(panel.locator('.worldbook-change')).toHaveCount(2);
+  await page.locator('.book-card').filter({ hasText: '雾港设定' }).click();
+  await expect(page).toHaveURL(new RegExp(`#\\/world-books\\/${book.id}$`));
+  await expect(panel.locator('.worldbook-change')).toHaveCount(2);
+  await expect(panel.locator('.worldbook-messages article')).toHaveCount(4);
   await panel.locator('.worldbook-change-detail summary').first().click();
   await expect(panel.locator('.worldbook-change').first()).toContainText('巡逻队可结伴出港');
   await page.setViewportSize({ width: 1440, height: 1000 });
@@ -94,6 +101,40 @@ test('selected book supports two draft turns, creation, real atomic apply and fo
   await expect.poll(() => requests.length).toBe(3);
   expect(requests[2].workspace.targets.every(item => item.bookId && item.upserts.length === 0)).toBe(true);
   await expect(panel.locator('.worldbook-messages')).toContainText('现有两本书均已保存');
+});
+
+test('partial entry reorder failure reloads the persisted order before reporting the error', async ({ page }, testInfo) => {
+  await registerUser(page);
+  const book = await seedBook(page, '换序恢复测试', 2);
+  let detailReads = 0;
+  await page.route('**/api/world-books/**', async route => {
+    const request = route.request();
+    const pathname = new URL(request.url()).pathname;
+    if (request.method() === 'GET' && pathname === `/api/world-books/${book.id}`) {
+      detailReads += 1;
+      return route.continue();
+    }
+    if (request.method() === 'PUT' && pathname === `/api/world-books/${book.id}/entries/${book.entries[1].id}`) {
+      return route.fulfill({ status: 500, json: { error: '模拟换序失败' } });
+    }
+    return route.continue();
+  });
+  await page.goto(`/#/world-books/${book.id}`);
+  await expect(page.locator('.entry-row')).toHaveCount(2);
+  const readsBeforeMove = detailReads;
+  await page.getByRole('button', { name: `下移条目：${book.entries[0].name}` }).click();
+  await expect(page.locator('.message-toast')).toContainText('模拟换序失败');
+  await expect.poll(() => detailReads).toBe(readsBeforeMove + 1);
+  const persistedBook = await apiRequest(page, `/api/world-books/${book.id}`);
+  const renderedNames = await page.locator('.entry-row strong').allTextContents();
+  expect(renderedNames).toEqual(persistedBook.entries.map(entry => entry.name || '未命名条目'));
+  await page.locator('.entry-list').scrollIntoViewIfNeeded();
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.screenshot({ path: testInfo.outputPath('worldbook-reorder-recovered-desktop.png'), animations: 'disabled' });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.locator('.entry-list').scrollIntoViewIfNeeded();
+  await expectNoHorizontalOverflow(page);
+  await page.screenshot({ path: testInfo.outputPath('worldbook-reorder-recovered-mobile.png'), animations: 'disabled' });
 });
 
 test('automatic selection starts empty and remains usable on a narrow phone', async ({ page }, testInfo) => {

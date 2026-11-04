@@ -881,7 +881,7 @@ export function useChatSubmit({
       return;
     }
     const runId = ++accessoryRefreshRun;
-    const jobId = String(assistantMessage?.postprocessJobId || '').trim();
+    const jobId = String(assistantMessage?.coreJobId || assistantMessage?.memoryProcessing?.stages?.core?.id || assistantMessage?.postprocessJobId || '').trim();
     const assistantMessageId = String(assistantMessage?.id || '').trim();
     clearAccessoryRefreshTimers();
     if (typeof onAccessoryRefreshStart === 'function') {

@@ -70,17 +70,20 @@ function onResponseModeFocusout(event) {
   }
 }
 
-// Keep the compact settings popover easy to dismiss with pointer and keyboard input.
+// Dismiss the compact settings popover on outside pointer input.
 function onResponseModePointerDown(event) {
   if (responseModeMenuOpen.value && !responseModeMenuRef.value?.contains(event.target)) {
     closeResponseModeMenu();
   }
 }
 
+// Consume Escape here so the parent only handles the next active layer.
 function onResponseModeKeydown(event) {
   if (event.key !== 'Escape' || !responseModeMenuOpen.value) {
     return;
   }
+  event.preventDefault();
+  event.stopPropagation();
   closeResponseModeMenu();
   responseModeTriggerRef.value?.focus({ preventScroll: true });
 }

@@ -154,10 +154,13 @@ test('ChatMessageItem focuses the edit textarea when edit mode opens', () => {
   );
 });
 
-test('ChatMessageItem owns typewriter state and follows only committed Markdown renders', () => {
-  assert.match(chatMessageItemScript, /import \{ useTypewriterText \} from '..\/..\/composables\/useTypewriterText\.js';/);
-  assert.match(chatMessageItemScript, /displayedText: displayedReasoning, isTyping: isReasoningTyping/);
-  assert.match(chatMessageItemScript, /displayedText: displayedContent, isTyping: isContentTyping/);
+test('ChatMessageItem forwards stream state and follows only committed Markdown renders', () => {
+  // SFC runtime cases live in streamRenderingLifecycle.test.js; newline/caret geometry lives in chat-typewriter-newline.spec.js.
+  assert.doesNotMatch(chatMessageItemScript, /useTypewriterText/);
+  assert.match(chatMessageItemScript, /const displayedReasoning = reasoningSource;/);
+  assert.match(chatMessageItemScript, /const displayedContent = contentSource;/);
+  assert.match(chatMessageItemScript, /const isReasoningTyping = reasoningStreaming;/);
+  assert.match(chatMessageItemScript, /const isContentTyping = contentStreaming;/);
   assert.match(chatMessageItemScript, /function emitContentRendered\(\) \{\s*if \(isContentTyping\.value\) emit\('typing-progress', props\.message\);\s*}/);
   assert.match(
     chatMessageItemTemplate,

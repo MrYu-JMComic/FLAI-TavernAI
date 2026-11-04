@@ -20,7 +20,8 @@ export function useChatConversation({ route, emit, showError }) {
   const sidebarLoadError = ref('');
   const sidebarLoading = ref(false);
   const historySearch = ref('');
-  const sidebarOpen = ref(isViewportMatch('(min-width: 981px)'));
+  // Auto-open only when the sidebar occupies a desktop grid column.
+  const sidebarOpen = ref(isViewportMatch('(min-width: 1180px)'));
   const settingsDrawerOpen = ref(false);
   const selectedConversationIds = ref(new Set());
   const conversationActionBusy = ref(false);

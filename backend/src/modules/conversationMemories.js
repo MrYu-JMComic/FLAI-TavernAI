@@ -3,6 +3,9 @@ import { normalizeBoolean } from '../utils/boolean.js';
 import { clampNumber } from '../utils/number.js';
 import { conversationRecallTerms, RECALLABLE_MEMORY_SQL, searchUserContent } from '../services/fullTextSearch.js';
 import { withSavepoint } from './savepoint.js';
+import { isMemoryPacketCommit } from '../services/conversationMemory/commit.js';
+import { auditMemoryProjectionChanges } from '../services/conversationMemory/projectionAudit.js';
+import { getCurrentMemoryEvent, resolveMemoryEntity } from '../repositories/conversationMemoryRepository.js';
 
 const memoryTypes = new Set(['event', 'relationship', 'location', 'preference', 'fact', 'summary', 'intent', 'hypothesis']);
 
@@ -22,7 +25,7 @@ export function listConversationMemories(database, userId, conversationId, optio
   return rows.map(toConversationMemory);
 }
 
-export function createConversationMemory(database, userId, conversationId, payload = {}) {
+function mutateCreateConversationMemory(database, userId, conversationId, payload = {}) {
   if (!conversationBelongsToUser(database, userId, conversationId)) {
     return null;
   }
@@ -31,13 +34,13 @@ export function createConversationMemory(database, userId, conversationId, paylo
     throw new Error('记忆内容不能为空');
   }
   const timestamp = nowIso();
-  const id = newId();
+  const id = isMemoryPacketCommit(database) && payload._stagedId ? String(payload._stagedId) : newId();
   database
     .prepare(
       `INSERT INTO conversation_memories (
         id, user_id, conversation_id, memory_type, subject, content, confidence,
-        source_message_id, source_kind, source_excerpt, enabled, archived, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        source_message_id, source_kind, source_excerpt, enabled, archived, created_at, updated_at,visibility,truth_status,actor_ids_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,?,?,?)`
     )
     .run(
       id,
@@ -53,12 +56,13 @@ export function createConversationMemory(database, userId, conversationId, paylo
       normalized.enabled ? 1 : 0,
       0,
       timestamp,
-      timestamp
+      timestamp,
+      normalized.visibility,normalized.truthStatus,JSON.stringify(validateMemoryActors(database,userId,conversationId,normalized.actorIds,normalized.visibility))
     );
   return getConversationMemory(database, userId, conversationId, id);
 }
 
-export function updateConversationMemory(database, userId, conversationId, memoryId, payload = {}) {
+function mutateUpdateConversationMemory(database, userId, conversationId, memoryId, payload = {}) {
   const existing = getConversationMemory(database, userId, conversationId, memoryId);
   if (!existing) {
     return null;
@@ -74,7 +78,7 @@ export function updateConversationMemory(database, userId, conversationId, memor
        SET memory_type = ?, subject = ?, content = ?, confidence = ?,
            source_message_id = ?, source_kind = ?, source_excerpt = ?,
            enabled = ?, archived = ?, pinned = ?, invalidated_at = ?, merged_into_id = ?,
-           revision = revision + 1, updated_at = ?
+           revision = revision + 1, updated_at = ?, visibility=?,truth_status=?,actor_ids_json=?
        WHERE id = ? AND user_id = ? AND conversation_id = ?`
     )
     .run(
@@ -91,6 +95,7 @@ export function updateConversationMemory(database, userId, conversationId, memor
       normalized.invalidatedAt,
       normalized.mergedIntoId,
       nowIso(),
+      normalized.visibility,normalized.truthStatus,JSON.stringify(validateMemoryActors(database,userId,conversationId,normalized.actorIds,normalized.visibility)),
       memoryId,
       userId,
       conversationId
@@ -98,7 +103,7 @@ export function updateConversationMemory(database, userId, conversationId, memor
   return getConversationMemory(database, userId, conversationId, memoryId);
 }
 
-export function confirmConversationMemory(database, userId, conversationId, memoryId) {
+function mutateConfirmConversationMemory(database, userId, conversationId, memoryId) {
   const existing = getConversationMemory(database, userId, conversationId, memoryId);
   if (!existing) {
     return null;
@@ -112,7 +117,7 @@ export function confirmConversationMemory(database, userId, conversationId, memo
   });
 }
 
-export function disableConversationMemory(database, userId, conversationId, memoryId) {
+function mutateDisableConversationMemory(database, userId, conversationId, memoryId) {
   const existing = getConversationMemory(database, userId, conversationId, memoryId);
   if (!existing) {
     return null;
@@ -120,11 +125,12 @@ export function disableConversationMemory(database, userId, conversationId, memo
   return updateConversationMemory(database, userId, conversationId, memoryId, {
     ...existing,
     enabled: false,
-    archived: false
+    archived: false,
+    invalidatedAt: nowIso()
   });
 }
 
-export function rollbackConversationMemory(database, userId, conversationId, memoryId) {
+function mutateRollbackConversationMemory(database, userId, conversationId, memoryId) {
   const existing = getConversationMemory(database, userId, conversationId, memoryId);
   if (!existing) {
     return null;
@@ -136,7 +142,7 @@ export function rollbackConversationMemory(database, userId, conversationId, mem
   });
 }
 
-export function deleteConversationMemory(database, userId, conversationId, memoryId) {
+function mutateDeleteConversationMemory(database, userId, conversationId, memoryId) {
   const result = database
     .prepare('DELETE FROM conversation_memories WHERE id = ? AND user_id = ? AND conversation_id = ?')
     .run(memoryId, userId, conversationId);
@@ -155,7 +161,7 @@ export class ConversationMemoryConflictError extends Error {
   }
 }
 
-export function pinConversationMemory(database, userId, conversationId, memoryId, payload = {}) {
+function mutatePinConversationMemory(database, userId, conversationId, memoryId, payload = {}) {
   const existing = requireOwnedMemory(database, userId, conversationId, memoryId);
   assertRevision(existing, payload.revision);
   database.prepare(`UPDATE conversation_memories SET pinned = ?, revision = revision + 1, updated_at = ?
@@ -165,7 +171,7 @@ export function pinConversationMemory(database, userId, conversationId, memoryId
   return getConversationMemory(database, userId, conversationId, memoryId);
 }
 
-export function batchReviewConversationMemories(database, userId, conversationId, payload = {}) {
+function mutateBatchReviewConversationMemories(database, userId, conversationId, payload = {}) {
   if (!conversationBelongsToUser(database, userId, conversationId)) return null;
   const action = String(payload.action || '');
   if (!['confirm', 'disable', 'invalidate'].includes(action)) throw new Error('不支持的批量操作');
@@ -201,7 +207,7 @@ export function listConversationMemoryConflictCandidates(database, userId, conve
   }));
 }
 
-export function mergeConversationMemories(database, userId, conversationId, payload = {}) {
+function mutateMergeConversationMemories(database, userId, conversationId, payload = {}) {
   if (!conversationBelongsToUser(database, userId, conversationId)) return null;
   const targetId = String(payload.targetId || '').trim();
   const sourceItems = normalizeReviewItems(payload.sourceItems).filter((item) => item.id !== targetId);
@@ -214,6 +220,12 @@ export function mergeConversationMemories(database, userId, conversationId, payl
       assertRevision(memory, item.revision);
       return memory;
     });
+    const scope=memory=>{
+      const event=getCurrentMemoryEvent(database,userId,conversationId,memory.id);
+      const intervals=event?database.prepare('SELECT valid_from,valid_to,modality FROM memory_claims WHERE event_id=? ORDER BY valid_from,valid_to,modality').all(event.id):[];
+      return JSON.stringify([memory.visibility,memory.truthStatus,[...memory.actorIds].sort(),event?.narrative_time||'',intervals]);
+    };
+    if (sources.some(source=>scope(source)!==scope(target))) throw new ConversationMemoryConflictError('不同角色知情、真伪或有效时间的记忆不能合并');
     const operationId = newId();
     const timestamp = nowIso();
     const members = [target, ...sources];
@@ -237,7 +249,7 @@ export function mergeConversationMemories(database, userId, conversationId, payl
   });
 }
 
-export function undoConversationMemoryMerge(database, userId, conversationId, operationId) {
+function mutateUndoConversationMemoryMerge(database, userId, conversationId, operationId) {
   if (!conversationBelongsToUser(database, userId, conversationId)) return null;
   return withSavepoint(database, 'sp_undo_memory_merge', () => {
     const operation = database.prepare(`SELECT * FROM conversation_memory_review_operations
@@ -401,7 +413,10 @@ function normalizeMemoryPayload(payload = {}, fallback = {}) {
     archived: normalizeBoolean(source.archived ?? fallback.archived ?? false, false),
     pinned: normalizeBoolean(source.pinned ?? fallback.pinned ?? false, false),
     invalidatedAt: source.invalidatedAt ?? fallback.invalidatedAt ?? null,
-    mergedIntoId: source.mergedIntoId ?? fallback.mergedIntoId ?? null
+    mergedIntoId: source.mergedIntoId ?? fallback.mergedIntoId ?? null,
+    visibility:['public','restricted','author'].includes(source.visibility??fallback.visibility)?source.visibility??fallback.visibility:'public',
+    truthStatus:['established','unverified','disputed','false','unknown'].includes(source.truthStatus??fallback.truthStatus)?source.truthStatus??fallback.truthStatus:'unverified',
+    actorIds:Array.isArray(source.actorIds??fallback.actorIds)?[...new Set((source.actorIds??fallback.actorIds).map(id=>String(id).trim()).filter(Boolean))].slice(0,30):[]
   };
 }
 
@@ -427,7 +442,11 @@ function toConversationMemory(row = {}) {
     revision: Number(row.revision || 1),
     invalidatedAt: row.invalidated_at || null,
     mergedIntoId: row.merged_into_id || null,
-    pending: row.source_kind === 'auto' && !row.enabled && !row.archived,
+    pending: row.lifecycle === 'candidate',
+    lifecycle: row.lifecycle || (row.enabled ? 'active' : 'candidate'),
+    visibility:row.visibility||'public',
+    truthStatus:row.truth_status||'unverified',
+    actorIds:JSON.parse(row.actor_ids_json||'[]'),
     layer: row.layer || 'short_term',
     importance: row.importance || 0,
     emotionalIntensity: row.emotional_intensity || 0,
@@ -463,4 +482,65 @@ function assertRevision(memory, revision) {
 
 function normalizeComparable(value) {
   return String(value || '').trim().toLocaleLowerCase().replace(/\s+/g, ' ');
+}
+
+function validateMemoryActors(database,userId,conversationId,ids,visibility) {
+  if (visibility==='restricted'&&!ids.length) throw new Error('受限记忆需要至少一个知情角色');
+  for(const id of ids) if(!resolveMemoryEntity(database,userId,conversationId,id)) throw new Error('知情角色不属于当前会话');
+  return ids;
+}
+
+/** All manual and model projection writes share one canonical revision/audit boundary. */
+const activeProjectionMutations = new WeakSet();
+function mutateMemoryProjection(database, userId, conversationId, operation) {
+  if (activeProjectionMutations.has(database)) return operation();
+  return withSavepoint(database, 'sp_memory_projection', () => {
+    activeProjectionMutations.add(database);
+    try {
+      const before = database.prepare('SELECT * FROM conversation_memories WHERE user_id=? AND conversation_id=?').all(userId, conversationId);
+      const result = operation();
+      if (result !== null && result !== false) auditMemoryProjectionChanges(database, userId, conversationId, before);
+      return result;
+    } finally { activeProjectionMutations.delete(database); }
+  });
+}
+
+export function createConversationMemory(database, userId, conversationId, ...args) {
+  return mutateMemoryProjection(database, userId, conversationId, () => mutateCreateConversationMemory(database, userId, conversationId, ...args));
+}
+
+export function updateConversationMemory(database, userId, conversationId, ...args) {
+  return mutateMemoryProjection(database, userId, conversationId, () => mutateUpdateConversationMemory(database, userId, conversationId, ...args));
+}
+
+export function confirmConversationMemory(database, userId, conversationId, ...args) {
+  return mutateMemoryProjection(database, userId, conversationId, () => mutateConfirmConversationMemory(database, userId, conversationId, ...args));
+}
+
+export function disableConversationMemory(database, userId, conversationId, ...args) {
+  return mutateMemoryProjection(database, userId, conversationId, () => mutateDisableConversationMemory(database, userId, conversationId, ...args));
+}
+
+export function rollbackConversationMemory(database, userId, conversationId, ...args) {
+  return mutateMemoryProjection(database, userId, conversationId, () => mutateRollbackConversationMemory(database, userId, conversationId, ...args));
+}
+
+export function deleteConversationMemory(database, userId, conversationId, ...args) {
+  return mutateMemoryProjection(database, userId, conversationId, () => mutateDeleteConversationMemory(database, userId, conversationId, ...args));
+}
+
+export function pinConversationMemory(database, userId, conversationId, ...args) {
+  return mutateMemoryProjection(database, userId, conversationId, () => mutatePinConversationMemory(database, userId, conversationId, ...args));
+}
+
+export function batchReviewConversationMemories(database, userId, conversationId, ...args) {
+  return mutateMemoryProjection(database, userId, conversationId, () => mutateBatchReviewConversationMemories(database, userId, conversationId, ...args));
+}
+
+export function mergeConversationMemories(database, userId, conversationId, ...args) {
+  return mutateMemoryProjection(database, userId, conversationId, () => mutateMergeConversationMemories(database, userId, conversationId, ...args));
+}
+
+export function undoConversationMemoryMerge(database, userId, conversationId, ...args) {
+  return mutateMemoryProjection(database, userId, conversationId, () => mutateUndoConversationMemoryMerge(database, userId, conversationId, ...args));
 }

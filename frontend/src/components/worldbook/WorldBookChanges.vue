@@ -27,7 +27,7 @@ function format(value) {
   if (value === undefined || value === null || value === '') return '空';
   return typeof value === 'object' ? JSON.stringify(value, null, 2) : String(value);
 }
-const fieldLabels = { name:'名称', description:'描述', scanDepth:'扫描深度', lorebookContextPercent:'上下文预算', content:'内容', triggerKeys:'触发词', keysSecondary:'副关键词', enabled:'启用', alwaysActive:'始终生效', regexMode:'正则模式', position:'注入位置', depth:'深度', selective:'选择性匹配', selectiveLogic:'匹配逻辑', probability:'概率', useProbability:'使用概率', group:'分组', groupWeight:'分组权重', role:'角色', sticky:'持续轮数', cooldown:'冷却轮数', delay:'延迟轮数', orderIndex:'排序' };
+const fieldLabels = { name:'名称', description:'描述', scanDepth:'扫描深度', lorebookContextPercent:'上下文预算', content:'内容', triggerKeys:'触发词', keysSecondary:'副关键词', enabled:'启用', alwaysActive:'始终生效', regexMode:'正则模式', position:'注入位置', depth:'深度', selective:'选择性匹配', selectiveLogic:'匹配逻辑', probability:'概率', useProbability:'使用概率', group:'分组', groupWeight:'分组权重', role:'角色', sticky:'持续轮数', cooldown:'冷却轮数', delay:'延迟轮数', orderIndex:'排序', knowledgeVisibility:'知情范围', audienceCastKeys:'角色标识' };
 function apply() {
   emit('apply', selected.value.map(change => ({ ...change, addToCharacter: !unlinked.value.includes(change.ref) })));
 }

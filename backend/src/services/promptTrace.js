@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { readMemoryRevision } from '../repositories/memoryStorageRepository.js';
 import { newId, nowIso } from '../security.js';
 import { parseJson } from '../utils/json.js';
 import { isDiagnosticSecretKey, sanitizeDiagnosticText } from './diagnosticRedaction.js';
@@ -58,6 +59,8 @@ export function createPromptTrace(database, options) {
   const source = database.prepare('SELECT revision FROM messages WHERE id = ? AND user_id = ? AND conversation_id = ?')
     .get(sourceMessageId, userId, conversationId);
   const selection = {
+    contextBundle: pipeline.contextBundle ? { version:pipeline.contextBundle.version,source:pipeline.contextBundle.source,
+      fingerprint:pipeline.contextBundle.fingerprint,isolation:pipeline.contextBundle.isolation } : null,
     priority: pipeline.priority, diagnostics: pipeline.diagnostics,
     manifest: (pipeline.selectionManifest || []).map((item) => ({ ...item })),
     sources: Object.fromEntries(Object.entries(pipeline.sections || {}).map(([key, section]) => [key, {
@@ -146,7 +149,9 @@ export function getPromptTrace(database, userId, conversationId, traceId) {
     budget: parseJson(row.budget_json, {}), usage: parseJson(row.usage_json, null), requests,
     redacted: true,
     outdated: database.prepare('SELECT timeline_revision FROM conversations WHERE id = ? AND user_id = ?')
-      .get(conversationId, userId)?.timeline_revision !== row.timeline_revision
+      .get(conversationId, userId)?.timeline_revision !== row.timeline_revision ||
+      (parseJson(row.selection_json,{}).contextBundle?.source.coreRevision ?? 0) !==
+      readMemoryRevision(database,userId,conversationId)
   };
 }
 

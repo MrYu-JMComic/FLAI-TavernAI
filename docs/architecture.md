@@ -1,6 +1,6 @@
 # 架构与所有权
 
-本文合并功能地图、所有权规则和遗留账本。调用链盘点始于 2026-09-27，世界书边界于 2026-10-17 更新；2026-10-18 整理时已纳入旧 NPC 管理移除。分层规则描述收敛目标，下表同时注明尚未完成的边界。
+本文合并功能地图、所有权规则和遗留账本。调用链盘点始于 2026-09-27，世界书边界于 2026-10-17 更新；2026-10-18 整理时已纳入旧 NPC 管理移除，2026-11-01 更新会话记忆 V1 边界。分层规则描述收敛目标，下表同时注明尚未完成的边界。
 
 ## 所有权规则
 
@@ -33,15 +33,29 @@ ChatView.vue -> composables/chat/useChatSubmit.js
   -> api/chat.js -> api/core.js
   -> /api/conversations/:id/messages
   -> routes/conversationGeneration.js
-  -> conversationTimeline + promptPipeline + conversationStreamResponse
+  -> conversationMemory/processingPolicy（等待核心就绪，随后取得生成锁）
+  -> resolvedPromptPipeline + conversationTimeline + conversationStreamResponse
   -> services/providers.js
   -> messages / conversations / conversation_checkpoints
 ```
 
-- 路由组合在 `routes/conversations.js`；消息继续、重新生成、编辑、删除、截断、分支、候选和存档由 conversation 子路由承担。context 预览、预算、trace 和 memory 仍部分位于 `routes/upgrade.js`。
+- 路由组合在 `routes/conversations.js`；消息继续、重新生成、编辑、删除、截断、分支、候选和存档由 conversation 子路由承担。记忆路由已收口到 `routes/conversationMemories.js`；context 预览、预算和 trace 仍位于 `routes/upgrade.js`。
 - 结果写入由 `conversationAssistantResults.js` 负责，时间线加锁、快照和后处理入队分别由 `conversationTimeline.js`、`conversationSnapshotRepository.js` 与 `services/jobs/` 负责。发送编排仍在 route，需要后续提炼 application service。
-- 核心表包括 `messages`、`message_swipes`、`saves`、`conversation_checkpoints`、`conversation_memories`、记忆审查表、`conversation_world_book_clock/state`、`prompt_traces`、`prompt_requests` 和 `job_steps`；检索使用 `fts_messages`、`fts_memories`。
-- 前端状态分布在 `composables/chat/`；`ChatContextBudget`、`ChatPromptHistory`、`ConversationMemoryReview` 和 `ChatProcessingStatus` 的直接传输调用仍需收口。行为约定见 [对话运行时](conversation.md)。
+- 核心表包括 `messages`、`message_swipes`、`saves`、`conversation_checkpoints`、`conversation_world_book_clock/state`、`prompt_traces`、`prompt_requests` 和 `job_steps`；记忆规范记录与检索结构见下节。
+- 前端状态分布在 `composables/chat/`；记忆/处理状态已使用 `api/memories.js` 与 `api/jobs.js`。`ChatContextBudget`、`ChatPromptHistory` 的直接传输调用仍需收口。行为约定见 [对话运行时](conversation.md)。
+
+### 会话记忆 V1
+
+`conversationMemoryAgent.js` 只在本轮工作区暂存工具提案，`services/conversationMemory/commit.js` 的 `commitMemoryPacket` 在短同步事务内复核来源、revision、租约和提交顺序，统一接受提案、领域计划、规范记录和派生任务 outbox。人工记忆操作保留原编辑 API，通过 `projectionAudit.js` 在同一事务追加规范修订；`modules/conversationMemories.js` 是审查投影兼容门面，不是另一套提取或召回实现。
+
+- `domain/conversationMemory/contracts.js` 与 `shared/memoryPolicy.js` 维护契约。`conversationMemoryRepository.js` 保存实体、事件、来源版本、声明、角色认知、剧情线、提交链和水位；`conversationMemoryDerivedRepository.js` 与 `conversationMemoryWorkbenchRepository.js` 分别承担派生数据与审查读取 SQL。关系图使用 SQLite 关系记录，不依赖独立图数据库。
+- `conversation_memory_state`、`memory_*` 表是规范记录及其投影；`conversation_memories` 保留现有审查界面所需的文本投影。`fts_memory_events`、摘要与向量是可重建派生数据，不决定世界状态，也不能越过统一 eligibility。
+- `conversation.postprocess` 核心按会话有序提交，失败缺口阻止后续核心越过水位；`memory.summarize`、`memory.index` 独立调度。默认后台 cast 生成由 `shortTerm.js` 和专用 repository 读取完整未处理原文后缀，在 prompt budget 中保护；短期容量和模型窗口不足明确拒绝。blocking 或严格 actor 模式才等待核心，历史失效仍需恢复。聊天静默轮询，详细处理状态在记忆工作台。
+- `actorDossier.js` 与 workbench repository/service 提供角色档案，作者角色筛选独立于严格知情范围；持有关系使用规范声明，有效 scene 回执才读取权威数量，历史/分支 ID 仍按对应 scope 解析。`revisionAssociations.js` 共享文本修订的图引用保留规则，旧审阅门面和角色 patch 使用同一路径。
+- `resolvedPromptPipeline.js` 统一解析上下文 bundle 后编译，生成、预览与评测复用来源及选择清单。历史投影通过 `projectedContextRepository.js` 选择对应 checkpoint 和提交祖先；严格角色视角缺少知情依据时关闭相关输入通道，不能仅依赖“不要剧透”的提示词。
+- `embeddingRepository.js`、`services/embeddings/` 与 `db/vectorRuntime.js` 负责独立向量配置、DashScope、计费、shadow generation 和原生 sqlite-vec；模型不走聊天回退。完整 snapshot v3 保存恢复规范记录，每轮 checkpoint 只存记忆水位/提交引用，向量恢复后重建。
+
+具体运行规则与未实测边界见 [对话运行时](conversation.md#会话记忆与工具)、[AI 运行时](ai-runtime.md#向量记忆运行时)；完整实施范围与关联分析见 [V1 计划](conversation-memory-v1-plan.md) 和 [改动关联分析](conversation-memory-v1-impact-analysis.md)。
 
 ### 角色卡
 
@@ -74,7 +88,7 @@ WorldBookAiPanel.vue / CharacterAiDraftPanel.vue
 
 `SettingsProviderPanel.vue / ChatModelSwitcher.vue / AI 面板 -> api/providers.js -> routes/settings.js + routes/upgrade.js -> services/providers.js`。
 
-`providers.js` 是调用门面；具体协议为 `providerChatCompletions.js`、`providerOpenAiResponses.js`、`providerAnthropic.js`、工具循环和生图模块；重试、熔断、网络、任务路由、SSE、usage 分别有独立 helper。提示词编排在 `promptPipeline.js`。
+`providers.js` 是聊天/工具/生图调用门面；具体协议为 `providerChatCompletions.js`、`providerOpenAiResponses.js`、`providerAnthropic.js`、工具循环和生图模块；重试、熔断、网络、任务路由、SSE、usage 分别有独立 helper。向量通过 `services/embeddings/` 专用协议复用 HTTP、网络和配额边界，模型目录区分 chat/embedding。异步检索编排在 `resolvedPromptPipeline.js`，提示词编译在 `promptPipeline.js`。
 
 配置通过 `providerProfileRepository.js` 写入 `provider_presets`、`provider_selections`；`provider_settings` 是兼容表。`provider_route_events`、`prompt_requests`、`prompt_traces` 记录运行情况；配额使用 `user_quotas`、`user_daily_usage`。`/api/settings/provider`、`/api/provider` 不能作为新的业务写入口。
 
@@ -102,8 +116,8 @@ WorldBookAiPanel.vue / CharacterAiDraftPanel.vue
 | --- | --- | --- |
 | L-001 / B | `provider_settings` 仍由 `providerProfileRepository.js` fallback/sync；正式表为 presets/selections | 支持的旧库完成迁移、运行时不再双读写；保留一次性迁移。`providerSettingsRoutes`、`providers`、`database-structure` 测试 |
 | L-002 / B | Provider 设置三组别名并存；正式前端封装为 `api/providers.js` | 客户端和 OpenAPI 迁移、别名调用清零后删除。`providerSettingsRoutes`、`apiContracts`、`frontendProviderModels` |
-| L-003 / B | `upgrade.js` 聚合 context、memory、diagnostics、snapshot、envelope、match-preview | 按领域迁移调用方和路由契约后移除聚合分支；公开路径迁移期间可读。`upgradeRoutes`、领域 route 测试 |
-| L-004 / B | 四个 context/processing 组件直接 `apiRequest` | 补齐 `api/chat.js`、`api/jobs.js` 命名函数；组件领域 URL 清零。前端 API、processing、inspector 测试 |
+| L-003 / B，记忆已收口 | `upgrade.js` 仍聚合 context、diagnostics、snapshot、envelope、match-preview；记忆注册已迁至 `routes/conversationMemories.js` | 剩余领域迁移调用方和路由契约后移除聚合分支；不再往旧聚合路由新增记忆分支。`upgradeRoutes`、领域 route 测试 |
+| L-004 / B，记忆/处理已收口 | `ConversationMemoryReview`、`ChatProcessingStatus` 使用领域 API；`ChatContextBudget`、`ChatPromptHistory` 仍直接 `apiRequest` | 补齐剩余 context 命名函数，组件领域 URL 清零。前端 API、processing、inspector 测试 |
 | L-005 / A，已收口 | 原 `modules/worldBooks.js` 已退役；CRUD/AI 应用统一 `worldBookService` | 维持 architecture/workspace/apply-changes/ownership 边界测试，禁止旧 module 回归 |
 | L-006 / C | 0019 回填旧 `world_books.character_id`，运行时只用 `character_world_books` | 支持旧库升级期间保留迁移，不恢复双写。world-book architecture/session/database 测试 |
 | L-009 / B | conversation 和 settings route 仍直接 SQL、跨 service 编排 | 新 service 覆盖角色初始化、开场消息、状态栏、checkpoint 和 timeline 失效后迁移；conversation/auth 测试 |
@@ -114,7 +128,8 @@ WorldBookAiPanel.vue / CharacterAiDraftPanel.vue
 | L-016 / B | `world-book.assist` 已共用工作区，旧 `worldBookId` 映射默认选书 ID | 支持的旧任务 payload 迁移后去掉旧参数适配；后台生成不自动写书；jobs/workspace 测试 |
 | L-018 / A，已收口 | 预设管理统一进入个人中心；`/presets` 保留为兼容跳转 | `SettingsPresetPanel` 与 settings composable 是唯一编辑入口；保留兼容路由和功能测试 |
 | L-019 / D | bootstrap/assets、单个 preset 读取和部分 talent mutation wrapper 缺生产 UI 调用方，仍被测试/barrel 引用 | 先决定接入功能或删除 wrapper，再更新测试和导出；测试引用不等于生产引用 |
-| L-020 / B | `api/chat.js` 同时承接消息、记忆、存档、场景、经济和 gameplay | 按领域迁移组件与测试 import、同步后端路由后去掉兼容转发，避免重复实现 |
+| L-020 / B，记忆已收口 | `api/memories.js` 是记忆与处理状态唯一请求实现；`api/chat.js` 的同名接口仅兼容转发，其他领域仍聚合 | 迁移剩余组件与测试 import 后去掉兼容转发，避免重复实现 |
+| L-021 / A，已收口 | 旧记忆规则提取、FTS 私有启用规则和工具逐次写库已退出运行路径；自动/公开任务进入 canonical 提交，人工审查通过同事务规范审计 | 保持 `conversationMemoryV1`、`memoryIntegrationV1`、`memoryEmbeddings`、`projectedContext` 回归；历史迁移与审查门面保留，不恢复双提取器或候选召回旁路 |
 
 迁移文件承担支持旧数据库升级的责任，不能因运行时代码退役而一概删除；退休 NPC 专属迁移按 [移除记录](maintenance.md#旧-npc-管理移除) 处理。
 

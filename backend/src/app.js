@@ -31,6 +31,7 @@ import { createSwipesRouter } from './routes/swipes.js';
 import { createTagsRouter } from './routes/tags.js';
 import { createTalentsRouter } from './routes/talents.js';
 import { createUpgradeRouter } from './routes/upgrade.js';
+import { createConversationMemoriesRouter } from './routes/conversationMemories.js';
 import { createWorldBooksRouter } from './routes/worldBooks.js';
 import { newId, nowIso, resolveSession } from './security.js';
 import { getAvatarAssetForViewer } from './services/avatars.js';
@@ -402,6 +403,7 @@ export function createApp(context = {}) {
   app.use('/api/jobs', createJobsRouter(routeContext));
   app.use('/api/conversations', createBranchesRouter(routeContext));
   app.use('/api', createUpgradeRouter(routeContext));
+  app.use('/api', createConversationMemoriesRouter(routeContext));
   app.use('/api', createSettingsRouter(routeContext));
 
   app.post('/api/admin/backup', requireAuth, requireRootAdmin, asyncRoute(async (_request, response) => {

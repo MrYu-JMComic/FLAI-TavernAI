@@ -1445,7 +1445,7 @@ fieldset.accessory-skills-grid:disabled {
     gap: 10px;
   }
 
-  .profile-avatar {
+  .profile-overview > .profile-avatar {
     width: 60px;
     height: 60px;
   }
@@ -1503,7 +1503,7 @@ fieldset.accessory-skills-grid:disabled {
     grid-template-columns: 56px minmax(0, 1fr);
   }
 
-  .profile-avatar {
+  .profile-overview > .profile-avatar {
     width: 56px;
     height: 56px;
   }

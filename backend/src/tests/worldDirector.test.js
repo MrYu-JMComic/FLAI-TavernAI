@@ -5,7 +5,7 @@ process.env.FLAI_DB_PATH = ':memory:';
 process.env.APP_SECRET = 'test-secret-world-director';
 
 const { createAppDatabase } = await import('../db.js');
-const { executeWorldDirectorProposal } = await import('../services/accessoryAgents.js');
+const { buildWorldDirectorMessages, executeWorldDirectorProposal } = await import('../services/accessoryAgents.js');
 const { getWorldClock } = await import('../modules/dynamicWorld.js');
 const { listQuests } = await import('../modules/quests.js');
 const { listSkillChecks } = await import('../modules/skillChecks.js');
@@ -25,6 +25,15 @@ function setupTestEnv() {
   db.prepare('INSERT INTO conversations (id, user_id, character_id, title, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)').run(conversationId, userId, characterId, '导演测试', timestamp, timestamp);
   return { db, userId, conversationId, character: { id: characterId, name: '旅者' } };
 }
+
+test('world director instructions allow server checks for narrated attempts without assuming an outcome', () => {
+  const messages = buildWorldDirectorMessages({ user: 'I try to pick the lock.', assistant: 'The character starts picking the lock.' }, {});
+  const systemPrompt = messages.find(message => message.role === 'system').content;
+  assert.match(systemPrompt, /action attempt that requires a check/);
+  assert.match(systemPrompt, /use the server result as the only outcome/);
+  assert.match(systemPrompt, /All other state-changing tools still require explicit confirmation/);
+  assert.doesNotMatch(systemPrompt, /[\u3400-\u9fff]/);
+});
 
 test('world director proposals only mutate through validated rule modules', async () => {
   const env = setupTestEnv();

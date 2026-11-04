@@ -4,11 +4,8 @@ import { STATUS_TEMPLATE_FILTER_NAMES } from './statusTemplateRenderer.js';
 import { STATUS_TEMPLATE_LOOP_COLLECTIONS } from './statusTemplateTokens.js';
 import { STATUS_VARIABLE_TYPES } from './statusVariables.js';
 
-// Single source of the status-bar template reference. The editors render it as
-// a cheat sheet and the AI assistants turn it into tool instructions, so what
-// the AI is told always matches what the renderer implements (backend tests
-// compare the lists below with the renderer, the expression engine and the
-// sanitiser).
+// The editor reference stays in Chinese; the AI guide below uses the same
+// runtime-backed lists but keeps its model-facing explanations in English.
 
 export const STATUS_VARIABLE_TYPE_GUIDE = Object.freeze([
   { type: 'meter', label: '数值条', example: '{"name":"体力","value":80,"max":100,"color":"#27ae60"}', summary: '带进度条的数值；可加 min（如好感 -100~100）与 unit' },
@@ -18,6 +15,9 @@ export const STATUS_VARIABLE_TYPE_GUIDE = Object.freeze([
 ]);
 
 export const STATUS_TEMPLATE_PERCENT_GUIDE = 'percent 已包含百分号（如 22%），percentage 返回纯数字（如 22）；进度宽度写 width:{{体力.percent}} 或 width:{{体力.percentage}}%，不要在 percent 后再次追加 %。';
+
+// 模型提示词使用独立英文说明；中文常量仍供设置界面展示。
+export const STATUS_TEMPLATE_PERCENT_AI_GUIDE = 'percent already includes the percent sign (for example, 22%); percentage returns a number without the sign (for example, 22). Use width:{{health.percent}} or width:{{health.percentage}}%. Do not append another % after percent.';
 
 export const STATUS_TEMPLATE_PLACEHOLDER_GUIDE = Object.freeze([
   { code: '{{体力}}  {体力}  {{getvar::体力}}', summary: '变量当前值；三种写法等价' },
@@ -79,6 +79,8 @@ export const STATUS_TEMPLATE_STYLE_GUIDE = Object.freeze([
   { classes: ['sb-theme-glass', 'sb-theme-parchment', 'sb-theme-terminal', 'sb-theme-neon'], code: 'sb-theme-glass · sb-theme-parchment · sb-theme-terminal · sb-theme-neon', summary: '整体主题：毛玻璃、羊皮纸、终端、霓虹' }
 ]);
 
+// This API list is also rendered by the Chinese character editor; keep its
+// labels and summaries localized and define model-only summaries separately.
 export const STATUS_SCRIPT_API = Object.freeze([
   { code: 'conversation · character · user · provider · settings · messages', summary: '当前会话、角色、用户、供应商、外观设置与消息列表的只读快照' },
   { code: 'statusBar', summary: '状态栏快照 { name, variables:[{name,value,type,min,max,unit,color}], template }' },
@@ -93,6 +95,26 @@ export const STATUS_SCRIPT_API = Object.freeze([
   { code: 'await wait(ms) · await requestPaint() · state', summary: '延时、等待下一帧、本次运行内的临时状态对象（重新应用脚本后重置）' },
   { code: 'onCleanup(fn) 或 return () => {}', summary: '离开会话或重新应用脚本时执行清理' }
 ]);
+
+// 模型提示词单独使用英文描述；API 名称从中文 UI 参考中派生，避免清单漂移。
+const STATUS_SCRIPT_AI_SUMMARIES = [
+  'Read-only snapshots of the current conversation, character, user, provider, appearance settings, and message list.',
+  'Status-bar snapshot: { name, variables:[{name,value,type,min,max,unit,color}], template }.',
+  'Read the current variable value. Meters and counters return numbers.',
+  'Set a variable or adjust a numeric variable, then save. Meter values are clamped to min and max.',
+  'Update multiple variables. Variables that do not exist are created.',
+  'Listen for variable changes or handle a template button with data-sb-action="script" and data-sb-script="name".',
+  'Insert text into the chat input or send a message immediately.',
+  'Show an info/success/warning/error notification, set a chat-area CSS variable, or scroll to the bottom.',
+  'Open or close the sidebar and settings panel.',
+  'Read chat-area element summaries { tag, text, className }. DOM nodes are not available in the sandbox.',
+  'Wait for a duration or the next frame. state is temporary data for this run and resets when the script is reapplied.',
+  'Register cleanup to run when leaving the conversation or reapplying the script.'
+];
+export const STATUS_SCRIPT_AI_API = Object.freeze(STATUS_SCRIPT_API.map((item, index) => ({
+  code: item.code.replace(' 或 ', ' or ').split(' · ').join(', '),
+  summary: STATUS_SCRIPT_AI_SUMMARIES[index]
+})));
 
 // Documented names, flattened for the consistency tests.
 export function documentedStatusTemplateFilters() {
@@ -131,30 +153,32 @@ export function buildStatusTemplateReferenceGroups() {
   ];
 }
 
-// Concise instructions for AI tools that write status-bar blueprints. Kept in
-// Chinese to match the rest of the assistant prompts.
+// Model-only status-bar instructions. Runtime names are sourced from the same
+// lists as the Chinese editor reference so supported syntax cannot drift.
+// 中文维护注释：模型指南独立使用英文，编辑器仍读取上方中文参考数据。
 export function buildStatusTemplateAiGuide() {
-  const filters = STATUS_TEMPLATE_FILTER_GUIDE.map((item) => item.code).join('；');
-  const functions = STATUS_EXPRESSION_FUNCTION_GUIDE.map((item) => item.code).join('；');
+  const filters = STATUS_TEMPLATE_FILTER_GUIDE.flatMap((item) => item.names).join(', ');
+  const functions = STATUS_EXPRESSION_FUNCTION_GUIDE.flatMap((item) => item.names).join(', ');
   const actions = STATUS_TEMPLATE_ACTIONS
-    .map((item) => (item.attrs.length ? `"${item.action}"（${item.attrs.join('、')}）` : `"${item.action}"`))
-    .join('、');
-  const styles = documentedStatusStyleClasses().join('、');
+    .map((item) => (item.attrs.length ? `${item.action} (${item.attrs.join(', ')})` : item.action))
+    .join('; ');
+  const styles = documentedStatusStyleClasses().join(', ');
   return [
-    `变量类型（variables[].type，可省略；省略时数字+max 视为数值条，其余视为文本）：${STATUS_VARIABLE_TYPE_GUIDE.map((item) => `${item.type}=${item.label}：${item.summary}，示例 ${item.example}`).join('；')}。`,
-    `占位符：${STATUS_TEMPLATE_PLACEHOLDER_GUIDE.map((item) => `${item.code}（${item.summary}）`).join('；')}。`,
-    `过滤器用 | 串联，参数用 : 分隔：${filters}。`,
-    `条件与循环：${STATUS_TEMPLATE_BLOCK_GUIDE.map((item) => item.code).join('；')}；块必须成对闭合。`,
-    `表达式 {{= …}} 与条件可用运算符 + - * / % == != > < >= <= && || ! contains ?: 和函数：${functions}；只能引用变量与内置值，不能写任何 JavaScript。`,
-    `内置值 ${STATUS_TEMPLATE_BUILTINS.map((name) => `{{${name}}}`).join(' ')} 由系统填充，不要为它们创建变量。`,
-    `按钮只能使用声明式动作 data-sb-action：${actions}。`,
-    `内置样式类可直接使用：${styles}；也可以在 <style> 中自写 CSS（支持 @media、@keyframes、CSS 变量和 data:image 图片），样式会自动限定在状态栏内。`
+    'Variable types: meter (a bounded number; use max and optional min/unit), number (a numeric counter), text, and list. If type is omitted, a finite numeric value with max greater than min is a meter; otherwise a JavaScript number is a number; every other value is text. A list value is a string split on U+3001 IDEOGRAPHIC COMMA, ASCII or full-width comma, ASCII or full-width semicolon, vertical bar, or newline.',
+    'Placeholders: {{name}}, {name}, and {{getvar::name}} read a variable; {{health.max}}, {{health.min}}, {{health.percent}}, and {{health.remaining}} read meter properties; {{health.color}}, {{health.display}}, {{coins.unit}}, and {{inventory.count}} read formatted properties. Dotted names such as {{Lina.affinity}} are valid variable names. {{= health * 2 + 10}} evaluates a restricted expression. {{user}}, {{char}}, {{date}}, {{time}}, and {{weekday}} are built-in values, not variables.',
+    STATUS_TEMPLATE_PERCENT_AI_GUIDE,
+    `Chain filters with | and separate arguments with :. Supported filters: ${filters}. For example, {{level | default:"pending" | upper}}.`,
+    `Conditional blocks use {{#if condition}}, {{else if condition}}, {{else}}, and {{/if}}. {{#unless variable}} renders for empty or placeholder values. Loops use {{#each collection}}...{{/each}} with one of these collections: ${STATUS_TEMPLATE_LOOP_COLLECTIONS.join(', ')}. Loop fields include @name, @value, @display, @max, @min, @percent, @color, @unit, @index, @first, @last, and @total. Pair every opening block with its matching closing block.`,
+    `Expressions inside {{= ...}} and conditions support + - * / % == != > < >= <= && || ! contains ?: and the functions ${functions}. This is a restricted expression language, not JavaScript. Reference only declared variables and built-in values.`,
+    `The system supplies ${STATUS_TEMPLATE_BUILTINS.map((name) => `{{${name}}}`).join(', ')}. Do not declare variables with these names.`,
+    `Use declarative data-sb-action attributes for template buttons. Supported actions and their attributes: ${actions}.`,
+    `Built-in CSS classes: ${styles}. Custom CSS may also be placed in <style> and may use @media, @keyframes, CSS variables, and data:image URLs. Styles are scoped to the status bar.`
   ];
 }
 
 // One-line summary of the custom JS sandbox API for tool descriptions.
 export function buildStatusScriptAiGuide() {
-  return STATUS_SCRIPT_API.map((item) => `${item.code}：${item.summary}`).join('；');
+  return STATUS_SCRIPT_AI_API.map((item) => `${item.code}: ${item.summary}`).join('; ');
 }
 
 // Exported for tests that keep the documentation in step with the runtime.

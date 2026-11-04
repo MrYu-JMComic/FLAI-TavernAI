@@ -282,7 +282,28 @@
   --chat-sidebar-drawer-width: min(var(--chat-sidebar-width), calc(100vw - 28px));
   --chat-readable-width: min(var(--reading-max), calc(100vw - 40px));
   --chat-composer-width: min(1000px, calc(100vw - 40px));
-  --chat-panel-bg: color-mix(in srgb, var(--surface) 86%, transparent);
+  --chat-panel-bg: color-mix(in srgb, var(--surface) 96%, transparent);
+}
+
+@media (max-width: 1179px) {
+  .deep-chat-shell,
+  .deep-chat-shell.sidebar-collapsed {
+    --chat-readable-width: min(var(--reading-max), calc(100vw - 32px));
+    --chat-composer-width: min(1000px, calc(100vw - 32px));
+  }
+
+  .deep-chat-shell:not(.sidebar-collapsed) .deep-chat-main :is(
+    .deep-chat-header,
+    .deep-message.assistant .deep-bubble,
+    .deep-composer
+  ) {
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
+
+  .deep-chat-shell:not(.sidebar-collapsed) .deep-sidebar {
+    background: var(--chat-sidebar-bg);
+  }
 }
 
 .deep-sidebar {
@@ -490,8 +511,6 @@
   color: var(--text);
   background: var(--chat-panel-bg);
   box-shadow: var(--shadow-sm);
-  backdrop-filter: blur(18px) saturate(1.06);
-  -webkit-backdrop-filter: blur(18px) saturate(1.06);
 }
 
 .deep-message.user .deep-message-content {
@@ -509,6 +528,10 @@
 .deep-bubble {
   font-size: 0.96rem;
   line-height: var(--leading-reading);
+}
+
+.deep-bubble .markdown-content p {
+  margin-bottom: 0.3em;
 }
 
 .message-actions {
@@ -808,17 +831,6 @@
   -webkit-backdrop-filter: blur(18px) saturate(1.06);
 }
 
-.deep-composer textarea,
-:root[data-theme="dark"] .deep-composer textarea {
-  border-radius: var(--radius-md);
-  background: color-mix(in srgb, var(--surface) 90%, transparent);
-}
-
-.deep-composer textarea:focus,
-:root[data-theme="dark"] .deep-composer textarea:focus {
-  background: color-mix(in srgb, var(--surface) 96%, transparent);
-}
-
 .mode-pill,
 .preset-select,
 .round-send {
@@ -1073,7 +1085,7 @@
   .markdown-body,
   .deep-bubble {
     font-size: 0.94rem;
-    line-height: 1.74;
+    line-height: var(--leading-reading);
   }
 
   .message-actions {

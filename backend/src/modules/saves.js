@@ -101,10 +101,10 @@ export function loadSave(database, userId, saveId, requestedConversationId = '')
   }
 
   const targetConversationId = row.conversation_id;
-  if (snapshot.version && snapshot.version !== 2) {
+  if (snapshot.version && ![2,3].includes(snapshot.version)) {
     throw Object.assign(new Error('Unsupported conversation snapshot version'), { code: 'SNAPSHOT_VERSION_UNSUPPORTED', status: 400 });
   }
-  const completeSnapshot = snapshot.version === 2;
+  const completeSnapshot = [2,3].includes(snapshot.version);
 
   withSavepoint(database, 'sp_load_save', () => {
     invalidateConversationTimeline(database, userId, targetConversationId);
@@ -154,7 +154,7 @@ export function loadSave(database, userId, saveId, requestedConversationId = '')
   return {
     conversationId: targetConversationId,
     messageCount: Array.isArray(snapshot.messages) ? snapshot.messages.length : 0,
-    snapshotVersion: completeSnapshot ? 2 : 1,
+    snapshotVersion: completeSnapshot ? 3 : 1,
     stateStatus: database.prepare('SELECT state_status FROM conversations WHERE id = ?').get(targetConversationId).state_status,
     warnings: completeSnapshot ? [] : ['旧存档缺少完整剧情状态，未保留读档前的人物、物品、场景或经济数据。']
   };

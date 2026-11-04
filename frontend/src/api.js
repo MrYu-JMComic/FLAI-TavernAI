@@ -1,3 +1,4 @@
+export { confirmConversationMemory, createConversationMemory, deleteConversationMemory, disableConversationMemory, fetchConversationMemories, rollbackConversationMemory, updateConversationMemory } from './api/memories.js';
 export { apiRequest, ensureCsrfToken } from './api/core.js';
 export { __resetApiCsrfTokenForTests } from './api/core.js';
 export {
@@ -14,25 +15,20 @@ export { createAsset, deleteAsset, fetchAssets } from './api/assets.js';
 export { exportEnvelope, importEnvelope } from './api/envelopes.js';
 export {
   branchConversation,
-  confirmConversationMemory,
   continueMessage,
   createConversation,
-  createConversationMemory,
   createEconomyTransaction,
   createMessageSwipe,
   createSave,
   deleteConversation,
-  deleteConversationMemory,
   deleteConversations,
   deleteMessage,
-  disableConversationMemory,
   deleteSave,
   deleteStatusBar,
   fetchConversationAccessorySkills,
   fetchConversationBranches,
   fetchConversationBranchTree,
   fetchConversationEconomy,
-  fetchConversationMemories,
   fetchConversationMessages,
   fetchConversationSettings,
   fetchConversations,
@@ -44,14 +40,12 @@ export {
   loadSave,
   previewConversationContext,
   renameSave,
-  rollbackConversationMemory,
   saveConversationAccessorySkills,
   saveConversationSettings,
   saveStatusBar,
   sendMessage,
   streamContinueMessage,
   streamMessage,
-  updateConversationMemory,
   updateMessage,
 } from './api/chat.js';
 export {

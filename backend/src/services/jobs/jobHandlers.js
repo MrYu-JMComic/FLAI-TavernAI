@@ -1,5 +1,3 @@
-import { recordAutomaticConversationMemories } from '../conversationMemoryExtraction.js';
-import { getConversationForUser } from '../../routes/helpers.js';
 import { completeWorldBookDraft } from '../worldBookAssistant.js';
 import { hasUsableProvider, providerWithSecret } from '../providers.js';
 import { recordAutomationAudit } from '../automationAudit.js';
@@ -7,44 +5,29 @@ import { executeProviderTask } from '../providerTaskRouter.js';
 import { getSelectedProviderProfileRow } from '../../repositories/providerProfileRepository.js';
 import { appConfig, withAppConfigDefaults } from '../../config.js';
 import { applyProviderNetworkPolicy } from '../providerNetworkPolicy.js';
-import { runConversationPostprocessing, runRecoverableConversationStep } from './conversationPostprocessing.js';
+import { runConversationPostprocessing } from './conversationPostprocessing.js';
+import { runMemorySummaryJob, runMemoryIndexJob } from '../conversationMemory/derivedJobs.js';
 
 export function createDefaultJobHandlers(database, options = {}) {
   const config = withAppConfigDefaults(options.config || appConfig);
   return {
     'conversation.postprocess': async (environment) => runConversationPostprocessing(database, environment, {
       config,
+      runMemoryAgent:options.runMemoryAgent,runAccessoryAgents:options.runAccessoryAgents,
       settings: options.providerSettings
         ? options.providerSettings(environment.job.userId)
         : providerSettings(database, environment.job.userId, config, { allowUnavailable: true })
     }),
-    'memory.extract': async (environment) => {
-      const { job, payload, progress } = environment;
-      return runRecoverableConversationStep(database, environment, 'memory:extract', (guarded) => {
-      const conversationId = requiredText(payload.conversationId, 'conversationId');
-      const conversation = getConversationForUser(database, job.userId, conversationId, { includeUsage: false });
-      if (!conversation) throw jobFailure('Conversation not found.', 'CONVERSATION_NOT_FOUND');
-      const messages = readJobEvidence(database, job.userId, payload);
-      const userMessage = messages.find((message) => message.id === payload.userMessageId) || {};
-      const assistantMessage = messages.find((message) => message.id === payload.assistantMessageId) || {};
-      progress(50, { phase: 'extracting' });
-      const memories = recordAutomaticConversationMemories(guarded, job.userId, conversationId, {
-        userMessage,
-        assistantMessage
-      });
-      recordAutomationAudit(database, job.userId, {
-        domain: 'memory',
-        operation: 'extract',
-        subjectType: 'conversation',
-        subjectId: conversationId,
-        sourceMessageId: userMessage.id,
-        jobId: job.id,
-        planSummary: `Extracted ${memories.length} memories`,
-        after: { memories }
-      });
-      return { memories };
-      });
-    },
+    'memory.extract': async (environment) => runConversationPostprocessing(database,environment,{
+      config,onlyMemory:true,runMemoryAgent:options.runMemoryAgent,settings:options.providerSettings
+        ? options.providerSettings(environment.job.userId)
+        : providerSettings(database,environment.job.userId,config,{allowUnavailable:true})
+    }),
+    'memory.summarize': async (environment) => runMemorySummaryJob(database,environment,{
+      config,settings:options.providerSettings ? options.providerSettings(environment.job.userId)
+        : providerSettings(database,environment.job.userId,config,{allowUnavailable:true})
+    }),
+    'memory.index': async (environment) => runMemoryIndexJob(database,environment,{config}),
     'world-book.assist': async ({ job, payload, signal, progress }) => {
       progress(10, { phase: 'provider' });
       const settings = providerSettings(database, job.userId, config);
@@ -102,24 +85,6 @@ function providerSettings(database, userId, config, options = {}) {
     'SELECT id, is_root_admin AS isRootAdmin FROM users WHERE id = ?'
   ).get(userId) || { id: userId };
   return applyProviderNetworkPolicy(settings, config, user);
-}
-
-function readJobEvidence(database, userId, payload) {
-  if (!Array.isArray(payload.evidenceRefs)) {
-    throw jobFailure('Task predates versioned inputs; schedule it again.', 'JOB_SOURCE_UNVERSIONED');
-  }
-  const read = database.prepare('SELECT id, role, content, revision FROM messages WHERE id = ? AND user_id = ? AND conversation_id = ?');
-  return payload.evidenceRefs.map((ref) => {
-    const message = read.get(ref.id, userId, payload.conversationId);
-    if (!message || message.revision !== ref.revision) throw jobFailure('Source history changed.', 'JOB_SOURCE_STALE');
-    return message;
-  });
-}
-
-function requiredText(value, field) {
-  const text = String(value || '').trim();
-  if (!text) throw jobFailure(`${field} is required.`, 'JOB_PAYLOAD_INVALID');
-  return text;
 }
 
 function jobFailure(message, code) {

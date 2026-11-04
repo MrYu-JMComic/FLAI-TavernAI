@@ -84,7 +84,7 @@ test('economy cursor pages retain the legacy total while avoiding offsets', () =
   }
 });
 
-test('message pagination and context preview meet the in-memory performance budget', () => {
+test('message pagination and context preview meet the in-memory performance budget', async () => {
   const database = createPaginationDatabase({ messageCount: 2000 });
   try {
     resetPerformanceMetrics();
@@ -93,7 +93,7 @@ test('message pagination and context preview meet the in-memory performance budg
     const pageDurationMs = performance.now() - pageStartedAt;
 
     const contextStartedAt = performance.now();
-    const preview = buildConversationContextPreview(
+    const preview = await buildConversationContextPreview(
       database,
       { id: 'page-user', username: 'page-user', displayName: 'Page User' },
       'page-conversation',
@@ -107,7 +107,8 @@ test('message pagination and context preview meet the in-memory performance budg
     assert.ok(contextDurationMs < 2000, `context preview took ${contextDurationMs.toFixed(1)}ms`);
     const names = new Set(performanceMetricsSnapshot().map((metric) => metric.name));
     assert.equal(names.has('sqlite.messages.list'), true);
-    assert.equal(names.has('sqlite.fts.search'), true);
+    // Preview now reports the same memory selection as generation, with no second global search.
+    assert.equal(names.has('sqlite.fts.search'), false);
     assert.equal(names.has('context.preview'), true);
   } finally {
     database.close();

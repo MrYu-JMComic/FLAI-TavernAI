@@ -27,12 +27,12 @@ internal prompt text read like help written for the user.
 - [x] Verify the character assistant prompt assembly, feature names, and runtime boundaries.
 - [x] Write and inject the internal environment guide.
 - [x] Test that the guide reaches the model and describes the key boundaries.
-- [ ] Inventory all fixed model-visible prompts and separate them from editable or user-facing text.
-- [ ] Translate fixed model instructions and model-facing tool descriptions to English with Chinese maintainer comments.
-- [ ] Split shared UI/model guide data where needed and preserve Chinese UI copy.
-- [ ] Add language and semantic contract tests for the fixed prompts.
-- [ ] Run targeted and required backend validation, encoding check, and diff check.
-- [ ] Record validation results and remaining limitations.
+- [x] Inventory all fixed model-visible prompts and separate them from editable or user-facing text.
+- [x] Translate fixed model instructions and model-facing tool descriptions to English with Chinese maintainer comments.
+- [x] Split shared UI/model guide data where needed and preserve Chinese UI copy.
+- [x] Add language and semantic contract tests for the fixed prompts.
+- [x] Run targeted and required backend validation, encoding check, and diff check.
+- [x] Record validation results and remaining limitations.
 
 ## Acceptance Criteria
 
@@ -86,11 +86,24 @@ the model prompt.
 
 ### Checklist
 
-- [ ] Translate the guide without changing runtime facts or permission limits.
-- [ ] Add concise Chinese comments that explain each prompt section.
-- [ ] Test that the injected guide contains no Chinese and remains present in
+- [x] Translate the guide without changing runtime facts or permission limits.
+- [x] Add concise Chinese comments that explain each prompt section.
+- [x] Test that the injected guide contains no Chinese and remains present in
   both request modes.
-- [ ] Run focused tests, encoding check, and diff check; record results.
+- [x] Run focused tests, encoding check, and diff check; record results.
+
+### Full Prompt Audit
+
+- [x] Check actual system messages, recovery nudges, workflow tool results, and
+  model-facing schema descriptions across chat and assistant agents.
+- [x] Align memory evidence instructions with optional quote behavior and
+  runtime confidence caps.
+- [x] Clarify that the world director can request a server-side skill check
+  for a narrated attempt before its outcome is known.
+- [x] Keep user-authored prompts, editable presets, character/world-book data,
+  and Chinese UI references unchanged.
+- [x] Run required backend, frontend, encoding, and diff validation after the
+  final semantic refinements; record results below.
 
 ### Acceptance Criteria
 
@@ -99,3 +112,33 @@ the model prompt.
    not part of the exported prompt string.
 3. The focused contract test confirms English-only content and both-mode
    injection.
+
+## Final Audit Notes
+
+- Fixed model-facing instructions, no-tool recovery nudges, workflow labels,
+  and tool-schema descriptions were reviewed for English wording and runtime
+  accuracy. User-visible plan/progress/summary fields retain explicit Chinese
+  output requirements where the interface expects Chinese.
+- Status-bar and memory setting descriptions remain localized UI data; model
+  calls use separate English descriptions. User-authored content remains data
+  and is not included in the fixed-prompt language audit.
+- The status-bar agent treats its author-provided tracking prompt as lower
+  priority than system rules, enabled tools, and tool schemas. The world
+  director's server-side check request is an explicit exception to the rule
+  that other state changes require narrative confirmation.
+
+## Final Validation (2026-10-23)
+
+- Updated the remaining prompt contract assertions to check English status-bar
+  placeholders and syntax guidance, enabled character-edit scope, world-book
+  quality rules, and selected-book target behavior.
+- All four focused prompt tests passed.
+- `npm test` ran 1674 tests: 1672 passed and 2 failed in the already-modified
+  frontend Markdown/KaTeX tests: `frontendKatexCompatibility.test.js` and
+  `frontendMarkdownContent.test.js`. The failures concern surface-aware KaTeX
+  contrast and typewriter DOM cadence; the prompt-related tests passed.
+- `npm run build` passed. Vite emitted its existing large-chunk warning.
+- `node scripts/check-encoding.mjs` passed across 741 files.
+- `git diff --check` passed; Git reported only LF/CRLF working-copy warnings.
+- No UI rendering changed in this prompt-only work, so no screenshot capture
+  was applicable.

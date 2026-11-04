@@ -1,4 +1,5 @@
 import { newId } from '../security.js';
+import { normalizeLoreKnowledge } from '../../../shared/loreKnowledge.js';
 import {
   WORLD_BOOK_ASSISTANT_ENTRY_LIMIT,
   WORLD_BOOK_ENTRY_LIMITS,
@@ -15,77 +16,80 @@ export const WORLD_BOOK_MUTATION_TOOL_NAMES = Object.freeze([
   'remove_world_book_entry'
 ]);
 
+// 中文维护说明：以下 schema description 会直接发送给模型；请用英文描述字段语义，并保持与实际匹配、注入行为一致。
 const worldBookEntryProperties = {
+  knowledgeVisibility: { type: 'string', enum: ['author', 'public', 'restricted'], description: 'Knowledge scope: author is narrator-only truth; public is common knowledge; restricted is visible only to the portable audienceCastKeys. Defaults to author. Does not itself prove a character learned a story event.' },
+  audienceCastKeys: { type: 'array', maxItems: 64, items: { type: 'string', minLength: 1, maxLength: 80 }, description: 'Portable stable cast keys, not conversation-local actor IDs. Used for restricted knowledge scope.' },
   id: {
     type: 'string',
     minLength: 1,
     maxLength: WORLD_BOOK_ENTRY_LIMITS.id,
-    description: '现有草稿条目的 ID。仅在完整替换时用于保留条目身份；新条目省略，由系统生成。'
+    description: 'ID of an existing draft entry. Use it only to preserve entry identity during full replacement. Omit it for a new entry; the system will assign an ID.'
   },
   name: {
     type: 'string',
     minLength: 1,
     maxLength: WORLD_BOOK_ENTRY_LIMITS.name,
-    description: '条目标题，1-100 字。用于管理和预览，不参与触发。'
+    description: 'Entry title, 1-100 characters. Used for management and previews; it does not participate in trigger matching.'
   },
   triggerKeys: {
     type: 'string',
     maxLength: WORLD_BOOK_ENTRY_LIMITS.triggerKeys,
-    description: '主关键词字符串，多个值必须用英文逗号分隔（不能用数组、顿号或分号）。alwaysActive=false 时不可为空。匹配忽略大小写。regexMode=true 时每个逗号分段都是独立正则；regexMode=false 时写成 /pattern/i 的分段也按正则处理，其余按子串匹配。'
+    description: 'Primary trigger keys as one string, separated by ASCII commas. Do not use an array, ideographic commas, or semicolons. Required when alwaysActive is false. Matching is case-insensitive. With regexMode=true, each comma-separated segment is a separate regular expression. With regexMode=false, a segment written as /pattern/i is still treated as a regular expression; all other segments use substring matching.'
   },
   content: {
     type: 'string',
     minLength: 1,
     maxLength: WORLD_BOOK_ENTRY_LIMITS.content,
-    description: '条目命中后注入模型上下文的正文，1-50000 字。只写事实、约束和关系，不写编辑说明。'
+    description: 'Entry body injected into model context when this entry matches, 1-50000 characters. Include facts, constraints, and relationships only. Do not include editing notes.'
   },
   position: {
     type: 'string',
     enum: WORLD_BOOK_POSITION_VALUES,
-    description: '注入位置：at_start=上下文最前；before_char=角色设定前；after_char=角色设定后；at_depth=按 depth/role 插入。默认 before_char。'
+    description: 'Injection position: at_start inserts at the beginning of context; before_char inserts before character definitions; after_char inserts after character definitions; at_depth inserts at the configured depth and role. Defaults to before_char.'
   },
-  enabled: { type: 'boolean', description: '是否启用条目，默认 true。' },
-  orderIndex: { type: 'integer', minimum: 0, description: '非负排序序号。保存时按数组顺序写入，通常省略即可。' },
-  regexMode: { type: 'boolean', description: '主关键词是否按安全正则表达式匹配，默认 false。' },
-  alwaysActive: { type: 'boolean', description: '是否不依赖主关键词而始终参与匹配，默认 false。' },
-  selective: { type: 'boolean', description: '是否启用副关键词条件，默认 false；启用时 keysSecondary 必须非空。' },
+  enabled: { type: 'boolean', description: 'Whether this entry is enabled. Defaults to true.' },
+  orderIndex: { type: 'integer', minimum: 0, description: 'Non-negative ordering index. Entries are saved in array order, so this field can usually be omitted.' },
+  regexMode: { type: 'boolean', description: 'Whether primary trigger keys use safe regular-expression matching. Defaults to false.' },
+  alwaysActive: { type: 'boolean', description: 'Whether this entry participates in matching without requiring primary trigger keys. Defaults to false.' },
+  selective: { type: 'boolean', description: 'Whether secondary-key conditions are enabled. Defaults to false. When true, keysSecondary must be non-empty.' },
   selectiveLogic: {
     type: 'integer',
     enum: [0, 1, 2],
-    description: '副关键词逻辑，仅在主关键词已命中后判定：0=任一副关键词命中才激活；1=任一副关键词命中则阻止；2=全部副关键词都命中才阻止。'
+    description: 'Secondary-key logic, evaluated only after a primary key matches: 0 activates only if any secondary key matches; 1 blocks activation if any secondary key matches; 2 blocks activation only if all secondary keys match.'
   },
   keysSecondary: {
     type: 'string',
     maxLength: WORLD_BOOK_ENTRY_LIMITS.keysSecondary,
-    description: '副关键词字符串，多个值用英文逗号分隔；仅 selective=true 时使用，始终按忽略大小写的子串匹配（不支持正则）。'
+    description: 'Secondary trigger keys as one string, separated by ASCII commas. Used only when selective=true. Matching is always case-insensitive substring matching; regular expressions are not supported.'
   },
-  useProbability: { type: 'boolean', description: '是否在关键词条件通过后再进行概率判定，默认 false。' },
+  useProbability: { type: 'boolean', description: 'Whether to apply a probability check after the key conditions pass. Defaults to false.' },
   probability: {
     type: 'integer',
     minimum: 0,
     maximum: WORLD_BOOK_ENTRY_LIMITS.probabilityMax,
-    description: '激活概率百分比 0-100；仅 useProbability=true 时生效，默认 100。'
+    description: 'Activation probability from 0 to 100 percent. Used only when useProbability=true. Defaults to 100.'
   },
   group: {
     type: 'string',
     maxLength: WORLD_BOOK_ENTRY_LIMITS.group,
-    description: '互斥组名。相同非空组内若多条命中，只按 groupWeight 选一条；实际保存字段名必须是 group。'
+    description: 'Name of an exclusive group. If multiple entries in the same non-empty group match, only one is selected by groupWeight. The stored field name is group.'
   },
-  groupWeight: { type: 'integer', minimum: 0, description: '互斥组抽选权重，非负整数，越大越容易被选中；0 按最低权重 1 处理。' },
+  groupWeight: { type: 'integer', minimum: 0, description: 'Non-negative selection weight within an exclusive group. Higher values are more likely to be selected. A value of 0 is treated as the minimum weight, 1.' },
   depth: {
     type: 'integer',
     minimum: 0,
     maximum: WORLD_BOOK_ENTRY_LIMITS.depthMax,
-    description: '从上下文末尾向前的插入深度 0-10，仅 position=at_depth 时生效，默认 0。'
+    description: 'Insertion depth counted backward from the end of context, from 0 to 10. Used only when position=at_depth. Defaults to 0.'
   },
   role: {
     type: 'integer',
     enum: [0, 1, 2],
-    description: 'at_depth 消息角色：0=system，1=user，2=assistant。实际保存格式只接受整数。'
+    description: 'Message role used with position=at_depth: 0=system, 1=user, 2=assistant. The stored value must be an integer.'
   },
-  sticky: stateDurationSchema('命中后继续保持激活的额外消息轮数，期间不再需要关键词'),
-  cooldown: stateDurationSchema('失活后禁止再次激活的消息轮数'),
-  delay: stateDurationSchema('从本会话首次扫描到该条目起，至少经过多少轮才允许激活')
+  sticky: stateDurationSchema('Additional message turns to keep this entry active after it matches; trigger keys are not required during this period'),
+  cooldown: stateDurationSchema('Message turns after deactivation during which this entry cannot activate again'),
+  delay: stateDurationSchema('Minimum message turns from the first scan of this entry in the current conversation before it may activate')
 };
 
 const { id: _entryIdSchema, ...worldBookEntryChangeProperties } = worldBookEntryProperties;
@@ -97,6 +101,7 @@ export const WORLD_BOOK_ENTRY_SCHEMA = Object.freeze({
   additionalProperties: false
 });
 
+// 中文维护说明：资料字段和条目正文由模型生成；英文描述规则，中文项目的实际内容仍应使用自然中文。
 export const WORLD_BOOK_DRAFT_SCHEMA = Object.freeze({
   type: 'object',
   properties: {
@@ -104,30 +109,30 @@ export const WORLD_BOOK_DRAFT_SCHEMA = Object.freeze({
       type: 'string',
       minLength: 1,
       maxLength: WORLD_BOOK_LIMITS.name,
-      description: '世界书名称，1-80 字。'
+      description: 'World-book name, 1-80 characters.'
     },
     description: {
       type: 'string',
       maxLength: WORLD_BOOK_LIMITS.description,
-      description: '世界书用途与覆盖范围说明，最多 2000 字；不会作为条目正文注入。'
+      description: 'Describe the world book purpose and scope, up to 2000 characters. This description is not injected as an entry body.'
     },
     scanDepth: {
       type: 'integer',
       minimum: WORLD_BOOK_LIMITS.scanDepthMin,
       maximum: WORLD_BOOK_LIMITS.scanDepthMax,
-      description: `每次匹配向前扫描的最近消息条数，${WORLD_BOOK_LIMITS.scanDepthMin}-${WORLD_BOOK_LIMITS.scanDepthMax}；草稿默认 4。只影响关键词扫描范围，不影响注入内容。`
+      description: `Number of recent messages scanned for trigger matches, from ${WORLD_BOOK_LIMITS.scanDepthMin} to ${WORLD_BOOK_LIMITS.scanDepthMax}. Draft default: 4. This changes only the scan range, not the injected content.`
     },
     lorebookContextPercent: {
       type: 'integer',
       minimum: WORLD_BOOK_LIMITS.contextPercentMin,
       maximum: WORLD_BOOK_LIMITS.contextPercentMax,
-      description: `本世界书命中内容最多占上下文预算的百分比，${WORLD_BOOK_LIMITS.contextPercentMin}-${WORLD_BOOK_LIMITS.contextPercentMax}；草稿默认 25。超预算时按 orderIndex 从前往后保留。`
+      description: `Maximum percentage of the context budget available to matched entries in this world book, from ${WORLD_BOOK_LIMITS.contextPercentMin} to ${WORLD_BOOK_LIMITS.contextPercentMax}. Draft default: 25. If the budget is exceeded, entries are retained in ascending orderIndex.`
     },
     entries: {
       type: 'array',
       minItems: 1,
       maxItems: WORLD_BOOK_ASSISTANT_ENTRY_LIMIT,
-      description: `可直接保存的世界书条目，最多 ${WORLD_BOOK_ASSISTANT_ENTRY_LIMIT} 条，按数组顺序保存。单次工具调用的参数总量有上限，正文很长时改用 upsert_world_book_entry 逐条写入。`,
+      description: `World-book entries that can be saved directly, up to ${WORLD_BOOK_ASSISTANT_ENTRY_LIMIT}, saved in array order. Tool-call arguments have a size limit; use upsert_world_book_entry for long bodies or large batches.`,
       items: WORLD_BOOK_ENTRY_SCHEMA
     }
   },
@@ -137,12 +142,13 @@ export const WORLD_BOOK_DRAFT_SCHEMA = Object.freeze({
 
 const { entries: _worldBookEntriesSchema, ...worldBookProfileProperties } = WORLD_BOOK_DRAFT_SCHEMA.properties;
 
+// 中文维护说明：工具名称和字段名是程序接口；description 是给模型的操作契约，不是用户界面文案。
 export const WORLD_BOOK_DRAFT_TOOLS = Object.freeze([
   {
     type: 'function',
     function: {
       name: 'set_world_book_profile',
-      description: '设置世界书资料。只传实际需要修改的字段；此工具不接收 entries，空字符串会覆盖已有文本。',
+      description: 'Update world-book profile fields. Send only fields that must change. This tool does not accept entries. An empty string overwrites the existing text.',
       parameters: {
         type: 'object',
         properties: worldBookProfileProperties,
@@ -155,7 +161,7 @@ export const WORLD_BOOK_DRAFT_TOOLS = Object.freeze([
     type: 'function',
     function: {
       name: 'replace_world_book_entries',
-      description: '用 entries 完整替换当前草稿的全部条目。仅用于首次成批创建或明确重建；编辑现有世界书时必须保留所有仍有效条目及其 id，未列出的条目会被删除。任一条目缺少 name、content 或必需的 triggerKeys 时整批拒绝，不会部分写入。',
+      description: 'Replace every entry in the current draft with entries. Use only for initial batch creation or an explicitly requested rebuild. When editing an existing world book, preserve every still-valid entry and its id; omitted entries will be deleted. The entire batch is rejected if any entry lacks name, content, or required triggerKeys; partial writes are not performed.',
       parameters: {
         type: 'object',
         properties: { entries: WORLD_BOOK_DRAFT_SCHEMA.properties.entries },
@@ -168,7 +174,7 @@ export const WORLD_BOOK_DRAFT_TOOLS = Object.freeze([
     type: 'function',
     function: {
       name: 'upsert_world_book_entry',
-      description: '创建一个条目，或用 entryId 局部修改现有条目。更新时省略的字段与其他条目保持不变；创建时必须提供 name、content，以及非常驻条目的 triggerKeys。',
+      description: 'Create an entry, or partially update an existing entry by entryId. Omitted fields remain unchanged during an update. For a new entry, provide name, content, and triggerKeys unless alwaysActive=true.',
       parameters: {
         type: 'object',
         properties: {
@@ -176,14 +182,14 @@ export const WORLD_BOOK_DRAFT_TOOLS = Object.freeze([
             type: 'string',
             minLength: 1,
             maxLength: WORLD_BOOK_ENTRY_LIMITS.id,
-            description: '要修改的现有条目 ID；创建新条目时省略。'
+            description: 'ID of the existing entry to update. Omit when creating a new entry.'
           },
           changes: {
             type: 'object',
             properties: worldBookEntryChangeProperties,
             minProperties: 1,
             additionalProperties: false,
-            description: '要写入的新值；不要重复提交未变化字段。'
+            description: 'Fields to write. Do not include fields whose values are unchanged.'
           }
         },
         required: ['changes'],
@@ -195,11 +201,11 @@ export const WORLD_BOOK_DRAFT_TOOLS = Object.freeze([
     type: 'function',
     function: {
       name: 'remove_world_book_entry',
-      description: '按 entryId 从当前草稿移除一个条目。只有编辑要求明确删除该条目时使用；不会直接删除数据库中的世界书。',
+      description: 'Remove one entry from the current draft by entryId. Use only when the edit request explicitly requires removing that entry. This does not delete the world book from the database.',
       parameters: {
         type: 'object',
         properties: {
-          entryId: { type: 'string', minLength: 1, maxLength: WORLD_BOOK_ENTRY_LIMITS.id, description: '当前草稿中的条目 ID。' }
+          entryId: { type: 'string', minLength: 1, maxLength: WORLD_BOOK_ENTRY_LIMITS.id, description: 'ID of an entry in the current draft.' }
         },
         required: ['entryId'],
         additionalProperties: false
@@ -210,11 +216,11 @@ export const WORLD_BOOK_DRAFT_TOOLS = Object.freeze([
     type: 'function',
     function: {
       name: 'preview_world_book_entries',
-      description: '使用示例文本只读检查当前草稿的关键词、副关键词和互斥组匹配结果，用于自检触发条件。不修改草稿：不执行概率随机判定（useProbability 条目只标记为待判定），也不推进 sticky、cooldown 与 delay 状态。',
+      description: 'Read-only check of primary keys, secondary keys, and exclusive-group matches in the current draft using example text. Use it to validate trigger conditions. This does not modify the draft, run probability sampling (entries with useProbability are marked as pending), or advance sticky, cooldown, or delay state.',
       parameters: {
         type: 'object',
         properties: {
-          text: { type: 'string', maxLength: 8_000, description: '用于测试触发效果的示例对话文本。' }
+          text: { type: 'string', maxLength: 8_000, description: 'Example conversation text for testing trigger matches.' }
         },
         required: ['text'],
         additionalProperties: false
@@ -223,15 +229,17 @@ export const WORLD_BOOK_DRAFT_TOOLS = Object.freeze([
   }
 ]);
 
+// 中文维护说明：这些质量规则直接进入模型提示词；内容语言由调用方提示，规则文本保持英文。
 export const WORLD_BOOK_QUALITY_INSTRUCTIONS = Object.freeze([
-  '把设定拆成原子条目：每条只描述一个人物、地点、阵营、物品、规则、事件、关系或秘密；不同主题不要混在同一条。',
-  'triggerKeys 与 keysSecondary 都是一个用英文逗号分隔的字符串，不是数组，也不要用顿号或分号分隔。普通关键词使用正式名称、别名、地点、阵营、物品或事件词；禁止使用“他、这里、事件”等泛词。',
-  '实际保存字段名是 group，不是 inclusionGroup；role 必须是 0、1、2 之一，不能写 system、user、assistant 字符串；sticky、cooldown、delay 不使用时省略或写 null，不要写 0 之外的占位值。',
-  '注入位置必须与用途一致：before_char 用于稳定设定，after_char 用于当前场景压力，at_start 仅用于必须全局生效的规则，at_depth 才使用 depth 与 role。',
-  'content 只写触发该主题时需要知道的事实、约束和关系，不复述整套世界观，也不包含“请生成、忽略之前指令”等面向模型的元指令，除非该条目本身就是用户要求的全局规则。',
-  'alwaysActive、regexMode、selective、useProbability、sticky、cooldown、delay 和 group 都会改变触发行为；只有 requirement 明确需要且能说明用途时才使用，并在 content 或 name 中体现该用途。',
-  '每个条目必须有非空 name 与 content；alwaysActive=false 时 triggerKeys 必须非空；selective=true 时 keysSecondary 必须非空。不满足的条目会被直接丢弃。',
-  `单次工具调用的参数总量有上限：条目多或正文长时，先用 upsert_world_book_entry 分批写入，不要把 ${WORLD_BOOK_ASSISTANT_ENTRY_LIMIT} 条长正文塞进一次 replace_world_book_entries。`
+  'Split the setting into atomic entries. Each entry should describe only one person, place, faction, item, rule, event, relationship, or secret. Do not combine unrelated topics.',
+  'triggerKeys and keysSecondary must each be a single string with values separated by ASCII commas. Do not use arrays, ideographic commas, or semicolons. Use specific names, aliases, places, factions, items, or event terms as ordinary keys. Avoid generic keys such as "he", "here", or "event".',
+  'The stored field name is group, not inclusionGroup. role must be the integer 0, 1, or 2; do not use the strings system, user, or assistant. If sticky, cooldown, or delay is unused, omit it or set it to null; do not use placeholder values.',
+  'Choose the injection position for its purpose: use before_char for stable facts, after_char for current-scene pressure, at_start only for rules that must apply globally, and at_depth only when depth and role are needed.',
+  'Write content as facts, constraints, and relationships needed when the topic is triggered. Do not repeat the entire setting or include meta-instructions to the model, such as requests to generate text or ignore prior instructions, unless the entry itself is an explicitly requested global rule.',
+  'alwaysActive, regexMode, selective, useProbability, sticky, cooldown, delay, and group change matching behavior. Use them only when the requirement calls for them and their purpose is clear; reflect that purpose in the name or content.',
+  'knowledgeVisibility and audienceCastKeys control strict single-actor access across conversations. Keep unclassified secrets author-only; use public for common knowledge and restricted with stable portable cast keys only when the requirement establishes the audience. Never turn author plans into already-known history.',
+  'Every entry must have a non-empty name and content. triggerKeys must be non-empty when alwaysActive=false. keysSecondary must be non-empty when selective=true. Entries that fail these requirements are discarded.',
+  `Each tool call has a total argument-size limit. For many entries or long bodies, write entries in batches with upsert_world_book_entry instead of placing ${WORLD_BOOK_ASSISTANT_ENTRY_LIMIT} long entries in one replace_world_book_entries call.`
 ]);
 
 export function createCharacterWorldBookTool() {
@@ -239,7 +247,7 @@ export function createCharacterWorldBookTool() {
     type: 'function',
     function: {
       name: 'create_character_world_book',
-      description: `为当前角色生成一份可保存的世界书草稿（名称 + 条目）。字段格式与“AI 世界书创建助手”完全一致；调用只生成待确认草稿，不会直接写入数据库。仅在需求明确需要独立世界设定、地点、阵营、规则或秘密条目时调用。条目很多或正文很长时，这里先写核心条目，再用 upsert_world_book_entry 逐条补充（上限 ${WORLD_BOOK_ASSISTANT_ENTRY_LIMIT} 条）。`,
+      description: `Create a saveable world-book draft for the current character, including its name and entries. Use the same schema as the standalone world-book creator. This tool creates a draft for confirmation and does not write to the database. Use it only when the request explicitly needs separate world setting, place, faction, rule, or secret entries. For many entries or long bodies, create the core entries here and add the rest with upsert_world_book_entry, up to ${WORLD_BOOK_ASSISTANT_ENTRY_LIMIT} entries total.`,
       parameters: WORLD_BOOK_DRAFT_SCHEMA
     }
   };
@@ -381,12 +389,13 @@ export function inferWorldBookName(requirement, entries = []) {
   return limitText(entries[0]?.name ? `${entries[0].name}世界书` : 'AI 世界书', WORLD_BOOK_LIMITS.name);
 }
 
+// 中文维护说明：这里生成的状态轮数说明会嵌入工具字段描述，因此调用方传入英文语义。
 function stateDurationSchema(label) {
   return {
     type: ['integer', 'null'],
     minimum: 0,
     maximum: WORLD_BOOK_ENTRY_LIMITS.stateDurationMax,
-    description: `${label}，0-${WORLD_BOOK_ENTRY_LIMITS.stateDurationMax}；不使用时省略或设为 null。`
+    description: `${label}, from 0 to ${WORLD_BOOK_ENTRY_LIMITS.stateDurationMax}. Omit when unused or set to null.`
   };
 }
 
@@ -432,6 +441,7 @@ export function normalizeWorldBookEntry(value = {}, index = 0) {
   const entry = objectOrEmpty(value);
   const position = WORLD_BOOK_POSITION_VALUES.includes(entry.position) ? entry.position : 'before_char';
   return {
+    ...normalizeLoreKnowledge(entry),
     id: limitText(entry.id || newId(), WORLD_BOOK_ENTRY_LIMITS.id),
     name: limitText(entry.name, WORLD_BOOK_ENTRY_LIMITS.name),
     triggerKeys: limitText(entry.triggerKeys, WORLD_BOOK_ENTRY_LIMITS.triggerKeys),

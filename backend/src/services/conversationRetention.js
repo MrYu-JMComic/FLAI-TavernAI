@@ -1,5 +1,4 @@
 import { appConfig } from '../config.js';
-import { conversationJobKey } from './jobs/jobQueue.js';
 
 const TERMINAL_JOB_STATUSES = ['succeeded', 'cancelled', 'failed'];
 
@@ -25,11 +24,11 @@ export function pruneConversationDerivedStorage(database, userId, conversationId
     // Succeeded jobs never retry. Failed or cancelled jobs whose source revision is gone can
     // only be repaired through a rebuild, so their per-step rollback snapshots are dead weight.
     const jobs = database.prepare(
-      `SELECT id, status FROM jobs WHERE user_id = ? AND serial_key = ?
+      `SELECT id, status FROM jobs WHERE user_id = ? AND conversation_id = ?
          AND status IN (${TERMINAL_JOB_STATUSES.map(() => '?').join(', ')})
          AND COALESCE(finished_at, updated_at) <= ?
          AND (status = 'succeeded' OR json_extract(payload_json, '$.timelineRevision') IS NOT ?)`
-    ).all(userId, conversationJobKey(userId, conversationId), ...TERMINAL_JOB_STATUSES, cutoff, conversation.timeline_revision);
+    ).all(userId, conversationId, ...TERMINAL_JOB_STATUSES, cutoff, conversation.timeline_revision);
     const removeSteps = database.prepare('DELETE FROM job_steps WHERE job_id = ?');
     const removePending = database.prepare(
       "DELETE FROM conversation_checkpoints WHERE id = ? AND conversation_id = ? AND kind = 'pending'"

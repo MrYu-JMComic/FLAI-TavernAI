@@ -173,8 +173,9 @@ test('desktop assistant stays bounded and ordinary workspace pages remain scroll
   expect(before.header.top).toBeGreaterThanOrEqual(0);
   expect(before.composer.bottom).toBeLessThanOrEqual(900);
   expect(before.transcript.height).toBeGreaterThan(0);
+  await page.setViewportSize({ width: 1440, height: 480 });
   await page.goto('/#/settings');
-  await expect(page.getByRole('navigation', { name: '个人设置分区' })).toBeVisible();
+  await expect(page.getByRole('navigation', { name: '个人设置' })).toBeVisible();
   const scrolled = await page.locator('.page-shell').evaluate(element => {
     element.scrollTop = 250;
     return { scrollTop: element.scrollTop, range: element.scrollHeight - element.clientHeight };

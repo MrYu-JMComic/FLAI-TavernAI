@@ -67,10 +67,13 @@ describe('chat rendering lifecycle', () => {
   });
 
   it('does not cache streaming prefixes and caches the settled result', async () => {
+    vi.useFakeTimers();
     const renderSpy = vi.spyOn(md, 'render');
     const wrapper = render(MarkdownContent, { props: { text: 'prefix cache test', deferUpdates: true } });
     expect(renderSpy).toHaveBeenCalledTimes(1);
     await wrapper.setProps({ text: 'prefix cache test final' });
+    expect(renderSpy).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(32);
     expect(renderSpy).toHaveBeenCalledTimes(2);
     await wrapper.setProps({ deferUpdates: false });
     expect(renderSpy).toHaveBeenCalledTimes(3);

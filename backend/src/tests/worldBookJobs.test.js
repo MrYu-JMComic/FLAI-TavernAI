@@ -50,7 +50,7 @@ test('world-book.assist jobs preserve owned reads, selected IDs, pending workspa
       const body = JSON.parse(request.body);
       round += 1;
       if (round === 1) {
-        assert.match(body.messages[0].content, /本次由用户指定用书/);
+        assert.match(body.messages[0].content, /The user selected the default book/);
         assert.ok(body.messages.some(message => message.content === '上轮决定保留航海主题。'));
         const input = JSON.parse(body.messages.at(-1).content);
         assert.equal(input.requirement, '读取灯塔，再补充指定书的用途。');

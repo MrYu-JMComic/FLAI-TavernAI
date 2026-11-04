@@ -2,14 +2,19 @@ import { newId, nowIso } from '../security.js';
 import { withSavepoint } from '../modules/savepoint.js';
 import {
   captureConversationSnapshot, clearConversationSnapshotState, findConversationCheckpoint,
-  readSnapshotConversation, readSnapshotMessages, restoreConversationSnapshot, writeConversationCheckpoint
+  conversationHistoryHash, readSnapshotConversation, readSnapshotMessages, restoreConversationSnapshot, writeConversationCheckpoint
 } from '../repositories/conversationSnapshotRepository.js';
 import {
-  cancelConversationJobs, CONVERSATION_POSTPROCESS_JOB, getActiveConversationJob, submitJob
+  cancelConversationJobs, CONVERSATION_POSTPROCESS_JOB, getActiveConversationJob, getConversationProcessingSummary, submitJob
 } from './jobs/jobQueue.js';
 import { unwrapConversationDatabase } from './conversationMutationContext.js';
 import { pruneConversationDerivedStorage } from './conversationRetention.js';
 import { THINKING_LEVELS } from '../../../shared/providerThinking.js';
+import { resolveMemoryProcessingPolicy } from './conversationMemory/processingPolicy.js';
+import { getConversationForUser } from '../routes/helpers.js';
+import { ensureMemoryBaseline, getMemoryProcessingState, invalidateMemorySources, restoreMemoryCheckpoint } from './conversationMemory/commit.js';
+import { validateStagedLoreTransition, applyStagedLoreTransition } from './worldBooks/stagedLoreTransition.js';
+import { parseJson } from '../utils/json.js';
 
 const generationControllers = new WeakMap();
 
@@ -77,6 +82,7 @@ export function invalidateConversationTimeline(database, userId, conversationId,
   cancelConversationJobs(database, userId, conversationId);
   database.prepare(`UPDATE conversations SET timeline_revision = timeline_revision + 1, state_status = ?,
     active_generation_id = '', generation_expires_at = NULL WHERE id = ? AND user_id = ?`).run(status, conversationId, userId);
+  invalidateMemorySources(database,userId,conversationId);
   return readSnapshotConversation(database, userId, conversationId).timeline_revision;
 }
 
@@ -97,6 +103,10 @@ export function enqueueConversationPostprocessing(database, userId, conversation
     userMessageId: user?.id || '', userRevision: user?.revision || 0,
     replayLore: options.replayLore === true
   };
+  const effective = resolveMemoryProcessingPolicy(database, userId,
+    getConversationForUser(database, userId, conversationId, { includeUsage: false }), options);
+  payload.requiredStages = effective.requiredStages;
+  payload.memoryMode = effective.mode;
   const thinkingLevel = optionalThinkingLevel(options.thinkingLevel);
   if (thinkingLevel) {
     payload.thinkingLevel = thinkingLevel;
@@ -135,11 +145,13 @@ export function prepareConversationHistoryChange(database, userId, conversationI
 }
 
 export function finishConversationHistoryChange(database, userId, conversationId, prepared, options = {}) {
+  const stagedLoreState = validateStagedLoreTransition(database, userId, conversationId, prepared.checkpoint, options.loreTransition);
   if (prepared.checkpoint) {
     restoreConversationSnapshot(database, userId, conversationId, prepared.checkpoint.snapshot, { restoreMessages: false, restoreSettings: false });
   } else {
     clearConversationSnapshotState(database, userId, conversationId);
   }
+  applyStagedLoreTransition(database, conversationId, stagedLoreState);
   const rows = readSnapshotMessages(database, userId, conversationId);
   const anchorIndex = prepared.checkpoint?.anchor_message_id
     ? rows.findIndex((message) => message.id === prepared.checkpoint.anchor_message_id)
@@ -149,7 +161,7 @@ export function finishConversationHistoryChange(database, userId, conversationId
   if (remaining.length === 1) {
     job = enqueueConversationPostprocessing(database, userId, conversationId, remaining[0].id, {
       ...(options.postprocessOptions || {}),
-      replayLore: true
+      replayLore: !stagedLoreState
     });
   } else {
     database.prepare('UPDATE conversations SET state_status = ? WHERE id = ?')
@@ -163,26 +175,82 @@ export function finishConversationHistoryChange(database, userId, conversationId
   };
 }
 
+/** Previews or replays from a checkpoint that cannot hide unresolved required core work. */
 export function requestConversationStateRebuild(database, userId, conversationId, options = {}) {
   if (options.acceptCurrent === true) {
     invalidateConversationTimeline(database, userId, conversationId, 'ready');
+    ensureMemoryBaseline(database,userId,conversationId,{kind:'adopted_baseline',
+      messageId:readSnapshotMessages(database,userId,conversationId).at(-1)?.id||'',sources:{acceptedCurrentState:true}});
     writeConversationCheckpoint(database, userId, conversationId);
     return { stateStatus: 'ready', jobs: [] };
   }
   assertConversationIdle(database, userId, conversationId);
-  const checkpoint = findConversationCheckpoint(database, userId, conversationId, '');
   const messages = readSnapshotMessages(database, userId, conversationId);
+  const summary = getConversationProcessingSummary(database, userId, conversationId);
+  const failed = (summary?.stages.core || []).filter(job => ['failed', 'cancelled'].includes(job.status)
+    && job.payload.requiredStages?.length !== 0);
+  const failedIndexes = failed.map(job => messages.findIndex(message => message.role === 'assistant'
+    && message.id === job.payload.assistantMessageId && message.revision === job.payload.assistantRevision
+    && String(message.content || '').trim()));
+  if (failedIndexes.includes(-1)) {
+    throw timelineError('失败任务的来源消息已缺失或版本不匹配，请明确接受当前状态后继续。', 'CONVERSATION_REBUILD_SOURCE_MISSING');
+  }
+  const firstFailedIndex = failedIndexes.length ? Math.min(...failedIndexes) : -1;
+  const checkpoint = firstFailedIndex < 0
+    ? findConversationCheckpoint(database, userId, conversationId, '')
+    : findConversationCheckpoint(database, userId, conversationId, messages[firstFailedIndex].id, { before: true });
+  // A bootstrap snapshot stores initial canon and blueprints, but its opening still needs extraction.
+  const baseline = !checkpoint && firstFailedIndex >= 0
+    ? findOpeningBootstrapSnapshot(database, userId, conversationId, messages, firstFailedIndex, failed) : null;
   const after = checkpoint?.index ?? -1;
   const candidates = messages.slice(after + 1).filter((message) => message.role === 'assistant' && String(message.content || '').trim());
   if (options.confirmed !== true) return { stateStatus: 'needs_rebuild', confirmationRequired: true, turnCount: candidates.length };
+  if (options.expectedTurnCount !== undefined) {
+    if (!Number.isSafeInteger(options.expectedTurnCount) || options.expectedTurnCount < 0)
+      throw timelineError('重建预览轮数无效，请重新预览。', 'CONVERSATION_REBUILD_PREVIEW_INVALID', 400);
+    if (options.expectedTurnCount !== candidates.length)
+      throw timelineError('预览后剧情历史已变化，请重新预览并确认重建轮数。', 'CONVERSATION_REBUILD_PREVIEW_STALE');
+  }
   return withSavepoint(database, 'sp_rebuild_conversation_state', () => {
     invalidateConversationTimeline(database, userId, conversationId, 'pending');
-    if (checkpoint) restoreConversationSnapshot(database, userId, conversationId, checkpoint.snapshot, { restoreMessages: false, restoreSettings: false });
-    else clearConversationSnapshotState(database, userId, conversationId);
+    if (checkpoint || baseline) restoreConversationSnapshot(database, userId, conversationId, (checkpoint || baseline).snapshot, { restoreMessages: false, restoreSettings: false });
+    else {
+      clearConversationSnapshotState(database, userId, conversationId);
+      // Clearing domain tables retains immutable memory logs; explicitly detach their current membership.
+      getMemoryProcessingState(database, userId, conversationId);
+      restoreMemoryCheckpoint(database, userId, conversationId, { viewOrder: 0 });
+    }
     const jobs = candidates.map((message) => enqueueConversationPostprocessing(database, userId, conversationId, message.id, { replayLore: true }));
     if (!jobs.length) database.prepare("UPDATE conversations SET state_status = 'ready' WHERE id = ?").run(conversationId);
     return { stateStatus: jobs.length ? 'pending' : 'ready', jobs };
   });
+}
+
+/** Recognizes the first pre-extraction opening snapshot without accepting later story state. */
+function findOpeningBootstrapSnapshot(database, userId, conversationId, messages, failedIndex, failedJobs) {
+  const openingIndex = messages.findIndex(message => message.role === 'assistant' && String(message.content || '').trim());
+  if (openingIndex !== failedIndex) return null;
+  const opening = messages[openingIndex];
+  const firstJob = failedJobs.filter(job => job.payload.assistantMessageId === opening.id)
+    .sort((left, right) => left.createdAt.localeCompare(right.createdAt))[0];
+  const rows = database.prepare(`SELECT * FROM conversation_checkpoints WHERE conversation_id = ?
+    AND anchor_message_id = ? AND kind = 'after' AND created_at <= ? ORDER BY created_at, rowid`)
+    .all(conversationId, opening.id, firstJob.createdAt);
+  for (const row of rows) {
+    if (row.history_hash !== conversationHistoryHash(messages.slice(0, openingIndex + 1))) continue;
+    const snapshot = parseJson(row.state_json, null);
+    const memory = snapshot?.memoryCheckpoint;
+    if (snapshot?.stateStatus !== 'ready' || memory?.baselineKind !== 'bootstrap'
+      || memory.viewOrder !== openingIndex + 1 || memory.coreMessageId !== opening.id
+      || memory.coreMessageRevision !== opening.revision) continue;
+    const commit = database.prepare(`SELECT narrative_order FROM memory_commits WHERE id = ? AND user_id = ?
+      AND conversation_id = ? AND kind = 'bootstrap' AND parent_commit_id IS NULL
+      AND message_id = ? AND message_revision = ?
+      AND NOT EXISTS (SELECT 1 FROM memory_events WHERE commit_id = memory_commits.id)`)
+      .get(memory.commitId, userId, conversationId, opening.id, opening.revision);
+    if (commit?.narrative_order === memory.coreOrder) return { snapshot };
+  }
+  return null;
 }
 
 export function recoverInterruptedGenerations(database) {

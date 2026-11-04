@@ -1,6 +1,7 @@
 import { fetchProviderModels } from '../api/providers.js';
+import { inferProviderModelTask } from '../../../shared/providerCapabilities.js';
 
-const CACHE_PREFIX = 'flai-provider-models:v1:';
+const CACHE_PREFIX = 'flai-provider-models:v2:';
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 const CACHE_EVENT = 'flai-provider-models-updated';
 
@@ -46,15 +47,15 @@ export async function refreshProviderModels(settings = {}, { forceRefresh = true
   return models;
 }
 
-export function buildModelSelectOptions(models = [], currentValue = '', emptyLabel = '') {
+export function buildModelSelectOptions(models = [], currentValue = '', emptyLabel = '', { task = 'chat' } = {}) {
   const options = [];
   if (emptyLabel) {
     options.push({ id: '', label: emptyLabel, empty: true });
   }
 
-  const normalized = normalizeModelList(models);
+  const normalized = normalizeModelList(models).filter((model) => inferProviderModelTask(model.id, model.task) === task);
   const current = String(currentValue || '').trim();
-  if (current && !hasNormalizedModelId(normalized, current)) {
+  if (current && inferProviderModelTask(current) === task && !hasNormalizedModelId(normalized, current)) {
     options.push({
       id: current,
       label: `当前保存：${current}`,
@@ -107,7 +108,8 @@ export function normalizeModelList(models = []) {
     byId.set(id, {
       id,
       label: String(item?.label || item?.displayName || item?.display_name || item?.name || id).trim() || id,
-      ownedBy: String(item?.ownedBy || item?.owned_by || item?.publisher || '').trim()
+      ownedBy: String(item?.ownedBy || item?.owned_by || item?.publisher || '').trim(),
+      ...(item?.task || inferProviderModelTask(id) === 'embedding' ? { task: inferProviderModelTask(id, item?.task) } : {})
     });
   }
   return collectSortedModelValues(byId);
@@ -135,7 +137,8 @@ export function areProviderModelListsEqual(currentModels, nextModels) {
   for (let index = 0; index < currentModels.length; index += 1) {
     const model = currentModels[index];
     const nextModel = nextModels[index];
-    if (model?.id !== nextModel?.id || model?.label !== nextModel?.label || model?.ownedBy !== nextModel?.ownedBy) {
+    if (model?.id !== nextModel?.id || model?.label !== nextModel?.label || model?.ownedBy !== nextModel?.ownedBy
+      || inferProviderModelTask(model?.id, model?.task) !== inferProviderModelTask(nextModel?.id, nextModel?.task)) {
       return false;
     }
   }
@@ -177,6 +180,7 @@ function providerModelCacheKey(settings = {}) {
     baseUrl,
     String(Boolean(settings.apiKey || settings.apiKeySet)),
     String(Boolean(settings.supportsReasoning)),
+    String(settings.task || 'chat'),
     stableStringifyExtraBody(settings.extraBody)
   ].join('|');
   const scope = String(settings.modelCacheScope || '').trim();

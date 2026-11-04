@@ -6,7 +6,7 @@ import test from 'node:test';
 
 const { createAppDatabase } = await import('../db.js');
 const { createCharacter } = await import('../modules/characters.js');
-const { createConversationMemory } = await import('../modules/conversationMemories.js');
+const { createConversationMemory, confirmConversationMemory } = await import('../modules/conversationMemories.js');
 const { createEntry, createWorldBook } = await import('../services/worldBooks/worldBookService.js');
 const { createConversationsRouter } = await import('../routes/conversations.js');
 const { writeSse } = await import('../routes/helpers.js');
@@ -230,6 +230,9 @@ test('DeepSeek Pro omits historical images from continue and regenerate provider
   insertMessage(database, {
     userId, conversationId, id: 'deepseek-pro-image-assistant-message', role: 'assistant', content: 'I cannot inspect it yet.'
   });
+  // Historical domain state must be anchored before continuation creates a new candidate.
+  database.prepare("UPDATE conversations SET state_status='ready' WHERE id=?").run(conversationId);
+  writeConversationCheckpoint(database, userId, conversationId, { throughMessageId: 'deepseek-pro-image-assistant-message' });
 
   const app = createConversationStreamingApp(database, userId, {
     providerType: 'deepseek',
@@ -887,7 +890,7 @@ test('chat completion separates director lore character and preset system prompt
       assert.ok(loreIndex > 0 && loreIndex < characterIndex);
       assert.ok(presetIndex > characterIndex);
       for (const index of [loreIndex, characterIndex, presetIndex]) assert.equal(providerBody.messages[index].role, 'system');
-      assert.match(providerBody.messages[presetIndex].content, /\[用户配置的会话级指令\]/);
+      assert.match(providerBody.messages[presetIndex].content, /\[User-Configured Session Instructions\]/);
       assert.equal(providerBody.messages.at(-1).role, 'user');
       assert.equal(providerBody.messages.at(-1).content, 'approach the moon gate');
     });
@@ -907,11 +910,15 @@ test('chat completion injects long-term conversation memories through the prompt
     visibility: 'private'
   });
   insertConversation(database, { userId, conversationId, characterId: character.id });
-  createConversationMemory(database, userId, conversationId, {
+  const candidate = createConversationMemory(database, userId, conversationId, {
     memoryType: 'event',
     subject: 'silver key',
-    content: 'The player found a silver key under the old bridge.'
+    content: 'The player found a silver key under the old bridge.',
+    sourceKind:'auto',enabled:false
   });
+
+  confirmConversationMemory(database,userId,conversationId,candidate.id);
+  createConversationMemory(database,userId,conversationId,{content:'Unreviewed secret of the north tower.',sourceKind:'auto',enabled:false});
 
   const app = createConversationStreamingApp(database, userId, {
     providerType: 'custom',
@@ -944,17 +951,17 @@ test('chat completion injects long-term conversation memories through the prompt
       });
 
       assert.equal(response.status, 200);
-      const memoryMessage = providerBody.messages.find((message) => /\[Long-term conversation memory\]/.test(message.content));
+      const memoryMessage = providerBody.messages.find((message) => /silver key under the old bridge/.test(message.content));
       assert.equal(memoryMessage.role, 'system');
       assert.match(memoryMessage.content, /silver key under the old bridge/);
-      assert.match(providerBody.messages[0].content, /long-term conversation memory/i);
+      assert.doesNotMatch(JSON.stringify(providerBody.messages), /Unreviewed secret of the north tower/);
     });
   } finally {
     globalThis.fetch = originalFetch;
   }
 });
 
-test('chat completion records pending automatic long-term memory candidates', async () => {
+test('chat completion leaves structured memory unmodified when processing has no provider', async () => {
   const database = createAppDatabase(':memory:');
   const userId = 'chat-auto-memory-user';
   const conversationId = 'chat-auto-memory-conversation';
@@ -1005,22 +1012,10 @@ test('chat completion records pending automatic long-term memory candidates', as
       const handlers = createDefaultJobHandlers(database, { providerSettings: () => ({ providerType: 'mock' }) });
       const processed = await handlers[queued.type]({ job: queued, payload: queued.payload, signal: new AbortController().signal, progress: () => {} });
       completeJob(database, queued.id, queued.leaseOwner, processed);
-      const memories = await waitForConversationMemories(database, conversationId, 2);
-      assert.ok(memories.length >= 2);
-      assert.equal(memories.every((memory) => memory.source_kind === 'auto'), true);
-      // Rule fallback preserves source-linked candidates for explicit confirmation.
-      assert.equal(memories.every((memory) => memory.enabled === 0), true);
-      assert.equal(memories.every((memory) => memory.archived === 0), true);
-      assert.equal(memories.some((memory) => memory.memory_type === 'preference'), true);
-      assert.equal(memories.some((memory) => memory.memory_type === 'relationship'), true);
-      assert.equal(
-        memories.some((memory) => memory.memory_type === 'preference' && memory.source_message_id === body.userMessage.id),
-        true
-      );
-      assert.equal(
-        memories.some((memory) => memory.memory_type === 'relationship' && memory.source_message_id === body.assistantMessage.id),
-        true
-      );
+      const memories=database.prepare('SELECT * FROM conversation_memories WHERE conversation_id=?').all(conversationId);
+      assert.deepEqual(memories,[]);
+      assert.equal(processed.mode,'raw');
+      assert.equal(database.prepare('SELECT postprocess_state FROM messages WHERE id=?').get(body.assistantMessage.id).postprocess_state,'completed');
     });
   } finally {
     globalThis.fetch = originalFetch;
@@ -1391,20 +1386,5 @@ async function waitForMessages(database, conversationId, expectedCount) {
   }
   return database
     .prepare('SELECT role, content FROM messages WHERE conversation_id = ? ORDER BY rowid ASC')
-    .all(conversationId);
-}
-
-async function waitForConversationMemories(database, conversationId, expectedCount) {
-  for (let attempt = 0; attempt < 20; attempt += 1) {
-    const rows = database
-      .prepare('SELECT * FROM conversation_memories WHERE conversation_id = ? ORDER BY rowid ASC')
-      .all(conversationId);
-    if (rows.length >= expectedCount) {
-      return rows;
-    }
-    await new Promise((resolve) => setTimeout(resolve, 25));
-  }
-  return database
-    .prepare('SELECT * FROM conversation_memories WHERE conversation_id = ? ORDER BY rowid ASC')
     .all(conversationId);
 }

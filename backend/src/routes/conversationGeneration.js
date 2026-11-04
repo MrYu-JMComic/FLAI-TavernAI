@@ -18,7 +18,7 @@ import {
   logAssistantPayloadFailure
 } from '../services/conversationGenerationDiagnostics.js';
 import { streamAssistantResponse } from '../services/conversationStreamResponse.js';
-import { buildPromptPipeline } from '../services/promptPipeline.js';
+import { buildResolvedPromptPipeline } from '../services/resolvedPromptPipeline.js';
 import {
   buildConversationCompletionOptions,
   resolveConversationThinkingLevel
@@ -39,6 +39,7 @@ import {
 import { continueMessageSchema, regenerateMessageSchema, sendMessageSchema, validate } from '../validations/schemas.js';
 import { routeErrorPayload } from './errorResponse.js';
 import { withSavepoint } from '../modules/savepoint.js';
+import { prepareMemoryGeneration } from '../services/conversationMemory/processingPolicy.js';
 
 const CONTINUATION_PROMPT = [
   '从上一条 assistant 回复的末尾直接续写尚未完成的内容。',
@@ -75,12 +76,22 @@ export function createConversationGenerationRouter(ctx) {
     ticket.thinkingEnabled = ticket.thinkingLevel !== 'off';
   }
 
-  function tryLockGeneration(userId, conversationId, response) {
+  async function tryLockGeneration(userId, conversationId, response) {
     try {
-      return beginConversationGeneration(db, userId, conversationId, { backgroundSafe: true });
+      const prepared = await prepareMemoryGeneration(db, userId, () => getConversation(userId, conversationId), {
+        settings: getChatProviderSettings(userId).value, config
+      });
+      // No await occurs between this final check and lock acquisition.
+      const ticket = beginConversationGeneration(db, userId, conversationId, { backgroundSafe: true });
+      if (ticket.revision !== prepared.timelineRevision) {
+        endConversationGeneration(db, ticket);
+        throw Object.assign(new Error('剧情版本已变化，请重试。'), { status: 409, code: 'MEMORY_SOURCE_CHANGED' });
+      }
+      ticket.preparedConversation=prepared.conversation;
+      return ticket;
     } catch (error) {
-      if (error.status !== 409) throw error;
-      response.status(409).json({ error: error.message, code: error.code, jobId: error.jobId || '', accepted: false });
+      if (![400, 404, 409].includes(error.status)) throw error;
+      response.status(error.status).json({ error: error.message, code: error.code, jobId: error.jobId || '', accepted: false });
       return null;
     }
   }
@@ -98,12 +109,12 @@ export function createConversationGenerationRouter(ctx) {
       return;
     }
 
-    const ticket = tryLockGeneration(request.auth.user.id, conversation.id, response);
+    const ticket = await tryLockGeneration(request.auth.user.id, conversation.id, response);
     if (!ticket) {
       return;
     }
     try {
-      await handleSendMessage(request, response, conversation, character, ticket);
+      await handleSendMessage(request, response, ticket.preparedConversation||conversation, character, ticket);
     } catch (error) {
       finishFailedTrace(ticket, error);
       throw error;
@@ -156,7 +167,8 @@ export function createConversationGenerationRouter(ctx) {
     const aiOptions = { ...buildConversationCompletionOptions(settings.value, conversation.contextBudget, request.body || {}, activePreset), signal: ticket.signal };
     rememberGenerationThinking(ticket, settings.value, aiOptions);
     let commitWorldBookState;
-    const promptPipeline = buildPromptPipeline(db, {
+    const promptPipeline = await buildResolvedPromptPipeline(db, {
+      allowProviderCall: true, signal: ticket.signal,
       character,
       conversation,
       user: request.auth.user,
@@ -375,12 +387,12 @@ export function createConversationGenerationRouter(ctx) {
       return;
     }
 
-    const ticket = tryLockGeneration(request.auth.user.id, conversation.id, response);
+    const ticket = await tryLockGeneration(request.auth.user.id, conversation.id, response);
     if (!ticket) {
       return;
     }
     try {
-      await handleContinueMessage(request, response, conversation, character, ticket);
+      await handleContinueMessage(request, response, ticket.preparedConversation||conversation, character, ticket);
     } catch (error) {
       finishFailedTrace(ticket, error);
       throw error;
@@ -410,7 +422,8 @@ export function createConversationGenerationRouter(ctx) {
     const aiOptions = { ...buildConversationCompletionOptions(settings.value, conversation.contextBudget, request.body || {}, activePreset), signal: ticket.signal };
     rememberGenerationThinking(ticket, settings.value, aiOptions);
     let commitWorldBookState;
-    const promptPipeline = buildPromptPipeline(db, {
+    const promptPipeline = await buildResolvedPromptPipeline(db, {
+      allowProviderCall: true, signal: ticket.signal,
       character,
       conversation,
       user: request.auth.user,
@@ -559,12 +572,12 @@ export function createConversationGenerationRouter(ctx) {
       return;
     }
 
-    const ticket = tryLockGeneration(request.auth.user.id, conversation.id, response);
+    const ticket = await tryLockGeneration(request.auth.user.id, conversation.id, response);
     if (!ticket) {
       return;
     }
     try {
-      await handleRegenerateMessage(request, response, conversation, character, ticket);
+      await handleRegenerateMessage(request, response, ticket.preparedConversation||conversation, character, ticket);
     } catch (error) {
       finishFailedTrace(ticket, error);
       throw error;
@@ -606,7 +619,9 @@ export function createConversationGenerationRouter(ctx) {
     const aiOptions = { ...buildConversationCompletionOptions(settings.value, conversation.contextBudget, request.body || {}, activePreset), signal: ticket.signal };
     rememberGenerationThinking(ticket, settings.value, aiOptions);
     let commitWorldBookState;
-    const promptPipeline = buildPromptPipeline(db, {
+    const promptPipeline = await buildResolvedPromptPipeline(db, {
+      allowProviderCall: true, signal: ticket.signal,
+      asOfMessageId: target.id, beforeCutoff: true,
       character,
       conversation,
       user: request.auth.user,
@@ -639,7 +654,7 @@ export function createConversationGenerationRouter(ctx) {
       charName: character.name || ''
     };
     const saveRegenerated = (options) => {
-      const assistantMessage = assistantResults.saveRegeneratedAssistantResult({ ...options, ticket, targetMessageId: target.id });
+      const assistantMessage = assistantResults.saveRegeneratedAssistantResult({ ...options, ticket, targetMessageId: target.id, loreTransition: promptPipeline.loreTransition });
       if (assistantMessage) {
         finishPromptTrace(ticket.requestTrace, { status: 'completed', assistantMessageId: assistantMessage.id, usage: assistantMessage.usage });
       }

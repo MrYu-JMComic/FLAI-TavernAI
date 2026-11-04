@@ -5,6 +5,7 @@
 // This is the only entry point for runtime activation. Authoring writes go
 // through worldBookService.js; trigger rules live in domain/worldBooks/.
 import { withSavepoint } from '../../modules/savepoint.js';
+import { isLoreVisibleToScope } from '../../../../shared/loreKnowledge.js';
 import {
   conversationExists,
   listEnabledEntryRowsForBooks,
@@ -102,7 +103,7 @@ export function matchWorldBookEntries(database, characterId, texts, options = {}
     return [];
   }
 
-  const entries = listEnabledEntryRowsForBooks(database, allBookIds);
+  const entries = listEnabledEntryRowsForBooks(database, allBookIds).filter((entry) => isLoreVisibleToScope(entry, options.knowledgeScope));
   const { entryIds, entryById } = indexWorldBookEntries(entries);
   const entryStates = loadWorldBookEntryStates(database, entryIds, conversationId);
 

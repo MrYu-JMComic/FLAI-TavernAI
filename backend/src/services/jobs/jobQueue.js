@@ -9,14 +9,15 @@ export const PUBLIC_JOB_TYPES = Object.freeze([
   'world-book.assist'
 ]);
 export const CONVERSATION_POSTPROCESS_JOB = 'conversation.postprocess';
-export const JOB_TYPES = Object.freeze([...PUBLIC_JOB_TYPES, CONVERSATION_POSTPROCESS_JOB]);
+export const MEMORY_DERIVED_JOBS = Object.freeze(['memory.summarize', 'memory.index']);
+export const JOB_TYPES = Object.freeze([...PUBLIC_JOB_TYPES, CONVERSATION_POSTPROCESS_JOB, ...MEMORY_DERIVED_JOBS]);
 export const TERMINAL_JOB_STATUSES = new Set(['succeeded', 'failed', 'cancelled']);
 const JOB_TYPE_SET = new Set(JOB_TYPES);
 const MAX_JOB_PAYLOAD_BYTES = 100_000;
 
 export function submitJob(database, userId, type, payload = {}, options = {}) {
   const normalizedType = normalizeJobType(type);
-  if (normalizedType === CONVERSATION_POSTPROCESS_JOB && options.internal !== true) {
+  if ((normalizedType === CONVERSATION_POSTPROCESS_JOB || MEMORY_DERIVED_JOBS.includes(normalizedType)) && options.internal !== true) {
     throw jobError('This job type is scheduled by the conversation pipeline.', 'JOB_TYPE_INTERNAL', 400);
   }
   const idempotencyKey = normalizeIdempotencyKey(options.idempotencyKey);
@@ -38,8 +39,9 @@ export function submitJob(database, userId, type, payload = {}, options = {}) {
       database.prepare(
         `INSERT INTO jobs (
            id, user_id, type, status, payload_json, idempotency_key,
-           max_attempts, created_at, updated_at, serial_key
-         ) VALUES (?, ?, ?, 'queued', ?, ?, ?, ?, ?, ?)`
+           max_attempts, created_at, updated_at, serial_key,
+           conversation_id, source_timeline_revision, stage, index_generation
+         ) VALUES (?, ?, ?, 'queued', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       ).run(
         id,
         userId,
@@ -49,7 +51,9 @@ export function submitJob(database, userId, type, payload = {}, options = {}) {
         clampInteger(options.maxAttempts, 1, 10, 3),
         timestamp,
         timestamp,
-        String(boundPayload?.conversationId || '').trim() ? conversationJobKey(userId, boundPayload.conversationId) : ''
+        String(boundPayload?.conversationId || '').trim() ? conversationJobKey(userId, boundPayload.conversationId, jobStage(normalizedType)) : '',
+        String(boundPayload?.conversationId || ''), Number(boundPayload?.timelineRevision || 0),
+        jobStage(normalizedType), String(boundPayload?.indexGeneration || '')
       );
       appendJobEvent(database, id, userId, 'queued', { progress: 0 });
     });
@@ -132,6 +136,7 @@ export function listJobEvents(database, userId, jobId, options = {}) {
   }));
 }
 
+/** Claims ordered work; only required or legacy core failures block subsequent core jobs. */
 export function claimNextJob(database, workerId, options = {}) {
   const leaseMs = clampInteger(options.leaseMs, 5_000, 15 * 60_000, 60_000);
   const now = Number(options.now || Date.now());
@@ -143,16 +148,20 @@ export function claimNextJob(database, workerId, options = {}) {
       `SELECT id, user_id FROM jobs candidate
        WHERE status = 'queued' AND cancel_requested = 0 AND attempt < max_attempts${typeFilter}
          AND (serial_key = '' OR NOT EXISTS (
-           SELECT 1 FROM conversations c WHERE c.id = json_extract(candidate.payload_json, '$.conversationId')
+           SELECT 1 FROM conversations c WHERE c.id = candidate.conversation_id AND c.user_id = candidate.user_id
              AND c.active_generation_id <> '' AND c.generation_expires_at > ?
+             AND candidate.stage NOT IN ('summary','index')
              AND (candidate.type <> 'conversation.postprocess' OR c.active_generation_id NOT LIKE 'chat:%'
                OR json_extract(candidate.payload_json, '$.replayLore') = 1)
          ))
          AND (serial_key = '' OR NOT EXISTS (
            SELECT 1 FROM jobs prior WHERE prior.user_id = candidate.user_id
              AND prior.serial_key = candidate.serial_key AND prior.id <> candidate.id
+             AND prior.source_timeline_revision = candidate.source_timeline_revision
              AND (prior.status = 'running' OR (prior.rowid < candidate.rowid
-               AND prior.cancel_requested = 0 AND prior.status = 'queued'))
+               AND (prior.status = 'queued' OR (candidate.stage = 'core' AND prior.status IN ('failed','cancelled')
+                 AND (COALESCE(json_type(prior.payload_json, '$.requiredStages'), '') <> 'array'
+                   OR json_array_length(prior.payload_json, '$.requiredStages') > 0)))))
          ))
        ORDER BY created_at ASC, rowid ASC LIMIT 1`
     ).get(...types, now);
@@ -316,37 +325,47 @@ export function recoverExpiredJobs(database, now = Date.now()) {
 }
 
 export function getActiveConversationJob(database, userId, conversationId) {
-  const row = database.prepare(`SELECT * FROM jobs WHERE user_id = ? AND serial_key = ?
+  const row = database.prepare(`SELECT * FROM jobs WHERE user_id = ? AND conversation_id = ? AND stage = 'core'
     AND status IN ('queued', 'running') ORDER BY rowid LIMIT 1`)
-    .get(userId, conversationJobKey(userId, conversationId));
+    .get(userId, conversationId);
   return row ? toJob(row) : null;
 }
 
 export function cancelConversationJobs(database, userId, conversationId) {
-  const rows = database.prepare(`SELECT id FROM jobs WHERE user_id = ? AND serial_key = ?
-    AND status IN ('queued', 'running', 'failed')`).all(userId, conversationJobKey(userId, conversationId));
+  const rows = database.prepare(`SELECT id FROM jobs WHERE user_id = ? AND conversation_id = ?
+    AND status IN ('queued', 'running', 'failed')`).all(userId, conversationId);
   return rows.map((row) => cancelJob(database, userId, row.id));
 }
 
-export function conversationJobKey(userId, conversationId) {
-  return JSON.stringify([String(userId), String(conversationId)]);
+export function conversationJobKey(userId, conversationId, stage = 'core') {
+  return JSON.stringify([String(userId), String(conversationId), stage]);
 }
 
+/** Reports required core readiness independently of derived work and invalid timeline state. */
 export function getConversationProcessingSummary(database, userId, conversationId) {
-  const rows = database.prepare(`SELECT * FROM jobs WHERE user_id = ? AND serial_key = ?
-    AND json_extract(payload_json, '$.timelineRevision') = (SELECT timeline_revision FROM conversations WHERE id = ?)
-    ORDER BY rowid`).all(userId, conversationJobKey(userId, conversationId), conversationId);
-  const pending = rows.filter((job) => ['queued', 'running'].includes(job.status));
-  const failed = rows.filter((job) => ['failed', 'cancelled'].includes(job.status));
+  const rows = database.prepare(`SELECT * FROM jobs WHERE user_id = ? AND conversation_id = ?
+    AND source_timeline_revision = (SELECT timeline_revision FROM conversations WHERE id = ? AND user_id = ?)
+    ORDER BY rowid`).all(userId, conversationId, conversationId, userId);
+  const core = rows.filter(row => row.stage === 'core' && parseJson(row.payload_json, {}).requiredStages?.length !== 0);
+  const pending = core.filter((job) => ['queued', 'running'].includes(job.status));
+  const failed = core.filter((job) => ['failed', 'cancelled'].includes(job.status));
   const row = pending.find((job) => job.status === 'running') || pending[0] || failed[0] || rows.at(-1);
   if (!row) return null;
   const job = toJob(row);
+  const conversation = database.prepare('SELECT state_status FROM conversations WHERE id = ? AND user_id = ?').get(conversationId, userId);
+  const rebuildRequired = ['needs_rebuild', 'stale', 'legacy_partial'].includes(conversation?.state_status)
+    || (conversation?.state_status === 'needs_review' && !rows.some(row => row.stage === 'core'));
   return { id: job.id, status: job.status, progress: job.progress, error: job.error,
     pendingCount: pending.length, failedCount: failed.length,
+    coreReady: !rebuildRequired && pending.length === 0 && failed.length === 0,
+    corePendingCount: pending.length, coreFailedCount: failed.length,
+    requiredStages: [...new Set(core.flatMap(row => parseJson(row.payload_json, {}).requiredStages || ['memory']))],
+    stages: Object.fromEntries(['core','summary','index'].map(stage => [stage, rows.filter(row => row.stage === stage).map(toJob)])),
     canRetry: ['failed', 'cancelled'].includes(job.status) && !hasLaterConversationWork(database, job) };
 }
 
 function hasLaterConversationWork(database, job) {
+  if (MEMORY_DERIVED_JOBS.includes(job.type)) return false;
   return Boolean(job.serialKey && database.prepare(`SELECT id FROM jobs WHERE user_id = ? AND serial_key = ?
     AND rowid > (SELECT rowid FROM jobs WHERE id = ?) AND attempt > 0
     AND json_extract(payload_json, '$.timelineRevision') = ? LIMIT 1`)
@@ -358,7 +377,8 @@ function bindConversationPayload(database, userId, type, payload) {
   if (!conversationId) return payload;
   const conversation = database.prepare('SELECT timeline_revision FROM conversations WHERE id = ? AND user_id = ?').get(conversationId, userId);
   if (!conversation) return payload;
-  const bound = { ...payload, conversationId, timelineRevision: conversation.timeline_revision };
+  const bound = { ...payload, conversationId, ownerId: userId, stage: jobStage(type),
+    timelineRevision: payload.timelineRevision ?? conversation.timeline_revision };
   if (type === 'memory.extract') {
     const rows = database.prepare(`SELECT id, role, revision FROM messages WHERE conversation_id = ? AND user_id = ?
       AND role IN ('user', 'assistant') ORDER BY created_at DESC, rowid DESC LIMIT 80`).all(conversationId, userId).reverse();
@@ -385,6 +405,11 @@ function reconcileConversationJobStatus(database, jobId) {
   if (['needs_rebuild', 'stale', 'legacy_partial'].includes(conversation.state_status)) return;
   const status = summary?.pendingCount ? 'pending' : summary?.failedCount ? 'needs_review' : 'ready';
   database.prepare('UPDATE conversations SET state_status = ? WHERE id = ?').run(status, payload.conversationId);
+}
+
+function jobStage(type) {
+  return type === 'memory.summarize' ? 'summary' : type === 'memory.index' ? 'index'
+    : ['memory.extract', CONVERSATION_POSTPROCESS_JOB].includes(type) ? 'core' : '';
 }
 
 function appendJobEvent(database, jobId, userId, type, data) {
@@ -417,6 +442,8 @@ function toJob(row) {
     error: row.error_code || row.error_message ? { code: row.error_code, message: row.error_message } : null,
     idempotencyKey: row.idempotency_key,
     serialKey: row.serial_key || '',
+    conversationId: row.conversation_id || '', stage: row.stage || '',
+    sourceTimelineRevision: Number(row.source_timeline_revision || 0), indexGeneration: row.index_generation || '',
     progress: Number(row.progress || 0),
     attempt: Number(row.attempt || 0),
     maxAttempts: Number(row.max_attempts || 0),

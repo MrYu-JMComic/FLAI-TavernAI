@@ -2,6 +2,7 @@ import { newId, nowIso } from '../security.js';
 import { withSavepoint } from './savepoint.js';
 import { captureConversationSnapshot, findConversationCheckpoint, readSnapshotMessages, restoreConversationSnapshot, SNAPSHOT_STATE_TABLES, writeConversationCheckpoint } from '../repositories/conversationSnapshotRepository.js';
 import { assertConversationIdle } from '../services/conversationTimeline.js';
+import { captureMemoryPrefix } from '../repositories/conversationMemoryRepository.js';
 
 export function branchConversation(db, userId, conversationId, branchFromMessageId) {
   const conversation = db
@@ -23,8 +24,14 @@ export function branchConversation(db, userId, conversationId, branchFromMessage
   const checkpoint = findConversationCheckpoint(db, userId, conversationId, branchFromMessageId, { exact: true });
   const atTip = branchIndex === allMessages.length - 1;
   const snapshot = checkpoint?.snapshot || captureConversationSnapshot(db, userId, conversationId, { includeMessages: false });
+  // Copy the selected immutable prefix once; checkpoints carry only a receipt.
+  if(checkpoint?.snapshot.memoryCheckpoint) {
+    snapshot.memory=captureMemoryPrefix(db,userId,conversationId,checkpoint.snapshot.memoryCheckpoint);
+    delete snapshot.memoryCheckpoint;
+  }
   if (!checkpoint && !atTip) {
     for (const table of SNAPSHOT_STATE_TABLES) snapshot.state[table] = [];
+    snapshot.memory={};delete snapshot.memoryCheckpoint;
   }
   snapshot.messages = allMessages.slice(0, branchIndex + 1);
   const messageIds = snapshot.messages.map((message) => message.id);

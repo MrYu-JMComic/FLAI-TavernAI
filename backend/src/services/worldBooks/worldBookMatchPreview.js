@@ -9,6 +9,7 @@
 //     lower orderIndex) instead of a weighted random pick, so a preview is
 //     reproducible.
 import { getWorldBook } from './worldBookService.js';
+import { isLoreVisibleToScope } from '../../../../shared/loreKnowledge.js';
 import { collectChatWorldBookIds } from './worldBookRuntime.js';
 import {
   entryGroupWeight,
@@ -25,7 +26,7 @@ const WORLD_BOOK_CONTEXT_EXPLANATION_LIMIT = 48;
 
 export function buildWorldBookMatchPreview(book = {}, payload = {}) {
   const text = String(payload.text || payload.content || '').trim();
-  const entries = Array.isArray(book.entries) ? book.entries : [];
+  const entries = (Array.isArray(book.entries) ? book.entries : []).filter((entry) => isLoreVisibleToScope(entry, payload.knowledgeScope));
   const explanations = [];
   const matchedCandidates = [];
 
@@ -90,7 +91,7 @@ export function buildWorldBookContextDiagnostics(database, options = {}) {
     }
     const scanText = selectBookScanText(texts, book.scanDepth);
     scannedTextLength += scanText.length;
-    const preview = buildWorldBookMatchPreview(book, { text: scanText });
+    const preview = buildWorldBookMatchPreview(book, { text: scanText, knowledgeScope: options.knowledgeScope });
     books.push({
       id: book.id,
       name: book.name || '未命名世界书',
@@ -150,6 +151,8 @@ function explainWorldBookEntry(entry = {}, text = '', orderIndex = 0) {
   return {
     id: normalized.id,
     name: normalized.name,
+    knowledgeVisibility: normalized.knowledgeVisibility,
+    audienceCastKeys: normalized.audienceCastKeys,
     matched: decision.matched,
     effective: decision.matched,
     status: decision.status,

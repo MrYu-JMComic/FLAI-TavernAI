@@ -1,6 +1,7 @@
 <script setup>
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { Check, LoaderCircle, RefreshCw, Search, X } from '@lucide/vue';
+import { inferProviderModelTask } from '../../../../shared/providerCapabilities.js';
 
 const props = defineProps({
   open: { type: Boolean, default: false },
@@ -48,7 +49,7 @@ const canRefresh = computed(() => Boolean(props.provider?.baseUrl) && !props.ref
 const modelOptions = computed(() => {
   const byId = new Map();
   const current = currentModel.value;
-  if (current) {
+  if (current && inferProviderModelTask(current) === 'chat') {
     byId.set(current, {
       id: current,
       label: current,
@@ -58,7 +59,7 @@ const modelOptions = computed(() => {
   }
   for (const item of Array.isArray(props.models) ? props.models : []) {
     const id = String(item?.id || item?.name || item?.model || item || '').trim();
-    if (!id) continue;
+    if (!id || inferProviderModelTask(id, item?.task) !== 'chat') continue;
     byId.set(id, {
       id,
       label: String(item?.label || item?.displayName || item?.name || id).trim() || id,

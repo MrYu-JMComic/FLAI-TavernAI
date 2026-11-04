@@ -14,6 +14,8 @@ cleanupStaleE2eDatabases(runtimeDir);
 
 const backendPort = Number(process.env.FLAI_E2E_BACKEND_PORT || 3211);
 const frontendPort = Number(process.env.FLAI_E2E_FRONTEND_PORT || 5174);
+const workerLimit = String(process.env.FLAI_E2E_WORKERS || '').trim();
+const e2eWorkers = /^[1-9]\d*$/.test(workerLimit) && Number.isSafeInteger(Number(workerLimit)) ? Number(workerLimit) : undefined;
 const backendBaseUrl = `http://127.0.0.1:${backendPort}`;
 const frontendBaseUrl = `http://127.0.0.1:${frontendPort}`;
 const runId = String(process.env.FLAI_E2E_RUN_ID || `${Date.now()}-${process.pid}-${crypto.randomBytes(4).toString('hex')}`)
@@ -22,6 +24,8 @@ const e2eDatabasePath = path.join(runtimeDir, `e2e-${runId}.sqlite`);
 process.env.FLAI_E2E_DATABASE_PATH = e2eDatabasePath;
 
 export default defineConfig({
+  // Resource-constrained hosts can bound browser concurrency while other runs retain Playwright's default.
+  ...(e2eWorkers === undefined ? {} : { workers: e2eWorkers }),
   globalTeardown: './e2e/global-teardown.js',
   metadata: { e2eDatabasePath },
   testDir: './e2e',

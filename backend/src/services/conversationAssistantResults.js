@@ -71,6 +71,9 @@ export function createConversationAssistantResultService({
       if (job) {
         assistantMessage.postprocessState = 'queued';
         assistantMessage.postprocessJobId = job.id;
+        assistantMessage.coreJobId=job.id;
+        assistantMessage.coreReady=job.payload?.requiredStages?.length===0;
+        assistantMessage.requiredStages=job.payload?.requiredStages||[];
       }
     }
     return assistantMessage;
@@ -82,7 +85,7 @@ export function createConversationAssistantResultService({
    * text is retained as a swipe; the timeline restores the pre-message checkpoint
    * and re-queues postprocessing for the new content.
    */
-  function saveRegeneratedAssistantResult({ userId, conversation, character, rules, result, macroContext = {}, ticket, targetMessageId }) {
+  function saveRegeneratedAssistantResult({ userId, conversation, character, rules, result, macroContext = {}, ticket, targetMessageId, loreTransition }) {
     const content = applyRegexRules(result.content || '', rules, 'output', macroContext);
     const reasoning = result.reasoning || '';
     if (!String(content || '').trim() && !String(reasoning || '').trim()) {
@@ -98,6 +101,7 @@ export function createConversationAssistantResultService({
         throw Object.assign(new Error('要重新生成的回复不存在'), { status: 404, code: 'MESSAGE_NOT_FOUND', publicMessage: '要重新生成的回复不存在' });
       }
       const timeline = replaceMessageWithAlternative(db, userId, existing, { content, reasoning, usage }, {
+        loreTransition,
         postprocessOptions: generationThinkingOptions(ticket)
       });
       updateConversationTimestamp(db, nowIso, userId, conversation.id);

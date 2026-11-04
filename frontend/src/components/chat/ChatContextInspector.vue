@@ -26,10 +26,11 @@ const props = defineProps({
   conversationId: { type: String, default: '' },
   draftContent: { type: String, default: '' },
   draftAttachments: { type: Array, default: () => [] },
-  presetId: { type: String, default: '' }
+  presetId: { type: String, default: '' },
+  initialView: { type: String, default: 'preview' }
 });
 
-const emit = defineEmits(['close', 'memory-updated']);
+const emit = defineEmits(['close', 'memory-updated', 'open-memory-settings', 'processing-settled']);
 const notify = useNotify();
 
 const loading = ref(false);
@@ -43,7 +44,24 @@ const tabs = [
   { id: 'history', label: '实际请求', icon: FileText },
   { id: 'budget', label: '预算', icon: Database }
 ];
+watch(() => [props.open, props.initialView], () => {
+  if (props.open && tabs.some(tab => tab.id === props.initialView)) activeView.value = props.initialView;
+}, { immediate: true });
 const memoryRefreshKey = ref(0);
+const memoryManifest = computed(() => {
+  const bundle = preview.value?.contextBundle;
+  if (bundle) return {
+    coreWatermark: bundle.source?.coreOrder,
+    actorId: bundle.actorId,
+    selected: preview.value?.retrieval?.evidence || bundle.memory?.entries || []
+  };
+  return preview.value?.sections?.memory?.manifest || preview.value?.manifest || null;
+});
+const recallRows = computed(() => {
+  const manifest = memoryManifest.value;
+  const selected = manifest?.selected || manifest?.selections || [];
+  return Array.isArray(selected) ? selected : [];
+});
 let inspectorLoadToken = 0;
 let inspectorDisposed = false;
 
@@ -401,6 +419,13 @@ async function handleMemoryChanged(result) {
   await loadInspector({ quiet: true });
 }
 
+/** Relay core recovery separately from author edits without restarting the workspace status reader. */
+async function handleProcessingSettled(state) {
+  if (!props.open || inspectorDisposed || state?.conversationId !== props.conversationId) return;
+  emit('processing-settled', state);
+  await loadInspector({ quiet: true });
+}
+
 function handleTabKeydown(event, index) {
   let nextIndex = index;
   if (event.key === 'ArrowRight') nextIndex = (index + 1) % tabs.length;
@@ -599,6 +624,7 @@ function worldBookRoleLabel(role) {
   >
     <aside
       class="chat-context-inspector"
+      :class="{ 'is-memory': activeView === 'memory' }"
       role="dialog"
       aria-modal="true"
       aria-labelledby="chat-context-inspector-title"
@@ -608,9 +634,9 @@ function worldBookRoleLabel(role) {
           <span class="chat-context-inspector-mark"><Brain :size="22" /></span>
           <div>
             <span class="chat-context-inspector-kicker">
-              上下文检查器
+              {{ activeView === 'memory' ? '角色档案与剧情记录' : '上下文检查器' }}
             </span>
-            <h2 id="chat-context-inspector-title">Prompt Pipeline V2</h2>
+            <h2 id="chat-context-inspector-title">{{ activeView === 'memory' ? '记忆工作台' : 'Prompt Pipeline V2' }}</h2>
           </div>
         </div>
         <div class="chat-context-inspector-actions">
@@ -646,6 +672,12 @@ function worldBookRoleLabel(role) {
 
         <template v-if="activeView === 'preview'">
 
+        <section v-if="memoryManifest" class="chat-context-section">
+          <h3>记忆来源与召回</h3>
+          <p>核心水位 {{ memoryManifest.coreWatermark ?? memoryManifest.watermarks?.core ?? '—' }} · 视角 {{ memoryManifest.actorId || '多角色叙述' }}</p>
+          <ul v-if="recallRows.length" class="context-source-list"><li v-for="(row, index) in recallRows" :key="row.eventId || row.id || row.sourceId || index"><strong>{{ row.content || row.label || row.kind || row.sourceId || row.id }}</strong><span>{{ row.reason || row.reasons?.join('、') || row.channel || '' }}<template v-if="row.epistemicState"> · 角色认知 {{ row.epistemicState }}</template><template v-if="row.sourceHash"> · 来源 {{ row.sourceHash }}</template></span></li></ul>
+          <p v-else>本次没有选中可召回记忆。</p>
+        </section>
         <section class="chat-context-section">
           <h3>
             <Database :size="15" />
@@ -799,7 +831,7 @@ function worldBookRoleLabel(role) {
         </section>
         </template>
 
-        <ConversationMemoryReview v-else-if="activeView === 'memory'" :conversation-id="conversationId" :open="open" :refresh-key="memoryRefreshKey" @changed="handleMemoryChanged" />
+        <ConversationMemoryReview v-else-if="activeView === 'memory'" :conversation-id="conversationId" :open="open" :refresh-key="memoryRefreshKey" @changed="handleMemoryChanged" @processing-settled="handleProcessingSettled" @open-settings="emit('open-memory-settings')" />
         <ChatPromptHistory v-else-if="activeView === 'history'" :conversation-id="conversationId" :open="open" />
         <ChatContextBudget v-else :conversation-id="conversationId" :open="open" @changed="loadInspector({ quiet: true })" />
       </div>
@@ -809,6 +841,10 @@ function worldBookRoleLabel(role) {
 </template>
 
 <style scoped>
+.context-source-list { display: grid; gap: 12px; margin: 0; padding-left: 18px; }
+.context-source-list li { display: grid; min-width: 0; gap: 5px; overflow-wrap: anywhere; font-size: 12px; line-height: 1.6; }
+.context-source-list span { color: var(--muted); }
+
 .chat-context-inspector-overlay {
   position: fixed;
   inset: 0;
@@ -832,6 +868,7 @@ function worldBookRoleLabel(role) {
   box-shadow: -18px 0 54px rgba(15, 23, 42, 0.18);
 }
 
+.chat-context-inspector.is-memory { width: min(960px, calc(100vw - 32px)); }
 .chat-context-tabs {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -1196,6 +1233,7 @@ function worldBookRoleLabel(role) {
 }
 
 @media (max-width: 640px) {
+  .chat-context-inspector.is-memory { width: 100%; }
   .chat-context-inspector-overlay {
     justify-content: stretch;
   }

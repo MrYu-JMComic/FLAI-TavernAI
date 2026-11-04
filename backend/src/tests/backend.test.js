@@ -1364,12 +1364,12 @@ test('character assistant completes drafts through multiple tool rounds', async 
     const statusBlueprintSchema = statusTool.function.parameters.properties.statusBarBlueprint;
     const statusValueSchema = statusBlueprintSchema.properties.variables.items.properties.value;
     assert.deepEqual(statusValueSchema.oneOf.map((schema) => schema.type), ['number', 'string']);
-    assert.match(statusBlueprintSchema.description, /\{\{姓名\}\}/);
-    assert.match(statusBlueprintSchema.description, /\{\{体力\.percent\}\}/);
-    assert.match(body.messages[0].content, /bar:10/);
+    assert.match(statusBlueprintSchema.description, /\{\{name\}\}/);
+    assert.match(statusBlueprintSchema.description, /\{\{health\.percent\}\}/);
+    assert.match(body.messages[0].content, /Supported filters:/);
     assert.match(body.messages[0].content, /{{= /);
     assert.match(body.messages[0].content, /\.sb-val/);
-    assert.match(body.messages[0].content, /可变化文本必须放入 variables\[\]\.value/);
+    assert.match(body.messages[0].content, /Put variable text that can change.*variables\[\]\.value/);
 
     if (calls === 1) {
       return jsonResponse({
@@ -1502,7 +1502,7 @@ test('character assistant respects disabled generation sections', async () => {
   try {
     globalThis.fetch = async (_url, request = {}) => {
       const body = JSON.parse(request.body);
-      assert.match(body.messages[0].content, /允许修改的部分仅限/);
+      assert.match(body.messages[0].content, /You may edit only these domains: worldview, persona, openingMessage\./);
       assert.deepEqual(body.tools.map((tool) => tool.function?.name), [
         'read_character_field',
         'search_character_draft',
@@ -1923,11 +1923,11 @@ test('world book assistant includes quality guide in complete and stream prompts
     extraBody: {}
   };
   const requiredGuideLines = [
-    '把设定拆成原子条目',
-    'triggerKeys 与 keysSecondary 都是一个用英文逗号分隔的字符串',
-    '实际保存字段名是 group，不是 inclusionGroup',
-    '注入位置必须与用途一致',
-    'alwaysActive、regexMode、selective、useProbability、sticky、cooldown、delay 和 group 都会改变触发行为'
+    'Split the setting into atomic entries',
+    'triggerKeys and keysSecondary must each be a single string with values separated by ASCII commas',
+    'The stored field name is group, not inclusionGroup',
+    'Choose the injection position for its purpose',
+    'alwaysActive, regexMode, selective, useProbability, sticky, cooldown, delay, and group change matching behavior'
   ];
 
   try {
@@ -1974,6 +1974,7 @@ test('world book assistant includes quality guide in complete and stream prompts
     await completeWorldBookDraft(settings, { requirement: 'archive lore' });
 
     const completePrompt = completeBodies[0].messages[0].content;
+    assert.doesNotMatch(completePrompt, /\p{Script=Han}/u);
     for (const line of requiredGuideLines) {
       assert.match(completePrompt, new RegExp(line));
     }
@@ -2023,6 +2024,7 @@ test('world book assistant includes quality guide in complete and stream prompts
     await streamWorldBookDraft(settings, { requirement: 'harbor oath lore', emit: () => {} });
 
     const streamPrompt = streamBodies[0].messages[0].content;
+    assert.doesNotMatch(streamPrompt, /\p{Script=Han}/u);
     for (const line of requiredGuideLines) {
       assert.match(streamPrompt, new RegExp(line));
     }
@@ -8738,9 +8740,11 @@ test('buildTalentSystemPrompt generates prompt from character talents', () => {
   rollTalent(database, character.id, pool.id);
 
   const prompt = buildTalentSystemPrompt(database, character.id);
-  assert.match(prompt, /\[角色天赋\]/);
-  assert.match(prompt, /以下天赋影响角色可尝试的方式/);
-  assert.match(prompt, /剑术|智慧/);
+  assert.match(prompt, /\[Character Talents\]/);
+  assert.match(prompt, /Talents describe the character's capabilities/);
+  assert.match(prompt, /Name: (剑术|智慧) \| Rarity: (rare|epic)/);
+  assert.match(prompt, /Description: 精通剑术/);
+  assert.match(prompt, /Effect: 攻击\+20%/);
 });
 
 // ── Weighted Random Pick ──

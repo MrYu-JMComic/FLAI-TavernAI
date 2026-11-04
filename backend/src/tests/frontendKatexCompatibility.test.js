@@ -126,7 +126,7 @@ test('MarkdownContent applies surface-aware contrast to KaTeX color boxes', () =
   );
   assert.match(
     markdownContentScript,
-    /reconcileDomChildren\(root, templateElement\.content\);\s*applyKatexSurfaceContrast\(root\);/
+    /reconcileDomChildren\(root, templateElement\.content\);\s*insertTypingCaret\(root\);\s*if \(pendingHtml\.includes\('katex'\)\) applyKatexSurfaceContrast\(root\);/
   );
 });
 

@@ -18,6 +18,7 @@ import {
 import { isStatusTemplateMeterProperty, parseStatusTemplateToken } from '../../../../shared/statusTemplateTokens.js';
 import { createStatusBarRuntimeExample, parseStatusBarRuntime, serializeStatusBarRuntime } from '../../../../shared/statusBarRuntime.js';
 import { THINKING_LEVELS } from '../../../../shared/providerThinking.js';
+import { normalizeMemoryEmbedding, normalizeMemoryPolicy } from '../../../../shared/memoryPolicy.js';
 import {
   STATUS_VARIABLE_LIMIT as STATUS_BAR_VARIABLE_LIMIT,
   normalizeStatusVariableExtras,
@@ -31,8 +32,8 @@ const ACCESSORY_SKILL_DEFAULTS = [
   { key: 'gameHud', enabled: false, modelOverride: '' },
   { key: 'rewardMode', enabled: false, modelOverride: '' },
   { key: 'statusBarAgent', enabled: 'auto', modelOverride: '', providerProfileId: '', thinkingLevel: '', tools: {} },
-  // The memory agent can follow the main provider or name a saved profile, and exposes a tool library.
-  { key: 'memoryAgent', enabled: 'auto', modelOverride: '', providerProfileId: '', tools: {} },
+  // The memory agent inherits provider/model/thinking unless explicitly overridden and exposes a tool library.
+  { key: 'memoryAgent', enabled: 'auto', modelOverride: '', providerProfileId: '', thinkingLevel: '', tools: {} },
   { key: 'economyAgent', enabled: false, modelOverride: '' },
   { key: 'talentPrompt', enabled: false, modelOverride: '' },
   { key: 'cgScene', enabled: false, modelOverride: '' }
@@ -52,6 +53,10 @@ function extraSkillFields(defaultSkill, source = {}) {
     const raw = source.tools && typeof source.tools === 'object' ? source.tools : {};
     for (const name of Object.keys(raw)) tools[name] = raw[name] === true;
     extras.tools = tools;
+  }
+  if (defaultSkill.key === 'memoryAgent') {
+    extras.memoryPolicy = normalizeMemoryPolicy(source.memoryPolicy);
+    extras.embedding = normalizeMemoryEmbedding(source.embedding);
   }
   return extras;
 }
@@ -266,6 +271,7 @@ export function useChatAccessory({ conversation, setActiveConversationIfChanged,
     quickReplies: []
   });
   const accessorySkills = reactive(createDefaultAccessorySkills());
+  let syncedAccessorySkills = JSON.parse(JSON.stringify(accessorySkills));
 
   const accessorySkillItems = [
     { key: 'sceneAgent', label: '场景构建助手', auto: false },
@@ -512,6 +518,7 @@ export function useChatAccessory({ conversation, setActiveConversationIfChanged,
         accessorySkills[key] = normalizedSkill;
       }
     }
+    syncedAccessorySkills = JSON.parse(JSON.stringify(accessorySkills));
   }
 
   function sameAccessorySkillConfig(current = {}, next = {}) {
@@ -519,7 +526,9 @@ export function useChatAccessory({ conversation, setActiveConversationIfChanged,
       && current?.modelOverride === next?.modelOverride
       && (current?.providerProfileId || '') === (next?.providerProfileId || '')
       && (current?.thinkingLevel || '') === (next?.thinkingLevel || '')
-      && sameSkillTools(current?.tools, next?.tools);
+      && sameSkillTools(current?.tools, next?.tools)
+      && JSON.stringify(current?.memoryPolicy) === JSON.stringify(next?.memoryPolicy)
+      && JSON.stringify(current?.embedding) === JSON.stringify(next?.embedding);
   }
 
   function updateAccessorySkill(key, patch = {}) {
@@ -546,13 +555,17 @@ export function useChatAccessory({ conversation, setActiveConversationIfChanged,
     return key === 'statusBarAgent' && hasStatusBarAutomationContext.value;
   }
 
-  async function saveAccessorySkillChanges() {
+  async function saveAccessorySkillChanges(options = {}) {
     const conversationId = conversation.value?.id;
     if (accessoryDisposed || !conversationId || accessorySaving.value) return;
     const requestToken = ++accessorySaveToken;
     accessorySaving.value = true;
     try {
-      const payload = await saveConversationAccessorySkills(conversationId, { accessorySkills });
+      // Save changed skills only, so unrelated author defaults remain inherited.
+      const changedSkills = Object.fromEntries(Object.entries(accessorySkills)
+        .filter(([key, skill]) => !sameAccessorySkillConfig(skill, syncedAccessorySkills[key]))
+        .map(([key, skill]) => [key, skillPatch(skill, syncedAccessorySkills[key] || {})]));
+      const payload = await saveConversationAccessorySkills(conversationId, { accessorySkills: changedSkills, restoreInheritance: options.restoreInheritance || [] });
       if (!isCurrentAccessorySave(requestToken, conversationId)) {
         return;
       }
@@ -586,6 +599,21 @@ export function useChatAccessory({ conversation, setActiveConversationIfChanged,
         accessorySaving.value = false;
       }
     }
+  }
+
+  function restoreAccessorySkillInheritance(key) {
+    return saveAccessorySkillChanges({ restoreInheritance: [key] });
+  }
+
+  function skillPatch(current, previous) {
+    const patch = {};
+    for (const [key, value] of Object.entries(current)) {
+      if (JSON.stringify(value) === JSON.stringify(previous[key])) continue;
+      patch[key] = ['memoryPolicy', 'embedding'].includes(key)
+        ? Object.fromEntries(Object.entries(value).filter(([field, item]) => JSON.stringify(item) !== JSON.stringify(previous[key]?.[field])))
+        : value;
+    }
+    return patch;
   }
 
   function isCurrentAccessorySave(requestToken, conversationId) {
@@ -1133,6 +1161,7 @@ export function useChatAccessory({ conversation, setActiveConversationIfChanged,
     syncAccessorySkills,
     isAccessorySkillActiveLocal,
     saveAccessorySkillChanges,
+    restoreAccessorySkillInheritance,
     applyStatusBarUpdate,
     handleSkillResult,
     syncStatusBarForm,

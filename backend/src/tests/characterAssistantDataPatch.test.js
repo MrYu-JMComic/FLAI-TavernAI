@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { applyCharacterDataPatch } from '../services/characterAssistantDataPatch.js';
+import { applyCharacterDataPatch, characterDataPatchTool } from '../services/characterAssistantDataPatch.js';
 import { normalizeAdvancedSettings } from '../modules/advancedSettings.js';
 
 function normalize(draft) {
@@ -23,6 +23,10 @@ function createDraft() {
     }
   });
 }
+
+test('character data patch tool instructions are English', () => {
+  assert.doesNotMatch(characterDataPatchTool.function.description, /[\u3400-\u9fff]/);
+});
 
 function patch(draft, edits, options = {}) {
   return applyCharacterDataPatch({ edits }, draft, options.sections || {}, options.normalize || normalize);

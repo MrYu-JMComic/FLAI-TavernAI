@@ -1,8 +1,4 @@
-export function createWorldBookApplyRequestId() {
-  // getRandomValues is also available on HTTP origins used by LAN deployments.
-  const bytes = globalThis.crypto.getRandomValues(new Uint8Array(16));
-  return Array.from(bytes, byte => byte.toString(16).padStart(2, '0')).join('');
-}
+export { createRequestId as createWorldBookApplyRequestId } from './requestId.js';
 
 // Rebase only applied targets; unchecked drafts remain available for follow-up.
 export function rebaseWorldBookWorkspace(workspace, appliedBooks = []) {

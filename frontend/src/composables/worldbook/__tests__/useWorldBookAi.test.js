@@ -49,6 +49,27 @@ describe('world book assistant conversation and saving', () => {
     expect(ai.aiChanges.value).toHaveLength(2);
     ai.scope.stop();
   });
+  it('keeps a cancelled in-flight run resumable with its streamed checkpoint', async () => {
+    const ai=createAssistant();
+    let oldHandlers;
+    let rejectRun;
+    ai.aiRequirement.value='补充';
+    streamWorldBookDraft.mockImplementationOnce((_payload, handlers, signal) => {
+      oldHandlers=handlers;
+      signal.addEventListener('abort', () => rejectRun(new DOMException('Aborted', 'AbortError')), { once: true });
+      return new Promise((_resolve, reject) => { rejectRun=reject; });
+    });
+    const run=ai.completeWorldBookWithAi();
+    oldHandlers.workspace({workspace:workspace(),changes:changes()});
+    ai.cancelWorldBookAi();
+    await run;
+    expect(ai.aiLoading.value).toBe(false);
+    expect(ai.aiStatus.value).toBe('paused');
+    expect(ai.aiChanges.value).toHaveLength(2);
+    oldHandlers.workspace({workspace:{targets:[]},changes:[]});
+    expect(ai.aiChanges.value).toHaveLength(2);
+    ai.scope.stop();
+  });
   it.each(['available', 'unavailable'])('retries with the same request identity and rebases applied targets without dropping unchecked drafts (randomUUID %s)', async availability => {
     if (availability === 'unavailable') vi.stubGlobal('crypto', { getRandomValues: crypto.getRandomValues.bind(crypto) });
     const ai=createAssistant();

@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { DatabaseSync } from 'node:sqlite';
+import { openVectorDatabase } from './vectorRuntime.js';
 import { initializeDatabase, resetColumnCache } from './schema.js';
 
 const sourceDir = path.dirname(fileURLToPath(import.meta.url));
@@ -29,7 +29,7 @@ export function createAppDatabase(filename = path.join(dataDir, 'flai.sqlite'), 
   ensureStorageDirs();
   resetColumnCache();
   const existedBeforeOpen = filename !== ':memory:' && fs.existsSync(filename);
-  const database = new DatabaseSync(filename);
+  const database = openVectorDatabase(filename);
   try {
     database.exec('PRAGMA busy_timeout = 5000');
     database.exec('PRAGMA foreign_keys = ON');

@@ -25,7 +25,10 @@ test('chat model picker searches models and saves only after confirmation', asyn
     supportsReasoning: true,
     extraBody: '{}'
   };
-  const models = [{ id: 'picker-current' }, { id: 'picker-next' }, { id: 'other-model' }];
+  const models = [
+    { id: 'picker-current' }, { id: 'picker-next' }, { id: 'other-model' },
+    { id: 'qwen3.7-text-embedding-flash' }, { id: 'private-vectors', task: 'embedding' }
+  ];
   const alternateModels = [{ id: 'claude-current' }, { id: 'claude-next' }];
   const modelCacheKey = [
     provider.providerType,
@@ -33,6 +36,7 @@ test('chat model picker searches models and saves only after confirmation', asyn
     provider.baseUrl.replace(/\/+$/, '').toLowerCase(),
     'false',
     String(Boolean(provider.supportsReasoning)),
+    'chat',
     '{}'
   ].join('|');
 
@@ -71,7 +75,7 @@ test('chat model picker searches models and saves only after confirmation', asyn
     });
   });
   await page.addInitScript(({ key, cachedModels }) => {
-    localStorage.setItem(`flai-provider-models:v1:${encodeURIComponent(key)}`, JSON.stringify({
+    localStorage.setItem(`flai-provider-models:v2:${encodeURIComponent(key)}`, JSON.stringify({
       savedAt: Date.now(),
       models: cachedModels
     }));
@@ -99,6 +103,7 @@ test('chat model picker searches models and saves only after confirmation', asyn
   const dialog = page.getByRole('dialog', { name: '切换聊天模型' });
   await expect(dialog).toBeVisible();
   await expect(dialog.getByText('3 个选项')).toBeVisible();
+  await expect(dialog.getByRole('button', { name: /qwen3.7-text-embedding-flash|private-vectors/ })).toHaveCount(0);
   await expect(dialog.getByRole('button', { name: 'picker-current' })).toHaveAttribute('aria-pressed', 'true');
   await expect(dialog.getByRole('button', { name: '关闭模型切换器' })).toBeFocused();
   const shell = dialog.locator('.chat-model-switcher-shell');
@@ -109,6 +114,7 @@ test('chat model picker searches models and saves only after confirmation', asyn
     const rect = element.getBoundingClientRect();
     return rect.top >= 0 && rect.bottom <= window.innerHeight;
   })).toBe(true);
+  await page.screenshot({ path: test.info().outputPath('chat-model-switcher-mobile.png'), animations: 'disabled' });
   await page.keyboard.press('Escape');
   await expect(dialog).not.toBeVisible();
   await expect(trigger).toBeFocused();
@@ -118,6 +124,8 @@ test('chat model picker searches models and saves only after confirmation', asyn
   await expect(dialog.getByRole('searchbox', { name: '搜索当前网关模型' })).toBeFocused();
   await dialog.getByRole('button', { name: '刷新模型列表' }).click();
   await expect(dialog.getByText('3 个选项')).toBeVisible();
+  await expect(dialog.getByRole('button', { name: /qwen3.7-text-embedding-flash|private-vectors/ })).toHaveCount(0);
+  await page.screenshot({ path: test.info().outputPath('chat-model-switcher-desktop.png'), animations: 'disabled' });
   const search = dialog.getByRole('searchbox', { name: '搜索当前网关模型' });
   await search.fill('picker-next');
   await expect(dialog.getByRole('button', { name: /picker-next/ })).toBeVisible();

@@ -6,6 +6,7 @@ import {
   WORLD_BOOK_DRAFT_TOOLS,
   createCharacterWorldBookTool
 } from '../services/worldBookDraftTools.js';
+import { worldBookWorkspaceTools } from '../services/worldBooks/worldBookAssistantWorkspace.js';
 
 const settings = { providerType: 'custom', gatewayName: 'Tool Test', baseUrl: 'https://world-tools.test/v1', model: 'test-model', apiKey: 'test-key', extraBody: {} };
 
@@ -109,7 +110,23 @@ test('character and standalone world book assistants share the exact draft schem
     characterTool.function.parameters.properties.entries,
     replacementTool.function.parameters.properties.entries
   );
-  assert.match(characterTool.function.description, /不会直接写入数据库/);
+  assert.match(characterTool.function.description, /does not write to the database/);
+});
+
+test('fixed world-book tool descriptions and quality instructions are English', async () => {
+  const { WORLD_BOOK_QUALITY_INSTRUCTIONS } = await import('../services/worldBookDraftTools.js');
+  const tools = [...WORLD_BOOK_DRAFT_TOOLS, ...worldBookWorkspaceTools(), createCharacterWorldBookTool()];
+  const descriptions = [];
+  const collect = (value) => {
+    if (!value || typeof value !== 'object') return;
+    if (typeof value.description === 'string') descriptions.push(value.description);
+    for (const child of Object.values(value)) collect(child);
+  };
+  tools.forEach(collect);
+  descriptions.push(...WORLD_BOOK_QUALITY_INSTRUCTIONS);
+
+  assert.ok(descriptions.length > 0);
+  for (const description of descriptions) assert.doesNotMatch(description, /\p{Script=Han}/u);
 });
 
 function worldBookToolResponse(calls, round) {
@@ -167,7 +184,8 @@ test('world book context limits rounds, entries and can ignore the current book'
     });
     assert.equal(requests.length, 2);
     assert.equal(JSON.parse(requests[0].messages[1].content).currentWorldBook, null);
-    assert.match(requests[0].messages[0].content, /条目总数不得超过 1 个/);
+    assert.match(requests[0].messages[0].content, /The total number of entries must not exceed 1/);
+    assert.doesNotMatch(requests[0].messages[0].content, /\p{Script=Han}/u);
     assert.equal(result.toolCalls[0].result.error, 'ENTRY_LIMIT');
     assert.deepEqual(result.worldBook.entries.map((entry) => entry.name), ['Harbor']);
   } finally {
@@ -206,7 +224,7 @@ test('world book plan phase is read-only and execution tracks the approved plan'
       planMode: true,
       plan: { approved: true, steps: planned.plan.steps }
     });
-    assert.match(requests[0].messages[0].content, /计划步骤 1（entries）：写入港口条目/);
+    assert.match(requests[0].messages[0].content, /Plan step 1 \(entries\): 写入港口条目/);
     assert.equal(executed.toolCalls[0].result.workflow.plan.completed, 1);
     assert.equal(executed.planProgress.completed, 1);
   } finally {

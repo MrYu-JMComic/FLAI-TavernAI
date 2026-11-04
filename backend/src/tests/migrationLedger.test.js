@@ -12,8 +12,8 @@ test('migration ledger records deterministic checksums and replays idempotently'
   try {
     const first = listAppliedMigrations(database);
     assert.equal(first.at(-1)?.version, latestSchemaVersion);
-    assert.equal(first.length, 19);
-    assert.deepEqual(first.slice(-8).map((row) => row.version), ['0015', '0017', '0018', '0019', '0020', '0027', '0028', '0029']);
+    assert.equal(first.length, 26);
+    assert.deepEqual(first.slice(-12).map((row) => row.version), ['0019', '0020', '0027', '0028', '0029', '0030', '0031', '0032', '0033', '0034', '0035', '0036']);
     for (const row of first) {
       assert.match(row.checksum, /^[a-f0-9]{64}$/);
     }
@@ -29,7 +29,7 @@ test('existing schemas without a ledger are adopted on the next initialization',
   try {
     database.exec('DROP TABLE schema_migrations');
     initializeDatabase(database);
-    assert.equal(listAppliedMigrations(database).length, 19);
+    assert.equal(listAppliedMigrations(database).length, 26);
   } finally {
     database.close();
   }

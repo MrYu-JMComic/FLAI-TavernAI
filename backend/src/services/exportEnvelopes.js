@@ -26,6 +26,8 @@ import { assertSafeRegexPattern } from './regexSafety.js';
 import { normalizeRegexFlags } from '../../../shared/regexFlags.js';
 import { recordAutomationAudit } from './automationAudit.js';
 import { assertUploadQuota } from './quotas.js';
+import { portableMemoryDefaults } from '../../../shared/memoryPolicy.js';
+import { normalizeLoreKnowledge } from '../../../shared/loreKnowledge.js';
 
 export const exportEnvelopeVersion = 1;
 export const exportEnvelopeSchemaVersion = 2;
@@ -33,6 +35,14 @@ export const exportEnvelopeCompatibility = Object.freeze({ minSchemaVersion: 1, 
 const IMPORT_CONFLICT_STRATEGIES = new Set(['duplicate', 'skip', 'error']);
 const MAX_IMPORT_ITEMS = 1000;
 const MAX_IMPORT_BYTES = 20 * 1024 * 1024;
+
+/** Portable cards carry author policy, never a user's provider binding or conversation actor. */
+function portableAuthorSettings(value) {
+  const settings = value && typeof value === 'object' && !Array.isArray(value) ? structuredClone(value) : {};
+  const memory = settings.accessorySkills?.memoryAgent;
+  if (memory) settings.accessorySkills.memoryAgent = portableMemoryDefaults(memory);
+  return settings;
+}
 
 const kindAliases = new Map([
   ['character', 'characters'],
@@ -408,7 +418,7 @@ function listCharacterEnvelopeItems(database, userId, requestedIds = []) {
       visibility: character.visibility || 'private',
       tags: listCharacterTagNames(database, userId, character.id, character.tags),
       renderPlugins: character.renderPlugins || [],
-      authorAdvancedSettings: character.authorAdvancedSettings || {},
+      authorAdvancedSettings: portableAuthorSettings(character.authorAdvancedSettings),
       regexRules: character.regexRules || [],
       images: listCharacterImages(database, character.id),
       worldBooks: listCharacterWorldBookEnvelopeReferences(database, userId, character.id),
@@ -534,7 +544,7 @@ function importCharacterItem(database, userId, item = {}) {
     openingMessage: source.openingMessage || source.opening_message || '',
     visibility: 'private',
     renderPlugins: source.renderPlugins || source.render_plugins || [],
-    authorAdvancedSettings: source.authorAdvancedSettings || source.author_advanced_settings || {},
+    authorAdvancedSettings: portableAuthorSettings(source.authorAdvancedSettings || source.author_advanced_settings),
     regexRules: item.regexRules || item.regex_rules || source.regexRules || [],
     tags: item.tags || source.tags || []
   });
@@ -586,6 +596,7 @@ function importWorldBookItem(database, userId, item = {}) {
 
 function normalizeWorldBookEntryImportItem(entry = {}) {
   return {
+    ...normalizeLoreKnowledge(entry),
     name: entry.name || '',
     triggerKeys: entry.triggerKeys || entry.trigger_keys || '',
     content: entry.content || '',

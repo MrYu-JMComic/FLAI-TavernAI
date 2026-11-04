@@ -2,6 +2,7 @@ import { isDeepStrictEqual } from 'node:util';
 import { createDefaultAccessorySkills } from '../modules/advancedSettings.js';
 import { compileSafeRegex } from './regexSafety.js';
 import { THINKING_LEVELS } from '../../../shared/providerThinking.js';
+import { MEMORY_EMBEDDING_FIELDS, MEMORY_POLICY_FIELDS, normalizeMemoryEmbedding, normalizeMemoryPolicy } from '../../../shared/memoryPolicy.js';
 import { STATUS_VARIABLE_LIMIT, STATUS_VARIABLE_TYPES, STATUS_VARIABLE_UNIT_LIMIT } from '../../../shared/statusVariables.js';
 
 const ROOTS = {
@@ -19,14 +20,15 @@ const ITEM_FIELDS = {
   'statusBarBlueprint.variables': ['name', 'type', 'value', 'min', 'max', 'unit', 'color']
 };
 const SKILLS = Object.keys(createDefaultAccessorySkills());
-const SKILL_FIELDS = ['enabled', 'modelOverride', 'providerProfileId', 'thinkingLevel', 'tools'];
+const SKILL_FIELDS = ['enabled', 'modelOverride', 'providerProfileId', 'thinkingLevel', 'tools', 'memoryPolicy', 'embedding'];
 const UNSAFE_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
 
 export const characterDataPatchTool = {
   type: 'function',
   function: {
     name: 'patch_character_data',
-    description: '精确编辑角色结构化数据，保留列表中其他条目。使用 JSON Pointer 路径，例如 /regexRules/0/replacement、/tags/-、/accessorySkills/statusBarAgent/enabled、/statusBarBlueprint/variables/0/value。replace/remove 必须提供读取到的完整 oldValue；add 只追加数组 /- 或新增不存在的对象字段。多项修改原子执行，冲突时全部不应用。文本片段改动使用 edit_character_text。',
+    // 该工具说明直接作为模型指令发送；运行时校验消息仍面向中文界面。
+    description: 'Edit structured character data precisely while preserving other list items. Use JSON Pointer paths such as /regexRules/0/replacement, /tags/-, /accessorySkills/statusBarAgent/enabled, and /statusBarBlueprint/variables/0/value. For replace and remove, provide the exact oldValue you just read. For add, append to an array with /- or add a field that does not exist. All edits are atomic; if any edit conflicts, none are applied. Use edit_character_text to change text passages.',
     parameters: {
       type: 'object',
       additionalProperties: false,
@@ -39,8 +41,8 @@ export const characterDataPatchTool = {
             properties: {
               op: { type: 'string', enum: ['replace', 'add', 'remove'] },
               path: { type: 'string', maxLength: 300 },
-              oldValue: { description: 'Exact previous JSON value; required for replace and remove.' },
-              value: { description: 'New JSON value; required for replace and add.' }
+              oldValue: { description: 'Exact previous JSON value; required for replace and remove. Shape depends on the allowlisted JSON Pointer target and is checked by the handler.' },
+              value: { description: 'New JSON value; required for replace and add. Shape depends on the allowlisted JSON Pointer target and is checked by the handler.' }
             }
           }
         }
@@ -139,7 +141,10 @@ function parsePath(path) {
   if (root === 'accessorySkills') {
     requireValid(segments.length <= 3 && (!segments.length || SKILLS.includes(segments[0])), '未知附属 Agent。');
     requireValid(segments.length < 2 || SKILL_FIELDS.includes(segments[1]), '未知 Agent 设置字段。');
-    requireValid(segments.length < 3 || (segments[1] === 'tools' && /^[a-z][a-z0-9_.]{0,39}$/.test(segments[2])), '未知 Agent 工具设置路径。');
+    requireValid(segments.length < 3 ||
+      (segments[1] === 'tools' && /^[a-z][a-z0-9_.]{0,39}$/.test(segments[2])) ||
+      (segments[0] === 'memoryAgent' && segments[1] === 'memoryPolicy' && MEMORY_POLICY_FIELDS.includes(segments[2])) ||
+      (segments[0] === 'memoryAgent' && segments[1] === 'embedding' && MEMORY_EMBEDDING_FIELDS.includes(segments[2])), '未知 Agent 工具设置路径。');
   } else {
     requireValid(segments.length <= (root === 'tags' ? 1 : 2), '不支持该嵌套字段。');
     requireValid(!segments.length || /^(?:0|[1-9]\d*|-)$/.test(segments[0]), '数组路径必须使用有效索引。');
@@ -181,6 +186,17 @@ function validateRoot(root, value, previous) {
       if (skill.tools !== undefined) {
         requireValid(isObject(skill.tools) && Object.keys(skill.tools).length <= 24, 'Agent 工具配置最多 24 项。');
         for (const [key, enabled] of Object.entries(skill.tools)) requireValid(/^[a-z][a-z0-9_.]{0,39}$/.test(key) && !UNSAFE_KEYS.has(key) && typeof enabled === 'boolean', 'Agent 工具名称或权限值无效。');
+      }
+      if (skill.memoryPolicy !== undefined || skill.embedding !== undefined) {
+        requireValid(name === 'memoryAgent', '仅记忆 Agent 支持记忆策略和向量设置。');
+        if (skill.memoryPolicy !== undefined) {
+          validateObject(skill.memoryPolicy, MEMORY_POLICY_FIELDS);
+          requireValid(retainsValues(skill.memoryPolicy, normalizeMemoryPolicy(skill.memoryPolicy)), '记忆策略字段类型或范围无效。');
+        }
+        if (skill.embedding !== undefined) {
+          validateObject(skill.embedding, MEMORY_EMBEDDING_FIELDS);
+          requireValid(retainsValues(skill.embedding, normalizeMemoryEmbedding(skill.embedding)), '向量设置字段类型或范围无效。');
+        }
       }
     }
     return;

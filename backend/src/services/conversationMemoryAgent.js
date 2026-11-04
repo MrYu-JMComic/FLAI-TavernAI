@@ -1,3 +1,4 @@
+import { z } from 'zod';
 import { MEMORY_AGENT_TOOLS } from '../../../shared/memoryAgentTools.js';
 import { normalizeAccessorySkills } from '../modules/advancedSettings.js';
 import {
@@ -9,11 +10,17 @@ import {
   selectConversationMemoryContext,
   updateConversationMemory
 } from '../modules/conversationMemories.js';
-import { recordAutomaticConversationMemories } from './conversationMemoryExtraction.js';
 import { searchUserContent } from './fullTextSearch.js';
 import { hasUsableProvider, runToolCompletion } from './providers.js';
-import { resolveAccessorySkillSettings } from './accessorySkillProvider.js';
+import { accessorySkillThinkingOptions,resolveAccessorySkillSettings } from './accessorySkillProvider.js';
 import { retryProviderCall } from './providerRetry.js';
+import { newId, nowIso } from '../security.js';
+import { assertMemoryEventRevisionTargets, commitMemoryPacket, getMemoryProcessingState } from './conversationMemory/commit.js';
+import { getCurrentMemoryEvent, getMemoryMessage, listMemoryEntities } from '../repositories/conversationMemoryRepository.js';
+import { memoryHash, normalizeMemoryPacket } from '../domain/conversationMemory/contracts.js';
+import { buildMemoryExtractionPacketSchema } from '../domain/conversationMemory/extractionSchema.js';
+import { normalizeMemoryPolicy } from '../../../shared/memoryPolicy.js';
+import { getStatusBar } from '../modules/statusBars.js';
 
 export const MEMORY_TYPES = Object.freeze(['event', 'relationship', 'location', 'preference', 'fact', 'summary', 'intent', 'hypothesis']);
 
@@ -24,6 +31,8 @@ const PARAPHRASE_CONFIDENCE_CAP = 0.6;
 const UNSOURCED_CONFIDENCE_CAP = 0.5;
 const MAX_ROUNDS = 8;
 const AGENT_TIMEOUT_MS = 90_000;
+const extractionPacketSchema = buildMemoryExtractionPacketSchema();
+const extractionPacketValidator = z.fromJSONSchema(extractionPacketSchema);
 
 export { MEMORY_AGENT_TOOLS } from '../../../shared/memoryAgentTools.js';
 
@@ -38,6 +47,7 @@ export function resolveMemoryAgentTools(skill = {}) {
   const enabled = [];
   for (const tool of MEMORY_AGENT_TOOLS) {
     const value = Object.prototype.hasOwnProperty.call(requested, tool.name) ? requested[tool.name] : tool.enabledByDefault;
+    if (tool.name === 'merge_memories' && !normalizeMemoryPolicy(skill.memoryPolicy).autoConsolidate) continue;
     if (tool.required || value === true) enabled.push(tool.name);
   }
   return enabled;
@@ -58,25 +68,36 @@ export async function runConversationMemoryAgent(options = {}) {
   const conversationId = String(conversation?.id || '');
   const skills = normalizeAccessorySkills(conversation?.settings?.accessorySkills || {});
   const skill = skills.memoryAgent || { enabled: 'auto', modelOverride: '', providerProfileId: '', tools: {} };
-  const rules = () => recordAutomaticConversationMemories(database, userId, conversationId, { userMessage, assistantMessage }) || [];
+  const baseState = getMemoryProcessingState(database, userId, conversationId);
+  const sourceVersions = [userMessage, assistantMessage].filter(message => message?.id).map(message => {
+    const live = getMemoryMessage(database, userId, conversationId, message.id);
+    return live ? { messageId:live.id, revision:live.revision, contentHash:memoryHash({role:live.role,content:live.content,attachments:JSON.parse(live.attachments_json||'[]')}) } : null;
+  }).filter(Boolean);
 
-  if (skill.enabled === false) {
-    return { mode: 'rules', reason: 'agent_disabled', memories: rules() };
+  if (skill.enabled === false || skill.memoryPolicy?.mode === 'raw') {
+    return { mode: 'raw', reason: 'agent_disabled', memories: [], requiredStages:[] };
   }
   const resolved = resolveAccessorySkillSettings(database, userId, settings, skill, { config });
   if (!hasUsableProvider(resolved.settings) || resolved.settings.providerType === 'mock') {
-    return { mode: 'rules', reason: 'provider_unavailable', providerSource: resolved.source, memories: rules() };
+    if (skill.enabled === true) throw Object.assign(new Error('记忆整理已开启，但未配置可用模型；请修复配置或切换原文模式'), { code:'MEMORY_PROVIDER_UNAVAILABLE', status:409, accepted:false });
+    return { mode: 'raw', reason: 'provider_unavailable', providerSource: resolved.source, memories: [], requiredStages:[] };
   }
   if (!String(assistantMessage?.content || '').trim() && !String(userMessage?.content || '').trim()) {
     return { mode: 'agent', reason: 'empty_turn', memories: [], toolCalls: [] };
   }
 
-  const session = createMemoryAgentSession({ database, userId, conversationId, userMessage, assistantMessage, skill });
+  const packetContext = {
+    sources: sourceVersions,
+    messageId: assistantMessage?.id || userMessage?.id || '',
+    idempotencyKey: options.idempotencyKey || `turn:${assistantMessage?.id || userMessage?.id}:${baseState.timelineRevision}:${sourceVersions.map(source => source.revision).join(':')}`
+  };
+  const session = createMemoryAgentSession({ database, userId, conversationId, userMessage, assistantMessage, skill, packetContext });
   const controller = new AbortController();
   const combinedSignal = signal ? AbortSignal.any([signal, controller.signal]) : controller.signal;
   const timer = setTimeout(() => controller.abort(Object.assign(new Error('memory agent timed out'), { code: 'AGENT_TIMEOUT', retryable: true })), AGENT_TIMEOUT_MS);
   try {
     const completion = await retryProviderCall(() => {
+      if (session.finished) return {};
       session.refreshSnapshot();
       return runTools(
         resolved.settings,
@@ -85,7 +106,7 @@ export async function runConversationMemoryAgent(options = {}) {
         session.execute,
         {
           maxRounds: MAX_ROUNDS,
-          thinkingEnabled: false,
+          ...accessorySkillThinkingOptions(resolved.settings,skill),
           temperature: 0,
           signal: combinedSignal,
           database,
@@ -94,9 +115,39 @@ export async function runConversationMemoryAgent(options = {}) {
         }
       );
     }, { signal: combinedSignal, retryDelaysMs: options.retryDelaysMs });
-    if (!session.finished) throw Object.assign(new Error('记忆代理未调用 finish_memory_review，整理未完成'), { code: 'MEMORY_AGENT_INCOMPLETE' });
+    if (!session.finished) throw session.packetError || Object.assign(new Error('记忆代理未调用 finish_memory_review，整理未完成'), { code: 'MEMORY_AGENT_INCOMPLETE' });
+    // Finish validated the complete packet, including generated projections, before any domain planning.
+    const packet = normalizeMemoryPacket(session.packet);
+    const projectedEventKeys = session.projectedEventKeys;
+    const commit = ({applyDomainPlan,enqueueDerived=options.enqueueDerived,guard=options.guard}={}) => commitMemoryPacket(database,userId,conversationId,packet,{
+      expectedTimelineRevision:baseState.timelineRevision, expectedRevision:baseState.revision, guard,
+      enqueueDerived, enforceOrder:options.enforceOrder,
+      mergeProvenance: session.merged,
+      projectedEventKeys,
+      applyActions:() => {
+        for (const proposal of session.proposals) {
+          if (proposal.type==='create') createConversationMemory(database,userId,conversationId,{...proposal.payload,_stagedId:proposal.id});
+          if (proposal.type==='update') updateConversationMemory(database,userId,conversationId,proposal.id,proposal.payload);
+          if (proposal.type==='merge') {
+            const result=mergeConversationMemories(database,userId,conversationId,proposal.payload);
+            const staged=session.merged.find(item=>item.operationId===proposal.operationId);
+            if (staged) staged.operationId=result.operationId;
+          }
+          if (proposal.type==='review') batchReviewConversationMemories(database,userId,conversationId,proposal.payload);
+          if (proposal.type==='pin') pinConversationMemory(database,userId,conversationId,proposal.id,proposal.payload);
+        }
+        const domainResult=applyDomainPlan?.();
+        if (domainResult && typeof domainResult.then==='function') throw new Error('Domain plan application must be synchronous');
+        const ids = stagedMemoryIds(session.proposals);
+        return {memories:(listConversationMemories(database,userId,conversationId,{includeArchived:true})||[]).filter(memory=>ids.has(memory.id))};
+      }
+    });
+    if (options.prepareOnly) return {mode:'prepared',packet,commit,providerSource:resolved.source,model:resolved.settings.model||'',usage:completion?.usage||null};
+    const receipt=commit();
     return {
       mode: 'agent',
+      receipt,
+      packet:receipt.packet,
       providerSource: resolved.source,
       providerWarning: resolved.warning || '',
       model: resolved.settings.model || '',
@@ -113,23 +164,10 @@ export async function runConversationMemoryAgent(options = {}) {
     };
   } catch (error) {
     if (signal?.aborted || isTimelineError(error)) throw error;
-    // A model or transport failure must not lose the turn: fall back to rule extraction.
-    return {
-      mode: 'rules',
-      fallback: true,
-      reason: 'agent_failed',
-      error: String(error?.publicMessage || error?.message || 'memory agent failed').slice(0, 300),
-      code: String(error?.code || ''),
-      providerSource: resolved.source,
-      memories: session.created.length ? session.created : rules(),
-      updated: session.updated,
-      merged: session.merged,
-      invalidated: session.invalidated,
-      pinned: session.pinned,
-      rejected: session.rejected,
-      finished: session.finished,
-      toolCalls: session.calls
-    };
+    // Failed extraction leaves staged operations uncommitted; the durable core job can retry safely.
+    error.code ||= 'MEMORY_EXTRACTION_FAILED';
+    error.retryable = true;
+    throw error;
   } finally {
     clearTimeout(timer);
   }
@@ -140,7 +178,7 @@ function isTimelineError(error) {
   return ['CONVERSATION_TIMELINE_CHANGED', 'JOB_CANCELLED', 'JOB_SOURCE_STALE', 'JOB_LEASE_LOST', 'JOB_STEP_SETTLED'].includes(code);
 }
 
-function createMemoryAgentSession({ database, userId, conversationId, userMessage, assistantMessage, skill }) {
+function createMemoryAgentSession({ database, userId, conversationId, userMessage, assistantMessage, skill, packetContext }) {
   const observation = [userMessage, assistantMessage]
     .filter((message) => message && message.id)
     .map((message) => ({
@@ -166,8 +204,23 @@ function createMemoryAgentSession({ database, userId, conversationId, userMessag
     rejected: [],
     calls: [],
     finished: false,
-    summary: ''
+    summary: '',
+    proposals: [],
+    packet: {},
+    packetError: null,
+    projectedEventKeys: new Set()
   };
+  session.policy = normalizeMemoryPolicy(skill.memoryPolicy);
+  const statusBar = session.policy.statusLink ? getStatusBar(database, userId, conversationId) : null;
+  session.statusContext = statusBar ? { id: statusBar.id, name: statusBar.name, variables: statusBar.variables } : null;
+  session.workspace=existing;
+  // Keep the database resolver server-side; model messages contain only the explicit observation/read-model fields.
+  session.validateRevisionTargets=(events,projectedMemoryIds)=>assertMemoryEventRevisionTargets(database,userId,conversationId,events,{projectedMemoryIds});
+  session.entities=listMemoryEntities(database,userId,conversationId).slice(0,80).map(entity=>({id:entity.id,name:entity.name,kind:entity.kind,castKey:entity.cast_key}));
+  const card = database.prepare(`SELECT c.name FROM characters c JOIN conversations v ON v.character_id=c.id
+    WHERE v.id=? AND v.user_id=?`).get(conversationId, userId);
+  session.cardActor = card && !session.entities.some(entity => entity.castKey === 'main-character')
+    ? { key: 'card-main', name: card.name, kind: 'actor', castKey: 'main-character' } : null;
   session.refreshSnapshot = () => {
     session.existingMemories = buildExistingMemorySummary(database, userId, conversationId, existing, observation);
   };
@@ -232,7 +285,7 @@ function createMemoryAgentSession({ database, userId, conversationId, userMessag
       };
       const key = memoryDedupeKey(candidate);
       if (dedupeKeys.has(key)) return { ok: false, error: '已存在内容相同的记忆，请改用 update_memory 或跳过', duplicate: true };
-      const memory = createConversationMemory(database, userId, conversationId, candidate);
+      const memory = stageCreate(candidate);
       if (!memory) return { ok: false, error: '会话不存在' };
       dedupeKeys.add(key);
       existing.push(memory);
@@ -255,6 +308,16 @@ function createMemoryAgentSession({ database, userId, conversationId, userMessag
         confidence: args?.confidence === undefined ? memory.confidence : clampNumber(args.confidence, 0, 1, memory.confidence),
         revision: memory.revision
       };
+      if (args?.search !== undefined || args?.replacement !== undefined) {
+        if (args.content !== undefined || typeof args.search !== 'string' || !args.search || typeof args.replacement !== 'string')
+          return { ok: false, error: '精确修改需要 search 和 replacement，不能同时提供 content' };
+        const expected = args.expectedOccurrences ?? 1;
+        const occurrences = memory.content.split(args.search).length - 1;
+        if (!Number.isInteger(expected) || expected < 1 || expected > 20 || occurrences !== expected)
+          return { ok: false, error: '精确修改匹配次数不符，请先检索完整记忆后重试', occurrences, expectedOccurrences: expected };
+        payload.content = memory.content.split(args.search).join(args.replacement).trim();
+        if (payload.content.length > MEMORY_CONTENT_LIMIT) return { ok: false, error: '修改后记忆超过 600 字限制' };
+      }
       if (!payload.content) return { ok: false, error: 'content 不能为空' };
       if (payload.content !== memory.content || args?.sourceMessageId !== undefined || args?.quote !== undefined) {
         const evidence = resolveEvidence(observationById, args);
@@ -273,7 +336,7 @@ function createMemoryAgentSession({ database, userId, conversationId, userMessag
       if (['memoryType', 'subject', 'content', 'confidence', 'sourceMessageId', 'sourceExcerpt'].every(key => payload[key] === memory[key])) {
         return { ok: true, unchanged: true, memory: summarizeMemory(memory, true) };
       }
-      const updated = updateConversationMemory(database, userId, conversationId, memory.id, payload);
+      const updated = stageUpdate(memory.id, payload);
       replaceExisting(updated);
       session.updated.push(updated);
       return { ok: true, memory: summarizeMemory(updated) };
@@ -283,16 +346,23 @@ function createMemoryAgentSession({ database, userId, conversationId, userMessag
       if (!target.ok) return target;
       if (target.memory.pinned) return { ok: false, error: '置顶记忆不能作为合并目标' };
       if (target.memory.archived) return { ok: false, error: '已归档或失效的记忆不能作为合并目标' };
+      if (args?.subject !== undefined && String(args.subject).trim().normalize('NFKC') !== String(target.memory.subject || '').trim().normalize('NFKC'))
+        return { ok: false, error: '自动合并不能改变角色主体，请通过单条修改或结构化修订更正主体' };
       const sourceItems = Array.isArray(args?.sourceItems) ? args.sourceItems : [];
       if (sourceItems.length < 1 || sourceItems.length > 8 || new Set(sourceItems.map(item => item.id)).size !== sourceItems.length
         || sourceItems.some(item => item.id === target.memory.id)) return { ok: false, error: 'sourceItems 需要 1～8 条唯一来源，且不能包含目标' };
+      const targetEvent = getCurrentMemoryEvent(database, userId, conversationId, target.memory.id);
       for (const item of sourceItems) {
         const source = requireTarget(item?.id, item?.revision);
         if (!source.ok) return source;
         if (source.memory.pinned) return { ok: false, error: '置顶记忆不能作为合并来源' };
         if (source.memory.archived) return { ok: false, error: '已归档或失效的记忆不能作为合并来源' };
+        const sourceEvent = getCurrentMemoryEvent(database, userId, conversationId, source.memory.id);
+        if (!compatibleConsolidation(target.memory, source.memory, targetEvent, sourceEvent)) return { ok: false, error: '自动合并需要相同角色主体、类型、受众、真假和语义范围，请保留独立记忆' };
       }
-      const result = mergeConversationMemories(database, userId, conversationId, {
+      if ([target.memory, ...sourceItems.map(item => existing.find(memory => memory.id === item.id))].some(hasStructuredDependents))
+        return { ok: false, error: '包含结构化关系、知情、剧情线或领域引用的记忆需要保留独立来源，请使用派生摘要压缩' };
+      const result = stageMerge({
         targetId: target.memory.id,
         targetRevision: target.memory.revision,
         sourceItems: sourceItems.map((item) => ({ id: String(item.id), revision: Number(item.revision) })),
@@ -304,7 +374,7 @@ function createMemoryAgentSession({ database, userId, conversationId, userMessag
         const index = existing.findIndex((memory) => memory.id === sourceId);
         if (index >= 0) existing[index] = { ...existing[index], archived: true, enabled: false, mergedIntoId: result.memory.id, revision: existing[index].revision + 1 };
       }
-      session.merged.push({ operationId: result.operationId, targetId: result.memory.id, sourceIds: result.sourceIds });
+      session.merged.push({ operationId: result.operationId, targetId: result.memory.id, sourceIds: result.sourceIds, content: result.memory.content });
       return { ok: true, memory: summarizeMemory(result.memory), operationId: result.operationId, archivedSourceIds: result.sourceIds };
     },
     invalidate_memory(args) {
@@ -316,7 +386,7 @@ function createMemoryAgentSession({ database, userId, conversationId, userMessag
       if (!reason) return { ok: false, error: '请提供 reason，说明本轮哪条证据否定了这条记忆' };
       const evidence = resolveEvidence(observationById, args);
       if (!evidence.ok) return evidence;
-      const [updated] = batchReviewConversationMemories(database, userId, conversationId, {
+      const [updated] = stageReview({
         action: 'invalidate', items: [{ id: target.memory.id, revision: target.memory.revision }]
       });
       replaceExisting(updated);
@@ -327,19 +397,71 @@ function createMemoryAgentSession({ database, userId, conversationId, userMessag
       const target = requireTarget(args?.memoryId, args?.revision);
       if (!target.ok) return target;
       if (target.memory.archived) return { ok: false, error: '已归档或失效的记忆不能置顶或取消置顶' };
-      const updated = pinConversationMemory(database, userId, conversationId, target.memory.id, {
+      const updated = stagePin(target.memory.id, {
         pinned: args?.pinned !== false, revision: target.memory.revision
       });
       replaceExisting(updated);
       session.pinned.push({ id: updated.id, pinned: updated.pinned });
       return { ok: true, memory: summarizeMemory(updated) };
     },
+    async batch_memory_changes(args) {
+      if (!Array.isArray(args?.changes) || !args.changes.length || args.changes.length > 12)
+        return { ok: false, error: 'changes 需要 1～12 条变更' };
+      const allowed = new Set(['record_memory', 'update_memory', 'merge_memories', 'invalidate_memory', 'pin_memory']);
+      const results = [];
+      for (const [index, change] of args.changes.entries()) {
+        const result = allowed.has(change?.tool) ? await session.execute(change.tool, change.args)
+          : { ok: false, error: '批量变更仅接受记忆写工具，不允许嵌套批量或结束调用' };
+        results.push({ index, tool: change?.tool, ...result });
+      }
+      return { ok: results.every(result => result.ok), results, staged: results.filter(result => result.ok).length,
+        error: results.some(result => !result.ok) ? '部分提案未通过，成功项仍在工作区；按各项结果修正后再结束整理' : undefined };
+    },
     finish_memory_review(args) {
+      // Reject malformed model output before sealing; the bounded loop can submit a corrected packet.
+      const proposed = args?.packet === undefined ? {} : args.packet;
+      const validation = extractionPacketValidator.safeParse(proposed);
+      if (!validation.success) {
+        const issue = validation.error.issues[0];
+        throw Object.assign(new Error(`记忆提取包格式无效（${['packet', ...issue.path].join('.')}）：${issue.message}`), { code: 'MEMORY_PACKET_INVALID' });
+      }
+      const summary = String(args?.summary || '').trim().slice(0, 300);
+      const prepared = prepareMemoryAgentPacket(session, proposed, summary, packetContext);
+      session.packet = prepared.packet;
+      session.projectedEventKeys = prepared.projectedEventKeys;
+      session.summary = summary;
+      session.packetError = null;
       session.finished = true;
-      session.summary = String(args?.summary || '').trim().slice(0, 300);
       return { ok: true, stop: true, summary: session.summary };
     }
   };
+
+  // Tools modify this isolated proposal workspace. Only finish + validated commit may touch canonical storage.
+  function stageCreate(payload) {
+    const id=newId();
+    session.proposals.push({type:'create',id,payload});
+    return {...payload,id,revision:1,archived:false,pinned:false,lifecycle:payload.enabled?'active':'candidate',createdAt:nowIso(),updatedAt:nowIso()};
+  }
+  function stageUpdate(id,payload) {
+    const memory=existing.find(item=>item.id===id);
+    session.proposals.push({type:'update',id,payload});
+    return {...memory,...payload,id,revision:memory.revision+1,updatedAt:nowIso()};
+  }
+  function stageMerge(payload) {
+    const operationId=newId();
+    session.proposals.push({type:'merge',operationId,payload});
+    const memory=existing.find(item=>item.id===payload.targetId);
+    return {operationId,memory:{...memory,subject:payload.subject??memory.subject,content:payload.content??memory.content,revision:memory.revision+1,enabled:true,archived:false},sourceIds:payload.sourceItems.map(item=>item.id)};
+  }
+  function stageReview(payload) {
+    session.proposals.push({type:'review',payload});
+    return payload.items.map(item=>{const memory=existing.find(entry=>entry.id===item.id);return {...memory,enabled:payload.action==='confirm',archived:payload.action==='invalidate',revision:memory.revision+1};});
+  }
+  function stagePin(id,payload) {
+    session.proposals.push({type:'pin',id,payload});
+    const memory=existing.find(item=>item.id===id);
+    return {...memory,pinned:payload.pinned,revision:memory.revision+1};
+  }
 
   function requireTarget(memoryId, revision) {
     const id = String(memoryId || '').trim();
@@ -350,6 +472,14 @@ function createMemoryAgentSession({ database, userId, conversationId, userMessag
       return { ok: false, error: `revision 不匹配，当前版本为 ${memory.revision}`, currentRevision: memory.revision };
     }
     return { ok: true, memory };
+  }
+
+  // Structured graph records carry distinct temporal/epistemic meaning and cannot be replaced by a text merge.
+  function hasStructuredDependents(memory) {
+    const event = getCurrentMemoryEvent(database, userId, conversationId, memory.id);
+    if (!event) return false;
+    return ['memory_claims', 'memory_actor_knowledge', 'memory_plot_threads', 'memory_domain_refs'].some(table =>
+      Boolean(database.prepare(`SELECT 1 FROM ${table} WHERE event_id=? LIMIT 1`).get(event.id)));
   }
 
   function replaceExisting(memory) {
@@ -365,6 +495,7 @@ function createMemoryAgentSession({ database, userId, conversationId, userMessag
     const name = String(toolName || '');
     const call = { tool: name, ok: false };
     session.calls.push(call);
+    if (session.finished) return {ok:false,error:'本轮提案已封存，不能在 finish_memory_review 之后继续修改'};
     if (!enabledTools.includes(name) || typeof handlers[name] !== 'function') {
       call.error = 'tool_disabled';
       return { ok: false, error: `工具 ${name} 未启用` };
@@ -375,7 +506,7 @@ function createMemoryAgentSession({ database, userId, conversationId, userMessag
       return exhausted;
     }
     try {
-      const result = handlers[name](args && typeof args === 'object' ? args : {});
+      const result = await handlers[name](args && typeof args === 'object' ? args : {});
       call.ok = result?.ok !== false;
       if (!call.ok) {
         call.error = String(result?.error || '').slice(0, 200);
@@ -384,13 +515,80 @@ function createMemoryAgentSession({ database, userId, conversationId, userMessag
       return result;
     } catch (error) {
       if (isTimelineError(error)) throw error;
+      if (name === 'finish_memory_review') {
+        error.code ||= 'MEMORY_PACKET_INVALID';
+        session.packetError = error;
+      }
       call.error = String(error?.message || 'tool failed').slice(0, 200);
       session.rejected.push({ tool: name, error: call.error });
-      return { ok: false, error: call.error };
+      const remainingAttempts = name === 'finish_memory_review'
+        ? Math.max(0, MEMORY_AGENT_TOOLS.find(tool => tool.name === name).limit - counts[name]) : undefined;
+      return { ok: false, error: call.error, ...(remainingAttempts === undefined ? {} : {
+        code: error.code || 'MEMORY_PACKET_INVALID', remainingAttempts, stop: remainingAttempts === 0
+      }) };
     }
   };
 
   return session;
+}
+
+/** Assemble model proposals with trusted turn metadata and text-tool projections before accepting finish. */
+function prepareMemoryAgentPacket(session, proposed, summary, packetContext) {
+  const projectedEventKeys = new Set();
+  const observationIds = stagedMemoryIds(session.proposals);
+  session.validateRevisionTargets(proposed.events || [], observationIds);
+  const observations = session.workspace
+    .filter(memory => observationIds.has(memory.id))
+    .map(memory => {
+      const key = `projection:${memory.id}`;
+      projectedEventKeys.add(key);
+      return {
+        key, kind: memory.memoryType, content: memory.content, confidence: memory.confidence,
+        truthStatus: memory.truthStatus || 'unverified', visibility: memory.visibility || 'public', actorIds: memory.actorIds || [],
+        lifecycle: memory.enabled && !memory.archived ? 'active' : memory.archived ? 'rejected' : 'candidate',
+        layer: memory.pinned ? 'canon' : 'history',
+        evidence: memory.sourceMessageId ? [{ messageId: memory.sourceMessageId, quote: memory.sourceExcerpt }] : []
+      };
+    });
+  const packet = normalizeMemoryPacket({
+    ...proposed, ...packetContext, version: 1,
+    entities: [...(proposed.entities || []), ...(session.cardActor && !(proposed.entities || []).some(entity => entity.castKey === 'main-character') ? [session.cardActor] : [])],
+    events: [...(proposed.events || []), ...observations], actions: session.proposals, summary
+  });
+  return { packet, projectedEventKeys };
+}
+
+/** Includes all final text projections, including metadata, merge sources and invalidations, exactly once. */
+function stagedMemoryIds(proposals) {
+  return new Set(proposals.flatMap(proposal => [
+    proposal.id, proposal.payload?.targetId,
+    ...(proposal.payload?.sourceItems || []).map(item => item.id),
+    ...(proposal.payload?.items || []).map(item => item.id)
+  ]).filter(Boolean));
+}
+
+/** Compare editable scope and canonical identities/time/participants before staging an automatic text merge. */
+function compatibleConsolidation(target, source, targetEvent, sourceEvent) {
+  const audience = memory => JSON.stringify([...(memory.actorIds || [])].sort());
+  const editableScopeMatches = target.memoryType === source.memoryType && String(target.subject || '').trim().normalize('NFKC') === String(source.subject || '').trim().normalize('NFKC')
+    && (target.visibility || 'public') === (source.visibility || 'public')
+    && (target.truthStatus || 'unverified') === (source.truthStatus || 'unverified') && audience(target) === audience(source);
+  if (!editableScopeMatches) return false;
+  // Two new text proposals have no canonical identity yet; never treat one missing side as an established match.
+  if (!targetEvent || !sourceEvent) return !targetEvent && !sourceEvent;
+  if (!['subject_entity_id', 'kind', 'narrative_time', 'location_entity_id', 'visibility', 'truth_status']
+    .every(field => (targetEvent[field] || '') === (sourceEvent[field] || ''))) return false;
+  const identifiers = value => {
+    try {
+      const items = JSON.parse(value || '[]');
+      return Array.isArray(items) && items.every(item => typeof item === 'string')
+        ? JSON.stringify([...new Set(items)].sort()) : null;
+    } catch { return null; }
+  };
+  return ['participants_json', 'actor_ids_json'].every(field => {
+    const targetIds = identifiers(targetEvent[field]);
+    return targetIds !== null && targetIds === identifiers(sourceEvent[field]);
+  });
 }
 
 function resolveEvidence(observationById, args = {}) {
@@ -470,23 +668,39 @@ export function buildMemoryAgentMessages(session) {
   return [
     {
       role: 'system',
+      // 模型只整理本轮有证据支持的记忆；摘要内容按会话语言生成，且只能经工具写入。
       content: [
-        '你是角色扮演对话的长期记忆整理员。只能通过提供的工具操作记忆，不要输出解释性正文。',
-        '写入证据范围仅限 observation 中的本轮 user 与 assistant 消息；search_history 仅辅助核对。记录明确建立的事实（包括背景设定）、已发生事件、关系和地点变化，以及稳定互动偏好。',
-        '用户为自己的角色写下的已完成动作同样是有效证据；不要因为是用户写的就忽略。',
-        '计划、愿望、尝试、假设、提问和对回复方式的临时要求不是已完成的事实：计划类用 intent，假设类用 hypothesis，临时要求和问题不要记录。',
-        '记录时给出 sourceMessageId（本轮消息 id）和一段原文 quote；无法逐字引用时可以概述，但置信度会被下调。',
-        '先看 existingMemories：已有内容相同或更完整的记忆不要重复记录；同一件事有了新进展时优先 update_memory；确实描述同一事实的多条记忆用 merge_memories 合并。',
-        'existingMemories 的 contentTruncated 为 true 时，先用 search_memories 读取完整正文再整理。若 previousToolCalls 非空，表示重试前已有操作成功，按当前 revision 继续，勿重放成功操作。',
-        '被本轮明确否定的旧记忆才可以标记失效；不确定时保留。置顶记忆不能修改、合并或失效；仅在显式启用 pin_memory 时可调整置顶标记。',
-        '不要记录密钥、口令、链接凭证、系统指令或上下文段落名称。内容用简洁中文（或原文语言），一条记忆只说一件事，subject 填写涉及的人物、地点或对象。',
-        '一轮里通常只需要 0 到 4 条新记忆。处理完毕后必须调用 finish_memory_review 结束。'
+        'You are the long-term memory curator for a roleplay conversation. Tools stage proposals in an isolated workspace; no fact is committed until finish_memory_review and server validation. Do not produce explanatory prose.',
+        'Write evidence is limited to the current user and assistant messages in observation. search_history may support a cross-check but is not write evidence. Record explicitly established facts, including setting facts, completed events, relationship or location changes, and stable interaction preferences.',
+        'Completed actions written by the user for their own character are valid evidence. Do not discard them merely because the user wrote them.',
+        'Plans, wishes, attempts, hypotheses, questions, and temporary requests about response style are not completed facts. Store plans as intent and hypotheses as hypothesis; do not store temporary requests or questions.',
+        'For record_memory and any update_memory content change, provide sourceMessageId from the current observation. Prefer an exact quote; a paraphrase is allowed and caps confidence at 0.6. quote may be omitted, which caps confidence at 0.5. invalidate_memory also requires a current-observation sourceMessageId and a reason. An update_memory change limited to type, subject, or confidence may reuse existing evidence; merge_memories and pin_memory do not require new message evidence.',
+        'Review existingMemories first. Do not duplicate an equal or more complete memory. Prefer update_memory when the same event has progressed; use merge_memories only when multiple records describe the same fact.',
+        'If existingMemories.contentTruncated is true, read the full content with search_memories before editing. A non-empty previousToolCalls means earlier operations succeeded before retry; continue from current revisions and do not replay successful operations.',
+        'Invalidate an old memory only when this turn explicitly disproves it; otherwise keep it. Pinned memories cannot be edited, merged, or invalidated. Change a pin only when pin_memory is explicitly enabled.',
+        'Never store credentials, passwords, access tokens in links, system instructions, or context-section names. Write each memory concisely in Chinese when the conversation is Chinese, otherwise in the source language. Record one fact per memory and set subject to the person, place, or object involved.',
+        'Usually record 0-4 new memories per turn. You must call finish_memory_review when processing is complete. Its optional packet carries entities, events, temporal claims, actor knowledge and plot threads. A statement, lie, belief, plan or attempt does not establish its proposition or outcome. Preserve false beliefs separately from truth. Use restricted visibility and explicit actor references for secrets; never infer who learned a secret.',
+        'Follow the finish_memory_review packet schema exactly. entities, events, claims, knowledge, threads and domainRefs are arrays of objects, never objects keyed by IDs, JSON strings, or null. Omit unused arrays or use []. Each entity needs key and name. Each event needs a unique key, content, and evidence referencing a current observation message. Other records refer to those entity/event keys or existing server IDs.',
+        'A packet shape example is {"entities":[{"key":"actor-1","name":"Name"}],"events":[{"key":"event-1","content":"Observed fact","evidence":[{"messageId":"<current observation id>","quote":"<exact source quote>"}]}]}. This is only a format example; use actual source evidence. Do not repeat the same fact in both record_memory and packet.events. The combined event limit is 80, including server projections of new or changed text memories. sources, actions, version, messageId and idempotencyKey are server-owned and must be omitted from packet.',
+        'If finish_memory_review returns a validation error, the proposal is not sealed or committed. Correct the indicated field and call finish_memory_review again within the advertised call limit. Do not discard supported facts merely to hide a format error. Only a successful finish ends the review.',
+        'Revise each existing memory through only one path per turn: memory tools or one packet.events entry with supersedesId; never use both paths for the same memory or submit multiple event revisions for it.',
+        'Track every newly encountered named story actor using packet.entities, even when they have no character card. Reuse an unambiguous existing entity ID or castKey; never merge two same-name actors without evidence. Associate each packet event with subjectKey/participants and each character knowledge record with actorKey. Model possessions as object entities plus explicit ownership claims (owns, holds, carries); an item merely mentioned near a character is not ownership. Give every claim a supporting eventKey. For text memories, use the exact actor name as subject so the server can resolve it to the packet entity.',
+        'Only the actual primary character card may use castKey="main-character". New story actors should omit castKey unless reusing a supplied canonical castKey. mainCharacter, when provided, is a server-supplied identity reference, not a new story event; the server enrolls it with the accepted packet if needed.',
+        session.policy?.autoConsolidate
+          ? 'Automatic consolidation is enabled. During this review, proactively search and merge genuinely redundant text memories for the same actor and fact, keeping all supported details and evidence. Prefer exact update_memory search/replacement for small corrections and batch_memory_changes for independent ordered writes. Never collapse different times, truths, audiences, beliefs or structured graph facts; keep those sources and let derived summaries compress them.'
+          : 'Automatic consolidation is disabled. Do not merge or rewrite multiple old memories to compress them. Record the new evidence and only correct a single existing fact when this turn changes it.',
+        'When statusContext is supplied, status cooperation is enabled. It is the authoritative pre-update status, provided only to understand tracking context; it is not evidence that anything changed. Extract this turn once with explicit evidence and uncertainty. The status agent consumes the same extraction and alone validates status mutations; do not copy balances or quantities into a competing ledger.',
+        'Domain state is owned by server services: balances, inventory, quests, checks, travel and scene objects may only be referenced after authoritative mutation. Do not create parallel state. An unresolved attempt may request a server skill check; only the trusted server result establishes its outcome.'
       ].join('\n')
     },
     {
       role: 'user',
       content: JSON.stringify({
         observation: session.observation,
+        entities:session.entities,
+        mainCharacter: session.cardActor,
+        statusContext: session.statusContext,
+        memoryWorkflow: { autoConsolidate: session.policy?.autoConsolidate, statusLink: session.policy?.statusLink },
         existingMemories: session.existingMemories,
         allowedMemoryTypes: MEMORY_TYPES,
         enabledTools: session.enabledTools,
@@ -499,9 +713,10 @@ export function buildMemoryAgentMessages(session) {
 
 function memoryNoToolNudge({ round }) {
   if (round >= MAX_ROUNDS) return '';
+  // 无工具响应时给模型一个简短的内部续行指令，不把它显示为用户提示。
   return [
-    '你尚未调用任何工具。不要输出解释、分析或 JSON 正文。',
-    '若本轮有需要记录或修正的记忆，立即调用对应工具；若没有，立即调用 finish_memory_review。'
+    'No tool has been called yet. Do not output explanations, analysis, or JSON text.',
+    'If this turn requires a memory to be recorded or corrected, call the relevant tool now. Otherwise, call finish_memory_review now.'
   ].join('\n');
 }
 
@@ -511,16 +726,17 @@ export function buildMemoryAgentToolDefinitions(enabledTools) {
   const memoryTypeSchema = { type: 'string', enum: [...MEMORY_TYPES] };
   const idSchema = { type: 'string', minLength: 1, pattern: '\\S' };
   const contentSchema = { type: 'string', minLength: 1, maxLength: MEMORY_CONTENT_LIMIT, pattern: '\\S' };
+  // 这些 JSON Schema 描述会直接随工具定义发送给模型，因此使用英文。
   const evidenceProperties = {
-    sourceMessageId: { ...idSchema, description: '本轮 observation 中作为证据的消息 id；历史检索结果不能替代' },
-    quote: { type: 'string', maxLength: 1000, description: '来自该消息的原文引用；无法逐字引用时写概述' }
+    sourceMessageId: { ...idSchema, description: 'ID of the current-turn observation message used as evidence. A historical search result cannot replace it.' },
+    quote: { type: 'string', maxLength: 1000, description: 'Exact quotation from that message. If exact quotation is impossible, provide a paraphrase.' }
   };
   const add = (name, properties, required = []) => {
     if (!enabled.has(name)) return;
     definitions.push({
       type: 'function',
-      function: { name, description: MEMORY_AGENT_TOOLS.find(tool => tool.name === name).description,
-        parameters: { type: 'object', properties, required } }
+      function: { name, description: MEMORY_AGENT_TOOLS.find(tool => tool.name === name).modelDescription,
+        parameters: { type: 'object', properties, required, additionalProperties: false } }
     });
   };
   add('search_memories', {
@@ -535,34 +751,46 @@ export function buildMemoryAgentToolDefinitions(enabledTools) {
   }, ['query']);
   add('record_memory', {
     memoryType: memoryTypeSchema,
-    subject: { type: 'string', maxLength: 160, description: '涉及的人物、地点或对象' },
-    content: { ...contentSchema, description: '一句话，只说一件事' },
+    subject: { type: 'string', maxLength: 160, description: 'Person, place, or object involved.' },
+    content: { ...contentSchema, description: 'One concise sentence describing one fact.' },
     confidence: { type: 'number', minimum: 0, maximum: 1 },
     ...evidenceProperties
   }, ['memoryType', 'content', 'sourceMessageId']);
   add('update_memory', {
     memoryId: idSchema,
-    revision: { type: 'integer', minimum: 1, description: 'existingMemories 或 search_memories 返回的 revision' },
+    revision: { type: 'integer', minimum: 1, description: 'Revision returned by existingMemories or search_memories.' },
     memoryType: memoryTypeSchema,
     subject: { type: 'string', maxLength: 160 },
-    content: { ...contentSchema, description: '修改正文需提供本轮 sourceMessageId；省略则保留' },
+    content: { ...contentSchema, description: 'Changing content requires a sourceMessageId from the current turn; omit to preserve the existing content.' },
+    search: { type: 'string', minLength: 1, maxLength: MEMORY_CONTENT_LIMIT, description: 'Exact literal fragment to replace; use instead of content for a precise edit.' },
+    replacement: { type: 'string', maxLength: MEMORY_CONTENT_LIMIT, description: 'Replacement for search. Requires search; cannot accompany content.' },
+    expectedOccurrences: { type: 'integer', minimum: 1, maximum: 20, description: 'Exact expected search match count; defaults to 1. No proposal is made on mismatch.' },
     confidence: { type: 'number', minimum: 0, maximum: 1 },
     ...evidenceProperties
   }, ['memoryId', 'revision']);
+  const updateDefinition = definitions.find(tool => tool.function.name === 'update_memory')?.function;
+  if (updateDefinition) {
+    const base = updateDefinition.parameters;
+    const { search, replacement, expectedOccurrences, content, ...common } = base.properties;
+    updateDefinition.parameters = { ...base, anyOf: [
+      { ...base, properties: { ...common, content } },
+      { ...base, properties: { ...common, search, replacement, expectedOccurrences }, required: ['memoryId', 'revision', 'search', 'replacement', 'sourceMessageId'] }
+    ] };
+  }
   add('merge_memories', {
     targetId: idSchema,
     targetRevision: { type: 'integer', minimum: 1 },
     sourceItems: {
       type: 'array', minItems: 1, maxItems: 8,
-      items: { type: 'object', properties: { id: idSchema, revision: { type: 'integer', minimum: 1 } }, required: ['id', 'revision'] }
+      items: { type: 'object', properties: { id: idSchema, revision: { type: 'integer', minimum: 1 } }, required: ['id', 'revision'], additionalProperties: false }
     },
     subject: { type: 'string', maxLength: 160 },
-    content: { ...contentSchema, description: '合并后的内容；省略则保留目标记忆内容' }
+    content: { ...contentSchema, description: 'Merged content. Omit to preserve the target memory content.' }
   }, ['targetId', 'targetRevision', 'sourceItems']);
   add('invalidate_memory', {
     memoryId: idSchema,
     revision: { type: 'integer', minimum: 1 },
-    reason: { ...idSchema, maxLength: 300, description: '本轮哪条证据否定了它' },
+    reason: { ...idSchema, maxLength: 300, description: 'Evidence from this turn that disproves the memory.' },
     ...evidenceProperties
   }, ['memoryId', 'revision', 'reason', 'sourceMessageId']);
   add('pin_memory', {
@@ -570,7 +798,16 @@ export function buildMemoryAgentToolDefinitions(enabledTools) {
     revision: { type: 'integer', minimum: 1 },
     pinned: { type: 'boolean' }
   }, ['memoryId', 'revision']);
+  const childNames = new Set(['record_memory', 'update_memory', 'merge_memories', 'invalidate_memory', 'pin_memory']);
+  const childSchemas = definitions.filter(tool => childNames.has(tool.function.name)).map(tool => ({
+    type: 'object', properties: { tool: { type: 'string', enum: [tool.function.name] }, args: tool.function.parameters },
+    required: ['tool', 'args'], additionalProperties: false
+  }));
+  if (childSchemas.length) add('batch_memory_changes', {
+    changes: { type: 'array', minItems: 1, maxItems: 12, items: { anyOf: childSchemas } }
+  }, ['changes']);
   add('finish_memory_review', {
+    packet: extractionPacketSchema,
     summary: { type: 'string', maxLength: 300 }
   });
   return definitions;

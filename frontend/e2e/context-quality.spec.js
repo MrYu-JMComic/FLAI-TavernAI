@@ -31,7 +31,7 @@ test('context inspector separates preview, actual requests, memory review, and m
   await expect(page.locator('.deep-chat-main')).toBeVisible();
   await page.getByLabel('更多聊天工具', { exact: true }).click();
   await page.getByRole('menuitem', { name: '上下文检查器' }).click();
-  const inspector = page.getByRole('dialog', { name: 'Prompt Pipeline V2' });
+  const inspector = page.getByRole('dialog', { name: /^(Prompt Pipeline V2|记忆工作台)$/ });
   await expect(inspector).toBeVisible();
   await expect(inspector.getByRole('tab')).toHaveCount(4);
 

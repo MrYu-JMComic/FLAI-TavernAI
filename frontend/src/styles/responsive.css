@@ -334,8 +334,6 @@
   }
 
   .deep-chat-shell {
-    height: 100%;
-    min-height: 100%;
     overflow: hidden;
     display: block;
   }
@@ -348,6 +346,7 @@
 
   .deep-composer textarea {
     font-size: 16px;
+    resize: none;
   }
 
   .auth-page {

@@ -126,6 +126,36 @@ test('character images keep only one default per character', () => {
   ]);
 });
 
+test('setting a new default rolls back the previous default when the image update fails', () => {
+  const { database, character } = setupDatabase();
+  const currentDefault = createCharacterImage(database, {
+    characterId: character.id,
+    imageUrl: 'data:image/png;base64,1111',
+    isDefault: true
+  });
+  const nextDefault = createCharacterImage(database, {
+    characterId: character.id,
+    imageUrl: 'data:image/png;base64,2222'
+  });
+  database.exec(`
+    CREATE TRIGGER fail_selected_default_update
+    BEFORE UPDATE OF is_default ON character_images
+    WHEN NEW.id = '${nextDefault.id}'
+    BEGIN
+      SELECT RAISE(ABORT, 'selected image update failed');
+    END;
+  `);
+
+  assert.throws(
+    () => updateCharacterImage(database, character.id, nextDefault.id, { isDefault: true }),
+    /selected image update failed/
+  );
+  assert.deepEqual(
+    listCharacterImages(database, character.id).map((image) => [image.id, image.isDefault]),
+    [[currentDefault.id, true], [nextDefault.id, false]]
+  );
+});
+
 test('character images reorder', () => {
   const { database, character } = setupDatabase();
 

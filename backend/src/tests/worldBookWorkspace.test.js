@@ -336,7 +336,8 @@ test('manual selection is explained to the model and identical provider call IDs
     let round = 0;
     globalThis.fetch = async (_url, request) => {
       const body = JSON.parse(request.body);
-      assert.match(body.messages[0].content, /本次由用户指定用书/);
+      assert.match(body.messages[0].content, /The user selected the default book/);
+      assert.doesNotMatch(body.messages[0].content, /\p{Script=Han}/u);
       round += 1;
       if (round === 1) return toolResponse([['upsert_world_book_entry', { changes: lore('通用条目') }]]);
       if (round === 2) return toolResponse([['select_world_book', { bookId: second.id }]]);

@@ -88,53 +88,6 @@ export function saveConversationAccessorySkills(conversationId, payload) {
   });
 }
 
-export function fetchConversationMemories(conversationId, options = {}) {
-  const params = new URLSearchParams();
-  if (options.includeArchived) {
-    params.set('includeArchived', '1');
-  }
-  const suffix = params.toString() ? `?${params.toString()}` : '';
-  return apiRequest(`/api/conversations/${conversationId}/memories${suffix}`);
-}
-
-export function createConversationMemory(conversationId, payload) {
-  return apiRequest(`/api/conversations/${conversationId}/memories`, {
-    method: 'POST',
-    body: JSON.stringify(payload)
-  });
-}
-
-export function updateConversationMemory(conversationId, memoryId, payload) {
-  return apiRequest(`/api/conversations/${conversationId}/memories/${memoryId}`, {
-    method: 'PUT',
-    body: JSON.stringify(payload)
-  });
-}
-
-export function confirmConversationMemory(conversationId, memoryId) {
-  return apiRequest(`/api/conversations/${conversationId}/memories/${memoryId}/confirm`, {
-    method: 'POST'
-  });
-}
-
-export function disableConversationMemory(conversationId, memoryId) {
-  return apiRequest(`/api/conversations/${conversationId}/memories/${memoryId}/disable`, {
-    method: 'POST'
-  });
-}
-
-export function rollbackConversationMemory(conversationId, memoryId) {
-  return apiRequest(`/api/conversations/${conversationId}/memories/${memoryId}/rollback`, {
-    method: 'POST'
-  });
-}
-
-export function deleteConversationMemory(conversationId, memoryId) {
-  return apiRequest(`/api/conversations/${conversationId}/memories/${memoryId}`, {
-    method: 'DELETE'
-  });
-}
-
 export function fetchSaves(conversationId) {
   return apiRequest(`/api/conversations/${conversationId}/saves`);
 }

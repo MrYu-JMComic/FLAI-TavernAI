@@ -131,7 +131,7 @@ test('memory selection recalls older relevant evidence within a bounded whole-en
   assert.equal(selectConversationMemoryContext(database, 'other-user', conversation.id).context, '');
 });
 
-test('prompt pipeline respects lore positions and budgets each source without sending internal metadata', (t) => {
+test('prompt pipeline respects lore positions and budgets each source without sending internal metadata', async (t) => {
   const { database, user, character, conversation } = fixture(t);
   const book = createWorldBook(database, user.id, { name: 'Positions', characterId: character.id });
   for (const position of ['at_start', 'before_char', 'after_char', 'at_depth']) {
@@ -157,7 +157,7 @@ test('prompt pipeline respects lore positions and budgets each source without se
   assert.ok(minimal.messages.some((message) => message.content === 'CURRENT_SENTINEL'.repeat(200)));
   assert.equal(minimal.sections.mods.budget.keptCharacters, 0);
   assert.equal(minimal.budget.overBudget, true);
-  const preview = buildConversationContextPreview(database, user, conversation.id, { content: 'silver key' });
+  const preview = await buildConversationContextPreview(database, user, conversation.id, { content: 'silver key' });
   assert.equal(preview.retrieval.query, 'silver key');
 });
 

@@ -64,6 +64,8 @@ const modelSwitcherProvider = ref(null);
 const modelSwitcherModels = ref([]);
 const worldBookMatchDialogOpen = ref(false);
 const contextInspectorOpen = ref(false);
+const contextInspectorInitialView = ref('preview');
+const processingRefreshKey = ref(0);
 const statusBarUpdateStatus = ref('not-updated');
 const statusSummaryExpanded = ref(false);
 const statusBarCollapseRequest = ref(0);
@@ -140,7 +142,7 @@ const {
   hasStatusBarContent, showEconomyFeature, showSceneFeature, showGameHudFeature, showRewardFeature,
   loadStatusBar, loadEconomyBalance, loadAccessorySkills,
   syncAccessorySkills, isAccessorySkillActiveLocal,
-  saveAccessorySkillChanges, applyStatusBarUpdate, handleSkillResult,
+  saveAccessorySkillChanges, restoreAccessorySkillInheritance, applyStatusBarUpdate, handleSkillResult,
   syncStatusBarForm, addStatusBarVariable, removeStatusBarVariable,
   saveStatusBarChanges, deleteStatusBarAction, applyStatusBarVariableUpdates,
   openStatusBarEditor, closeStatusBarEditor, setStatusBarTemplateMode,
@@ -419,7 +421,7 @@ async function copyLastFailureMessage() {
 
 async function retryFailureFromPanel() {
   await retryLastFailure();
-  scheduleComposerLayoutUpdate({ focus: true });
+  scheduleComposerLayoutUpdate({ focus: !isPhoneViewport() });
 }
 
 function canSaveMessageEditAndRerun(message) {
@@ -445,7 +447,7 @@ async function saveMessageEditAndRerun(message) {
   if (!submitted) {
     notify.warning('重跑未开始，请检查输入框状态。');
   }
-  scheduleComposerLayoutUpdate({ focus: true });
+  scheduleComposerLayoutUpdate({ focus: !isPhoneViewport() });
 }
 
 function openModelSwitcher() {
@@ -837,6 +839,13 @@ async function refreshProcessedState(state) {
   await Promise.allSettled([loadStatusBar(), loadEconomyBalance()]);
 }
 
+/** External recovery refreshes the quiet status reader; its own settled event never increments this key. */
+async function refreshMemoryProcessingState(state) {
+  if (chatViewDisposed || state?.conversationId !== conversation.value?.id) return;
+  processingRefreshKey.value += 1;
+  await refreshProcessedState(state);
+}
+
 async function refreshAccessoryPanels(payload = {}) {
   refreshStatusBarUpdateStatus(payload);
   return hasPendingAccessoryRefresh();
@@ -945,8 +954,13 @@ function closeMemoryAgentDialog() {
 async function saveMemoryAgentSettings(payload) {
   if (accessorySaving.value) return;
   updateAccessorySkill('memoryAgent', payload);
-  await saveAccessorySkillChanges();
-  memoryAgentDialogOpen.value = false;
+  const saved = await saveAccessorySkillChanges();
+  if (saved) memoryAgentDialogOpen.value = false;
+}
+
+async function restoreMemoryAgentDefaults() {
+  const saved = await restoreAccessorySkillInheritance('memoryAgent');
+  if (saved) memoryAgentDialogOpen.value = false;
 }
 
 function closeStatusBarAgentDialog() {
@@ -1038,6 +1052,8 @@ function resizeComposerTextarea(onlyIfLayoutChanged = false) {
     return;
   }
   composerTextareaLayout = layout;
+  // The temporary height collapse can reset the textarea's internal scroll.
+  const previousScrollTop = el.scrollTop;
   el.style.height = 'auto';
   const scrollH = el.scrollHeight;
   const minHeight = isUserResizing ? Math.min(userResizedHeight, maxHeight) : 0;
@@ -1049,6 +1065,7 @@ function resizeComposerTextarea(onlyIfLayoutChanged = false) {
   }
   el.style.height = `${targetHeight}px`;
   el.style.overflowY = scrollH > maxHeight ? 'auto' : 'hidden';
+  el.scrollTop = previousScrollTop;
   autoSizingTextareaRafId = scheduleChatFrame(() => {
     autoSizingTextareaRafId = null;
     if (chatViewDisposed) return;
@@ -1106,10 +1123,14 @@ function readComposerTextareaMaxHeight(el) {
 
 function handleViewportResize() {
   if (chatViewDisposed) return;
-  chatViewportIsPhone.value = isPhoneViewport();
-  // Measure after Vue updates the phone/desktop rows. Height-only viewport
-  // changes must not collapse a focused, scrolling textarea for measurement.
-  scheduleComposerLayoutUpdate({ layoutOnly: true });
+  const isPhone = isPhoneViewport();
+  if (chatViewportIsPhone.value !== isPhone) {
+    chatViewportIsPhone.value = isPhone;
+    // Re-measure only when the phone/desktop row count changes.
+    scheduleComposerLayoutUpdate({ layoutOnly: true });
+    return;
+  }
+  updateComposerDock();
 }
 
 function scheduleViewportLayoutUpdate() {
@@ -1129,9 +1150,7 @@ let textareaResizeObserver = null;
 
 function updateComposerDock() {
   if (chatViewDisposed) return;
-  if (composerDockRafId !== null) {
-    cancelChatFrame(composerDockRafId);
-  }
+  if (composerDockRafId !== null) return;
   composerDockRafId = scheduleChatFrame(() => {
     composerDockRafId = null;
     if (chatViewDisposed) {
@@ -1259,19 +1278,14 @@ const hasStatusBarVisible = computed(() => {
 });
 
 onMounted(async () => {
-  await loadConversation();
-  if (chatViewDisposed) return;
-  await loadSidebarData();
-  if (chatViewDisposed) return;
-  await loadEconomyBalance();
-  if (chatViewDisposed) return;
+  // Keep keyboard docking active while conversation and auxiliary data load.
   resizeComposerTextarea();
   updateComposerDock();
   window.addEventListener('resize', scheduleViewportLayoutUpdate);
   window.addEventListener('keydown', handleGlobalKeydown);
   window.addEventListener('focusin', updateComposerDock);
   window.addEventListener('focusout', updateComposerDock);
-  window.visualViewport?.addEventListener('resize', scheduleViewportLayoutUpdate);
+  window.visualViewport?.addEventListener('resize', updateComposerDock);
   window.visualViewport?.addEventListener('scroll', updateComposerDock);
   const wrapEl = composerWrap.value?.wrapRef || composerWrap.value;
   if (wrapEl && typeof ResizeObserver !== 'undefined') {
@@ -1287,6 +1301,12 @@ onMounted(async () => {
     });
     textareaResizeObserver.observe(textareaEl);
   }
+
+  await loadConversation();
+  if (chatViewDisposed) return;
+  await loadSidebarData();
+  if (chatViewDisposed) return;
+  await loadEconomyBalance();
 });
 
 onBeforeUnmount(() => {
@@ -1306,7 +1326,7 @@ onBeforeUnmount(() => {
   window.removeEventListener('keydown', handleGlobalKeydown);
   window.removeEventListener('focusin', updateComposerDock);
   window.removeEventListener('focusout', updateComposerDock);
-  window.visualViewport?.removeEventListener('resize', scheduleViewportLayoutUpdate);
+  window.visualViewport?.removeEventListener('resize', updateComposerDock);
   window.visualViewport?.removeEventListener('scroll', updateComposerDock);
   if (composerResizeObserver) {
     composerResizeObserver.disconnect();
@@ -1499,11 +1519,13 @@ watch([showWorldBookMatchSummary, worldBookMatchSummary], ([shouldShow, matches]
       :open="memoryAgentDialogOpen"
       :skill="accessorySkills.memoryAgent"
       :tools="memoryAgentTools"
+      can-restore-inheritance
       :main-provider="props.provider"
       :main-model-options="providerModels"
       :saving="accessorySaving"
       @close="closeMemoryAgentDialog"
       @save="saveMemoryAgentSettings"
+      @restore-inheritance="restoreMemoryAgentDefaults"
     />
 
     <section class="deep-chat-main" :style="chatMainStyle" :data-chat-scope="conversation?.id || 'active'">
@@ -1521,7 +1543,7 @@ watch([showWorldBookMatchSummary, worldBookMatchSummary], ([shouldShow, matches]
         @toggle-theme="emit('toggle-theme')"
         @open-sidebar="openSidebar"
         @open-status="(event) => openWorkspaceTool('status', event)"
-        @open-context="(event) => openWorkspaceTool('context', event)"
+        @open-context="(event) => { contextInspectorInitialView = 'preview'; openWorkspaceTool('context', event); }"
         @open-economy="(event) => openWorkspaceTool('economy', event)"
         @open-scene="(event) => openWorkspaceTool('scene', event)"
         @open-saves="(event) => openWorkspaceTool('saves', event)"
@@ -1532,8 +1554,9 @@ watch([showWorldBookMatchSummary, worldBookMatchSummary], ([shouldShow, matches]
         v-if="conversation?.id"
         :conversation-id="conversation.id"
         :generating="sending"
-        :refresh-key="`${messages.length}:${latestAssistantMessage?.id || ''}:${sending}:${messageActionBusy}`"
+        :refresh-key="`${processingRefreshKey}:${messages.length}:${latestAssistantMessage?.id || ''}:${sending}:${messageActionBusy}`"
         @settled="refreshProcessedState"
+        @open-memory="contextInspectorInitialView = 'memory'; openWorkspaceTool('context')"
       />
 
       <GameHud
@@ -1801,10 +1824,13 @@ watch([showWorldBookMatchSummary, worldBookMatchSummary], ([shouldShow, matches]
       />
       <ChatContextInspector
         :open="contextInspectorOpen"
+        :initial-view="contextInspectorInitialView"
         :conversation-id="conversation?.id || ''"
         :draft-content="input"
         :draft-attachments="chatAttachments"
         :preset-id="selectedPresetId"
+        @processing-settled="refreshMemoryProcessingState"
+        @open-memory-settings="closeWorkspaceTool('context'); openSkillSettings('memoryAgent')"
         @close="closeWorkspaceTool('context')"
       />
     </section>

@@ -336,17 +336,7 @@ async function setDefault(imageId) {
   const mutationToken = ++imageMutationToken;
 
   try {
-    // Clear old default
-    let currentDefault = null;
-    for (const image of images.value) {
-      if (image?.isDefault) {
-        currentDefault = image;
-        break;
-      }
-    }
-    if (currentDefault && currentDefault.id !== imageId) {
-      await updateCharacterImage(characterId, currentDefault.id, { isDefault: false });
-    }
+    // The server changes the default in one update and retains the old value if that update fails.
     await updateCharacterImage(characterId, imageId, { isDefault: true });
     if (!isCurrentImageMutation(mutationToken, characterId)) return;
     await loadImages();

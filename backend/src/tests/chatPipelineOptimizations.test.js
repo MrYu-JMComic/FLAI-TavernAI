@@ -154,7 +154,8 @@ test('generation route locks per conversation and skips usage aggregation', () =
   assert.match(generationRouteSource, /if \(!ticket\) \{\s*return;\s*\}/);
   assert.match(generationRouteSource, /finally \{\s*finishFailedTrace\(ticket\);\s*endConversationGeneration\(db, ticket\);\s*\}/);
   assert.doesNotMatch(generationRouteSource, /queueMicrotask|startAccessoryAgentsInBackground/);
-  assert.match(generationRouteSource, /response\.status\(409\)/);
+  assert.match(generationRouteSource, /response\.status\(error\.status\)/);
+  assert.ok(generationRouteSource.indexOf('await prepareMemoryGeneration') < generationRouteSource.indexOf('const ticket = beginConversationGeneration'));
   // Status bar is fetched once per response, not per field.
   assert.doesNotMatch(
     generationRouteSource,

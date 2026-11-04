@@ -3,13 +3,8 @@ import { searchWorldBookEntryRows } from '../repositories/worldBookRepository.js
 
 const SEARCH_TYPES = new Set(['message', 'memory', 'world-book']);
 
-// Untouched legacy automatic candidates remain usable; an explicit review,
-// disable, invalidation or merge must never be silently undone by recall.
-export const RECALLABLE_MEMORY_SQL = `(memories.enabled = 1 OR (memories.source_kind = 'auto'
-  AND memories.revision = 1 AND memories.created_at = memories.updated_at
-  AND memories.invalidated_at IS NULL AND memories.merged_into_id IS NULL
-  AND EXISTS (SELECT 1 FROM messages evidence WHERE evidence.id = memories.source_message_id
-    AND evidence.conversation_id = memories.conversation_id AND evidence.user_id = memories.user_id)))`;
+// Only accepted lifecycle records are eligible in every formal recall channel.
+export const RECALLABLE_MEMORY_SQL = `(memories.enabled = 1 AND memories.lifecycle = 'active')`;
 
 export function conversationRecallTerms(value) {
   const text = String(value || '').normalize('NFKC').toLowerCase().slice(0, 2_000);

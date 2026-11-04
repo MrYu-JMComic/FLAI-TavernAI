@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { DatabaseSync } from 'node:sqlite';
+import { openVectorDatabase } from '../db/vectorRuntime.js';
 import { applyStartupMigrations, latestSchemaVersion, listAppliedMigrations } from '../db/migrations.js';
 import { listBackups, preflightBackupRestore, resolveBackupStorage, verifyBackupFile } from './backup.js';
 
@@ -47,7 +47,7 @@ export function runBackupRestoreDrill(options = {}) {
     // column cache and world book counter, which would corrupt the live
     // server's state when the drill runs in-process. A scratch copy only needs
     // the migrations plus its own column lookups.
-    const database = new DatabaseSync(restoredPath);
+    const database = openVectorDatabase(restoredPath);
     try {
       applyStartupMigrations(database, { getCachedTableColumns: readTableColumns });
       const ledger = listAppliedMigrations(database);

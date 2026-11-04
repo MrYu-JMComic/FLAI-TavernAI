@@ -769,7 +769,9 @@ test('CharacterFormView normalizes accessory skill payloads with a direct defaul
   assert.match(snippet, /modelOverride: String\(source\.modelOverride \|\| source\.model_override \|\| ''\)\.trim\(\)\.slice\(0, 100\)/);
   assert.match(snippet, /providerProfileId: String\(source\.providerProfileId \|\| source\.provider_profile_id \|\| ''\)\.trim\(\)\.slice\(0, 160\)/);
   assert.match(snippet, /tools: normalizeAccessorySkillTools\(source\.tools\)/);
-  assert.match(characterFormPayloadSource, /memoryAgent: createDefaultAccessorySkill\('auto'\)/);
+  assert.match(characterFormPayloadSource, /memoryAgent: \{ \.\.\.createDefaultAccessorySkill\('auto'\), memoryPolicy: normalizeMemoryPolicy\(\), embedding: normalizeMemoryEmbedding\(\) \}/);
+  assert.match(snippet, /normalized\[key\]\.memoryPolicy = normalizeMemoryPolicy\(source\.memoryPolicy\)/);
+  assert.match(snippet, /normalized\[key\]\.embedding = normalizeMemoryEmbedding\(source\.embedding\)/);
   assert.match(snippet, /return normalized;/);
   assert.doesNotMatch(snippet, /Object\.fromEntries/);
   assert.doesNotMatch(snippet, /Object\.keys\(defaults\)\.map/);

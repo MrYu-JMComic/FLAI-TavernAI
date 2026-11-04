@@ -68,7 +68,7 @@ test('versioned save restores all domain tables and image asset references, not 
   seedState(f);
   const before = captureConversationSnapshot(database, userId, conversationId);
   const save = createSave(database, userId, conversationId, { name: 'Complete save' });
-  assert.equal(getSave(database, userId, save.id).snapshot.version, 2);
+  assert.equal(getSave(database, userId, save.id).snapshot.version, 3);
   assert.deepEqual(Object.keys(before.state).sort(), [...SNAPSHOT_STATE_TABLES].sort());
   database.prepare('UPDATE economy_accounts SET balance = 0 WHERE conversation_id = ?').run(conversationId);
   database.prepare('UPDATE scene_nodes SET name = ? WHERE id = ?').run('Future place', 'warehouse');
@@ -221,7 +221,7 @@ test('actual assistant persistence enqueues postprocessing atomically and blocks
   assert.throws(() => results.saveAssistantResult({ userId: f.userId, conversation: { id: f.conversationId }, character: f.character, rules: [], result: { content: 'Stale' }, ticket }), (error) => error.code === 'CONVERSATION_TIMELINE_CHANGED');
 });
 
-test('postprocessing runs through the real handler and supports durable memory extraction', async (t) => {
+test('postprocessing runs through the real handler without inventing facts in raw mode', async (t) => {
   const f = fixture(t);
   f.message('user', 'I prefer tea.');
   const assistant = f.message('assistant', 'Mira found a key.');
@@ -231,7 +231,8 @@ test('postprocessing runs through the real handler and supports durable memory e
   const result = await handlers[job.type]({ job, payload: job.payload, signal: new AbortController().signal, progress: () => {} });
   completeJob(f.database, job.id, job.leaseOwner, result);
   assert.equal(getJob(f.database, f.userId, queued.id).status, 'succeeded');
-  assert.ok(f.database.prepare('SELECT COUNT(*) AS count FROM conversation_memories WHERE conversation_id = ?').get(f.conversationId).count > 0);
+  assert.equal(f.database.prepare('SELECT COUNT(*) AS count FROM conversation_memories WHERE conversation_id = ?').get(f.conversationId).count, 0);
+  assert.equal(result.mode, 'raw');
   assert.equal(f.database.prepare('SELECT postprocess_state FROM messages WHERE id = ?').get(assistant.id).postprocess_state, 'completed');
   assert.ok(f.database.prepare('SELECT id FROM conversation_checkpoints WHERE anchor_message_id = ?').get(assistant.id));
 });

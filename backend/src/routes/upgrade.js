@@ -1,20 +1,7 @@
 import { Router } from 'express';
 import { appConfig, withAppConfigDefaults } from '../config.js';
 import { createAsset, deleteAsset, getAssetForViewer, listAssets } from '../modules/assets.js';
-import {
-  batchReviewConversationMemories,
-  confirmConversationMemory,
-  createConversationMemory,
-  deleteConversationMemory,
-  disableConversationMemory,
-  listConversationMemoryConflictCandidates,
-  listConversationMemories,
-  mergeConversationMemories,
-  pinConversationMemory,
-  rollbackConversationMemory,
-  undoConversationMemoryMerge,
-  updateConversationMemory
-} from '../modules/conversationMemories.js';
+
 import { getConversationBranchTree } from '../modules/branches.js';
 import { getWorldBook } from '../services/worldBooks/worldBookService.js';
 import { buildConversationContextPreview } from '../services/contextPreview.js';
@@ -101,15 +88,15 @@ export function createUpgradeRouter(ctx) {
     response.json({ ok: true });
   });
 
-  router.post('/conversations/:id/context/preview', requireAuth, (request, response) => {
+  router.post('/conversations/:id/context/preview', requireAuth, asyncRoute(async (request, response) => {
     const settings = getChatProviderSettingsFromContext(ctx, request.auth.user.id);
-    const preview = buildConversationContextPreview(db, request.auth.user, request.params.id, request.body || {}, settings.value);
+    const preview = await buildConversationContextPreview(db, request.auth.user, request.params.id, request.body || {}, settings.value);
     if (!preview) {
       response.status(404).json({ error: '对话不存在' });
       return;
     }
     response.json(preview);
-  });
+  }));
 
   router.get('/conversations/:id/context/budget', requireAuth, (request, response) => {
     const budget = readConversationContextBudget(db, request.auth.user.id, request.params.id);
@@ -141,118 +128,6 @@ export function createUpgradeRouter(ctx) {
     if (!trace) return response.status(404).json({ error: 'Request trace not found' });
     response.setHeader('Cache-Control', 'no-store');
     response.json(trace);
-  });
-
-  router.get('/conversations/:id/memories', requireAuth, (request, response) => {
-    const memories = listConversationMemories(db, request.auth.user.id, request.params.id, {
-      includeArchived: request.query.includeArchived === '1'
-    });
-    if (!memories) {
-      response.status(404).json({ error: '对话不存在' });
-      return;
-    }
-    response.json({ memories });
-  });
-
-  router.post('/conversations/:id/memories', requireAuth, (request, response) => {
-    try {
-      const memory = createConversationMemory(db, request.auth.user.id, request.params.id, request.body || {});
-      if (!memory) {
-        response.status(404).json({ error: '对话不存在' });
-        return;
-      }
-      response.status(201).json(memory);
-    } catch (error) {
-      sendRouteError(response, error, { status: 400, isProduction: config.isProduction, fallback: '记忆保存失败' });
-    }
-  });
-
-  router.get('/conversations/:id/memories/conflicts', requireAuth, (request, response) => {
-    const candidates = listConversationMemoryConflictCandidates(db, request.auth.user.id, request.params.id);
-    if (!candidates) {
-      response.status(404).json({ error: '对话不存在' });
-      return;
-    }
-    response.json({ candidates });
-  });
-
-  router.post('/conversations/:id/memories/batch', requireAuth, (request, response) => {
-    handleMemoryMutation(response, config, () => {
-      const memories = batchReviewConversationMemories(db, request.auth.user.id, request.params.id, request.body || {});
-      return memories ? { memories } : null;
-    });
-  });
-
-  router.post('/conversations/:id/memories/merge', requireAuth, (request, response) => {
-    handleMemoryMutation(response, config, () => mergeConversationMemories(
-      db, request.auth.user.id, request.params.id, request.body || {}
-    ));
-  });
-
-  router.post('/conversations/:id/memories/merges/:operationId/undo', requireAuth, (request, response) => {
-    handleMemoryMutation(response, config, () => undoConversationMemoryMerge(
-      db, request.auth.user.id, request.params.id, request.params.operationId
-    ));
-  });
-
-  router.put('/conversations/:id/memories/:memoryId', requireAuth, (request, response) => {
-    try {
-      const memory = updateConversationMemory(
-        db,
-        request.auth.user.id,
-        request.params.id,
-        request.params.memoryId,
-        request.body || {}
-      );
-      if (!memory) {
-        response.status(404).json({ error: '记忆不存在' });
-        return;
-      }
-      response.json(memory);
-    } catch (error) {
-      sendRouteError(response, error, { status: 400, isProduction: config.isProduction, fallback: '记忆更新失败' });
-    }
-  });
-
-  router.post('/conversations/:id/memories/:memoryId/confirm', requireAuth, (request, response) => {
-    const memory = confirmConversationMemory(db, request.auth.user.id, request.params.id, request.params.memoryId);
-    if (!memory) {
-      response.status(404).json({ error: '记忆不存在' });
-      return;
-    }
-    response.json(memory);
-  });
-
-  router.post('/conversations/:id/memories/:memoryId/pin', requireAuth, (request, response) => {
-    handleMemoryMutation(response, config, () => pinConversationMemory(
-      db, request.auth.user.id, request.params.id, request.params.memoryId, request.body || {}
-    ));
-  });
-
-  router.post('/conversations/:id/memories/:memoryId/disable', requireAuth, (request, response) => {
-    const memory = disableConversationMemory(db, request.auth.user.id, request.params.id, request.params.memoryId);
-    if (!memory) {
-      response.status(404).json({ error: '记忆不存在' });
-      return;
-    }
-    response.json(memory);
-  });
-
-  router.post('/conversations/:id/memories/:memoryId/rollback', requireAuth, (request, response) => {
-    const memory = rollbackConversationMemory(db, request.auth.user.id, request.params.id, request.params.memoryId);
-    if (!memory) {
-      response.status(404).json({ error: '记忆不存在' });
-      return;
-    }
-    response.json(memory);
-  });
-
-  router.delete('/conversations/:id/memories/:memoryId', requireAuth, (request, response) => {
-    if (!deleteConversationMemory(db, request.auth.user.id, request.params.id, request.params.memoryId)) {
-      response.status(404).json({ error: '记忆不存在' });
-      return;
-    }
-    response.json({ ok: true });
   });
 
   router.get('/conversations/:id/branches/tree', requireAuth, (request, response) => {
@@ -306,22 +181,6 @@ export function createUpgradeRouter(ctx) {
   return router;
 }
 
-function handleMemoryMutation(response, config, operation) {
-  try {
-    const result = operation();
-    if (!result) {
-      response.status(404).json({ error: '对话或记忆不存在' });
-      return;
-    }
-    response.json(result);
-  } catch (error) {
-    sendRouteError(response, error, {
-      status: Number(error?.status) || 400,
-      isProduction: config.isProduction,
-      fallback: '记忆审阅操作失败'
-    });
-  }
-}
 
 function buildProviderHealthSettings(ctx, userId, payload = {}, user = {}) {
   const config = withAppConfigDefaults(ctx.config || appConfig);

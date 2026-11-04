@@ -184,10 +184,12 @@ test('character assistant normalizes generation options with direct defaults loo
 test('character assistant prompts include shared quality guidance', async () => {
   const originalFetch = globalThis.fetch;
   const prompts = [];
+  const toolSets = [];
   try {
     globalThis.fetch = async (_url, request = {}) => {
       const body = JSON.parse(request.body);
       prompts.push(body.messages[0].content);
+      toolSets.push(body.tools || []);
       return finishedDraftResponse('Quality guidance reviewed.');
     };
 
@@ -217,15 +219,39 @@ test('character assistant prompts include shared quality guidance', async () => 
 
     assert.equal(prompts.length, 2);
     for (const prompt of prompts) {
-      assert.match(prompt, /人设字段是长期角色扮演契约/);
-      assert.match(prompt, /开场白必须是可直接互动的第一幕/);
-      assert.match(prompt, /扩展、状态变量、Mod 和渲染插件必须对应明确的实际用途/);
-      assert.match(prompt, /currentCharacter 是现有表单数据/);
+      assert.match(prompt, /Treat the persona field as a durable role-play contract/);
+      assert.match(prompt, /Write the opening message as an immediately playable first scene/);
+      assert.match(prompt, /Add extensions, status variables, mods, and rendering plugins only when each has a clear practical purpose/);
+      assert.match(prompt, /currentCharacter contains existing form data/);
+      assert.match(prompt, /one or two concise Chinese sentences/);
+    }
+    const fixedToolNames = new Set([
+      'update_character_profile', 'update_character_story', 'replace_character_regex_rules',
+      'replace_character_render_plugins', 'update_character_status_bar', 'update_character_agents',
+      'update_character_presentation', 'set_character_recommendations', 'report_character_progress',
+      'finish_character_draft'
+    ]);
+    for (const tools of toolSets) {
+      for (const tool of tools.filter((item) => fixedToolNames.has(item.function?.name))) {
+        const descriptions = collectSchemaDescriptions(tool.function);
+        assert.ok(descriptions.length, `${tool.function.name} must document its model-facing schema`);
+        assert.doesNotMatch(descriptions.join('\n'), /[\u3400-\u9fff]/, `${tool.function.name} must use English descriptions`);
+      }
     }
   } finally {
     globalThis.fetch = originalFetch;
   }
 });
+
+function collectSchemaDescriptions(value, output = []) {
+  if (Array.isArray(value)) {
+    for (const item of value) collectSchemaDescriptions(item, output);
+  } else if (value && typeof value === 'object') {
+    if (typeof value.description === 'string') output.push(value.description);
+    for (const item of Object.values(value)) collectSchemaDescriptions(item, output);
+  }
+  return output;
+}
 
 test('character assistant formats enabled sections without Object.entries pipelines', () => {
   const source = fs.readFileSync(new URL('../services/characterAssistant.js', import.meta.url), 'utf8');
@@ -235,7 +261,7 @@ test('character assistant formats enabled sections without Object.entries pipeli
     /function formatEnabledSectionList\(enabledSections = \{\}\) \{\s*let sections = '';\s*for \(const key in enabledSections\) \{[\s\S]*sections = sections \? `\$\{sections\}, \$\{key\}` : key;[\s\S]*return sections \|\| 'none';\s*\}/
   );
   assert.equal(
-    source.match(/允许修改的部分仅限：\$\{formatEnabledSectionList\(enabledSections\)\}。/g)?.length,
+    source.match(/You may edit only these domains: \$\{formatEnabledSectionList\(enabledSections\)\}\./g)?.length,
     1
   );
   assert.doesNotMatch(source, /Object\.entries\(enabledSections\)\.filter\(\(\[, value\]\) => value\)\.map\(\(\[key\]\) => key\)\.join\(', '\)/);

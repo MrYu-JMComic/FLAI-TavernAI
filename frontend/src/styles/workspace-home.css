@@ -104,8 +104,8 @@
   background: var(--primary-strong);
 }
 
-:root[data-theme="dark"] .home-primary-action {
-  color: var(--bg);
+:root[data-theme="dark"] .home-workbench .home-primary-action {
+  color: var(--bg) !important;
 }
 
 .home-secondary-action:hover:not(:disabled),
@@ -363,7 +363,7 @@
   padding: 12px 0;
   border: 0;
   border-radius: 0;
-  background: var(--bg);
+  background: color-mix(in srgb, var(--surface) 97%, var(--bg));
 }
 
 .home-search-field,

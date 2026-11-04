@@ -19,9 +19,14 @@ import {
   resolveStatusVariableKind
 } from '../../../shared/statusVariables.js';
 import {
+  STATUS_SCRIPT_AI_API,
+  STATUS_SCRIPT_API,
   STATUS_TEMPLATE_ACTIONS,
+  STATUS_TEMPLATE_PERCENT_AI_GUIDE,
+  STATUS_TEMPLATE_PERCENT_GUIDE,
   buildStatusTemplateAiGuide,
   buildStatusTemplateReferenceGroups,
+  buildStatusScriptAiGuide,
   documentedStatusExpressionFunctions,
   documentedStatusTemplateFilters
 } from '../../../shared/statusTemplateSyntax.js';
@@ -160,9 +165,14 @@ test('the documented syntax matches what the runtime implements', () => {
   );
 
   const guide = buildStatusTemplateAiGuide().join('\n');
-  assert.ok(guide.includes('width:{{体力.percent}}'));
-  assert.ok(guide.includes('width:{{体力.percentage}}%'));
-  assert.ok(guide.includes('percent 已包含百分号'));
+  assert.match(guide, /finite numeric value with max greater than min/);
+  assert.match(guide, /U\+3001 IDEOGRAPHIC COMMA/);
+  assert.doesNotMatch(guide, /、/);
+  assert.ok(guide.includes('width:{{health.percent}}'));
+  assert.ok(guide.includes('width:{{health.percentage}}%'));
+  assert.ok(guide.includes(STATUS_TEMPLATE_PERCENT_AI_GUIDE));
+  assert.doesNotMatch(guide, /[\u3400-\u9fff]/);
+  assert.match(STATUS_TEMPLATE_PERCENT_GUIDE, /percent 已包含百分号/);
   for (const type of STATUS_VARIABLE_TYPES) {
     assert.ok(guide.includes(type), `AI guide is missing variable type ${type}`);
   }
@@ -175,6 +185,7 @@ test('the documented syntax matches what the runtime implements', () => {
     groups.map((group) => group.key),
     ['placeholders', 'types', 'filters', 'blocks', 'expressions', 'actions', 'styles']
   );
+  assert.equal(groups[0].title, '占位符');
   for (const group of groups) {
     assert.ok(group.items.length, `reference group ${group.key} is empty`);
     for (const item of group.items) {
@@ -182,4 +193,9 @@ test('the documented syntax matches what the runtime implements', () => {
       assert.ok(item.summary, `reference item ${item.code} has no summary`);
     }
   }
+
+  const scriptGuide = buildStatusScriptAiGuide();
+  assert.equal(STATUS_SCRIPT_AI_API.length, STATUS_SCRIPT_API.length);
+  assert.match(STATUS_SCRIPT_API[0].summary, /当前会话/);
+  assert.doesNotMatch(scriptGuide, /[\u3400-\u9fff]/);
 });

@@ -37,6 +37,8 @@ test('DeepSeek online search stays independent and fits desktop and mobile chat'
   await page.keyboard.press('Escape');
   await expect(page.getByRole('dialog', { name: '响应模式' })).toBeHidden();
   await expect(responseModes).toBeFocused();
+  const closeSidebar = page.getByRole('button', { name: '收起侧边栏' });
+  if (await closeSidebar.isVisible()) await closeSidebar.click();
   await page.getByRole('textbox', { name: '聊天消息输入' }).click();
 
   for (const viewport of [

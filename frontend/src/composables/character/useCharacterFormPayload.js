@@ -3,6 +3,7 @@ import {
   normalizeStatusBarBlueprintForPayload
 } from './useCharacterStatusBlueprint';
 import { THINKING_LEVELS } from '../../../../shared/providerThinking.js';
+import { normalizeMemoryEmbedding, normalizeMemoryPolicy } from '../../../../shared/memoryPolicy.js';
 
 export function emptyCharacter() {
   return {
@@ -62,7 +63,7 @@ export function createDefaultAccessorySkills() {
     economyAgent: createDefaultAccessorySkill(false),
     talentPrompt: createDefaultAccessorySkill(false),
     cgScene: createDefaultAccessorySkill(false),
-    memoryAgent: createDefaultAccessorySkill('auto')
+    memoryAgent: { ...createDefaultAccessorySkill('auto'), memoryPolicy: normalizeMemoryPolicy(), embedding: normalizeMemoryEmbedding() }
   };
 }
 
@@ -79,6 +80,10 @@ export function normalizeAccessorySkillsForPayload(input = {}) {
       thinkingLevel: normalizeAccessoryThinkingLevel(source.thinkingLevel || source.thinking_level),
       tools: normalizeAccessorySkillTools(source.tools)
     };
+    if (key === 'memoryAgent') {
+      normalized[key].memoryPolicy = normalizeMemoryPolicy(source.memoryPolicy);
+      normalized[key].embedding = normalizeMemoryEmbedding(source.embedding);
+    }
   }
   return normalized;
 }
@@ -110,7 +115,11 @@ export function hasNonDefaultAccessorySkills(skills = {}) {
       String(current.modelOverride || current.model_override || '').trim() ||
       String(current.providerProfileId || current.provider_profile_id || '').trim() ||
       normalizeAccessoryThinkingLevel(current.thinkingLevel || current.thinking_level) ||
-      hasAccessorySkillToolOverrides(current.tools)
+      hasAccessorySkillToolOverrides(current.tools) ||
+      key === 'memoryAgent' && (
+        JSON.stringify(normalizeMemoryPolicy(current.memoryPolicy)) !== JSON.stringify(fallback.memoryPolicy) ||
+        JSON.stringify(normalizeMemoryEmbedding(current.embedding)) !== JSON.stringify(fallback.embedding)
+      )
     ) {
       return true;
     }

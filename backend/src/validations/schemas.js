@@ -5,6 +5,8 @@
 
 import { z } from 'zod';
 import { THINKING_LEVELS } from '../../../shared/providerThinking.js';
+import { EMBEDDING_DIMENSIONS, MEMORY_ISOLATIONS, MEMORY_MODES } from '../../../shared/memoryPolicy.js';
+import { LORE_VISIBILITIES } from '../../../shared/loreKnowledge.js';
 import { CHARACTER_CONTENT_LIMITS } from '../domain/characters/limits.js';
 import { WORLD_BOOK_ENTRY_LIMITS, WORLD_BOOK_LIMITS } from '../domain/worldBooks/limits.js';
 import { JSON_BODY_LIMIT_DEFAULT_BYTES } from '../config.js';
@@ -35,6 +37,34 @@ const booleanLikeSchema = z.preprocess((value) => {
 }, z.boolean());
 const thinkingLevelSchema = z.enum(THINKING_LEVELS);
 
+export const memoryPolicySchema = z.object({
+  version: z.literal(1).optional(),
+  mode: z.enum(MEMORY_MODES).optional(),
+  isolation: z.enum(MEMORY_ISOLATIONS).optional(),
+  actorId: z.string().max(160).trim().optional(),
+  coreWaitMs: z.number().int().min(1000).max(60000).optional(),
+  syncMode: z.enum(['background', 'blocking']).optional(),
+  shortTermTurns: z.number().int().min(1).max(32).optional(),
+  autoConsolidate: z.boolean().optional(),
+  statusLink: z.boolean().optional(),
+  unknownContextTokens: z.number().int().min(4096).max(262144).optional(),
+  recallLimit: z.number().int().min(1).max(64).optional(),
+  summaryEnabled: z.boolean().optional()
+}).strict();
+
+export const memoryEmbeddingSchema = z.object({
+  enabled: z.boolean().optional(),
+  providerProfileId: z.string().max(160).trim().optional(),
+  model: z.string().min(1).max(160).trim().optional(),
+  dimensions: z.number().refine((value) => EMBEDDING_DIMENSIONS.includes(value), '不支持的向量维度').optional(),
+  region: z.string().max(60).trim().optional(),
+  documentTemplateVersion: z.string().max(40).trim().optional(),
+  queryTemplateVersion: z.string().max(40).trim().optional(),
+  normalizationVersion: z.string().max(40).trim().optional(),
+  quotaUsdPerCny: z.number().finite().min(0).max(100).optional(),
+  queryInstruction: z.string().max(1000).trim().optional()
+}).strict();
+
 const accessorySkillConfigSchema = z.object({
   enabled: z.union([z.boolean(), z.literal('auto')]).optional(),
   modelOverride: z.string().max(100).trim().optional().default(''),
@@ -52,8 +82,28 @@ const accessorySkillsSchema = z.object({
   economyAgent: accessorySkillConfigSchema.optional(),
   talentPrompt: accessorySkillConfigSchema.optional(),
   cgScene: accessorySkillConfigSchema.optional(),
-  memoryAgent: accessorySkillConfigSchema.optional()
+  memoryAgent: accessorySkillConfigSchema.extend({
+    memoryPolicy: memoryPolicySchema.optional(),
+    embedding: memoryEmbeddingSchema.optional()
+  }).optional()
 }).partial().optional().default({});
+
+// Explicit overrides must not materialize empty model/provider/tool defaults.
+const accessorySkillPatchSchema = z.object(Object.fromEntries(Object.entries(accessorySkillConfigSchema.shape).map(([key, field]) => {
+  while (field instanceof z.ZodOptional || field instanceof z.ZodDefault) field = field.unwrap();
+  return [key, field.optional()];
+})));
+
+export const saveConversationAccessorySkillsSchema = z.object({
+  accessorySkills: z.object({
+    worldDirector: accessorySkillPatchSchema.optional(), gameHud: accessorySkillPatchSchema.optional(),
+    rewardMode: accessorySkillPatchSchema.optional(), sceneAgent: accessorySkillPatchSchema.optional(),
+    statusBarAgent: accessorySkillPatchSchema.optional(), economyAgent: accessorySkillPatchSchema.optional(),
+    talentPrompt: accessorySkillPatchSchema.optional(), cgScene: accessorySkillPatchSchema.optional(),
+    memoryAgent: accessorySkillPatchSchema.extend({ memoryPolicy: memoryPolicySchema.optional(), embedding: memoryEmbeddingSchema.optional() }).optional()
+  }).strict().optional(),
+  restoreInheritance: z.array(z.enum(['worldDirector', 'gameHud', 'rewardMode', 'sceneAgent', 'statusBarAgent', 'economyAgent', 'talentPrompt', 'cgScene', 'memoryAgent'])).max(9).optional()
+}).strict();
 
 const statusBarBlueprintVariableSchema = z.object({
   name: z.string().max(40).trim().optional().default(''),
@@ -230,6 +280,8 @@ export const createWorldBookSchema = z.object({
 export const updateWorldBookSchema = createWorldBookSchema.partial();
 
 export const createWorldBookEntrySchema = z.object({
+  knowledgeVisibility: z.enum(LORE_VISIBILITIES).optional(),
+  audienceCastKeys: z.array(z.string().min(1).max(80).trim()).max(64).optional(),
   name: z.string().max(WORLD_BOOK_ENTRY_LIMITS.name).trim().optional().default(''),
   triggerKeys: z.string().max(WORLD_BOOK_ENTRY_LIMITS.triggerKeys).trim().optional().default(''),
   content: z.string().max(WORLD_BOOK_ENTRY_LIMITS.content).trim().optional().default(''),

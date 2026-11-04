@@ -265,8 +265,8 @@ export function insertWorldBookEntryRecord(database, record) {
   const data = record.data;
   database.prepare(
     `INSERT INTO world_book_entries (
-      id, world_book_id, name, trigger_keys, content, position, enabled, order_index, regex_mode, always_active, depth, selective, selective_logic, keys_secondary, probability, use_probability, inclusion_group, group_weight, role, sticky, cooldown, delay, created_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      id, world_book_id, name, trigger_keys, content, position, enabled, order_index, regex_mode, always_active, depth, selective, selective_logic, keys_secondary, probability, use_probability, inclusion_group, group_weight, role, sticky, cooldown, delay, created_at, knowledge_visibility, audience_cast_keys
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).run(
     record.id,
     record.bookId,
@@ -290,14 +290,16 @@ export function insertWorldBookEntryRecord(database, record) {
     data.sticky,
     data.cooldown,
     data.delay,
-    record.createdAt
+    record.createdAt,
+    data.knowledgeVisibility || 'author',
+    JSON.stringify(data.audienceCastKeys || [])
   );
 }
 
 export function updateWorldBookEntryRecord(database, bookId, entryId, data) {
   return database.prepare(
     `UPDATE world_book_entries
-     SET name = ?, trigger_keys = ?, content = ?, position = ?, enabled = ?, order_index = ?, regex_mode = ?, always_active = ?, depth = ?, selective = ?, selective_logic = ?, keys_secondary = ?, probability = ?, use_probability = ?, inclusion_group = ?, group_weight = ?, role = ?, sticky = ?, cooldown = ?, delay = ?
+     SET name = ?, trigger_keys = ?, content = ?, position = ?, enabled = ?, order_index = ?, regex_mode = ?, always_active = ?, depth = ?, selective = ?, selective_logic = ?, keys_secondary = ?, probability = ?, use_probability = ?, inclusion_group = ?, group_weight = ?, role = ?, sticky = ?, cooldown = ?, delay = ?, knowledge_visibility = ?, audience_cast_keys = ?
      WHERE id = ? AND world_book_id = ?`
   ).run(
     data.name,
@@ -320,6 +322,8 @@ export function updateWorldBookEntryRecord(database, bookId, entryId, data) {
     data.sticky,
     data.cooldown,
     data.delay,
+    data.knowledgeVisibility || 'author',
+    JSON.stringify(data.audienceCastKeys || []),
     entryId,
     bookId
   ).changes;
@@ -337,14 +341,15 @@ export function updateWorldBookEntryPatchRecord(database, bookId, entryId, patch
     alwaysActive: 'always_active', depth: 'depth', selective: 'selective',
     selectiveLogic: 'selective_logic', keysSecondary: 'keys_secondary',
     probability: 'probability', useProbability: 'use_probability', group: 'inclusion_group',
-    groupWeight: 'group_weight', role: 'role', sticky: 'sticky', cooldown: 'cooldown', delay: 'delay'
+    groupWeight: 'group_weight', role: 'role', sticky: 'sticky', cooldown: 'cooldown', delay: 'delay',
+    knowledgeVisibility: 'knowledge_visibility', audienceCastKeys: 'audience_cast_keys'
   };
   const keys = Object.keys(patch).filter((key) => Object.hasOwn(columns, key));
   if (!keys.length) return 0;
   return database.prepare(
     `UPDATE world_book_entries SET ${keys.map((key) => `${columns[key]} = ?`).join(', ')}
      WHERE id = ? AND world_book_id = ?`
-  ).run(...keys.map((key) => typeof patch[key] === 'boolean' ? Number(patch[key]) : patch[key]), entryId, bookId).changes;
+  ).run(...keys.map((key) => key === 'audienceCastKeys' ? JSON.stringify(patch[key]) : typeof patch[key] === 'boolean' ? Number(patch[key]) : patch[key]), entryId, bookId).changes;
 }
 
 // -- Character link reads --
@@ -406,6 +411,16 @@ export function deleteCharacterWorldBookLink(database, bookId, characterId) {
 
 export function conversationExists(database, conversationId) {
   return Boolean(database.prepare('SELECT id FROM conversations WHERE id = ?').get(conversationId));
+}
+
+/** Owner-scoped diagnostics must join entries to their book instead of exposing global totals. */
+export function countOwnedWorldBookEntries(database, userId) {
+  return Number(database.prepare(`SELECT COUNT(*) AS count FROM world_book_entries entry
+    JOIN world_books book ON book.id=entry.world_book_id WHERE book.user_id=?`).get(userId).count);
+}
+
+export function worldBookEntryExists(database, entryId) {
+  return Boolean(database.prepare('SELECT 1 FROM world_book_entries WHERE id=?').get(entryId));
 }
 
 export function readConversationChatLorebookId(database, conversationId) {

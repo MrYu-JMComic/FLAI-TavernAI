@@ -45,4 +45,23 @@ describe('dark-theme font weights', () => {
     expect(strong.style.getPropertyValue('font-weight')).toBe('');
     expect(inserted.style.getPropertyValue('font-weight')).toBe('600');
   });
+
+  it('keeps Markdown bold distinct when the browser resolves relative bolder weights', async () => {
+    frame = document.createElement('iframe');
+    document.body.append(frame);
+    const doc = frame.contentDocument;
+    const style = doc.createElement('style');
+    style.textContent = 'body { font-weight: 400; } .markdown-content strong { font-weight: 700; }';
+    doc.head.append(style);
+    doc.body.innerHTML = '<main><div class="markdown-content"><p>Plain <strong>Bold</strong></p></div></main>';
+
+    stopAdaptation = installDarkFontWeightAdaptation(doc);
+    doc.documentElement.dataset.theme = 'dark';
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const paragraph = doc.querySelector('p');
+    const strong = doc.querySelector('strong');
+    expect(Number(doc.defaultView.getComputedStyle(paragraph).fontWeight)).toBe(300);
+    expect(Number(doc.defaultView.getComputedStyle(strong).fontWeight)).toBe(600);
+  });
 });

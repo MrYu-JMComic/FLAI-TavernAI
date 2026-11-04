@@ -30,6 +30,7 @@ export function useCharacterAssistantSessions({ editor, user }) {
   let disposed = false;
   let initialized = false;
   let selectionToken = 0;
+  let versionsRequestToken = 0;
   let autosaveTimer;
   let lastSnapshot = '';
   let saveQueue = Promise.resolve();
@@ -123,7 +124,9 @@ export function useCharacterAssistantSessions({ editor, user }) {
 
   function applySession(session, { restoreCharacter = true, restoreVersion = false } = {}) {
     clearTimeout(autosaveTimer);
+    versionsRequestToken += 1;
     versions.value = [];
+    versionsLoading.value = false;
     versionsError.value = '';
     resetDraftError.value = '';
     activeSession.value = session;
@@ -248,15 +251,18 @@ export function useCharacterAssistantSessions({ editor, user }) {
   async function loadVersions() {
     if (!activeSession.value || running.value || settling.value || versionsLoading.value) return;
     const id = activeSession.value.id;
+    const requestToken = ++versionsRequestToken;
     versionsLoading.value = true;
     versionsError.value = '';
     try {
       const result = await fetchCharacterAssistantVersions(id);
-      if (!disposed && activeSession.value?.id === id) versions.value = result;
+      if (!disposed && requestToken === versionsRequestToken && activeSession.value?.id === id) versions.value = result;
     } catch (err) {
-      if (!disposed && activeSession.value?.id === id) versionsError.value = err?.message || '读取历史版本失败';
+      if (!disposed && requestToken === versionsRequestToken && activeSession.value?.id === id) {
+        versionsError.value = err?.message || '读取历史版本失败';
+      }
     } finally {
-      versionsLoading.value = false;
+      if (requestToken === versionsRequestToken) versionsLoading.value = false;
     }
   }
 
@@ -469,6 +475,7 @@ export function useCharacterAssistantSessions({ editor, user }) {
     }
     disposed = true;
     selectionToken += 1;
+    versionsRequestToken += 1;
   });
 
   return { sessions, activeSession, loading, busy, running, settling, error, saveStatus, pendingMessage, pendingAttachments,

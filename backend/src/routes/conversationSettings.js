@@ -1,8 +1,4 @@
 import { Router } from 'express';
-import {
-  normalizeAccessorySkills,
-  normalizeAdvancedSettings
-} from '../modules/advancedSettings.js';
 import { saveConversationAppearance } from '../modules/conversationAppearance.js';
 import {
   deleteStatusBar,
@@ -17,6 +13,7 @@ import { getConversationForUser, parseJson } from './helpers.js';
 import { withSavepoint } from '../modules/savepoint.js';
 import {
   saveConversationSettingsSchema,
+  saveConversationAccessorySkillsSchema,
   saveStatusBarSchema,
   validate
 } from '../validations/schemas.js';
@@ -35,11 +32,22 @@ export function createConversationSettingsRouter(ctx) {
     }
 
     const existing = parseJson(row.user_advanced_settings, {});
-    const accessorySkills = normalizeAccessorySkills(payload.accessorySkills ?? payload.skills ?? payload);
+    // Store explicit overrides rather than normalized effective defaults. Missing skills keep inheriting.
+    const accessorySkills = { ...(existing.accessorySkills || {}) };
+    const patches = payload.accessorySkills || {};
+    for (const [key, patch] of Object.entries(patches)) {
+      const previous = accessorySkills[key] || {};
+      accessorySkills[key] = {
+        ...previous, ...patch,
+        ...(patch.memoryPolicy ? { memoryPolicy: { ...previous.memoryPolicy, ...patch.memoryPolicy } } : {}),
+        ...(patch.embedding ? { embedding: { ...previous.embedding, ...patch.embedding } } : {})
+      };
+    }
+    for (const key of payload.restoreInheritance || []) delete accessorySkills[key];
     db
       .prepare('UPDATE conversations SET user_advanced_settings = ?, updated_at = ? WHERE id = ? AND user_id = ?')
       .run(
-        JSON.stringify(normalizeAdvancedSettings({ ...existing, accessorySkills })),
+        JSON.stringify({ ...existing, accessorySkills }),
         nowIso(),
         conversationId,
         userId
@@ -107,7 +115,7 @@ export function createConversationSettingsRouter(ctx) {
     });
   });
 
-  router.put('/accessory-skills', requireAuth, (request, response) => {
+  router.put('/accessory-skills', requireAuth, validate(saveConversationAccessorySkillsSchema), (request, response) => {
     const payload = saveConversationAccessorySkills(request.auth.user.id, request.params.id, request.body || {});
     if (!payload) {
       response.status(404).json({ error: '对话不存在' });

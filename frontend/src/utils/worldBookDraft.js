@@ -1,3 +1,5 @@
+import { normalizeLoreKnowledge } from '../../../shared/loreKnowledge.js';
+
 const WORLD_BOOK_POSITIONS = new Set(['at_start', 'before_char', 'after_char', 'at_depth']);
 
 export function normalizeAiWorldBookDraft(value) {
@@ -28,6 +30,7 @@ export function normalizeAiWorldBookDraft(value) {
 export function normalizeWorldBookEntryForCreate(value = {}, index = 0) {
   const entry = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
   return {
+    ...normalizeLoreKnowledge(entry),
     name: String(entry.name || '').trim(),
     triggerKeys: String(entry.triggerKeys || '').trim(),
     content: String(entry.content || '').trim(),

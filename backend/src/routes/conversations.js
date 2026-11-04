@@ -35,8 +35,11 @@ import {
 } from '../validations/schemas.js';
 import { listConversationRows } from '../repositories/conversationRepository.js';
 import { writeConversationCheckpoint } from '../repositories/conversationSnapshotRepository.js';
-import { assertConversationIdle, invalidateConversationTimeline } from '../services/conversationTimeline.js';
+import { assertConversationIdle, invalidateConversationTimeline, enqueueConversationPostprocessing } from '../services/conversationTimeline.js';
 import { getConversationMutationContext } from '../services/conversationMutationContext.js';
+import { ensureMemoryBaseline } from '../services/conversationMemory/commit.js';
+import { resolveMemoryProcessingPolicy } from '../services/conversationMemory/processingPolicy.js';
+import { memoryHash } from '../domain/conversationMemory/contracts.js';
 
 export { createSavesRouter } from './conversationSaves.js';
 
@@ -112,7 +115,16 @@ export function createConversationsRouter(ctx) {
       }
 
       db.prepare("UPDATE conversations SET state_status = 'ready' WHERE id = ?").run(conversationId);
+      const opening=db.prepare('SELECT id FROM messages WHERE conversation_id=? AND user_id=? ORDER BY created_at DESC,rowid DESC LIMIT 1').get(conversationId,request.auth.user.id);
+      ensureMemoryBaseline(db,request.auth.user.id,conversationId,{kind:'bootstrap',messageId:opening?.id||'',
+        sources:{characterId:character.id,openingMessageId:opening?.id||'',authorCanon:{hash:memoryHash({
+          name:character.name,persona:character.persona,background:character.background,worldview:character.worldview,
+          authorAdvancedSettings:character.authorAdvancedSettings}),name:character.name}},
+        entities:[{key:'main-character',name:character.name,kind:'actor',castKey:'main-character'}]});
       writeConversationCheckpoint(db, request.auth.user.id, conversationId);
+      const memoryPolicy=resolveMemoryProcessingPolicy(db,request.auth.user.id,getConversation(request.auth.user.id,conversationId),{config:ctx.config});
+      if(opening&&memoryPolicy.mode==='structured'&&!memoryPolicy.configurationError)
+        enqueueConversationPostprocessing(db,request.auth.user.id,conversationId,opening.id);
       touchCharacter(db, request.auth.user.id, character.id);
       return getConversation(request.auth.user.id, conversationId);
     });

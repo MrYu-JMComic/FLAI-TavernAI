@@ -9,6 +9,8 @@ const { createEntry, createWorldBook, linkCharacter } = await import('../service
 const { publicUser, getUserProfile } = await import('../modules/users.js');
 const { providerWithSecret } = await import('../services/providers.js');
 const { createUpgradeRouter } = await import('../routes/upgrade.js');
+const { createConversationMemoriesRouter } = await import('../routes/conversationMemories.js');
+const { createConversationMemory } = await import('../modules/conversationMemories.js');
 const { insertUser, withServer } = await import('./routeTestUtils.js');
 
 const tinyPngDataUrl = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=';
@@ -186,6 +188,7 @@ test('upgrade conversation memories support editable long-term context', async (
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
+        revision: created.revision,
         content: 'Mira trusts the player and follows their lead.',
         enabled: false
       })
@@ -196,23 +199,25 @@ test('upgrade conversation memories support editable long-term context', async (
     assert.match(updated.content, /follows/);
 
     const confirmResponse = await fetch(`${baseUrl}/api/conversations/${conversationId}/memories/${created.id}/confirm`, {
-      method: 'POST'
+      method: 'POST', headers:{'Content-Type':'application/json'},body:JSON.stringify({revision:updated.revision})
     });
     assert.equal(confirmResponse.status, 200);
-    assert.equal((await confirmResponse.json()).enabled, true);
+    const confirmed=await confirmResponse.json();
+    assert.equal(confirmed.enabled, true);
 
     const disableResponse = await fetch(`${baseUrl}/api/conversations/${conversationId}/memories/${created.id}/disable`, {
-      method: 'POST'
+      method: 'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({revision:confirmed.revision})
     });
     assert.equal(disableResponse.status, 200);
-    assert.equal((await disableResponse.json()).enabled, false);
+    const disabled=await disableResponse.json();
+    assert.equal(disabled.enabled, false);
 
     const listResponse = await fetch(`${baseUrl}/api/conversations/${conversationId}/memories`);
     const list = await listResponse.json();
     assert.equal(list.memories.length, 1);
 
     const rollbackResponse = await fetch(`${baseUrl}/api/conversations/${conversationId}/memories/${created.id}/rollback`, {
-      method: 'POST'
+      method: 'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({revision:disabled.revision})
     });
     assert.equal(rollbackResponse.status, 200);
     const rolledBack = await rollbackResponse.json();
@@ -225,7 +230,7 @@ test('upgrade conversation memories support editable long-term context', async (
     assert.equal(archivedList.memories.length, 1);
 
     const deleteResponse = await fetch(`${baseUrl}/api/conversations/${conversationId}/memories/${created.id}`, {
-      method: 'DELETE'
+      method: 'DELETE',headers:{'Content-Type':'application/json'},body:JSON.stringify({revision:rolledBack.revision})
     });
     assert.equal(deleteResponse.status, 200);
   });
@@ -832,6 +837,7 @@ function createUpgradeRoutesApp(database, userId) {
     getProviderRow: (targetUserId) => database.prepare('SELECT * FROM provider_settings WHERE user_id = ?').get(targetUserId),
     providerWithSecret
   }));
+  app.use('/api',createConversationMemoriesRouter({db:database,requireAuth:(request,_response,next)=>{request.auth={user:getUser(database,userId)};next();}}));
   app.use((error, _request, response, _next) => {
     response.status(500).json({ error: error.message });
   });

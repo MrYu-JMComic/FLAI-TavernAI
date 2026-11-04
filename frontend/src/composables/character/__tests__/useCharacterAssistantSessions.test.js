@@ -241,6 +241,35 @@ describe('character assistant sessions', () => {
     expect(workspace.versions).toEqual([]);
   });
 
+  it('starts history loading for the new session while discarding an older request', async () => {
+    const { workspace } = setupEditor();
+    await flushPromises();
+    let resolveFirst;
+    let resolveSecond;
+    api.fetchCharacterAssistantVersions
+      .mockImplementationOnce(() => new Promise((resolve) => { resolveFirst = resolve; }))
+      .mockImplementationOnce(() => new Promise((resolve) => { resolveSecond = resolve; }));
+
+    const firstLoad = workspace.loadVersions();
+    expect(workspace.versionsLoading).toBe(true);
+    api.fetchCharacterAssistantSession.mockResolvedValueOnce(session('second-session'));
+    await workspace.selectSession('second-session');
+    expect(workspace.versionsLoading).toBe(false);
+
+    const secondLoad = workspace.loadVersions();
+    expect(api.fetchCharacterAssistantVersions).toHaveBeenNthCalledWith(1, 'new-session');
+    expect(api.fetchCharacterAssistantVersions).toHaveBeenNthCalledWith(2, 'second-session');
+    resolveFirst([{ id: 'stale-version' }]);
+    await firstLoad;
+    expect(workspace.versions).toEqual([]);
+    expect(workspace.versionsLoading).toBe(true);
+
+    resolveSecond([{ id: 'second-version' }]);
+    await secondLoad;
+    expect(workspace.versions).toEqual([{ id: 'second-version' }]);
+    expect(workspace.versionsLoading).toBe(false);
+  });
+
   it('holds autosave during explicit save and resumes with the committed world book draft', async () => {
     vi.useFakeTimers();
     const { editor, workspace } = setupEditor({ saving: false });

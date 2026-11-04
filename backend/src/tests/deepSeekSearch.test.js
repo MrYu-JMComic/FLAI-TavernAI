@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  DEEPSEEK_ONLINE_SEARCH_INSTRUCTIONS,
+  DEEPSEEK_ONLINE_SEARCH_TOOLS,
   applyDeepSeekOnlineSearch,
   createDeepSeekOnlineSearchExecutor
 } from '../services/deepSeekSearch.js';
@@ -17,6 +19,16 @@ function makeSettings(baseUrl = 'https://deepseek-search.test') {
     retryBudget: 0
   };
 }
+
+test('online-search model instructions and tool descriptions are English', () => {
+  assert.doesNotMatch(DEEPSEEK_ONLINE_SEARCH_INSTRUCTIONS, /\p{Script=Han}/u);
+  for (const tool of DEEPSEEK_ONLINE_SEARCH_TOOLS) {
+    assert.doesNotMatch(tool.function.description, /\p{Script=Han}/u);
+    for (const property of Object.values(tool.function.parameters.properties)) {
+      assert.doesNotMatch(property.description, /\p{Script=Han}/u);
+    }
+  }
+});
 
 test('DeepSeek online tools call Search with bounded results and fetch only returned URLs', async () => {
   const originalFetch = globalThis.fetch;

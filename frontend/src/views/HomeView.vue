@@ -469,6 +469,8 @@ let containerMeasureRafId = null;
 let mobileLayoutQuery = null;
 let characterLoadToken = 0;
 let tagLoadToken = 0;
+let characterReactionRevision = 0;
+const characterReactionRevisions = new Map();
 let importFileReadToken = 0;
 let chatOpenNavigationToken = 0;
 let searchLoadTimer = null;
@@ -648,6 +650,7 @@ watch(
 function resetHomeAsyncScope() {
   characterLoadToken += 1;
   tagLoadToken += 1;
+  characterReactionRevisions.clear();
   importFileReadToken += 1;
   chatOpenNavigationToken += 1;
   clearSearchLoadTimer();
@@ -729,13 +732,14 @@ function clearSearch() {
 
 async function loadCharacters() {
   const requestToken = ++characterLoadToken;
+  const reactionRevisionAtStart = characterReactionRevision;
   const filters = { search: search.value, sort: sort.value, tag: selectedTag.value };
   loading.value = true;
   loadError.value = '';
   try {
     const nextCharacters = await fetchCharacters(filters);
     if (!isCurrentCharacterLoad(requestToken)) return;
-    setCharactersIfChanged(nextCharacters);
+    setCharactersIfChanged(mergeRecentCharacterReactions(nextCharacters, reactionRevisionAtStart));
   } catch (err) {
     if (!isCurrentCharacterLoad(requestToken)) return;
     loadError.value = err.message || '加载角色失败';
@@ -745,6 +749,34 @@ async function loadCharacters() {
       loading.value = false;
     }
   }
+}
+
+// Keep reaction fields saved after this request began when its older list snapshot arrives.
+function mergeRecentCharacterReactions(nextCharacters, revisionAtStart) {
+  if (!Array.isArray(nextCharacters)) return nextCharacters;
+  const currentById = new Map(characters.value.map((character) => [String(character?.id || ''), character]));
+
+  return nextCharacters.map((nextCharacter) => {
+    const id = String(nextCharacter?.id || '');
+    const current = currentById.get(id);
+    if (!current) return nextCharacter;
+
+    const favoriteChanged = (characterReactionRevisions.get(`favorite:${id}`) || 0) > revisionAtStart;
+    const likeChanged = (characterReactionRevisions.get(`like:${id}`) || 0) > revisionAtStart;
+    if (!favoriteChanged && !likeChanged) return nextCharacter;
+
+    return {
+      ...nextCharacter,
+      ...(favoriteChanged && {
+        favoritedByMe: current.favoritedByMe,
+        favoriteCount: current.favoriteCount
+      }),
+      ...(likeChanged && {
+        likedByMe: current.likedByMe,
+        likeCount: current.likeCount
+      })
+    };
+  });
 }
 
 function retryLoadCharacters() {
@@ -820,6 +852,8 @@ async function toggleReaction({ character, type, nextActive, save }) {
     const nextCharacter = await save(character.id, nextActive);
     if (!isHomeActive()) return;
     mergeCharacter(nextCharacter);
+    characterReactionRevision += 1;
+    characterReactionRevisions.set(`${type}:${character.id}`, characterReactionRevision);
   } catch (err) {
     if (!isHomeActive()) return;
     notify.error(err.message);

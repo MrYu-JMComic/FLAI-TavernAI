@@ -47,6 +47,19 @@ test('Personal Center routes stay focused and fit desktop and mobile widths', as
       }));
       expect(fieldBoxes).toHaveLength(2);
       expect(fieldBoxes[0].bottom).toBeLessThanOrEqual(fieldBoxes[1].top);
+
+      for (const width of [519, 991]) {
+        await page.setViewportSize({ width, height: 930 });
+        const avatarBox = await page.locator('.profile-overview > .profile-avatar').boundingBox();
+        const identityBox = await page.locator('.profile-identity').boundingBox();
+        expect(avatarBox).not.toBeNull();
+        expect(identityBox).not.toBeNull();
+        expect(avatarBox.x + avatarBox.width).toBeLessThanOrEqual(identityBox.x);
+        if (width === 991) {
+          await page.screenshot({ path: testInfo.outputPath('personal-center-profile-991.png'), fullPage: true, animations: 'disabled' });
+        }
+      }
+      await page.setViewportSize({ width: 519, height: 930 });
     }
     await page.screenshot({ path: testInfo.outputPath(detail.screenshot), fullPage: true, animations: 'disabled' });
     const backButton = page.getByRole('button', { name: '返回个人中心' });

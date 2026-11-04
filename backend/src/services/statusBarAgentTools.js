@@ -17,10 +17,10 @@ export function statusBarEditingTools(skill = {}) {
   return [
     tool('read_status_bar', 'Read the complete current status bar, all variable metadata, raw template and parsed runtime code before making a precise edit.', {}),
     tool('upsert_status_bar_variable', 'Create or edit exactly one variable identified by name. Only supplied fields change. renameTo renames an existing variable. New variables require value.', {
-      name: { type: 'string', maxLength: 40 }, renameTo: { type: 'string', maxLength: 40 }, ...variableProperties
+      name: { type: 'string', minLength: 1, maxLength: 40, pattern: '\\S' }, renameTo: { type: 'string', minLength: 1, maxLength: 40, pattern: '\\S' }, ...variableProperties
     }, ['name']),
     tool('remove_status_bar_variable', 'Remove exactly one named variable only when the author rules explicitly require removal. Template references must be edited separately.', {
-      name: { type: 'string', maxLength: 40 }
+      name: { type: 'string', minLength: 1, maxLength: 40, pattern: '\\S' }
     }, ['name']),
     tool('update_status_bar_metadata', 'Update only supplied status-bar metadata. template replaces the entire template; prefer precise replacement or code-section tools for small edits.', {
       name: { type: 'string', maxLength: 50 }, template: { type: 'string', maxLength: TEMPLATE_LIMIT }
@@ -107,5 +107,5 @@ function failure(error, message, statusBar) {
 }
 
 function tool(name, description, properties, required = []) {
-  return { type: 'function', function: { name, description, parameters: { type: 'object', properties, required } } };
+  return { type: 'function', function: { name, description, parameters: { type: 'object', properties, required, additionalProperties: false } } };
 }

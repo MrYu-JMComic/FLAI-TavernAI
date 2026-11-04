@@ -15,9 +15,7 @@ const renderCache = createMarkdownRenderCache();
 const LF_CHAR_CODE = 10;
 const FOLD_CARET = '\u203a';
 const DEFAULT_FOLD_TITLE = '\u6298\u53e0\u5185\u5bb9';
-const streamGraphemeSegmenter = typeof Intl !== 'undefined' && typeof Intl.Segmenter === 'function'
-  ? new Intl.Segmenter(undefined, { granularity: 'grapheme' })
-  : null;
+const STREAM_RENDER_INTERVAL_MS = 32;
 
 function getCachedRender(text, renderPlugins = [], cacheResult = true) {
   if (!text) return '';
@@ -273,83 +271,6 @@ function appendPluginCacheField(cacheKey, value) {
   return `${cacheKey}${text.length}:${text};`;
 }
 
-function splitStreamGraphemes(text) {
-  if (!text) return [];
-  if (!streamGraphemeSegmenter) return Array.from(text);
-  return Array.from(streamGraphemeSegmenter.segment(text), (part) => part.segment);
-}
-
-function isStreamVisibleTextNode(node, root) {
-  return !(node.parentNode === root && !String(node.nodeValue || '').trim())
-    && !node.parentElement?.closest('.katex');
-}
-
-function collectStreamText(root) {
-  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
-  let text = '';
-  let node = walker.nextNode();
-  while (node) {
-    if (isStreamVisibleTextNode(node, root)) text += node.nodeValue || '';
-    node = walker.nextNode();
-  }
-  return text;
-}
-
-function wrapNewStreamGraphemes(root, appendedText) {
-  if (document.defaultView?.matchMedia?.('(prefers-reduced-motion: reduce)').matches) return;
-  const glyphs = splitStreamGraphemes(appendedText).filter((glyph) => /\S/u.test(glyph));
-  if (!glyphs.length) return;
-
-  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
-  const textNodes = [];
-  let node = walker.nextNode();
-  while (node) {
-    if (isStreamVisibleTextNode(node, root) && !node.parentElement?.closest('.stream-ink-glyph')) {
-      textNodes.push(node);
-    }
-    node = walker.nextNode();
-  }
-
-  let remaining = glyphs.length;
-  const plans = [];
-  // Walk from the end so only the newly visible suffix receives a wrapper.
-  for (let index = textNodes.length - 1; index >= 0 && remaining > 0; index -= 1) {
-    const textNode = textNodes[index];
-    const parts = splitStreamGraphemes(textNode.nodeValue || '');
-    let start = parts.length;
-    let count = 0;
-    while (start > 0 && count < remaining) {
-      start -= 1;
-      if (/\S/u.test(parts[start])) count += 1;
-    }
-    if (count) {
-      plans.push({ node: textNode, parts, start, count });
-      remaining -= count;
-    }
-  }
-
-  let glyphIndex = glyphs.length - remaining - plans.reduce((sum, plan) => sum + plan.count, 0);
-  for (const plan of plans.reverse()) {
-    const fragment = document.createDocumentFragment();
-    if (plan.start > 0) {
-      fragment.append(document.createTextNode(plan.parts.slice(0, plan.start).join('')));
-    }
-    for (const part of plan.parts.slice(plan.start)) {
-      if (!/\S/u.test(part)) {
-        fragment.append(document.createTextNode(part));
-        continue;
-      }
-      const span = document.createElement('span');
-      span.className = 'stream-ink-glyph';
-      span.style.setProperty('--stream-glyph-index', String(glyphIndex));
-      span.textContent = part;
-      fragment.append(span);
-      glyphIndex += 1;
-    }
-    plan.node.replaceWith(fragment);
-  }
-}
-
 function applyKatexSurfaceContrast(root) {
   if (!root || typeof getComputedStyle !== 'function') return;
 
@@ -391,6 +312,10 @@ export default defineComponent({
     highlightDialogue: {
       type: Boolean,
       default: false
+    },
+    showCaret: {
+      type: Boolean,
+      default: false
     }
   },
   setup(props, { attrs, emit }) {
@@ -404,39 +329,74 @@ export default defineComponent({
     let templateElement = null;
     let katexResizeObserver = null;
     let katexFitTimeout = null;
+    let streamRenderTimer = null;
     let mounted = false;
-    let lastSourceText = String(props.text || '');
 
     function renderMarkdownNow(text, renderPlugins) {
-      const sourceText = String(text || '');
-      const animateAppend = mounted
-        && props.deferUpdates
-        && sourceText.startsWith(lastSourceText)
-        && sourceText.length > lastSourceText.length;
-      lastSourceText = sourceText;
       pendingHtml = getCachedRender(text, renderPlugins, !props.deferUpdates);
-      reconcileRenderedHtml(animateAppend);
+      reconcileRenderedHtml();
     }
 
-    function reconcileRenderedHtml(animateAppend = false) {
+    function insertTypingCaret(root) {
+      clearTypingMarkers(root);
+      if (!props.showCaret) return;
+
+      const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+      let lastTextNode = null;
+      let node = walker.nextNode();
+      while (node) {
+        const value = String(node.nodeValue || '');
+        const inKatex = node.parentElement?.closest('.katex');
+        const rootWhitespace = node.parentNode === root && !value.trim();
+        if (value && !inKatex && !rootWhitespace) lastTextNode = node;
+        node = walker.nextNode();
+      }
+
+      const caret = document.createElement('span');
+      caret.className = 'typing-caret';
+      caret.setAttribute('aria-hidden', 'true');
+      if (!lastTextNode) {
+        root.append(caret);
+        return;
+      }
+
+      const range = document.createRange();
+      range.setStart(lastTextNode, lastTextNode.nodeValue.length);
+      range.collapse(true);
+      const sourceEndsWithNewline = normalizeModelNewlines(props.text).endsWith('\n');
+      const insideCodeBlock = Boolean(lastTextNode.parentElement?.closest('pre'));
+      if (sourceEndsWithNewline && !insideCodeBlock) {
+        const lineBreak = document.createElement('br');
+        lineBreak.className = 'typing-caret-break';
+        lineBreak.setAttribute('aria-hidden', 'true');
+        range.insertNode(lineBreak);
+        lineBreak.after(caret);
+      } else {
+        range.insertNode(caret);
+      }
+    }
+
+    function clearTypingMarkers(root) {
+      root.querySelectorAll('.typing-caret, .typing-caret-break').forEach((marker) => marker.remove());
+    }
+
+    function reconcileRenderedHtml() {
       const root = rootElement.value;
       if (!root || typeof document === 'undefined') return;
-      if (appliedHtml === pendingHtml && appliedDialogueHighlight === props.highlightDialogue) return;
-      const previousStreamText = animateAppend ? collectStreamText(root) : '';
+      clearTypingMarkers(root);
+      if (appliedHtml === pendingHtml && appliedDialogueHighlight === props.highlightDialogue) {
+        insertTypingCaret(root);
+        return;
+      }
       templateElement ||= document.createElement('template');
       templateElement.innerHTML = pendingHtml;
       if (props.highlightDialogue) highlightDialogueQuotes(templateElement.content);
       reconcileDomChildren(root, templateElement.content);
-      if (animateAppend) {
-        const nextStreamText = collectStreamText(root);
-        if (nextStreamText.startsWith(previousStreamText)) {
-          wrapNewStreamGraphemes(root, nextStreamText.slice(previousStreamText.length));
-        }
-      }
-      applyKatexSurfaceContrast(root);
+      insertTypingCaret(root);
+      if (pendingHtml.includes('katex')) applyKatexSurfaceContrast(root);
       appliedHtml = pendingHtml;
       appliedDialogueHighlight = props.highlightDialogue;
-      fitInlineKatex();
+      if (pendingHtml.includes('katex')) fitInlineKatex();
       emit('rendered');
     }
 
@@ -514,14 +474,6 @@ export default defineComponent({
       katexPreviewSource.value = null;
     }
 
-    function removeCompletedStreamGlyph(event) {
-      const glyph = event.target;
-      if (!glyph?.classList?.contains('stream-ink-glyph')) return;
-      const parent = glyph.parentNode;
-      glyph.replaceWith(document.createTextNode(glyph.textContent || ''));
-      parent?.normalize();
-    }
-
     function handleKatexPreviewClick(event) {
       const wrapper = findKatexPreviewWrapper(event.target);
       if (wrapper) openKatexPreview(wrapper);
@@ -547,14 +499,24 @@ export default defineComponent({
     function scheduleRenderedMarkdown() {
       pendingMarkdownText = props.text;
       pendingRenderPlugins = props.renderPlugins;
-
-      renderMarkdownNow(pendingMarkdownText, pendingRenderPlugins);
+      if (!mounted || !props.deferUpdates) {
+        if (streamRenderTimer !== null) {
+          clearTimeout(streamRenderTimer);
+          streamRenderTimer = null;
+        }
+        renderMarkdownNow(pendingMarkdownText, pendingRenderPlugins);
+        return;
+      }
+      if (streamRenderTimer !== null) return;
+      streamRenderTimer = setTimeout(() => {
+        streamRenderTimer = null;
+        renderMarkdownNow(pendingMarkdownText, pendingRenderPlugins);
+      }, STREAM_RENDER_INTERVAL_MS);
     }
 
-    // The typewriter owns the visible update cadence. Commit Markdown after
-    // Vue's text update without adding a second animation-frame queue.
+    // Merge frequent SSE deltas so Markdown parsing and DOM reconciliation stay bounded.
     watch(
-      [() => props.text, () => buildPluginCacheKey(props.renderPlugins), () => props.deferUpdates],
+      [() => props.text, () => buildPluginCacheKey(props.renderPlugins), () => props.deferUpdates, () => props.showCaret],
       scheduleRenderedMarkdown,
       { immediate: true, flush: 'post' }
     );
@@ -562,7 +524,6 @@ export default defineComponent({
     watch(() => props.highlightDialogue, reconcileRenderedHtml, { flush: 'post' });
     onMounted(() => {
       mounted = true;
-      rootElement.value?.addEventListener('animationend', removeCompletedStreamGlyph);
       reconcileRenderedHtml();
       fitInlineKatex();
       if (typeof ResizeObserver === 'function' && rootElement.value) {
@@ -572,9 +533,12 @@ export default defineComponent({
     });
     onBeforeUnmount(() => {
       closeKatexPreview();
-      rootElement.value?.removeEventListener('animationend', removeCompletedStreamGlyph);
       katexResizeObserver?.disconnect();
       katexResizeObserver = null;
+      if (streamRenderTimer !== null) {
+        clearTimeout(streamRenderTimer);
+        streamRenderTimer = null;
+      }
       if (katexFitTimeout !== null) {
         clearTimeout(katexFitTimeout);
         katexFitTimeout = null;

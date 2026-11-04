@@ -33,6 +33,9 @@ const rippleSelector = [
 const route = computed(() => normalizeAppRoute(vueRoute));
 const isAuthRoute = computed(() => ['login', 'register'].includes(route.value.name));
 const routeKey = computed(() => getRouteKey(route.value));
+const componentKey = computed(() => (
+  ['worldBooks', 'worldBookDetail'].includes(route.value.name) ? 'world-books' : routeKey.value
+));
 const notificationFallbackMessages = {
   error: '操作失败，请稍后重试。',
   warning: '操作未完成，请检查后重试。'
@@ -449,7 +452,7 @@ function clearNotifications() {
       >
         <component
           :is="Component"
-          :key="routeKey"
+          :key="componentKey"
           :route="route"
           :user="user"
           :provider="provider"

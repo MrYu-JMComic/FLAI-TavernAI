@@ -6,6 +6,7 @@
 // clamps.
 import { normalizeBoolean } from '../../utils/boolean.js';
 import { normalizeFiniteNumber } from '../../utils/number.js';
+import { normalizeLoreKnowledge } from '../../../../shared/loreKnowledge.js';
 import { WORLD_BOOK_ENTRY_LIMITS, WORLD_BOOK_LIMITS } from './limits.js';
 import { ENTRY_POSITIONS, readEntryField, readEntryFlag } from './entryRules.js';
 
@@ -111,6 +112,7 @@ export function normalizeEntryPayload(payload = {}, fallback = {}) {
   payload = payload ?? {};
   fallback = fallback ?? {};
   return {
+    ...normalizeLoreKnowledge(payload, fallback),
     name: String(payload.name || '').trim().slice(0, WORLD_BOOK_ENTRY_LIMITS.name),
     triggerKeys: String(payload.triggerKeys || '').trim().slice(0, WORLD_BOOK_ENTRY_LIMITS.triggerKeys),
     content: String(payload.content || '').slice(0, WORLD_BOOK_ENTRY_LIMITS.content),
@@ -156,6 +158,7 @@ export function toWorldBook(row) {
 /** Project a `world_book_entries` row into the API shape. */
 export function toWorldBookEntry(row) {
   return {
+    ...normalizeLoreKnowledge(row),
     id: row.id,
     worldBookId: row.world_book_id,
     name: row.name || '',
@@ -185,6 +188,7 @@ export function toWorldBookEntry(row) {
 /** Project a matched entry row into the shape the prompt pipeline consumes. */
 export function toMatchedWorldBookEntry(entry) {
   return {
+    ...normalizeLoreKnowledge(entry),
     id: entry.id,
     worldBookId: entry.world_book_id,
     worldBookName: entry.world_book_name || '',
@@ -204,6 +208,7 @@ export function toMatchedWorldBookEntry(entry) {
  */
 export function normalizeExplainableEntry(entry, fallbackOrderIndex = 0) {
   return {
+    ...normalizeLoreKnowledge(entry),
     id: String(entry?.id || ''),
     name: String(readEntryField(entry, 'name', 'name', '') || 'Untitled entry'),
     enabled: readEntryFlag(entry, 'enabled', 'enabled', true),

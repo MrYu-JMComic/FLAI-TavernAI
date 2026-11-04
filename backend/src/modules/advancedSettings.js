@@ -1,5 +1,6 @@
 import { isStatusTemplateMeterProperty, parseStatusTemplateToken } from '../../../shared/statusTemplateTokens.js';
 import { THINKING_LEVELS } from '../../../shared/providerThinking.js';
+import { normalizeMemoryEmbedding, normalizeMemoryPolicy } from '../../../shared/memoryPolicy.js';
 import {
   hasStatusBarTemplateRuntime,
   parseStatusBarRuntime,
@@ -121,8 +122,8 @@ export function createDefaultAccessorySkills() {
     economyAgent: createSkillConfig(false),
     talentPrompt: createSkillConfig(false),
     cgScene: createSkillConfig(false),
-    // Model-driven long-term memory review; 'auto' uses the model when a provider is usable and rules otherwise.
-    memoryAgent: createSkillConfig('auto'),
+    // Auto uses structured extraction with a usable provider, otherwise raw-history continuity.
+    memoryAgent: createSkillConfig('auto', { memoryPolicy: normalizeMemoryPolicy(), embedding: normalizeMemoryEmbedding() }),
     sceneAgent: createSkillConfig(false)
   };
 }
@@ -136,6 +137,10 @@ export function normalizeAccessorySkills(input = {}, fallback = createDefaultAcc
       continue;
     }
     normalized[key] = normalizeSkillConfig(source[key], fallback[key] || defaults[key]);
+    if (key === 'memoryAgent') {
+      normalized[key].memoryPolicy = normalizeMemoryPolicy(source[key]?.memoryPolicy, fallback[key]?.memoryPolicy);
+      normalized[key].embedding = normalizeMemoryEmbedding(source[key]?.embedding, fallback[key]?.embedding);
+    }
   }
   if (Object.prototype.hasOwnProperty.call(source, 'sceneAgent') || Object.prototype.hasOwnProperty.call(fallback, 'sceneAgent')) {
     normalized.sceneAgent = normalizeSkillConfig(source.sceneAgent, fallback.sceneAgent || { enabled: false, modelOverride: '' });

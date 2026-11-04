@@ -2,6 +2,8 @@ import { appConfig } from '../config.js';
 import { normalizeProviderRow } from './providers.js';
 import { sanitizeDiagnosticValue } from './diagnosticRedaction.js';
 import { getSelectedProviderProfileRow } from '../repositories/providerProfileRepository.js';
+import { countMemoryRecords } from '../repositories/memoryStorageRepository.js';
+import { countOwnedWorldBookEntries } from '../repositories/worldBookRepository.js';
 
 const diagnosticTables = [
   'characters',
@@ -37,6 +39,7 @@ export function buildDiagnosticsExport(database, userId) {
     provider: providerRow ? sanitizeDiagnosticValue(normalizeProviderRow(providerRow)) : null,
     counts: {
       ...readUserScopedCounts(database, userId),
+      ...countMemoryRecords(database, userId),
     }
   };
 }
@@ -56,7 +59,11 @@ function countRows(database, tableName, userId) {
   if (tableHasColumn(database, tableName, 'user_id')) {
     return database.prepare(`SELECT COUNT(*) AS count FROM ${tableName} WHERE user_id = ?`).get(userId).count;
   }
-  return database.prepare(`SELECT COUNT(*) AS count FROM ${tableName}`).get().count;
+  if (tableName === 'world_book_entries') {
+    return countOwnedWorldBookEntries(database, userId);
+  }
+  // A missing owner column is never permission to expose another user's global totals.
+  return 0;
 }
 
 function tableExists(database, tableName) {

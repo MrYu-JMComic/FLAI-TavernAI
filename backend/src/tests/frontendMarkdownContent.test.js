@@ -14,7 +14,7 @@ test('MarkdownContent caches only settled sanitized HTML with bounded storage', 
   assert.match(markdownContentScript, /getCachedRender\(text, renderPlugins, !props\.deferUpdates\)/);
 });
 
-test('MarkdownContent commits in the typewriter cadence and reports stable DOM renders', () => {
+test('MarkdownContent coalesces stream renders and reports stable DOM commits', () => {
   assert.match(
     markdownContentScript,
     /import \{ defineComponent, h, onBeforeUnmount, onMounted, ref, watch \} from 'vue';/
@@ -25,10 +25,10 @@ test('MarkdownContent commits in the typewriter cadence and reports stable DOM r
     markdownContentScript,
     /function scheduleRenderedMarkdown\(\) \{[\s\S]*pendingMarkdownText = props\.text;[\s\S]*pendingRenderPlugins = props\.renderPlugins;[\s\S]*renderMarkdownNow\(pendingMarkdownText, pendingRenderPlugins\);[\s\S]*}/
   );
-  assert.match(markdownContentScript, /watch\(\s*\[\(\) => props\.text, \(\) => buildPluginCacheKey\(props\.renderPlugins\), \(\) => props\.deferUpdates\],\s*scheduleRenderedMarkdown,\s*\{ immediate: true, flush: 'post' \}/);
-  assert.match(markdownContentScript, /onMounted\(\(\) => \{\s*reconcileRenderedHtml\(\);/);
+  assert.match(markdownContentScript, /watch\(\s*\[\(\) => props\.text, \(\) => buildPluginCacheKey\(props\.renderPlugins\), \(\) => props\.deferUpdates, \(\) => props\.showCaret\],\s*scheduleRenderedMarkdown,\s*\{ immediate: true, flush: 'post' \}/);
+  assert.match(markdownContentScript, /onMounted\(\(\) => \{\s*mounted = true;\s*reconcileRenderedHtml\(\);/);
   assert.match(markdownContentScript, /emits: \['rendered'\]/);
-  assert.match(markdownContentScript, /reconcileDomChildren\(root, templateElement\.content\);\s*applyKatexSurfaceContrast\(root\);\s*appliedHtml = pendingHtml;\s*appliedDialogueHighlight = props\.highlightDialogue;\s*fitInlineKatex\(\);\s*emit\('rendered'\);/);
+  assert.match(markdownContentScript, /reconcileDomChildren\(root, templateElement\.content\);\s*insertTypingCaret\(root\);\s*if \(pendingHtml\.includes\('katex'\)\) applyKatexSurfaceContrast\(root\);\s*appliedHtml = pendingHtml;\s*appliedDialogueHighlight = props\.highlightDialogue;\s*if \(pendingHtml\.includes\('katex'\)\) fitInlineKatex\(\);\s*emit\('rendered'\);/);
   assert.doesNotMatch(markdownContentScript, /requestAnimationFrame|markdownRenderFrame|cancelPendingMarkdownFrame/);
   assert.match(markdownContentScript, /templateElement\.innerHTML = pendingHtml;/);
   assert.match(markdownContentScript, /import \{ reconcileDomChildren \} from '..\/utils\/domReconciler\.js';/);

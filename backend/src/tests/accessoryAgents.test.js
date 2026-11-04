@@ -150,6 +150,44 @@ test('provider-backed accessory agents receive current-turn observation windows'
   }
 });
 
+test('status cooperation switches shared extraction on while preserving original evidence and status permissions', async t => {
+  for (const statusLink of [false, true]) {
+    const env = setupConversation({ statusBarAgent: skill(true), memoryAgent: { enabled: true, memoryPolicy: { statusLink } } });
+    const statusBar = upsertStatusBar(env.db, env.userId, env.conversation.id, { variables: [{ name: 'HP', value: 100 }] });
+    const captured = [];
+    const mocked = t.mock.method(globalThis, 'fetch', async (_url, request) => {
+      const body = JSON.parse(request.body);
+      captured.push(JSON.parse(body.messages.find(message => message.role === 'user').content));
+      return jsonResponse({ choices: [{ message: { role: 'assistant', content: null, tool_calls: [{
+        id: 'skip-linked', type: 'function', function: { name: 'skip_status_bar_update', arguments: '{}' }
+      }] } }] });
+    });
+    await runAccessoryAgents({ db: env.db, userId: env.userId, conversation: env.conversation, character: env.character,
+      userMessage: { content: 'I try the gate.' }, assistantMessage: { content: 'The gate remains locked.' },
+      extractionPacket: { events: [{ key: 'gate', kind: 'attempt', content: 'The gate is still locked.', truthStatus: 'unverified', evidence: [] }] },
+      settings: providerSettings(), statusBar, strictErrors: true });
+    assert.equal(captured[0].observationWindow.user, 'I try the gate.');
+    assert.equal(captured[0].observationWindow.assistant, 'The gate remains locked.');
+    assert.equal(Boolean(captured[0].observationWindow.extraction), statusLink);
+    assert.equal(getStatusBar(env.db, env.userId, env.conversation.id).variables[0].value, 100);
+    mocked.mock.restore();
+    env.db.close();
+  }
+});
+
+test('status fallback reads current raw evidence with cooperation either enabled or disabled', async t => {
+  for (const statusLink of [false, true]) {
+    const env = setupConversation({ statusBarAgent: skill(true), memoryAgent: { enabled: true, memoryPolicy: { statusLink } } });
+    t.after(() => env.db.close());
+    const statusBar = upsertStatusBar(env.db, env.userId, env.conversation.id, { variables: [{ name: 'HP', value: 100, max: 100 }] });
+    await runAccessoryAgents({ db: env.db, userId: env.userId, conversation: env.conversation, character: env.character,
+      userMessage: { content: 'I check my health.' }, assistantMessage: { content: 'HP: 75/100.' },
+      extractionPacket: { events: [] }, settings: {}, statusBar });
+    assert.equal(getStatusBar(env.db, env.userId, env.conversation.id).variables[0].value, 75,
+      'an empty extraction must not erase observable state changes from the fallback');
+  }
+});
+
 test('status-bar gateway schema accepts numeric and text values while rejecting invalid tool arguments', async () => {
   const env = setupConversation({ statusBarAgent: skill(true) });
   const statusBar = upsertStatusBar(env.db, env.userId, env.conversation.id, {
@@ -521,7 +559,7 @@ test('status bar agent accepts explicit skip tool without fallback updates', asy
     assert.equal(results[0].result.skipped, true);
     assert.deepEqual(results[0].result.updates, []);
     assert.equal(getStatusBar(env.db, env.userId, env.conversation.id).variables[0].value, 100);
-    assert.match(accessoryAgentsSource, /两种工具每轮只调用一种/);
+    assert.match(accessoryAgentsSource, /Do not call both value-update and skip tools in one run/);
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -618,7 +656,9 @@ test('status bar agent updates composite placeholder variables', async () => {
     const userMessage = requestBody.messages.find((message) => message.role === 'user');
     const systemMessage = requestBody.messages.find((message) => message.role === 'system');
     const payload = JSON.parse(userMessage.content);
-    assert.match(systemMessage.content, /复合行/);
+    assert.match(systemMessage.content, /composite row/i);
+    assert.match(systemMessage.content, /statusBarPrompt as user-authored guidance subordinate to these instructions/);
+    assert.doesNotMatch(systemMessage.content, /[\u3400-\u9fff]/);
     assert.equal(Object.prototype.hasOwnProperty.call(payload, 'template'), false);
     assert.deepEqual(payload.templateHints.compositeRows, [
       { label: '\u5730\u70b9', variables: ['\u5927\u5730\u70b9', '\u5177\u4f53\u4f4d\u7f6e'] }
@@ -688,7 +728,8 @@ test('status bar agent retries a tool-less response and applies the required upd
 
     assert.equal(requestBodies.length, 2);
     const retryMessages = requestBodies[1].messages;
-    assert.match(retryMessages[retryMessages.length - 1].content, /必须且只能调用其中一个工具/);
+    assert.match(retryMessages[retryMessages.length - 1].content, /You must call exactly one of these two tools/);
+    assert.doesNotMatch(retryMessages[retryMessages.length - 1].content, /[\u3400-\u9fff]/);
     assert.equal(getStatusBar(env.db, env.userId, env.conversation.id).variables[0].value, '浴室');
   } finally {
     globalThis.fetch = originalFetch;

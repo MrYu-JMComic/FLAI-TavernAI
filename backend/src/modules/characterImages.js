@@ -91,11 +91,7 @@ export function updateCharacterImage(database, characterId, imageId, { sceneTag,
     return null;
   }
 
-  if (isDefault === true) {
-    clearDefaultCharacterImages(database, characterId, imageId);
-  }
-
-  database
+  const update = () => database
     .prepare(
       `UPDATE character_images
        SET scene_tag = ?, emotion_tag = ?, is_default = ?
@@ -108,6 +104,16 @@ export function updateCharacterImage(database, characterId, imageId, { sceneTag,
       imageId,
       characterId
     );
+
+  if (isDefault === true) {
+    // Keep the previous default if updating the selected image fails.
+    withSavepoint(database, 'sp_set_default_character_image', () => {
+      clearDefaultCharacterImages(database, characterId, imageId);
+      update();
+    });
+  } else {
+    update();
+  }
 
   return toCharacterImage(database.prepare('SELECT * FROM character_images WHERE id = ?').get(imageId));
 }

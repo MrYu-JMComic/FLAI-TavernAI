@@ -427,8 +427,10 @@ export function detectSceneTransition(database, conversationId, messages = [], o
   return dedupeTransitions(transitions);
 }
 
-export function buildSceneContext(database, userId, conversationId) {
+export function buildSceneContext(database, userId, conversationId, options = {}) {
   assertConversationAccess(database, userId, conversationId);
+  // Historical projections must neither read nor populate the live conversation cache.
+  if (options.cache === false) return buildSceneContextUncached(database, userId, conversationId);
   const cacheKey = `scene:${versionKey(conversationId, 'scene')}`;
   const cached = getCached('scene', cacheKey);
   if (cached !== undefined) return cached;

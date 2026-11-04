@@ -6,6 +6,7 @@ const providerCapabilityDefaults = {
   tools: true,
   vision: false,
   imageGeneration: false,
+  embedding: false,
   usage: true
 };
 
@@ -125,21 +126,33 @@ export function resolveProviderModelCapabilities(settings = {}, providerCapabili
   // model can invoke a dedicated image model.
   const imageGenerationModel = Boolean(capabilities.imageGeneration && isKnownImageGenerationModel(providerType, model));
   const imageGeneration = imageGenerationModel;
+  const task = inferProviderModelTask(model, settings.task);
+  const embeddingModel = task === 'embedding';
   const modelVision = providerType === 'deepseek'
     ? isDeepSeekVisionModel(model)
     : capabilities.vision;
   return {
     ...capabilities,
-    streaming: Boolean(capabilities.streaming && !imageGenerationModel),
-    vision: Boolean(modelVision && !imageGenerationModel),
+    task,
+    embedding: embeddingModel,
+    embeddingProtocol: embeddingModel && providerType === 'qwen' ? 'dashscope-text-embedding-v1' : '',
+    streaming: Boolean(capabilities.streaming && !imageGenerationModel && !embeddingModel),
+    vision: Boolean(modelVision && !imageGenerationModel && !embeddingModel),
+    reasoning: Boolean(capabilities.reasoning && !embeddingModel),
     imageGeneration,
     imageGenerationModel,
     imageGenerationAvailable: Boolean(capabilities.imageGeneration),
-    tools: Boolean(capabilities.tools && !imageGenerationModel),
+    tools: Boolean(capabilities.tools && !imageGenerationModel && !embeddingModel),
     model,
     thinking,
     thinkingLevels: thinking.levels
   };
+}
+
+/** Prefer explicit catalogue task metadata; known vector models never enter chat fallbacks. */
+export function inferProviderModelTask(model, explicitTask = '') {
+  if (explicitTask === 'embedding' || explicitTask === 'chat') return explicitTask;
+  return /(?:^|[-_.])(?:embedding|embed)(?:[-_.]|$)/i.test(String(model || '')) ? 'embedding' : 'chat';
 }
 
 export function isKnownImageGenerationModel(providerType, model) {

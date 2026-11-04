@@ -405,6 +405,11 @@ select:focus {
   font-size: 2rem;
 }
 
+.profile-overview > .profile-avatar {
+  width: 68px;
+  height: 68px;
+}
+
 .character-avatar.small {
   width: 42px;
   height: 42px;

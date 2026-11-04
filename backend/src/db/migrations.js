@@ -1,6 +1,13 @@
 import { migrateIndependentSceneItems } from './migrations/0027IndependentSceneItems.js';
 import { migrateCharacterAssistantSessions } from './migrations/0028CharacterAssistantSessions.js';
 import { migrateCharacterAssistantDraftVersions } from './migrations/0029CharacterAssistantDraftVersions.js';
+import { migrateConversationMemory } from './migrations/0030ConversationMemory.js';
+import { migrateMemoryEmbeddings } from './migrations/0031MemoryEmbeddings.js';
+import { migrateMemoryJobScope } from './migrations/0032MemoryJobScope.js';
+import { migrateWorldBookKnowledgeScope } from './migrations/0033WorldBookKnowledgeScope.js';
+import { migrateConversationMemoryUpgrade } from './migrations/0034ConversationMemoryUpgrade.js';
+import { migrateMemoryProvenanceRepair } from './migrations/0035MemoryProvenanceRepair.js';
+import { migrateMemoryProjectionUpgrade } from './migrations/0036MemoryProjectionUpgrade.js';
 import crypto from 'node:crypto';
 import { newId } from '../security.js';
 import { migrateDurableJobs } from './migrations/0006DurableJobs.js';
@@ -18,7 +25,7 @@ import { migrateWorldBookLinkConsolidation } from './migrations/0019WorldBookLin
 import { migrateWorldBookGlobalStateRemoval } from './migrations/0020WorldBookGlobalStateRemoval.js';
 
 // The image-model migration stays at 0012: an older deployment already used 0011.
-export const latestSchemaVersion = '0029';
+export const latestSchemaVersion = '0036';
 
 export function applyStartupMigrations(database, { getCachedTableColumns }) {
   ensureSchemaMeta(database);
@@ -98,6 +105,13 @@ export function applyStartupMigrations(database, { getCachedTableColumns }) {
   runRecordedMigration(database, { version: '0027', name: 'independent-scene-items', checksum: 'independent-scene-items-v1', apply: () => migrateIndependentSceneItems(database) });
   runRecordedMigration(database, { version: '0028', name: 'character-assistant-sessions', checksum: 'character-assistant-sessions-v1', apply: () => migrateCharacterAssistantSessions(database) });
   runRecordedMigration(database, { version: '0029', name: 'character-assistant-draft-versions', checksum: 'character-assistant-draft-versions-v1', apply: () => migrateCharacterAssistantDraftVersions(database) });
+  runRecordedMigration(database, { version: '0030', name: 'conversation-memory-v1', checksum: 'conversation-memory-v1-canonical-records-1', apply: () => migrateConversationMemory(database) });
+  runRecordedMigration(database, { version: '0031', name: 'conversation-memory-embeddings', checksum: 'conversation-memory-embeddings-v1-1', apply: () => migrateMemoryEmbeddings(database) });
+  runRecordedMigration(database, { version: '0032', name: 'conversation-memory-job-scope', checksum: 'conversation-memory-job-scope-v1-1', apply: () => migrateMemoryJobScope(database) });
+  runRecordedMigration(database, { version: '0033', name: 'world-book-knowledge-scope', checksum: 'world-book-knowledge-scope-v1-1', apply: () => migrateWorldBookKnowledgeScope(database) });
+  runRecordedMigration(database, { version: '0034', name: 'conversation-memory-schema-upgrade', checksum: 'conversation-memory-schema-upgrade-v1', apply: () => migrateConversationMemoryUpgrade(database) });
+  runRecordedMigration(database, { version: '0035', name: 'conversation-memory-provenance-repair', checksum: 'conversation-memory-provenance-repair-v1', apply: () => migrateMemoryProvenanceRepair(database) });
+  runRecordedMigration(database, { version: '0036', name: 'conversation-memory-projection-upgrade', checksum: 'conversation-memory-projection-upgrade-v1', apply: () => migrateMemoryProjectionUpgrade(database) });
   // Keep repairing pre-ledger tag fixtures and interrupted legacy upgrades.
   migrateTagsToUserScoped(database, getCachedTableColumns);
 }

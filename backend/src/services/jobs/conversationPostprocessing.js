@@ -12,6 +12,9 @@ import {
 } from '../../repositories/conversationSnapshotRepository.js';
 import { createConversationDatabaseFacade, withConversationMutationContext } from '../conversationMutationContext.js';
 import { getJob, getConversationProcessingSummary } from './jobQueue.js';
+import { createDomainPlanningSession } from '../conversationMemory/domainPlanning.js';
+import { enqueueMemoryDerivedJobs } from '../conversationMemory/derivedJobs.js';
+import { assertMemoryCoreOrder } from '../conversationMemory/commit.js';
 
 export function assertConversationJobCurrent(database, job, payload, signal, options = {}) {
   if (!Number.isSafeInteger(payload.timelineRevision) || payload.timelineRevision < 1) {
@@ -52,7 +55,7 @@ export async function runRecoverableConversationStep(database, environment, step
     return parseJson(stored.result_json, {});
   }
   const before = stored?.status === 'running' ? parseJson(stored.before_json, null)
-    : captureConversationSnapshot(database, job.userId, payload.conversationId, { includeMessages: false });
+    : captureConversationSnapshot(database, job.userId, payload.conversationId, { includeMessages: false, compactMemory: true });
   withSavepoint(database, 'sp_begin_conversation_job_step', () => {
     if (stored?.status === 'running') {
       restoreConversationSnapshot(database, job.userId, payload.conversationId, before, { restoreMessages: false, restoreSettings: false, preserveWorldBookState: stepKey !== 'lore' });
@@ -98,7 +101,7 @@ export async function runRecoverableConversationStep(database, environment, step
 }
 
 export async function runConversationPostprocessing(database, environment, options = {}) {
-  const { job, payload, signal, progress } = environment;
+  const { job, payload, signal, progress=()=>{} } = environment;
   assertConversationJobCurrent(database, job, payload, signal);
   const conversation = getConversationForUser(database, job.userId, payload.conversationId, { includeUsage: false });
   const character = getCharacter(database, job.userId, conversation.characterId);
@@ -110,6 +113,9 @@ export async function runConversationPostprocessing(database, environment, optio
   };
   const assistantMessage = readMessage(payload.assistantMessageId);
   const userMessage = readMessage(payload.userMessageId);
+  if(!assistantMessage)throw failure('记忆处理缺少有效的 assistant 来源，请重新提交任务','JOB_SOURCE_UNVERSIONED');
+  const completed=database.prepare("SELECT result_json FROM job_steps WHERE job_id=? AND step_key='core' AND status='completed'").get(job.id);
+  if(completed)return parseJson(completed.result_json,{});
   const failures = [];
   const step = async (key, operation) => {
     try {
@@ -121,6 +127,9 @@ export async function runConversationPostprocessing(database, environment, optio
     }
   };
   try {
+    if (payload.requiredStages?.length!==0) {
+      assertMemoryCoreOrder(database,job.userId,conversation.id,assistantMessage.id,{timelineRevision:payload.timelineRevision});
+    }
     if (payload.replayLore) {
       await step('lore', (guarded) => {
         const messages = readSnapshotMessages(guarded, job.userId, conversation.id, assistantMessage.id).slice(0, -1);
@@ -129,33 +138,49 @@ export async function runConversationPostprocessing(database, environment, optio
         return { entries: entries.map((entry) => entry.id) };
       });
     }
-    const memory = await step('memory', (guarded) => runConversationMemoryAgent({
-      database: guarded, userId: job.userId, conversation, userMessage, assistantMessage,
-      settings: options.settings, signal, config: options.config
-    }));
-    const skills = await (options.runAccessoryAgents || runAccessoryAgents)({
-      db: createConversationDatabaseFacade(database), userId: job.userId, conversation, character, userMessage, assistantMessage,
-      settings: options.settings, statusBar: getStatusBar(database, job.userId, conversation.id),
-      signal, strictErrors: false,
-      emit: (event, data) => progress(50, { phase: 'accessory', event, data }),
-      runStep: (key, operation) => step(`agent:${key}`, operation)
+    const memory = await (options.runMemoryAgent||runConversationMemoryAgent)({
+      database, userId: job.userId, conversation, userMessage, assistantMessage,
+      settings: options.settings, signal, config: options.config,prepareOnly:true,
+      idempotencyKey:`core:${conversation.id}:${payload.timelineRevision}:${assistantMessage.id}:${assistantMessage.revision}`,
+      guard:()=>assertConversationJobCurrent(database,job,payload,signal)
     });
-    assertConversationJobCurrent(database, job, payload, signal);
-    if (failures.length) throw failures[0];
-    withSavepoint(database, 'sp_finish_conversation_postprocess', () => {
-      database.prepare("UPDATE messages SET postprocess_state = 'completed' WHERE id = ?").run(assistantMessage.id);
-      const summary = getConversationProcessingSummary(database, job.userId, conversation.id);
-      const partial = summary?.failedCount > 0 || ['needs_rebuild', 'stale', 'legacy_partial'].includes(conversation.stateStatus);
-      database.prepare("UPDATE conversations SET state_status = ? WHERE id = ? AND state_status NOT IN ('needs_rebuild', 'stale', 'legacy_partial')")
-        .run(summary?.pendingCount > 1 ? 'pending' : partial ? 'needs_review' : 'ready', conversation.id);
-      writeConversationCheckpoint(database, job.userId, conversation.id, {
-        id: `job:${job.id}`, throughMessageId: assistantMessage.id, stateStatus: partial ? 'needs_review' : 'ready',
-        preserveWorldBookState: true
+    assertConversationJobCurrent(database,job,payload,signal);
+    const planning=createDomainPlanningSession(database,job.userId,conversation.id);
+    let skills=[];
+    let committedResult;
+    try {
+      if(!options.onlyMemory) skills = await (options.runAccessoryAgents || runAccessoryAgents)({
+        db: planning.database, userId: job.userId, conversation, character, userMessage, assistantMessage,
+        extractionPacket:memory.mode==='prepared'?memory.packet:undefined,
+        settings: options.settings, statusBar: getStatusBar(planning.database, job.userId, conversation.id),
+        signal, strictErrors: true,
+        emit: (event, data) => progress(50, { phase: 'accessory', event, data })
       });
-    });
-    return { conversationId: conversation.id, assistantMessageId: assistantMessage.id, memories: memory.memories?.length || 0,
-      skills: skills.map((entry) => ({ skill: entry.skill, ok: entry.ok })),
-      stateStatus: getConversationForUser(database, job.userId, conversation.id, { includeUsage: false }).stateStatus };
+      const failed=skills.find(entry=>entry.ok===false);
+      if(failed)throw failure(failed.error,failed.code||'AGENT_STEP_FAILED',failed.retryable);
+      assertConversationJobCurrent(database, job, payload, signal);
+      withSavepoint(database,'sp_accept_conversation_core',()=>{
+        if(memory.mode==='prepared')memory.receipt=memory.commit({applyDomainPlan:()=>planning.apply(),
+          enqueueDerived:receipt=>enqueueMemoryDerivedJobs(database,job.userId,conversation.id,receipt)});
+        else planning.apply();
+        const coreResult={conversationId:conversation.id,assistantMessageId:assistantMessage.id,
+          memories:memory.receipt?.eventIds?.length||memory.memories?.length||0,
+          mode:memory.mode,skills:skills.map(entry=>({skill:entry.skill,ok:entry.ok}))};
+        database.prepare("UPDATE messages SET postprocess_state='completed' WHERE id=?").run(assistantMessage.id);
+        const summary=getConversationProcessingSummary(database,job.userId,conversation.id);
+        const partial=summary?.failedCount>0||['needs_rebuild','stale','legacy_partial'].includes(conversation.stateStatus);
+        database.prepare("UPDATE conversations SET state_status=? WHERE id=? AND state_status NOT IN ('needs_rebuild','stale','legacy_partial')")
+          .run(summary?.pendingCount>1?'pending':partial?'needs_review':'ready',conversation.id);
+        writeConversationCheckpoint(database,job.userId,conversation.id,{id:`job:${job.id}`,throughMessageId:assistantMessage.id,
+          stateStatus:partial?'needs_review':'ready',preserveWorldBookState:true});
+        committedResult={...coreResult,stateStatus:partial?'needs_review':'ready'};
+        database.prepare(`INSERT INTO job_steps(job_id,step_key,status,before_json,result_json,attempt,updated_at)
+          VALUES(?,'core','completed','{}',?,?,?) ON CONFLICT(job_id,step_key) DO UPDATE SET
+          status='completed',result_json=excluded.result_json,attempt=excluded.attempt,updated_at=excluded.updated_at`)
+          .run(job.id,JSON.stringify(committedResult),job.attempt,nowIso());
+      });
+    } finally {planning.close();}
+    return committedResult;
   } catch (error) {
     const current = database.prepare('SELECT timeline_revision FROM conversations WHERE id = ?').get(conversation.id);
     if (current?.timeline_revision === payload.timelineRevision) {

@@ -61,9 +61,10 @@ function providerCacheKey(settings, extraBody = '{}') {
     normalizedBaseUrl,
     String(Boolean(settings.apiKey || settings.apiKeySet)),
     String(Boolean(settings.supportsReasoning)),
+    String(settings.task || 'chat'),
     extraBody
   ].join('|');
-  return `flai-provider-models:v1:${encodeURIComponent(key)}`;
+  return `flai-provider-models:v2:${encodeURIComponent(key)}`;
 }
 
 test('useProviderModels skips redundant cache syncs for identical model lists', () => {
@@ -150,11 +151,11 @@ test('provider model list normalization collects Map values without spread', () 
   assert.doesNotMatch(modelCatalogSource, /return\s+\[\.\.\.byId\.values\(\)\]\.sort\(/);
 });
 
-test('provider model select options scan normalized rows directly', () => {
-  assert.match(
-    modelCatalogSource,
-    /export function buildModelSelectOptions\(models = \[\], currentValue = '', emptyLabel = ''\) \{[\s\S]*const normalized = normalizeModelList\(models\);[\s\S]*if \(current && !hasNormalizedModelId\(normalized, current\)\) \{[\s\S]*for \(let index = 0; index < normalized\.length; index \+= 1\) \{[\s\S]*options\.push\(normalized\[index\]\);[\s\S]*return options;[\s\S]*\}/
-  );
+test('provider model select options isolate embedding models from chat and preserve task metadata', () => {
+  const models = [{ id: 'chat-model' }, { id: 'qwen3.7-text-embedding-flash' }, { id: 'private-vectors', task: 'embedding' }];
+  assert.deepEqual(buildModelSelectOptions(models).map((model) => model.id), ['chat-model']);
+  assert.deepEqual(buildModelSelectOptions(models, '', '', { task: 'embedding' }).map((model) => model.id), ['private-vectors', 'qwen3.7-text-embedding-flash']);
+  assert.equal(areProviderModelListsEqual([{ id: 'private-vectors', task: 'chat' }], [{ id: 'private-vectors', task: 'embedding' }]), false);
   assert.match(
     modelCatalogSource,
     /function hasNormalizedModelId\(models, modelId\) \{[\s\S]*for \(let index = 0; index < models\.length; index \+= 1\) \{[\s\S]*if \(models\[index\]\?\.id === modelId\) \{[\s\S]*return true;[\s\S]*return false;[\s\S]*\}/

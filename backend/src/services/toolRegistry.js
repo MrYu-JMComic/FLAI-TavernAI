@@ -17,18 +17,19 @@ const groups = [
   ]],
   ['character-draft', 'validate', 'request', ['report_character_progress', 'finish_character_draft']],
   ['character-draft', 'read', 'read-only', ['read_character_field', 'search_character_draft']],
-  ['world-book-draft', 'draft', 'request', ['create_world_book', 'create_character_world_book', 'set_world_book_profile', 'replace_world_book_entries', 'upsert_world_book_entry', 'remove_world_book_entry']],
+  ['world-book-draft', 'draft', 'request', ['create_world_book', 'create_character_world_book', 'set_world_book_profile', 'replace_world_book_entries', 'upsert_world_book_entry', 'remove_world_book_entry', 'patch_world_book_text', 'batch_world_book_entries']],
   ['world-book-draft', 'read', 'read-only', ['search_world_books', 'select_world_book', 'read_world_book', 'preview_world_book_entries']],
   ['world-book-draft', 'validate', 'request', ['finish_world_book_task']],
   ['status', 'write', 'job-step', ['update_status_bar', 'upsert_status_bar_variable', 'remove_status_bar_variable', 'update_status_bar_metadata', 'replace_status_bar_template', 'update_status_bar_code']],
   ['status', 'read', 'read-only', ['skip_status_bar_update', 'read_status_bar']],
-  ['memory', 'write', 'job-step', ['record_memory', 'update_memory', 'merge_memories', 'invalidate_memory', 'pin_memory']],
+  ['memory', 'write', 'job-step', ['record_memory', 'update_memory', 'merge_memories', 'invalidate_memory', 'pin_memory', 'batch_memory_changes']],
   ['memory', 'read', 'read-only', ['search_memories', 'search_history', 'finish_memory_review']],
   ['web', 'read', 'read-only', ['deepseek_web_search', 'deepseek_web_fetch']],
   ['economy', 'write', 'job-step', ['record_economy_transaction']],
-  ['scene', 'write', 'job-step', ['upsert_scene_node', 'upsert_scene_route', 'merge_scene_nodes', 'remove_scene_route']],
+  ['scene', 'write', 'job-step', ['upsert_scene_node', 'upsert_scene_route', 'merge_scene_nodes', 'remove_scene_route', 'patch_scene_text', 'batch_scene_changes']],
   ['scene', 'read', 'read-only', ['finish_scene_organization']],
-  ['world', 'write', 'job-step', ['create_quest', 'advance_quest_objective', 'advance_world_time', 'set_world_weather', 'request_skill_check', 'discover_location', 'travel_to_location', 'propose_reward']]
+  ['world', 'write', 'job-step', ['create_quest', 'advance_quest_objective', 'advance_world_time', 'set_world_weather', 'request_skill_check', 'discover_location', 'travel_to_location', 'propose_reward']],
+  ['assistant-plan', 'validate', 'request', ['submit_character_plan', 'submit_world_book_plan']]
 ];
 const policies = new Map();
 for (const [domain, effect, idempotency, names] of groups) {

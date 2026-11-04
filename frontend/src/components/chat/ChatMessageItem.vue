@@ -18,7 +18,6 @@ import {
 } from '@lucide/vue';
 import MarkdownContent from '../MarkdownContent.vue';
 import { extractHtmlDocument } from '../../utils/htmlDocument.js';
-import { useTypewriterText } from '../../composables/useTypewriterText.js';
 import HtmlDocumentPreview from './HtmlDocumentPreview.vue';
 import { normalizeSafeAttachmentUrl } from '../../utils/attachmentUrls.js';
 
@@ -77,14 +76,10 @@ const contentStreaming = computed(() => (
 ));
 const reasoningSource = computed(() => String(props.message?.reasoning || ''));
 const contentSource = computed(() => String(props.message?.content || ''));
-const { displayedText: displayedReasoning, isTyping: isReasoningTyping } = useTypewriterText(
-  reasoningSource,
-  reasoningStreaming
-);
-const { displayedText: displayedContent, isTyping: isContentTyping } = useTypewriterText(
-  contentSource,
-  contentStreaming
-);
+const displayedReasoning = reasoningSource;
+const displayedContent = contentSource;
+const isReasoningTyping = reasoningStreaming;
+const isContentTyping = contentStreaming;
 const messagePlaceholder = computed(() => {
   if (!props.message?.streaming) return '';
   return props.message?.reasoning && !props.message?.content
@@ -176,6 +171,7 @@ watch(isEditingCurrentMessage, async (active) => {
             :text="displayedReasoning"
             :render-plugins="renderPlugins"
             :defer-updates="isReasoningTyping"
+            :show-caret="isReasoningTyping"
             @rendered="emitReasoningRendered"
           />
         </div>
@@ -246,6 +242,7 @@ watch(isEditingCurrentMessage, async (active) => {
             :highlight-dialogue="highlightDialogue"
             :render-plugins="renderPlugins"
             :defer-updates="isContentTyping"
+            :show-caret="isContentTyping && Boolean(displayedContent)"
             @rendered="emitContentRendered"
           />
         </template>

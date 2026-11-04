@@ -7,6 +7,7 @@ process.env.APP_SECRET = 'test-secret-memory-agent';
 const { createAppDatabase } = await import('../db.js');
 const { createCharacter } = await import('../modules/characters.js');
 const { createConversationMemory, listConversationMemories, pinConversationMemory } = await import('../modules/conversationMemories.js');
+const { upsertStatusBar } = await import('../modules/statusBars.js');
 const { normalizeAccessorySkills } = await import('../modules/advancedSettings.js');
 const {
   MEMORY_AGENT_TOOLS,
@@ -87,7 +88,7 @@ function validatedRunner(script) {
   return runner;
 }
 
-test('all eight memory tools share catalog descriptions and validate their advertised minimum arguments', async () => {
+test('all memory tools share catalog descriptions and validate their advertised minimum arguments', async () => {
   const definitions = buildMemoryAgentToolDefinitions(MEMORY_AGENT_TOOLS.map(tool => tool.name));
   const minimumArguments = {
     search_memories: {}, search_history: { query: 'key' },
@@ -96,9 +97,13 @@ test('all eight memory tools share catalog descriptions and validate their adver
     merge_memories: { targetId: 'target', targetRevision: 1, sourceItems: [{ id: 'source', revision: 1 }] },
     invalidate_memory: { memoryId: 'memory', revision: 1, reason: 'Evidence contradicts current state.', sourceMessageId: 'turn-user' },
     pin_memory: { memoryId: 'memory', revision: 1 }, finish_memory_review: {},
+    batch_memory_changes: { changes: [{ tool: 'record_memory', args: { memoryType: 'fact', content: 'Key received.', sourceMessageId: 'turn-user' } }] },
   };
   for (const tool of definitions) {
-    assert.equal(tool.function.description, MEMORY_AGENT_TOOLS.find(entry => entry.name === tool.function.name).description);
+    const catalogTool = MEMORY_AGENT_TOOLS.find(entry => entry.name === tool.function.name);
+    assert.equal(tool.function.description, catalogTool.modelDescription);
+    assert.doesNotMatch(tool.function.description, /[^\x00-\x7F]/);
+    assert.match(catalogTool.description, /[\u3400-\u9fff]/, 'settings retain their Chinese UI description');
     const prepared = await executeProviderTool(async () => ({ ok: true }), tool.function.name, minimumArguments[tool.function.name], {}, undefined, definitions);
     assert.equal(prepared.result.ok, true, tool.function.name);
   }
@@ -106,6 +111,205 @@ test('all eight memory tools share catalog descriptions and validate their adver
     const rejected = await executeProviderTool(() => { throw new Error('must not execute'); }, name, args, {}, undefined, definitions);
     assert.equal(rejected.result.error, 'TOOL_ARGUMENTS_INVALID');
   }
+});
+
+test('batch writes reuse child permissions, revisions and evidence and exact edits preserve unrelated text', async t => {
+  const env = setup({ enabled: true });
+  t.after(() => env.database.close());
+  const seed = createConversationMemory(env.database, env.userId, env.conversationId, { memoryType: 'event', subject: 'Mira', content: 'Mira holds a silver key. The cloak is blue.' });
+  const runTools = async (_settings, _messages, tools, execute) => {
+    const call = async (name, args) => (await executeProviderTool(execute, name, args, {}, undefined, tools)).result;
+    const result = await call('batch_memory_changes', { changes: [
+      { tool: 'update_memory', args: { memoryId: seed.id, revision: seed.revision, search: 'silver key', replacement: 'gate key', sourceMessageId: 'turn-assistant' } },
+      { tool: 'record_memory', args: { memoryType: 'fact', content: 'Invalid evidence.', sourceMessageId: 'not-current' } },
+      { tool: 'record_memory', args: { memoryType: 'intent', subject: 'Mira', content: 'Mira plans to open the gate tomorrow.', sourceMessageId: 'turn-assistant' } }
+    ] });
+    assert.equal(result.ok, false);
+    assert.equal(result.staged, 2);
+    assert.equal(result.results[0].memory.content, 'Mira holds a gate key. The cloak is blue.');
+    assert.equal(result.results[1].ok, false);
+    assert.equal(result.results[2].ok, true);
+    const mismatch = await call('update_memory', { memoryId: seed.id, revision: seed.revision + 1, search: 'missing key', replacement: 'other', sourceMessageId: 'turn-assistant' });
+    assert.equal(mismatch.ok, false);
+    assert.equal(mismatch.occurrences, 0);
+    const rejected = await call('batch_memory_changes', { changes: [{ tool: 'pin_memory', args: { memoryId: seed.id, revision: seed.revision + 1 } }] });
+    assert.equal(rejected.error, 'TOOL_ARGUMENTS_INVALID', 'disabled child tools are absent from the batch schema');
+    assert.equal(listConversationMemories(env.database, env.userId, env.conversationId).length, 1, 'all changes remain staged');
+    await call('finish_memory_review', {});
+    return {};
+  };
+  const result = await runConversationMemoryAgent({ ...env, settings: usableSettings, runTools });
+  assert.equal(result.memories.length, 1);
+  const memories = listConversationMemories(env.database, env.userId, env.conversationId);
+  assert.equal(memories.length, 2);
+  assert.equal(memories.find(memory => memory.id === seed.id).content, 'Mira holds a gate key. The cloak is blue.');
+});
+
+test('automatic consolidation switch removes merge capability and compatible text merges retain provenance', async t => {
+  const env = setup({ enabled: true, memoryPolicy: { autoConsolidate: false } });
+  t.after(() => env.database.close());
+  assert.equal(resolveMemoryAgentTools(env.conversation.settings.accessorySkills.memoryAgent).includes('merge_memories'), false);
+  const first = createConversationMemory(env.database, env.userId, env.conversationId, { memoryType: 'fact', subject: 'Mira', content: 'Mira holds the key.' });
+  const second = createConversationMemory(env.database, env.userId, env.conversationId, { memoryType: 'fact', subject: 'Mira', content: 'The key is held by Mira.' });
+  const third = createConversationMemory(env.database, env.userId, env.conversationId, { memoryType: 'fact', subject: 'Noel', content: 'Noel holds a different key.' });
+  let prepared;
+  const blockedRunner = async (_settings, messages, tools, execute) => {
+    assert.match(messages[0].content, /Automatic consolidation is disabled/);
+    assert.equal(tools.some(tool => tool.function.name === 'merge_memories'), false);
+    assert.equal((await execute('merge_memories', { targetId: first.id, targetRevision: first.revision, sourceItems: [{ id: second.id, revision: second.revision }] })).ok, false);
+    await execute('finish_memory_review', {}); return {};
+  };
+  prepared = await runConversationMemoryAgent({ ...env, settings: usableSettings, runTools: blockedRunner, prepareOnly: true });
+  assert.deepEqual(prepared.packet.actions, []);
+  env.conversation.settings.accessorySkills.memoryAgent.memoryPolicy.autoConsolidate = true;
+  const runner = validatedRunner([
+    ['merge_memories', { targetId: first.id, targetRevision: first.revision, sourceItems: [{ id: third.id, revision: third.revision }] }],
+    ['merge_memories', { targetId: first.id, targetRevision: first.revision, sourceItems: [{ id: second.id, revision: second.revision }] }],
+    ['finish_memory_review', {}]
+  ]);
+  await runConversationMemoryAgent({ ...env, settings: usableSettings, runTools: runner });
+  assert.equal(runner.results[0].ok, false);
+  assert.equal(runner.results[1].ok, true);
+  const memories = listConversationMemories(env.database, env.userId, env.conversationId, { includeArchived: true });
+  assert.equal(memories.find(memory => memory.id === second.id).archived, true);
+  assert.equal(memories.find(memory => memory.id === third.id).archived, false);
+});
+
+test('memory-status cooperation shares only the authoritative pre-update status when enabled', async t => {
+  const env = setup({ enabled: true });
+  t.after(() => env.database.close());
+  upsertStatusBar(env.database, env.userId, env.conversationId, { name: 'Current', variables: [{ name: 'HP', value: 75 }] });
+  for (const statusLink of [false, true]) {
+    env.conversation.settings.accessorySkills.memoryAgent.memoryPolicy = { statusLink };
+    await runConversationMemoryAgent({ ...env, settings: usableSettings, prepareOnly: true,
+      runTools: async (_settings, messages, _tools, execute) => {
+        const input = JSON.parse(messages[1].content);
+        assert.equal(Boolean(input.statusContext), statusLink);
+        if (statusLink) assert.equal(input.statusContext.variables[0].value, 75);
+        assert.equal(input.memoryWorkflow.statusLink, statusLink);
+        await execute('finish_memory_review', {}); return {};
+      } });
+  }
+});
+
+test('finish validates direct calls before sealing and preserves staged work during a corrected attempt', async t => {
+  const env = setup({ enabled: true });
+  t.after(() => env.database.close());
+  const runTools = async (_settings, messages, _tools, execute, options) => {
+    assert.equal(options.maxRounds, 8);
+    assert.equal(JSON.parse(messages[1].content).toolCallLimits.finish_memory_review, 3);
+    assert.match(messages[0].content, /arrays of objects, never objects keyed by IDs/);
+    const staged = await execute('record_memory', {
+      memoryType: 'event', content: 'Mira took the silver key.', sourceMessageId: 'turn-assistant', quote: 'Mira took the silver key'
+    });
+    assert.equal(staged.ok, true);
+    const invalid = await execute('finish_memory_review', { packet: { entities: { mira: { name: 'Mira' } } } });
+    assert.equal(invalid.ok, false);
+    assert.equal(invalid.code, 'MEMORY_PACKET_INVALID');
+    assert.match(invalid.error, /packet.entities/);
+    assert.equal(invalid.stop, false);
+    assert.equal(invalid.remainingAttempts, 2);
+    assert.equal(listConversationMemories(env.database, env.userId, env.conversationId).length, 0);
+    const accepted = await execute('finish_memory_review', { packet: { entities: [{ key: 'mira', name: 'Mira' }] }, summary: 'Key received.' });
+    assert.equal(accepted.ok, true);
+    assert.equal(accepted.stop, true);
+    const afterFinish = await execute('record_memory', {
+      memoryType: 'fact', content: 'Late mutation.', sourceMessageId: 'turn-user'
+    });
+    assert.equal(afterFinish.ok, false);
+    assert.match(afterFinish.error, /封存/);
+    assert.equal((await execute('finish_memory_review', {})).ok, false);
+    return {};
+  };
+  const prepared = await runConversationMemoryAgent({ ...env, settings: usableSettings, runTools, prepareOnly: true });
+  assert.equal(prepared.mode, 'prepared');
+  assert.equal(prepared.packet.events.length, 1);
+  assert.equal(prepared.packet.summary, 'Key received.');
+  assert.equal(prepared.packet.version, 1);
+  assert.equal(prepared.packet.messageId, 'turn-assistant');
+  assert.deepEqual(prepared.packet.sources.map(source => source.messageId), ['turn-user', 'turn-assistant']);
+  assert.equal(env.database.prepare('SELECT COUNT(*) AS n FROM memory_commits').get().n, 0);
+  const receipt = prepared.commit();
+  assert.equal(receipt.eventIds.length, 1);
+  assert.equal(listConversationMemories(env.database, env.userId, env.conversationId).length, 1);
+});
+
+test('repeated invalid finish attempts remain bounded and cannot turn malformed output into an empty success', async t => {
+  const env = setup({ enabled: true });
+  t.after(() => env.database.close());
+  let results;
+  const runTools = async (_settings, _messages, _tools, execute) => {
+    results = [];
+    for (let index = 0; index < 3; index += 1) {
+      results.push(await execute('finish_memory_review', { packet: { events: 'invalid array' } }));
+    }
+    return {};
+  };
+  await assert.rejects(runConversationMemoryAgent({ ...env, settings: usableSettings, runTools, prepareOnly: true }), error => {
+    assert.equal(error.code, 'MEMORY_PACKET_INVALID');
+    assert.match(error.message, /packet.events/);
+    return true;
+  });
+  assert.deepEqual(results.map(result => result.remainingAttempts), [2, 1, 0]);
+  assert.deepEqual(results.map(result => result.stop), [false, false, true]);
+  assert.equal(env.database.prepare('SELECT COUNT(*) AS n FROM memory_commits').get().n, 0);
+  assert.equal(listConversationMemories(env.database, env.userId, env.conversationId).length, 0);
+});
+
+test('the extraction schema rejects model attempts to supply trusted server fields before a safe finish', async t => {
+  const env = setup({ enabled: true });
+  t.after(() => env.database.close());
+  const runTools = validatedRunner([
+    ['finish_memory_review', { packet: { version: 2, sources: [], actions: [], messageId: 'forged', idempotencyKey: 'forged' } }],
+    ['finish_memory_review', {}]
+  ]);
+  const result = await runConversationMemoryAgent({ ...env, settings: usableSettings, runTools, idempotencyKey: 'trusted-turn', prepareOnly: true });
+  assert.equal(runTools.results[0].error, 'TOOL_ARGUMENTS_INVALID');
+  assert.equal(runTools.results[1].ok, true);
+  assert.equal(result.packet.version, 1);
+  assert.equal(result.packet.messageId, 'turn-assistant');
+  assert.equal(result.packet.idempotencyKey, 'trusted-turn');
+  assert.equal(result.packet.sources.length, 2);
+  assert.deepEqual(result.packet.actions, []);
+});
+
+test('event capacity includes final metadata, pin, merge and invalidation projections once per memory', async t => {
+  const env = setup({ enabled: true, tools: { pin_memory: true, invalidate_memory: true } });
+  t.after(() => env.database.close());
+  const seeds = ['First key', 'Second key', 'Duplicate key', 'Old key'].map(content =>
+    createConversationMemory(env.database, env.userId, env.conversationId, { memoryType: 'fact', content }));
+  const eventCount = env.database.prepare('SELECT COUNT(*) AS n FROM memory_events').get().n;
+  const events = Array.from({ length: 77 }, (_, index) => ({
+    key: `new-${index}`, content: `Gate detail ${index}.`,
+    evidence: [{ messageId: 'turn-assistant', quote: 'Mira took the silver key' }]
+  }));
+  const runTools = async (_settings, _messages, _tools, execute) => {
+    assert.equal((await execute('update_memory', { memoryId: seeds[0].id, revision: seeds[0].revision, subject: 'Key' })).ok, true);
+    assert.equal((await execute('pin_memory', { memoryId: seeds[0].id, revision: seeds[0].revision + 1 })).ok, true);
+    assert.equal((await execute('merge_memories', {
+      targetId: seeds[1].id, targetRevision: seeds[1].revision,
+      sourceItems: [{ id: seeds[2].id, revision: seeds[2].revision }]
+    })).ok, true);
+    assert.equal((await execute('invalidate_memory', {
+      memoryId: seeds[3].id, revision: seeds[3].revision, reason: 'The key changed hands.',
+      sourceMessageId: 'turn-assistant', quote: 'Mira took the silver key'
+    })).ok, true);
+    const rejected = await execute('finish_memory_review', { packet: { events } });
+    assert.equal(rejected.ok, false);
+    assert.match(rejected.error, /events.*80.*81/);
+    assert.equal(env.database.prepare('SELECT COUNT(*) AS n FROM memory_events').get().n, eventCount);
+    assert.equal((await execute('finish_memory_review', { packet: { events: events.slice(0, 76) } })).ok, true);
+    return {};
+  };
+  const prepared = await runConversationMemoryAgent({ ...env, settings: usableSettings, runTools, prepareOnly: true });
+  assert.equal(prepared.packet.events.length, 80);
+  const projections = prepared.packet.events.filter(event => event.key.startsWith('projection:'));
+  assert.equal(projections.length, 4);
+  assert.equal(projections.find(event => event.key === `projection:${seeds[0].id}`).layer, 'canon');
+  for (const seed of seeds.slice(2)) assert.equal(projections.find(event => event.key === `projection:${seed.id}`).lifecycle, 'rejected');
+  const receipt = prepared.commit();
+  assert.equal(receipt.eventIds.length, 80);
+  assert.equal(env.database.prepare('SELECT COUNT(*) AS n FROM memory_events').get().n, eventCount + 80);
 });
 
 test('validated memory writes preserve optional quotes and apply evidence confidence caps on updates', async () => {
@@ -203,9 +407,13 @@ test('memory retries refresh revisions after a partial write instead of replayin
 
 test('memory agent skill defaults to auto and exposes a switchable tool library', () => {
   const skills = normalizeAccessorySkills({});
-  assert.deepEqual(skills.memoryAgent, { enabled: 'auto', modelOverride: '', providerProfileId: '', thinkingLevel: '', tools: {} });
+  assert.equal(skills.memoryAgent.enabled, 'auto');
+  assert.equal(skills.memoryAgent.memoryPolicy.mode, 'structured');
+  assert.equal(skills.memoryAgent.embedding.enabled, false);
   const normalized = normalizeAccessorySkills({ memoryAgent: { enabled: true, providerProfileId: ' profile-1 ', tools: { record_memory: 'off', invalidate_memory: true, 'Bad Name': true } } });
-  assert.deepEqual(normalized.memoryAgent, { enabled: true, modelOverride: '', providerProfileId: 'profile-1', thinkingLevel: '', tools: { record_memory: false, invalidate_memory: true } });
+  assert.equal(normalized.memoryAgent.providerProfileId, 'profile-1');
+  assert.deepEqual(normalized.memoryAgent.tools, { record_memory:false, invalidate_memory:true });
+  assert.deepEqual(normalized.memoryAgent.memoryPolicy, skills.memoryAgent.memoryPolicy);
 
   const enabled = resolveMemoryAgentTools({ tools: { record_memory: false, invalidate_memory: true, finish_memory_review: false } });
   assert.equal(enabled.includes('record_memory'), false);
@@ -244,6 +452,10 @@ test('memory agent records evidence-backed memories through tools and rejects in
   assert.equal(runTools.seen[0].settings.model, 'memory-model');
   assert.equal(runTools.seen[0].settings.apiKey, 'sk-main');
   assert.deepEqual(runTools.seen[0].tools, resolveMemoryAgentTools({}));
+  const systemPrompt = runTools.seen[0].messages[0].content;
+  assert.doesNotMatch(systemPrompt, /[\u3400-\u9fff]/);
+  assert.match(systemPrompt, /Write evidence is limited to the current user and assistant messages/);
+  assert.match(systemPrompt, /Write each memory concisely in Chinese when the conversation is Chinese/);
   const [invalidSource, quoted, paraphrased, duplicate, badType, finished] = runTools.results;
   assert.equal(invalidSource.ok, false);
   assert.match(invalidSource.error, /sourceMessageId/);
@@ -273,7 +485,7 @@ test('memory agent records evidence-backed memories through tools and rejects in
   assert.ok(userPayload.enabledTools.includes('record_memory'));
 });
 
-test('memory agent falls back to rule extraction when the model is unavailable, disabled or failing', async () => {
+test('memory agent uses raw mode without configuration and leaves failed structured extraction retryable', async () => {
   const unavailable = setup({ enabled: 'auto' });
   let called = 0;
   const counting = async () => { called += 1; return {}; };
@@ -282,10 +494,10 @@ test('memory agent falls back to rule extraction when the model is unavailable, 
     userMessage: unavailable.userMessage, assistantMessage: unavailable.assistantMessage,
     settings: {}, runTools: counting
   });
-  assert.equal(offline.mode, 'rules');
+  assert.equal(offline.mode, 'raw');
   assert.equal(offline.reason, 'provider_unavailable');
   assert.equal(called, 0);
-  assert.equal(offline.memories.some((memory) => memory.memoryType === 'preference'), true);
+  assert.deepEqual(offline.memories, []);
 
   const disabled = setup({ enabled: false });
   const off = await runConversationMemoryAgent({
@@ -293,21 +505,18 @@ test('memory agent falls back to rule extraction when the model is unavailable, 
     userMessage: disabled.userMessage, assistantMessage: disabled.assistantMessage,
     settings: usableSettings, runTools: counting
   });
-  assert.equal(off.mode, 'rules');
+  assert.equal(off.mode, 'raw');
   assert.equal(off.reason, 'agent_disabled');
   assert.equal(called, 0);
-  assert.ok(off.memories.length > 0);
+  assert.deepEqual(off.memories, []);
 
   const failing = setup({ enabled: true });
-  const failed = await runConversationMemoryAgent({
+  await assert.rejects(() => runConversationMemoryAgent({
     database: failing.database, userId: failing.userId, conversation: failing.conversation,
     userMessage: failing.userMessage, assistantMessage: failing.assistantMessage,
     settings: usableSettings, runTools: async () => { throw Object.assign(new Error('gateway exploded'), { status: 502 }); }
-  });
-  assert.equal(failed.mode, 'rules');
-  assert.equal(failed.fallback, true);
-  assert.equal(failed.error, 'gateway exploded');
-  assert.ok(failed.memories.length > 0);
+  }), /gateway exploded/);
+  assert.deepEqual(listConversationMemories(failing.database,failing.userId,failing.conversationId), []);
 
   const cancelled = setup({ enabled: true });
   const controller = new AbortController();

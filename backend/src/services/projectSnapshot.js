@@ -9,6 +9,7 @@ import {
   listWorldBookEntryRows
 } from '../repositories/worldBookRepository.js';
 import { toWorldBook, toWorldBookEntry } from '../domain/worldBooks/normalization.js';
+import { countMemoryRecords, sumMemoryStorageBytes } from '../repositories/memoryStorageRepository.js';
 
 const snapshotVersion = 2;
 
@@ -18,6 +19,8 @@ export function buildProjectSnapshot(database, userId) {
   return stripSecrets({
     version: snapshotVersion,
     kind: 'project_snapshot',
+    purpose: 'diagnostic_inventory',
+    restorable: false,
     createdAt,
     app: {
       serviceName: appConfig.serviceName,
@@ -35,6 +38,7 @@ export function buildProjectSnapshot(database, userId) {
       statusBarTemplates: listStatusBarTemplates(database, userId),
       conversations,
       conversationMemories: listConversationMemories(database, userId),
+      conversationMemoryInventory: memoryInventory(database, userId),
       economyAccounts: listEconomyAccounts(database, userId),
       saves: listSaveSummaries(database, userId)
     },
@@ -45,6 +49,25 @@ export function buildProjectSnapshot(database, userId) {
       providerCapabilities: listProviderCapabilities()
     }
   });
+}
+
+/** Diagnostic inventory describes coverage and derived indexes; full restoration uses conversation saves. */
+function memoryInventory(database, userId) {
+  return {
+    version: 1,
+    restorable: false,
+    recordCounts: countMemoryRecords(database, userId),
+    logicalStorageBytes: sumMemoryStorageBytes(database, userId),
+    processing: database.prepare(`SELECT conversation_id AS conversationId,revision,core_order AS coreOrder,
+      summary_order AS summaryOrder,index_order AS indexOrder,baseline_kind AS baselineKind
+      FROM conversation_memory_state WHERE user_id=? ORDER BY conversation_id`).all(userId),
+    indexes: database.prepare(`SELECT id,conversation_id AS conversationId,fingerprint,dimensions,
+      source_revision AS sourceRevision,status,document_count AS documentCount,error_code AS errorCode
+      FROM memory_embedding_indexes WHERE user_id=? ORDER BY conversation_id,created_at`).all(userId),
+    usage: database.prepare(`SELECT operation,currency,price_version AS priceVersion,SUM(input_tokens) AS inputTokens,
+      SUM(cost_cny) AS costCny,COUNT(*) AS requests FROM memory_embedding_usage WHERE user_id=?
+      GROUP BY operation,currency,price_version`).all(userId)
+  };
 }
 
 function listCharacters(database, userId) {

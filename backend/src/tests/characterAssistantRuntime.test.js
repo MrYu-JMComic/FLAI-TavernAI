@@ -89,7 +89,7 @@ test('character assistant emits progressive checkpoints while provider tool call
     assert.equal(checkpoints.length, 2);
     assert.equal(checkpoints[0].data.character.name, '雾岚');
     assert.deepEqual(checkpoints[0].data.character.tags, ['旅人']);
-    assert.match(checkpoints[0].data.workflow.nextAction, /自主决定/);
+    assert.match(checkpoints[0].data.workflow.nextAction, /decide whether more tool calls are needed/);
     assert.equal(checkpoints.at(-1).data.lastTool, 'finish_character_draft');
     assert.deepEqual(checkpoints.at(-1).data.completedSections, ['profile', 'tags']);
     assert.equal(events.some((item) => item.event === 'content'), false);
@@ -722,6 +722,41 @@ test('character plan phase withholds write tools and returns a plan without a ch
   }
 });
 
+test('character plan format repair sends an English instruction to the model', async () => {
+  const originalFetch = globalThis.fetch;
+  const requests = [];
+  try {
+    globalThis.fetch = async (_url, request = {}) => {
+      const body = JSON.parse(request.body);
+      requests.push(body);
+      if (requests.length === 1) {
+        return jsonResponse({ choices: [{ message: { role: 'assistant', content: 'A prose plan.' } }] });
+      }
+      return jsonResponse(toolMessage([
+        toolCall('plan-after-repair', 'submit_character_plan', {
+          steps: [{ section: 'persona', intent: '重写说话方式' }]
+        })
+      ]));
+    };
+
+    const result = await completeCharacterDraft(providerSettings, {
+      requirement: '改写人设',
+      current: { name: '澄灯', persona: '旧人设' },
+      options: { profile: false, background: false, worldview: false, persona: true, openingMessage: false, tags: false, regexRules: false, renderPlugins: false, worldBook: false, advancedSettings: false, modSuggestions: false },
+      planMode: true
+    });
+
+    const repairMessage = requests[1].messages.at(-1);
+    assert.equal(repairMessage.role, 'user');
+    assert.match(repairMessage.content, /Format validation failed/);
+    assert.match(repairMessage.content, /submit_character_plan/);
+    assert.doesNotMatch(repairMessage.content, /[\u3400-\u9fff]/);
+    assert.equal(result.phase, 'plan');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test('character plan phase refuses a step outside the approved scope', async () => {
   const originalFetch = globalThis.fetch;
   const events = [];
@@ -791,7 +826,7 @@ test('character execution follows the approved plan ledger and refuses to finish
     });
 
     const systemPrompt = requests[0].messages[0].content;
-    assert.match(systemPrompt, /计划步骤 1（persona）：重写说话方式/);
+    assert.match(systemPrompt, /Plan step 1 \(persona\): 重写说话方式/);
     assert.doesNotMatch(systemPrompt, /改为夜场/);
     assert.equal(JSON.parse(requests[0].messages[1].content).planExtraRequirement, '保留口癖');
     assert.ok(requests[0].tools.some((tool) => tool.function.name === 'update_character_story'));
@@ -1010,8 +1045,8 @@ test('character assistant preserves an HTML event template without inferring Jav
     assert.deepEqual(blueprint.variables.map(variable => variable.name), ['HP']);
     assert.equal(result.toolCalls[0].result.ok, true);
     const instructions = requests[0].messages.filter(message => message.role === 'system').map(message => message.content).join('\n');
-    assert.match(instructions, /onclick 等事件属性或 javascript: 链接时，会自动进入隔离运行时/);
-    assert.doesNotMatch(instructions, /不支持 Vue、脚本、外部资源或事件属性/);
+    assert.match(instructions, /Raw HTML containing <script>, event attributes such as onclick, or javascript: links automatically uses the isolated runtime/);
+    assert.match(instructions, /Braces in scripts and event-handler code are not parsed as status variables/);
   } finally {
     globalThis.fetch = originalFetch;
   }

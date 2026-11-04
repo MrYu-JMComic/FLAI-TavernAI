@@ -163,9 +163,13 @@ export function useWorldBookAi({ providerRef, isCurrentRun = () => true, onAppli
   }
 
   function cancelWorldBookAi() {
-    aiAbortController.value?.abort();
+    const abortController = aiAbortController.value;
+    if (!abortController) return;
+    abortController.abort();
     aiLoading.value = false;
     aiAbortController.value = null;
+    aiStatus.value = 'paused';
+    aiStatusMessage.value = '已暂停，可重新开始';
   }
 
   function setSelectedBookIds(ids) {

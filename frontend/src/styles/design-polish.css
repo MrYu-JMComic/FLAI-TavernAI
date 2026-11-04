@@ -2,18 +2,28 @@
   --line: color-mix(in srgb, var(--text) 10%, var(--surface));
   --surface-strong: color-mix(in srgb, var(--surface) 97%, var(--text));
   --surface-hover: color-mix(in srgb, var(--surface) 96%, var(--text));
-  --focus-ring: color-mix(in srgb, var(--green) 30%, transparent);
+  --focus-ring: color-mix(in srgb, var(--primary) 30%, transparent);
 }
 
 :root[data-theme="dark"] {
   --line: color-mix(in srgb, var(--text) 12%, var(--surface));
   --surface-strong: color-mix(in srgb, var(--surface) 97%, var(--text));
   --surface-hover: color-mix(in srgb, var(--surface) 94%, var(--text));
-  --focus-ring: color-mix(in srgb, var(--green) 34%, transparent);
+  --focus-ring: color-mix(in srgb, var(--primary) 38%, transparent);
 }
 
+::selection {
+  color: var(--text);
+  background-color: color-mix(in srgb, var(--primary) 34%, var(--surface));
+}
+
+:where(input, textarea) {
+  caret-color: var(--primary-strong);
+}
+
+:root[data-theme="dark"] .home-workbench .home-primary-action,
 :root[data-theme="dark"] .home-primary-action {
-  color: #fffaf7 !important;
+  color: #16191d !important;
 }
 
 html {
@@ -32,17 +42,33 @@ body,
 }
 
 html[data-theme] body :where(input, textarea, select):focus {
-  border-color: color-mix(in srgb, var(--green) 54%, var(--line)) !important;
+  border-color: color-mix(in srgb, var(--primary) 54%, var(--line)) !important;
   outline: none !important;
   box-shadow:
     0 0 0 1px color-mix(in srgb, var(--surface) 92%, transparent),
-    0 0 0 4px color-mix(in srgb, var(--green) 22%, transparent),
+    0 0 0 4px var(--focus-ring),
     inset 0 1px 2px color-mix(in srgb, var(--text) 5%, transparent) !important;
+}
+
+html[data-theme] body .deep-composer textarea,
+html[data-theme] body .deep-composer textarea:focus {
+  border: 0 !important;
+  border-color: transparent !important;
+  outline: none !important;
+  background: transparent !important;
+  box-shadow: none !important;
+}
+
+html[data-theme] body .deep-composer:focus-within {
+  border-color: color-mix(in srgb, var(--primary) 58%, var(--line)) !important;
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--surface) 92%, transparent),
+    0 0 0 4px var(--focus-ring) !important;
 }
 
 html[data-theme] body .home-search-field:focus-within,
 html[data-theme] body .home-select-field:focus-within {
-  border-color: color-mix(in srgb, var(--green) 54%, var(--line)) !important;
+  border-color: color-mix(in srgb, var(--primary) 54%, var(--line)) !important;
   box-shadow:
     0 0 0 1px color-mix(in srgb, var(--surface) 92%, transparent),
     0 0 0 4px var(--focus-ring),
@@ -54,6 +80,24 @@ html[data-theme] body .home-select-field select:focus {
   border-color: transparent !important;
   box-shadow: none !important;
   outline: none !important;
+}
+
+html[data-theme] body .chat-model-search:focus-within {
+  border-color: color-mix(in srgb, var(--primary) 58%, var(--line)) !important;
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--surface) 92%, transparent),
+    0 0 0 4px color-mix(in srgb, var(--primary) 22%, transparent),
+    inset 0 1px 2px color-mix(in srgb, var(--text) 5%, transparent) !important;
+}
+
+html[data-theme] body .chat-model-search input:focus {
+  border-color: transparent !important;
+  box-shadow: none !important;
+  outline: none !important;
+}
+
+.markdown-content :is(strong, b) {
+  font-weight: 700;
 }
 
 :where(.markdown-content, .deep-message-content) :where(svg, .lucide) {
@@ -74,28 +118,6 @@ html[data-theme] body .home-select-field select:focus {
   transform-origin: center;
 }
 
-.stream-ink-glyph {
-  display: inline-block;
-  animation: stream-ink-focus 190ms both cubic-bezier(0.2, 0.75, 0.2, 1);
-  animation-delay: calc(var(--stream-glyph-index, 0) * 18ms);
-  transform-origin: center;
-  vertical-align: -0.04em;
-}
-
-@keyframes stream-ink-focus {
-  from {
-    opacity: 0.15;
-    filter: blur(4px);
-    transform: translateY(0.08em);
-  }
-
-  to {
-    opacity: 1;
-    filter: blur(0);
-    transform: translateY(0);
-  }
-}
-
 @keyframes spring-feedback {
   0% { transform: scale(1); }
   32% { transform: scale(0.88); }
@@ -105,7 +127,6 @@ html[data-theme] body .home-select-field select:focus {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .stream-ink-glyph,
   :where(.message-action-button[title="复制消息"], .home-reaction-button.like, .reaction-button.like):active {
     animation: none;
     filter: none;

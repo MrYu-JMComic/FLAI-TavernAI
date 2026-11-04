@@ -15,6 +15,7 @@ function quotes(wrapper) {
 }
 afterEach(() => {
   for (const wrapper of wrappers.splice(0)) wrapper.unmount();
+  vi.useRealTimers();
   vi.restoreAllMocks();
 });
 
@@ -70,10 +71,12 @@ describe('dialogue quote presentation', () => {
   });
 
   it('keeps incomplete streamed quotes plain and isolates each message', async () => {
+    vi.useFakeTimers();
     const wrapper = render('Narration \u201cFirst\nnext', { deferUpdates: true });
     expect(quotes(wrapper)).toBe('');
     expect(quotes(render('other message\u201d'))).toBe('');
     await wrapper.setProps({ text: 'Narration \u201cFirst\nnext\u201d after' });
+    await vi.advanceTimersByTimeAsync(32);
     expect(quotes(wrapper)).toBe('\u201cFirst\nnext\u201d');
     await wrapper.setProps({ deferUpdates: false });
     expect(quotes(wrapper)).toBe('\u201cFirst\nnext\u201d');
@@ -83,12 +86,14 @@ describe('dialogue quote presentation', () => {
     ['*', 'em'], ['**', 'strong'], ['***', 'em > strong'],
     ['_', 'em'], ['__', 'strong'], ['___', 'em > strong'], ['~~', 's']
   ])('renders punctuated %s dialogue when its streamed closing markers arrive', async (marker, selector) => {
+    vi.useFakeTimers();
     const wrapper = render(`她说${marker}“任务。`, { deferUpdates: true });
     expect(wrapper.find('strong, em, s').exists()).toBe(false);
     expect(quotes(wrapper)).toBe('');
 
     const text = `她说${marker}“任务。”${marker}随后点头。`;
     await wrapper.setProps({ text });
+    await vi.advanceTimersByTimeAsync(32);
     expect(wrapper.find(selector).text()).toBe('“任务。”');
     expect(quotes(wrapper)).toBe('“任务。”');
     expect(wrapper.text()).toBe('她说“任务。”随后点头。');

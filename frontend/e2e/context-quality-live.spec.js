@@ -82,6 +82,7 @@ test('real context quality workflow preserves rejected drafts and reviews traces
 
   await inspector.getByRole('tab', { name: '记忆' }).click();
   const memoryReview = inspector.getByRole('region', { name: '对话记忆审阅' });
+  await memoryReview.getByRole('button', { name: '全部记忆', exact: true }).click();
   await expect(memoryReview.getByText(firstMemory.content, { exact: true })).toBeVisible();
   await expect(memoryReview.getByText(secondMemory.content, { exact: true })).toBeVisible();
   await memoryReview.getByRole('checkbox', { name: /选择记忆：Mira/ }).nth(0).check();
@@ -91,11 +92,26 @@ test('real context quality workflow preserves rejected drafts and reviews traces
   await memoryReview.getByRole('button', { name: '置顶记忆' }).first().click();
   await memoryReview.locator('summary').filter({ hasText: '待审阅候选' }).click();
   await memoryReview.getByRole('button', { name: '审阅合并' }).click();
-  const mergeDialog = page.getByRole('form', { name: '合并记忆' });
+  const mergeDialog = page.getByRole('dialog', { name: '合并记忆', exact: true });
   await expect(mergeDialog).toBeVisible();
+  const mergedResponse = page.waitForResponse((response) => response.url().endsWith(`${memoryBase}/merge`) && response.request().method() === 'POST');
   await mergeDialog.getByRole('button', { name: '合并' }).click();
+  const mergeResponse = await mergedResponse;
+  expect(mergeResponse.status()).toBe(200);
+  const merged = await mergeResponse.json();
+  expect(merged.operationId).toEqual(expect.any(String));
+  expect([firstMemory.id, secondMemory.id]).toContain(merged.memory.id);
+  const mergedState = await apiRequest(page, `${memoryBase}?includeArchived=1`);
+  expect(mergedState.memories.filter((memory) => !memory.archived).map((memory) => memory.id)).toEqual([merged.memory.id]);
+  expect(mergedState.memories.find((memory) => memory.id !== merged.memory.id)).toMatchObject({ archived: true, mergedIntoId: merged.memory.id });
+  await expect(mergeDialog).not.toBeVisible();
   await expect(memoryReview.getByRole('button', { name: '撤销上次合并' })).toBeVisible();
+  const undoneResponse = page.waitForResponse((response) => response.url().endsWith(`${memoryBase}/merges/${merged.operationId}/undo`) && response.request().method() === 'POST');
   await memoryReview.getByRole('button', { name: '撤销上次合并' }).click();
+  expect((await undoneResponse).status()).toBe(200);
+  const restoredState = await apiRequest(page, `${memoryBase}?includeArchived=1`);
+  expect(restoredState.memories.map((memory) => memory.id).sort()).toEqual([firstMemory.id, secondMemory.id].sort());
+  expect(restoredState.memories.every((memory) => !memory.archived && memory.enabled && !memory.mergedIntoId)).toBe(true);
   await expect(memoryReview.getByText(firstMemory.content, { exact: true })).toBeVisible();
   await expect(memoryReview.getByText(secondMemory.content, { exact: true })).toBeVisible();
 
@@ -139,7 +155,7 @@ test('real context quality workflow preserves rejected drafts and reviews traces
 async function openInspector(page) {
   await page.getByLabel('更多聊天工具', { exact: true }).click();
   await page.getByRole('menuitem', { name: '上下文检查器' }).click();
-  const inspector = page.getByRole('dialog', { name: 'Prompt Pipeline V2' });
+  const inspector = page.getByRole('dialog', { name: /^(Prompt Pipeline V2|记忆工作台)$/ });
   await expect(inspector).toBeVisible();
   return inspector;
 }

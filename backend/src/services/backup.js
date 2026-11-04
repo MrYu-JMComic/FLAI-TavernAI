@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { DatabaseSync } from 'node:sqlite';
+import { openVectorDatabase } from '../db/vectorRuntime.js';
 import { appConfig } from '../config.js';
 import { dataDir } from '../db/runtime.js';
 import { latestSchemaVersion, listAppliedMigrations } from '../db/migrations.js';
@@ -433,7 +433,7 @@ function readBackupFileNamesNewestFirst(backupDir) {
 }
 
 export function verifyBackupFile(filePath) {
-  const database = new DatabaseSync(filePath, { readOnly: true });
+  const database = openVectorDatabase(filePath, { readOnly: true });
   try {
     return String(Object.values(database.prepare('PRAGMA integrity_check(1)').get() || {})[0] || 'error');
   } finally {
@@ -463,7 +463,7 @@ function readBackupMetadata(filePath) {
 }
 
 function readBackupSchemaVersion(filePath) {
-  const database = new DatabaseSync(filePath, { readOnly: true });
+  const database = openVectorDatabase(filePath, { readOnly: true });
   try {
     const table = database.prepare(
       "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'schema_migrations'"
@@ -490,7 +490,7 @@ function standaloneBackupMetadata(filePath) {
 }
 
 function assertDatabaseCanBeLocked(databasePath) {
-  const database = new DatabaseSync(databasePath);
+  const database = openVectorDatabase(databasePath);
   try {
     database.exec('PRAGMA busy_timeout = 1000; PRAGMA wal_checkpoint(TRUNCATE); BEGIN EXCLUSIVE; ROLLBACK;');
   } catch (error) {

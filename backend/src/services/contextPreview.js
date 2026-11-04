@@ -1,28 +1,27 @@
 import { getCharacter } from '../modules/characters.js';
-import { normalizeAdvancedSettings } from '../modules/advancedSettings.js';
+import { normalizeAdvancedSettings, mergeAdvancedSettings } from '../modules/advancedSettings.js';
 import { getDefaultPreset, getPreset } from '../modules/presets.js';
 import { parseJson } from '../utils/json.js';
 import { resolveChatAttachmentsForModel } from './chatAttachments.js';
 import { createDiagnosticId } from './conversationGenerationDiagnostics.js';
 import { describeProviderCapabilities } from './providerCapabilities.js';
-import { searchUserContent } from './fullTextSearch.js';
-import { measureSync } from './performanceMetrics.js';
+import { measureAsync } from './performanceMetrics.js';
 import { getSelectedProviderProfileRow } from '../repositories/providerProfileRepository.js';
 import { buildConversationCompletionOptions } from './conversationContextBudget.js';
 import {
-  buildPromptPipeline,
   sanitizePromptMessagesForPreview
 } from './promptPipeline.js';
+import { buildResolvedPromptPipeline } from './resolvedPromptPipeline.js';
 
-export function buildConversationContextPreview(database, user, conversationId, payload = {}, providerSettings) {
-  return measureSync(
+export async function buildConversationContextPreview(database, user, conversationId, payload = {}, providerSettings) {
+  return measureAsync(
     'context.preview',
     () => buildConversationContextPreviewUnmeasured(database, user, conversationId, payload, providerSettings),
     { rows: (result) => (result?.messages?.length || 0) + (result?.retrieval?.returned || 0) }
   );
 }
 
-function buildConversationContextPreviewUnmeasured(database, user, conversationId, payload = {}, providerSettings) {
+async function buildConversationContextPreviewUnmeasured(database, user, conversationId, payload = {}, providerSettings) {
   const conversation = getConversation(database, user.id, conversationId);
   if (!conversation) {
     return null;
@@ -31,6 +30,11 @@ function buildConversationContextPreviewUnmeasured(database, user, conversationI
   if (!character) {
     return null;
   }
+  conversation.authorSettings = character.authorAdvancedSettings || conversation.authorSettings;
+  conversation.isCharacterOwner = character.ownerId === user.id;
+  conversation.settings = mergeAdvancedSettings(conversation.authorSettings, conversation.userSettings, {
+    allowAuthorDangerous: conversation.isCharacterOwner
+  });
 
   const activePreset = getPreviewPreset(database, user.id, payload);
   const providerRow = getSelectedProviderProfileRow(database, user.id);
@@ -39,11 +43,15 @@ function buildConversationContextPreviewUnmeasured(database, user, conversationI
     supportsReasoning: Boolean(providerRow?.supports_reasoning), extraBody: parseJson(providerRow?.extra_body, {})
   };
   const completionOptions = buildConversationCompletionOptions(settings, conversation.contextBudget, payload, activePreset);
-  const pipeline = buildPromptPipeline(database, {
+  const pipeline = await buildResolvedPromptPipeline(database, {
     character,
     conversation,
     user,
     content: payload.content || payload.message || '',
+    asOfMessageId: payload.asOfMessageId,
+    asOfOrder: payload.asOfOrder,
+    beforeCutoff: payload.beforeCutoff === true,
+    allowProviderCall: false,
     userAttachments: resolveChatAttachmentsForModel(database, user.id, payload.attachments),
     history: getRecentMessages(database, user.id, conversation.id),
     activePreset,
@@ -56,11 +64,8 @@ function buildConversationContextPreviewUnmeasured(database, user, conversationI
     resolveAttachmentsForModel: (attachments) => resolveChatAttachmentsForModel(database, user.id, attachments)
   });
   const providerDiagnostics = buildProviderDiagnostics(database, user.id);
-  const retrievalQuery = String(payload.searchQuery || pipeline.input.processed || '').trim();
-  const retrieval = searchUserContent(database, user.id, retrievalQuery, {
-    conversationId: conversation.id,
-    limit: payload.searchLimit || 12
-  });
+  const retrieval = pipeline.contextBundle.memory;
+  const retrievalQuery = String(pipeline.input.processed || '').trim();
 
   return {
     conversationId: conversation.id,
@@ -74,14 +79,17 @@ function buildConversationContextPreviewUnmeasured(database, user, conversationI
     priority: pipeline.priority,
     budget: pipeline.budget,
     selectionManifest: pipeline.selectionManifest,
+    contextBundle: pipeline.contextBundle,
     retrieval: {
-      query: retrieval.query,
-      evidence: retrieval.results,
-      budget: payload.searchLimit || 12,
-      sources: retrieval.sources,
-      returned: retrieval.results.length,
-      truncated: retrieval.truncated,
-      truncationReason: retrieval.truncationReason
+      query: retrievalQuery,
+      evidence: retrieval.entries,
+      budget: pipeline.contextBundle.policy.recallLimit,
+      sources: [...new Set(retrieval.entries.flatMap((entry) => entry.reasons || []))],
+      returned: retrieval.entries.length,
+      truncated: Number(retrieval.omitted || 0) > 0,
+      truncationReason: Number(retrieval.omitted || 0) > 0 ? 'context_budget_or_ranking' : '',
+      vectorStatus: pipeline.contextBundle.vectorStatus,
+      fingerprint: pipeline.contextBundle.fingerprint
     },
     providerDiagnostics,
     diagnostics: {
@@ -140,8 +148,9 @@ function getConversation(database, userId, conversationId) {
     characterId: row.character_id,
     title: row.title,
     stateStatus: row.state_status || 'legacy',
+    timelineRevision: Number(row.timeline_revision || 1),
     contextBudget: parseJson(row.context_budget_json, {}),
-    userSettings: normalizeAdvancedSettings(parseJson(row.user_advanced_settings, {})),
+    userSettings: parseJson(row.user_advanced_settings, {}),
     authorSettings: normalizeAdvancedSettings(parseJson(row.author_advanced_settings, {})),
     createdAt: row.created_at,
     updatedAt: row.updated_at

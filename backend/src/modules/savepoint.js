@@ -4,10 +4,16 @@ export function withSavepoint(database, name, operation) {
   if (!SAVEPOINT_NAME_PATTERN.test(name)) {
     throw new Error(`Invalid savepoint name: ${name}`);
   }
+  if(operation?.constructor?.name==='AsyncFunction') {
+    throw new TypeError('Savepoint callbacks must be synchronous; async callbacks are not invoked.');
+  }
 
   database.exec(`SAVEPOINT ${name}`);
   try {
     const result = operation();
+    if(result && typeof result.then === 'function') {
+      throw new TypeError('Savepoint callbacks must be synchronous; finish provider work before opening a transaction.');
+    }
     database.exec(`RELEASE SAVEPOINT ${name}`);
     return result;
   } catch (error) {

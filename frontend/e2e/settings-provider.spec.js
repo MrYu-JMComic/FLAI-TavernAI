@@ -37,6 +37,7 @@ test('loads saved provider settings and the provider capability registry', async
   expect(health.capability.providerType).toBe('custom');
 
   await page.goto('/#/settings');
+  await page.getByRole('button', { name: '模型网关', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'AI 供应商设置' })).toBeVisible();
   await expect(page.getByLabel('供应商')).toHaveValue('custom');
   await expect(page.getByLabel('网关名称')).toHaveValue(gatewayName);

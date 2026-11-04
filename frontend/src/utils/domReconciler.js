@@ -1,10 +1,8 @@
 const ELEMENT_NODE = 1;
 const TEXT_NODE = 3;
 const COMMENT_NODE = 8;
-const SHOW_TEXT = 4;
 
 export function reconcileDomChildren(currentParent, nextParent) {
-  const activeGlyphs = captureActiveStreamGlyphs(currentParent);
   let currentNode = currentParent.firstChild;
   let nextNode = nextParent.firstChild;
 
@@ -45,66 +43,6 @@ export function reconcileDomChildren(currentParent, nextParent) {
     currentParent.removeChild(currentNode);
     currentNode = followingCurrentNode;
   }
-  restoreActiveStreamGlyphs(currentParent, activeGlyphs);
-}
-
-function captureActiveStreamGlyphs(parent) {
-  // Preserve active glyph nodes across Markdown updates so their animation finishes.
-  const glyphs = [];
-  let offset = 0;
-  for (const child of parent.childNodes) {
-    if (child.nodeType === ELEMENT_NODE && child.classList.contains('stream-ink-glyph')) {
-      glyphs.push({
-        element: child,
-        offset,
-        animationTimes: typeof child.getAnimations === 'function'
-          ? child.getAnimations().map((animation) => animation.currentTime)
-          : []
-      });
-      offset += child.textContent?.length || 0;
-    } else if (child.nodeType === TEXT_NODE || child.nodeType === ELEMENT_NODE) {
-      offset += child.textContent?.length || 0;
-    }
-  }
-  return glyphs;
-}
-
-function restoreActiveStreamGlyphs(parent, glyphs) {
-  for (const glyph of glyphs) {
-    const text = glyph.element.textContent || '';
-    const target = findTextAtOffset(parent, glyph.offset);
-    if (!target || target.text.slice(target.localOffset, target.localOffset + text.length) !== text) continue;
-
-    const fragment = parent.ownerDocument.createDocumentFragment();
-    const before = target.text.slice(0, target.localOffset);
-    const after = target.text.slice(target.localOffset + text.length);
-    if (before) fragment.append(parent.ownerDocument.createTextNode(before));
-    fragment.append(glyph.element);
-    if (after) fragment.append(parent.ownerDocument.createTextNode(after));
-    target.node.replaceWith(fragment);
-
-    if (glyph.animationTimes.length && typeof glyph.element.getAnimations === 'function') {
-      const animations = glyph.element.getAnimations();
-      for (let index = 0; index < Math.min(animations.length, glyph.animationTimes.length); index += 1) {
-        animations[index].currentTime = glyph.animationTimes[index];
-      }
-    }
-  }
-}
-
-function findTextAtOffset(parent, offset) {
-  const walker = parent.ownerDocument.createTreeWalker(parent, SHOW_TEXT);
-  let consumed = 0;
-  let node = walker.nextNode();
-  while (node) {
-    const text = node.nodeValue || '';
-    if (offset >= consumed && offset < consumed + text.length) {
-      return { node, localOffset: offset - consumed, text };
-    }
-    consumed += text.length;
-    node = walker.nextNode();
-  }
-  return null;
 }
 
 function canReconcileNode(currentNode, nextNode) {

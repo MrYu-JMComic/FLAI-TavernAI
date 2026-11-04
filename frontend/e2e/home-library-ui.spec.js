@@ -7,7 +7,7 @@ const tags = [
   { id: 'daily', name: 'Daily', usageCount: 3, color: '#ff80ab' }
 ];
 
-async function openLibrary(page, { characterTags = tags } = {}) {
+async function openLibrary(page, { characterTags = tags, onCharactersRequest, onReactionRequest } = {}) {
   const requests = [];
   const characters = Array.from({ length: 24 }, (_, index) => ({
     id: `library-${index}`,
@@ -42,7 +42,24 @@ async function openLibrary(page, { characterTags = tags } = {}) {
         && (!url.searchParams.get('tag') || character.characterTags.some((tag) => tag.name === url.searchParams.get('tag')))
       ));
       if (url.searchParams.get('sort') === 'name') items = items.toSorted((a, b) => a.name.localeCompare(b.name));
+      if (onCharactersRequest && await onCharactersRequest(route, { url, items, characters })) return;
       return route.fulfill({ json: items });
+    }
+    const reactionMatch = url.pathname.match(/^\/api\/characters\/([^/]+)\/(favorite|like)$/);
+    if (reactionMatch) {
+      const [, characterId, reactionType] = reactionMatch;
+      const character = characters.find((item) => item.id === characterId);
+      const body = route.request().postDataJSON();
+      const activeKey = reactionType === 'favorite' ? 'favoritedByMe' : 'likedByMe';
+      const countKey = reactionType === 'favorite' ? 'favoriteCount' : 'likeCount';
+      const nextActive = Boolean(body[reactionType === 'favorite' ? 'favorited' : 'liked']);
+      const nextCharacter = {
+        ...character,
+        [activeKey]: nextActive,
+        [countKey]: Math.max(0, character[countKey] + Number(nextActive) - Number(character[activeKey]))
+      };
+      if (onReactionRequest && await onReactionRequest(route, { url, character: nextCharacter })) return;
+      return route.fulfill({ json: nextCharacter });
     }
     return route.fulfill({ json: {} });
   });
@@ -103,7 +120,7 @@ test('desktop sidebar gives the workspace full height and keeps account controls
   expect(menuBox.y + menuBox.height).toBeLessThanOrEqual(userBox.y + 1);
   await page.getByRole('menuitem', { name: '个人中心', exact: true }).click();
   await expect(page).toHaveURL(/\/#\/settings$/);
-  await expect(page.getByRole('navigation', { name: '个人设置分区' })).toBeVisible();
+  await expect(page.getByRole('navigation', { name: '个人设置' })).toBeVisible();
   await expect(menu).toHaveCount(0);
   await navigation.locator('.topnav').getByRole('button', { name: '首页', exact: true }).click();
   await expect(page.locator('.home-character-card').first()).toBeVisible();
@@ -265,6 +282,62 @@ test('search clearing preserves the tag and sorting is selectable and remembered
   await expect(sort).toHaveValue('name');
 });
 
+test('a list response started before a saved favorite does not revert it', async ({ page }) => {
+  let holdFavoriteResponse = false;
+  let releaseFavoriteResponse;
+  let signalFavoriteStarted;
+  const favoriteRequestStarted = new Promise((resolve) => { signalFavoriteStarted = resolve; });
+  let holdCharacterListResponse = false;
+  let releaseCharacterListResponse;
+  let signalCharacterListStarted;
+  const characterListStarted = new Promise((resolve) => { signalCharacterListStarted = resolve; });
+
+  await openLibrary(page, {
+    onReactionRequest: async (route, { url, character }) => {
+      if (!holdFavoriteResponse || !url.pathname.endsWith('/favorite')) return false;
+      holdFavoriteResponse = false;
+      signalFavoriteStarted();
+      await new Promise((resolve) => { releaseFavoriteResponse = resolve; });
+      await route.fulfill({ json: character });
+      return true;
+    },
+    onCharactersRequest: async (route, { url, items }) => {
+      if (!holdCharacterListResponse || url.searchParams.get('sort') !== 'name') return false;
+      holdCharacterListResponse = false;
+      signalCharacterListStarted();
+      await new Promise((resolve) => { releaseCharacterListResponse = resolve; });
+      await route.fulfill({ json: items });
+      return true;
+    }
+  });
+
+  const favoriteButton = page.locator('.home-character-card').filter({
+    has: page.getByRole('heading', { name: 'Traveler 01', exact: true })
+  }).getByRole('button', { name: '取消收藏', exact: true });
+  holdFavoriteResponse = true;
+  await favoriteButton.click();
+  await favoriteRequestStarted;
+
+  holdCharacterListResponse = true;
+  await page.getByRole('combobox').selectOption('name');
+  await characterListStarted;
+
+  const favoriteSaved = page.waitForResponse((response) => (
+    response.url().includes('/api/characters/library-0/favorite')
+    && response.request().method() === 'PUT'
+  ));
+  releaseFavoriteResponse();
+  await favoriteSaved;
+  await page.waitForTimeout(50);
+  releaseCharacterListResponse();
+
+  const updatedCharacterCard = page.locator('.home-character-card').filter({
+    has: page.getByRole('heading', { name: 'Traveler 01', exact: true })
+  });
+  await expect(updatedCharacterCard.getByRole('button', { name: '收藏', exact: true })).toHaveAttribute('aria-pressed', 'false');
+  await expect(updatedCharacterCard.getByRole('button', { name: '收藏', exact: true })).toContainText('0');
+});
+
 test('keyboard users can skip navigation and see file-input focus', async ({ page }) => {
   await openLibrary(page);
   const originalUrl = page.url();
@@ -303,6 +376,22 @@ for (const theme of ['light', 'dark']) {
         });
       }));
       expect(collisions).toEqual([]);
+      if (theme === 'dark' && viewport.width === 1440) {
+        const contrast = await page.locator('.home-primary-action').first().evaluate((button) => {
+          const luminance = (color) => {
+            const channels = color.match(/[\d.]+/g).slice(0, 3).map(Number).map((channel) => channel / 255);
+            const linear = channels.map((channel) => (
+              channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4
+            ));
+            return linear[0] * 0.2126 + linear[1] * 0.7152 + linear[2] * 0.0722;
+          };
+          const style = getComputedStyle(button);
+          const foreground = luminance(style.color);
+          const background = luminance(style.backgroundColor);
+          return (Math.max(foreground, background) + 0.05) / (Math.min(foreground, background) + 0.05);
+        });
+        expect(contrast).toBeGreaterThanOrEqual(4.5);
+      }
       if (viewport.width < 620) {
         const sizes = await page.locator('.home-control-panel button, .home-control-panel select, .home-character-card button').evaluateAll((elements) => elements.slice(0, 8).map((element) => {
           const rect = element.getBoundingClientRect();

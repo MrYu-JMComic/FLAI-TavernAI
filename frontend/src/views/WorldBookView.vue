@@ -411,6 +411,8 @@ function sameEntrySummary(currentEntry, nextEntry) {
     && Number(currentEntry?.probability ?? 100) === Number(nextEntry?.probability ?? 100)
     && currentEntry?.group === nextEntry?.group
     && Number(currentEntry?.groupWeight || 0) === Number(nextEntry?.groupWeight || 0)
+    && (currentEntry?.knowledgeVisibility || 'author') === (nextEntry?.knowledgeVisibility || 'author')
+    && JSON.stringify(currentEntry?.audienceCastKeys || []) === JSON.stringify(nextEntry?.audienceCastKeys || [])
     && Number(currentEntry?.orderIndex || 0) === Number(nextEntry?.orderIndex || 0);
 }
 
@@ -642,7 +644,9 @@ function openEditEntry(entry) {
     useProbability: Boolean(entry.useProbability),
     probability: entry.probability ?? 100,
     group: entry.group || '',
-    groupWeight: entry.groupWeight ?? 0
+    groupWeight: entry.groupWeight ?? 0,
+    knowledgeVisibility: entry.knowledgeVisibility || 'author',
+    audienceCastKeysText: (entry.audienceCastKeys || []).join(', ')
   });
   editingEntryId.value = entry.id;
   showEntryForm.value = true;
@@ -685,7 +689,9 @@ async function saveEntry() {
       useProbability: editingEntry.useProbability,
       probability: clampNumber(editingEntry.probability, 0, 100, 100),
       group: editingEntry.group.trim(),
-      groupWeight: Math.max(0, Number(editingEntry.groupWeight) || 0)
+      groupWeight: Math.max(0, Number(editingEntry.groupWeight) || 0),
+      knowledgeVisibility: editingEntry.knowledgeVisibility,
+      audienceCastKeys: [...new Set(editingEntry.audienceCastKeysText.split(',').map((key) => key.trim()).filter(Boolean))]
     };
     if (targetEntryId) {
       await updateWorldBookEntry(targetBookId, targetEntryId, payload);
@@ -764,11 +770,17 @@ async function moveEntry(index, direction) {
   const mutationToken = worldBookMutationToken;
   saving.value = true;
   try {
-    await Promise.all([
+    const updates = await Promise.allSettled([
       updateWorldBookEntry(targetBookId, current.id, { orderIndex: target.orderIndex }),
       updateWorldBookEntry(targetBookId, target.id, { orderIndex: current.orderIndex })
     ]);
     if (!isCurrentWorldBookMutation(mutationToken, targetBookId)) return;
+    const failedUpdate = updates.find(result => result.status === 'rejected');
+    if (failedUpdate) {
+      await loadBook(targetBookId);
+      if (!isCurrentWorldBookMutation(mutationToken, targetBookId)) return;
+      throw failedUpdate.reason;
+    }
     await loadBook(targetBookId);
   } catch (err) {
     if (!isCurrentWorldBookMutation(mutationToken, targetBookId)) return;
@@ -877,7 +889,9 @@ function createEmptyEntry() {
     useProbability: false,
     probability: 100,
     group: '',
-    groupWeight: 0
+    groupWeight: 0,
+    knowledgeVisibility: 'author',
+    audienceCastKeysText: ''
   };
 }
 
@@ -1219,8 +1233,8 @@ function nullableNumber(value) {
     </div>
 
     <div v-if="showEntryForm" class="modal-overlay" @click.self="closeEntryForm">
-      <div class="modal-content form-panel entry-modal" :aria-busy="saving">
-        <h2>{{ editingEntryId ? '编辑条目' : '添加条目' }}</h2>
+      <div class="modal-content form-panel entry-modal" :aria-busy="saving" role="dialog" aria-modal="true" :aria-label="editingEntryId ? '编辑条目' : '添加条目'">
+        <h2 id="worldbook-entry-form-title">{{ editingEntryId ? '编辑条目' : '添加条目' }}</h2>
         <label class="field">
           <span>条目名称</span>
           <input v-model.trim="editingEntry.name" maxlength="120" placeholder="例如：魔法系统" :disabled="saving" />
@@ -1238,6 +1252,14 @@ function nullableNumber(value) {
         <label class="field">
           <span>注入内容</span>
           <textarea v-model="editingEntry.content" rows="8" placeholder="当触发词匹配时，这段内容会被注入到 AI 上下文中。" :disabled="saving" />
+        </label>
+        <label class="field">
+          <span>知情范围</span>
+          <select v-model="editingEntry.knowledgeVisibility" :disabled="saving"><option value="author">作者真相（严格角色视角隐藏）</option><option value="public">公共常识</option><option value="restricted">指定角色知晓</option></select>
+        </label>
+        <label v-if="editingEntry.knowledgeVisibility === 'restricted'" class="field">
+          <span>角色标识</span><input v-model="editingEntry.audienceCastKeysText" maxlength="5184" :disabled="saving" placeholder="稳定角色标识，用英文逗号分隔；不填写会话角色 ID">
+          <small>与会话角色的 cast key 对应，可随世界书跨会话使用。</small>
         </label>
         <label class="checkbox-line">
           <input v-model="editingEntry.enabled" type="checkbox" :disabled="saving" />
